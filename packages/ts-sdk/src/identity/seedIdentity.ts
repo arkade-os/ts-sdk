@@ -263,6 +263,10 @@ export class SeedIdentity implements HDCapableIdentity {
      * Returns true when `descriptor` is derived from this identity's seed.
      * HD descriptors match by account xpub; bare `tr(pubkey)` descriptors
      * match by raw pubkey. See {@link descriptorIsOurs}.
+     *
+     * @deprecated Prefer `DescriptorProvider.isOurs()` via
+     * `HDDescriptorProvider` for rotating HD wallets or
+     * `StaticDescriptorProvider` for legacy single-key wallets.
      */
     isOurs(descriptor: string): boolean {
         return descriptorIsOurs(
@@ -275,6 +279,10 @@ export class SeedIdentity implements HDCapableIdentity {
     /**
      * Signs each request with the key derived from its descriptor.
      * Each descriptor must share this identity's seed ({@link isOurs}).
+     *
+     * @deprecated Prefer `DescriptorProvider.signWithDescriptor()` via
+     * `HDDescriptorProvider` or `StaticDescriptorProvider`. Identities keep
+     * this method only as backing implementation for descriptor providers.
      */
     async signWithDescriptor(
         requests: DescriptorSigningRequest[]
@@ -292,6 +300,10 @@ export class SeedIdentity implements HDCapableIdentity {
 
     /**
      * Signs a message with the key derived from `descriptor`.
+     *
+     * @deprecated Prefer `DescriptorProvider.signMessageWithDescriptor()` via
+     * `HDDescriptorProvider` or `StaticDescriptorProvider`. Identities keep
+     * this method only as backing implementation for descriptor providers.
      */
     async signMessageWithDescriptor(
         descriptor: string,
@@ -524,6 +536,10 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
      * HD descriptors match by account xpub; bare `tr(pubkey)` descriptors
      * fall back to comparing against the index-0 x-only pubkey. See
      * {@link descriptorIsOurs}.
+     *
+     * @deprecated Prefer `DescriptorProvider.isOurs()` via
+     * `HDDescriptorProvider` for rotating HD wallets or
+     * `StaticDescriptorProvider` for legacy single-key wallets.
      */
     isOurs(descriptor: string): boolean {
         return descriptorIsOurs(

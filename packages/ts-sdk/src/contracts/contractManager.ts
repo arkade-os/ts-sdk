@@ -11,6 +11,7 @@ import {
     GetContractsFilter,
     PathContext,
     PathSelection,
+    ExtendedContractVtxo,
 } from "./types";
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
@@ -36,6 +37,23 @@ export type RefreshVtxosOptions = {
     scripts?: string[];
     after?: number;
     before?: number;
+    /**
+     * When true and `scripts` is not set, refresh every contract in
+     * the repository — including those marked `inactive` and those
+     * that have dropped out of the watcher's active set. Useful for
+     * "did anyone send funds to a stale rotated display address?"
+     * audits.
+     *
+     * Because this is a *superset* of the watcher's watched set, the
+     * cursor invariant still holds and the cursor advances normally
+     * (unless an explicit `after` / `before` window is also supplied).
+     *
+     * Ignored when `scripts` is set (the explicit list already
+     * specifies what to refresh, regardless of contract state).
+     *
+     * @defaultValue `false`
+     */
+    includeInactive?: boolean;
 };
 
 export interface IContractManager extends Disposable {
@@ -635,9 +653,22 @@ export class ContractManager implements IContractManager {
     /**
      * Force refresh virtual outputs from the indexer.
      *
-     * Without options, re-fetches every contract and advances the global cursor.
-     * With options, narrows the refresh to specific scripts and/or a time window.
-     * Subset refreshes (scripts filter) intentionally do not advance the cursor.
+     * Without options, re-fetches every contract in the watcher's
+     * watched set and advances the global cursor.
+     *
+     * `scripts` narrows the refresh to a specific list (subset query —
+     * cursor is not advanced because contracts outside the list may
+     * have data we'd skip).
+     *
+     * `includeInactive: true` (and no `scripts`) widens the refresh to
+     * every contract in the repository, including ones marked
+     * `inactive` and ones that have dropped out of the watcher's
+     * active set. This is a *superset* of the watched set, so the
+     * cursor invariant still holds and the cursor advances normally.
+     *
+     * `after` / `before` apply a caller-supplied time window. The
+     * cursor never advances on a windowed query because the window
+     * may skip data outside its bounds.
      */
     async refreshVtxos(opts?: RefreshVtxosOptions): Promise<void> {
         const contracts = opts?.scripts
@@ -654,6 +685,9 @@ export class ContractManager implements IContractManager {
             opts?.after !== undefined || opts?.before !== undefined;
         await this.syncContracts({
             contracts,
+            // Scope-only widener; never set together with explicit
+            // `contracts` because `scripts` already names the exact set.
+            includeInactive: contracts ? false : opts?.includeInactive,
             window: hasExplicitWindow
                 ? { after: opts?.after, before: opts?.before }
                 : undefined,
@@ -750,7 +784,7 @@ export class ContractManager implements IContractManager {
 
     private async getVtxosForContracts(
         contracts: Contract[]
-    ): Promise<ContractVtxo[]> {
+    ): Promise<ExtendedContractVtxo[]> {
         const res = await Promise.all(
             contracts.map((contract) =>
                 getVtxosForContract(
@@ -758,11 +792,10 @@ export class ContractManager implements IContractManager {
                     contract
                 ).then((vtxos) =>
                     vtxos.map(
-                        (vtxo) =>
-                            ({
-                                ...vtxo,
-                                contractScript: contract.script,
-                            }) as ContractVtxo
+                        (vtxo): ExtendedContractVtxo => ({
+                            ...vtxo,
+                            contractScript: contract.script,
+                        })
                     )
                 )
             )
@@ -785,24 +818,33 @@ export class ContractManager implements IContractManager {
         pageSize?: number;
         // Overrides the cursor-derived window.
         window?: { after?: number; before?: number };
-    }): Promise<Map<string, ContractVtxo[]>> {
+        // When `contracts` is omitted: query every contract in the
+        // repository (active + inactive) instead of just the watcher's
+        // watched set. This is a superset of the watched set, so the
+        // cursor invariant still holds and the cursor still advances.
+        includeInactive?: boolean;
+    }): Promise<Map<string, ExtendedContractVtxo[]>> {
         const cursor = await getSyncCursor(this.config.walletRepository);
         const window = options.window ?? computeSyncWindow(cursor);
 
-        // Advance the global cursor only on full-scope, cursor-derived delta
-        // syncs. A caller-supplied window is targeted (e.g. `refreshVtxos`)
-        // and must not move the cursor — it may skip data outside its bounds.
-        // `<=` lets the bootstrap case (cursor=0, window.after=0) write the
-        // migration marker on first boot; otherwise the marker would never
-        // be written and every subsequent boot would treat the cursor as
-        // legacy and re-bootstrap.
+        // Advance the global cursor only on cursor-derived delta syncs
+        // whose contract scope covers at least the watcher's watched
+        // set. Targeted subset queries (caller-supplied `contracts`) and
+        // bounded-window queries must not move the cursor — they may
+        // skip data outside their bounds. `includeInactive` (with no
+        // `contracts`) widens the scope rather than narrowing it, so it
+        // is cursor-safe. `<=` lets the bootstrap case (cursor=0,
+        // window.after=0) write the migration marker on first boot.
         const mustUpdateCursor =
             options.contracts === undefined &&
             options.window === undefined &&
             (window.after ?? 0) <= cursor;
 
         const contracts =
-            options.contracts ?? this.watcher.getWatchedContracts();
+            options.contracts ??
+            (options.includeInactive
+                ? await this.config.contractRepository.getContracts({})
+                : this.watcher.getWatchedContracts());
 
         const requestStartedAt = Date.now();
         const result = await this.fetchContractVxosFromIndexer(
@@ -842,7 +884,7 @@ export class ContractManager implements IContractManager {
         const owned = vtxos.filter((v) => scriptToContract.has(v.script));
         const annotated = await this.annotateVtxos(owned);
 
-        const byContract = new Map<string, ContractVtxo[]>();
+        const byContract = new Map<string, ExtendedContractVtxo[]>();
         for (const vtxo of annotated) {
             const contract = scriptToContract.get(vtxo.script)!;
             let arr = byContract.get(contract.address);
@@ -879,13 +921,13 @@ export class ContractManager implements IContractManager {
         contracts: Contract[],
         pageSize?: number,
         syncWindow?: { after?: number; before?: number }
-    ): Promise<Map<string, ContractVtxo[]>> {
+    ): Promise<Map<string, ExtendedContractVtxo[]>> {
         const fetched = await this.fetchContractVtxosBulk(
             contracts,
             pageSize,
             syncWindow
         );
-        const result = new Map<string, ContractVtxo[]>();
+        const result = new Map<string, ExtendedContractVtxo[]>();
         for (const [contractScript, vtxos] of fetched) {
             result.set(contractScript, vtxos);
             const contract = contracts.find((c) => c.script === contractScript);
@@ -910,7 +952,7 @@ export class ContractManager implements IContractManager {
         contracts: Contract[],
         pageSize: number = DEFAULT_PAGE_SIZE,
         syncWindow?: { after?: number; before?: number }
-    ): Promise<Map<string, ContractVtxo[]>> {
+    ): Promise<Map<string, ExtendedContractVtxo[]>> {
         if (contracts.length === 0) {
             return new Map();
         }
@@ -922,7 +964,7 @@ export class ContractManager implements IContractManager {
         const scriptToContract = new Map<string, Contract>(
             contracts.map((c) => [c.script, c])
         );
-        const result = new Map<string, ContractVtxo[]>(
+        const result = new Map<string, ExtendedContractVtxo[]>(
             contracts.map((c) => [c.script, []])
         );
 

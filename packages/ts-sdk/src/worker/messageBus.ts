@@ -146,6 +146,7 @@ type Initialize = {
         indexerUrl?: string;
         esploraUrl?: string;
         settlementConfig?: SettlementConfig | false;
+        walletMode?: "auto" | "static" | "hd";
         watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
         /**
          * Page-supplied per-operation timeout map. Keys are message types
@@ -377,6 +378,7 @@ export class MessageBus {
                 storage,
                 delegatorProvider,
                 settlementConfig: config.settlementConfig,
+                walletMode: config.walletMode,
                 watcherConfig: config.watcherConfig,
             });
             return { wallet, arkProvider, readonlyWallet: wallet };

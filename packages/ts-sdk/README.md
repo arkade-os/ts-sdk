@@ -28,11 +28,10 @@ const mnemonic = generateMnemonic(wordlist)
 const identity = MnemonicIdentity.fromMnemonic(mnemonic)
 
 // Create a wallet with Arkade support
-const wallet = await Wallet.create({
-  identity,
-  arkServerUrl: 'https://arkade.computer',
-})
+const wallet = await Wallet.create({ identity })  // defaults to mainnet
 ```
+
+To use a different network, pass `arkServerUrl` option.
 
 ### Read-Only Wallets (Watch-Only)
 
@@ -55,7 +54,6 @@ const readonlyIdentity = ReadonlySingleKey.fromPublicKey(publicKey)
 // Create a read-only wallet
 const readonlyWallet = await ReadonlyWallet.create({
   identity: readonlyIdentity,
-  arkServerUrl: 'https://arkade.computer'
 })
 
 // Query operations work normally
@@ -75,10 +73,7 @@ import { Wallet, MnemonicIdentity } from '@arkade-os/sdk'
 
 // Create a full wallet
 const identity = MnemonicIdentity.fromMnemonic('abandon abandon...')
-const wallet = await Wallet.create({
-  identity,
-  arkServerUrl: 'https://arkade.computer'
-})
+const wallet = await Wallet.create({ identity })
 
 // Convert to read-only wallet (safe to share)
 const readonlyWallet = await wallet.toReadonly()
@@ -101,7 +96,6 @@ const readonlyIdentity = await identity.toReadonly()
 // Use in read-only wallet
 const readonlyWallet = await ReadonlyWallet.create({
   identity: readonlyIdentity,
-  arkServerUrl: 'https://arkade.computer'
 })
 ```
 
@@ -132,7 +126,6 @@ const identityWithPassphrase = MnemonicIdentity.fromMnemonic(mnemonic, {
 // Create wallet as usual
 const wallet = await Wallet.create({
   identity: identityWithPassphrase,
-  arkServerUrl: 'https://arkade.computer'
 })
 ```
 
@@ -177,7 +170,6 @@ const readonlyFromTemplate = ReadonlyDescriptorIdentity.fromDescriptor(template)
 // Use in a watch-only wallet
 const readonlyWallet = await ReadonlyWallet.create({
   identity: readonly,
-  arkServerUrl: 'https://arkade.computer'
 })
 
 // Can query but not sign
@@ -219,7 +211,7 @@ const identity = new MyBrowserWallet()
 console.log(isBatchSignable(identity)) // true
 
 // Wallet.send() uses one popup instead of N+1
-const wallet = await Wallet.create({ identity, arkServerUrl: 'https://arkade.computer' })
+const wallet = await Wallet.create({ identity })
 await wallet.send({ address: 'ark1q...', amount: 1000 })
 ```
 
@@ -456,7 +448,6 @@ Virtual output renewal at 3 days and boarding input sweep enabled.
 ```typescript
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://arkade.computer',
   // Enable settlement with defaults explicitly:
   settlementConfig: {
     // Seconds before virtual output expiry to trigger renewal
@@ -473,7 +464,6 @@ const wallet = await Wallet.create({
 // Enable both virtual output renewal and boarding input sweep
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://arkade.computer',
   settlementConfig: {
     vtxoThreshold: 60 * 60 * 24,  // renew when 24 hours remain (in seconds)
     boardingUtxoSweep: true,      // sweep expired boarding inputs
@@ -485,7 +475,6 @@ const wallet = await Wallet.create({
 // Explicitly disable all settlement
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://arkade.computer',
   settlementConfig: false,
 })
 ```
@@ -567,7 +556,6 @@ import { Wallet, MnemonicIdentity, RestDelegatorProvider } from '@arkade-os/sdk'
 
 const wallet = await Wallet.create({
   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
-  arkServerUrl: 'https://arkade.computer',
   delegatorProvider: new RestDelegatorProvider('http://localhost:7001'),
 })
 ```
@@ -612,7 +600,6 @@ import { ServiceWorkerWallet, MnemonicIdentity } from '@arkade-os/sdk'
 
 const wallet = await ServiceWorkerWallet.setup({
   serviceWorkerPath: '/service-worker.js',
-  arkServerUrl: 'https://arkade.computer',
   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
   delegatorUrl: 'http://localhost:7001',
 })
@@ -686,7 +673,6 @@ import { Wallet, MnemonicIdentity, Ramps } from '@arkade-os/sdk'
 
 const wallet = await Wallet.create({
   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
-  arkServerUrl: 'https://arkade.computer'
 })
 
 // Get fee information from the server
@@ -733,7 +719,7 @@ for await (const step of session) {
       console.log(`Waiting for transaction ${step.txid} to be confirmed`);
       break;
     case Unroll.StepType.UNROLL:
-      console.log(`Broadcasting transaction ${step.tx.id}`);
+      console.log(`Transaction ${step.tx.id} unrolled`);
       break;
     case Unroll.StepType.DONE:
       console.log(`Unrolling complete for virtual output ${step.vtxoTxid}`);
@@ -748,6 +734,26 @@ The unrolling process works by:
 - Broadcasting each transaction that isn't already onchain
 - Waiting for confirmations between steps
 - Using P2A (Pay-to-Anchor) transactions to pay for fees
+
+Optionally, you can use `session.next()` to control the broadcasting process manually.
+
+```typescript
+const step = await session.next();
+switch (step.type) {
+  case Unroll.StepType.WAIT:
+    await step.do(); // wait for the transaction to be confirmed
+    break;
+  case Unroll.StepType.UNROLL:
+    const [parent, child] = step.pkg;
+    console.log(`Parent: ${parent}`)
+    console.log(`Child: ${child}`)
+    await step.do(); // broadcast the 1C1P package
+    break;
+  case Unroll.StepType.DONE:
+    console.log(`Unrolling complete for VTXO ${step.vtxoTxid}`);
+    break;
+  }
+```
 
 #### Step 2: Completing the Exit
 
@@ -808,7 +814,6 @@ import { ServiceWorkerWallet, MnemonicIdentity } from '@arkade-os/sdk'
 // One-liner: registers the SW, initializes the MessageBus, and creates the wallet
 const wallet = await ServiceWorkerWallet.setup({
   serviceWorkerPath: '/service-worker.js',
-  arkServerUrl: 'https://arkade.computer',
   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
 })
 
@@ -948,7 +953,6 @@ const executor: SQLExecutor = {
 
 const wallet = await Wallet.create({
   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
-  arkServerUrl: 'https://arkade.computer',
   storage: {
     walletRepository: new SQLiteWalletRepository(executor),
     contractRepository: new SQLiteContractRepository(executor),
@@ -979,7 +983,6 @@ const realm = await Realm.open({
 })
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://arkade.computer',
   storage: {
     walletRepository: new RealmWalletRepository(realm),
     contractRepository: new RealmContractRepository(realm),
@@ -997,7 +1000,6 @@ import { MnemonicIdentity, Wallet } from '@arkade-os/sdk'
 
 const wallet = await Wallet.create({
   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
-  arkServerUrl: 'https://arkade.computer',
   // Uses IndexedDB by default in the browser
 })
 ```
@@ -1017,7 +1019,6 @@ import {
 
 const wallet = await Wallet.create({
   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
-  arkServerUrl: 'https://arkade.computer',
   storage: {
     walletRepository: new InMemoryWalletRepository(),
     contractRepository: new InMemoryContractRepository()
@@ -1101,7 +1102,6 @@ const executor = {
 
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://arkade.computer',
   arkProvider: new ExpoArkProvider('https://arkade.computer'),
   indexerProvider: new ExpoIndexerProvider('https://arkade.computer'),
   storage: {
