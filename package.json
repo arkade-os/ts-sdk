@@ -7,6 +7,8 @@
     "module": "./dist/index.js",
     "types": "./dist/index.d.ts",
     "sideEffects": [
+        "src/index.ts",
+        "src/contracts/handlers/index.ts",
         "dist/index.js",
         "dist/index.cjs",
         "dist/contracts/handlers/index.js",
