@@ -44,6 +44,13 @@ import {
 } from "../../worker/messageBus";
 import { Transaction } from "../../utils/transaction";
 import { buildTransactionHistory } from "../../utils/transactionHistory";
+import {
+    filterVtxosForScript,
+    getVtxosForContract,
+    saveVtxosForContract,
+    warnAndFilterVtxosForScript,
+} from "../../contracts/vtxoOwnership";
+import { scriptFromArkAddress } from "../../repositories/scriptFromAddress";
 
 export class WalletNotInitializedError extends Error {
     constructor() {
@@ -267,6 +274,16 @@ export type ResponseRefreshVtxos = ResponseEnvelope & {
     type: "REFRESH_VTXOS_SUCCESS";
 };
 
+export type RequestRefreshOutpoints = RequestEnvelope & {
+    type: "REFRESH_OUTPOINTS";
+    payload: {
+        outpoints: { txid: string; vout: number }[];
+    };
+};
+export type ResponseRefreshOutpoints = ResponseEnvelope & {
+    type: "REFRESH_OUTPOINTS_SUCCESS";
+};
+
 export type RequestGetAllSpendingPaths = RequestEnvelope & {
     type: "GET_ALL_SPENDING_PATHS";
     payload: { options: GetAllSpendingPathsOptions };
@@ -460,6 +477,7 @@ export type WalletUpdaterRequest =
     | RequestGetAllSpendingPaths
     | RequestIsContractManagerWatching
     | RequestRefreshVtxos
+    | RequestRefreshOutpoints
     | RequestSend
     | RequestGetAssetDetails
     | RequestIssue
@@ -502,6 +520,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseGetAllSpendingPaths
         | ResponseIsContractManagerWatching
         | ResponseRefreshVtxos
+        | ResponseRefreshOutpoints
         | ResponseContractEvent
         | ResponseSend
         | ResponseGetAssetDetails
@@ -873,6 +892,17 @@ export class WalletMessageHandler
                         type: "REFRESH_VTXOS_SUCCESS",
                     });
                 }
+                case "REFRESH_OUTPOINTS": {
+                    const manager =
+                        await this.readonlyWallet.getContractManager();
+                    const { outpoints } = (message as RequestRefreshOutpoints)
+                        .payload;
+                    await manager.refreshOutpoints(outpoints);
+                    return this.tagged({
+                        id,
+                        type: "REFRESH_OUTPOINTS_SUCCESS",
+                    });
+                }
                 case "SEND": {
                     const { recipients } = (message as RequestSend).payload;
                     const txid = await (this.wallet as IWallet).send(
@@ -1091,11 +1121,11 @@ export class WalletMessageHandler
         const totalOffchain = settled + preconfirmed + recoverable;
 
         // aggregate asset balances from spendable virtual outputs
-        const assetBalances = new Map<string, number>();
+        const assetBalances = new Map<string, bigint>();
         for (const vtxo of spendableVtxos) {
             if (vtxo.assets) {
                 for (const a of vtxo.assets) {
-                    const current = assetBalances.get(a.assetId) ?? 0;
+                    const current = assetBalances.get(a.assetId) ?? 0n;
                     assetBalances.set(a.assetId, current + a.amount);
                 }
             }
@@ -1186,11 +1216,57 @@ export class WalletMessageHandler
 
                     if (newVtxos.length + spentVtxos.length === 0) return;
 
-                    // save virtual outputs using unified repository
-                    await this.walletRepository?.saveVtxos(address, [
-                        ...newVtxos,
-                        ...spentVtxos,
-                    ]);
+                    // Save virtual outputs using unified repository. The
+                    // event may carry rows for several scripts (other
+                    // contracts the wallet watches), so split by script and
+                    // save each bucket under its own contract address rather
+                    // than saving a mixed-script array under one address.
+                    const byScript = new Map<string, ExtendedVirtualCoin[]>();
+                    for (const v of [...newVtxos, ...spentVtxos]) {
+                        if (!v.script) {
+                            // Without a script we can't route the row to the
+                            // right contract bucket; surface the drop instead
+                            // of silently losing the VTXO.
+                            console.warn(
+                                `WalletMessageHandler.notifyIncomingFunds: dropping VTXO without script ${v.txid}:${v.vout}`
+                            );
+                            continue;
+                        }
+                        const arr = byScript.get(v.script) ?? [];
+                        arr.push(v);
+                        byScript.set(v.script, arr);
+                    }
+                    let walletScript: string | undefined;
+                    try {
+                        walletScript = scriptFromArkAddress(address);
+                    } catch {
+                        walletScript = undefined;
+                    }
+                    const cm = await this.readonlyWallet!.getContractManager();
+                    const contracts = await cm.getContracts();
+                    const addrByScript = new Map(
+                        contracts.map((c) => [c.script, c.address])
+                    );
+                    for (const [script, vtxos] of byScript) {
+                        const filtered = warnAndFilterVtxosForScript(
+                            vtxos,
+                            script,
+                            "WalletMessageHandler.notifyIncomingFunds"
+                        );
+                        if (filtered.length === 0) continue;
+                        const targetAddress =
+                            script === walletScript
+                                ? address
+                                : addrByScript.get(script);
+                        if (!targetAddress) continue;
+                        if (this.walletRepository) {
+                            await saveVtxosForContract(
+                                this.walletRepository,
+                                { script, address: targetAddress },
+                                filtered
+                            );
+                        }
+                    }
 
                     // notify all clients about the virtual output state update
                     this.scheduleForNextTick(() =>
@@ -1336,9 +1412,9 @@ export class WalletMessageHandler
         const outpointSet = new Set(
             vtxoOutpoints.map((o) => `${o.txid}:${o.vout}`)
         );
-        const filtered = allVtxos.filter((v) =>
-            outpointSet.has(`${v.txid}:${v.vout}`)
-        );
+        const filtered = allVtxos
+            .filter((v) => outpointSet.has(`${v.txid}:${v.vout}`))
+            .map((v) => ({ ...v, contractScript: v.script }));
 
         const result = await delegatorManager.delegate(
             filtered,
@@ -1443,20 +1519,34 @@ export class WalletMessageHandler
             }
         };
 
-        // Aggregate virtual outputs from all contract addresses
+        // Aggregate virtual outputs from all contract addresses. Address
+        // buckets may carry legacy duplicate rows from other contracts; gate
+        // each bucket by its owning contract script before deduplication so a
+        // wrong-script row never wins the txid:vout race.
         const manager = await this.readonlyWallet.getContractManager();
         const contracts = await manager.getContracts();
         for (const contract of contracts) {
-            const vtxos = await this.walletRepository.getVtxos(
-                contract.address
+            addVtxos(
+                await getVtxosForContract(this.walletRepository, contract)
             );
-            addVtxos(vtxos);
         }
 
-        // Also check the wallet's primary address
+        // Also check the wallet's primary address. Decode it to its script
+        // and apply the same script gate. Failing to decode the wallet's own
+        // address is a structural bug — surfacing the error is safer than
+        // silently dropping the primary bucket and zeroing the user's
+        // visible balance.
         const walletAddress = await this.readonlyWallet.getAddress();
+        let walletScript: string;
+        try {
+            walletScript = scriptFromArkAddress(walletAddress);
+        } catch (e) {
+            throw new Error(
+                `WalletMessageHandler.getVtxosFromRepo: failed to derive script from wallet address ${walletAddress}: ${e instanceof Error ? e.message : String(e)}`
+            );
+        }
         const walletVtxos = await this.walletRepository.getVtxos(walletAddress);
-        addVtxos(walletVtxos);
+        addVtxos(filterVtxosForScript(walletVtxos, walletScript));
 
         return allVtxos;
     }

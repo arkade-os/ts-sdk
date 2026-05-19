@@ -41,6 +41,7 @@ import {
     IReadonlyWallet,
     BaseWalletConfig,
     WalletConfig,
+    WalletMode,
     ReadonlyWalletConfig,
     ProviderClass,
     ArkTransaction,
@@ -80,6 +81,8 @@ import {
     waitForIncomingFunds,
     IncomingFunds,
     selectVirtualCoins,
+    DescriptorSigningProviderMissingError,
+    MissingSigningDescriptorError,
 } from "./wallet/wallet";
 import { createAssetPacket, selectCoinsWithAsset } from "./wallet/asset";
 import { TxTree, TxTreeNode } from "./tree/txTree";
@@ -89,6 +92,7 @@ import {
     TreePartialSigs,
 } from "./tree/signingSession";
 import { Ramps } from "./wallet/ramps";
+import { HDDescriptorProvider } from "./wallet/hdDescriptorProvider";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
 import type { IVtxoManager, SettlementConfig } from "./wallet/vtxo-manager";
 import {
@@ -96,7 +100,10 @@ import {
     ServiceWorkerReadonlyWallet,
     DEFAULT_MESSAGE_TIMEOUTS,
 } from "./wallet/serviceWorker/wallet";
-import type { MessageTimeouts } from "./wallet/serviceWorker/wallet";
+import type {
+    MessageTimeouts,
+    ServiceWorkerWalletMode,
+} from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { setupServiceWorker } from "./worker/browser/utils";
 import {
@@ -106,6 +113,8 @@ import {
     ExplorerTransaction,
 } from "./providers/onchain";
 import {
+    ELECTRUM_TCP_HOST,
+    ELECTRUM_WS_URL,
     ElectrumOnchainProvider,
     WsElectrumChainSource,
 } from "./providers/electrum";
@@ -206,6 +215,7 @@ import type { ArkadeLeaf, ArkadeVtxoInput } from "./arkade/vtxoScript";
 import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
+import { TxWeightEstimator, type VSize } from "./utils/txSizeEstimator";
 import { Unroll } from "./wallet/unroll";
 import { ArkError, maybeArkError } from "./providers/errors";
 import {
@@ -262,6 +272,7 @@ import type {
     ContractHandler,
     PathSelection,
     PathContext,
+    ExtendedContractVtxo,
     ContractManagerConfig,
     CreateContractParams,
     ContractWatcherConfig,
@@ -271,6 +282,7 @@ import type {
     VHTLCContractParams,
 } from "./contracts";
 import { IContractManager } from "./contracts/contractManager";
+import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
 import { closeDatabase, openDatabase } from "./repositories/indexedDB/manager";
 import {
     WalletMessageHandler,
@@ -297,12 +309,15 @@ export {
     OnchainWallet,
     Ramps,
     VtxoManager,
+    HDDescriptorProvider,
     DelegatorManagerImpl,
     RestDelegatorProvider,
 
     // Providers
     ESPLORA_URL,
     EsploraProvider,
+    ELECTRUM_WS_URL,
+    ELECTRUM_TCP_HOST,
     ElectrumOnchainProvider,
     WsElectrumChainSource,
     RestArkProvider,
@@ -406,10 +421,15 @@ export {
     P2A,
     Unroll,
     Transaction,
+    TxWeightEstimator,
+    timelockToSequence,
+    sequenceToTimelock,
 
     // Errors
     ArkError,
     maybeArkError,
+    DescriptorSigningProviderMissingError,
+    MissingSigningDescriptorError,
 
     // Batch session
     Batch,
@@ -446,6 +466,7 @@ export type {
     IReadonlyWallet,
     BaseWalletConfig,
     WalletConfig,
+    WalletMode,
     ReadonlyWalletConfig,
     ProviderClass,
     ArkTransaction,
@@ -557,6 +578,7 @@ export type {
 
     // Anchor
     AnchorBumper,
+    VSize,
 
     // Storage
     StorageConfig,
@@ -572,6 +594,7 @@ export type {
     ContractHandler,
     IContractManager,
     PathSelection,
+    ExtendedContractVtxo,
     PathContext,
     ContractManagerConfig,
     CreateContractParams,
@@ -586,6 +609,7 @@ export type {
     RequestEnvelope,
     ResponseEnvelope,
     MessageTimeouts,
+    ServiceWorkerWalletMode,
 
     // Arkade types
     ArkadeExtendedCoin,

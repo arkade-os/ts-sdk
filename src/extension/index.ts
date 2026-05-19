@@ -4,7 +4,7 @@ import { equalBytes } from "@scure/btc-signer/utils.js";
 import { Packet } from "./asset";
 import { BufferReader } from "./utils";
 import { ExtensionPacket, UnknownPacket } from "./packet";
-import type { TransactionOutput } from "@scure/btc-signer/psbt";
+import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import type { Transaction } from "../utils/transaction";
 import { IntrospectorPacket } from "./introspector";
 

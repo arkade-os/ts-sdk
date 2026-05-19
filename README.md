@@ -28,11 +28,10 @@ const mnemonic = generateMnemonic(wordlist)
 const identity = MnemonicIdentity.fromMnemonic(mnemonic)
 
 // Create a wallet with Arkade support
-const wallet = await Wallet.create({
-  identity,
-  arkServerUrl: 'https://arkade.computer',
-})
+const wallet = await Wallet.create({ identity })  // defaults to mainnet
 ```
+
+To use a different network, pass `arkServerUrl` option.
 
 ### Read-Only Wallets (Watch-Only)
 
@@ -55,7 +54,6 @@ const readonlyIdentity = ReadonlySingleKey.fromPublicKey(publicKey)
 // Create a read-only wallet
 const readonlyWallet = await ReadonlyWallet.create({
   identity: readonlyIdentity,
-  arkServerUrl: 'https://arkade.computer'
 })
 
 // Query operations work normally
@@ -75,10 +73,7 @@ import { Wallet, MnemonicIdentity } from '@arkade-os/sdk'
 
 // Create a full wallet
 const identity = MnemonicIdentity.fromMnemonic('abandon abandon...')
-const wallet = await Wallet.create({
-  identity,
-  arkServerUrl: 'https://arkade.computer'
-})
+const wallet = await Wallet.create({ identity })
 
 // Convert to read-only wallet (safe to share)
 const readonlyWallet = await wallet.toReadonly()
@@ -101,7 +96,6 @@ const readonlyIdentity = await identity.toReadonly()
 // Use in read-only wallet
 const readonlyWallet = await ReadonlyWallet.create({
   identity: readonlyIdentity,
-  arkServerUrl: 'https://arkade.computer'
 })
 ```
 
@@ -132,7 +126,6 @@ const identityWithPassphrase = MnemonicIdentity.fromMnemonic(mnemonic, {
 // Create wallet as usual
 const wallet = await Wallet.create({
   identity: identityWithPassphrase,
-  arkServerUrl: 'https://arkade.computer'
 })
 ```
 
@@ -146,19 +139,19 @@ import { mnemonicToSeedSync } from '@scure/bip39'
 const seed = mnemonicToSeedSync(mnemonic)
 const identity = SeedIdentity.fromSeed(seed)
 
-// Or with a custom output descriptor
-const identityWithDescriptor = SeedIdentity.fromSeed(seed, { descriptor })
+// Or with a custom account-descriptor template (must end in "/*)")
+const identityWithDescriptor = SeedIdentity.fromSeed(seed, { descriptor: template })
 
-// Or with a custom descriptor and passphrase (MnemonicIdentity)
+// Or with a custom template and passphrase (MnemonicIdentity)
 const identityWithDescriptorAndPassphrase = MnemonicIdentity.fromMnemonic(mnemonic, {
-  descriptor,
+  descriptor: template,
   passphrase: 'my secret passphrase'
 })
 ```
 
 #### Watch-Only with ReadonlyDescriptorIdentity
 
-Create watch-only wallets from an output descriptor:
+Create watch-only wallets from an account-descriptor template:
 
 ```typescript
 import { MnemonicIdentity, ReadonlyDescriptorIdentity, ReadonlyWallet } from '@arkade-os/sdk'
@@ -170,26 +163,23 @@ const mnemonic = generateMnemonic(wordlist)
 const identity = MnemonicIdentity.fromMnemonic(mnemonic)
 const readonly = await identity.toReadonly()
 
-// Or directly from a descriptor (e.g., from another wallet)
-const descriptor = "tr([12345678/86'/0'/0']xpub.../0/0)"
-const readonlyFromDescriptor = ReadonlyDescriptorIdentity.fromDescriptor(descriptor)
+// Or directly from a wildcard template (e.g., exported from another wallet)
+const template = "tr([12345678/86'/0'/0']xpub.../0/*)"
+const readonlyFromTemplate = ReadonlyDescriptorIdentity.fromDescriptor(template)
 
 // Use in a watch-only wallet
 const readonlyWallet = await ReadonlyWallet.create({
   identity: readonly,
-  arkServerUrl: 'https://arkade.computer'
 })
 
 // Can query but not sign
 const balance = await readonlyWallet.getBalance()
 ```
 
-**Derivation Path:** `m/86'/{coinType}'/0'/0/0`
+**Derivation Path:** `m/86'/{coinType}'/0'/0/*`
 - BIP86 (Taproot) purpose
 - Coin type 0 for mainnet, 1 for testnet
-- Account 0, external chain, first address
-
-The descriptor format (`tr([fingerprint/path']xpub.../0/0)`) is HD-ready — future versions will support deriving multiple addresses and change outputs from the same seed.
+- Account 0, external chain, wildcard index — `identity.descriptor` is the wildcard template that drives HD rotation; consumers materialize a concrete descriptor at a specific index when they need one.
 
 ### Batch Signing for Browser Wallets
 
@@ -221,11 +211,96 @@ const identity = new MyBrowserWallet()
 console.log(isBatchSignable(identity)) // true
 
 // Wallet.send() uses one popup instead of N+1
-const wallet = await Wallet.create({ identity, arkServerUrl: 'https://arkade.computer' })
+const wallet = await Wallet.create({ identity })
 await wallet.send({ address: 'ark1q...', amount: 1000 })
 ```
 
 Identities without `signMultiple` continue to work unchanged — each checkpoint is signed individually via `sign()`.
+
+### Onchain Providers
+
+Wallets read onchain state (UTXOs, transactions, fee rates, chain tip) through an `OnchainProvider`. The SDK ships with two implementations and a single transport-agnostic interface so you can swap them without touching wallet code.
+
+| Provider | Transport | When to use |
+|---|---|---|
+| `EsploraProvider` | REST/HTTP (mempool.space-compatible) | Default for browser wallets, public mempool deployments, simple integrations. Both atomic 1P1C package broadcast and outspends are first-class. |
+| `ElectrumOnchainProvider` | WebSocket (Electrum protocol) | Self-hosted nodes (Fulcrum, electrs), low-latency subscriptions, environments where you control the backend. Required if you need to talk to an Electrum server directly. |
+
+If you don't pass a provider explicitly, `OnchainWallet` and `Wallet.create({ ... })` both default to `EsploraProvider` pointing at the URL in `ESPLORA_URL[networkName]`.
+
+#### Default URLs
+
+The SDK ships with reachable defaults for each network — bitcoin, signet, and mutinynet point at Ark Labs–operated deployments; testnet falls back to mempool.space; regtest assumes a local nigiri stack.
+
+```typescript
+import {
+  ESPLORA_URL,        // Record<NetworkName, string>
+  ELECTRUM_WS_URL,    // Record<NetworkName, string>
+  ELECTRUM_TCP_HOST,  // Record<NetworkName, string | null> — informational
+} from '@arkade-os/sdk'
+
+ESPLORA_URL.bitcoin       // "https://mempool.arkade.sh/api"
+ESPLORA_URL.signet        // "https://mempool.signet.arkade.sh/api"
+ESPLORA_URL.mutinynet     // "https://mempool.mutinynet.arkade.sh/api"
+
+ELECTRUM_WS_URL.bitcoin   // "wss://electrum.arkade.sh"
+ELECTRUM_WS_URL.signet    // "wss://electrum.signet.arkade.sh"
+ELECTRUM_WS_URL.mutinynet // "wss://electrum.mutinynet.arkade.sh"
+```
+
+#### Using Esplora (default)
+
+```typescript
+import { EsploraProvider, ESPLORA_URL, OnchainWallet } from '@arkade-os/sdk'
+
+// Use the default URL for the network
+const provider = new EsploraProvider(ESPLORA_URL.bitcoin)
+
+// Or pass nothing — OnchainWallet picks the default for you
+const wallet = await OnchainWallet.create(identity, 'bitcoin')
+
+// Or override with your own mempool/esplora instance
+const customProvider = new EsploraProvider('https://my-esplora.example/api')
+```
+
+#### Using Electrum (WebSocket)
+
+```typescript
+import { ElectrumWS } from 'ws-electrumx-client'
+import {
+  ElectrumOnchainProvider,
+  ELECTRUM_WS_URL,
+  OnchainWallet,
+  networks,
+} from '@arkade-os/sdk'
+
+const ws = new ElectrumWS(ELECTRUM_WS_URL.bitcoin)
+const provider = new ElectrumOnchainProvider(ws, networks.bitcoin)
+
+const wallet = await OnchainWallet.create(identity, 'bitcoin', provider)
+
+// Remember to close the connection when you're done
+await provider.close()
+```
+
+#### Atomic 1P1C package broadcast (TRUC / BIP 431)
+
+Both providers expose `broadcastTransaction(...txs)` that accepts either a single tx or a 1P1C package (parent first, child last). The package path is **atomic** — the parent doesn't have to independently meet mempool minfee, which is the point of TRUC relay.
+
+The Electrum provider implements this via `blockchain.transaction.broadcast_package` (Fulcrum ≥ 1.10 backed by bitcoind ≥ v28). **There is no fallback to sequential broadcast**: if the server doesn't support `broadcast_package`, the call surfaces a clear error so you can route through a different provider rather than have TRUC packages silently fail at the parent step. Ark Labs Fulcrum deployments at `electrum.arkade.sh` (and the `*.signet` / `*.mutinynet` variants) all support it.
+
+#### Server compatibility notes
+
+`ElectrumOnchainProvider` is built around methods supported by both **Fulcrum** and **electrs** (the two main Electrum server implementations):
+
+- ✅ `blockchain.scripthash.{listunspent, get_history, subscribe}`
+- ✅ `blockchain.transaction.{get, get_merkle, broadcast}`
+- ✅ `blockchain.block.header`, `blockchain.headers.subscribe`
+- ✅ `blockchain.estimatefee`, `blockchain.relayfee`
+- ⚠️ `blockchain.transaction.broadcast_package` — **Fulcrum-only**. Required for atomic 1P1C; the provider throws a descriptive error against electrs.
+- ❌ The provider does **not** call `blockchain.transaction.get` with `verbose=true` (Fulcrum-only and rejected by electrs); confirmation status is derived from `transaction.get_merkle` + raw block headers instead.
+
+Output amounts are derived from parsed raw transaction bytes (exact bigints), never from floating-point `value` fields — protocol-level money handling shouldn't depend on `Math.round(value * 1e8)`.
 
 ### Receiving Bitcoin
 
@@ -373,7 +448,6 @@ Virtual output renewal at 3 days and boarding input sweep enabled.
 ```typescript
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://arkade.computer',
   // Enable settlement with defaults explicitly:
   settlementConfig: {
     // Seconds before virtual output expiry to trigger renewal
@@ -390,7 +464,6 @@ const wallet = await Wallet.create({
 // Enable both virtual output renewal and boarding input sweep
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://arkade.computer',
   settlementConfig: {
     vtxoThreshold: 60 * 60 * 24,  // renew when 24 hours remain (in seconds)
     boardingUtxoSweep: true,      // sweep expired boarding inputs
@@ -402,7 +475,6 @@ const wallet = await Wallet.create({
 // Explicitly disable all settlement
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://arkade.computer',
   settlementConfig: false,
 })
 ```
@@ -484,7 +556,6 @@ import { Wallet, MnemonicIdentity, RestDelegatorProvider } from '@arkade-os/sdk'
 
 const wallet = await Wallet.create({
   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
-  arkServerUrl: 'https://arkade.computer',
   delegatorProvider: new RestDelegatorProvider('http://localhost:7001'),
 })
 ```
@@ -529,7 +600,6 @@ import { ServiceWorkerWallet, MnemonicIdentity } from '@arkade-os/sdk'
 
 const wallet = await ServiceWorkerWallet.setup({
   serviceWorkerPath: '/service-worker.js',
-  arkServerUrl: 'https://arkade.computer',
   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
   delegatorUrl: 'http://localhost:7001',
 })
@@ -603,7 +673,6 @@ import { Wallet, MnemonicIdentity, Ramps } from '@arkade-os/sdk'
 
 const wallet = await Wallet.create({
   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
-  arkServerUrl: 'https://arkade.computer'
 })
 
 // Get fee information from the server
@@ -650,7 +719,7 @@ for await (const step of session) {
       console.log(`Waiting for transaction ${step.txid} to be confirmed`);
       break;
     case Unroll.StepType.UNROLL:
-      console.log(`Broadcasting transaction ${step.tx.id}`);
+      console.log(`Transaction ${step.tx.id} unrolled`);
       break;
     case Unroll.StepType.DONE:
       console.log(`Unrolling complete for virtual output ${step.vtxoTxid}`);
@@ -665,6 +734,26 @@ The unrolling process works by:
 - Broadcasting each transaction that isn't already onchain
 - Waiting for confirmations between steps
 - Using P2A (Pay-to-Anchor) transactions to pay for fees
+
+Optionally, you can use `session.next()` to control the broadcasting process manually.
+
+```typescript
+const step = await session.next();
+switch (step.type) {
+  case Unroll.StepType.WAIT:
+    await step.do(); // wait for the transaction to be confirmed
+    break;
+  case Unroll.StepType.UNROLL:
+    const [parent, child] = step.pkg;
+    console.log(`Parent: ${parent}`)
+    console.log(`Child: ${child}`)
+    await step.do(); // broadcast the 1C1P package
+    break;
+  case Unroll.StepType.DONE:
+    console.log(`Unrolling complete for VTXO ${step.vtxoTxid}`);
+    break;
+  }
+```
 
 #### Step 2: Completing the Exit
 
@@ -725,7 +814,6 @@ import { ServiceWorkerWallet, MnemonicIdentity } from '@arkade-os/sdk'
 // One-liner: registers the SW, initializes the MessageBus, and creates the wallet
 const wallet = await ServiceWorkerWallet.setup({
   serviceWorkerPath: '/service-worker.js',
-  arkServerUrl: 'https://arkade.computer',
   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
 })
 
@@ -865,7 +953,6 @@ const executor: SQLExecutor = {
 
 const wallet = await Wallet.create({
   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
-  arkServerUrl: 'https://arkade.computer',
   storage: {
     walletRepository: new SQLiteWalletRepository(executor),
     contractRepository: new SQLiteContractRepository(executor),
@@ -896,7 +983,6 @@ const realm = await Realm.open({
 })
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://arkade.computer',
   storage: {
     walletRepository: new RealmWalletRepository(realm),
     contractRepository: new RealmContractRepository(realm),
@@ -914,7 +1000,6 @@ import { MnemonicIdentity, Wallet } from '@arkade-os/sdk'
 
 const wallet = await Wallet.create({
   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
-  arkServerUrl: 'https://arkade.computer',
   // Uses IndexedDB by default in the browser
 })
 ```
@@ -934,7 +1019,6 @@ import {
 
 const wallet = await Wallet.create({
   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
-  arkServerUrl: 'https://arkade.computer',
   storage: {
     walletRepository: new InMemoryWalletRepository(),
     contractRepository: new InMemoryContractRepository()
@@ -1018,7 +1102,6 @@ const executor = {
 
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://arkade.computer',
   arkProvider: new ExpoArkProvider('https://arkade.computer'),
   indexerProvider: new ExpoIndexerProvider('https://arkade.computer'),
   storage: {

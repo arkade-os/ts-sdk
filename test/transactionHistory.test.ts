@@ -230,7 +230,7 @@ describe("buildTransactionHistory", () => {
                 createdAt: baseDate,
                 isUnrolled: false,
                 isSpent: false,
-                assets: [{ assetId: assetA, amount: 50 }],
+                assets: [{ assetId: assetA, amount: 50n }],
             };
 
             const txs = await buildTransactionHistory([vtxo], [], new Set());
@@ -238,7 +238,7 @@ describe("buildTransactionHistory", () => {
             expect(txs).toHaveLength(1);
             expect(txs[0].type).toBe(TxType.TxReceived);
             expect(txs[0].assets).toStrictEqual([
-                { assetId: assetA, amount: 50 },
+                { assetId: assetA, amount: 50n },
             ]);
         });
 
@@ -257,8 +257,8 @@ describe("buildTransactionHistory", () => {
                 isUnrolled: false,
                 isSpent: false,
                 assets: [
-                    { assetId: assetA, amount: 10 },
-                    { assetId: assetB, amount: 20 },
+                    { assetId: assetA, amount: 10n },
+                    { assetId: assetB, amount: 20n },
                 ],
             };
 
@@ -268,8 +268,8 @@ describe("buildTransactionHistory", () => {
             expect(txs[0].type).toBe(TxType.TxReceived);
             expect(txs[0].tag).toBe("batch");
             expect(txs[0].assets).toStrictEqual([
-                { assetId: assetA, amount: 10 },
-                { assetId: assetB, amount: 20 },
+                { assetId: assetA, amount: 10n },
+                { assetId: assetB, amount: 20n },
             ]);
         });
 
@@ -304,7 +304,7 @@ describe("buildTransactionHistory", () => {
                 isUnrolled: false,
                 isSpent: true,
                 arkTxId,
-                assets: [{ assetId: assetA, amount: 100 }],
+                assets: [{ assetId: assetA, amount: 100n }],
             };
 
             const changeVtxo: VirtualCoin = {
@@ -316,7 +316,7 @@ describe("buildTransactionHistory", () => {
                 createdAt: new Date(baseDate.getTime() + 1000),
                 isUnrolled: false,
                 isSpent: false,
-                assets: [{ assetId: assetA, amount: 30 }],
+                assets: [{ assetId: assetA, amount: 30n }],
             };
 
             const txs = await buildTransactionHistory(
@@ -329,7 +329,7 @@ describe("buildTransactionHistory", () => {
             expect(sentTxs).toHaveLength(1);
             expect(sentTxs[0].amount).toBe(600);
             expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetA, amount: -70 },
+                { assetId: assetA, amount: -70n },
             ]);
         });
 
@@ -346,7 +346,7 @@ describe("buildTransactionHistory", () => {
                 isUnrolled: false,
                 isSpent: true,
                 arkTxId,
-                assets: [{ assetId: assetA, amount: 50 }],
+                assets: [{ assetId: assetA, amount: 50n }],
             };
 
             const changeVtxo: VirtualCoin = {
@@ -358,7 +358,7 @@ describe("buildTransactionHistory", () => {
                 createdAt: new Date(baseDate.getTime() + 1000),
                 isUnrolled: false,
                 isSpent: false,
-                assets: [{ assetId: assetA, amount: 50 }],
+                assets: [{ assetId: assetA, amount: 50n }],
             };
 
             const txs = await buildTransactionHistory(
@@ -387,8 +387,8 @@ describe("buildTransactionHistory", () => {
                 isSpent: true,
                 arkTxId,
                 assets: [
-                    { assetId: assetA, amount: 40 },
-                    { assetId: assetB, amount: 60 },
+                    { assetId: assetA, amount: 40n },
+                    { assetId: assetB, amount: 60n },
                 ],
             };
 
@@ -402,8 +402,8 @@ describe("buildTransactionHistory", () => {
             expect(sentTxs).toHaveLength(1);
             expect(sentTxs[0].amount).toBe(1000);
             expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetA, amount: -40 },
-                { assetId: assetB, amount: -60 },
+                { assetId: assetA, amount: -40n },
+                { assetId: assetB, amount: -60n },
             ]);
         });
 
@@ -420,7 +420,7 @@ describe("buildTransactionHistory", () => {
                 isUnrolled: false,
                 isSpent: true,
                 settledBy: commitmentTxId,
-                assets: [{ assetId: assetA, amount: 80 }],
+                assets: [{ assetId: assetA, amount: 80n }],
             };
 
             const changeVtxo: VirtualCoin = {
@@ -435,7 +435,7 @@ describe("buildTransactionHistory", () => {
                 createdAt: new Date(baseDate.getTime() + 1000),
                 isUnrolled: false,
                 isSpent: false,
-                assets: [{ assetId: assetA, amount: 20 }],
+                assets: [{ assetId: assetA, amount: 20n }],
             };
 
             const txs = await buildTransactionHistory(
@@ -449,7 +449,7 @@ describe("buildTransactionHistory", () => {
             expect(sentTxs[0].tag).toBe("exit");
             expect(sentTxs[0].amount).toBe(1500);
             expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetA, amount: -60 },
+                { assetId: assetA, amount: -60n },
             ]);
         });
 
@@ -466,7 +466,7 @@ describe("buildTransactionHistory", () => {
                 isUnrolled: false,
                 isSpent: true,
                 settledBy: commitmentTxId,
-                assets: [{ assetId: assetB, amount: 75 }],
+                assets: [{ assetId: assetB, amount: 75n }],
             };
 
             const txs = await buildTransactionHistory(
@@ -480,7 +480,7 @@ describe("buildTransactionHistory", () => {
             expect(sentTxs[0].tag).toBe("exit");
             expect(sentTxs[0].amount).toBe(1000);
             expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetB, amount: -75 },
+                { assetId: assetB, amount: -75n },
             ]);
         });
 
@@ -508,7 +508,7 @@ describe("buildTransactionHistory", () => {
                 createdAt: new Date(baseDate.getTime() + 1000),
                 isUnrolled: false,
                 isSpent: false,
-                assets: [{ assetId: assetA, amount: 100 }],
+                assets: [{ assetId: assetA, amount: 100n }],
             };
 
             const txs = await buildTransactionHistory(
@@ -521,7 +521,7 @@ describe("buildTransactionHistory", () => {
             expect(sentTxs).toHaveLength(1);
             expect(sentTxs[0].amount).toBe(0);
             expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetA, amount: 100 },
+                { assetId: assetA, amount: 100n },
             ]);
         });
 
@@ -538,7 +538,7 @@ describe("buildTransactionHistory", () => {
                 isUnrolled: false,
                 isSpent: true,
                 arkTxId,
-                assets: [{ assetId: assetA, amount: 50 }],
+                assets: [{ assetId: assetA, amount: 50n }],
             };
 
             const changeVtxo: VirtualCoin = {
@@ -550,7 +550,7 @@ describe("buildTransactionHistory", () => {
                 createdAt: new Date(baseDate.getTime() + 1000),
                 isUnrolled: false,
                 isSpent: false,
-                assets: [{ assetId: assetA, amount: 150 }],
+                assets: [{ assetId: assetA, amount: 150n }],
             };
 
             const txs = await buildTransactionHistory(
@@ -563,7 +563,7 @@ describe("buildTransactionHistory", () => {
             expect(sentTxs).toHaveLength(1);
             expect(sentTxs[0].amount).toBe(0);
             expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetA, amount: 100 },
+                { assetId: assetA, amount: 100n },
             ]);
         });
 
@@ -581,7 +581,7 @@ describe("buildTransactionHistory", () => {
                 isUnrolled: false,
                 isSpent: true,
                 arkTxId,
-                assets: [{ assetId: assetA, amount: 100 }],
+                assets: [{ assetId: assetA, amount: 100n }],
             };
 
             // Change VTXO has all BTC back but no assets (fully burned)
@@ -607,7 +607,7 @@ describe("buildTransactionHistory", () => {
             expect(sentTxs[0].amount).toBe(0);
             // Negative = assets lost/burned
             expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetA, amount: -100 },
+                { assetId: assetA, amount: -100n },
             ]);
         });
 
@@ -627,8 +627,8 @@ describe("buildTransactionHistory", () => {
                 isSpent: true,
                 arkTxId,
                 assets: [
-                    { assetId: assetA, amount: 50 }, // will be fully burned
-                    { assetId: assetB, amount: 80 }, // 30 will be transferred
+                    { assetId: assetA, amount: 50n }, // will be fully burned
+                    { assetId: assetB, amount: 80n }, // 30 will be transferred
                 ],
             };
 
@@ -643,8 +643,8 @@ describe("buildTransactionHistory", () => {
                 isUnrolled: false,
                 isSpent: false,
                 assets: [
-                    { assetId: assetB, amount: 50 }, // kept 50 of 80
-                    { assetId: assetC, amount: 200 }, // newly issued
+                    { assetId: assetB, amount: 50n }, // kept 50 of 80
+                    { assetId: assetC, amount: 200n }, // newly issued
                 ],
             };
 
@@ -658,9 +658,9 @@ describe("buildTransactionHistory", () => {
             expect(sentTxs).toHaveLength(1);
             expect(sentTxs[0].amount).toBe(500);
             expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetB, amount: -30 }, // transferred/lost
-                { assetId: assetC, amount: 200 }, // issued/gained
-                { assetId: assetA, amount: -50 }, // burned/lost
+                { assetId: assetB, amount: -30n }, // transferred/lost
+                { assetId: assetC, amount: 200n }, // issued/gained
+                { assetId: assetA, amount: -50n }, // burned/lost
             ]);
         });
 
@@ -677,7 +677,7 @@ describe("buildTransactionHistory", () => {
                 isUnrolled: false,
                 isSpent: true,
                 arkTxId,
-                assets: [{ assetId: assetA, amount: 30 }],
+                assets: [{ assetId: assetA, amount: 30n }],
             };
 
             const spentVtxo2: VirtualCoin = {
@@ -691,8 +691,8 @@ describe("buildTransactionHistory", () => {
                 isSpent: true,
                 arkTxId,
                 assets: [
-                    { assetId: assetA, amount: 20 },
-                    { assetId: assetB, amount: 10 },
+                    { assetId: assetA, amount: 20n },
+                    { assetId: assetB, amount: 10n },
                 ],
             };
 
@@ -706,8 +706,8 @@ describe("buildTransactionHistory", () => {
             expect(sentTxs).toHaveLength(1);
             expect(sentTxs[0].amount).toBe(1000);
             expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetA, amount: -50 },
-                { assetId: assetB, amount: -10 },
+                { assetId: assetA, amount: -50n },
+                { assetId: assetB, amount: -10n },
             ]);
         });
     });

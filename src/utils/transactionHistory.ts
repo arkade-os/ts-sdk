@@ -10,11 +10,11 @@ const txKey: TxKey = {
 };
 
 function collectAssets(vtxos: VirtualCoin[]): Asset[] | undefined {
-    const map = new Map<string, number>();
+    const map = new Map<string, bigint>();
     for (const vtxo of vtxos) {
         if (vtxo.assets) {
             for (const a of vtxo.assets) {
-                map.set(a.assetId, (map.get(a.assetId) ?? 0) + a.amount);
+                map.set(a.assetId, (map.get(a.assetId) ?? 0n) + a.amount);
             }
         }
     }
@@ -26,20 +26,20 @@ function subtractAssets(
     spent: VirtualCoin[],
     change: VirtualCoin[]
 ): Asset[] | undefined {
-    const map = new Map<string, number>();
+    const map = new Map<string, bigint>();
     for (const vtxo of change) {
         if (vtxo.assets) {
             for (const a of vtxo.assets) {
-                map.set(a.assetId, (map.get(a.assetId) ?? 0) + a.amount);
+                map.set(a.assetId, (map.get(a.assetId) ?? 0n) + a.amount);
             }
         }
     }
     for (const vtxo of spent) {
         if (vtxo.assets) {
             for (const a of vtxo.assets) {
-                const current = map.get(a.assetId) ?? 0;
+                const current = map.get(a.assetId) ?? 0n;
                 const remaining = current - a.amount;
-                if (remaining !== 0) {
+                if (remaining !== 0n) {
                     map.set(a.assetId, remaining);
                 } else {
                     map.delete(a.assetId);

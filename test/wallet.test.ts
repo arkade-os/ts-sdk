@@ -7,13 +7,21 @@ import {
     RestArkProvider,
     ReadonlyWallet,
     Batch,
+    DefaultVtxo,
     InMemoryWalletRepository,
     InMemoryContractRepository,
     ArkError,
     type IndexerProvider,
     type ArkProvider,
     type OnchainProvider,
+    type DelegatorProvider,
 } from "../src";
+import {
+    TEST_PUB_KEY,
+    TEST_DELEGATE_PUB_KEY,
+    TEST_SERVER_PUB_KEY,
+} from "./contracts/helpers";
+import { DEFAULT_ARKADE_SERVER_URL } from "../src/wallet";
 import type { ExtendedCoin } from "../src/wallet";
 import { ReadonlySingleKey } from "../src/identity/singleKey";
 import {
@@ -21,18 +29,13 @@ import {
     IndexedDBContractRepository,
 } from "../src/repositories";
 import type { Coin, VirtualCoin } from "../src/wallet";
+import { MockEventSource } from "./mocks/eventSource";
+import { timelockToSequence } from "../src/utils/timelock";
 
 // Mock fetch
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-// Mock EventSource
-const MockEventSource = vi.fn().mockImplementation((url: string) => ({
-    url,
-    onmessage: null,
-    onerror: null,
-    close: vi.fn(),
-}));
 vi.stubGlobal("EventSource", MockEventSource);
 
 // Shared IndexedDB repos — cleared between tests so cached VTXOs,
@@ -53,6 +56,15 @@ describe("Wallet", () => {
         mockFetch.mockReset();
         await sharedRepo.clear();
         await sharedContractRepo.clear();
+    });
+
+    describe("create", () => {
+        it("defaults OnchainWallet to the bitcoin network", async () => {
+            const wallet = await OnchainWallet.create(mockIdentity);
+
+            expect(wallet.network.bech32).toBe("bc");
+            expect(wallet.address.startsWith("bc1p")).toBe(true);
+        });
     });
 
     describe("getBalance", () => {
@@ -902,6 +914,84 @@ describe("Wallet", () => {
         });
     });
 
+    describe("notifyIncomingFunds — single SSE stream", () => {
+        const mockArkInfo = {
+            signerPubkey: mockServerKeyHex,
+            forfeitPubkey: mockServerKeyHex,
+            batchExpiry: BigInt(144),
+            unilateralExitDelay: BigInt(144),
+            boardingExitDelay: BigInt(144),
+            roundInterval: BigInt(144),
+            network: "mutinynet",
+            dust: BigInt(1000),
+            forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+            checkpointTapscript:
+                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+        };
+
+        it("opens exactly one getSubscription stream after notifyIncomingFunds", async () => {
+            // `subscribeForScripts` legitimately fires more than once to
+            // extend the same subscription id, so we count
+            // `getSubscription` (the actual SSE open).
+            const compressedPubKey = await mockIdentity.compressedPublicKey();
+            const readonlyIdentity =
+                ReadonlySingleKey.fromPublicKey(compressedPubKey);
+
+            const getSubscriptionSpy = vi
+                .fn<IndexerProvider["getSubscription"]>()
+                .mockImplementation(async function* () {
+                    await new Promise(() => {});
+                });
+
+            const wallet = await ReadonlyWallet.create({
+                identity: readonlyIdentity,
+                arkServerUrl: "http://localhost:7070",
+                arkProvider: {
+                    getInfo: vi.fn().mockResolvedValue(mockArkInfo),
+                } as Partial<ArkProvider> as ArkProvider,
+                indexerProvider: {
+                    getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
+                    subscribeForScripts: vi
+                        .fn()
+                        .mockResolvedValue("sub-shared"),
+                    unsubscribeForScripts: vi.fn().mockResolvedValue(undefined),
+                    getSubscription: getSubscriptionSpy,
+                } as Partial<IndexerProvider> as IndexerProvider,
+                onchainProvider: {
+                    watchAddresses: vi
+                        .fn<OnchainProvider["watchAddresses"]>()
+                        .mockResolvedValue(() => {}),
+                } as Partial<OnchainProvider> as OnchainProvider,
+                storage: {
+                    walletRepository: new InMemoryWalletRepository(),
+                    contractRepository: new InMemoryContractRepository(),
+                },
+            });
+
+            expect(getSubscriptionSpy).toHaveBeenCalledTimes(0);
+
+            // Boot the ContractManager up-front so its watcher is already
+            // running with an open SSE stream. Without this baseline,
+            // `notifyIncomingFunds` would lazy-init the CM itself and a
+            // regression where it opened its own subscription would still
+            // produce exactly one `getSubscription` call.
+            await wallet.getContractManager();
+            // Yield so the cold-start kick reaches `getSubscription`.
+            await new Promise((resolve) => setTimeout(resolve, 0));
+
+            expect(getSubscriptionSpy).toHaveBeenCalledTimes(1);
+
+            const stop = await wallet.notifyIncomingFunds(() => {});
+            // Yield again to surface any extra stream opened by
+            // `notifyIncomingFunds`.
+            await new Promise((resolve) => setTimeout(resolve, 0));
+
+            expect(getSubscriptionSpy).toHaveBeenCalledTimes(1);
+
+            stop();
+        });
+    });
+
     describe("pending-spend filtering", () => {
         const mockArkInfo = {
             signerPubkey: mockServerKeyHex,
@@ -1069,58 +1159,305 @@ describe("Wallet", () => {
         });
     });
 
-    describe("mainnet unilateral exit delay pinning", () => {
-        // If this constant changes in the SDK, update both sides intentionally —
-        // changing the pinned value alters derived addresses for every mainnet
-        // wallet.
-        const MAINNET_PINNED_DELAY = 605184n;
+    describe("mainnet unilateral exit delay compatibility", () => {
+        const MAINNET_LEGACY_DELAY = 605184n;
+        const ARKD_DELAY = 86528n;
+        const MUTINYNET_DELAY = 144n;
+        const DELEGATE_PUBKEY = mockServerKeyHex;
 
-        const mockMainnetInfo = (unilateralExitDelay: bigint) => ({
+        const mockArkInfo = (
+            network: "bitcoin" | "mutinynet",
+            unilateralExitDelay: bigint
+        ) => ({
             signerPubkey: mockServerKeyHex,
             forfeitPubkey: mockServerKeyHex,
             batchExpiry: BigInt(144),
             unilateralExitDelay,
+            boardingExitDelay: BigInt(144),
             roundInterval: BigInt(144),
-            network: "bitcoin",
-            forfeitAddress: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+            network,
+            dust: BigInt(330),
+            forfeitAddress:
+                network === "bitcoin"
+                    ? "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
+                    : "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
             checkpointTapscript:
                 "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
         });
 
-        it("pins the exit timelock to 605184s on mainnet even when the server advertises a shorter delay", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(mockMainnetInfo(86528n)),
+        function sequence(value: bigint, type: "blocks" | "seconds") {
+            return timelockToSequence({ value, type }).toString();
+        }
+
+        function contractSummaries(
+            contracts: { type: string; params: Record<string, string> }[]
+        ) {
+            return contracts
+                .map(
+                    (contract) =>
+                        `${contract.type}:${contract.params.csvTimelock}`
+                )
+                .sort();
+        }
+
+        function createIndexerProvider() {
+            return {
+                getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
+                subscribeForScripts: vi.fn().mockResolvedValue("sub-1"),
+                unsubscribeForScripts: vi.fn().mockResolvedValue(undefined),
+                getSubscription: async function* () {},
+            } as Partial<IndexerProvider> as IndexerProvider;
+        }
+
+        function createOnchainProvider() {
+            return {
+                getCoins: vi.fn().mockResolvedValue([]),
+                getFeeRate: vi.fn().mockResolvedValue(1),
+                broadcastTransaction: vi.fn().mockResolvedValue(""),
+                getTxOutspends: vi.fn().mockResolvedValue([]),
+                getTransactions: vi.fn().mockResolvedValue([]),
+                getTxStatus: vi.fn().mockResolvedValue({ confirmed: false }),
+                getChainTip: vi.fn().mockResolvedValue({
+                    height: 1,
+                    time: 1,
+                    hash: "00".repeat(32),
+                }),
+                watchAddresses: vi.fn().mockResolvedValue(() => {}),
+            } as Partial<OnchainProvider> as OnchainProvider;
+        }
+
+        function createDelegatorProvider() {
+            return {
+                getDelegateInfo: vi.fn().mockResolvedValue({
+                    pubkey: DELEGATE_PUBKEY,
+                    fee: "0",
+                    delegatorAddress: "",
+                }),
+                delegate: vi.fn().mockResolvedValue(undefined),
+            } as Partial<DelegatorProvider> as DelegatorProvider;
+        }
+
+        async function createReadonlyTestWallet(config?: {
+            network?: "bitcoin" | "mutinynet";
+            unilateralExitDelay?: bigint;
+            exitTimelock?: { value: bigint; type: "blocks" | "seconds" };
+            delegatorProvider?: DelegatorProvider;
+        }) {
+            const network = config?.network ?? "bitcoin";
+            const compressedPubKey = await mockIdentity.compressedPublicKey();
+            const readonlyIdentity =
+                ReadonlySingleKey.fromPublicKey(compressedPubKey);
+            const walletRepository = new InMemoryWalletRepository();
+            const contractRepository = new InMemoryContractRepository();
+
+            const wallet = await ReadonlyWallet.create({
+                identity: readonlyIdentity,
+                arkServerUrl: "http://localhost:7070",
+                arkProvider: {
+                    getInfo: vi
+                        .fn()
+                        .mockResolvedValue(
+                            mockArkInfo(
+                                network,
+                                config?.unilateralExitDelay ??
+                                    (network === "bitcoin"
+                                        ? ARKD_DELAY
+                                        : MUTINYNET_DELAY)
+                            )
+                        ),
+                } as Partial<ArkProvider> as ArkProvider,
+                indexerProvider: createIndexerProvider(),
+                onchainProvider: createOnchainProvider(),
+                storage: {
+                    walletRepository,
+                    contractRepository,
+                },
+                exitTimelock: config?.exitTimelock,
+                delegatorProvider: config?.delegatorProvider,
             });
+
+            return { wallet };
+        }
+
+        async function createFullMainnetWallet(config?: {
+            delegatorProvider?: DelegatorProvider;
+        }) {
+            const walletRepository = new InMemoryWalletRepository();
+            const contractRepository = new InMemoryContractRepository();
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
                 arkServerUrl: "http://localhost:7070",
+                arkProvider: {
+                    getInfo: vi
+                        .fn()
+                        .mockResolvedValue(mockArkInfo("bitcoin", ARKD_DELAY)),
+                } as Partial<ArkProvider> as ArkProvider,
+                indexerProvider: createIndexerProvider(),
+                onchainProvider: createOnchainProvider(),
+                storage: {
+                    walletRepository,
+                    contractRepository,
+                },
+                delegatorProvider: config?.delegatorProvider,
+                settlementConfig: false,
             });
 
-            expect(wallet.offchainTapscript.options.csvTimelock).toEqual({
-                value: MAINNET_PINNED_DELAY,
-                type: "seconds",
-            });
+            return { wallet };
+        }
+
+        it("uses the arkd exit timelock as the mainnet offchain address delay", async () => {
+            const { wallet } = await createReadonlyTestWallet();
+
+            try {
+                expect(wallet.offchainTapscript.options.csvTimelock).toEqual({
+                    value: ARKD_DELAY,
+                    type: "seconds",
+                });
+            } finally {
+                await wallet.dispose();
+            }
         });
 
-        it("lets an explicit config.exitTimelock override the mainnet pin", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(mockMainnetInfo(86528n)),
+        it("registers arkd and legacy default contracts on mainnet", async () => {
+            const { wallet } = await createReadonlyTestWallet();
+
+            try {
+                const manager = await wallet.getContractManager();
+                const contracts = await manager.getContracts({
+                    type: ["default", "delegate"],
+                });
+
+                expect(contractSummaries(contracts)).toEqual([
+                    `default:${sequence(ARKD_DELAY, "seconds")}`,
+                    `default:${sequence(MAINNET_LEGACY_DELAY, "seconds")}`,
+                ]);
+            } finally {
+                await wallet.dispose();
+            }
+        });
+
+        it("registers arkd and legacy default and delegate contracts on mainnet", async () => {
+            const { wallet } = await createReadonlyTestWallet({
+                delegatorProvider: createDelegatorProvider(),
             });
 
-            // bip68 seconds must be multiples of 512.
+            try {
+                const manager = await wallet.getContractManager();
+                const contracts = await manager.getContracts({
+                    type: ["default", "delegate"],
+                });
+
+                expect(contractSummaries(contracts)).toEqual([
+                    `default:${sequence(ARKD_DELAY, "seconds")}`,
+                    `default:${sequence(MAINNET_LEGACY_DELAY, "seconds")}`,
+                    `delegate:${sequence(ARKD_DELAY, "seconds")}`,
+                    `delegate:${sequence(MAINNET_LEGACY_DELAY, "seconds")}`,
+                ]);
+            } finally {
+                await wallet.dispose();
+            }
+        });
+
+        it("passes wallet contract timelocks through Wallet.create for delegate wallets", async () => {
+            const { wallet } = await createFullMainnetWallet({
+                delegatorProvider: createDelegatorProvider(),
+            });
+
+            try {
+                expect(wallet.offchainTapscript.options.csvTimelock).toEqual({
+                    value: ARKD_DELAY,
+                    type: "seconds",
+                });
+                expect(
+                    wallet.walletContractTimelocks.map((timelock) =>
+                        timelockToSequence(timelock).toString()
+                    )
+                ).toEqual([
+                    sequence(ARKD_DELAY, "seconds"),
+                    sequence(MAINNET_LEGACY_DELAY, "seconds"),
+                ]);
+
+                const manager = await wallet.getContractManager();
+                const contracts = await manager.getContracts({
+                    type: ["default", "delegate"],
+                });
+
+                expect(contractSummaries(contracts)).toEqual([
+                    `default:${sequence(ARKD_DELAY, "seconds")}`,
+                    `default:${sequence(MAINNET_LEGACY_DELAY, "seconds")}`,
+                    `delegate:${sequence(ARKD_DELAY, "seconds")}`,
+                    `delegate:${sequence(MAINNET_LEGACY_DELAY, "seconds")}`,
+                ]);
+            } finally {
+                await wallet.dispose();
+            }
+        });
+
+        it("lets an explicit config.exitTimelock override compatibility registration", async () => {
             const override = { value: 1024n, type: "seconds" as const };
-            const wallet = await Wallet.create({
-                identity: mockIdentity,
-                arkServerUrl: "http://localhost:7070",
+            const { wallet } = await createReadonlyTestWallet({
                 exitTimelock: override,
             });
 
             expect(wallet.offchainTapscript.options.csvTimelock).toEqual(
                 override
             );
+
+            try {
+                const manager = await wallet.getContractManager();
+                const contracts = await manager.getContracts({
+                    type: ["default", "delegate"],
+                });
+
+                expect(contractSummaries(contracts)).toEqual([
+                    `default:${sequence(override.value, override.type)}`,
+                ]);
+            } finally {
+                await wallet.dispose();
+            }
+        });
+
+        it("dedupes the legacy delay when arkd advertises the legacy value", async () => {
+            const { wallet } = await createReadonlyTestWallet({
+                unilateralExitDelay: MAINNET_LEGACY_DELAY,
+            });
+
+            try {
+                const manager = await wallet.getContractManager();
+                const contracts = await manager.getContracts({
+                    type: ["default", "delegate"],
+                });
+
+                expect(contractSummaries(contracts)).toEqual([
+                    `default:${sequence(MAINNET_LEGACY_DELAY, "seconds")}`,
+                ]);
+            } finally {
+                await wallet.dispose();
+            }
+        });
+
+        it("does not register legacy mainnet delay variants on mutinynet", async () => {
+            const { wallet } = await createReadonlyTestWallet({
+                network: "mutinynet",
+            });
+
+            try {
+                expect(wallet.walletContractTimelocks).toEqual([
+                    { value: MUTINYNET_DELAY, type: "blocks" },
+                ]);
+
+                const manager = await wallet.getContractManager();
+                const contracts = await manager.getContracts({
+                    type: ["default", "delegate"],
+                });
+
+                expect(contractSummaries(contracts)).toEqual([
+                    `default:${sequence(MUTINYNET_DELAY, "blocks")}`,
+                ]);
+            } finally {
+                await wallet.dispose();
+            }
         });
     });
 });
@@ -1181,6 +1518,31 @@ describe("ReadonlyWallet", () => {
 
         const boardingAddress = await readonlyWallet.getBoardingAddress();
         expect(boardingAddress).toBeDefined();
+    });
+
+    it("should create ReadonlyWallet with the default Arkade server URL", async () => {
+        const key = SingleKey.fromRandomBytes();
+        const compressedPubKey = await key.compressedPublicKey();
+        const readonlyIdentity =
+            ReadonlySingleKey.fromPublicKey(compressedPubKey);
+
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(mockArkInfo),
+        });
+
+        const readonlyWallet = await ReadonlyWallet.create({
+            identity: readonlyIdentity,
+            storage: {
+                walletRepository: new InMemoryWalletRepository(),
+                contractRepository: new InMemoryContractRepository(),
+            },
+        });
+
+        expect(readonlyWallet).toBeInstanceOf(ReadonlyWallet);
+        expect(mockFetch).toHaveBeenCalledWith(
+            `${DEFAULT_ARKADE_SERVER_URL}/v1/info`
+        );
     });
 
     it("should query balance with ReadonlyWallet", async () => {
@@ -1541,5 +1903,577 @@ describe("Wallet._settleImpl", () => {
         expect(deleteIntent).toHaveBeenCalledTimes(1);
         expect(batchJoinSpy).not.toHaveBeenCalled();
         batchJoinSpy.mockRestore();
+    });
+});
+
+describe("Wallet.updateDbAfterOffchainTx", () => {
+    const PRIMARY_SCRIPT = "ab".repeat(34);
+    const PRIMARY_ADDR = "ark1primaryaddress";
+    const DELEGATE_SCRIPT = "cd".repeat(34);
+    const DELEGATE_ADDR = "ark1delegateaddress";
+
+    const primaryPkScript = hex.decode(PRIMARY_SCRIPT);
+
+    const makeThisArg = (overrides: {
+        annotateVtxos: ReturnType<typeof vi.fn>;
+        contracts: { script: string; address: string }[];
+        saveVtxos?: ReturnType<typeof vi.fn>;
+        saveTransactions?: ReturnType<typeof vi.fn>;
+    }) => {
+        const saveVtxos =
+            overrides.saveVtxos ?? vi.fn().mockResolvedValue(undefined);
+        const saveTransactions =
+            overrides.saveTransactions ?? vi.fn().mockResolvedValue(undefined);
+        const getContracts = vi.fn().mockResolvedValue(overrides.contracts);
+        const getContractManager = vi.fn().mockResolvedValue({
+            annotateVtxos: overrides.annotateVtxos,
+            getContracts,
+        });
+        const arkAddress = { encode: () => PRIMARY_ADDR };
+        const offchainTapscript: any = {
+            pkScript: primaryPkScript,
+            forfeit: () => [new Uint8Array(32), new Uint8Array(33)],
+            encode: () => new Uint8Array(64),
+            address: () => arkAddress,
+        };
+        return {
+            thisArg: {
+                network: { hrp: "ark" },
+                arkServerPublicKey: new Uint8Array(32),
+                walletRepository: { saveVtxos, saveTransactions },
+                getContractManager,
+            } as any,
+            offchainTapscript,
+            saveVtxos,
+            saveTransactions,
+            getContracts,
+        };
+    };
+
+    const makeSpentInput = (script: string, suffix: string): VirtualCoin => ({
+        txid: suffix.repeat(64).slice(0, 64),
+        vout: 0,
+        value: 5_000,
+        status: { confirmed: true },
+        virtualStatus: { state: "preconfirmed", batchExpiry: 1_700_000_000 },
+        createdAt: new Date(),
+        isUnrolled: false,
+        isSpent: false,
+        script,
+    });
+
+    const annotated = (input: VirtualCoin): any => ({
+        ...input,
+        forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
+        intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+        tapTree: new Uint8Array(64),
+    });
+
+    it("saves single-contract spend rows and the change row under the primary bucket", async () => {
+        const input = makeSpentInput(PRIMARY_SCRIPT, "1");
+        const annotateVtxos = vi.fn().mockResolvedValue([annotated(input)]);
+        const { thisArg, offchainTapscript, saveVtxos, saveTransactions } =
+            makeThisArg({
+                annotateVtxos,
+                contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
+            });
+
+        await (Wallet.prototype as any).updateDbAfterOffchainTx.call(
+            thisArg,
+            [input],
+            "ark-tx-id",
+            [], // empty checkpoints → loop takes the no-PSBT branch
+            1_000, // sentAmount
+            4_000n, // changeAmount
+            1, // changeVout
+            offchainTapscript
+        );
+
+        // Per-script saves: one for the spent row, one for the change row.
+        expect(saveVtxos).toHaveBeenCalledTimes(2);
+        expect(saveVtxos).toHaveBeenCalledWith(
+            PRIMARY_ADDR,
+            expect.arrayContaining([
+                expect.objectContaining({
+                    txid: input.txid,
+                    isSpent: true,
+                    script: PRIMARY_SCRIPT,
+                }),
+            ])
+        );
+        expect(saveVtxos).toHaveBeenCalledWith(
+            PRIMARY_ADDR,
+            expect.arrayContaining([
+                expect.objectContaining({
+                    txid: "ark-tx-id",
+                    vout: 1,
+                    script: PRIMARY_SCRIPT,
+                }),
+            ])
+        );
+
+        expect(saveTransactions).toHaveBeenCalledTimes(1);
+        expect(saveTransactions.mock.calls[0][0]).toBe(PRIMARY_ADDR);
+    });
+
+    it("routes multi-contract spend rows to their owning contract buckets", async () => {
+        const primaryInput = makeSpentInput(PRIMARY_SCRIPT, "1");
+        const delegateInput = makeSpentInput(DELEGATE_SCRIPT, "2");
+        const annotateVtxos = vi
+            .fn()
+            .mockResolvedValue([
+                annotated(primaryInput),
+                annotated(delegateInput),
+            ]);
+        const { thisArg, offchainTapscript, saveVtxos } = makeThisArg({
+            annotateVtxos,
+            contracts: [
+                { script: PRIMARY_SCRIPT, address: PRIMARY_ADDR },
+                { script: DELEGATE_SCRIPT, address: DELEGATE_ADDR },
+            ],
+        });
+
+        await (Wallet.prototype as any).updateDbAfterOffchainTx.call(
+            thisArg,
+            [primaryInput, delegateInput],
+            "ark-tx-id",
+            [],
+            1_000,
+            0n, // no change → only spent rows
+            0,
+            offchainTapscript
+        );
+
+        expect(saveVtxos).toHaveBeenCalledTimes(2);
+        const calls = new Map(
+            saveVtxos.mock.calls.map(([addr, vtxos]: any) => [addr, vtxos])
+        );
+        expect(calls.get(PRIMARY_ADDR)).toHaveLength(1);
+        expect(calls.get(PRIMARY_ADDR)[0].script).toBe(PRIMARY_SCRIPT);
+        expect(calls.get(DELEGATE_ADDR)).toHaveLength(1);
+        expect(calls.get(DELEGATE_ADDR)[0].script).toBe(DELEGATE_SCRIPT);
+    });
+
+    it("saves change separately from primary-bucket spent rows", async () => {
+        const primaryInput = makeSpentInput(PRIMARY_SCRIPT, "1");
+        const delegateInput = makeSpentInput(DELEGATE_SCRIPT, "2");
+        const annotateVtxos = vi
+            .fn()
+            .mockResolvedValue([
+                annotated(primaryInput),
+                annotated(delegateInput),
+            ]);
+        const { thisArg, offchainTapscript, saveVtxos } = makeThisArg({
+            annotateVtxos,
+            contracts: [
+                { script: PRIMARY_SCRIPT, address: PRIMARY_ADDR },
+                { script: DELEGATE_SCRIPT, address: DELEGATE_ADDR },
+            ],
+        });
+
+        await (Wallet.prototype as any).updateDbAfterOffchainTx.call(
+            thisArg,
+            [primaryInput, delegateInput],
+            "ark-tx-id",
+            [],
+            1_000,
+            4_000n,
+            1,
+            offchainTapscript
+        );
+
+        // Per-script saves: primary spent, delegate spent, change (primary script).
+        expect(saveVtxos).toHaveBeenCalledTimes(3);
+        expect(saveVtxos).toHaveBeenCalledWith(
+            PRIMARY_ADDR,
+            expect.arrayContaining([
+                expect.objectContaining({ script: PRIMARY_SCRIPT }),
+            ])
+        );
+        expect(saveVtxos).toHaveBeenCalledWith(
+            DELEGATE_ADDR,
+            expect.arrayContaining([
+                expect.objectContaining({ script: DELEGATE_SCRIPT }),
+            ])
+        );
+    });
+
+    it("rethrows when a spent VTXO has no script", async () => {
+        const input = makeSpentInput(PRIMARY_SCRIPT, "1");
+        const annotateVtxos = vi
+            .fn()
+            .mockResolvedValue([{ ...annotated(input), script: undefined }]);
+        const { thisArg, offchainTapscript, saveVtxos } = makeThisArg({
+            annotateVtxos,
+            contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
+        });
+
+        await expect(
+            (Wallet.prototype as any).updateDbAfterOffchainTx.call(
+                thisArg,
+                [input],
+                "ark-tx-id",
+                [],
+                1_000,
+                0n,
+                0,
+                offchainTapscript
+            )
+        ).rejects.toThrow(/has no script/);
+
+        expect(saveVtxos).not.toHaveBeenCalled();
+    });
+
+    it("rethrows when a spent VTXO references an unknown contract", async () => {
+        const input = makeSpentInput(PRIMARY_SCRIPT, "1");
+        const orphan = {
+            ...annotated(input),
+            script: "ee".repeat(34),
+        };
+        const annotateVtxos = vi.fn().mockResolvedValue([orphan]);
+        const { thisArg, offchainTapscript, saveVtxos } = makeThisArg({
+            annotateVtxos,
+            contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
+        });
+
+        await expect(
+            (Wallet.prototype as any).updateDbAfterOffchainTx.call(
+                thisArg,
+                [input],
+                "ark-tx-id",
+                [],
+                1_000,
+                0n,
+                0,
+                offchainTapscript
+            )
+        ).rejects.toThrow(/no contract owns script/);
+
+        expect(saveVtxos).not.toHaveBeenCalled();
+    });
+
+    it("binds the change VTXO metadata to the snapshot, not to this.offchainTapscript", async () => {
+        // PR #489 review #1 contract test: the change output's pkScript
+        // is captured under `_txLock` BEFORE the offchain round-trip,
+        // but the change-VTXO metadata (`forfeitTapLeafScript`,
+        // `tapTree`, `script`, `primaryAddress`) is written AFTER the
+        // round-trip — `WalletReceiveRotator.rotate` could swap
+        // `this.offchainTapscript` in between. The fix threads the
+        // pre-round-trip snapshot down as a parameter and derives all
+        // four fields from it. A regression that re-reads
+        // `this.offchainTapscript` inside the function would bind the
+        // change to the post-rotation tapscript while the server's
+        // VTXO is locked to the pre-rotation pkScript — the exact P1
+        // race we're guarding against.
+        //
+        // Two real `DefaultVtxo.Script` instances with distinct
+        // pubkeys: `tapscriptOld` lives on `this.offchainTapscript`
+        // (deliberately the "wrong" one), `tapscriptNew` is the
+        // snapshot threaded through. The change-VTXO fields must
+        // match `tapscriptNew` everywhere.
+        const tapscriptOld = new DefaultVtxo.Script({
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+        });
+        const tapscriptNew = new DefaultVtxo.Script({
+            pubKey: TEST_DELEGATE_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+        });
+        // Sanity: the two tapscripts produce distinguishable outputs.
+        // Without this, any assertion below would be vacuously true.
+        expect(hex.encode(tapscriptOld.pkScript)).not.toBe(
+            hex.encode(tapscriptNew.pkScript)
+        );
+
+        const SPEND_SCRIPT = hex.encode(tapscriptOld.pkScript);
+        const SPEND_ADDR = tapscriptOld
+            .address("ark", TEST_SERVER_PUB_KEY)
+            .encode();
+        const CHANGE_SCRIPT = hex.encode(tapscriptNew.pkScript);
+        const CHANGE_ADDR = tapscriptNew
+            .address("ark", TEST_SERVER_PUB_KEY)
+            .encode();
+
+        const input: VirtualCoin = {
+            txid: "1".repeat(64),
+            vout: 0,
+            value: 5_000,
+            status: { confirmed: true },
+            virtualStatus: {
+                state: "preconfirmed",
+                batchExpiry: 1_700_000_000,
+            },
+            createdAt: new Date(),
+            isUnrolled: false,
+            isSpent: false,
+            script: SPEND_SCRIPT,
+        };
+        const annotatedInput: any = {
+            ...input,
+            forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
+            intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+            tapTree: new Uint8Array(64),
+        };
+
+        const saveVtxos = vi.fn().mockResolvedValue(undefined);
+        const saveTransactions = vi.fn().mockResolvedValue(undefined);
+        const getContractManager = vi.fn().mockResolvedValue({
+            annotateVtxos: vi.fn().mockResolvedValue([annotatedInput]),
+            getContracts: vi.fn().mockResolvedValue([
+                // Spent input is owned by the OLD script's contract.
+                { script: SPEND_SCRIPT, address: SPEND_ADDR },
+                // Change is owned by the NEW script's contract.
+                { script: CHANGE_SCRIPT, address: CHANGE_ADDR },
+            ]),
+        });
+
+        const thisArg = {
+            network: { hrp: "ark" },
+            arkServerPublicKey: TEST_SERVER_PUB_KEY,
+            // Deliberately the WRONG tapscript on `this`. A regression
+            // that re-reads `this.offchainTapscript` inside the
+            // function would bind the change to this instead of the
+            // snapshot.
+            offchainTapscript: tapscriptOld,
+            arkAddress: tapscriptOld.address("ark", TEST_SERVER_PUB_KEY),
+            walletRepository: { saveVtxos, saveTransactions },
+            getContractManager,
+        } as any;
+
+        await (Wallet.prototype as any).updateDbAfterOffchainTx.call(
+            thisArg,
+            [input],
+            "ark-tx-id",
+            [], // empty checkpoints → no-PSBT branch
+            1_000,
+            4_000n,
+            1,
+            tapscriptNew // the snapshot
+        );
+
+        // Find the change-row save (the one keyed by CHANGE_ADDR).
+        const changeCall = saveVtxos.mock.calls.find(
+            ([addr]: any) => addr === CHANGE_ADDR
+        );
+        expect(changeCall).toBeDefined();
+        const [, changeRows] = changeCall!;
+        expect(changeRows).toHaveLength(1);
+        const changeVtxo = changeRows[0];
+
+        // The four script-shaped fields all derive from `tapscriptNew`.
+        // Asserting each individually so a regression points at the
+        // exact field that broke. `TapLeafScript` is
+        // `[ControlBlockObject, Uint8Array]` — assert by structural
+        // equality on the object and hex equality on the script bytes.
+        expect(changeVtxo.script).toBe(CHANGE_SCRIPT);
+        expect(hex.encode(changeVtxo.tapTree)).toBe(
+            hex.encode(tapscriptNew.encode())
+        );
+        const expectedForfeit = tapscriptNew.forfeit();
+        expect(changeVtxo.forfeitTapLeafScript[0]).toEqual(expectedForfeit[0]);
+        expect(hex.encode(changeVtxo.forfeitTapLeafScript[1])).toBe(
+            hex.encode(expectedForfeit[1])
+        );
+        expect(changeVtxo.intentTapLeafScript[0]).toEqual(expectedForfeit[0]);
+        expect(hex.encode(changeVtxo.intentTapLeafScript[1])).toBe(
+            hex.encode(expectedForfeit[1])
+        );
+
+        // `primaryAddress` (the address `saveTransactions` is keyed by)
+        // also derives from the snapshot, not from `this.arkAddress`.
+        expect(saveTransactions).toHaveBeenCalledTimes(1);
+        expect(saveTransactions.mock.calls[0][0]).toBe(CHANGE_ADDR);
+        expect(saveTransactions.mock.calls[0][0]).not.toBe(SPEND_ADDR);
+    });
+});
+
+describe("Wallet.updateDbAfterSettle", () => {
+    const PRIMARY_SCRIPT = "ab".repeat(34);
+    const PRIMARY_ADDR = "ark1primaryaddress";
+    const DELEGATE_SCRIPT = "cd".repeat(34);
+    const DELEGATE_ADDR = "ark1delegateaddress";
+    const BOARDING_ADDR = "bc1boardingaddr";
+
+    const makeThisArg = (overrides: {
+        annotateVtxos: ReturnType<typeof vi.fn>;
+        contracts: { script: string; address: string }[];
+        currentBoardingUtxos?: any[];
+    }) => {
+        const saveVtxos = vi.fn().mockResolvedValue(undefined);
+        const saveUtxos = vi.fn().mockResolvedValue(undefined);
+        const deleteUtxos = vi.fn().mockResolvedValue(undefined);
+        const getUtxos = vi
+            .fn()
+            .mockResolvedValue(overrides.currentBoardingUtxos ?? []);
+        const getContracts = vi.fn().mockResolvedValue(overrides.contracts);
+        const getContractManager = vi.fn().mockResolvedValue({
+            annotateVtxos: overrides.annotateVtxos,
+            getContracts,
+        });
+        return {
+            thisArg: {
+                walletRepository: {
+                    saveVtxos,
+                    saveUtxos,
+                    deleteUtxos,
+                    getUtxos,
+                },
+                getContractManager,
+                getBoardingAddress: vi.fn().mockResolvedValue(BOARDING_ADDR),
+            } as any,
+            saveVtxos,
+            saveUtxos,
+            deleteUtxos,
+            getUtxos,
+        };
+    };
+
+    const makeVtxoInput = (script: string, suffix: string): ExtendedCoin =>
+        ({
+            txid: suffix.repeat(64).slice(0, 64),
+            vout: 0,
+            value: 5_000,
+            status: { confirmed: true },
+            virtualStatus: { state: "preconfirmed" },
+            createdAt: new Date(),
+            isUnrolled: false,
+            isSpent: false,
+            script,
+            forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
+            intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+            tapTree: new Uint8Array(64),
+        }) as ExtendedCoin;
+
+    const makeBoardingInput = (suffix: string): ExtendedCoin =>
+        ({
+            txid: suffix.repeat(64).slice(0, 64),
+            vout: 0,
+            value: 10_000,
+            status: { confirmed: true },
+        }) as ExtendedCoin;
+
+    it("saves single-contract settle rows under the primary bucket", async () => {
+        const input = makeVtxoInput(PRIMARY_SCRIPT, "1");
+        const annotateVtxos = vi.fn().mockResolvedValue([input]);
+        const { thisArg, saveVtxos } = makeThisArg({
+            annotateVtxos,
+            contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
+        });
+
+        await (Wallet.prototype as any).updateDbAfterSettle.call(
+            thisArg,
+            [input],
+            "commitment-tx"
+        );
+
+        expect(saveVtxos).toHaveBeenCalledTimes(1);
+        const [addr, vtxos] = saveVtxos.mock.calls[0];
+        expect(addr).toBe(PRIMARY_ADDR);
+        expect(vtxos).toHaveLength(1);
+        expect(vtxos[0].virtualStatus.state).toBe("settled");
+        expect(vtxos[0].settledBy).toBe("commitment-tx");
+        expect(vtxos[0].isSpent).toBe(true);
+    });
+
+    it("routes multi-contract settle rows to their owning contract buckets", async () => {
+        const primaryInput = makeVtxoInput(PRIMARY_SCRIPT, "1");
+        const delegateInput = makeVtxoInput(DELEGATE_SCRIPT, "2");
+        const annotateVtxos = vi
+            .fn()
+            .mockResolvedValue([primaryInput, delegateInput]);
+        const { thisArg, saveVtxos } = makeThisArg({
+            annotateVtxos,
+            contracts: [
+                { script: PRIMARY_SCRIPT, address: PRIMARY_ADDR },
+                { script: DELEGATE_SCRIPT, address: DELEGATE_ADDR },
+            ],
+        });
+
+        await (Wallet.prototype as any).updateDbAfterSettle.call(
+            thisArg,
+            [primaryInput, delegateInput],
+            "commitment-tx"
+        );
+
+        expect(saveVtxos).toHaveBeenCalledTimes(2);
+        const calls = new Map(
+            saveVtxos.mock.calls.map(([addr, vtxos]: any) => [addr, vtxos])
+        );
+        expect(calls.get(PRIMARY_ADDR)).toHaveLength(1);
+        expect(calls.get(PRIMARY_ADDR)[0].script).toBe(PRIMARY_SCRIPT);
+        expect(calls.get(DELEGATE_ADDR)).toHaveLength(1);
+        expect(calls.get(DELEGATE_ADDR)[0].script).toBe(DELEGATE_SCRIPT);
+    });
+
+    it("removes settled boarding inputs even when no vtxo rows are settled", async () => {
+        const boardingInput = makeBoardingInput("b");
+        const otherUtxo = {
+            txid: "c".repeat(64),
+            vout: 0,
+            value: 1000,
+            status: { confirmed: true },
+        };
+        const annotateVtxos = vi.fn().mockResolvedValue([]);
+        const { thisArg, saveVtxos, deleteUtxos, saveUtxos, getUtxos } =
+            makeThisArg({
+                annotateVtxos,
+                contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
+                currentBoardingUtxos: [
+                    { txid: boardingInput.txid, vout: 0, value: 10_000 },
+                    otherUtxo,
+                ],
+            });
+
+        await (Wallet.prototype as any).updateDbAfterSettle.call(
+            thisArg,
+            [boardingInput],
+            "commitment-tx"
+        );
+
+        expect(saveVtxos).not.toHaveBeenCalled();
+        expect(getUtxos).toHaveBeenCalledWith(BOARDING_ADDR);
+        expect(deleteUtxos).toHaveBeenCalledWith(BOARDING_ADDR);
+        expect(saveUtxos).toHaveBeenCalledWith(BOARDING_ADDR, [otherUtxo]);
+    });
+
+    it("rethrows when a settled VTXO has no script", async () => {
+        const input = makeVtxoInput(PRIMARY_SCRIPT, "1");
+        const annotateVtxos = vi
+            .fn()
+            .mockResolvedValue([{ ...input, script: undefined }]);
+        const { thisArg, saveVtxos } = makeThisArg({
+            annotateVtxos,
+            contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
+        });
+
+        await expect(
+            (Wallet.prototype as any).updateDbAfterSettle.call(
+                thisArg,
+                [input],
+                "commitment-tx"
+            )
+        ).rejects.toThrow(/has no script/);
+
+        expect(saveVtxos).not.toHaveBeenCalled();
+    });
+
+    it("rethrows when a settled VTXO references an unknown contract", async () => {
+        const input = makeVtxoInput(PRIMARY_SCRIPT, "1");
+        const orphan = { ...input, script: "ee".repeat(34) };
+        const annotateVtxos = vi.fn().mockResolvedValue([orphan]);
+        const { thisArg, saveVtxos } = makeThisArg({
+            annotateVtxos,
+            contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
+        });
+
+        await expect(
+            (Wallet.prototype as any).updateDbAfterSettle.call(
+                thisArg,
+                [orphan],
+                "commitment-tx"
+            )
+        ).rejects.toThrow(/no contract owns script/);
+
+        expect(saveVtxos).not.toHaveBeenCalled();
     });
 });

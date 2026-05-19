@@ -1,6 +1,7 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { ArkProvider, Output, SettlementEvent } from "../providers/ark";
 import { Identity, ReadonlyIdentity } from "../identity";
+import { DescriptorProvider } from "../identity/descriptorProvider";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 import { RenewalConfig, SettlementConfig } from "./vtxo-manager";
@@ -12,6 +13,36 @@ import { IContractManager } from "../contracts/contractManager";
 import { IDelegatorManager } from "./delegator";
 import { DelegatorProvider } from "../providers/delegator";
 
+/** Defaults */
+export const DEFAULT_ARKADE_SERVER_URL = "https://arkade.computer" as const;
+export const DEFAULT_ARKADE_HRP = "ark" as const;
+export const DEFAULT_NETWORK_NAME = "bitcoin" as const;
+
+/**
+ * Wallet receive-address strategy.
+ *
+ * - `'auto'` *(default)*: **short-term** — currently identical to
+ *   `'static'`. The `'auto'` name is reserved for a future change that
+ *   will re-enable identity-probing once HD rotation has matured in
+ *   the field. Until then, opt into HD explicitly via `'hd'` or a
+ *   {@link DescriptorProvider}.
+ *   *(See `TODO(hd-maturation)` in
+ *   `src/wallet/walletReceiveRotator.ts:resolveDescriptorProvider` for
+ *   the flip-back criteria.)*
+ * - `'static'`: never rotate. The wallet uses one receive address derived
+ *   from `identity.xOnlyPublicKey()`.
+ * - `'hd'`: must rotate, using the built-in HD provider derived from the
+ *   identity. Throws at `Wallet.create` if the identity isn't HD-capable
+ *   or its descriptor isn't rangeable — no silent fallback.
+ * - A {@link DescriptorProvider} instance: rotate via the supplied
+ *   provider on every incoming VTXO. The wallet does not probe the
+ *   identity; the caller is responsible for ensuring the identity can
+ *   sign for whatever pubkey the provider returns. Errors thrown by the
+ *   provider propagate — there is no silent fallback for an explicit
+ *   provider.
+ */
+export type WalletMode = "auto" | "static" | "hd" | DescriptorProvider;
+
 /**
  * Base configuration options shared by all wallet types.
  *
@@ -22,9 +53,6 @@ import { DelegatorProvider } from "../providers/delegator";
  *
  * Provider-based configuration supplies concrete provider instances directly,
  * including the ArkProvider, IndexerProvider, OnchainProvider, and DelegatorProvider.
- *
- * At least one of the following must be provided:
- * - arkServerUrl OR arkProvider
  *
  * The wallet will use provided URLs to create default providers if custom provider
  * instances are not supplied. If optional parameters are not provided, the wallet
@@ -168,6 +196,16 @@ export interface WalletConfig extends ReadonlyWalletConfig {
      * @see SettlementConfig
      */
     settlementConfig?: SettlementConfig | false;
+
+    /**
+     * Receive-address strategy. Pass `'static'`, `'hd'`, or a
+     * {@link DescriptorProvider} instance to drive rotation; omit (or
+     * pass `'auto'`) for the built-in auto-detect behaviour. See
+     * {@link WalletMode}.
+     *
+     * @defaultValue `'auto'`
+     */
+    walletMode?: WalletMode;
 }
 
 /**
@@ -272,8 +310,12 @@ export interface Asset {
     /** Asset identifier. */
     assetId: string;
 
-    /** Asset amount in base units. */
-    amount: number;
+    /**
+     * Asset amount in base units. Typed as `bigint` because asset
+     * supplies routinely exceed `Number.MAX_SAFE_INTEGER` (2^53 - 1)
+     * and silently truncating in arithmetic would corrupt balances.
+     */
+    amount: bigint;
 }
 
 /**
@@ -333,8 +375,12 @@ export type AssetDetails = {
     /** Asset identifier. */
     assetId: string;
 
-    /** Total issued supply in base units. */
-    supply: number;
+    /**
+     * Total issued supply in base units. Typed as `bigint` for the
+     * same reason as {@link Asset.amount} — supplies often exceed
+     * `Number.MAX_SAFE_INTEGER`.
+     */
+    supply: bigint;
 
     /** Optional immutable metadata associated with the asset. */
     metadata?: AssetMetadata;
@@ -351,7 +397,7 @@ export type AssetDetails = {
  */
 export interface IssuanceParams {
     /** Initial amount of asset to issue */
-    amount: number;
+    amount: bigint;
     /** Optional control asset ID that can be used for future reissuance */
     controlAssetId?: string;
     /** Immutable asset metadata including `ticker`, `decimals`, `icon` */
@@ -380,7 +426,7 @@ export interface ReissuanceParams {
     /** Existing asset ID, made up of genesis (Arkade) transaction ID and zero-based asset group index */
     assetId: string;
     /** Amount of asset to issue */
-    amount: number;
+    amount: bigint;
 }
 
 /**
@@ -392,7 +438,7 @@ export interface BurnParams {
     /** Existing asset ID, made up of genesis (Arkade) transaction ID and zero-based asset group index */
     assetId: string;
     /** Amount of asset to burn */
-    amount: number;
+    amount: bigint;
 }
 
 /**
@@ -501,24 +547,27 @@ export interface Coin extends Outpoint {
  * @see VirtualStatus
  */
 export interface VirtualCoin extends Coin {
-    /** Virtual output status */
-    virtualStatus: VirtualStatus;
-    /** Transaction id that spent this virtual output, when known. */
-    spentBy?: string;
-    /** Settlement transaction associated with this virtual output, when known. */
-    settledBy?: string;
-    /** Arkade transaction id that created or spent this virtual output, when known. */
-    arkTxId?: string;
     /** Creation time of the virtual output. */
     createdAt: Date;
-    /** Whether this virtual output has been unrolled to onchain outputs. */
-    isUnrolled: boolean;
-    /** Whether this virtual output is already spent. */
-    isSpent?: boolean;
-    /** Assets carried by this virtual output, if any. */
-    assets?: Asset[];
     /** The scriptPubKey (hex) locking this virtual output, as returned by the indexer. */
     script: string;
+    /** Whether this virtual output has been broadcasted onchain via an unroll (unilateral exit). */
+    isUnrolled: boolean;
+    /**
+     * Whether this virtual output is already spent (boolean helper for `spentBy`).
+     * This is not set to true if the virtual output is unrolled or swept, only when it's spent offchain.
+     */
+    isSpent?: boolean;
+    /** ID of the onchain commitment transaction that settled this output, if applicable. */
+    settledBy?: string;
+    /** ID of the offchain checkpoint transaction that spent this output, if applicable. */
+    spentBy?: string;
+    /** ID of the offchain Arkade transaction that spent the above checkpoint output, if applicable. */
+    arkTxId?: string;
+    /** Virtual output status */
+    virtualStatus: VirtualStatus;
+    /** Assets carried by this virtual output, if any. */
+    assets?: Asset[];
 }
 
 /** Wallet transaction direction. */

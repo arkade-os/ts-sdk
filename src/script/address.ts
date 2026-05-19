@@ -1,6 +1,7 @@
 import { bech32m } from "@scure/base";
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { Script } from "@scure/btc-signer/script.js";
+import { DEFAULT_ARKADE_HRP } from "../wallet";
 
 /**
  * ArkAddress allows creating and decoding bech32m-encoded Arkade addresses.
@@ -33,10 +34,10 @@ import { Script } from "@scure/btc-signer/script.js";
  */
 export class ArkAddress {
     /**
-     * Create an Arkade address from its server key, vtxo taproot public key, and prefix.
+     * Create an Arkade address from its server public key, Taproot output key, and prefix.
      *
      * @param serverPubKey - 32-byte Arkade server public key
-     * @param vtxoTaprootKey - 32-byte tweaked vtxo taproot public key
+     * @param vtxoTaprootKey - 32-byte Taproot output key (a.k.a. tweaked public key)
      * @param hrp - Bech32 human-readable prefix
      * @param version - Address version byte
      * @defaultValue `version = 0`
@@ -45,7 +46,7 @@ export class ArkAddress {
     constructor(
         readonly serverPubKey: Bytes,
         readonly vtxoTaprootKey: Bytes,
-        readonly hrp: string,
+        readonly hrp: string = DEFAULT_ARKADE_HRP,
         readonly version: number = 0
     ) {
         if (serverPubKey.length !== 32) {

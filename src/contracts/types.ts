@@ -1,6 +1,6 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
-import { TapLeafScript, VtxoScript } from "../script/base";
-import { VirtualCoin, ExtendedVirtualCoin } from "../wallet";
+import { EncodedVtxoScript, TapLeafScript, VtxoScript } from "../script/base";
+import { ExtendedVirtualCoin, VirtualCoin, TapLeaves } from "../wallet";
 import { ContractFilter } from "../repositories";
 
 /**
@@ -76,10 +76,29 @@ export interface Contract {
 /**
  * A virtual output that has been associated with a specific contract.
  */
-export interface ContractVtxo extends ExtendedVirtualCoin {
-    /** The contract script this virtual output belongs to. */
+export type ContractVtxo = VirtualCoin &
+    Partial<TapLeaves & EncodedVtxoScript> & {
+        extraWitness?: Bytes[];
+        contractScript: string;
+    };
+
+/**
+ * A {@link ContractVtxo} with all taproot annotation fields required.
+ *
+ * Mirrors the {@link ExtendedVirtualCoin} / {@link VirtualCoin} split:
+ * - {@link ContractVtxo} carries `TapLeaves` and `EncodedVtxoScript` as
+ *   `Partial<>` because VTXOs fetched raw from the indexer do not yet have
+ *   taproot data.
+ * - `ExtendedContractVtxo` narrows those fields to required, guaranteeing
+ *   that `annotateVtxos` has run and the taproot leaves are present.
+ *
+ * Use this type (instead of {@link ContractVtxo}) wherever the compiler
+ * should enforce that annotation has happened — e.g. `saveVtxos` and
+ * forfeit transaction construction.
+ */
+export type ExtendedContractVtxo = ExtendedVirtualCoin & {
     contractScript: string;
-}
+};
 
 /**
  * Result of path selection, including the tapleaf to use and any extra witness data.
@@ -264,7 +283,7 @@ export type GetContractsFilter = ContractFilter;
  */
 export type ContractWithVtxos = {
     contract: Contract;
-    vtxos: ContractVtxo[];
+    vtxos: ExtendedContractVtxo[];
 };
 
 /**

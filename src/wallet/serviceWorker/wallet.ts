@@ -17,6 +17,7 @@ import {
     ReissuanceParams,
     BurnParams,
     Recipient,
+    DEFAULT_ARKADE_SERVER_URL,
 } from "..";
 import { SettlementEvent } from "../../providers/ark";
 import { hex } from "@scure/base";
@@ -53,6 +54,7 @@ import {
     RequestInitWallet,
     RequestIsContractManagerWatching,
     RequestRefreshVtxos,
+    RequestRefreshOutpoints,
     RequestReloadWallet,
     RequestSendBitcoin,
     RequestSettle,
@@ -135,6 +137,7 @@ import {
     MESSAGE_BUS_NOT_INITIALIZED,
     ServiceWorkerTimeoutError,
 } from "../../worker/errors";
+import { getArkadeServerUrl } from "../wallet";
 
 // Check by error message content instead of instanceof because postMessage uses the
 // structured clone algorithm which strips the prototype chain — the page
@@ -149,6 +152,8 @@ function isMessageBusNotInitializedError(error: unknown): boolean {
 type RequestType = WalletUpdaterRequest["type"];
 
 export type MessageTimeouts = Partial<Record<RequestType, number>>;
+
+export type ServiceWorkerWalletMode = "auto" | "static" | "hd";
 
 export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     // Fast reads — fail quickly
@@ -197,6 +202,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     UPDATE_CONTRACT: 30_000,
     DELETE_CONTRACT: 10_000,
     REFRESH_VTXOS: 30_000,
+    REFRESH_OUTPOINTS: 30_000,
 };
 
 const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
@@ -329,7 +335,7 @@ interface ServiceWorkerWalletOptions {
     /** Optional Arkade server public key used to construct and validate Arkade addresses. */
     arkServerPublicKey?: string;
     /** Base URL of the Arkade server. */
-    arkServerUrl: string;
+    arkServerUrl?: string;
     /** Optional override for the indexer URL. */
     indexerUrl?: string;
     /** Optional override for the Esplora API URL. */
@@ -352,6 +358,14 @@ interface ServiceWorkerWalletOptions {
     messageBusTimeoutMs?: number;
     /** Optional settlement configuration forwarded to the worker wallet. */
     settlementConfig?: SettlementConfig | false;
+    /**
+     * Receive-address strategy forwarded to the worker wallet.
+     *
+     * Service workers can only receive serializable configuration, so the
+     * descriptor-provider object form accepted by `Wallet.create()` is not
+     * supported here.
+     */
+    walletMode?: ServiceWorkerWalletMode;
     /** Optional contract watcher configuration forwarded to the worker wallet. */
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
     /**
@@ -396,6 +410,7 @@ type MessageBusInitConfig = {
     esploraUrl?: string;
     timeoutMs?: number;
     settlementConfig?: SettlementConfig | false;
+    walletMode?: ServiceWorkerWalletMode;
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
     messageTimeouts?: Record<string, number>;
 };
@@ -531,7 +546,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             .then(hex.encode);
         const initWalletPayload = {
             key: { publicKey },
-            arkServerUrl: options.arkServerUrl,
+            arkServerUrl: getArkadeServerUrl(options),
             arkServerPublicKey: options.arkServerPublicKey,
             delegatorUrl: options.delegatorUrl,
         };
@@ -548,7 +563,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         const busInitConfig: MessageBusInitConfig = {
             wallet: serializedWallet,
             arkServer: {
-                url: options.arkServerUrl,
+                url: getArkadeServerUrl(options),
                 publicKey: options.arkServerPublicKey,
             },
             delegatorUrl: options.delegatorUrl,
@@ -1273,6 +1288,18 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 await sendContractMessage(message);
             },
 
+            async refreshOutpoints(
+                outpoints: { txid: string; vout: number }[]
+            ): Promise<void> {
+                const message: RequestRefreshOutpoints = {
+                    type: "REFRESH_OUTPOINTS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { outpoints },
+                };
+                await sendContractMessage(message);
+            },
+
             async isWatching(): Promise<boolean> {
                 const message: RequestIsContractManagerWatching = {
                     type: "IS_CONTRACT_MANAGER_WATCHING",
@@ -1388,7 +1415,7 @@ export class ServiceWorkerWallet
                 : null;
         const initWalletPayload = {
             key: legacyPrivateKey ? { privateKey: legacyPrivateKey } : {},
-            arkServerUrl: options.arkServerUrl,
+            arkServerUrl: getArkadeServerUrl(options),
             arkServerPublicKey: options.arkServerPublicKey,
             delegatorUrl: options.delegatorUrl,
         };
@@ -1405,13 +1432,14 @@ export class ServiceWorkerWallet
         const busInitConfig: MessageBusInitConfig = {
             wallet: serializedWallet,
             arkServer: {
-                url: options.arkServerUrl,
+                url: getArkadeServerUrl(options),
                 publicKey: options.arkServerPublicKey,
             },
             delegatorUrl: options.delegatorUrl,
             indexerUrl: options.indexerUrl,
             esploraUrl: options.esploraUrl,
             settlementConfig: options.settlementConfig,
+            walletMode: options.walletMode,
             watcherConfig: options.watcherConfig,
             messageTimeouts,
         };

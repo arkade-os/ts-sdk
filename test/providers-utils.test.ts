@@ -3,41 +3,11 @@ import {
     eventSourceIterator,
     isEventSourceError,
 } from "../src/providers/utils";
-
-class ControlledEventSource {
-    readyState = 1;
-    private listeners = new Map<string, Set<(event: unknown) => void>>();
-
-    addEventListener(type: string, handler: (event: unknown) => void) {
-        if (!this.listeners.has(type)) {
-            this.listeners.set(type, new Set());
-        }
-        this.listeners.get(type)!.add(handler);
-    }
-
-    removeEventListener(type: string, handler: (event: unknown) => void) {
-        this.listeners.get(type)?.delete(handler);
-    }
-
-    emitMessage(data: string) {
-        this.emit("message", { data });
-    }
-
-    emitError(readyState: number) {
-        this.readyState = readyState;
-        this.emit("error", new Event("error"));
-    }
-
-    private emit(type: string, event: unknown) {
-        for (const handler of this.listeners.get(type) ?? []) {
-            handler(event);
-        }
-    }
-}
+import { MockEventSource } from "./mocks/eventSource";
 
 describe("eventSourceIterator", () => {
     it("surfaces reconnecting EventSource errors as EventSourceError", async () => {
-        const eventSource = new ControlledEventSource();
+        const eventSource = new MockEventSource();
         const iterator = eventSourceIterator(
             eventSource as unknown as EventSource
         );
@@ -56,7 +26,7 @@ describe("eventSourceIterator", () => {
     });
 
     it("surfaces closed EventSource errors as EventSourceError", async () => {
-        const eventSource = new ControlledEventSource();
+        const eventSource = new MockEventSource();
         const iterator = eventSourceIterator(
             eventSource as unknown as EventSource
         );
@@ -72,5 +42,42 @@ describe("eventSourceIterator", () => {
         await next.catch((error) => {
             expect(isEventSourceError(error)).toBe(true);
         });
+    });
+
+    it("close wakes a pending next without relying on an EventSource error", async () => {
+        const eventSource = new MockEventSource();
+        const iterator = eventSourceIterator(
+            eventSource as unknown as EventSource
+        );
+        const next = iterator.next();
+
+        iterator.close();
+
+        await expect(next).rejects.toMatchObject({
+            name: "AbortError",
+            message: "EventSource closed",
+        });
+        expect(eventSource.closed).toBe(true);
+        expect(eventSource.listenerCount("message")).toBe(0);
+        expect(eventSource.listenerCount("error")).toBe(0);
+    });
+
+    it("return closes the EventSource and wakes a pending next", async () => {
+        const eventSource = new MockEventSource();
+        const iterator = eventSourceIterator(
+            eventSource as unknown as EventSource
+        );
+        const next = iterator.next();
+
+        const returned = iterator.return();
+
+        await expect(next).rejects.toMatchObject({
+            name: "AbortError",
+            message: "EventSource closed",
+        });
+        await expect(returned).resolves.toMatchObject({ done: true });
+        expect(eventSource.closed).toBe(true);
+        expect(eventSource.listenerCount("message")).toBe(0);
+        expect(eventSource.listenerCount("error")).toBe(0);
     });
 });

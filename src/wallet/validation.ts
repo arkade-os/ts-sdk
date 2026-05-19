@@ -200,7 +200,7 @@ function validateAssetGroupOutput(
     packet: Packet,
     outputIndex: number,
     assetId: string,
-    expectedAmount: number
+    expectedAmount: bigint
 ): void {
     const assetGroup = packet.groups.find((group) => {
         if (group.isIssuance()) return false;
@@ -220,11 +220,10 @@ function validateAssetGroupOutput(
         throw ErrAssetOutputNotFound(assetId, outputIndex);
     }
 
-    const expectedAmountBigInt = BigInt(expectedAmount);
-    if (assetOutput.amount !== expectedAmountBigInt) {
+    if (assetOutput.amount !== expectedAmount) {
         throw ErrInvalidAssetOutputAmount(
             assetOutput.amount,
-            expectedAmountBigInt,
+            expectedAmount,
             assetId
         );
     }

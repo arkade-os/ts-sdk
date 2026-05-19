@@ -10,6 +10,7 @@ import {
     SeedIdentity,
     ReadonlyDescriptorIdentity,
 } from "../../src";
+import { DEFAULT_ARKADE_SERVER_URL } from "../../src/wallet";
 import { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import { hex } from "@scure/base";
@@ -1164,6 +1165,26 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         return call![0].config.wallet;
     };
 
+    const getInitializeMessage = (serviceWorker: {
+        postMessage: ReturnType<typeof vi.fn>;
+    }): any => {
+        const call = serviceWorker.postMessage.mock.calls.find(
+            ([msg]: any) => msg?.tag === "INITIALIZE_MESSAGE_BUS"
+        );
+        expect(call).toBeDefined();
+        return call![0];
+    };
+
+    const getInitWalletMessage = (serviceWorker: {
+        postMessage: ReturnType<typeof vi.fn>;
+    }): any => {
+        const call = serviceWorker.postMessage.mock.calls.find(
+            ([msg]: any) => msg?.type === "INIT_WALLET"
+        );
+        expect(call).toBeDefined();
+        return call![0];
+    };
+
     afterEach(() => {
         vi.unstubAllGlobals();
     });
@@ -1184,6 +1205,62 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
             type: "single-key",
             privateKey: TEST_PRIVATE_KEY_HEX,
         });
+    });
+
+    it("ServiceWorkerWallet.create uses the default Arkade server URL when omitted", async () => {
+        const { serviceWorker } = setup();
+        const identity = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
+
+        await ServiceWorkerWallet.create({
+            serviceWorker: serviceWorker as any,
+            identity,
+            storage: storage(),
+        });
+
+        expect(getInitializeMessage(serviceWorker).config.arkServer.url).toBe(
+            DEFAULT_ARKADE_SERVER_URL
+        );
+        expect(getInitWalletMessage(serviceWorker).payload.arkServerUrl).toBe(
+            DEFAULT_ARKADE_SERVER_URL
+        );
+    });
+
+    it("ServiceWorkerWallet.create forwards walletMode to the worker init config", async () => {
+        const { serviceWorker } = setup();
+        const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: true,
+        });
+
+        await ServiceWorkerWallet.create({
+            serviceWorker: serviceWorker as any,
+            arkServerUrl: "https://ark.test",
+            identity,
+            walletMode: "hd",
+            storage: storage(),
+        });
+
+        expect(getInitializeMessage(serviceWorker).config.walletMode).toBe(
+            "hd"
+        );
+    });
+
+    it("ServiceWorkerReadonlyWallet.create uses the default Arkade server URL when omitted", async () => {
+        const { serviceWorker } = setup();
+        const signing = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
+        const identity = await signing.toReadonly();
+
+        await ServiceWorkerReadonlyWallet.create({
+            serviceWorker: serviceWorker as any,
+            identity,
+            storage: storage(),
+        });
+
+        expect(getInitializeMessage(serviceWorker).config.arkServer.url).toBe(
+            DEFAULT_ARKADE_SERVER_URL
+        );
+        expect(getInitWalletMessage(serviceWorker).payload.arkServerUrl).toBe(
+            DEFAULT_ARKADE_SERVER_URL
+        );
     });
 
     it("ReadonlySingleKey emits a tagged readonly-single-key envelope", async () => {

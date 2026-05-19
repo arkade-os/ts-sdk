@@ -1,5 +1,6 @@
 import { IndexerProvider, SubscriptionResponse } from "../providers/indexer";
 import { VirtualCoin } from "../wallet";
+import { extendVirtualCoinForContract } from "../wallet/utils";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
     Contract,
@@ -8,6 +9,7 @@ import {
     ContractEvent,
 } from "./types";
 import { isEventSourceError } from "../providers/utils";
+import { filterVtxosForScript, getVtxosForContract } from "./vtxoOwnership";
 
 /**
  * Configuration for the ContractWatcher.
@@ -180,8 +182,12 @@ export class ContractWatcher {
      */
     private async seedLastKnownVtxos(state: ContractState): Promise<void> {
         try {
-            const cached = await this.config.walletRepository.getVtxos(
-                state.contract.address
+            // Apply the same script gate used by getContractVtxos so a legacy
+            // wrong-script row in the address bucket can't seed the baseline
+            // and then look "spent" on the first poll.
+            const cached = await getVtxosForContract(
+                this.config.walletRepository,
+                state.contract
             );
             for (const vtxo of cached) {
                 if (vtxo.isSpent) continue;
@@ -280,8 +286,10 @@ export class ContractWatcher {
                 return true;
             })
             .map(async (state): Promise<[[string, ContractVtxo[]]] | []> => {
-                // Use contract address as cache key
-                const cached = await repo.getVtxos(state.contract.address);
+                // Use contract address as cache key. Legacy address buckets
+                // can contain rows from other contracts; gate by script before
+                // converting so a wrong-script row never reaches the watcher.
+                const cached = await getVtxosForContract(repo, state.contract);
                 if (cached.length > 0) {
                     // Convert to ContractVtxo with contractScript
                     const contractVtxos: ContractVtxo[] = cached.map((v) => ({
@@ -380,14 +388,19 @@ export class ContractWatcher {
 
     /**
      * Connect to the subscription.
+     *
+     * @param skipUpdate - Skip the leading `updateSubscription` call when
+     *   the caller has already established `subscriptionId`.
      */
-    private async connect(): Promise<void> {
+    private async connect(skipUpdate = false): Promise<void> {
         if (!this.isWatching) return;
 
         this.connectionState = "connecting";
 
         try {
-            await this.updateSubscription();
+            if (!skipUpdate) {
+                await this.updateSubscription();
+            }
 
             // Poll immediately after connection to sync state
             await this.pollAllContracts();
@@ -556,10 +569,35 @@ export class ContractWatcher {
     }
 
     private async tryUpdateSubscription() {
+        const hadSubscription = this.subscriptionId !== undefined;
         try {
             await this.updateSubscription();
         } catch (error) {
             // nothing, the connection will be retried later
+            return;
+        }
+
+        // Cold start: `startWatching` may have run with zero scripts,
+        // leaving `listenLoop` parked behind the reconnect timer. Kick
+        // `connect` now so streaming resumes without waiting on the
+        // backoff. `skipUpdate` avoids re-issuing `subscribeForScripts`.
+        const justGotSubscription =
+            !hadSubscription && this.subscriptionId !== undefined;
+        const listenerParked =
+            this.connectionState === "disconnected" ||
+            this.connectionState === "reconnecting";
+        if (this.isWatching && justGotSubscription && listenerParked) {
+            if (this.reconnectTimeoutId) {
+                clearTimeout(this.reconnectTimeoutId);
+                this.reconnectTimeoutId = undefined;
+            }
+            this.reconnectAttempts = 0;
+            this.connect(true).catch((error) => {
+                console.warn(
+                    "ContractWatcher cold-start connect failed:",
+                    error
+                );
+            });
         }
     }
 
@@ -735,18 +773,26 @@ export class ContractWatcher {
         if (!this.eventCallback) return;
         const state = this.contracts.get(contractScript);
         if (!state) return;
+
+        const extended: ContractVtxo[] = [];
+        for (const v of vtxos) {
+            try {
+                const extendedVtxo = extendVirtualCoinForContract(
+                    v,
+                    state.contract
+                );
+                extended.push({ ...extendedVtxo, contractScript });
+            } catch (err) {
+                console.warn(`failed to extend vtxo ${v.txid}:${v.vout}`, err);
+                extended.push({ ...v, contractScript });
+            }
+        }
+
         switch (eventType) {
             case "vtxo_received":
                 this.eventCallback({
                     type: "vtxo_received",
-                    vtxos: vtxos.map((v) => ({
-                        ...v,
-                        contractScript,
-                        // These fields may not be available from basic VirtualCoin
-                        forfeitTapLeafScript: undefined as any,
-                        intentTapLeafScript: undefined as any,
-                        tapTree: undefined as any,
-                    })),
+                    vtxos: extended,
                     contractScript,
                     contract: state.contract,
                     timestamp,
@@ -755,14 +801,7 @@ export class ContractWatcher {
             case "vtxo_spent":
                 this.eventCallback({
                     type: "vtxo_spent",
-                    vtxos: vtxos.map((v) => ({
-                        ...v,
-                        contractScript,
-                        // These fields may not be available from basic VirtualCoin
-                        forfeitTapLeafScript: undefined as any,
-                        intentTapLeafScript: undefined as any,
-                        tapTree: undefined as any,
-                    })),
+                    vtxos: extended,
                     contractScript,
                     contract: state.contract,
                     timestamp,

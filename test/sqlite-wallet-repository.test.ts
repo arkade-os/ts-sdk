@@ -400,7 +400,7 @@ function createMockVtxoWithExtras(
         intentTapLeafScript: tapLeaf,
         tapTree: new Uint8Array(32).fill(5),
         extraWitness: [new Uint8Array([0xab, 0xcd]), new Uint8Array([0xef])],
-        assets: [{ assetId: "asset-1", amount: 500 }],
+        assets: [{ assetId: "asset-1", amount: 500n }],
         script: "5120deadbeef",
     };
 }
@@ -533,7 +533,7 @@ describe("SQLiteWalletRepository", () => {
             ]);
             expect(retrieved.virtualStatus.batchExpiry).toBe(1700100000);
             expect(retrieved.assets).toEqual([
-                { assetId: "asset-1", amount: 500 },
+                { assetId: "asset-1", amount: 500n },
             ]);
             // extraWitness round-trip (Uint8Array)
             expect(retrieved.extraWitness).toBeDefined();
@@ -644,6 +644,86 @@ describe("SQLiteWalletRepository", () => {
             const [retrieved] = await repository.getVtxos(testAddress);
 
             expect(retrieved.isSpent).toBeUndefined();
+        });
+
+        describe("Script-scoped VTXO management", () => {
+            it("should return empty array when no VTXOs exist for script", async () => {
+                const vtxos = await repository.getVtxosForScript("script1");
+                expect(vtxos).toEqual([]);
+            });
+
+            it("should save and retrieve VTXOs by script", async () => {
+                const script1 = "script1";
+                const address1 = "address1";
+                const vtxo1 = {
+                    ...createMockVtxo("tx1", 0, 10000),
+                    script: script1,
+                };
+
+                await repository.saveVtxosForScript(
+                    { script: script1, address: address1 },
+                    [vtxo1]
+                );
+                const retrieved = await repository.getVtxosForScript(script1);
+
+                expect(retrieved).toHaveLength(1);
+                expect(retrieved[0].txid).toBe("tx1");
+                expect(retrieved[0].script).toBe(script1);
+            });
+
+            it("should throw when saving VTXO with mismatched script", async () => {
+                const script1 = "script1";
+                const address1 = "address1";
+                const vtxo1 = {
+                    ...createMockVtxo("tx1", 0, 10000),
+                    script: "wrong-script",
+                };
+
+                await expect(
+                    repository.saveVtxosForScript(
+                        { script: script1, address: address1 },
+                        [vtxo1]
+                    )
+                ).rejects.toThrow();
+            });
+
+            it("should delete VTXOs by script", async () => {
+                const script1 = "script1";
+                const address1 = "address1";
+                const vtxo1 = {
+                    ...createMockVtxo("tx1", 0, 10000),
+                    script: script1,
+                };
+
+                await repository.saveVtxos(address1, [vtxo1]);
+                await repository.deleteVtxosForScript(script1);
+
+                expect(await repository.getVtxosForScript(script1)).toEqual([]);
+            });
+
+            it("should read by script, not address", async () => {
+                const address1 = "address1";
+                const scriptA = "scriptA";
+                const scriptB = "scriptB";
+                const vtxoA = {
+                    ...createMockVtxo("tx1", 0, 10000),
+                    script: scriptA,
+                };
+                const vtxoB = {
+                    ...createMockVtxo("tx2", 0, 20000),
+                    script: scriptB,
+                };
+
+                await repository.saveVtxos(address1, [vtxoA, vtxoB]);
+
+                const resultA = await repository.getVtxosForScript(scriptA);
+                const resultB = await repository.getVtxosForScript(scriptB);
+
+                expect(resultA).toHaveLength(1);
+                expect(resultA[0].txid).toBe("tx1");
+                expect(resultB).toHaveLength(1);
+                expect(resultB[0].txid).toBe("tx2");
+            });
         });
     });
 
@@ -858,8 +938,8 @@ describe("SQLiteWalletRepository", () => {
                 settled: true,
                 createdAt: 5000,
                 assets: [
-                    { assetId: "asset-a", amount: 100 },
-                    { assetId: "asset-b", amount: 200 },
+                    { assetId: "asset-a", amount: 100n },
+                    { assetId: "asset-b", amount: 200n },
                 ],
             };
 
@@ -869,8 +949,8 @@ describe("SQLiteWalletRepository", () => {
 
             expect(retrieved.settled).toBe(true);
             expect(retrieved.assets).toEqual([
-                { assetId: "asset-a", amount: 100 },
-                { assetId: "asset-b", amount: 200 },
+                { assetId: "asset-a", amount: 100n },
+                { assetId: "asset-b", amount: 200n },
             ]);
         });
 

@@ -14,6 +14,11 @@ import {
  * service-worker boundary. All variants are structured-clone safe
  * (plain strings only — no functions or prototypes).
  *
+ * `descriptor` carries the wildcard *template* (e.g.
+ * `tr([fp/86'/0'/0']xpub.../0/*)`), not a concrete index — the
+ * receiving factories require a template, and storing it directly
+ * means nothing here has to convert concrete → template on rehydrate.
+ *
  * Adding a new variant is a source change in every worker build; keep
  * old variants around until all deployed workers handle them.
  */
@@ -30,6 +35,8 @@ export type SerializedSigningIdentity =
 /**
  * Tagged envelope for a readonly identity transported across the
  * service-worker boundary. All variants are structured-clone safe.
+ * `descriptor` is the wildcard template (see
+ * {@link SerializedSigningIdentity}).
  */
 export type SerializedReadonlyIdentity =
     | { type: "readonly-single-key"; publicKey: string }
@@ -111,6 +118,11 @@ export async function serializeReadonlyIdentity(
  * The return type is the union of signing and readonly; use
  * {@link isSigningSerialized} on the envelope before hydration if the caller
  * needs to know which side it ends up on.
+ *
+ * Envelopes store the wildcard template directly (see
+ * `serializeSeedOwnedSigningIdentity` / `serializeSeedOwnedReadonlyIdentity`),
+ * so the `descriptor` field is passed straight through to the
+ * template-only factories.
  */
 export function hydrateIdentity(
     s: SerializedIdentity

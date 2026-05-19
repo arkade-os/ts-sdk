@@ -12,7 +12,7 @@ import { DefaultVtxo } from "../script/default";
 import { DelegateVtxo } from "../script/delegate";
 import { ReadonlyWallet } from "./wallet";
 import { hex } from "@scure/base";
-import { Bytes } from "@scure/btc-signer/utils";
+import { Bytes } from "@scure/btc-signer/utils.js";
 
 export const DUST_AMOUNT = 546; // sats
 

@@ -5,12 +5,12 @@ import {
     TAPROOT_UNSPENDABLE_KEY,
     NETWORK,
 } from "@scure/btc-signer";
-import * as bip68 from "bip68";
 import { TAP_LEAF_VERSION } from "@scure/btc-signer/payment.js";
 import { PSBTOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
 import { ArkAddress } from "./address";
+import { timelockToSequence } from "../utils/timelock";
 import {
     CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,
@@ -173,20 +173,19 @@ export class VtxoScript {
         > = [];
         for (const leaf of this.leaves) {
             try {
-                const tapscript = CSVMultisigTapscript.decode(
-                    scriptFromTapLeafScript(leaf)
-                );
-                paths.push(tapscript);
-                continue;
-            } catch (e) {
-                try {
-                    const tapscript = ConditionCSVMultisigTapscript.decode(
-                        scriptFromTapLeafScript(leaf)
-                    );
-                    paths.push(tapscript);
-                } catch (e) {
-                    continue;
+                const script = scriptFromTapLeafScript(leaf);
+                if (CSVMultisigTapscript.isScriptValid(script) === true) {
+                    const tapScript = CSVMultisigTapscript.decode(script);
+                    paths.push(tapScript);
+                } else if (
+                    ConditionCSVMultisigTapscript.isScriptValid(script) === true
+                ) {
+                    const tapScript =
+                        ConditionCSVMultisigTapscript.decode(script);
+                    paths.push(tapScript);
                 }
+            } catch (e) {
+                console.debug("Failed to decode script", e);
             }
         }
         return paths;
@@ -224,11 +223,7 @@ export function getSequence(tapLeafScript: TapLeafScript): number | undefined {
         );
         try {
             const params = CSVMultisigTapscript.decode(script).params;
-            sequence = bip68.encode(
-                params.timelock.type === "blocks"
-                    ? { blocks: Number(params.timelock.value) }
-                    : { seconds: Number(params.timelock.value) }
-            );
+            sequence = timelockToSequence(params.timelock);
         } catch {
             const params = CLTVMultisigTapscript.decode(script).params;
             sequence = Number(params.absoluteTimelock);

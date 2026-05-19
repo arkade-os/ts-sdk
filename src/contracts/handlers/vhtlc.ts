@@ -7,13 +7,8 @@ import {
     PathContext,
     PathSelection,
 } from "../types";
-import {
-    isCltvSatisfied,
-    isCsvSpendable,
-    resolveRole,
-    sequenceToTimelock,
-    timelockToSequence,
-} from "./helpers";
+import { isCltvSatisfied, isCsvSpendable, resolveRole } from "./helpers";
+import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
 
 /**
  * Typed parameters for VHTLC contracts.

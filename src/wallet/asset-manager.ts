@@ -63,7 +63,7 @@ export class AssetManager
      * ```
      */
     async issue(params: IssuanceParams): Promise<IssuanceResult> {
-        if (params.amount <= 0) {
+        if (params.amount <= 0n) {
             throw new Error(
                 `Issue amount must be greater than 0, got ${params.amount}`
             );
@@ -93,14 +93,14 @@ export class AssetManager
             if (!coin.assets) continue;
             for (const { assetId, amount } of coin.assets) {
                 const existing = assetChanges.get(assetId) ?? 0n;
-                assetChanges.set(assetId, existing + BigInt(amount));
+                assetChanges.set(assetId, existing + amount);
             }
         }
 
         const groups: AssetGroup[] = [];
 
         // issued asset group
-        const issuedAssetOutput = AssetOutput.create(0, BigInt(params.amount));
+        const issuedAssetOutput = AssetOutput.create(0, params.amount);
         const issuedAssetGroup = AssetGroup.create(
             null,
             controlAssetRef,
@@ -124,7 +124,7 @@ export class AssetManager
                     for (const asset of assets) {
                         if (asset.assetId !== assetId) continue;
                         changeInputs.push(
-                            AssetInput.create(inputIndex, BigInt(asset.amount))
+                            AssetInput.create(inputIndex, asset.amount)
                         );
                     }
                 }
@@ -181,7 +181,7 @@ export class AssetManager
      * ```
      */
     async reissue(params: ReissuanceParams): Promise<string> {
-        if (params.amount <= 0) {
+        if (params.amount <= 0n) {
             throw new Error(
                 `Reissuance amount must be greater than 0, got ${params.amount}`
             );
@@ -213,11 +213,11 @@ export class AssetManager
             if (!coin.assets) continue;
             for (const { assetId, amount } of coin.assets) {
                 if (assetId === params.assetId) {
-                    assetToReissueAmount += BigInt(amount);
+                    assetToReissueAmount += amount;
                     continue;
                 }
                 const existing = assetChanges.get(assetId) ?? 0n;
-                assetChanges.set(assetId, existing + BigInt(amount));
+                assetChanges.set(assetId, existing + amount);
             }
         }
 
@@ -244,11 +244,11 @@ export class AssetManager
                 if (!coin.assets) continue;
                 for (const { assetId, amount } of coin.assets) {
                     if (assetId === params.assetId) {
-                        assetToReissueAmount += BigInt(amount);
+                        assetToReissueAmount += amount;
                         continue;
                     }
                     const existing = assetChanges.get(assetId) ?? 0n;
-                    assetChanges.set(assetId, existing + BigInt(amount));
+                    assetChanges.set(assetId, existing + amount);
                 }
             }
             selectedCoins = [...selectedCoins, ...additional.inputs];
@@ -265,14 +265,12 @@ export class AssetManager
         for (const [inputIndex, assets] of assetInputs) {
             for (const asset of assets) {
                 if (asset.assetId !== params.assetId) continue;
-                reissueInputs.push(
-                    AssetInput.create(inputIndex, BigInt(asset.amount))
-                );
+                reissueInputs.push(AssetInput.create(inputIndex, asset.amount));
             }
         }
 
         // the total output amount of the asset to reissue = new + (optional) selected amount
-        const totalAssetAmount = assetToReissueAmount + BigInt(params.amount);
+        const totalAssetAmount = assetToReissueAmount + params.amount;
         const reissueAssetIdObj = AssetId.fromString(params.assetId);
 
         // create the reissuance asset group
@@ -293,7 +291,7 @@ export class AssetManager
                 for (const asset of assets) {
                     if (asset.assetId !== assetId) continue;
                     changeInputs.push(
-                        AssetInput.create(inputIndex, BigInt(asset.amount))
+                        AssetInput.create(inputIndex, asset.amount)
                     );
                 }
             }
@@ -342,7 +340,7 @@ export class AssetManager
      * ```
      */
     async burn(params: BurnParams): Promise<string> {
-        if (params.amount <= 0) {
+        if (params.amount <= 0n) {
             throw new Error(
                 `Burn amount must be greater than 0, got ${params.amount}`
             );
@@ -358,7 +356,7 @@ export class AssetManager
         const { selected: assetCoins } = selectCoinsWithAsset(
             virtualCoins,
             params.assetId,
-            BigInt(params.amount)
+            params.amount
         );
 
         const selectedCoins = [...assetCoins];
@@ -370,13 +368,13 @@ export class AssetManager
             if (!coin.assets) continue;
             for (const { assetId, amount } of coin.assets) {
                 const existing = assetChanges.get(assetId) ?? 0n;
-                assetChanges.set(assetId, existing + BigInt(amount));
+                assetChanges.set(assetId, existing + amount);
             }
         }
         // subtract the amount to burn from the asset change
         assetChanges.set(
             params.assetId,
-            (assetChanges.get(params.assetId) ?? 0n) - BigInt(params.amount)
+            (assetChanges.get(params.assetId) ?? 0n) - params.amount
         );
 
         const minBtcNeeded = Number(this.wallet.dustAmount);
@@ -401,7 +399,7 @@ export class AssetManager
                 if (!coin.assets) continue;
                 for (const { assetId, amount } of coin.assets) {
                     const existing = assetChanges.get(assetId) ?? 0n;
-                    assetChanges.set(assetId, existing + BigInt(amount));
+                    assetChanges.set(assetId, existing + amount);
                 }
             }
 
@@ -418,7 +416,7 @@ export class AssetManager
                 for (const asset of assets) {
                     if (asset.assetId !== assetId) continue;
                     changeInputs.push(
-                        AssetInput.create(inputIndex, BigInt(asset.amount))
+                        AssetInput.create(inputIndex, asset.amount)
                     );
                 }
             }

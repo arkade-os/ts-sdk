@@ -5,10 +5,12 @@ docs/
 .idea
 .claude/
 *.sqlite
+
+# Debug 
 *.har
+*.idb
 
 # AI
-CLAUDE.md
 TASKS.md
 *.agents.md
 REVIEW.md
