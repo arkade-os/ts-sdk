@@ -36,18 +36,22 @@ import type { AsyncStorageTaskQueue } from "../../worker/expo/asyncStorageTaskQu
 
 /**
  * Background processing configuration for @see ExpoWallet.
+ *
+ * OS-level task registration is **not** part of this config — call
+ * `registerExpoBackgroundTask` from `@arkade-os/sdk/wallet/expo/background`
+ * explicitly. Splitting that step out keeps `/wallet/expo` free of the
+ * `expo-task-manager` / `expo-background-task` dependencies, so
+ * react-native-web and Node consumers can use `ExpoWallet` without
+ * those native packages. See
+ * https://github.com/arkade-os/ts-sdk/issues/486 for details.
  */
 export interface ExpoBackgroundConfig {
-    /** Identifier registered with expo-background-task. */
-    taskName: string;
     /** Persistence layer for foreground ↔ background handoff. */
     taskQueue: TaskQueue;
     /** Processors to run on each tick. Defaults to `[contractPollProcessor]`. */
     processors?: TaskProcessor[];
     /** If set, automatically polls at this interval (ms) while the app is in the foreground. */
     foregroundIntervalMs?: number;
-    /** If set, registers the background task with the OS at this interval (minutes, min 15). */
-    minimumBackgroundInterval?: number;
 }
 
 /**
@@ -58,15 +62,45 @@ export interface ExpoWalletConfig extends WalletConfig {
 }
 
 /**
+ * Catches JS callers still passing the pre-fix-#486 fields: TypeScript
+ * blocks these at compile time, but compiled JS silently dropped them
+ * and consumers would never realize the OS task wasn't scheduled.
+ *
+ * @internal Exported for tests; not part of the public API surface.
+ */
+export function warnOnRemovedBackgroundFields(bg: unknown): void {
+    if (!bg || typeof bg !== "object") return;
+    const removed: string[] = [];
+    if ("taskName" in bg) removed.push("taskName");
+    if ("minimumBackgroundInterval" in bg) {
+        removed.push("minimumBackgroundInterval");
+    }
+    if (removed.length === 0) return;
+    console.warn(
+        `[ark-sdk] ExpoWallet.setup: ignoring removed background field(s): ${removed.join(", ")}. ` +
+            'OS-task registration moved to "@arkade-os/sdk/wallet/expo/background". ' +
+            "See https://github.com/arkade-os/ts-sdk/issues/486"
+    );
+}
+
+/**
  * Expo/React Native wallet with built-in background task processing.
  *
  * Wraps a standard @see Wallet and adds a lightweight task queue
  * for keeping contract/VTXO state fresh while the app is active and
  * across Expo BackgroundTask wakes.
  *
+ * OS-level task registration is the consumer's responsibility — call
+ * `registerExpoBackgroundTask` from
+ * `@arkade-os/sdk/wallet/expo/background` after `setup()`. Keeping
+ * registration out of `setup()` lets this entrypoint avoid pulling
+ * `expo-task-manager` / `expo-background-task` into the `/wallet/expo`
+ * bundle.
+ *
  * @example
  * ```ts
  * import { ExpoWallet } from "@arkade-os/sdk/wallet/expo";
+ * import { registerExpoBackgroundTask } from "@arkade-os/sdk/wallet/expo/background";
  * import { AsyncStorageTaskQueue } from "@arkade-os/sdk/worker/expo";
  *
  * const wallet = await ExpoWallet.setup({
@@ -75,12 +109,13 @@ export interface ExpoWalletConfig extends WalletConfig {
  *     esploraUrl: 'https://mempool.space/api',
  *     storage: { ... },
  *     background: {
- *         taskName: "ark-background-poll",
  *         taskQueue: new AsyncStorageTaskQueue(AsyncStorage),
  *         foregroundIntervalMs: 20_000,
- *         minimumBackgroundInterval: 15,
  *     },
  * });
+ *
+ * // Activate the OS scheduler (Expo Android/iOS only)
+ * await registerExpoBackgroundTask("ark-background-poll", { minimumInterval: 15 });
  *
  * const balance = await wallet.getBalance();
  * ```
@@ -91,20 +126,17 @@ export class ExpoWallet implements IWallet {
     readonly indexerProvider: Wallet["indexerProvider"];
 
     private foregroundIntervalId?: ReturnType<typeof setInterval>;
-    private readonly taskName: string;
 
     private constructor(
         private readonly wallet: Wallet,
         private readonly taskQueue: TaskQueue,
         private readonly processors: TaskProcessor[],
         private readonly deps: TaskDependencies,
-        taskName: string,
         foregroundIntervalMs?: number
     ) {
         this.identity = wallet.identity;
         this.arkProvider = wallet.arkProvider;
         this.indexerProvider = wallet.indexerProvider;
-        this.taskName = taskName;
 
         if (foregroundIntervalMs && foregroundIntervalMs > 0) {
             this.startForegroundPolling(foregroundIntervalMs);
@@ -112,16 +144,21 @@ export class ExpoWallet implements IWallet {
     }
 
     /**
-     * Create an ExpoWallet with background task support.
+     * Create an ExpoWallet with foreground/background queue handoff.
      *
      * 1. Creates the inner @see Wallet via `Wallet.create()`.
      * 2. Wires up processors (defaults to @see contractPollProcessor).
      * 3. Persists background config for the background handler (if the queue supports it).
      * 4. Seeds the task queue with a `contract-poll` task.
-     * 5. Registers the background task with the OS scheduler (if `minimumBackgroundInterval` is set).
-     * 6. Starts foreground polling if `foregroundIntervalMs` is set.
+     * 5. Starts the foreground interval if `foregroundIntervalMs` is set.
+     *
+     * OS-level scheduling lives in
+     * `@arkade-os/sdk/wallet/expo/background` and is invoked separately
+     * by the consumer.
      */
     static async setup(config: ExpoWalletConfig): Promise<ExpoWallet> {
+        warnOnRemovedBackgroundFields(config.background);
+
         const wallet = await Wallet.create(config);
 
         const processors = config.background.processors ?? [
@@ -176,27 +213,11 @@ export class ExpoWallet implements IWallet {
             taskQueue,
             processors,
             deps,
-            config.background.taskName,
             config.background.foregroundIntervalMs
         );
 
         // Seed the queue so the first tick (or background wake) has work to do
         await expoWallet.seedContractPollTask();
-
-        // Activate OS-level background scheduling
-        if (config.background.minimumBackgroundInterval) {
-            try {
-                const { registerExpoBackgroundTask } = await import(
-                    "./background"
-                );
-                await registerExpoBackgroundTask(config.background.taskName, {
-                    minimumInterval:
-                        config.background.minimumBackgroundInterval,
-                });
-            } catch {
-                // expo-background-task not installed — foreground-only mode
-            }
-        }
 
         return expoWallet;
     }
@@ -238,21 +259,17 @@ export class ExpoWallet implements IWallet {
     // ── Lifecycle ────────────────────────────────────────────────────
 
     /**
-     * Stop foreground polling and unregister the background task.
+     * Stop foreground polling and dispose the inner wallet.
+     *
+     * Does **not** unregister the OS background task — call
+     * `unregisterExpoBackgroundTask` from
+     * `@arkade-os/sdk/wallet/expo/background` yourself, matching the
+     * explicit `register` step.
      */
     async dispose(): Promise<void> {
         if (this.foregroundIntervalId) {
             clearInterval(this.foregroundIntervalId);
             this.foregroundIntervalId = undefined;
-        }
-
-        try {
-            const { unregisterExpoBackgroundTask } = await import(
-                "./background"
-            );
-            await unregisterExpoBackgroundTask(this.taskName);
-        } catch {
-            // expo-background-task not installed — nothing to unregister
         }
 
         await this.wallet.dispose();

@@ -1,13 +1,31 @@
-import Module from "module";
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CONTRACT_POLL_TASK_TYPE } from "../../../src/worker/expo/processors";
 
-const defineTaskMock = vi.fn();
-const registerTaskAsyncMock = vi.fn();
-const unregisterTaskAsyncMock = vi.fn();
-const runTasksMock = vi.fn();
-const expoIndexerProviderCtorMock = vi.fn();
-const expoArkProviderCtorMock = vi.fn();
+const {
+    defineTaskMock,
+    registerTaskAsyncMock,
+    unregisterTaskAsyncMock,
+    runTasksMock,
+    expoIndexerProviderCtorMock,
+    expoArkProviderCtorMock,
+} = vi.hoisted(() => ({
+    defineTaskMock: vi.fn(),
+    registerTaskAsyncMock: vi.fn(),
+    unregisterTaskAsyncMock: vi.fn(),
+    runTasksMock: vi.fn(),
+    expoIndexerProviderCtorMock: vi.fn(),
+    expoArkProviderCtorMock: vi.fn(),
+}));
+
+vi.mock("expo-task-manager", () => ({
+    defineTask: defineTaskMock,
+}));
+
+vi.mock("expo-background-task", () => ({
+    BackgroundTaskResult: { Success: 1, Failed: 2 },
+    registerTaskAsync: registerTaskAsyncMock,
+    unregisterTaskAsync: unregisterTaskAsyncMock,
+}));
 
 vi.mock("../../../src/worker/expo/taskRunner", async () => {
     const actual = await vi.importActual<any>(
@@ -37,34 +55,9 @@ const loadBackground = async () =>
     import("../../../src/wallet/expo/background");
 
 describe("expo background task helpers", () => {
-    const originalRequire = Module.prototype.require;
-
     beforeEach(() => {
         vi.resetModules();
         vi.clearAllMocks();
-
-        Module.prototype.require = function patchedRequire(
-            this: unknown,
-            id: string
-        ) {
-            if (id === "expo-task-manager") {
-                return {
-                    defineTask: defineTaskMock,
-                };
-            }
-            if (id === "expo-background-task") {
-                return {
-                    BackgroundTaskResult: { Success: 1, Failed: 2 },
-                    registerTaskAsync: registerTaskAsyncMock,
-                    unregisterTaskAsync: unregisterTaskAsyncMock,
-                };
-            }
-            return originalRequire.call(this, id);
-        };
-    });
-
-    afterEach(() => {
-        Module.prototype.require = originalRequire;
     });
 
     it("defines and executes the background task happy path", async () => {

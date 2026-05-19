@@ -1,3 +1,25 @@
+/**
+ * Expo background task entrypoint — `@arkade-os/sdk/wallet/expo/background`.
+ *
+ * This subpath is the **only** module in the package that touches
+ * `expo-task-manager` / `expo-background-task`. It is split out from
+ * `/wallet/expo` on purpose: those packages have no web platform and
+ * are declared as optional peer dependencies, so importing them from
+ * `/wallet/expo` would regress react-native-web / Node consumers who
+ * only need the foreground APIs.
+ *
+ * The imports are static (not lazy `require()`) because Metro's static
+ * dependency collector cannot see modules hidden behind `__require()`
+ * in the ESM build — without static imports the packages never enter
+ * the bundle graph and resolution fails at runtime. See
+ * https://github.com/arkade-os/ts-sdk/issues/486 for details.
+ *
+ * Consumers install the peers in their Expo app:
+ *   npx expo install expo-task-manager expo-background-task
+ */
+import * as TaskManager from "expo-task-manager";
+import * as BackgroundTask from "expo-background-task";
+
 import type { WalletRepository } from "../../repositories/walletRepository";
 import type { ContractRepository } from "../../repositories/contractRepository";
 import type { AsyncStorageTaskQueue } from "../../worker/expo/asyncStorageTaskQueue";
@@ -11,52 +33,6 @@ import {
 import { ExpoArkProvider } from "../../providers/expoArk";
 import { ExpoIndexerProvider } from "../../providers/expoIndexer";
 import { getRandomId } from "../utils";
-
-// ── Inline type declarations for optional Expo packages ──────────
-// These avoid a hard build-time dependency on expo-background-task
-// and expo-task-manager (they are optional peerDependencies).
-
-interface TaskManagerModule {
-    defineTask(
-        taskName: string,
-        executor: (body: {
-            data: unknown;
-            error: { code: string | number; message: string } | null;
-            executionInfo: { eventId: string; taskName: string };
-        }) => Promise<unknown>
-    ): void;
-}
-
-interface BackgroundTaskModule {
-    BackgroundTaskResult: { Success: 1; Failed: 2 };
-    registerTaskAsync(
-        taskName: string,
-        options?: { minimumInterval?: number }
-    ): Promise<void>;
-    unregisterTaskAsync(taskName: string): Promise<void>;
-}
-
-function requireTaskManager(): TaskManagerModule {
-    try {
-        return require("expo-task-manager") as TaskManagerModule;
-    } catch {
-        throw new Error(
-            "expo-task-manager is required for background tasks. " +
-                "Install it with: npx expo install expo-task-manager"
-        );
-    }
-}
-
-function requireBackgroundTask(): BackgroundTaskModule {
-    try {
-        return require("expo-background-task") as BackgroundTaskModule;
-    } catch {
-        throw new Error(
-            "expo-background-task is required for background tasks. " +
-                "Install it with: npx expo install expo-background-task"
-        );
-    }
-}
 
 // ── Persisted config ─────────────────────────────────────────────
 
@@ -92,13 +68,17 @@ export interface DefineBackgroundTaskOptions {
 /**
  * Define the Expo background task handler.
  *
- * **Must be called at module/global scope** (before React mounts).
- * Internally calls `TaskManager.defineTask()`.
+ * **Must be called at module/global scope** (before React mounts) so
+ * Expo's TaskManager can resume the task on cold start.
+ *
+ * Pair with @see registerExpoBackgroundTask to activate the OS
+ * scheduler — `ExpoWallet.setup()` no longer registers the task for
+ * you.
  *
  * @example
  * ```ts
- * // At the top of your app entry file
- * import { defineExpoBackgroundTask } from "@arkade-os/sdk/wallet/expo";
+ * // App entry (e.g. _layout.tsx) — module scope
+ * import { defineExpoBackgroundTask } from "@arkade-os/sdk/wallet/expo/background";
  * import { AsyncStorageTaskQueue } from "@arkade-os/sdk/worker/expo";
  * import AsyncStorage from "@react-native-async-storage/async-storage";
  *
@@ -114,9 +94,6 @@ export function defineExpoBackgroundTask(
     taskName: string,
     options: DefineBackgroundTaskOptions
 ): void {
-    const TaskManager = requireTaskManager();
-    const BackgroundTask = requireBackgroundTask();
-
     const {
         taskQueue,
         walletRepository,
@@ -134,7 +111,6 @@ export function defineExpoBackgroundTask(
                 return BackgroundTask.BackgroundTaskResult.Success;
             }
 
-            // Reconstruct providers
             const indexerProvider = new ExpoIndexerProvider(
                 config.arkServerUrl
             );
@@ -181,16 +157,19 @@ export function defineExpoBackgroundTask(
 /**
  * Activate the OS-level background task scheduler.
  *
- * Call this after @see defineExpoBackgroundTask (typically inside
- * @see ExpoWallet.setup or in a React component after wallet init).
+ * Call once after @see defineExpoBackgroundTask — typically right after
+ * `ExpoWallet.setup()`. Safe to call again to update the interval.
  *
- * @param minimumInterval - Minimum interval in minutes (default 15).
+ * @param taskName - The task name passed to {@link defineExpoBackgroundTask}.
+ * @param options.minimumInterval - Minimum interval in **minutes** (default
+ *   15, the floor enforced by `expo-background-task`).
+ *
+ * @see https://docs.expo.dev/versions/latest/sdk/background-task/#backgroundtaskoptions
  */
 export async function registerExpoBackgroundTask(
     taskName: string,
     options?: { minimumInterval?: number }
 ): Promise<void> {
-    const BackgroundTask = requireBackgroundTask();
     await BackgroundTask.registerTaskAsync(taskName, {
         minimumInterval: (options?.minimumInterval ?? 15) * 60,
     });
@@ -198,10 +177,13 @@ export async function registerExpoBackgroundTask(
 
 /**
  * Unregister the background task from the OS scheduler.
+ *
+ * `ExpoWallet.dispose()` does **not** call this — the OS-level task
+ * lifecycle is the consumer's responsibility, matching the explicit
+ * `register` step.
  */
 export async function unregisterExpoBackgroundTask(
     taskName: string
 ): Promise<void> {
-    const BackgroundTask = requireBackgroundTask();
     await BackgroundTask.unregisterTaskAsync(taskName);
 }
