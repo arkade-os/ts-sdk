@@ -1516,8 +1516,15 @@ describe("ArkadeSwaps", () => {
                     expect(result).toHaveProperty("txid");
                     expect(result.txid).toHaveLength(64);
 
-                    const balance = await defaultWallet.getBalance();
-                    expect(balance.available).toBeGreaterThan(0);
+                    // With VtxoManager enabled, the just-claimed VTXO can
+                    // briefly disappear from available balance while it's
+                    // being re-registered into the next settlement round.
+                    // Poll instead of asserting on a single snapshot.
+                    await waitForBalance(
+                        () => defaultWallet.getBalance(),
+                        1,
+                        10_000
+                    );
                 } finally {
                     await defaultWallet.dispose();
                 }
