@@ -1,27 +1,25 @@
 {
     "compilerOptions": {
-        "target": "es2020",
+        "target": "es2022",
         "lib": ["es2022", "dom", "dom.iterable"],
         "module": "esnext",
-        "moduleResolution": "node",
+        "moduleResolution": "bundler",
         "strict": true,
         "esModuleInterop": true,
         "skipLibCheck": true,
         "forceConsistentCasingInFileNames": true,
         "resolveJsonModule": true,
         "isolatedModules": true,
-        "declaration": true,
-        "declarationDir": "./dist/types",
-        "outDir": "./dist/esm"
+        "noEmit": true
     },
     "include": [
-        "src"
+        "src",
+        "tsup.config.ts"
     ],
     "exclude": [
         "node_modules",
         "dist",
         "**/*.test.ts",
-        "examples",
-        "src/repositories/indexedDB/websqlAdapter.ts"
+        "examples"
     ]
 }

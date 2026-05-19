@@ -3,79 +3,125 @@
     "version": "0.4.27",
     "description": "TypeScript SDK for building Bitcoin wallets using the Arkade protocol",
     "type": "module",
-    "main": "./dist/cjs/index.js",
-    "module": "./dist/esm/index.js",
-    "types": "./dist/types/index.d.ts",
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
     "sideEffects": [
-        "dist/esm/contracts/handlers/index.js",
-        "dist/cjs/contracts/handlers/index.js"
+        "dist/index.js",
+        "dist/index.cjs",
+        "dist/contracts/handlers/index.js",
+        "dist/contracts/handlers/index.cjs"
     ],
     "exports": {
         ".": {
-            "types": "./dist/types/index.d.ts",
-            "import": "./dist/esm/index.js",
-            "require": "./dist/cjs/index.js",
-            "default": "./dist/esm/index.js"
+            "import": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.js"
+            },
+            "require": {
+                "types": "./dist/index.d.cts",
+                "default": "./dist/index.cjs"
+            }
         },
         "./adapters/expo": {
-            "types": "./dist/types/adapters/expo.d.ts",
-            "import": "./dist/esm/adapters/expo.js",
-            "require": "./dist/cjs/adapters/expo.js",
-            "default": "./dist/esm/adapters/expo.js"
+            "import": {
+                "types": "./dist/adapters/expo.d.ts",
+                "default": "./dist/adapters/expo.js"
+            },
+            "require": {
+                "types": "./dist/adapters/expo.d.cts",
+                "default": "./dist/adapters/expo.cjs"
+            }
         },
         "./adapters/localStorage": {
-            "types": "./dist/types/adapters/localStorage.d.ts",
-            "import": "./dist/esm/adapters/localStorage.js",
-            "require": "./dist/cjs/adapters/localStorage.js",
-            "default": "./dist/esm/adapters/localStorage.js"
+            "import": {
+                "types": "./dist/adapters/localStorage.d.ts",
+                "default": "./dist/adapters/localStorage.js"
+            },
+            "require": {
+                "types": "./dist/adapters/localStorage.d.cts",
+                "default": "./dist/adapters/localStorage.cjs"
+            }
         },
         "./adapters/fileSystem": {
-            "types": "./dist/types/adapters/fileSystem.d.ts",
-            "import": "./dist/esm/adapters/fileSystem.js",
-            "require": "./dist/cjs/adapters/fileSystem.js",
-            "default": "./dist/esm/adapters/fileSystem.js"
+            "import": {
+                "types": "./dist/adapters/fileSystem.d.ts",
+                "default": "./dist/adapters/fileSystem.js"
+            },
+            "require": {
+                "types": "./dist/adapters/fileSystem.d.cts",
+                "default": "./dist/adapters/fileSystem.cjs"
+            }
         },
         "./adapters/indexedDB": {
-            "types": "./dist/types/adapters/indexedDB.d.ts",
-            "import": "./dist/esm/adapters/indexedDB.js",
-            "require": "./dist/cjs/adapters/indexedDB.js",
-            "default": "./dist/esm/adapters/indexedDB.js"
+            "import": {
+                "types": "./dist/adapters/indexedDB.d.ts",
+                "default": "./dist/adapters/indexedDB.js"
+            },
+            "require": {
+                "types": "./dist/adapters/indexedDB.d.cts",
+                "default": "./dist/adapters/indexedDB.cjs"
+            }
         },
         "./adapters/asyncStorage": {
-            "types": "./dist/types/adapters/asyncStorage.d.ts",
-            "import": "./dist/esm/adapters/asyncStorage.js",
-            "require": "./dist/cjs/adapters/asyncStorage.js",
-            "default": "./dist/esm/adapters/asyncStorage.js"
+            "import": {
+                "types": "./dist/adapters/asyncStorage.d.ts",
+                "default": "./dist/adapters/asyncStorage.js"
+            },
+            "require": {
+                "types": "./dist/adapters/asyncStorage.d.cts",
+                "default": "./dist/adapters/asyncStorage.cjs"
+            }
         },
         "./repositories/sqlite": {
-            "types": "./dist/types/repositories/sqlite/index.d.ts",
-            "import": "./dist/esm/repositories/sqlite/index.js",
-            "require": "./dist/cjs/repositories/sqlite/index.js",
-            "default": "./dist/esm/repositories/sqlite/index.js"
+            "import": {
+                "types": "./dist/repositories/sqlite/index.d.ts",
+                "default": "./dist/repositories/sqlite/index.js"
+            },
+            "require": {
+                "types": "./dist/repositories/sqlite/index.d.cts",
+                "default": "./dist/repositories/sqlite/index.cjs"
+            }
         },
         "./repositories/realm": {
-            "types": "./dist/types/repositories/realm/index.d.ts",
-            "import": "./dist/esm/repositories/realm/index.js",
-            "require": "./dist/cjs/repositories/realm/index.js",
-            "default": "./dist/esm/repositories/realm/index.js"
+            "import": {
+                "types": "./dist/repositories/realm/index.d.ts",
+                "default": "./dist/repositories/realm/index.js"
+            },
+            "require": {
+                "types": "./dist/repositories/realm/index.d.cts",
+                "default": "./dist/repositories/realm/index.cjs"
+            }
         },
         "./worker/expo": {
-            "types": "./dist/types/worker/expo/index.d.ts",
-            "import": "./dist/esm/worker/expo/index.js",
-            "require": "./dist/cjs/worker/expo/index.js",
-            "default": "./dist/esm/worker/expo/index.js"
+            "import": {
+                "types": "./dist/worker/expo/index.d.ts",
+                "default": "./dist/worker/expo/index.js"
+            },
+            "require": {
+                "types": "./dist/worker/expo/index.d.cts",
+                "default": "./dist/worker/expo/index.cjs"
+            }
         },
         "./wallet/expo": {
-            "types": "./dist/types/wallet/expo/index.d.ts",
-            "import": "./dist/esm/wallet/expo/index.js",
-            "require": "./dist/cjs/wallet/expo/index.js",
-            "default": "./dist/esm/wallet/expo/index.js"
+            "import": {
+                "types": "./dist/wallet/expo/index.d.ts",
+                "default": "./dist/wallet/expo/index.js"
+            },
+            "require": {
+                "types": "./dist/wallet/expo/index.d.cts",
+                "default": "./dist/wallet/expo/index.cjs"
+            }
         },
         "./wallet/expo/background": {
-            "types": "./dist/types/wallet/expo/background.d.ts",
-            "import": "./dist/esm/wallet/expo/background.js",
-            "require": "./dist/cjs/wallet/expo/background.js",
-            "default": "./dist/esm/wallet/expo/background.js"
+            "import": {
+                "types": "./dist/wallet/expo/background.d.ts",
+                "default": "./dist/wallet/expo/background.js"
+            },
+            "require": {
+                "types": "./dist/wallet/expo/background.d.cts",
+                "default": "./dist/wallet/expo/background.cjs"
+            }
         }
     },
     "files": [
@@ -86,16 +132,9 @@
         "registry": "https://registry.npmjs.org/"
     },
     "scripts": {
-        "build": "rimraf dist && pnpm run build:esm && pnpm run build:expo:esm && pnpm run build:cjs && pnpm run build:expo:cjs && pnpm run build:types && pnpm run build:expo:types && node scripts/add-extensions.js && node scripts/generate-package-files.js",
-        "build:esm": "tsc -p tsconfig.esm.json --outDir dist/esm",
-        "build:cjs": "tsc -p tsconfig.cjs.json --outDir dist/cjs",
-        "build:types": "tsc -p tsconfig.json --outDir dist/types --emitDeclarationOnly",
-        "build:expo:check": "node -e \"try{require.resolve('expo-sqlite')}catch{process.exit(1)}\"",
-        "build:expo:esm": "pnpm run build:expo:check || exit 0; tsc -p tsconfig.expo.json --outDir dist/esm",
-        "build:expo:cjs": "pnpm run build:expo:check || exit 0; tsc -p tsconfig.expo.json --module commonjs --outDir dist/cjs",
-        "build:expo:types": "pnpm run build:expo:check || exit 0; tsc -p tsconfig.expo.json --outDir dist/types --declaration --emitDeclarationOnly",
-        "build:browser": "node scripts/build-browser.js",
-        "docs:build": "pnpm run build:types && pnpm typedoc",
+        "build": "tsup",
+        "typecheck": "tsc --noEmit",
+        "docs:build": "pnpm run typecheck && pnpm typedoc",
         "docs:open": "open ./docs/index.html",
         "test": "vitest run",
         "test:master": "ARK_ENV=master vitest run",
@@ -136,13 +175,11 @@
         "@types/node": "24.3.1",
         "@vitest/coverage-v8": "3.2.4",
         "better-sqlite3": "12.6.2",
-        "esbuild": "^0.27.3",
         "eventsource": "4.0.0",
-        "glob": "11.1.0",
         "husky": "9.1.7",
         "indexeddbshim": "16.1.0",
         "prettier": "3.6.2",
-        "rimraf": "^6.1.2",
+        "tsup": "^8.5.0",
         "typedoc": "^0.28.16",
         "typescript": "5.9.2",
         "vitest": "3.2.4"

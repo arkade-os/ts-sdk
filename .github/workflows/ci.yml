@@ -98,4 +98,6 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Type-check
+        run: pnpm run typecheck
       - run: pnpm build
