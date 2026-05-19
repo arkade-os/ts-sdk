@@ -135,6 +135,7 @@
     },
     "scripts": {
         "build": "tsup",
+        "smoke:dist": "node scripts/smoke-dist.mjs",
         "typecheck": "tsc --noEmit",
         "docs:build": "pnpm run typecheck && pnpm typedoc",
         "docs:open": "open ./docs/index.html",
