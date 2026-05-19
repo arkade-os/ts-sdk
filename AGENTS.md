@@ -46,7 +46,7 @@ pnpm run release:boltz-swap   # Release boltz-swap only
 ## Code Style
 
 - **Prettier**: double quotes, semicolons, trailing commas (all), 100 char width, 4-space indent
-- **Package manager**: pnpm 10.25.x only (enforced). Node >=22.12.0
+- **Package manager**: pnpm 10.25.x only (enforced). Node >=24.15.0 (see `.nvmrc`)
 - **TypeScript**: 5.9, strict mode, target ES2022, module resolution "bundler"
 
 ## Architecture

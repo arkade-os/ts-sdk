@@ -12,7 +12,7 @@ TypeScript packages for the Arkade Bitcoin wallet ecosystem — on-chain/off-cha
 
 ## Prerequisites
 
-- Node.js >= 22.12.0 (LTS)
+- Node.js >= 24.15.0 (LTS — see `.nvmrc`)
 - pnpm >= 10.25.0
 
 ```bash
