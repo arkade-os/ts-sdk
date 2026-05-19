@@ -1,9 +1,5 @@
 import type { SQLExecutor } from "@arkade-os/sdk/repositories/sqlite";
-import type {
-    GetSwapsFilter,
-    BoltzSwap,
-    SwapRepository,
-} from "../swap-repository";
+import type { GetSwapsFilter, BoltzSwap, SwapRepository } from "../swap-repository";
 
 interface SwapRow {
     id: string;
@@ -48,13 +44,13 @@ export class SQLiteSwapRepository implements SwapRepository {
             )
         `);
         await this.executor.run(
-            `CREATE INDEX IF NOT EXISTS idx_boltz_swaps_status ON boltz_swaps(status)`
+            `CREATE INDEX IF NOT EXISTS idx_boltz_swaps_status ON boltz_swaps(status)`,
         );
         await this.executor.run(
-            `CREATE INDEX IF NOT EXISTS idx_boltz_swaps_type ON boltz_swaps(type)`
+            `CREATE INDEX IF NOT EXISTS idx_boltz_swaps_type ON boltz_swaps(type)`,
         );
         await this.executor.run(
-            `CREATE INDEX IF NOT EXISTS idx_boltz_swaps_created_at ON boltz_swaps(created_at)`
+            `CREATE INDEX IF NOT EXISTS idx_boltz_swaps_created_at ON boltz_swaps(created_at)`,
         );
     }
 
@@ -69,13 +65,7 @@ export class SQLiteSwapRepository implements SwapRepository {
         await this.executor.run(
             `INSERT OR REPLACE INTO boltz_swaps (id, type, status, created_at, data)
              VALUES (?, ?, ?, ?, ?)`,
-            [
-                swap.id,
-                swap.type,
-                swap.status,
-                swap.createdAt,
-                JSON.stringify(swap),
-            ]
+            [swap.id, swap.type, swap.status, swap.createdAt, JSON.stringify(swap)],
         );
     }
 
@@ -84,9 +74,7 @@ export class SQLiteSwapRepository implements SwapRepository {
         await this.executor.run(`DELETE FROM boltz_swaps WHERE id = ?`, [id]);
     }
 
-    async getAllSwaps<T extends BoltzSwap>(
-        filter?: GetSwapsFilter
-    ): Promise<T[]> {
+    async getAllSwaps<T extends BoltzSwap>(filter?: GetSwapsFilter): Promise<T[]> {
         await this.ensureInit();
 
         // Early return for empty array filters (no possible matches)
@@ -104,9 +92,7 @@ export class SQLiteSwapRepository implements SwapRepository {
         if (filter) {
             if (filter.id !== undefined) {
                 if (Array.isArray(filter.id)) {
-                    conditions.push(
-                        `id IN (${filter.id.map(() => "?").join(",")})`
-                    );
+                    conditions.push(`id IN (${filter.id.map(() => "?").join(",")})`);
                     params.push(...filter.id);
                 } else {
                     conditions.push(`id = ?`);
@@ -116,9 +102,7 @@ export class SQLiteSwapRepository implements SwapRepository {
 
             if (filter.status !== undefined) {
                 if (Array.isArray(filter.status)) {
-                    conditions.push(
-                        `status IN (${filter.status.map(() => "?").join(",")})`
-                    );
+                    conditions.push(`status IN (${filter.status.map(() => "?").join(",")})`);
                     params.push(...filter.status);
                 } else {
                     conditions.push(`status = ?`);
@@ -128,9 +112,7 @@ export class SQLiteSwapRepository implements SwapRepository {
 
             if (filter.type !== undefined) {
                 if (Array.isArray(filter.type)) {
-                    conditions.push(
-                        `type IN (${filter.type.map(() => "?").join(",")})`
-                    );
+                    conditions.push(`type IN (${filter.type.map(() => "?").join(",")})`);
                     params.push(...filter.type);
                 } else {
                     conditions.push(`type = ?`);
@@ -149,10 +131,7 @@ export class SQLiteSwapRepository implements SwapRepository {
             sql += ` ORDER BY created_at ${direction}`;
         }
 
-        const rows = await this.executor.all<Pick<SwapRow, "data">>(
-            sql,
-            params
-        );
+        const rows = await this.executor.all<Pick<SwapRow, "data">>(sql, params);
         return rows.map((row) => JSON.parse(row.data) as T);
     }
 

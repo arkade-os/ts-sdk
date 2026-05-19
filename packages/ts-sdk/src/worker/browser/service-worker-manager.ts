@@ -25,7 +25,7 @@ function debugLog(debug: boolean | undefined, ...args: unknown[]) {
 }
 
 function normalizeOptions(
-    pathOrOptions: string | SetupServiceWorkerOptions
+    pathOrOptions: string | SetupServiceWorkerOptions,
 ): Required<Omit<SetupServiceWorkerOptions, "onNeedRefresh" | "onUpdated">> &
     Pick<SetupServiceWorkerOptions, "onNeedRefresh" | "onUpdated"> {
     if (typeof pathOrOptions === "string") {
@@ -49,10 +49,7 @@ function normalizeOptions(
     };
 }
 
-function sendSkipWaiting(
-    worker: ServiceWorker | null | undefined,
-    debug?: boolean
-) {
+function sendSkipWaiting(worker: ServiceWorker | null | undefined, debug?: boolean) {
     if (!worker) return;
     try {
         worker.postMessage({ type: "SKIP_WAITING" });
@@ -64,15 +61,14 @@ function sendSkipWaiting(
 
 function attachUpdateHandlers(
     registration: ServiceWorkerRegistration,
-    options: ReturnType<typeof normalizeOptions>
+    options: ReturnType<typeof normalizeOptions>,
 ) {
     // Guard: only the first caller per registration attaches handlers.
     // Subsequent calls with different options are silently ignored.
     if (handshakes.has(registration)) return;
     handshakes.add(registration);
 
-    const { autoReload, onNeedRefresh, onUpdated, activationTimeoutMs, debug } =
-        options;
+    const { autoReload, onNeedRefresh, onUpdated, activationTimeoutMs, debug } = options;
 
     let reloadTriggered = false;
 
@@ -98,18 +94,12 @@ function attachUpdateHandlers(
         if (activationTimeoutMs > 0 && typeof window !== "undefined") {
             window.setTimeout(() => {
                 if (registration.waiting) {
-                    debugLog(
-                        debug,
-                        "Waiting worker still pending; re-sending SKIP_WAITING"
-                    );
+                    debugLog(debug, "Waiting worker still pending; re-sending SKIP_WAITING");
                     sendSkipWaiting(registration.waiting, debug);
                     registration
                         .update()
                         .catch(() =>
-                            debugLog(
-                                debug,
-                                "Service worker update retry failed (timeout path)"
-                            )
+                            debugLog(debug, "Service worker update retry failed (timeout path)"),
                         );
                 }
             }, activationTimeoutMs);
@@ -139,7 +129,7 @@ function attachUpdateHandlers(
 }
 
 function registerOnce(
-    options: ReturnType<typeof normalizeOptions>
+    options: ReturnType<typeof normalizeOptions>,
 ): Promise<ServiceWorkerRegistration> {
     const { path, updateViaCache } = options;
 
@@ -152,7 +142,7 @@ function registerOnce(
                 } catch (error) {
                     console.warn(
                         "Service worker update failed; continuing with registration",
-                        error
+                        error,
                     );
                 }
                 return registration;
@@ -180,7 +170,7 @@ function registerOnce(
  * @throws if service workers are not supported or registration fails.
  */
 export async function setupServiceWorkerOnce(
-    pathOrOptions: string | SetupServiceWorkerOptions
+    pathOrOptions: string | SetupServiceWorkerOptions,
 ): Promise<ServiceWorkerRegistration> {
     ensureServiceWorkerSupport();
     const options = normalizeOptions(pathOrOptions);
@@ -194,9 +184,7 @@ export async function setupServiceWorkerOnce(
  * @param path - Optional service worker script path to register and prefer.
  * @throws if service workers are not supported or no active worker is available.
  */
-export async function getActiveServiceWorker(
-    path?: string
-): Promise<ServiceWorker> {
+export async function getActiveServiceWorker(path?: string): Promise<ServiceWorker> {
     ensureServiceWorkerSupport();
     const registration: ServiceWorkerRegistration = path
         ? await registerOnce(normalizeOptions(path))

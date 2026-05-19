@@ -14,7 +14,7 @@ export interface AggregateKey {
 export function aggregateKeys(
     publicKeys: Uint8Array[],
     sort: boolean,
-    options: Partial<KeyAggOptions> = {}
+    options: Partial<KeyAggOptions> = {},
 ): AggregateKey {
     if (sort) {
         publicKeys = musig.sortKeys(publicKeys);
@@ -32,14 +32,10 @@ export function aggregateKeys(
     const tweakBytes = schnorr.utils.taggedHash(
         "TapTweak",
         preTweakedKey.toBytes(true).subarray(1),
-        options.taprootTweak ?? new Uint8Array(0)
+        options.taprootTweak ?? new Uint8Array(0),
     );
 
-    const { aggPublicKey: finalKey } = musig.keyAggregate(
-        publicKeys,
-        [tweakBytes],
-        [true]
-    );
+    const { aggPublicKey: finalKey } = musig.keyAggregate(publicKeys, [tweakBytes], [true]);
 
     return {
         preTweakedKey: preTweakedKey.toBytes(true),

@@ -12,9 +12,7 @@ vi.mock("../../../src/wallet/wallet", () => ({
 }));
 
 vi.mock("../../../src/worker/expo/taskRunner", async () => {
-    const actual = await vi.importActual<any>(
-        "../../../src/worker/expo/taskRunner"
-    );
+    const actual = await vi.importActual<any>("../../../src/worker/expo/taskRunner");
     return {
         ...actual,
         runTasks: runTasksMock,
@@ -88,9 +86,7 @@ describe("ExpoWallet", () => {
             exitTimelockValue: "77",
             exitTimelockType: "blocks",
         });
-        expect(await taskQueue.getTasks(CONTRACT_POLL_TASK_TYPE)).toHaveLength(
-            1
-        );
+        expect(await taskQueue.getTasks(CONTRACT_POLL_TASK_TYPE)).toHaveLength(1);
 
         await wallet.dispose();
         expect(walletStub.dispose).toHaveBeenCalledTimes(1);
@@ -131,17 +127,13 @@ describe("ExpoWallet", () => {
             },
         } as any);
 
-        expect(await taskQueue.getTasks(CONTRACT_POLL_TASK_TYPE)).toHaveLength(
-            1
-        );
+        expect(await taskQueue.getTasks(CONTRACT_POLL_TASK_TYPE)).toHaveLength(1);
 
         await vi.advanceTimersByTimeAsync(1_000);
 
         expect(runTasksMock).toHaveBeenCalledTimes(1);
         expect(await taskQueue.getResults()).toEqual([]);
-        expect(await taskQueue.getTasks(CONTRACT_POLL_TASK_TYPE)).toHaveLength(
-            1
-        );
+        expect(await taskQueue.getTasks(CONTRACT_POLL_TASK_TYPE)).toHaveLength(1);
 
         await wallet.dispose();
         expect(walletStub.dispose).toHaveBeenCalledTimes(1);
@@ -174,21 +166,15 @@ describe("ExpoWallet", () => {
             onchain: 2,
         });
         await expect(wallet.getVtxos()).resolves.toEqual([{ txid: "v1" }]);
-        await expect(wallet.getBoardingUtxos()).resolves.toEqual([
-            { txid: "u1" },
-        ]);
-        await expect(wallet.getTransactionHistory()).resolves.toEqual([
-            { txid: "h1" },
-        ]);
+        await expect(wallet.getBoardingUtxos()).resolves.toEqual([{ txid: "u1" }]);
+        await expect(wallet.getTransactionHistory()).resolves.toEqual([{ txid: "h1" }]);
         await expect(wallet.getContractManager()).resolves.toEqual({
             id: "manager",
         });
         await expect(wallet.getDelegatorManager()).resolves.toEqual({
             id: "delegator",
         });
-        await expect(wallet.sendBitcoin({ amount: 1 } as any)).resolves.toBe(
-            "send-txid"
-        );
+        await expect(wallet.sendBitcoin({ amount: 1 } as any)).resolves.toBe("send-txid");
         await expect(wallet.settle()).resolves.toBe("settle-txid");
 
         expect(walletStub.getAddress).toHaveBeenCalledTimes(1);

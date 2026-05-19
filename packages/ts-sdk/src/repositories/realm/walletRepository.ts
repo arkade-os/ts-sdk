@@ -1,13 +1,5 @@
-import {
-    ArkTransaction,
-    ExtendedCoin,
-    ExtendedVirtualCoin,
-} from "../../wallet";
-import {
-    WalletRepository,
-    WalletState,
-    VtxoRepositoryKey,
-} from "../walletRepository";
+import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
+import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
 import {
     serializeVtxo,
     serializeUtxo,
@@ -61,16 +53,11 @@ export class RealmWalletRepository implements WalletRepository {
 
     async getVtxos(address: string): Promise<ExtendedVirtualCoin[]> {
         await this.ensureInit();
-        const results = this.realm
-            .objects("ArkVtxo")
-            .filtered("address == $0", address);
+        const results = this.realm.objects("ArkVtxo").filtered("address == $0", address);
         return [...results].map(vtxoObjectToDomain);
     }
 
-    async saveVtxos(
-        address: string,
-        vtxos: ExtendedVirtualCoin[]
-    ): Promise<void> {
+    async saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void> {
         await this.ensureInit();
         this.realm.write(() => {
             for (const vtxo of vtxos) {
@@ -101,13 +88,11 @@ export class RealmWalletRepository implements WalletRepository {
                         spentBy: s.spentBy ?? null,
                         settledBy: s.settledBy ?? null,
                         arkTxId: s.arkTxId ?? null,
-                        extraWitnessJson: s.extraWitness
-                            ? JSON.stringify(s.extraWitness)
-                            : null,
+                        extraWitnessJson: s.extraWitness ? JSON.stringify(s.extraWitness) : null,
                         assetsJson: s.assets ? JSON.stringify(s.assets) : null,
                         script: s.script ?? null,
                     },
-                    "modified"
+                    "modified",
                 );
             }
         });
@@ -116,32 +101,25 @@ export class RealmWalletRepository implements WalletRepository {
     async deleteVtxos(address: string): Promise<void> {
         await this.ensureInit();
         this.realm.write(() => {
-            const toDelete = this.realm
-                .objects("ArkVtxo")
-                .filtered("address == $0", address);
+            const toDelete = this.realm.objects("ArkVtxo").filtered("address == $0", address);
             this.realm.delete(toDelete);
         });
     }
 
     async getVtxosForScript(script: string): Promise<ExtendedVirtualCoin[]> {
         await this.ensureInit();
-        const results = this.realm
-            .objects("ArkVtxo")
-            .filtered("script == $0", script);
+        const results = this.realm.objects("ArkVtxo").filtered("script == $0", script);
         return [...results].map(vtxoObjectToDomain);
     }
 
-    async saveVtxosForScript(
-        key: VtxoRepositoryKey,
-        vtxos: ExtendedVirtualCoin[]
-    ): Promise<void> {
+    async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
         if (!key.address) {
             throw new Error("RealmWalletRepository requires an address");
         }
         for (const vtxo of vtxos) {
             if (!isVtxoForScript(vtxo, key.script)) {
                 throw new Error(
-                    `VTXO ${vtxo.txid}:${vtxo.vout} script mismatch: expected ${key.script}, got ${vtxo.script}`
+                    `VTXO ${vtxo.txid}:${vtxo.vout} script mismatch: expected ${key.script}, got ${vtxo.script}`,
                 );
             }
         }
@@ -151,9 +129,7 @@ export class RealmWalletRepository implements WalletRepository {
     async deleteVtxosForScript(script: string): Promise<void> {
         await this.ensureInit();
         this.realm.write(() => {
-            const toDelete = this.realm
-                .objects("ArkVtxo")
-                .filtered("script == $0", script);
+            const toDelete = this.realm.objects("ArkVtxo").filtered("script == $0", script);
             this.realm.delete(toDelete);
         });
     }
@@ -162,9 +138,7 @@ export class RealmWalletRepository implements WalletRepository {
 
     async getUtxos(address: string): Promise<ExtendedCoin[]> {
         await this.ensureInit();
-        const results = this.realm
-            .objects("ArkUtxo")
-            .filtered("address == $0", address);
+        const results = this.realm.objects("ArkUtxo").filtered("address == $0", address);
         return [...results].map(utxoObjectToDomain);
     }
 
@@ -187,11 +161,9 @@ export class RealmWalletRepository implements WalletRepository {
                         intentCb: s.intentTapLeafScript.cb,
                         intentS: s.intentTapLeafScript.s,
                         statusJson: JSON.stringify(s.status),
-                        extraWitnessJson: s.extraWitness
-                            ? JSON.stringify(s.extraWitness)
-                            : null,
+                        extraWitnessJson: s.extraWitness ? JSON.stringify(s.extraWitness) : null,
                     },
-                    "modified"
+                    "modified",
                 );
             }
         });
@@ -200,9 +172,7 @@ export class RealmWalletRepository implements WalletRepository {
     async deleteUtxos(address: string): Promise<void> {
         await this.ensureInit();
         this.realm.write(() => {
-            const toDelete = this.realm
-                .objects("ArkUtxo")
-                .filtered("address == $0", address);
+            const toDelete = this.realm.objects("ArkUtxo").filtered("address == $0", address);
             this.realm.delete(toDelete);
         });
     }
@@ -211,18 +181,13 @@ export class RealmWalletRepository implements WalletRepository {
 
     async getTransactionHistory(address: string): Promise<ArkTransaction[]> {
         await this.ensureInit();
-        const results = this.realm
-            .objects("ArkTransaction")
-            .filtered("address == $0", address);
+        const results = this.realm.objects("ArkTransaction").filtered("address == $0", address);
         const txs = [...results].map(txObjectToDomain);
         txs.sort((a, b) => a.createdAt - b.createdAt);
         return txs;
     }
 
-    async saveTransactions(
-        address: string,
-        txs: ArkTransaction[]
-    ): Promise<void> {
+    async saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {
         await this.ensureInit();
         this.realm.write(() => {
             for (const tx of txs) {
@@ -238,11 +203,9 @@ export class RealmWalletRepository implements WalletRepository {
                         amount: tx.amount,
                         settled: tx.settled,
                         createdAt: tx.createdAt,
-                        assetsJson: tx.assets
-                            ? JSON.stringify(serializeAssets(tx.assets))
-                            : null,
+                        assetsJson: tx.assets ? JSON.stringify(serializeAssets(tx.assets)) : null,
                     },
-                    "modified"
+                    "modified",
                 );
             }
         });
@@ -285,11 +248,9 @@ export class RealmWalletRepository implements WalletRepository {
                 {
                     key: "state",
                     lastSyncTime: state.lastSyncTime,
-                    settingsJson: state.settings
-                        ? JSON.stringify(state.settings)
-                        : null,
+                    settingsJson: state.settings ? JSON.stringify(state.settings) : null,
                 },
-                "modified"
+                "modified",
             );
         });
     }
@@ -326,9 +287,7 @@ function vtxoObjectToDomain(obj: any): ExtendedVirtualCoin {
         spentBy: obj.spentBy ?? undefined,
         settledBy: obj.settledBy ?? undefined,
         arkTxId: obj.arkTxId ?? undefined,
-        extraWitness: obj.extraWitnessJson
-            ? JSON.parse(obj.extraWitnessJson)
-            : undefined,
+        extraWitness: obj.extraWitnessJson ? JSON.parse(obj.extraWitnessJson) : undefined,
         assets: obj.assetsJson ? JSON.parse(obj.assetsJson) : undefined,
         // Post-migration every row has `script`, but the backfill is
         // idempotent: derive from `address` if the legacy column is still
@@ -355,9 +314,7 @@ function utxoObjectToDomain(obj: any): ExtendedCoin {
             s: obj.intentS,
         } as SerializedTapLeaf,
         status: JSON.parse(obj.statusJson),
-        extraWitness: obj.extraWitnessJson
-            ? JSON.parse(obj.extraWitnessJson)
-            : undefined,
+        extraWitness: obj.extraWitnessJson ? JSON.parse(obj.extraWitnessJson) : undefined,
     };
 
     return deserializeUtxo(serialized);

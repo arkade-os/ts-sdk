@@ -36,12 +36,9 @@ describe("RestIndexerProvider", () => {
 
             const requestUrl = new URL(mockFetch.mock.calls[0][0]);
             expect(requestUrl.origin + requestUrl.pathname).toBe(
-                "http://localhost:7070/v1/indexer/vtxos"
+                "http://localhost:7070/v1/indexer/vtxos",
             );
-            expect(requestUrl.searchParams.getAll("scripts")).toEqual([
-                "script-a",
-                "script-b",
-            ]);
+            expect(requestUrl.searchParams.getAll("scripts")).toEqual(["script-a", "script-b"]);
             expect(requestUrl.searchParams.get("spendableOnly")).toBe("false");
             expect(requestUrl.searchParams.get("pendingOnly")).toBe("true");
             expect(requestUrl.searchParams.get("after")).toBe("1678");
@@ -68,10 +65,7 @@ describe("RestIndexerProvider", () => {
             });
 
             const requestUrl = new URL(mockFetch.mock.calls[0][0]);
-            expect(requestUrl.searchParams.getAll("outpoints")).toEqual([
-                "txid-1:0",
-                "txid-2:1",
-            ]);
+            expect(requestUrl.searchParams.getAll("outpoints")).toEqual(["txid-1:0", "txid-2:1"]);
             expect(requestUrl.searchParams.get("spentOnly")).toBe("true");
             expect(requestUrl.searchParams.get("after")).toBe("0");
             expect(requestUrl.searchParams.get("before")).toBe("0");
@@ -85,10 +79,8 @@ describe("RestIndexerProvider", () => {
                 provider.getVtxos({
                     scripts: ["script-a"],
                     outpoints: [{ txid: "txid-1", vout: 0 }],
-                })
-            ).rejects.toThrow(
-                "scripts and outpoints are mutually exclusive options"
-            );
+                }),
+            ).rejects.toThrow("scripts and outpoints are mutually exclusive options");
 
             expect(mockFetch).not.toHaveBeenCalled();
         });
@@ -98,7 +90,7 @@ describe("RestIndexerProvider", () => {
 
             // @ts-expect-error either scripts or outpoints must be provided
             await expect(provider.getVtxos({})).rejects.toThrow(
-                "Either scripts or outpoints must be provided"
+                "Either scripts or outpoints must be provided",
             );
 
             expect(mockFetch).not.toHaveBeenCalled();
@@ -112,9 +104,9 @@ describe("RestIndexerProvider", () => {
                     scripts: ["script-a"],
                     spendableOnly: true,
                     spentOnly: true,
-                })
+                }),
             ).rejects.toThrow(
-                "spendableOnly, spentOnly, and recoverableOnly are mutually exclusive options"
+                "spendableOnly, spentOnly, and recoverableOnly are mutually exclusive options",
             );
 
             expect(mockFetch).not.toHaveBeenCalled();
@@ -128,7 +120,7 @@ describe("RestIndexerProvider", () => {
                     scripts: ["script-a"],
                     after: 2000,
                     before: 2000,
-                })
+                }),
             ).rejects.toThrow("before must be greater than after");
 
             expect(mockFetch).not.toHaveBeenCalled();
@@ -156,9 +148,7 @@ describe("RestIndexerProvider", () => {
 
             expect(MockEventSource.instances[0].closed).toBe(true);
             await expect(pending).resolves.toMatchObject({ done: true });
-            expect(MockEventSource.instances[0].listenerCount("message")).toBe(
-                0
-            );
+            expect(MockEventSource.instances[0].listenerCount("message")).toBe(0);
             expect(MockEventSource.instances[0].listenerCount("error")).toBe(0);
         });
 
@@ -177,9 +167,7 @@ describe("RestIndexerProvider", () => {
             expect(MockEventSource.instances[0].closed).toBe(true);
             await expect(pending).resolves.toMatchObject({ done: true });
             await expect(returned).resolves.toMatchObject({ done: true });
-            expect(MockEventSource.instances[0].listenerCount("message")).toBe(
-                0
-            );
+            expect(MockEventSource.instances[0].listenerCount("message")).toBe(0);
             expect(MockEventSource.instances[0].listenerCount("error")).toBe(0);
         });
     });

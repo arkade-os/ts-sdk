@@ -40,14 +40,12 @@ export interface DescriptorProvider {
     isOurs(descriptor: string): boolean;
 
     /** Signs transactions, each with its own descriptor-derived key. */
-    signWithDescriptor(
-        requests: DescriptorSigningRequest[]
-    ): Promise<Transaction[]>;
+    signWithDescriptor(requests: DescriptorSigningRequest[]): Promise<Transaction[]>;
 
     /** Signs a message using the key derived from the descriptor. */
     signMessageWithDescriptor(
         descriptor: string,
         message: Uint8Array,
-        type?: "schnorr" | "ecdsa"
+        type?: "schnorr" | "ecdsa",
     ): Promise<Uint8Array>;
 }

@@ -43,9 +43,7 @@ function createMockRealm() {
             if (trimmed.startsWith("(") && trimmed.endsWith(")")) {
                 const inner = trimmed.slice(1, -1);
                 const orParts = inner.split(" OR ");
-                return orParts.some((orPart) =>
-                    evaluateCondition(obj, orPart.trim(), args)
-                );
+                return orParts.some((orPart) => evaluateCondition(obj, orPart.trim(), args));
             }
             return evaluateCondition(obj, trimmed, args);
         });
@@ -59,10 +57,7 @@ function createMockRealm() {
         while (i < str.length) {
             if (str[i] === "(") depth++;
             if (str[i] === ")") depth--;
-            if (
-                depth === 0 &&
-                str.substring(i, i + delimiter.length) === delimiter
-            ) {
+            if (depth === 0 && str.substring(i, i + delimiter.length) === delimiter) {
                 parts.push(current);
                 current = "";
                 i += delimiter.length;
@@ -75,11 +70,7 @@ function createMockRealm() {
         return parts;
     }
 
-    function evaluateCondition(
-        obj: any,
-        condition: string,
-        args: any[]
-    ): boolean {
+    function evaluateCondition(obj: any, condition: string, args: any[]): boolean {
         const match = condition.match(/(\w+)\s*==\s*\$(\d+)/);
         if (!match) return true; // skip unknown conditions
         const field = match[1];
@@ -90,9 +81,7 @@ function createMockRealm() {
     function createFilteredResult(items: any[], schemaName: string) {
         const result: any = {
             filtered(query: string, ...args: any[]) {
-                const filtered = items.filter((item) =>
-                    matchesFilter(item, query, args)
-                );
+                const filtered = items.filter((item) => matchesFilter(item, query, args));
                 return createFilteredResult(filtered, schemaName);
             },
             [Symbol.iterator]: () => items[Symbol.iterator](),
@@ -262,19 +251,19 @@ describe("RealmContractRepository", () => {
                 createMockContract({
                     script: "s1",
                     state: "active",
-                })
+                }),
             );
             await repository.saveContract(
                 createMockContract({
                     script: "s2",
                     state: "inactive",
-                })
+                }),
             );
             await repository.saveContract(
                 createMockContract({
                     script: "s3",
                     state: "active",
-                })
+                }),
             );
 
             const active = await repository.getContracts({ state: "active" });
@@ -289,12 +278,8 @@ describe("RealmContractRepository", () => {
         });
 
         it("should filter by state array", async () => {
-            await repository.saveContract(
-                createMockContract({ script: "s1", state: "active" })
-            );
-            await repository.saveContract(
-                createMockContract({ script: "s2", state: "inactive" })
-            );
+            await repository.saveContract(createMockContract({ script: "s1", state: "active" }));
+            await repository.saveContract(createMockContract({ script: "s2", state: "inactive" }));
 
             const both = await repository.getContracts({
                 state: ["active", "inactive"],
@@ -307,15 +292,9 @@ describe("RealmContractRepository", () => {
 
     describe("filter by type", () => {
         it("should filter by single type", async () => {
-            await repository.saveContract(
-                createMockContract({ script: "s1", type: "default" })
-            );
-            await repository.saveContract(
-                createMockContract({ script: "s2", type: "vhtlc" })
-            );
-            await repository.saveContract(
-                createMockContract({ script: "s3", type: "vhtlc" })
-            );
+            await repository.saveContract(createMockContract({ script: "s1", type: "default" }));
+            await repository.saveContract(createMockContract({ script: "s2", type: "vhtlc" }));
+            await repository.saveContract(createMockContract({ script: "s3", type: "vhtlc" }));
 
             const vhtlc = await repository.getContracts({ type: "vhtlc" });
             expect(vhtlc).toHaveLength(2);
@@ -323,24 +302,15 @@ describe("RealmContractRepository", () => {
         });
 
         it("should filter by type array", async () => {
-            await repository.saveContract(
-                createMockContract({ script: "s1", type: "default" })
-            );
-            await repository.saveContract(
-                createMockContract({ script: "s2", type: "vhtlc" })
-            );
-            await repository.saveContract(
-                createMockContract({ script: "s3", type: "custom" })
-            );
+            await repository.saveContract(createMockContract({ script: "s1", type: "default" }));
+            await repository.saveContract(createMockContract({ script: "s2", type: "vhtlc" }));
+            await repository.saveContract(createMockContract({ script: "s3", type: "custom" }));
 
             const filtered = await repository.getContracts({
                 type: ["default", "vhtlc"],
             });
             expect(filtered).toHaveLength(2);
-            expect(filtered.map((c) => c.type).sort()).toEqual([
-                "default",
-                "vhtlc",
-            ]);
+            expect(filtered.map((c) => c.type).sort()).toEqual(["default", "vhtlc"]);
         });
     });
 
@@ -387,21 +357,21 @@ describe("RealmContractRepository", () => {
                     script: "s1",
                     state: "active",
                     type: "default",
-                })
+                }),
             );
             await repository.saveContract(
                 createMockContract({
                     script: "s2",
                     state: "active",
                     type: "vhtlc",
-                })
+                }),
             );
             await repository.saveContract(
                 createMockContract({
                     script: "s3",
                     state: "inactive",
                     type: "vhtlc",
-                })
+                }),
             );
 
             const result = await repository.getContracts({
@@ -418,28 +388,28 @@ describe("RealmContractRepository", () => {
                     script: "s1",
                     state: "active",
                     type: "default",
-                })
+                }),
             );
             await repository.saveContract(
                 createMockContract({
                     script: "s2",
                     state: "active",
                     type: "vhtlc",
-                })
+                }),
             );
             await repository.saveContract(
                 createMockContract({
                     script: "s3",
                     state: "inactive",
                     type: "vhtlc",
-                })
+                }),
             );
             await repository.saveContract(
                 createMockContract({
                     script: "s4",
                     state: "inactive",
                     type: "custom",
-                })
+                }),
             );
 
             const result = await repository.getContracts({
@@ -466,9 +436,7 @@ describe("RealmContractRepository", () => {
         });
 
         it("should not throw when deleting non-existent script", async () => {
-            await expect(
-                repository.deleteContract("nonexistent")
-            ).resolves.toBeUndefined();
+            await expect(repository.deleteContract("nonexistent")).resolves.toBeUndefined();
         });
     });
 
@@ -516,9 +484,7 @@ describe("RealmContractRepository", () => {
 
     describe("[Symbol.asyncDispose]", () => {
         it("should be a no-op and not throw", async () => {
-            await expect(
-                repository[Symbol.asyncDispose]()
-            ).resolves.toBeUndefined();
+            await expect(repository[Symbol.asyncDispose]()).resolves.toBeUndefined();
         });
     });
 });

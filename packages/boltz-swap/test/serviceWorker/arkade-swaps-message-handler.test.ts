@@ -34,11 +34,9 @@ describe("ArkadeSwapsMessageHandler broadcastEvent", () => {
             payload: { swap, oldStatus: "swap.created" as BoltzSwapStatus },
         });
 
-        expect((globalThis as any).self.clients.matchAll).toHaveBeenCalledTimes(
-            1
-        );
+        expect((globalThis as any).self.clients.matchAll).toHaveBeenCalledTimes(1);
         expect(postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({ type: "SM-EVENT-SWAP_UPDATE" })
+            expect.objectContaining({ type: "SM-EVENT-SWAP_UPDATE" }),
         );
     });
 });
@@ -53,7 +51,7 @@ describe("ArkadeSwapsMessageHandler long-running requests", () => {
                     id: "req",
                     tag: handler.messageTag,
                     type,
-                } as any)
+                } as any),
             ).toBe(true);
         }
 
@@ -62,7 +60,7 @@ describe("ArkadeSwapsMessageHandler long-running requests", () => {
                 id: "req",
                 tag: handler.messageTag,
                 type: "GET_FEES",
-            } as any)
+            } as any),
         ).toBe(false);
     });
 });

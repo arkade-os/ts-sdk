@@ -29,10 +29,7 @@ describe("vtxoOwnership", () => {
 
     describe("filterVtxosForScript", () => {
         it("keeps only matching-script rows", () => {
-            const out = filterVtxosForScript(
-                [row("a"), row("b"), row("a")],
-                "a"
-            );
+            const out = filterVtxosForScript([row("a"), row("b"), row("a")], "a");
             expect(out).toHaveLength(2);
             expect(out.every((v) => v.script === "a")).toBe(true);
         });
@@ -50,11 +47,7 @@ describe("vtxoOwnership", () => {
         it("returns matches and warns about rejected outpoints", () => {
             const good = row("a", "aa".repeat(32), 0);
             const bad = row("b", "bb".repeat(32), 1);
-            const out = warnAndFilterVtxosForScript(
-                [good, bad],
-                "a",
-                "test-context"
-            );
+            const out = warnAndFilterVtxosForScript([good, bad], "a", "test-context");
             expect(out).toEqual([good]);
             expect(warnSpy).toHaveBeenCalledOnce();
             const msg = warnSpy.mock.calls[0][0] as string;
@@ -73,18 +66,16 @@ describe("vtxoOwnership", () => {
         it("throws on a wrong-script row, naming the outpoint and context", () => {
             const good = row("a");
             const bad = row("b", "bb".repeat(32), 1);
-            expect(() =>
-                validateVtxosForScript([good, bad], "a", "Wallet.ctx")
-            ).toThrowError(/Wallet\.ctx/);
-            expect(() =>
-                validateVtxosForScript([good, bad], "a", "Wallet.ctx")
-            ).toThrowError(new RegExp(vtxoOutpoint(bad)));
+            expect(() => validateVtxosForScript([good, bad], "a", "Wallet.ctx")).toThrowError(
+                /Wallet\.ctx/,
+            );
+            expect(() => validateVtxosForScript([good, bad], "a", "Wallet.ctx")).toThrowError(
+                new RegExp(vtxoOutpoint(bad)),
+            );
         });
 
         it("returns silently when every row matches", () => {
-            expect(() =>
-                validateVtxosForScript([row("a"), row("a")], "a", "ctx")
-            ).not.toThrow();
+            expect(() => validateVtxosForScript([row("a"), row("a")], "a", "ctx")).not.toThrow();
         });
     });
 });

@@ -52,21 +52,21 @@ export class RealmContractRepository implements ContractRepository {
                 filterArgs,
                 "script",
                 filter.script,
-                argIndex
+                argIndex,
             );
             argIndex = this.addFilterCondition(
                 filterParts,
                 filterArgs,
                 "state",
                 filter.state,
-                argIndex
+                argIndex,
             );
             argIndex = this.addFilterCondition(
                 filterParts,
                 filterArgs,
                 "type",
                 filter.type,
-                argIndex
+                argIndex,
             );
 
             if (filterParts.length > 0) {
@@ -91,11 +91,9 @@ export class RealmContractRepository implements ContractRepository {
                     paramsJson: JSON.stringify(contract.params),
                     createdAt: contract.createdAt,
                     label: contract.label ?? null,
-                    metadataJson: contract.metadata
-                        ? JSON.stringify(contract.metadata)
-                        : null,
+                    metadataJson: contract.metadata ? JSON.stringify(contract.metadata) : null,
                 },
-                "modified"
+                "modified",
             );
         });
     }
@@ -103,9 +101,7 @@ export class RealmContractRepository implements ContractRepository {
     async deleteContract(script: string): Promise<void> {
         await this.ensureInit();
         this.realm.write(() => {
-            const toDelete = this.realm
-                .objects("ArkContract")
-                .filtered("script == $0", script);
+            const toDelete = this.realm.objects("ArkContract").filtered("script == $0", script);
             this.realm.delete(toDelete);
         });
     }
@@ -117,7 +113,7 @@ export class RealmContractRepository implements ContractRepository {
         args: unknown[],
         column: string,
         value: string | string[] | undefined,
-        argIndex: number
+        argIndex: number,
     ): number {
         if (value === undefined) return argIndex;
 

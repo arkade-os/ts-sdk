@@ -32,10 +32,7 @@ import {
 import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
 import { setupServiceWorker } from "../../worker/browser/utils";
-import {
-    IndexedDBContractRepository,
-    IndexedDBWalletRepository,
-} from "../../repositories";
+import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../../repositories";
 import {
     RequestClear,
     RequestCreateContract,
@@ -133,20 +130,14 @@ import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegator";
 import { getRandomId } from "../utils";
 import type { VirtualCoin } from "..";
-import {
-    MESSAGE_BUS_NOT_INITIALIZED,
-    ServiceWorkerTimeoutError,
-} from "../../worker/errors";
+import { MESSAGE_BUS_NOT_INITIALIZED, ServiceWorkerTimeoutError } from "../../worker/errors";
 import { getArkadeServerUrl } from "../wallet";
 
 // Check by error message content instead of instanceof because postMessage uses the
 // structured clone algorithm which strips the prototype chain — the page
 // receives a plain Error, not the original MessageBusNotInitializedError.
 function isMessageBusNotInitializedError(error: unknown): boolean {
-    return (
-        error instanceof Error &&
-        error.message.includes(MESSAGE_BUS_NOT_INITIALIZED)
-    );
+    return error instanceof Error && error.message.includes(MESSAGE_BUS_NOT_INITIALIZED);
 }
 
 type RequestType = WalletUpdaterRequest["type"];
@@ -232,9 +223,7 @@ function getRequestDedupKey(request: WalletUpdaterRequest): string {
     return JSON.stringify(rest);
 }
 
-function isSigningCapable(
-    identity: Identity | ReadonlyIdentity
-): identity is Identity {
+function isSigningCapable(identity: Identity | ReadonlyIdentity): identity is Identity {
     const candidate = identity as Partial<Identity>;
     return (
         typeof candidate.signMessage === "function" &&
@@ -246,9 +235,9 @@ function isSigningCapable(
 class ServiceWorkerReadonlyAssetManager implements IReadonlyAssetManager {
     constructor(
         protected readonly sendMessage: (
-            msg: WalletUpdaterRequest
+            msg: WalletUpdaterRequest,
         ) => Promise<WalletUpdaterResponse>,
-        protected readonly messageTag: string
+        protected readonly messageTag: string,
     ) {}
 
     async getAssetDetails(assetId: string): Promise<AssetDetails> {
@@ -263,10 +252,7 @@ class ServiceWorkerReadonlyAssetManager implements IReadonlyAssetManager {
     }
 }
 
-class ServiceWorkerAssetManager
-    extends ServiceWorkerReadonlyAssetManager
-    implements IAssetManager
-{
+class ServiceWorkerAssetManager extends ServiceWorkerReadonlyAssetManager implements IAssetManager {
     async issue(params: IssuanceParams): Promise<IssuanceResult> {
         const message: RequestIssue = {
             tag: this.messageTag,
@@ -418,7 +404,7 @@ type MessageBusInitConfig = {
 const initializeMessageBus = (
     serviceWorker: ServiceWorker,
     config: MessageBusInitConfig,
-    timeoutMs = 2000
+    timeoutMs = 2000,
 ) => {
     const initCmd = {
         tag: "INITIALIZE_MESSAGE_BUS",
@@ -461,8 +447,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     protected initConfig: MessageBusInitConfig | null = null;
     protected initWalletPayload: RequestInitWallet["payload"] | null = null;
     protected messageBusTimeoutMs?: number;
-    protected messageTimeouts: Record<RequestType, number> =
-        DEFAULT_MESSAGE_TIMEOUTS as Record<RequestType, number>;
+    protected messageTimeouts: Record<RequestType, number> = DEFAULT_MESSAGE_TIMEOUTS as Record<
+        RequestType,
+        number
+    >;
     // Denormalized from options so buildInitConfig() can rebuild the init
     // envelope on demand for SDK-factory-created wallets. `create()` sets
     // these immediately after construction.
@@ -471,16 +459,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     protected delegatorUrl?: string;
     protected indexerUrl?: string;
     protected esploraUrl?: string;
-    protected watcherConfig?: Partial<
-        Omit<ContractWatcherConfig, "indexerProvider">
-    >;
+    protected watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
     protected settlementConfig?: SettlementConfig | false;
     private reinitPromise: Promise<void> | null = null;
     private pingPromise: Promise<void> | null = null;
-    private inflightRequests = new Map<
-        string,
-        Promise<WalletUpdaterResponse>
-    >();
+    private inflightRequests = new Map<string, Promise<WalletUpdaterResponse>>();
 
     get assetManager(): IReadonlyAssetManager {
         return this._readonlyAssetManager;
@@ -491,14 +474,14 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         identity: ReadonlyIdentity,
         walletRepository: WalletRepository,
         contractRepository: ContractRepository,
-        protected readonly messageTag: string
+        protected readonly messageTag: string,
     ) {
         this.identity = identity;
         this.walletRepository = walletRepository;
         this.contractRepository = contractRepository;
         this._readonlyAssetManager = new ServiceWorkerReadonlyAssetManager(
             (msg) => this.sendMessage(msg),
-            messageTag
+            messageTag,
         );
     }
 
@@ -514,15 +497,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
      * @throws Error if service-worker initialization fails
      */
     static async create(
-        options: ServiceWorkerWalletCreateOptions
+        options: ServiceWorkerWalletCreateOptions,
     ): Promise<ServiceWorkerReadonlyWallet> {
         const walletRepository =
-            options.storage?.walletRepository ??
-            new IndexedDBWalletRepository();
+            options.storage?.walletRepository ?? new IndexedDBWalletRepository();
 
         const contractRepository =
-            options.storage?.contractRepository ??
-            new IndexedDBContractRepository();
+            options.storage?.contractRepository ?? new IndexedDBContractRepository();
 
         const messageTag = options.walletUpdaterTag ?? DEFAULT_MESSAGE_TAG;
 
@@ -532,18 +513,14 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             options.identity,
             walletRepository,
             contractRepository,
-            messageTag
+            messageTag,
         );
 
-        const serializedWallet = await serializeReadonlyIdentity(
-            options.identity
-        );
+        const serializedWallet = await serializeReadonlyIdentity(options.identity);
 
         // INIT_WALLET retains the legacy `key` payload for wire compatibility
         // with older workers; the current handler does not read it.
-        const publicKey = await options.identity
-            .compressedPublicKey()
-            .then(hex.encode);
+        const publicKey = await options.identity.compressedPublicKey().then(hex.encode);
         const initWalletPayload = {
             key: { publicKey },
             arkServerUrl: getArkadeServerUrl(options),
@@ -577,7 +554,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         await initializeMessageBus(
             options.serviceWorker,
             { ...busInitConfig, timeoutMs: options.messageBusTimeoutMs },
-            options.messageBusTimeoutMs
+            options.messageBusTimeoutMs,
         );
 
         // Initialize the wallet handler
@@ -616,7 +593,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
      * ```
      */
     static async setup(
-        options: ServiceWorkerWalletSetupOptions
+        options: ServiceWorkerWalletSetupOptions,
     ): Promise<ServiceWorkerReadonlyWallet> {
         // Register and setup the service worker
         const serviceWorker = await setupServiceWorker({
@@ -633,29 +610,24 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
     private sendMessageDirect(
         request: WalletUpdaterRequest,
-        timeoutMs: number
+        timeoutMs: number,
     ): Promise<WalletUpdaterResponse> {
         return new Promise((resolve, reject) => {
             const cleanup = () => {
                 clearTimeout(timeoutId);
-                navigator.serviceWorker.removeEventListener(
-                    "message",
-                    messageHandler
-                );
+                navigator.serviceWorker.removeEventListener("message", messageHandler);
             };
 
             const timeoutId = setTimeout(() => {
                 cleanup();
                 reject(
                     new ServiceWorkerTimeoutError(
-                        `Service worker message timed out (${request.type})`
-                    )
+                        `Service worker message timed out (${request.type})`,
+                    ),
                 );
             }, timeoutMs);
 
-            const messageHandler = (
-                event: MessageEvent<WalletUpdaterResponse>
-            ) => {
+            const messageHandler = (event: MessageEvent<WalletUpdaterResponse>) => {
                 const response = event.data;
                 if (request.id !== response.id) {
                     return;
@@ -684,19 +656,14 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     private sendMessageStreaming(
         request: WalletUpdaterRequest,
         onEvent: (response: WalletUpdaterResponse) => void,
-        isComplete: (response: WalletUpdaterResponse) => boolean
+        isComplete: (response: WalletUpdaterResponse) => boolean,
     ): Promise<WalletUpdaterResponse> {
         return new Promise((resolve, reject) => {
             const cleanup = () => {
-                navigator.serviceWorker.removeEventListener(
-                    "message",
-                    messageHandler
-                );
+                navigator.serviceWorker.removeEventListener("message", messageHandler);
             };
 
-            const messageHandler = (
-                event: MessageEvent<WalletUpdaterResponse>
-            ) => {
+            const messageHandler = (event: MessageEvent<WalletUpdaterResponse>) => {
                 const response = event.data;
                 if (request.id !== response.id) return;
 
@@ -719,9 +686,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         });
     }
 
-    protected async sendMessage(
-        request: WalletUpdaterRequest
-    ): Promise<WalletUpdaterResponse> {
+    protected async sendMessage(request: WalletUpdaterRequest): Promise<WalletUpdaterResponse> {
         if (!DEDUPABLE_REQUEST_TYPES.has(request.type)) {
             return this.sendMessageWithRetry(request);
         }
@@ -745,19 +710,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
             const cleanup = () => {
                 clearTimeout(timeoutId);
-                navigator.serviceWorker.removeEventListener(
-                    "message",
-                    onMessage
-                );
+                navigator.serviceWorker.removeEventListener("message", onMessage);
             };
 
             const timeoutId = setTimeout(() => {
                 cleanup();
-                reject(
-                    new ServiceWorkerTimeoutError(
-                        "Service worker ping timed out"
-                    )
-                );
+                reject(new ServiceWorkerTimeoutError("Service worker ping timed out"));
             }, 2_000);
 
             const onMessage = (event: MessageEvent) => {
@@ -782,7 +740,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     // send a message, retrying up to 2 times if the service worker was
     // killed and restarted by the OS (mobile browsers do this aggressively)
     private async sendMessageWithRetry(
-        request: WalletUpdaterRequest
+        request: WalletUpdaterRequest,
     ): Promise<WalletUpdaterResponse> {
         // Skip the preflight ping during the initial INIT_WALLET call:
         // create() hasn't set initConfig yet, so reinitialize() would throw.
@@ -800,10 +758,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             try {
                 return await this.sendMessageDirect(request, timeoutMs);
             } catch (error: any) {
-                if (
-                    !isMessageBusNotInitializedError(error) ||
-                    attempt >= maxRetries
-                ) {
+                if (!isMessageBusNotInitializedError(error) || attempt >= maxRetries) {
                     throw error;
                 }
 
@@ -817,7 +772,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     protected async sendMessageWithEvents(
         request: WalletUpdaterRequest,
         onEvent: (response: WalletUpdaterResponse) => void,
-        isComplete: (response: WalletUpdaterResponse) => boolean
+        isComplete: (response: WalletUpdaterResponse) => boolean,
     ): Promise<WalletUpdaterResponse> {
         if (this.initConfig) {
             try {
@@ -830,16 +785,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         const maxRetries = 2;
         for (let attempt = 0; ; attempt++) {
             try {
-                return await this.sendMessageStreaming(
-                    request,
-                    onEvent,
-                    isComplete
-                );
+                return await this.sendMessageStreaming(request, onEvent, isComplete);
             } catch (error: any) {
-                if (
-                    !isMessageBusNotInitializedError(error) ||
-                    attempt >= maxRetries
-                ) {
+                if (!isMessageBusNotInitializedError(error) || attempt >= maxRetries) {
                     throw error;
                 }
 
@@ -866,9 +814,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     protected async buildInitConfig(): Promise<MessageBusInitConfig> {
         if (this.initConfig) return this.initConfig;
         if (!this.arkServerUrl) {
-            throw new Error(
-                "Cannot re-initialize: wallet was not initialized via the SDK factory"
-            );
+            throw new Error("Cannot re-initialize: wallet was not initialized via the SDK factory");
         }
         const wallet = await this.serializeIdentity();
         this.initConfig = {
@@ -890,9 +836,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     protected buildInitWalletPayload(): RequestInitWallet["payload"] {
         if (this.initWalletPayload) return this.initWalletPayload;
         if (!this.arkServerUrl) {
-            throw new Error(
-                "Cannot re-initialize: wallet was not initialized via the SDK factory"
-            );
+            throw new Error("Cannot re-initialize: wallet was not initialized via the SDK factory");
         }
         this.initWalletPayload = {
             // `key` is deprecated and ignored by the current handler.
@@ -910,11 +854,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             const config = await this.buildInitConfig();
             const payload = this.buildInitWalletPayload();
 
-            await initializeMessageBus(
-                this.serviceWorker,
-                config,
-                this.messageBusTimeoutMs
-            );
+            await initializeMessageBus(this.serviceWorker, config, this.messageBusTimeoutMs);
 
             const initMessage: RequestInitWallet = {
                 tag: this.messageTag,
@@ -923,10 +863,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 payload,
             };
 
-            await this.sendMessageDirect(
-                initMessage,
-                this.getTimeoutForRequest(initMessage)
-            );
+            await this.sendMessageDirect(initMessage, this.getTimeoutForRequest(initMessage));
         })().finally(() => {
             this.reinitPromise = null;
         });
@@ -1040,8 +977,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         try {
             const response = await this.sendMessage(message);
-            return (response as ResponseGetTransactionHistory).payload
-                .transactions;
+            return (response as ResponseGetTransactionHistory).payload.transactions;
         } catch (error) {
             throw new Error(`Failed to get transaction history: ${error}`);
         }
@@ -1086,7 +1022,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         const wallet = this;
 
         const sendContractMessage = async <T extends WalletUpdaterRequest>(
-            message: T
+            message: T,
         ): Promise<WalletUpdaterResponse> => {
             return wallet.sendMessage(message as WalletUpdaterRequest);
         };
@@ -1094,9 +1030,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         const messageTag = this.messageTag;
 
         const manager: IContractManager = {
-            async createContract(
-                params: CreateContractParams
-            ): Promise<Contract> {
+            async createContract(params: CreateContractParams): Promise<Contract> {
                 const message: RequestCreateContract = {
                     type: "CREATE_CONTRACT",
                     id: getRandomId(),
@@ -1105,16 +1039,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 };
                 try {
                     const response = await sendContractMessage(message);
-                    return (response as ResponseCreateContract).payload
-                        .contract;
+                    return (response as ResponseCreateContract).payload.contract;
                 } catch (e) {
                     throw new Error("Failed to create contract");
                 }
             },
 
-            async getContracts(
-                filter?: GetContractsFilter
-            ): Promise<Contract[]> {
+            async getContracts(filter?: GetContractsFilter): Promise<Contract[]> {
                 const message: RequestGetContracts = {
                     type: "GET_CONTRACTS",
                     id: getRandomId(),
@@ -1129,9 +1060,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 }
             },
 
-            async getContractsWithVtxos(
-                filter: GetContractsFilter
-            ): Promise<ContractWithVtxos[]> {
+            async getContractsWithVtxos(filter: GetContractsFilter): Promise<ContractWithVtxos[]> {
                 const message: RequestGetContractsWithVtxos = {
                     type: "GET_CONTRACTS_WITH_VTXOS",
                     id: getRandomId(),
@@ -1140,16 +1069,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 };
                 try {
                     const response = await sendContractMessage(message);
-                    return (response as ResponseGetContractsWithVtxos).payload
-                        .contracts;
+                    return (response as ResponseGetContractsWithVtxos).payload.contracts;
                 } catch (e) {
                     throw new Error("Failed to get contracts with vtxos");
                 }
             },
 
-            async annotateVtxos(
-                vtxos: VirtualCoin[]
-            ): Promise<ExtendedVirtualCoin[]> {
+            async annotateVtxos(vtxos: VirtualCoin[]): Promise<ExtendedVirtualCoin[]> {
                 if (vtxos.length === 0) return [];
                 const message: RequestAnnotateVtxos = {
                     type: "ANNOTATE_VTXOS",
@@ -1167,7 +1093,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
             async updateContract(
                 script: string,
-                updates: Partial<Omit<Contract, "script" | "createdAt">>
+                updates: Partial<Omit<Contract, "script" | "createdAt">>,
             ): Promise<Contract> {
                 const message: RequestUpdateContract = {
                     type: "UPDATE_CONTRACT",
@@ -1177,17 +1103,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 };
                 try {
                     const response = await sendContractMessage(message);
-                    return (response as ResponseUpdateContract).payload
-                        .contract;
+                    return (response as ResponseUpdateContract).payload.contract;
                 } catch (e) {
                     throw new Error("Failed to update contract");
                 }
             },
 
-            async setContractState(
-                script: string,
-                state: ContractState
-            ): Promise<void> {
+            async setContractState(script: string, state: ContractState): Promise<void> {
                 const message: RequestUpdateContract = {
                     type: "UPDATE_CONTRACT",
                     id: getRandomId(),
@@ -1217,9 +1139,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 }
             },
 
-            async getSpendablePaths(
-                options: GetSpendablePathsOptions
-            ): Promise<PathSelection[]> {
+            async getSpendablePaths(options: GetSpendablePathsOptions): Promise<PathSelection[]> {
                 const message: RequestGetSpendablePaths = {
                     type: "GET_SPENDABLE_PATHS",
                     id: getRandomId(),
@@ -1228,15 +1148,14 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 };
                 try {
                     const response = await sendContractMessage(message);
-                    return (response as ResponseGetSpendablePaths).payload
-                        .paths;
+                    return (response as ResponseGetSpendablePaths).payload.paths;
                 } catch (e) {
                     throw new Error("Failed to get spendable paths");
                 }
             },
 
             async getAllSpendingPaths(
-                options: GetAllSpendingPathsOptions
+                options: GetAllSpendingPathsOptions,
             ): Promise<PathSelection[]> {
                 const message: RequestGetAllSpendingPaths = {
                     type: "GET_ALL_SPENDING_PATHS",
@@ -1246,8 +1165,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 };
                 try {
                     const response = await sendContractMessage(message);
-                    return (response as ResponseGetAllSpendingPaths).payload
-                        .paths;
+                    return (response as ResponseGetAllSpendingPaths).payload.paths;
                 } catch (e) {
                     throw new Error("Failed to get all spending paths");
                 }
@@ -1265,16 +1183,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     callback((response as ResponseContractEvent).payload.event);
                 };
 
-                navigator.serviceWorker.addEventListener(
-                    "message",
-                    messageHandler
-                );
+                navigator.serviceWorker.addEventListener("message", messageHandler);
 
                 return () => {
-                    navigator.serviceWorker.removeEventListener(
-                        "message",
-                        messageHandler
-                    );
+                    navigator.serviceWorker.removeEventListener("message", messageHandler);
                 };
             },
 
@@ -1288,9 +1200,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 await sendContractMessage(message);
             },
 
-            async refreshOutpoints(
-                outpoints: { txid: string; vout: number }[]
-            ): Promise<void> {
+            async refreshOutpoints(outpoints: { txid: string; vout: number }[]): Promise<void> {
                 const message: RequestRefreshOutpoints = {
                     type: "REFRESH_OUTPOINTS",
                     id: getRandomId(),
@@ -1308,12 +1218,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 };
                 try {
                     const response = await sendContractMessage(message);
-                    return (response as ResponseIsContractManagerWatching)
-                        .payload.isWatching;
+                    return (response as ResponseIsContractManagerWatching).payload.isWatching;
                 } catch (e) {
-                    throw new Error(
-                        "Failed to check if contract manager is watching"
-                    );
+                    throw new Error("Failed to check if contract manager is watching");
                 }
             },
 
@@ -1331,10 +1238,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 }
 
-export class ServiceWorkerWallet
-    extends ServiceWorkerReadonlyWallet
-    implements IWallet
-{
+export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements IWallet {
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
     public readonly identity: Identity;
@@ -1347,21 +1251,15 @@ export class ServiceWorkerWallet
         walletRepository: WalletRepository,
         contractRepository: ContractRepository,
         messageTag: string,
-        hasDelegator: boolean
+        hasDelegator: boolean,
     ) {
-        super(
-            serviceWorker,
-            identity,
-            walletRepository,
-            contractRepository,
-            messageTag
-        );
+        super(serviceWorker, identity, walletRepository, contractRepository, messageTag);
         this.identity = identity;
         this.walletRepository = walletRepository;
         this.contractRepository = contractRepository;
         this._assetManager = new ServiceWorkerAssetManager(
             (msg) => this.sendMessage(msg),
-            messageTag
+            messageTag,
         );
         this.hasDelegator = hasDelegator;
     }
@@ -1374,20 +1272,16 @@ export class ServiceWorkerWallet
         return serializeSigningIdentity(this.identity);
     }
 
-    static async create(
-        options: ServiceWorkerWalletCreateOptions
-    ): Promise<ServiceWorkerWallet> {
+    static async create(options: ServiceWorkerWalletCreateOptions): Promise<ServiceWorkerWallet> {
         const walletRepository =
-            options.storage?.walletRepository ??
-            new IndexedDBWalletRepository();
+            options.storage?.walletRepository ?? new IndexedDBWalletRepository();
 
         const contractRepository =
-            options.storage?.contractRepository ??
-            new IndexedDBContractRepository();
+            options.storage?.contractRepository ?? new IndexedDBContractRepository();
 
         if (!isSigningCapable(options.identity)) {
             throw new Error(
-                "ServiceWorkerWallet.create() requires a signing Identity; got a ReadonlyIdentity"
+                "ServiceWorkerWallet.create() requires a signing Identity; got a ReadonlyIdentity",
             );
         }
         const identity: Identity = options.identity;
@@ -1402,7 +1296,7 @@ export class ServiceWorkerWallet
             walletRepository,
             contractRepository,
             messageTag,
-            !!options.delegatorUrl
+            !!options.delegatorUrl,
         );
 
         // INIT_WALLET retains the legacy `key` payload for wire compatibility
@@ -1410,9 +1304,7 @@ export class ServiceWorkerWallet
         // SingleKey-style identities can populate it. Kept optional so seed /
         // mnemonic identities simply omit it.
         const legacyPrivateKey =
-            serializedWallet.type === "single-key"
-                ? serializedWallet.privateKey
-                : null;
+            serializedWallet.type === "single-key" ? serializedWallet.privateKey : null;
         const initWalletPayload = {
             key: legacyPrivateKey ? { privateKey: legacyPrivateKey } : {},
             arkServerUrl: getArkadeServerUrl(options),
@@ -1447,7 +1339,7 @@ export class ServiceWorkerWallet
         await initializeMessageBus(
             options.serviceWorker,
             { ...busInitConfig, timeoutMs: options.messageBusTimeoutMs },
-            options.messageBusTimeoutMs
+            options.messageBusTimeoutMs,
         );
         // Initialize the service worker with the config
         const initMessage: RequestInitWallet = {
@@ -1483,9 +1375,7 @@ export class ServiceWorkerWallet
      * });
      * ```
      */
-    static async setup(
-        options: ServiceWorkerWalletSetupOptions
-    ): Promise<ServiceWorkerWallet> {
+    static async setup(options: ServiceWorkerWalletSetupOptions): Promise<ServiceWorkerWallet> {
         // Register and setup the service worker
         const serviceWorker = await setupServiceWorker({
             path: options.serviceWorkerPath,
@@ -1517,7 +1407,7 @@ export class ServiceWorkerWallet
 
     async settle(
         params?: SettleParams,
-        callback?: (event: SettlementEvent) => void
+        callback?: (event: SettlementEvent) => void,
     ): Promise<string> {
         const message: RequestSettle = {
             id: getRandomId(),
@@ -1530,7 +1420,7 @@ export class ServiceWorkerWallet
             const response = await this.sendMessageWithEvents(
                 message,
                 (resp) => callback?.((resp as ResponseSettleEvent).payload),
-                (resp) => resp.type === "SETTLE_SUCCESS"
+                (resp) => resp.type === "SETTLE_SUCCESS",
             );
             return (response as ResponseSettle).payload.txid;
         } catch (error) {
@@ -1616,9 +1506,7 @@ export class ServiceWorkerWallet
         const messageTag = this.messageTag;
 
         const manager: IVtxoManager = {
-            async recoverVtxos(
-                eventCallback?: (event: SettlementEvent) => void
-            ): Promise<string> {
+            async recoverVtxos(eventCallback?: (event: SettlementEvent) => void): Promise<string> {
                 const message: RequestRecoverVtxos = {
                     tag: messageTag,
                     type: "RECOVER_VTXOS",
@@ -1627,11 +1515,8 @@ export class ServiceWorkerWallet
                 try {
                     const response = await wallet.sendMessageWithEvents(
                         message,
-                        (resp) =>
-                            eventCallback?.(
-                                (resp as ResponseRecoverVtxosEvent).payload
-                            ),
-                        (resp) => resp.type === "RECOVER_VTXOS_SUCCESS"
+                        (resp) => eventCallback?.((resp as ResponseRecoverVtxosEvent).payload),
+                        (resp) => resp.type === "RECOVER_VTXOS_SUCCESS",
                     );
                     return (response as ResponseRecoverVtxos).payload.txid;
                 } catch (e) {
@@ -1647,8 +1532,7 @@ export class ServiceWorkerWallet
                 };
                 try {
                     const response = await wallet.sendMessage(message);
-                    const payload = (response as ResponseGetRecoverableBalance)
-                        .payload;
+                    const payload = (response as ResponseGetRecoverableBalance).payload;
                     return {
                         recoverable: BigInt(payload.recoverable),
                         subdust: BigInt(payload.subdust),
@@ -1675,9 +1559,7 @@ export class ServiceWorkerWallet
                 }
             },
 
-            async renewVtxos(
-                eventCallback?: (event: SettlementEvent) => void
-            ): Promise<string> {
+            async renewVtxos(eventCallback?: (event: SettlementEvent) => void): Promise<string> {
                 const message: RequestRenewVtxos = {
                     tag: messageTag,
                     type: "RENEW_VTXOS",
@@ -1686,11 +1568,8 @@ export class ServiceWorkerWallet
                 try {
                     const response = await wallet.sendMessageWithEvents(
                         message,
-                        (resp) =>
-                            eventCallback?.(
-                                (resp as ResponseRenewVtxosEvent).payload
-                            ),
-                        (resp) => resp.type === "RENEW_VTXOS_SUCCESS"
+                        (resp) => eventCallback?.((resp as ResponseRenewVtxosEvent).payload),
+                        (resp) => resp.type === "RENEW_VTXOS_SUCCESS",
                     );
                     return (response as ResponseRenewVtxos).payload.txid;
                 } catch (e) {
@@ -1706,12 +1585,9 @@ export class ServiceWorkerWallet
                 };
                 try {
                     const response = await wallet.sendMessage(message);
-                    return (response as ResponseGetExpiredBoardingUtxos).payload
-                        .utxos;
+                    return (response as ResponseGetExpiredBoardingUtxos).payload.utxos;
                 } catch (e) {
-                    throw new Error(
-                        `Failed to get expired boarding utxos: ${e}`
-                    );
+                    throw new Error(`Failed to get expired boarding utxos: ${e}`);
                 }
             },
 
@@ -1723,12 +1599,9 @@ export class ServiceWorkerWallet
                 };
                 try {
                     const response = await wallet.sendMessage(message);
-                    return (response as ResponseSweepExpiredBoardingUtxos)
-                        .payload.txid;
+                    return (response as ResponseSweepExpiredBoardingUtxos).payload.txid;
                 } catch (e) {
-                    throw new Error(
-                        `Failed to sweep expired boarding utxos: ${e}`
-                    );
+                    throw new Error(`Failed to sweep expired boarding utxos: ${e}`);
                 }
             },
 

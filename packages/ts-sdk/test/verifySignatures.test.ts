@@ -30,7 +30,7 @@ describe("verifyTapscriptSignatures", async () => {
     function createMockTransaction(
         signers: { identity: SingleKey; publicKey: Uint8Array }[],
         amount: bigint = 1000n,
-        sighashType: number = SigHash.DEFAULT
+        sighashType: number = SigHash.DEFAULT,
     ): Transaction {
         const tx = new Transaction();
 
@@ -54,9 +54,7 @@ describe("verifyTapscriptSignatures", async () => {
         for (const signer of signers) {
             const signed = tx.signIdx(signer.identity["key"], 0, [sighashType]);
             if (!signed) {
-                throw new Error(
-                    `Failed to sign with key ${hex.encode(signer.publicKey)}`
-                );
+                throw new Error(`Failed to sign with key ${hex.encode(signer.publicKey)}`);
             }
         }
 
@@ -64,9 +62,7 @@ describe("verifyTapscriptSignatures", async () => {
     }
 
     it("should verify valid single signature", () => {
-        const tx = createMockTransaction([
-            { identity: identity1, publicKey: publicKey1 },
-        ]);
+        const tx = createMockTransaction([{ identity: identity1, publicKey: publicKey1 }]);
 
         expect(() => {
             verifyTapscriptSignatures(tx, 0, [hex.encode(publicKey1)]);
@@ -100,12 +96,8 @@ describe("verifyTapscriptSignatures", async () => {
             verifyTapscriptSignatures(
                 tx,
                 0,
-                [
-                    hex.encode(publicKey1),
-                    hex.encode(publicKey2),
-                    hex.encode(publicKey3),
-                ],
-                [hex.encode(publicKey3)] // Exclude pubkey3
+                [hex.encode(publicKey1), hex.encode(publicKey2), hex.encode(publicKey3)],
+                [hex.encode(publicKey3)], // Exclude pubkey3
             );
         }).not.toThrow();
     });
@@ -120,42 +112,29 @@ describe("verifyTapscriptSignatures", async () => {
             verifyTapscriptSignatures(
                 tx,
                 0,
-                [
-                    hex.encode(publicKey1),
-                    hex.encode(publicKey2),
-                    hex.encode(publicKey3),
-                ] // Require pubkey3 but not signed
+                [hex.encode(publicKey1), hex.encode(publicKey2), hex.encode(publicKey3)], // Require pubkey3 but not signed
             );
         }).toThrow(/Missing signatures from/);
     });
 
     it("should throw error for invalid signature", () => {
         // Create a properly signed transaction
-        const tx = createMockTransaction([
-            { identity: identity1, publicKey: publicKey1 },
-        ]);
+        const tx = createMockTransaction([{ identity: identity1, publicKey: publicKey1 }]);
 
         // Access the internal PSBT inputs array directly (hack!)
         const txAny = tx as any;
         if (txAny.inputs && txAny.inputs.length > 0) {
             const internalInput = txAny.inputs[0];
 
-            if (
-                internalInput.tapScriptSig &&
-                internalInput.tapScriptSig.length > 0
-            ) {
-                const [tapScriptSigData, validSignature] =
-                    internalInput.tapScriptSig[0];
+            if (internalInput.tapScriptSig && internalInput.tapScriptSig.length > 0) {
+                const [tapScriptSigData, validSignature] = internalInput.tapScriptSig[0];
 
                 // Create a completely fake signature (64 random bytes)
                 const fakeSignature = new Uint8Array(64);
                 crypto.getRandomValues(fakeSignature);
 
                 // Replace the signature directly in the internal array
-                internalInput.tapScriptSig[0] = [
-                    tapScriptSigData,
-                    fakeSignature,
-                ];
+                internalInput.tapScriptSig[0] = [tapScriptSigData, fakeSignature];
             }
         }
 
@@ -166,21 +145,15 @@ describe("verifyTapscriptSignatures", async () => {
 
     it("should throw error for invalid sighash type", () => {
         // Create a properly signed transaction with DEFAULT sighash
-        const tx = createMockTransaction([
-            { identity: identity1, publicKey: publicKey1 },
-        ]);
+        const tx = createMockTransaction([{ identity: identity1, publicKey: publicKey1 }]);
 
         // Access the internal PSBT inputs array and modify the signature to use SigHash.ALL
         const txAny = tx as any;
         if (txAny.inputs && txAny.inputs.length > 0) {
             const internalInput = txAny.inputs[0];
 
-            if (
-                internalInput.tapScriptSig &&
-                internalInput.tapScriptSig.length > 0
-            ) {
-                const [tapScriptSigData, validSignature] =
-                    internalInput.tapScriptSig[0];
+            if (internalInput.tapScriptSig && internalInput.tapScriptSig.length > 0) {
+                const [tapScriptSigData, validSignature] = internalInput.tapScriptSig[0];
 
                 // Append SigHash.ALL byte to the signature (making it 65 bytes)
                 const sigWithSighash = new Uint8Array(65);
@@ -188,10 +161,7 @@ describe("verifyTapscriptSignatures", async () => {
                 sigWithSighash[64] = SigHash.ALL; // Append sighash type
 
                 // Replace the signature with the modified one
-                internalInput.tapScriptSig[0] = [
-                    tapScriptSigData,
-                    sigWithSighash,
-                ];
+                internalInput.tapScriptSig[0] = [tapScriptSigData, sigWithSighash];
             }
         }
 
@@ -201,7 +171,7 @@ describe("verifyTapscriptSignatures", async () => {
                 0,
                 [hex.encode(publicKey1)],
                 [],
-                [SigHash.DEFAULT] // Only allow DEFAULT
+                [SigHash.DEFAULT], // Only allow DEFAULT
             );
         }).toThrow(/Unallowed sighash type/);
     });

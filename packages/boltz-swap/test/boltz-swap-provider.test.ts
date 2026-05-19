@@ -1,10 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { BoltzSwapProvider } from "../src/boltz-swap-provider";
 import { SchemaError, NetworkError, SwapNotFoundError } from "../src/errors";
-import {
-    extractInvoiceAmount,
-    extractTimeLockFromLeafOutput,
-} from "../src/utils/restoration";
+import { extractInvoiceAmount, extractTimeLockFromLeafOutput } from "../src/utils/restoration";
 import { FeesResponse } from "../src/types";
 
 // Scaffolding test file for BoltzSwapProvider
@@ -69,9 +66,7 @@ describe("BoltzSwapProvider", () => {
             const mutinynetProvider = new BoltzSwapProvider({
                 network: "mutinynet",
             });
-            expect(mutinynetProvider.getApiUrl()).toBe(
-                "https://api.boltz.mutinynet.arkade.sh"
-            );
+            expect(mutinynetProvider.getApiUrl()).toBe("https://api.boltz.mutinynet.arkade.sh");
         });
 
         it("should convert https to wss for WebSocket URL", () => {
@@ -79,9 +74,7 @@ describe("BoltzSwapProvider", () => {
                 network: "mutinynet",
                 apiUrl: "https://api.example.com",
             });
-            expect(httpsProvider.getWsUrl()).toBe(
-                "wss://api.example.com/v2/ws"
-            );
+            expect(httpsProvider.getWsUrl()).toBe("wss://api.example.com/v2/ws");
         });
     });
 
@@ -134,20 +127,14 @@ describe("BoltzSwapProvider", () => {
             // act
             const fees = await provider.getFees();
             // assert
-            expect(fetch).toHaveBeenCalledWith(
-                "http://localhost:9090/v2/swap/submarine",
-                {
-                    method: "GET",
-                    headers: { "Content-Type": "application/json" },
-                }
-            );
-            expect(fetch).toHaveBeenCalledWith(
-                "http://localhost:9090/v2/swap/reverse",
-                {
-                    method: "GET",
-                    headers: { "Content-Type": "application/json" },
-                }
-            );
+            expect(fetch).toHaveBeenCalledWith("http://localhost:9090/v2/swap/submarine", {
+                method: "GET",
+                headers: { "Content-Type": "application/json" },
+            });
+            expect(fetch).toHaveBeenCalledWith("http://localhost:9090/v2/swap/reverse", {
+                method: "GET",
+                headers: { "Content-Type": "application/json" },
+            });
             expect(fetch).toHaveBeenCalledTimes(2);
             expect(fees).toEqual({
                 submarine: {
@@ -168,7 +155,7 @@ describe("BoltzSwapProvider", () => {
             // arrange
             vi.stubGlobal(
                 "fetch",
-                vi.fn(() => createFetchResponse({ invalid: "response" }))
+                vi.fn(() => createFetchResponse({ invalid: "response" })),
             );
             // act & assert
             await expect(provider.getFees()).rejects.toThrow(SchemaError);
@@ -198,19 +185,16 @@ describe("BoltzSwapProvider", () => {
             // mock fetch response
             vi.stubGlobal(
                 "fetch",
-                vi.fn(() => createFetchResponse(mockResponse))
+                vi.fn(() => createFetchResponse(mockResponse)),
             );
 
             // act
             const limits = await provider.getLimits();
             // assert
-            expect(fetch).toHaveBeenCalledWith(
-                "http://localhost:9090/v2/swap/submarine",
-                {
-                    method: "GET",
-                    headers: { "Content-Type": "application/json" },
-                }
-            );
+            expect(fetch).toHaveBeenCalledWith("http://localhost:9090/v2/swap/submarine", {
+                method: "GET",
+                headers: { "Content-Type": "application/json" },
+            });
             expect(limits).toEqual({ min: 1000, max: 1000000 });
         });
 
@@ -218,7 +202,7 @@ describe("BoltzSwapProvider", () => {
             // arrange
             vi.stubGlobal(
                 "fetch",
-                vi.fn(() => createFetchResponse({ invalid: "response" }))
+                vi.fn(() => createFetchResponse({ invalid: "response" })),
             );
             // act & assert
             await expect(provider.getLimits()).rejects.toThrow(SchemaError);
@@ -239,18 +223,15 @@ describe("BoltzSwapProvider", () => {
             };
             vi.stubGlobal(
                 "fetch",
-                vi.fn(() => createFetchResponse(mockResponse))
+                vi.fn(() => createFetchResponse(mockResponse)),
             );
             // act
             const status = await provider.getSwapStatus("mock-id");
             // assert
-            expect(fetch).toHaveBeenCalledWith(
-                "http://localhost:9090/v2/swap/mock-id",
-                {
-                    method: "GET",
-                    headers: { "Content-Type": "application/json" },
-                }
-            );
+            expect(fetch).toHaveBeenCalledWith("http://localhost:9090/v2/swap/mock-id", {
+                method: "GET",
+                headers: { "Content-Type": "application/json" },
+            });
             expect(status).toEqual(mockResponse);
         });
 
@@ -258,12 +239,10 @@ describe("BoltzSwapProvider", () => {
             // arrange
             vi.stubGlobal(
                 "fetch",
-                vi.fn(() => createFetchResponse({ invalid: "response" }))
+                vi.fn(() => createFetchResponse({ invalid: "response" })),
             );
             // act & assert
-            await expect(provider.getSwapStatus("mock-id")).rejects.toThrow(
-                SchemaError
-            );
+            await expect(provider.getSwapStatus("mock-id")).rejects.toThrow(SchemaError);
         });
 
         it("should throw SwapNotFoundError on 404 with 'could not find swap' body", async () => {
@@ -280,11 +259,11 @@ describe("BoltzSwapProvider", () => {
                             Promise.resolve(
                                 JSON.stringify({
                                     error: "could not find swap with id: mock-id",
-                                })
+                                }),
                             ),
                         headers: { get: () => null },
-                    })
-                )
+                    }),
+                ),
             );
 
             try {
@@ -308,13 +287,10 @@ describe("BoltzSwapProvider", () => {
                     Promise.resolve({
                         ok: false,
                         status: 404,
-                        text: () =>
-                            Promise.resolve(
-                                "<html><body>Not Found</body></html>"
-                            ),
+                        text: () => Promise.resolve("<html><body>Not Found</body></html>"),
                         headers: { get: () => null },
-                    })
-                )
+                    }),
+                ),
             );
 
             try {
@@ -338,7 +314,7 @@ describe("BoltzSwapProvider", () => {
             };
             vi.stubGlobal(
                 "fetch",
-                vi.fn(() => createFetchResponse(mockResponse))
+                vi.fn(() => createFetchResponse(mockResponse)),
             );
             // act
             const result = await provider.getReverseSwapTxId("mock-swap-id");
@@ -348,7 +324,7 @@ describe("BoltzSwapProvider", () => {
                 {
                     method: "GET",
                     headers: { "Content-Type": "application/json" },
-                }
+                },
             );
             expect(result).toEqual(mockResponse);
         });
@@ -357,12 +333,10 @@ describe("BoltzSwapProvider", () => {
             // arrange
             vi.stubGlobal(
                 "fetch",
-                vi.fn(() => createFetchResponse({ invalid: "response" }))
+                vi.fn(() => createFetchResponse({ invalid: "response" })),
             );
             // act & assert
-            await expect(
-                provider.getReverseSwapTxId("mock-id")
-            ).rejects.toThrow(SchemaError);
+            await expect(provider.getReverseSwapTxId("mock-id")).rejects.toThrow(SchemaError);
         });
     });
 
@@ -374,7 +348,7 @@ describe("BoltzSwapProvider", () => {
             };
             vi.stubGlobal(
                 "fetch",
-                vi.fn(() => createFetchResponse(mockResponse))
+                vi.fn(() => createFetchResponse(mockResponse)),
             );
             // act
             const result = await provider.getSwapPreimage("mock-swap-id");
@@ -384,7 +358,7 @@ describe("BoltzSwapProvider", () => {
                 {
                     method: "GET",
                     headers: { "Content-Type": "application/json" },
-                }
+                },
             );
             expect(result).toEqual(mockResponse);
         });
@@ -393,12 +367,10 @@ describe("BoltzSwapProvider", () => {
             // arrange
             vi.stubGlobal(
                 "fetch",
-                vi.fn(() => createFetchResponse({ invalid: "response" }))
+                vi.fn(() => createFetchResponse({ invalid: "response" })),
             );
             // act & assert
-            await expect(provider.getSwapPreimage("mock-id")).rejects.toThrow(
-                SchemaError
-            );
+            await expect(provider.getSwapPreimage("mock-id")).rejects.toThrow(SchemaError);
         });
     });
 
@@ -421,7 +393,7 @@ describe("BoltzSwapProvider", () => {
             };
             vi.stubGlobal(
                 "fetch",
-                vi.fn(() => createFetchResponse(mockResponse))
+                vi.fn(() => createFetchResponse(mockResponse)),
             );
             // act
             const response = await provider.createSubmarineSwap({
@@ -429,20 +401,17 @@ describe("BoltzSwapProvider", () => {
                 refundPublicKey: mockHexCompressedPubKey,
             });
             // assert
-            expect(fetch).toHaveBeenCalledWith(
-                "http://localhost:9090/v2/swap/submarine",
-                {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        from: "ARK",
-                        to: "BTC",
-                        invoice,
-                        refundPublicKey: mockHexCompressedPubKey,
-                        referralId: "arkade-ts-sdk",
-                    }),
-                }
-            );
+            expect(fetch).toHaveBeenCalledWith("http://localhost:9090/v2/swap/submarine", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    from: "ARK",
+                    to: "BTC",
+                    invoice,
+                    refundPublicKey: mockHexCompressedPubKey,
+                    referralId: "arkade-ts-sdk",
+                }),
+            });
             expect(response).toEqual(mockResponse);
         });
 
@@ -450,14 +419,14 @@ describe("BoltzSwapProvider", () => {
             // arrange
             vi.stubGlobal(
                 "fetch",
-                vi.fn(() => createFetchResponse({ invalid: "response" }))
+                vi.fn(() => createFetchResponse({ invalid: "response" })),
             );
             // act & assert
             await expect(
                 provider.createSubmarineSwap({
                     invoice,
                     refundPublicKey: mockHexCompressedPubKey,
-                })
+                }),
             ).rejects.toThrow(SchemaError);
         });
     });
@@ -481,7 +450,7 @@ describe("BoltzSwapProvider", () => {
             };
             vi.stubGlobal(
                 "fetch",
-                vi.fn(() => createFetchResponse(mockResponse))
+                vi.fn(() => createFetchResponse(mockResponse)),
             );
             // act
             const response = await provider.createReverseSwap({
@@ -490,22 +459,19 @@ describe("BoltzSwapProvider", () => {
                 preimageHash: "mock-preimage-hash",
             });
             // assert
-            expect(fetch).toHaveBeenCalledWith(
-                "http://localhost:9090/v2/swap/reverse",
-                {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        from: "BTC",
-                        to: "ARK",
-                        invoiceAmount: 21000,
-                        claimPublicKey: mockHexCompressedPubKey,
-                        preimageHash: "mock-preimage-hash",
-                        description: "Send to Arkade address",
-                        referralId: "arkade-ts-sdk",
-                    }),
-                }
-            );
+            expect(fetch).toHaveBeenCalledWith("http://localhost:9090/v2/swap/reverse", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    from: "BTC",
+                    to: "ARK",
+                    invoiceAmount: 21000,
+                    claimPublicKey: mockHexCompressedPubKey,
+                    preimageHash: "mock-preimage-hash",
+                    description: "Send to Arkade address",
+                    referralId: "arkade-ts-sdk",
+                }),
+            });
             expect(response).toEqual(mockResponse);
         });
 
@@ -527,7 +493,7 @@ describe("BoltzSwapProvider", () => {
             };
             vi.stubGlobal(
                 "fetch",
-                vi.fn(() => createFetchResponse(mockResponse))
+                vi.fn(() => createFetchResponse(mockResponse)),
             );
             // act
             const response = await provider.createReverseSwap({
@@ -537,22 +503,19 @@ describe("BoltzSwapProvider", () => {
                 description: "Test payment for coffee",
             });
             // assert
-            expect(fetch).toHaveBeenCalledWith(
-                "http://localhost:9090/v2/swap/reverse",
-                {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        from: "BTC",
-                        to: "ARK",
-                        invoiceAmount: 21000,
-                        claimPublicKey: mockHexCompressedPubKey,
-                        preimageHash: "mock-preimage-hash",
-                        description: "Test payment for coffee",
-                        referralId: "arkade-ts-sdk",
-                    }),
-                }
-            );
+            expect(fetch).toHaveBeenCalledWith("http://localhost:9090/v2/swap/reverse", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    from: "BTC",
+                    to: "ARK",
+                    invoiceAmount: 21000,
+                    claimPublicKey: mockHexCompressedPubKey,
+                    preimageHash: "mock-preimage-hash",
+                    description: "Test payment for coffee",
+                    referralId: "arkade-ts-sdk",
+                }),
+            });
             expect(response).toEqual(mockResponse);
         });
 
@@ -574,7 +537,7 @@ describe("BoltzSwapProvider", () => {
             };
             vi.stubGlobal(
                 "fetch",
-                vi.fn(() => createFetchResponse(mockResponse))
+                vi.fn(() => createFetchResponse(mockResponse)),
             );
             // act
             const response = await provider.createReverseSwap({
@@ -584,23 +547,20 @@ describe("BoltzSwapProvider", () => {
                 description: "   ", // whitespace-only description
             });
             // assert
-            expect(fetch).toHaveBeenCalledWith(
-                "http://localhost:9090/v2/swap/reverse",
-                {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        from: "BTC",
-                        to: "ARK",
-                        invoiceAmount: 21000,
-                        claimPublicKey: mockHexCompressedPubKey,
-                        preimageHash: "mock-preimage-hash",
-                        description: "Send to Arkade address",
-                        referralId: "arkade-ts-sdk",
-                        // description should be replaced with default
-                    }),
-                }
-            );
+            expect(fetch).toHaveBeenCalledWith("http://localhost:9090/v2/swap/reverse", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    from: "BTC",
+                    to: "ARK",
+                    invoiceAmount: 21000,
+                    claimPublicKey: mockHexCompressedPubKey,
+                    preimageHash: "mock-preimage-hash",
+                    description: "Send to Arkade address",
+                    referralId: "arkade-ts-sdk",
+                    // description should be replaced with default
+                }),
+            });
             expect(response).toEqual(mockResponse);
         });
 
@@ -608,7 +568,7 @@ describe("BoltzSwapProvider", () => {
             // arrange
             vi.stubGlobal(
                 "fetch",
-                vi.fn(() => createFetchResponse({ invalid: "response" }))
+                vi.fn(() => createFetchResponse({ invalid: "response" })),
             );
             // act & assert
             await expect(
@@ -616,7 +576,7 @@ describe("BoltzSwapProvider", () => {
                     invoiceAmount: 21000,
                     claimPublicKey: mockHexCompressedPubKey,
                     preimageHash: "mock-preimage-hash",
-                })
+                }),
             ).rejects.toThrow(SchemaError);
         });
     });
@@ -658,28 +618,20 @@ describe("BoltzSwapProvider", () => {
                     },
                 };
 
-                expect(
-                    extractTimeLockFromLeafOutput(
-                        tree.refundWithoutBoltzLeaf.output
-                    )
-                ).toBe(expected.refund);
+                expect(extractTimeLockFromLeafOutput(tree.refundWithoutBoltzLeaf.output)).toBe(
+                    expected.refund,
+                );
+
+                expect(extractTimeLockFromLeafOutput(tree.unilateralClaimLeaf.output)).toBe(
+                    expected.unilateralClaim,
+                );
+
+                expect(extractTimeLockFromLeafOutput(tree.unilateralRefundLeaf.output)).toBe(
+                    expected.unilateralRefund,
+                );
 
                 expect(
-                    extractTimeLockFromLeafOutput(
-                        tree.unilateralClaimLeaf.output
-                    )
-                ).toBe(expected.unilateralClaim);
-
-                expect(
-                    extractTimeLockFromLeafOutput(
-                        tree.unilateralRefundLeaf.output
-                    )
-                ).toBe(expected.unilateralRefund);
-
-                expect(
-                    extractTimeLockFromLeafOutput(
-                        tree.unilateralRefundWithoutBoltzLeaf.output
-                    )
+                    extractTimeLockFromLeafOutput(tree.unilateralRefundWithoutBoltzLeaf.output),
                 ).toBe(expected.unilateralRefundWithoutReceiver);
             });
 
@@ -718,28 +670,20 @@ describe("BoltzSwapProvider", () => {
                     },
                 };
 
-                expect(
-                    extractTimeLockFromLeafOutput(
-                        tree.refundWithoutBoltzLeaf.output
-                    )
-                ).toBe(expected.refund);
+                expect(extractTimeLockFromLeafOutput(tree.refundWithoutBoltzLeaf.output)).toBe(
+                    expected.refund,
+                );
+
+                expect(extractTimeLockFromLeafOutput(tree.unilateralClaimLeaf.output)).toBe(
+                    expected.unilateralClaim,
+                );
+
+                expect(extractTimeLockFromLeafOutput(tree.unilateralRefundLeaf.output)).toBe(
+                    expected.unilateralRefund,
+                );
 
                 expect(
-                    extractTimeLockFromLeafOutput(
-                        tree.unilateralClaimLeaf.output
-                    )
-                ).toBe(expected.unilateralClaim);
-
-                expect(
-                    extractTimeLockFromLeafOutput(
-                        tree.unilateralRefundLeaf.output
-                    )
-                ).toBe(expected.unilateralRefund);
-
-                expect(
-                    extractTimeLockFromLeafOutput(
-                        tree.unilateralRefundWithoutBoltzLeaf.output
-                    )
+                    extractTimeLockFromLeafOutput(tree.unilateralRefundWithoutBoltzLeaf.output),
                 ).toBe(expected.unilateralRefundWithoutReceiver);
             });
         });
@@ -796,14 +740,14 @@ describe("BoltzSwapProvider", () => {
 
             vi.stubGlobal(
                 "fetch",
-                vi.fn(() => createFetchResponse(mockResponse))
+                vi.fn(() => createFetchResponse(mockResponse)),
             );
 
             // act
             const result = await provider.refundSubmarineSwap(
                 mockSwapId,
                 mockTransaction as any,
-                mockCheckpoint as any
+                mockCheckpoint as any,
             );
 
             // assert
@@ -816,7 +760,7 @@ describe("BoltzSwapProvider", () => {
                         checkpoint: validPsbtBase64,
                         transaction: validPsbtBase64,
                     }),
-                }
+                },
             );
             expect(mockTransaction.toPSBT).toHaveBeenCalled();
             expect(mockCheckpoint.toPSBT).toHaveBeenCalled();
@@ -836,7 +780,7 @@ describe("BoltzSwapProvider", () => {
 
             vi.stubGlobal(
                 "fetch",
-                vi.fn(() => createFetchResponse({ invalid: "response" }))
+                vi.fn(() => createFetchResponse({ invalid: "response" })),
             );
 
             // act & assert
@@ -844,8 +788,8 @@ describe("BoltzSwapProvider", () => {
                 provider.refundSubmarineSwap(
                     "mock-swap-id",
                     mockTransaction as any,
-                    mockCheckpoint as any
-                )
+                    mockCheckpoint as any,
+                ),
             ).rejects.toThrow(SchemaError);
         });
     });
@@ -868,7 +812,7 @@ describe("BoltzSwapProvider", () => {
                 "WebSocket",
                 vi.fn(() => {
                     return mockWebSocket;
-                })
+                }),
             );
         });
 
@@ -891,9 +835,7 @@ describe("BoltzSwapProvider", () => {
                     mockWebSocket.onmessage({
                         data: JSON.stringify({
                             event: "update",
-                            args: [
-                                { id: swapId, status: "transaction.mempool" },
-                            ],
+                            args: [{ id: swapId, status: "transaction.mempool" }],
                         }),
                     });
                     // Send terminal status update
@@ -911,15 +853,13 @@ describe("BoltzSwapProvider", () => {
             await provider.monitorSwap(swapId, updateCallback);
 
             // assert
-            expect(globalThis.WebSocket).toHaveBeenCalledWith(
-                "ws://localhost:9090/v2/ws"
-            );
+            expect(globalThis.WebSocket).toHaveBeenCalledWith("ws://localhost:9090/v2/ws");
             expect(mockWebSocket.send).toHaveBeenCalledWith(
                 JSON.stringify({
                     op: "subscribe",
                     channel: "swap.update",
                     args: [swapId],
-                })
+                }),
             );
             expect(updateCallback).toHaveBeenCalledWith("transaction.mempool", {
                 id: swapId,
@@ -989,9 +929,9 @@ describe("BoltzSwapProvider", () => {
             }, 0);
 
             // act & assert
-            await expect(
-                provider.monitorSwap(swapId, updateCallback)
-            ).rejects.toThrow(NetworkError);
+            await expect(provider.monitorSwap(swapId, updateCallback)).rejects.toThrow(
+                NetworkError,
+            );
         });
 
         it("should close WebSocket and reject on swap error message", async () => {
@@ -1020,9 +960,7 @@ describe("BoltzSwapProvider", () => {
             }, 10);
 
             // act & assert
-            await expect(
-                provider.monitorSwap(swapId, updateCallback)
-            ).rejects.toThrow();
+            await expect(provider.monitorSwap(swapId, updateCallback)).rejects.toThrow();
             expect(mockWebSocket.close).toHaveBeenCalled();
         });
 
@@ -1095,13 +1033,12 @@ describe("BoltzSwapProvider", () => {
                     Promise.resolve({
                         ok: false,
                         status: 400,
-                        text: () =>
-                            Promise.resolve(JSON.stringify(errorResponse)),
+                        text: () => Promise.resolve(JSON.stringify(errorResponse)),
                         headers: {
                             get: () => null,
                         },
-                    })
-                )
+                    }),
+                ),
             );
 
             // act & assert
@@ -1111,11 +1048,9 @@ describe("BoltzSwapProvider", () => {
             } catch (error) {
                 expect(error).toBeInstanceOf(NetworkError);
                 expect((error as NetworkError).statusCode).toBe(400);
-                expect((error as NetworkError).errorData).toEqual(
-                    errorResponse
-                );
+                expect((error as NetworkError).errorData).toEqual(errorResponse);
                 expect((error as NetworkError).message).toBe(
-                    'Boltz API error: 400 {"error":"27 is less than minimal of 333"}'
+                    'Boltz API error: 400 {"error":"27 is less than minimal of 333"}',
                 );
             }
         });
@@ -1133,8 +1068,8 @@ describe("BoltzSwapProvider", () => {
                         headers: {
                             get: () => null,
                         },
-                    })
-                )
+                    }),
+                ),
             );
 
             // act & assert
@@ -1146,7 +1081,7 @@ describe("BoltzSwapProvider", () => {
                 expect((error as NetworkError).statusCode).toBe(500);
                 expect((error as NetworkError).errorData).toBeUndefined();
                 expect((error as NetworkError).message).toBe(
-                    "Boltz API error: 500 Internal Server Error"
+                    "Boltz API error: 500 Internal Server Error",
                 );
             }
         });
@@ -1164,8 +1099,8 @@ describe("BoltzSwapProvider", () => {
                         headers: {
                             get: () => null,
                         },
-                    })
-                )
+                    }),
+                ),
             );
 
             // act & assert
@@ -1176,9 +1111,7 @@ describe("BoltzSwapProvider", () => {
                 expect(error).toBeInstanceOf(NetworkError);
                 expect((error as NetworkError).statusCode).toBe(400);
                 expect((error as NetworkError).errorData).toBeUndefined();
-                expect((error as NetworkError).message).toBe(
-                    "Boltz API error: 400 {invalid json}"
-                );
+                expect((error as NetworkError).message).toBe("Boltz API error: 400 {invalid json}");
             }
         });
     });

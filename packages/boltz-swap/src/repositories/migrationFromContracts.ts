@@ -24,7 +24,7 @@ export type LegacyStorageAccessor = {
  */
 export async function migrateToSwapRepository(
     storageAdapter: LegacyStorageAccessor,
-    fresh: SwapRepository
+    fresh: SwapRepository,
 ): Promise<boolean> {
     try {
         const migration = await storageAdapter.getItem(MIGRATION_KEY);
@@ -33,10 +33,14 @@ export async function migrateToSwapRepository(
         }
 
         // reverse swaps
-        const reverseSwaps: readonly BoltzReverseSwap[] =
-            await getContractCollection(storageAdapter, "reverseSwaps");
-        const submarineSwaps: readonly BoltzSubmarineSwap[] =
-            await getContractCollection(storageAdapter, "submarineSwaps");
+        const reverseSwaps: readonly BoltzReverseSwap[] = await getContractCollection(
+            storageAdapter,
+            "reverseSwaps",
+        );
+        const submarineSwaps: readonly BoltzSubmarineSwap[] = await getContractCollection(
+            storageAdapter,
+            "submarineSwaps",
+        );
 
         for (const swap of reverseSwaps) {
             await fresh.saveSwap(swap);
@@ -51,9 +55,7 @@ export async function migrateToSwapRepository(
     } catch (error) {
         if (
             error instanceof Error &&
-            error.message.includes(
-                "One of the specified object stores was not found."
-            )
+            error.message.includes("One of the specified object stores was not found.")
         ) {
             // This error occurs if app tries to migrate without having an existing storage
             return false;
@@ -64,7 +66,7 @@ export async function migrateToSwapRepository(
 
 async function getContractCollection<T>(
     storage: LegacyStorageAccessor,
-    contractType: string
+    contractType: string,
 ): Promise<ReadonlyArray<T>> {
     const stored = await storage.getItem(`collection:${contractType}`);
     if (!stored) return [];
@@ -72,10 +74,9 @@ async function getContractCollection<T>(
     try {
         return JSON.parse(stored) as T[];
     } catch (error) {
-        const errMessage: string =
-            "message" in (error as any) ? (error as any).message : "";
+        const errMessage: string = "message" in (error as any) ? (error as any).message : "";
         throw new Error(
-            `Failed to parse contract collection ${contractType} from storage: ${errMessage}`
+            `Failed to parse contract collection ${contractType} from storage: ${errMessage}`,
         );
     }
 }

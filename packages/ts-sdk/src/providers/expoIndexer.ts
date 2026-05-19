@@ -14,15 +14,9 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
             isLeaf: !vtxo.isPreconfirmed,
         },
         virtualStatus: {
-            state: vtxo.isSwept
-                ? "swept"
-                : vtxo.isPreconfirmed
-                  ? "preconfirmed"
-                  : "settled",
+            state: vtxo.isSwept ? "swept" : vtxo.isPreconfirmed ? "preconfirmed" : "settled",
             commitmentTxIds: vtxo.commitmentTxids,
-            batchExpiry: vtxo.expiresAt
-                ? Number(vtxo.expiresAt) * 1000
-                : undefined,
+            batchExpiry: vtxo.expiresAt ? Number(vtxo.expiresAt) * 1000 : undefined,
         },
         spentBy: vtxo.spentBy ?? "",
         settledBy: vtxo.settledBy,
@@ -58,12 +52,11 @@ export class ExpoIndexerProvider extends RestIndexerProvider {
 
     override async *getSubscription(
         subscriptionId: string,
-        abortSignal: AbortSignal
+        abortSignal: AbortSignal,
     ): AsyncIterableIterator<SubscriptionResponse> {
         // Detect if we're running in React Native/Expo environment
         const isReactNative =
-            typeof navigator !== "undefined" &&
-            navigator.product === "ReactNative";
+            typeof navigator !== "undefined" && navigator.product === "ReactNative";
 
         const expoFetch = await getExpoFetch().catch((error) => {
             // In React Native/Expo, expo/fetch is required for proper streaming support
@@ -71,7 +64,7 @@ export class ExpoIndexerProvider extends RestIndexerProvider {
                 throw new Error(
                     "expo/fetch is unavailable in React Native environment. " +
                         "Please ensure expo/fetch is installed and properly configured. " +
-                        "Streaming support may not work with standard fetch in React Native."
+                        "Streaming support may not work with standard fetch in React Native.",
                 );
             }
             throw error;
@@ -97,21 +90,15 @@ export class ExpoIndexerProvider extends RestIndexerProvider {
                             return {
                                 txid: data.event.txid,
                                 scripts: data.event.scripts || [],
-                                newVtxos: (data.event.newVtxos || []).map(
-                                    convertVtxo
-                                ),
-                                spentVtxos: (data.event.spentVtxos || []).map(
-                                    convertVtxo
-                                ),
-                                sweptVtxos: (data.event.sweptVtxos || []).map(
-                                    convertVtxo
-                                ),
+                                newVtxos: (data.event.newVtxos || []).map(convertVtxo),
+                                spentVtxos: (data.event.spentVtxos || []).map(convertVtxo),
+                                sweptVtxos: (data.event.sweptVtxos || []).map(convertVtxo),
                                 tx: data.event.tx,
                                 checkpointTxs: data.event.checkpointTxs,
                             };
                         }
                         return null;
-                    }
+                    },
                 );
             } catch (error) {
                 if (error instanceof Error && error.name === "AbortError") {

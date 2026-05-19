@@ -84,9 +84,7 @@ export interface IContractManager extends Disposable {
      *
      * If no filter is provided, returns all contracts with their virtual outputs.
      */
-    getContractsWithVtxos(
-        filter?: GetContractsFilter
-    ): Promise<ContractWithVtxos[]>;
+    getContractsWithVtxos(filter?: GetContractsFilter): Promise<ContractWithVtxos[]>;
 
     /**
      * Stamp raw virtual outputs with the correct per-contract tapscripts
@@ -109,7 +107,7 @@ export interface IContractManager extends Disposable {
      */
     updateContract(
         script: string,
-        updates: Partial<Omit<Contract, "script" | "createdAt">>
+        updates: Partial<Omit<Contract, "script" | "createdAt">>,
     ): Promise<Contract>;
 
     /**
@@ -127,18 +125,14 @@ export interface IContractManager extends Disposable {
      *
      * Returns an empty array if the contract or its handler cannot be found.
      */
-    getSpendablePaths(
-        options: GetSpendablePathsOptions
-    ): Promise<PathSelection[]>;
+    getSpendablePaths(options: GetSpendablePathsOptions): Promise<PathSelection[]>;
 
     /**
      * Get all possible spending paths for a contract.
      *
      * Returns an empty array if the contract or its handler cannot be found.
      */
-    getAllSpendingPaths(
-        options: GetAllSpendingPathsOptions
-    ): Promise<PathSelection[]>;
+    getAllSpendingPaths(options: GetAllSpendingPathsOptions): Promise<PathSelection[]>;
 
     /**
      * Subscribe to contract events.
@@ -307,9 +301,7 @@ export class ContractManager implements IContractManager {
      *
      * @param config ContractManagerConfig
      */
-    static async create(
-        config: ContractManagerConfig
-    ): Promise<ContractManager> {
+    static async create(config: ContractManagerConfig): Promise<ContractManager> {
         const cm = new ContractManager(config);
         await cm.initialize();
         return cm;
@@ -370,9 +362,7 @@ export class ContractManager implements IContractManager {
         // Validate that a handler exists for this contract type
         const handler = contractHandlers.get(params.type);
         if (!handler) {
-            throw new Error(
-                `No handler registered for contract type '${params.type}'`
-            );
+            throw new Error(`No handler registered for contract type '${params.type}'`);
         }
 
         // Validate params by attempting to create the script
@@ -385,7 +375,7 @@ export class ContractManager implements IContractManager {
             if (derivedScript !== params.script) {
                 throw new Error(
                     `Script mismatch: provided script does not match script derived from params. ` +
-                        `Expected ${derivedScript}, got ${params.script}`
+                        `Expected ${derivedScript}, got ${params.script}`,
                 );
             }
         } catch (error) {
@@ -393,7 +383,7 @@ export class ContractManager implements IContractManager {
                 throw error;
             }
             throw new Error(
-                `Invalid params for contract type '${params.type}': ${error instanceof Error ? error.message : String(error)}`
+                `Invalid params for contract type '${params.type}': ${error instanceof Error ? error.message : String(error)}`,
             );
         }
 
@@ -402,7 +392,7 @@ export class ContractManager implements IContractManager {
         if (existing) {
             if (existing.type === params.type) return existing;
             throw new Error(
-                `Contract with script ${params.script} already exists with with type ${existing.type}.`
+                `Contract with script ${params.script} already exists with with type ${existing.type}.`,
             );
         }
 
@@ -446,16 +436,14 @@ export class ContractManager implements IContractManager {
 
     async getContractsWithVtxos(
         filter?: GetContractsFilter,
-        pageSize?: number
+        pageSize?: number,
     ): Promise<ContractWithVtxos[]> {
         const contracts = await this.getContracts(filter);
         await this.syncContracts({ contracts, pageSize });
         const vtxos = await this.getVtxosForContracts(contracts);
         return contracts.map((contract) => ({
             contract,
-            vtxos: vtxos.filter(
-                (vtxo) => vtxo.contractScript === contract.script
-            ),
+            vtxos: vtxos.filter((vtxo) => vtxo.contractScript === contract.script),
         }));
     }
 
@@ -472,9 +460,7 @@ export class ContractManager implements IContractManager {
             byScript.set(contract.script, contract);
         }
 
-        return vtxos.map((vtxo) =>
-            extendVirtualCoinForContract(vtxo, byScript)
-        );
+        return vtxos.map((vtxo) => extendVirtualCoinForContract(vtxo, byScript));
     }
 
     private buildContractsDbFilter(filter: GetContractsFilter): ContractFilter {
@@ -495,7 +481,7 @@ export class ContractManager implements IContractManager {
      */
     async updateContract(
         script: string,
-        updates: Partial<Omit<Contract, "script" | "createdAt">>
+        updates: Partial<Omit<Contract, "script" | "createdAt">>,
     ): Promise<Contract> {
         const contracts = await this.config.contractRepository.getContracts({
             script,
@@ -523,10 +509,7 @@ export class ContractManager implements IContractManager {
      * @param script - Contract script
      * @param updates - The new values to merge with existing params
      */
-    async updateContractParams(
-        script: string,
-        updates: Contract["params"]
-    ): Promise<Contract> {
+    async updateContractParams(script: string, updates: Contract["params"]): Promise<Contract> {
         const contracts = await this.config.contractRepository.getContracts({
             script,
         });
@@ -549,10 +532,7 @@ export class ContractManager implements IContractManager {
     /**
      * Set a contract's state.
      */
-    async setContractState(
-        script: string,
-        state: ContractState
-    ): Promise<void> {
+    async setContractState(script: string, state: ContractState): Promise<void> {
         await this.updateContract(script, { state });
     }
 
@@ -571,15 +551,8 @@ export class ContractManager implements IContractManager {
      *
      * @param options - Options for getting spendable paths
      */
-    async getSpendablePaths(
-        options: GetSpendablePathsOptions
-    ): Promise<PathSelection[]> {
-        const {
-            contractScript,
-            collaborative = true,
-            walletPubKey,
-            vtxo,
-        } = options;
+    async getSpendablePaths(options: GetSpendablePathsOptions): Promise<PathSelection[]> {
+        const { contractScript, collaborative = true, walletPubKey, vtxo } = options;
 
         const [contract] = await this.getContracts({ script: contractScript });
         if (!contract) return [];
@@ -603,9 +576,7 @@ export class ContractManager implements IContractManager {
      *
      * @param options - Options for getting spending paths
      */
-    async getAllSpendingPaths(
-        options: GetAllSpendingPathsOptions
-    ): Promise<PathSelection[]> {
+    async getAllSpendingPaths(options: GetAllSpendingPathsOptions): Promise<PathSelection[]> {
         const { contractScript, collaborative = true, walletPubKey } = options;
 
         const [contract] = await this.getContracts({ script: contractScript });
@@ -681,16 +652,13 @@ export class ContractManager implements IContractManager {
         // gate (which requires `options.window === undefined`), turning every
         // `refreshVtxos()` call into an unbounded full re-scan whose cursor
         // never moves forward.
-        const hasExplicitWindow =
-            opts?.after !== undefined || opts?.before !== undefined;
+        const hasExplicitWindow = opts?.after !== undefined || opts?.before !== undefined;
         await this.syncContracts({
             contracts,
             // Scope-only widener; never set together with explicit
             // `contracts` because `scripts` already names the exact set.
             includeInactive: contracts ? false : opts?.includeInactive,
-            window: hasExplicitWindow
-                ? { after: opts?.after, before: opts?.before }
-                : undefined,
+            window: hasExplicitWindow ? { after: opts?.after, before: opts?.before } : undefined,
         });
     }
 
@@ -726,16 +694,9 @@ export class ContractManager implements IContractManager {
         for (const [address, addressVtxos] of byAddress) {
             const contract = contracts.find((c) => c.address === address);
             if (contract) {
-                await saveVtxosForContract(
-                    this.config.walletRepository,
-                    contract,
-                    addressVtxos
-                );
+                await saveVtxosForContract(this.config.walletRepository, contract, addressVtxos);
             } else {
-                await this.config.walletRepository.saveVtxos(
-                    address,
-                    addressVtxos
-                );
+                await this.config.walletRepository.saveVtxos(address, addressVtxos);
             }
         }
     }
@@ -782,23 +743,18 @@ export class ContractManager implements IContractManager {
         this.emitEvent(event);
     }
 
-    private async getVtxosForContracts(
-        contracts: Contract[]
-    ): Promise<ExtendedContractVtxo[]> {
+    private async getVtxosForContracts(contracts: Contract[]): Promise<ExtendedContractVtxo[]> {
         const res = await Promise.all(
             contracts.map((contract) =>
-                getVtxosForContract(
-                    this.config.walletRepository,
-                    contract
-                ).then((vtxos) =>
+                getVtxosForContract(this.config.walletRepository, contract).then((vtxos) =>
                     vtxos.map(
                         (vtxo): ExtendedContractVtxo => ({
                             ...vtxo,
                             contractScript: contract.script,
-                        })
-                    )
-                )
-            )
+                        }),
+                    ),
+                ),
+            ),
         );
         return res.flat();
     }
@@ -847,11 +803,7 @@ export class ContractManager implements IContractManager {
                 : this.watcher.getWatchedContracts());
 
         const requestStartedAt = Date.now();
-        const result = await this.fetchContractVxosFromIndexer(
-            contracts,
-            options.pageSize,
-            window
-        );
+        const result = await this.fetchContractVxosFromIndexer(contracts, options.pageSize, window);
 
         if (mustUpdateCursor) {
             const cutoff = cursorCutoff(requestStartedAt);
@@ -866,13 +818,9 @@ export class ContractManager implements IContractManager {
      * repository. This catches virtual outputs whose state changed outside the delta
      * window (e.g. a spend that hasn't settled yet).
      */
-    private async reconcilePendingFrontier(
-        contracts: Contract[]
-    ): Promise<void> {
+    private async reconcilePendingFrontier(contracts: Contract[]): Promise<void> {
         const scripts = contracts.map((c) => c.script);
-        const scriptToContract = new Map<string, Contract>(
-            contracts.map((c) => [c.script, c])
-        );
+        const scriptToContract = new Map<string, Contract>(contracts.map((c) => [c.script, c]));
 
         const { vtxos } = await this.config.indexerProvider.getVtxos({
             scripts,
@@ -906,13 +854,13 @@ export class ContractManager implements IContractManager {
             const filtered = warnAndFilterVtxosForScript(
                 contractVtxos,
                 contract.script,
-                "ContractManager.reconcilePendingFrontier"
+                "ContractManager.reconcilePendingFrontier",
             );
             if (filtered.length === 0) continue;
             await saveVtxosForContract(
                 this.config.walletRepository,
                 contract,
-                filtered as ExtendedVirtualCoin[]
+                filtered as ExtendedVirtualCoin[],
             );
         }
     }
@@ -920,13 +868,9 @@ export class ContractManager implements IContractManager {
     private async fetchContractVxosFromIndexer(
         contracts: Contract[],
         pageSize?: number,
-        syncWindow?: { after?: number; before?: number }
+        syncWindow?: { after?: number; before?: number },
     ): Promise<Map<string, ExtendedContractVtxo[]>> {
-        const fetched = await this.fetchContractVtxosBulk(
-            contracts,
-            pageSize,
-            syncWindow
-        );
+        const fetched = await this.fetchContractVtxosBulk(contracts, pageSize, syncWindow);
         const result = new Map<string, ExtendedContractVtxo[]>();
         for (const [contractScript, vtxos] of fetched) {
             result.set(contractScript, vtxos);
@@ -935,13 +879,13 @@ export class ContractManager implements IContractManager {
                 const filtered = warnAndFilterVtxosForScript(
                     vtxos,
                     contract.script,
-                    "ContractManager.fetchContractVxosFromIndexer"
+                    "ContractManager.fetchContractVxosFromIndexer",
                 );
                 if (filtered.length === 0) continue;
                 await saveVtxosForContract(
                     this.config.walletRepository,
                     contract,
-                    filtered as ExtendedVirtualCoin[]
+                    filtered as ExtendedVirtualCoin[],
                 );
             }
         }
@@ -951,7 +895,7 @@ export class ContractManager implements IContractManager {
     private async fetchContractVtxosBulk(
         contracts: Contract[],
         pageSize: number = DEFAULT_PAGE_SIZE,
-        syncWindow?: { after?: number; before?: number }
+        syncWindow?: { after?: number; before?: number },
     ): Promise<Map<string, ExtendedContractVtxo[]>> {
         if (contracts.length === 0) {
             return new Map();
@@ -961,11 +905,9 @@ export class ContractManager implements IContractManager {
         // round-trips. Results are keyed by script so we can distribute them
         // back to the correct contract afterwards. Always fetches the full
         // history (spent/swept included) so the repo is the source of truth.
-        const scriptToContract = new Map<string, Contract>(
-            contracts.map((c) => [c.script, c])
-        );
+        const scriptToContract = new Map<string, Contract>(contracts.map((c) => [c.script, c]));
         const result = new Map<string, ExtendedContractVtxo[]>(
-            contracts.map((c) => [c.script, []])
+            contracts.map((c) => [c.script, []]),
         );
 
         const scripts = contracts.map((c) => c.script);

@@ -53,9 +53,7 @@ export class Packet implements ExtensionPacket {
 
     /** Convert the packet into the batch-leaf form for a specific intent transaction id. */
     leafTxPacket(intentTxid: Uint8Array): Packet {
-        const leafGroups = this.groups.map((group) =>
-            group.toBatchLeafAssetGroup(intentTxid)
-        );
+        const leafGroups = this.groups.map((group) => group.toBatchLeafAssetGroup(intentTxid));
         return new Packet(leafGroups);
     }
 
@@ -105,7 +103,7 @@ export class Packet implements ExtensionPacket {
                 group.controlAsset.ref.groupIndex >= this.groups.length
             ) {
                 throw new Error(
-                    `invalid control asset group index, ${group.controlAsset.ref.groupIndex} out of range [0, ${this.groups.length - 1}]`
+                    `invalid control asset group index, ${group.controlAsset.ref.groupIndex} out of range [0, ${this.groups.length - 1}]`,
                 );
             }
         }
@@ -121,7 +119,7 @@ export class Packet implements ExtensionPacket {
 
         if (reader.remaining() > 0) {
             throw new Error(
-                `invalid packet length, left ${reader.remaining()} unknown bytes to read`
+                `invalid packet length, left ${reader.remaining()} unknown bytes to read`,
             );
         }
 

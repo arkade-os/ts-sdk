@@ -1,9 +1,4 @@
-import {
-    ArkProvider,
-    IndexerProvider,
-    IWallet,
-    NetworkName,
-} from "@arkade-os/sdk";
+import { ArkProvider, IndexerProvider, IWallet, NetworkName } from "@arkade-os/sdk";
 import {
     CreateReverseSwapResponse,
     CreateSubmarineSwapResponse,
@@ -251,10 +246,7 @@ export type BoltzSwap = BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap;
 export interface PendingReverseSwap extends BoltzReverseSwap {}
 export interface PendingSubmarineSwap extends BoltzSubmarineSwap {}
 export interface PendingChainSwap extends BoltzChainSwap {}
-export type PendingSwap =
-    | PendingReverseSwap
-    | PendingSubmarineSwap
-    | PendingChainSwap;
+export type PendingSwap = PendingReverseSwap | PendingSubmarineSwap | PendingChainSwap;
 
 /** Configuration for initializing ArkadeSwaps via the constructor (swapProvider is required). */
 export interface ArkadeSwapsConfig {
@@ -285,10 +277,7 @@ export interface ArkadeSwapsConfig {
  * Configuration for {@link ArkadeSwaps.create} — same as ArkadeSwapsConfig but
  * `swapProvider` is optional (auto-created from the wallet's network if omitted).
  */
-export type ArkadeSwapsCreateConfig = Omit<
-    ArkadeSwapsConfig,
-    "swapProvider"
-> & {
+export type ArkadeSwapsCreateConfig = Omit<ArkadeSwapsConfig, "swapProvider"> & {
     swapProvider?: BoltzSwapProvider;
 };
 

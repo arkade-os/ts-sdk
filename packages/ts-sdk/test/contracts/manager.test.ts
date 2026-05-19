@@ -31,9 +31,7 @@ const SECOND_DEFAULT_SCRIPT_TAPSCRIPT = new DefaultVtxo.Script({
     pubKey: TEST_DELEGATE_PUB_KEY,
     serverPubKey: TEST_SERVER_PUB_KEY,
 });
-const SECOND_DEFAULT_SCRIPT = hex.encode(
-    SECOND_DEFAULT_SCRIPT_TAPSCRIPT.pkScript
-);
+const SECOND_DEFAULT_SCRIPT = hex.encode(SECOND_DEFAULT_SCRIPT_TAPSCRIPT.pkScript);
 const SECOND_DEFAULT_PARAMS = DefaultContractHandler.serializeParams({
     pubKey: TEST_DELEGATE_PUB_KEY,
     serverPubKey: TEST_SERVER_PUB_KEY,
@@ -108,9 +106,7 @@ describe("ContractManager", () => {
                 value: DefaultVtxo.Script.DEFAULT_TIMELOCK.value + 1n,
             },
         });
-        const altScript = hex.encode(
-            DefaultContractHandler.createScript(altParams).pkScript
-        );
+        const altScript = hex.encode(DefaultContractHandler.createScript(altParams).pkScript);
 
         await manager.createContract({
             type: "default",
@@ -234,9 +230,7 @@ describe("ContractManager", () => {
         // The bootstrap call should NOT have used spendableOnly
         const calls = (mockIndexer.getVtxos as any).mock.calls;
         expect(calls.length).toBeGreaterThan(0);
-        const bootstrapCall = calls.find(
-            (c: any) => c[0].scripts?.[0] === TEST_DEFAULT_SCRIPT
-        );
+        const bootstrapCall = calls.find((c: any) => c[0].scripts?.[0] === TEST_DEFAULT_SCRIPT);
         expect(bootstrapCall).toBeDefined();
         expect(bootstrapCall[0].spendableOnly).toBeUndefined();
 
@@ -336,7 +330,7 @@ describe("ContractManager", () => {
                     };
                 }
                 return gen();
-            }
+            },
         );
 
         const contract = await manager.createContract({
@@ -377,7 +371,7 @@ describe("ContractManager", () => {
         async function seedRaw(
             script: string,
             address: string,
-            state: "active" | "inactive"
+            state: "active" | "inactive",
         ): Promise<void> {
             await repository.saveContract({
                 type: "default",
@@ -526,9 +520,7 @@ describe("ContractManager", () => {
                 // on the no-op case (cursor unchanged), defeating the
                 // test.
                 const stateAfter = await walletRepo.getWalletState();
-                expect(stateAfter?.lastSyncTime ?? 0).toBeGreaterThan(
-                    SEEDED_CURSOR
-                );
+                expect(stateAfter?.lastSyncTime ?? 0).toBeGreaterThan(SEEDED_CURSOR);
             } finally {
                 await mgr.dispose();
             }
@@ -639,9 +631,7 @@ describe("ContractManager", () => {
                 vtxos: [spent],
             });
 
-            await localManager.refreshOutpoints([
-                { txid: spent.txid, vout: spent.vout },
-            ]);
+            await localManager.refreshOutpoints([{ txid: spent.txid, vout: spent.vout }]);
 
             // Outpoint-scoped indexer call.
             expect(mockIndexer.getVtxos).toHaveBeenCalledWith({
@@ -650,9 +640,7 @@ describe("ContractManager", () => {
 
             // The wallet repo now reflects the spent flag for this address.
             const stored = await walletRepo.getVtxos("address");
-            const found = stored.find(
-                (v) => v.txid === spent.txid && v.vout === spent.vout
-            );
+            const found = stored.find((v) => v.txid === spent.txid && v.vout === spent.vout);
             expect(found).toBeDefined();
             expect(found!.isSpent).toBe(true);
         });
@@ -681,9 +669,7 @@ describe("ContractManager", () => {
                 ],
             });
 
-            await localManager.refreshOutpoints([
-                { txid: "aa".repeat(32), vout: 0 },
-            ]);
+            await localManager.refreshOutpoints([{ txid: "aa".repeat(32), vout: 0 }]);
 
             expect(mockIndexer.getVtxos).toHaveBeenCalled();
             const stored = await walletRepo.getVtxos("address");
@@ -829,9 +815,7 @@ describe("ContractManager", () => {
                 vtxos: [spent],
             });
 
-            await localManager.refreshOutpoints([
-                { txid: spent.txid, vout: spent.vout },
-            ]);
+            await localManager.refreshOutpoints([{ txid: spent.txid, vout: spent.vout }]);
 
             // Outpoint-scoped indexer call.
             expect(mockIndexer.getVtxos).toHaveBeenCalledWith({
@@ -840,9 +824,7 @@ describe("ContractManager", () => {
 
             // The wallet repo now reflects the spent flag for this address.
             const stored = await walletRepo.getVtxos("address");
-            const found = stored.find(
-                (v) => v.txid === spent.txid && v.vout === spent.vout
-            );
+            const found = stored.find((v) => v.txid === spent.txid && v.vout === spent.vout);
             expect(found).toBeDefined();
             expect(found!.isSpent).toBe(true);
         });
@@ -871,9 +853,7 @@ describe("ContractManager", () => {
                 ],
             });
 
-            await localManager.refreshOutpoints([
-                { txid: "aa".repeat(32), vout: 0 },
-            ]);
+            await localManager.refreshOutpoints([{ txid: "aa".repeat(32), vout: 0 }]);
 
             expect(mockIndexer.getVtxos).toHaveBeenCalled();
             const stored = await walletRepo.getVtxos("address");
@@ -913,9 +893,7 @@ describe("ContractManager", () => {
                 value: DefaultVtxo.Script.DEFAULT_TIMELOCK.value + 1n,
             },
         });
-        const altScript = hex.encode(
-            DefaultContractHandler.createScript(altParams).pkScript
-        );
+        const altScript = hex.encode(DefaultContractHandler.createScript(altParams).pkScript);
 
         const walletRepo = new InMemoryWalletRepository();
         const localManager = await ContractManager.create({
@@ -968,9 +946,7 @@ describe("ContractManager", () => {
         const b = result.find((c) => c.contract.script === contractB.script);
 
         // Contract A must not return a row whose script is contract B's.
-        expect(
-            a?.vtxos.find((v) => v.txid === "ee".repeat(32))
-        ).toBeUndefined();
+        expect(a?.vtxos.find((v) => v.txid === "ee".repeat(32))).toBeUndefined();
         // Contract B returns its own script-matching row.
         const bRow = b?.vtxos.find((v) => v.txid === "ee".repeat(32));
         expect(bRow).toBeDefined();
@@ -1014,7 +990,7 @@ describe("ContractManager", () => {
                 params: createDefaultContractParams(),
                 script: TEST_DEFAULT_SCRIPT,
                 address: "contract-addr",
-            })
+            }),
         ).resolves.toBeDefined();
 
         const saved = await walletRepo.getVtxos("contract-addr");

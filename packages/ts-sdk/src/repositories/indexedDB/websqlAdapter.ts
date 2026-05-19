@@ -31,14 +31,8 @@ export interface SQLError {
     message: string;
 }
 
-type ExecuteSqlSuccessCb = (
-    tx: WebSQLTransaction,
-    resultSet: SQLResultSet
-) => void;
-type ExecuteSqlErrorCb = (
-    tx: WebSQLTransaction,
-    error: SQLError
-) => boolean | void;
+type ExecuteSqlSuccessCb = (tx: WebSQLTransaction, resultSet: SQLResultSet) => void;
+type ExecuteSqlErrorCb = (tx: WebSQLTransaction, error: SQLError) => boolean | void;
 
 interface QueuedStatement {
     sql: string;
@@ -69,7 +63,7 @@ export class WebSQLTransaction {
         sql: string,
         args?: any[],
         successCb?: ExecuteSqlSuccessCb,
-        errorCb?: ExecuteSqlErrorCb
+        errorCb?: ExecuteSqlErrorCb,
     ): void {
         this._queue.push({ sql, args: args ?? [], successCb, errorCb });
     }
@@ -82,11 +76,7 @@ function isRead(sql: string): boolean {
     return trimmed.startsWith("SELECT") || trimmed.startsWith("PRAGMA");
 }
 
-function buildResultSet(
-    db: SQLiteDatabase,
-    sql: string,
-    args: any[]
-): SQLResultSet {
+function buildResultSet(db: SQLiteDatabase, sql: string, args: any[]): SQLResultSet {
     if (isRead(sql)) {
         const rows = db.getAllSync(sql, args);
         return {
@@ -157,7 +147,7 @@ export class WebSQLDatabase {
     transaction(
         callback: (tx: WebSQLTransaction) => void,
         errorCb?: (error: SQLError) => void,
-        successCb?: () => void
+        successCb?: () => void,
     ): void {
         // WebSQL is async/callback-based.  Schedule via macrotask so the
         // caller's subsequent code runs first (matches browser behavior).
@@ -188,7 +178,7 @@ export class WebSQLDatabase {
     readTransaction(
         callback: (tx: WebSQLTransaction) => void,
         errorCb?: (error: SQLError) => void,
-        successCb?: () => void
+        successCb?: () => void,
     ): void {
         // Reads go through the same path — SQLite handles concurrency.
         this.transaction(callback, errorCb, successCb);
@@ -202,7 +192,7 @@ export function openDatabase(
     version: string,
     _displayName: string,
     _estimatedSize: number,
-    _creationCallback?: (db: WebSQLDatabase) => void
+    _creationCallback?: (db: WebSQLDatabase) => void,
 ): WebSQLDatabase {
     const { db: sqliteDb, created } = getSqliteDb(name);
     const wsdb = new WebSQLDatabase(sqliteDb, version);

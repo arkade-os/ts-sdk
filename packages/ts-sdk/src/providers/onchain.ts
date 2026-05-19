@@ -85,11 +85,8 @@ export interface OnchainProvider {
      * @see getTxOutspends
      */
     getTxStatus(
-        txid: string
-    ): Promise<
-        | { confirmed: false }
-        | { confirmed: true; blockTime: number; blockHeight: number }
-    >;
+        txid: string,
+    ): Promise<{ confirmed: false } | { confirmed: true; blockTime: number; blockHeight: number }>;
     /**
      * Fetch the current chain tip.
      *
@@ -113,7 +110,7 @@ export interface OnchainProvider {
      */
     watchAddresses(
         addresses: string[],
-        eventCallback: (txs: ExplorerTransaction[]) => void
+        eventCallback: (txs: ExplorerTransaction[]) => void,
     ): Promise<() => void>;
 }
 
@@ -139,7 +136,7 @@ export class EsploraProvider implements OnchainProvider {
 
             /** Force polling even when websocket transport is available. */
             forcePolling?: boolean;
-        }
+        },
     ) {
         this.pollingInterval = opts?.pollingInterval ?? 15_000;
         this.forcePolling = opts?.forcePolling ?? false;
@@ -173,9 +170,7 @@ export class EsploraProvider implements OnchainProvider {
         }
     }
 
-    async getTxOutspends(
-        txid: string
-    ): Promise<{ spent: boolean; txid: string }[]> {
+    async getTxOutspends(txid: string): Promise<{ spent: boolean; txid: string }[]> {
         const response = await fetch(`${this.baseUrl}/tx/${txid}/outspends`);
         if (!response.ok) {
             const error = await response.text();
@@ -218,9 +213,7 @@ export class EsploraProvider implements OnchainProvider {
 
         const response = await fetch(`${this.baseUrl}/tx/${txid}/status`);
         if (!response.ok) {
-            throw new Error(
-                `Failed to get transaction status: ${response.statusText}`
-            );
+            throw new Error(`Failed to get transaction status: ${response.statusText}`);
         }
 
         const data = await response.json();
@@ -237,7 +230,7 @@ export class EsploraProvider implements OnchainProvider {
 
     async watchAddresses(
         addresses: string[],
-        callback: (txs: ExplorerTransaction[]) => void
+        callback: (txs: ExplorerTransaction[]) => void,
     ): Promise<() => void> {
         let intervalId: ReturnType<typeof setInterval> | null = null;
         const wsUrl = this.baseUrl.replace(/^http(s)?:/, "ws$1:") + "/v1/ws";
@@ -245,7 +238,7 @@ export class EsploraProvider implements OnchainProvider {
         const poll = async () => {
             const getAllTxs = async () => {
                 const txArrays = await Promise.all(
-                    addresses.map((address) => this.getTransactions(address))
+                    addresses.map((address) => this.getTransactions(address)),
                 );
                 return txArrays.flat();
             };
@@ -254,8 +247,7 @@ export class EsploraProvider implements OnchainProvider {
             const initialTxs = await getAllTxs();
 
             // we use block_time in key to also notify when a transaction is confirmed
-            const txKey = (tx: ExplorerTransaction) =>
-                `${tx.txid}_${tx.status.block_time}`;
+            const txKey = (tx: ExplorerTransaction) => `${tx.txid}_${tx.status.block_time}`;
 
             // create a set of existing transactions to avoid duplicates
             const existingTxs = new Set(initialTxs.map(txKey));
@@ -268,9 +260,7 @@ export class EsploraProvider implements OnchainProvider {
                     const currentTxs = await getAllTxs();
 
                     // filter out transactions that are already in initialTxs
-                    const newTxs = currentTxs.filter(
-                        (tx) => !existingTxs.has(txKey(tx))
-                    );
+                    const newTxs = currentTxs.filter((tx) => !existingTxs.has(txKey(tx)));
 
                     if (newTxs.length > 0) {
                         // Update the tracking set instead of growing the array
@@ -308,33 +298,20 @@ export class EsploraProvider implements OnchainProvider {
             ws.addEventListener("message", (event: MessageEvent) => {
                 try {
                     const newTxs: ExplorerTransaction[] = [];
-                    const message: WebSocketMessage = JSON.parse(
-                        event.data.toString()
-                    );
+                    const message: WebSocketMessage = JSON.parse(event.data.toString());
                     if (!message["multi-address-transactions"]) return;
                     const aux = message["multi-address-transactions"];
 
                     for (const address in aux) {
-                        for (const type of [
-                            "mempool",
-                            "confirmed",
-                            "removed",
-                        ] as const) {
+                        for (const type of ["mempool", "confirmed", "removed"] as const) {
                             if (!aux[address][type]) continue;
-                            newTxs.push(
-                                ...aux[address][type].filter(
-                                    isExplorerTransaction
-                                )
-                            );
+                            newTxs.push(...aux[address][type].filter(isExplorerTransaction));
                         }
                     }
                     // callback with new transactions
                     if (newTxs.length > 0) callback(newTxs);
                 } catch (error) {
-                    console.error(
-                        "Failed to process WebSocket message:",
-                        error
-                    );
+                    console.error("Failed to process WebSocket message:", error);
                 }
             });
 
@@ -378,10 +355,7 @@ export class EsploraProvider implements OnchainProvider {
         };
     }
 
-    private async broadcastPackage(
-        parent: string,
-        child: string
-    ): Promise<string> {
+    private async broadcastPackage(parent: string, child: string): Promise<string> {
         const response = await fetch(`${this.baseUrl}/txs/package`, {
             method: "POST",
             headers: {
@@ -416,9 +390,7 @@ export class EsploraProvider implements OnchainProvider {
     }
 }
 
-function isValidBlocksTip(
-    tip: any
-): tip is { id: string; height: number; mediantime: number }[] {
+function isValidBlocksTip(tip: any): tip is { id: string; height: number; mediantime: number }[] {
     return (
         Array.isArray(tip) &&
         tip.every((t) => {
@@ -442,8 +414,7 @@ const isExplorerTransaction = (tx: any): tx is ExplorerTransaction => {
         Array.isArray(tx.vout) &&
         tx.vout.every(
             (vout: any) =>
-                typeof vout.scriptpubkey_address === "string" &&
-                typeof vout.value === "number"
+                typeof vout.scriptpubkey_address === "string" && typeof vout.value === "number",
         ) &&
         typeof tx.status === "object" &&
         typeof tx.status.confirmed === "boolean"

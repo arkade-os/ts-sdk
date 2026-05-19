@@ -9,12 +9,7 @@ import {
     rollbackMigration,
     MIGRATION_KEY,
 } from "../src/repositories/migrations/fromStorageAdapter";
-import type {
-    ExtendedVirtualCoin,
-    ExtendedCoin,
-    ArkTransaction,
-    TxType,
-} from "../src/wallet";
+import type { ExtendedVirtualCoin, ExtendedCoin, ArkTransaction, TxType } from "../src/wallet";
 import type { TapLeafScript } from "../src/script/base";
 import { IndexedDBStorageAdapter } from "../src/storage/indexedDB";
 import { WalletRepositoryImpl } from "../src/repositories/migrations/walletRepositoryImpl";
@@ -41,21 +36,9 @@ describe("IndexedDB migrations", () => {
         const vtxo3 = createMockVtxo("txvtxo3", 0, 30000);
         const utxo1 = createMockUtxo("txutxo1", 0, 10000);
         const utxo2 = createMockUtxo("txutxo2", 1, 20000);
-        const tx1 = createMockTransaction(
-            { boardingTxid: "btx1" },
-            "SENT" as TxType,
-            10000
-        );
-        const tx2 = createMockTransaction(
-            { commitmentTxid: "ctx2" },
-            "RECEIVED" as TxType,
-            20000
-        );
-        const tx3 = createMockTransaction(
-            { arkTxid: "atx3" },
-            "SENT" as TxType,
-            30000
-        );
+        const tx1 = createMockTransaction({ boardingTxid: "btx1" }, "SENT" as TxType, 10000);
+        const tx2 = createMockTransaction({ commitmentTxid: "ctx2" }, "RECEIVED" as TxType, 20000);
+        const tx3 = createMockTransaction({ arkTxid: "atx3" }, "SENT" as TxType, 30000);
         const walletState = {
             settings: { theme: "dark" },
         };
@@ -123,10 +106,7 @@ describe("IndexedDB migrations", () => {
         const vtxo1 = createMockVtxo("tx1", 0, 10000);
         await walletRepoV1.saveVtxos(testAddress, [vtxo1]);
 
-        await oldStorage.setItem(
-            "migration-from-storage-adapter-wallet",
-            "done"
-        );
+        await oldStorage.setItem("migration-from-storage-adapter-wallet", "done");
 
         const walletRepoV2 = new IndexedDBWalletRepository(newDbName);
 
@@ -151,7 +131,7 @@ describe("IndexedDB migrations", () => {
             getItem: () => {
                 throw new DOMException(
                     "One of the specified object stores was not found",
-                    "NotFoundError"
+                    "NotFoundError",
                 );
             },
         } as any;
@@ -177,7 +157,7 @@ describe("getMigrationStatus", () => {
             getItem: () => {
                 throw new DOMException(
                     "One of the specified object stores was not found",
-                    "NotFoundError"
+                    "NotFoundError",
                 );
             },
         } as any;
@@ -268,7 +248,7 @@ describe("requiresMigration", () => {
             getItem: () => {
                 throw new DOMException(
                     "One of the specified object stores was not found",
-                    "NotFoundError"
+                    "NotFoundError",
                 );
             },
         } as any;
@@ -296,19 +276,13 @@ describe("rollbackMigration", () => {
             offchain: [testAddress],
         });
 
-        const statusAfterMigration = await getMigrationStatus(
-            "wallet",
-            oldStorage
-        );
+        const statusAfterMigration = await getMigrationStatus("wallet", oldStorage);
         expect(statusAfterMigration).toBe("done");
 
         // Rollback
         await rollbackMigration("wallet", oldStorage);
 
-        const statusAfterRollback = await getMigrationStatus(
-            "wallet",
-            oldStorage
-        );
+        const statusAfterRollback = await getMigrationStatus("wallet", oldStorage);
         expect(statusAfterRollback).toBe("pending");
 
         // Migration should re-run
@@ -326,11 +300,9 @@ describe("migrateWalletRepository in-progress flag", () => {
                 // No migration flag set yet → pending
                 return null;
             }),
-            setItem: vi
-                .fn()
-                .mockImplementation(async (key: string, value: string) => {
-                    callOrder.push(`setItem:${value}`);
-                }),
+            setItem: vi.fn().mockImplementation(async (key: string, value: string) => {
+                callOrder.push(`setItem:${value}`);
+            }),
             removeItem: vi.fn(),
         } as any;
 
@@ -348,7 +320,7 @@ describe("migrateWalletRepository in-progress flag", () => {
         const origImpl = WalletRepositoryImpl;
         vi.spyOn(
             await import("../src/repositories/migrations/walletRepositoryImpl"),
-            "WalletRepositoryImpl"
+            "WalletRepositoryImpl",
         ).mockImplementation(() => mockOldRepo as any);
 
         const mockFresh = {
@@ -381,11 +353,7 @@ function createMockTapLeafScript(): TapLeafScript {
     return [controlBlock, script];
 }
 
-export function createMockVtxo(
-    txid: string,
-    vout: number,
-    value: number
-): ExtendedVirtualCoin {
+export function createMockVtxo(txid: string, vout: number, value: number): ExtendedVirtualCoin {
     const tapLeaf = createMockTapLeafScript();
     return {
         txid,
@@ -410,11 +378,7 @@ export function createMockVtxo(
     };
 }
 
-export function createMockUtxo(
-    txid: string,
-    vout: number,
-    value: number
-): ExtendedCoin {
+export function createMockUtxo(txid: string, vout: number, value: number): ExtendedCoin {
     const tapLeaf = createMockTapLeafScript();
     return {
         txid,
@@ -436,12 +400,10 @@ let txCounter = 0;
 export function createMockTransaction(
     key: { boardingTxid?: string; commitmentTxid?: string; arkTxid?: string },
     type: TxType,
-    amount: number
+    amount: number,
 ): ArkTransaction {
     if (!key.boardingTxid && !key.commitmentTxid && !key.arkTxid) {
-        throw new Error(
-            "Key must have one of boardingTxid, commitmentTxid, or arkTxid"
-        );
+        throw new Error("Key must have one of boardingTxid, commitmentTxid, or arkTxid");
     }
     return {
         key: {

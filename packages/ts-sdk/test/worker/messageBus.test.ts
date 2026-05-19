@@ -1,8 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import {
-    InMemoryWalletRepository,
-    InMemoryContractRepository,
-} from "../../src";
+import { InMemoryWalletRepository, InMemoryContractRepository } from "../../src";
 import {
     MessageBus,
     MessageHandler,
@@ -32,8 +29,7 @@ let messageHandler: (event: {
 function installSelfStub(): StubbedSelf {
     const selfMock: StubbedSelf = {
         addEventListener: vi.fn((type: string, handler: Function) => {
-            if (type === "message")
-                messageHandler = handler as typeof messageHandler;
+            if (type === "message") messageHandler = handler as typeof messageHandler;
         }),
         removeEventListener: vi.fn(),
         skipWaiting: vi.fn(),
@@ -46,7 +42,7 @@ function installSelfStub(): StubbedSelf {
             globalThis.setTimeout(fn, ms)) as unknown as typeof setTimeout,
         clearTimeout: ((id: unknown) =>
             globalThis.clearTimeout(
-                id as Parameters<typeof globalThis.clearTimeout>[0]
+                id as Parameters<typeof globalThis.clearTimeout>[0],
             )) as unknown as typeof clearTimeout,
     };
     vi.stubGlobal("self", selfMock);
@@ -55,11 +51,8 @@ function installSelfStub(): StubbedSelf {
 
 class TestHandler implements MessageHandler {
     readonly messageTag: string;
-    handleMessage =
-        vi.fn<(message: RequestEnvelope) => Promise<ResponseEnvelope | null>>();
-    tick = vi
-        .fn<(now: number) => Promise<ResponseEnvelope[]>>()
-        .mockResolvedValue([]);
+    handleMessage = vi.fn<(message: RequestEnvelope) => Promise<ResponseEnvelope | null>>();
+    tick = vi.fn<(now: number) => Promise<ResponseEnvelope[]>>().mockResolvedValue([]);
     start = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
     stop = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
 
@@ -74,18 +67,14 @@ async function createAndInitBus(options: {
     messageTimeoutOverrides?: Record<string, number>;
     debug?: boolean;
 }) {
-    const bus = new MessageBus(
-        new InMemoryWalletRepository(),
-        new InMemoryContractRepository(),
-        {
-            messageHandlers: options.handlers,
-            messageTimeoutMs: options.messageTimeoutMs ?? 30_000,
-            messageTimeoutOverrides: options.messageTimeoutOverrides,
-            debug: options.debug ?? false,
-            // Bypass the real buildServices — it tries to talk to networks.
-            buildServices: async () => ({}) as never,
-        }
-    );
+    const bus = new MessageBus(new InMemoryWalletRepository(), new InMemoryContractRepository(), {
+        messageHandlers: options.handlers,
+        messageTimeoutMs: options.messageTimeoutMs ?? 30_000,
+        messageTimeoutOverrides: options.messageTimeoutOverrides,
+        debug: options.debug ?? false,
+        // Bypass the real buildServices — it tries to talk to networks.
+        buildServices: async () => ({}) as never,
+    });
     await bus.start();
     const initSource = { postMessage: vi.fn() };
     await messageHandler({
@@ -117,7 +106,7 @@ describe("MessageBus PING/PONG", () => {
         const bus = new MessageBus(
             new InMemoryWalletRepository(),
             new InMemoryContractRepository(),
-            { messageHandlers: [] }
+            { messageHandlers: [] },
         );
         await bus.start();
 
@@ -140,7 +129,7 @@ describe("MessageBus PING/PONG", () => {
         const bus = new MessageBus(
             new InMemoryWalletRepository(),
             new InMemoryContractRepository(),
-            { messageHandlers: [] }
+            { messageHandlers: [] },
         );
         await bus.start();
 
@@ -215,9 +204,7 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
     });
 
     it("delivers an ack envelope when a handler returns undefined", async () => {
-        handler.handleMessage.mockResolvedValueOnce(
-            undefined as unknown as ResponseEnvelope
-        );
+        handler.handleMessage.mockResolvedValueOnce(undefined as unknown as ResponseEnvelope);
         const bus = await createAndInitBus({ handlers: [handler] });
         const postMessage = vi.fn();
 
@@ -251,7 +238,7 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
         });
 
         expect(postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({ id: "m4", payload: { ok: true } })
+            expect.objectContaining({ id: "m4", payload: { ok: true } }),
         );
 
         await bus.stop();
@@ -385,7 +372,7 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
                 messageTimeoutMs: 30_000,
                 messageTimeoutOverrides: { SETTLE: 5_000 },
                 buildServices: async () => ({}) as never,
-            }
+            },
         );
         await bus.start();
         const initSource = { postMessage: vi.fn() };
@@ -434,7 +421,7 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
                 messageHandlers: [handler],
                 messageTimeoutMs: 30_000,
                 buildServices: async () => ({}) as never,
-            }
+            },
         );
         await bus.start();
 
@@ -536,7 +523,7 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
         handler.handleMessage.mockReturnValueOnce(
             new Promise<ResponseEnvelope>((resolve) => {
                 resolveLate = resolve;
-            })
+            }),
         );
         const bus = await createAndInitBus({
             handlers: [handler],
@@ -559,9 +546,9 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
 
         // First response: the timeout error
         expect(postMessage).toHaveBeenCalledTimes(1);
-        expect(
-            (postMessage.mock.calls[0][0] as ResponseEnvelope).error
-        ).toBeInstanceOf(ServiceWorkerTimeoutError);
+        expect((postMessage.mock.calls[0][0] as ResponseEnvelope).error).toBeInstanceOf(
+            ServiceWorkerTimeoutError,
+        );
 
         // Handler now completes late
         resolveLate!({
@@ -580,7 +567,7 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
             expect.objectContaining({
                 id: "m10",
                 payload: { settled: true },
-            })
+            }),
         );
 
         await bus.stop();
@@ -592,7 +579,7 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
         handler.handleMessage.mockReturnValueOnce(
             new Promise<ResponseEnvelope>((_, reject) => {
                 rejectLate = reject;
-            })
+            }),
         );
         const bus = await createAndInitBus({
             handlers: [handler],
@@ -665,7 +652,7 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
         handler.handleMessage.mockReturnValueOnce(
             new Promise<ResponseEnvelope>((resolve) => {
                 resolveLate = resolve;
-            })
+            }),
         );
         const bus = await createAndInitBus({
             handlers: [handler],
@@ -708,7 +695,7 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
         handler.handleMessage.mockReturnValueOnce(
             new Promise<ResponseEnvelope>((_, reject) => {
                 rejectLate = reject;
-            })
+            }),
         );
         const bus = await createAndInitBus({
             handlers: [handler],
@@ -745,7 +732,7 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
         handler.handleMessage.mockReturnValueOnce(
             new Promise<ResponseEnvelope>((resolve) => {
                 resolveLate = resolve;
-            })
+            }),
         );
         const bus = await createAndInitBus({
             handlers: [handler],
@@ -804,8 +791,7 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
         const [msg] =
             warnSpy.mock.calls.find(
                 (call) =>
-                    typeof call[0] === "string" &&
-                    call[0].includes("cannot deliver response")
+                    typeof call[0] === "string" && call[0].includes("cannot deliver response"),
             ) ?? [];
         expect(msg).toBeDefined();
 
@@ -841,7 +827,7 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
                 id: "bc1",
                 tag: "A_HANDLER",
                 payload: { fromA: true },
-            })
+            }),
         );
         expect(postMessage).toHaveBeenCalledWith({
             id: "bc1",
@@ -874,11 +860,11 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
 
         expect(postMessage).toHaveBeenCalledTimes(2);
         const aResponse = postMessage.mock.calls.find(
-            (c) => (c[0] as ResponseEnvelope).tag === "A_HANDLER"
+            (c) => (c[0] as ResponseEnvelope).tag === "A_HANDLER",
         )?.[0] as ResponseEnvelope;
         expect(aResponse.error?.message).toBe("A failed");
         const bResponse = postMessage.mock.calls.find(
-            (c) => (c[0] as ResponseEnvelope).tag === "B_HANDLER"
+            (c) => (c[0] as ResponseEnvelope).tag === "B_HANDLER",
         )?.[0] as ResponseEnvelope;
         expect(bResponse.payload).toEqual({ ok: true });
 

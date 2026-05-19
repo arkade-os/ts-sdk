@@ -52,20 +52,14 @@ export function createVHTLCScript({
     // validate we are using a x-only receiver public key
     const receiverXOnlyPublicKey = normalizeToXOnlyPublicKey(
         hex.decode(receiverPubkey),
-        "receiver"
+        "receiver",
     );
 
     // validate we are using a x-only sender public key
-    const senderXOnlyPublicKey = normalizeToXOnlyPublicKey(
-        hex.decode(senderPubkey),
-        "sender"
-    );
+    const senderXOnlyPublicKey = normalizeToXOnlyPublicKey(hex.decode(senderPubkey), "sender");
 
     // validate we are using a x-only server public key
-    const serverXOnlyPublicKey = normalizeToXOnlyPublicKey(
-        hex.decode(serverPubkey),
-        "server"
-    );
+    const serverXOnlyPublicKey = normalizeToXOnlyPublicKey(hex.decode(serverPubkey), "server");
 
     const vhtlcScript = new VHTLC.Script({
         preimageHash: ripemd160(preimageHash),
@@ -73,14 +67,10 @@ export function createVHTLCScript({
         receiver: receiverXOnlyPublicKey,
         server: serverXOnlyPublicKey,
         refundLocktime: BigInt(vhtlcTimeouts.refund),
-        unilateralClaimDelay: toBip68RelativeTimelock(
-            vhtlcTimeouts.unilateralClaim
-        ),
-        unilateralRefundDelay: toBip68RelativeTimelock(
-            vhtlcTimeouts.unilateralRefund
-        ),
+        unilateralClaimDelay: toBip68RelativeTimelock(vhtlcTimeouts.unilateralClaim),
+        unilateralRefundDelay: toBip68RelativeTimelock(vhtlcTimeouts.unilateralRefund),
         unilateralRefundWithoutReceiverDelay: toBip68RelativeTimelock(
-            vhtlcTimeouts.unilateralRefundWithoutReceiver
+            vhtlcTimeouts.unilateralRefundWithoutReceiver,
         ),
     });
 
@@ -88,9 +78,7 @@ export function createVHTLCScript({
 
     // validate vhtlc script
     const hrp = network === "bitcoin" ? "ark" : "tark";
-    const vhtlcAddress = vhtlcScript
-        .address(hrp, serverXOnlyPublicKey)
-        .encode();
+    const vhtlcAddress = vhtlcScript.address(hrp, serverXOnlyPublicKey).encode();
 
     return { vhtlcScript, vhtlcAddress };
 }

@@ -1,13 +1,5 @@
-import {
-    ArkTransaction,
-    ExtendedCoin,
-    ExtendedVirtualCoin,
-} from "../../wallet";
-import {
-    WalletRepository,
-    WalletState,
-    VtxoRepositoryKey,
-} from "../walletRepository";
+import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
+import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
 import {
     serializeVtxo,
     serializeUtxo,
@@ -48,7 +40,7 @@ export class SQLiteWalletRepository implements WalletRepository {
 
     constructor(
         private readonly db: SQLExecutor,
-        options?: SQLiteWalletRepositoryOptions
+        options?: SQLiteWalletRepositoryOptions,
     ) {
         this.prefix = sanitizePrefix(options?.prefix ?? "ark_");
         this.tables = {
@@ -112,16 +104,16 @@ export class SQLiteWalletRepository implements WalletRepository {
         `);
 
         await this.db.run(
-            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_address ON ${this.tables.vtxos} (address)`
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_address ON ${this.tables.vtxos} (address)`,
         );
         await this.db.run(
-            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_script ON ${this.tables.vtxos} (script)`
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_script ON ${this.tables.vtxos} (script)`,
         );
         await this.db.run(
-            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}utxos_address ON ${this.tables.utxos} (address)`
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}utxos_address ON ${this.tables.utxos} (address)`,
         );
         await this.db.run(
-            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}transactions_address ON ${this.tables.transactions} (address)`
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}transactions_address ON ${this.tables.transactions} (address)`,
         );
     }
 
@@ -148,7 +140,7 @@ export class SQLiteWalletRepository implements WalletRepository {
     private async migrateVtxosTable(): Promise<void> {
         const tableExists = await this.db.get<{ name: string }>(
             `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
-            [this.tables.vtxos]
+            [this.tables.vtxos],
         );
 
         if (!tableExists) {
@@ -157,7 +149,7 @@ export class SQLiteWalletRepository implements WalletRepository {
         }
 
         const cols = await this.db.all<{ name: string; notnull: number }>(
-            `PRAGMA table_info(${this.tables.vtxos})`
+            `PRAGMA table_info(${this.tables.vtxos})`,
         );
         const scriptCol = cols.find((c) => c.name === "script");
         if (scriptCol && scriptCol.notnull === 1) {
@@ -168,9 +160,7 @@ export class SQLiteWalletRepository implements WalletRepository {
         await this.db.run("BEGIN IMMEDIATE");
         try {
             if (!scriptCol) {
-                await this.db.run(
-                    `ALTER TABLE ${this.tables.vtxos} ADD COLUMN script TEXT`
-                );
+                await this.db.run(`ALTER TABLE ${this.tables.vtxos} ADD COLUMN script TEXT`);
             }
 
             // Backfill any NULL scripts from the owning address. Derivation
@@ -180,13 +170,11 @@ export class SQLiteWalletRepository implements WalletRepository {
                 txid: string;
                 vout: number;
                 address: string;
-            }>(
-                `SELECT txid, vout, address FROM ${this.tables.vtxos} WHERE script IS NULL`
-            );
+            }>(`SELECT txid, vout, address FROM ${this.tables.vtxos} WHERE script IS NULL`);
             for (const row of nullRows) {
                 await this.db.run(
                     `UPDATE ${this.tables.vtxos} SET script = ? WHERE txid = ? AND vout = ?`,
-                    [scriptFromArkAddress(row.address), row.txid, row.vout]
+                    [scriptFromArkAddress(row.address), row.txid, row.vout],
                 );
             }
 
@@ -211,9 +199,7 @@ export class SQLiteWalletRepository implements WalletRepository {
                 FROM ${this.tables.vtxos}
             `);
             await this.db.run(`DROP TABLE ${this.tables.vtxos}`);
-            await this.db.run(
-                `ALTER TABLE ${tempName} RENAME TO ${this.tables.vtxos}`
-            );
+            await this.db.run(`ALTER TABLE ${tempName} RENAME TO ${this.tables.vtxos}`);
             await this.db.run("COMMIT");
         } catch (e) {
             // A failed COMMIT auto-rolls-back in SQLite, which makes a
@@ -274,15 +260,12 @@ export class SQLiteWalletRepository implements WalletRepository {
         await this.ensureInit();
         const rows = await this.db.all<VtxoRow>(
             `SELECT * FROM ${this.tables.vtxos} WHERE address = ?`,
-            [address]
+            [address],
         );
         return rows.map(vtxoRowToDomain);
     }
 
-    async saveVtxos(
-        address: string,
-        vtxos: ExtendedVirtualCoin[]
-    ): Promise<void> {
+    async saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void> {
         await this.ensureInit();
         for (const vtxo of vtxos) {
             const s = serializeVtxo(vtxo);
@@ -323,39 +306,33 @@ export class SQLiteWalletRepository implements WalletRepository {
                     s.extraWitness ? JSON.stringify(s.extraWitness) : null,
                     s.assets ? JSON.stringify(s.assets) : null,
                     s.script ?? null,
-                ]
+                ],
             );
         }
     }
 
     async deleteVtxos(address: string): Promise<void> {
         await this.ensureInit();
-        await this.db.run(
-            `DELETE FROM ${this.tables.vtxos} WHERE address = ?`,
-            [address]
-        );
+        await this.db.run(`DELETE FROM ${this.tables.vtxos} WHERE address = ?`, [address]);
     }
 
     async getVtxosForScript(script: string): Promise<ExtendedVirtualCoin[]> {
         await this.ensureInit();
         const rows = await this.db.all<VtxoRow>(
             `SELECT * FROM ${this.tables.vtxos} WHERE script = ?`,
-            [script]
+            [script],
         );
         return rows.map(vtxoRowToDomain);
     }
 
-    async saveVtxosForScript(
-        key: VtxoRepositoryKey,
-        vtxos: ExtendedVirtualCoin[]
-    ): Promise<void> {
+    async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
         if (!key.address) {
             throw new Error("SQLiteWalletRepository requires an address");
         }
         for (const vtxo of vtxos) {
             if (!isVtxoForScript(vtxo, key.script)) {
                 throw new Error(
-                    `VTXO ${vtxo.txid}:${vtxo.vout} script mismatch: expected ${key.script}, got ${vtxo.script}`
+                    `VTXO ${vtxo.txid}:${vtxo.vout} script mismatch: expected ${key.script}, got ${vtxo.script}`,
                 );
             }
         }
@@ -364,9 +341,7 @@ export class SQLiteWalletRepository implements WalletRepository {
 
     async deleteVtxosForScript(script: string): Promise<void> {
         await this.ensureInit();
-        await this.db.run(`DELETE FROM ${this.tables.vtxos} WHERE script = ?`, [
-            script,
-        ]);
+        await this.db.run(`DELETE FROM ${this.tables.vtxos} WHERE script = ?`, [script]);
     }
 
     // ── UTXO management ────────────────────────────────────────────────
@@ -375,7 +350,7 @@ export class SQLiteWalletRepository implements WalletRepository {
         await this.ensureInit();
         const rows = await this.db.all<UtxoRow>(
             `SELECT * FROM ${this.tables.utxos} WHERE address = ?`,
-            [address]
+            [address],
         );
         return rows.map(utxoRowToDomain);
     }
@@ -404,17 +379,14 @@ export class SQLiteWalletRepository implements WalletRepository {
                     s.intentTapLeafScript.s,
                     JSON.stringify(s.status),
                     s.extraWitness ? JSON.stringify(s.extraWitness) : null,
-                ]
+                ],
             );
         }
     }
 
     async deleteUtxos(address: string): Promise<void> {
         await this.ensureInit();
-        await this.db.run(
-            `DELETE FROM ${this.tables.utxos} WHERE address = ?`,
-            [address]
-        );
+        await this.db.run(`DELETE FROM ${this.tables.utxos} WHERE address = ?`, [address]);
     }
 
     // ── Transaction history ────────────────────────────────────────────
@@ -423,15 +395,12 @@ export class SQLiteWalletRepository implements WalletRepository {
         await this.ensureInit();
         const rows = await this.db.all<TransactionRow>(
             `SELECT * FROM ${this.tables.transactions} WHERE address = ? ORDER BY created_at ASC`,
-            [address]
+            [address],
         );
         return rows.map(txRowToDomain);
     }
 
-    async saveTransactions(
-        address: string,
-        txs: ArkTransaction[]
-    ): Promise<void> {
+    async saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {
         await this.ensureInit();
         for (const tx of txs) {
             await this.db.run(
@@ -449,20 +418,15 @@ export class SQLiteWalletRepository implements WalletRepository {
                     tx.amount,
                     tx.settled ? 1 : 0,
                     tx.createdAt,
-                    tx.assets
-                        ? JSON.stringify(serializeAssets(tx.assets))
-                        : null,
-                ]
+                    tx.assets ? JSON.stringify(serializeAssets(tx.assets)) : null,
+                ],
             );
         }
     }
 
     async deleteTransactions(address: string): Promise<void> {
         await this.ensureInit();
-        await this.db.run(
-            `DELETE FROM ${this.tables.transactions} WHERE address = ?`,
-            [address]
-        );
+        await this.db.run(`DELETE FROM ${this.tables.transactions} WHERE address = ?`, [address]);
     }
 
     // ── Wallet state ───────────────────────────────────────────────────
@@ -471,7 +435,7 @@ export class SQLiteWalletRepository implements WalletRepository {
         await this.ensureInit();
         const row = await this.db.get<WalletStateRow>(
             `SELECT * FROM ${this.tables.walletState} WHERE key = ?`,
-            ["state"]
+            ["state"],
         );
         if (!row) return null;
 
@@ -493,7 +457,7 @@ export class SQLiteWalletRepository implements WalletRepository {
                 "state",
                 state.settings ? JSON.stringify(state.settings) : null,
                 state.lastSyncTime ?? null,
-            ]
+            ],
         );
     }
 }
@@ -560,7 +524,7 @@ const SAFE_PREFIX = /^[a-zA-Z0-9_]+$/;
 function sanitizePrefix(prefix: string): string {
     if (!SAFE_PREFIX.test(prefix)) {
         throw new Error(
-            `Invalid table prefix "${prefix}": only letters, digits, and underscores are allowed`
+            `Invalid table prefix "${prefix}": only letters, digits, and underscores are allowed`,
         );
     }
     return prefix;
@@ -590,9 +554,7 @@ function vtxoRowToDomain(row: VtxoRow): ExtendedVirtualCoin {
         spentBy: row.spent_by ?? undefined,
         settledBy: row.settled_by ?? undefined,
         arkTxId: row.ark_tx_id ?? undefined,
-        extraWitness: row.extra_witness_json
-            ? JSON.parse(row.extra_witness_json)
-            : undefined,
+        extraWitness: row.extra_witness_json ? JSON.parse(row.extra_witness_json) : undefined,
         assets: row.assets_json ? JSON.parse(row.assets_json) : undefined,
         // Post-migration every row has `script`, but the backfill is
         // idempotent: derive from `address` if the legacy column is still
@@ -618,9 +580,7 @@ function utxoRowToDomain(row: UtxoRow): ExtendedCoin {
             s: row.intent_s,
         } as SerializedTapLeaf,
         status: JSON.parse(row.status_json),
-        extraWitness: row.extra_witness_json
-            ? JSON.parse(row.extra_witness_json)
-            : undefined,
+        extraWitness: row.extra_witness_json ? JSON.parse(row.extra_witness_json) : undefined,
     };
 
     return deserializeUtxo(serialized);

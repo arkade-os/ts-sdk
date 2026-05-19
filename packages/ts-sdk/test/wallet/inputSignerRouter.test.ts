@@ -1,10 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { hex } from "@scure/base";
 import { Transaction } from "@scure/btc-signer";
-import {
-    InputSignerRouter,
-    InputSigningJob,
-} from "../../src/wallet/inputSignerRouter";
+import { InputSignerRouter, InputSigningJob } from "../../src/wallet/inputSignerRouter";
 import { SingleKey } from "../../src/identity/singleKey";
 import { InMemoryContractRepository } from "../../src/repositories/inMemory/contractRepository";
 import { ContractRepository } from "../../src/repositories/contractRepository";
@@ -15,36 +12,27 @@ import {
 } from "../../src/wallet/signingErrors";
 
 const identity = SingleKey.fromHex(
-    "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2"
+    "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
 );
 
 // Distinct 32-byte pseudo-pubkeys used to build distinct test scripts.
 // The router never validates these as taproot keys — it only hex-encodes
 // them for repo lookup — so we deliberately use easy-to-read fillers.
-const BOARDING_PUBKEY =
-    "1111111111111111111111111111111111111111111111111111111111111111";
-const UNKNOWN_PUBKEY =
-    "2222222222222222222222222222222222222222222222222222222222222222";
-const ROTATED_A_PUBKEY =
-    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-const ROTATED_B_PUBKEY =
-    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-const VHTLC_PUBKEY =
-    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
-const BASELINE_REUSE_PUBKEY =
-    "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
-const DELEGATE_BASELINE_PUBKEY =
-    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
-const DELEGATE_ROTATED_PUBKEY =
-    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+const BOARDING_PUBKEY = "1111111111111111111111111111111111111111111111111111111111111111";
+const UNKNOWN_PUBKEY = "2222222222222222222222222222222222222222222222222222222222222222";
+const ROTATED_A_PUBKEY = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const ROTATED_B_PUBKEY = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const VHTLC_PUBKEY = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+const BASELINE_REUSE_PUBKEY = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+const DELEGATE_BASELINE_PUBKEY = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+const DELEGATE_ROTATED_PUBKEY = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
 
-const taprootScript = (pubKeyHex: string) =>
-    new Uint8Array([0x51, 0x20, ...hex.decode(pubKeyHex)]);
+const taprootScript = (pubKeyHex: string) => new Uint8Array([0x51, 0x20, ...hex.decode(pubKeyHex)]);
 
 const boardingPkScript = taprootScript(BOARDING_PUBKEY);
 
 const makeContract = (
-    overrides: Partial<Contract> & Pick<Contract, "script" | "type" | "params">
+    overrides: Partial<Contract> & Pick<Contract, "script" | "type" | "params">,
 ): Contract => ({
     address: "ark1qtest",
     state: "active",
@@ -88,9 +76,7 @@ describe("InputSignerRouter", async () => {
 
     it("routes boarding script with no contract to identity", async () => {
         const mockIdentity = {
-            xOnlyPublicKey: vi
-                .fn()
-                .mockResolvedValue(hex.decode(BASELINE_REUSE_PUBKEY)),
+            xOnlyPublicKey: vi.fn().mockResolvedValue(hex.decode(BASELINE_REUSE_PUBKEY)),
             sign: vi.fn().mockImplementation((tx) => tx),
         };
         const router = createRouter({ identity: mockIdentity });
@@ -104,9 +90,7 @@ describe("InputSignerRouter", async () => {
 
     it("skips unknown script with no contract and no boarding match", async () => {
         const mockIdentity = {
-            xOnlyPublicKey: vi
-                .fn()
-                .mockResolvedValue(hex.decode(BASELINE_REUSE_PUBKEY)),
+            xOnlyPublicKey: vi.fn().mockResolvedValue(hex.decode(BASELINE_REUSE_PUBKEY)),
             sign: vi.fn().mockImplementation((tx) => tx),
         };
         const router = createRouter({ identity: mockIdentity });
@@ -127,7 +111,7 @@ describe("InputSignerRouter", async () => {
                 script: hex.encode(script),
                 type: "default",
                 params: { pubKey: baselinePubKey },
-            })
+            }),
         );
 
         const signSpy = vi.fn().mockImplementation((tx) => tx);
@@ -159,7 +143,7 @@ describe("InputSignerRouter", async () => {
                 script: hex.encode(script),
                 type: "default",
                 params: { pubKey: baselinePubKey.toUpperCase() },
-            })
+            }),
         );
 
         const signSpy = vi.fn().mockImplementation((tx) => tx);
@@ -186,7 +170,7 @@ describe("InputSignerRouter", async () => {
                 script: hex.encode(script),
                 type: "delegate",
                 params: { pubKey: baselinePubKey },
-            })
+            }),
         );
 
         const signSpy = vi.fn().mockImplementation((tx) => tx);
@@ -215,12 +199,10 @@ describe("InputSignerRouter", async () => {
                 type: "default",
                 params: { pubKey: ROTATED_A_PUBKEY },
                 metadata: { signingDescriptor: descriptor },
-            })
+            }),
         );
 
-        const signWithDescriptor = vi
-            .fn()
-            .mockImplementation((reqs) => [reqs[0].tx]);
+        const signWithDescriptor = vi.fn().mockImplementation((reqs) => [reqs[0].tx]);
         const router = createRouter({
             contractRepository: contractRepo,
             descriptorProvider: { signWithDescriptor },
@@ -229,9 +211,7 @@ describe("InputSignerRouter", async () => {
         const tx = stubTxWithInputs(1);
         await router.sign(tx, [{ index: 0, lookupScript: script }]);
 
-        expect(signWithDescriptor).toHaveBeenCalledWith([
-            { tx, descriptor, inputIndexes: [0] },
-        ]);
+        expect(signWithDescriptor).toHaveBeenCalledWith([{ tx, descriptor, inputIndexes: [0] }]);
     });
 
     it("routes rotated delegate contract with descriptor to descriptor provider", async () => {
@@ -244,12 +224,10 @@ describe("InputSignerRouter", async () => {
                 type: "delegate",
                 params: { pubKey: DELEGATE_ROTATED_PUBKEY },
                 metadata: { signingDescriptor: descriptor },
-            })
+            }),
         );
 
-        const signWithDescriptor = vi
-            .fn()
-            .mockImplementation((reqs) => [reqs[0].tx]);
+        const signWithDescriptor = vi.fn().mockImplementation((reqs) => [reqs[0].tx]);
         const router = createRouter({
             contractRepository: contractRepo,
             descriptorProvider: { signWithDescriptor },
@@ -258,9 +236,7 @@ describe("InputSignerRouter", async () => {
         const tx = stubTxWithInputs(1);
         await router.sign(tx, [{ index: 0, lookupScript: script }]);
 
-        expect(signWithDescriptor).toHaveBeenCalledWith([
-            { tx, descriptor, inputIndexes: [0] },
-        ]);
+        expect(signWithDescriptor).toHaveBeenCalledWith([{ tx, descriptor, inputIndexes: [0] }]);
     });
 
     it("throws MissingSigningDescriptorError if rotated contract is missing descriptor", async () => {
@@ -272,15 +248,15 @@ describe("InputSignerRouter", async () => {
                 type: "default",
                 params: { pubKey: ROTATED_A_PUBKEY },
                 metadata: {},
-            })
+            }),
         );
 
         const router = createRouter({ contractRepository: contractRepo });
         const tx = stubTxWithInputs(1);
 
-        await expect(
-            router.sign(tx, [{ index: 0, lookupScript: script }])
-        ).rejects.toThrow(MissingSigningDescriptorError);
+        await expect(router.sign(tx, [{ index: 0, lookupScript: script }])).rejects.toThrow(
+            MissingSigningDescriptorError,
+        );
     });
 
     it("throws DescriptorSigningProviderMissingError if descriptor route needed but no provider", async () => {
@@ -292,7 +268,7 @@ describe("InputSignerRouter", async () => {
                 type: "default",
                 params: { pubKey: ROTATED_A_PUBKEY },
                 metadata: { signingDescriptor: "tr(rotated)" },
-            })
+            }),
         );
 
         const router = createRouter({
@@ -301,9 +277,9 @@ describe("InputSignerRouter", async () => {
         });
         const tx = stubTxWithInputs(1);
 
-        await expect(
-            router.sign(tx, [{ index: 0, lookupScript: script }])
-        ).rejects.toThrow(DescriptorSigningProviderMissingError);
+        await expect(router.sign(tx, [{ index: 0, lookupScript: script }])).rejects.toThrow(
+            DescriptorSigningProviderMissingError,
+        );
     });
 
     it("routes non-default/non-delegate contract (vhtlc) to identity", async () => {
@@ -314,7 +290,7 @@ describe("InputSignerRouter", async () => {
                 script: hex.encode(script),
                 type: "vhtlc",
                 params: { pubKey: VHTLC_PUBKEY },
-            })
+            }),
         );
 
         const signSpy = vi.fn().mockImplementation((tx) => tx);
@@ -348,7 +324,7 @@ describe("InputSignerRouter", async () => {
                 type: "default",
                 params: { pubKey: ROTATED_B_PUBKEY },
                 metadata: { signingDescriptor: descriptorB },
-            })
+            }),
         );
 
         // Job 2: rotated default with descriptor A (lex-smaller than B)
@@ -360,7 +336,7 @@ describe("InputSignerRouter", async () => {
                 type: "default",
                 params: { pubKey: ROTATED_A_PUBKEY },
                 metadata: { signingDescriptor: descriptorA },
-            })
+            }),
         );
 
         const cloneTx = (tx: Transaction): Transaction => {
@@ -412,25 +388,19 @@ describe("InputSignerRouter", async () => {
         expect(mockIdentity.sign).toHaveBeenCalledOnce();
         expect(mockIdentity.sign).toHaveBeenCalledWith(expect.anything(), [0]);
 
-        expect(mockDescriptorProvider.signWithDescriptor).toHaveBeenCalledTimes(
-            2
+        expect(mockDescriptorProvider.signWithDescriptor).toHaveBeenCalledTimes(2);
+        expect(mockDescriptorProvider.signWithDescriptor.mock.calls[0][0][0].descriptor).toBe(
+            descriptorA,
         );
-        expect(
-            mockDescriptorProvider.signWithDescriptor.mock.calls[0][0][0]
-                .descriptor
-        ).toBe(descriptorA);
-        expect(
-            mockDescriptorProvider.signWithDescriptor.mock.calls[0][0][0]
-                .inputIndexes
-        ).toEqual([2]);
-        expect(
-            mockDescriptorProvider.signWithDescriptor.mock.calls[1][0][0]
-                .descriptor
-        ).toBe(descriptorB);
-        expect(
-            mockDescriptorProvider.signWithDescriptor.mock.calls[1][0][0]
-                .inputIndexes
-        ).toEqual([1]);
+        expect(mockDescriptorProvider.signWithDescriptor.mock.calls[0][0][0].inputIndexes).toEqual([
+            2,
+        ]);
+        expect(mockDescriptorProvider.signWithDescriptor.mock.calls[1][0][0].descriptor).toBe(
+            descriptorB,
+        );
+        expect(mockDescriptorProvider.signWithDescriptor.mock.calls[1][0][0].inputIndexes).toEqual([
+            1,
+        ]);
 
         expect(result._signedByIdentity).toBe(true);
         expect(result._signedByDescriptor).toEqual([descriptorA, descriptorB]);
@@ -463,9 +433,7 @@ describe("InputSignerRouter", async () => {
             [Symbol.asyncDispose]: async () => {},
         };
 
-        const signWithDescriptor = vi
-            .fn()
-            .mockImplementation((reqs) => [reqs[0].tx]);
+        const signWithDescriptor = vi.fn().mockImplementation((reqs) => [reqs[0].tx]);
         const router = createRouter({
             contractRepository: stubRepo,
             descriptorProvider: { signWithDescriptor },

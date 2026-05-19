@@ -1,12 +1,7 @@
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import { TapLeafScript } from "../script/base";
-import {
-    ArkTransaction,
-    Asset,
-    ExtendedCoin,
-    ExtendedVirtualCoin,
-} from "../wallet";
+import { ArkTransaction, Asset, ExtendedCoin, ExtendedVirtualCoin } from "../wallet";
 
 export type SerializedTapLeaf = { cb: string; s: string };
 export type SerializedVtxo = ReturnType<typeof serializeVtxo>;
@@ -19,10 +14,7 @@ export type SerializedTransaction = ReturnType<typeof serializeTransaction>;
 // correctly across process restarts.
 export type SerializedAsset = { assetId: string; amount: string };
 
-export const serializeTapLeaf = ([
-    cb,
-    s,
-]: TapLeafScript): SerializedTapLeaf => ({
+export const serializeTapLeaf = ([cb, s]: TapLeafScript): SerializedTapLeaf => ({
     cb: hex.encode(TaprootControlBlock.encode(cb)),
     s: hex.encode(s),
 });
@@ -40,7 +32,7 @@ export const deserializeAsset = (a: {
 }): Asset => {
     if (typeof a.amount === "number" && !Number.isSafeInteger(a.amount)) {
         throw new Error(
-            `Unsafe legacy asset amount for ${a.assetId}; re-sync from the original source`
+            `Unsafe legacy asset amount for ${a.assetId}; re-sync from the original source`,
         );
     }
     return {
@@ -49,14 +41,11 @@ export const deserializeAsset = (a: {
     };
 };
 
-export const serializeAssets = (
-    assets: Asset[] | undefined
-): SerializedAsset[] | undefined => assets?.map(serializeAsset);
+export const serializeAssets = (assets: Asset[] | undefined): SerializedAsset[] | undefined =>
+    assets?.map(serializeAsset);
 
 export const deserializeAssets = (
-    assets:
-        | Array<{ assetId: string; amount: string | number | bigint }>
-        | undefined
+    assets: Array<{ assetId: string; amount: string | number | bigint }> | undefined,
 ): Asset[] | undefined => assets?.map(deserializeAsset);
 
 export const serializeVtxo = (v: ExtendedVirtualCoin) => ({
@@ -105,9 +94,7 @@ export const deserializeUtxo = (o: SerializedUtxo): ExtendedCoin => ({
     extraWitness: o.extraWitness?.map(hex.decode),
 });
 
-export const deserializeTransaction = (
-    o: SerializedTransaction
-): ArkTransaction => ({
+export const deserializeTransaction = (o: SerializedTransaction): ArkTransaction => ({
     ...o,
     assets: deserializeAssets(o.assets),
 });

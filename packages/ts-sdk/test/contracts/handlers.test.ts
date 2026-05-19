@@ -3,12 +3,7 @@ import { hex } from "@scure/base";
 import { DefaultContractHandler } from "../../src/contracts/handlers/default";
 import { DelegateContractHandler } from "../../src/contracts/handlers/delegate";
 import { VHTLCContractHandler } from "../../src/contracts/handlers/vhtlc";
-import {
-    Contract,
-    contractHandlers,
-    DefaultVtxo,
-    DelegateVtxo,
-} from "../../src";
+import { Contract, contractHandlers, DefaultVtxo, DelegateVtxo } from "../../src";
 import {
     createDefaultContractParams,
     createDelegateContractParams,
@@ -50,12 +45,9 @@ describe("Contract Registry", () => {
 });
 
 describe("resolveRole", () => {
-    const receiverXOnly =
-        "1e1bb85455fe3f5aed60d101aa4dbdb9e7714f6226769a97a17a5331dadcd53b";
-    const senderXOnly =
-        "0192e796452d6df9697c280542e1560557bcf79a347d925895043136225c7cb4";
-    const serverXOnly =
-        "aad52d58162e9eefeafc7ad8a1cdca8060b5f01df1e7583362d052e266208f88";
+    const receiverXOnly = "1e1bb85455fe3f5aed60d101aa4dbdb9e7714f6226769a97a17a5331dadcd53b";
+    const senderXOnly = "0192e796452d6df9697c280542e1560557bcf79a347d925895043136225c7cb4";
+    const serverXOnly = "aad52d58162e9eefeafc7ad8a1cdca8060b5f01df1e7583362d052e266208f88";
 
     const contract: Contract = {
         type: "vhtlc",
@@ -81,7 +73,7 @@ describe("resolveRole", () => {
                 collaborative: false,
                 currentTime: Date.now(),
                 walletDescriptor: `tr(${receiverXOnly.toUpperCase()})`,
-            })
+            }),
         ).toBe("receiver");
     });
 
@@ -92,7 +84,7 @@ describe("resolveRole", () => {
                 currentTime: Date.now(),
                 walletDescriptor: "tr([12345678/86'/0'/0']xpubSomething/0/5)",
                 walletPubKey: senderXOnly,
-            })
+            }),
         ).toBe("sender");
     });
 
@@ -102,7 +94,7 @@ describe("resolveRole", () => {
                 collaborative: false,
                 currentTime: Date.now(),
                 walletDescriptor: "tr([12345678/86'/0'/0']xpubSomething/0/5)",
-            })
+            }),
         ).toBeUndefined();
     });
 
@@ -116,7 +108,7 @@ describe("resolveRole", () => {
                 currentTime: Date.now(),
                 walletDescriptor: `tr(${unrelatedXOnly})`,
                 walletPubKey: senderXOnly,
-            })
+            }),
         ).toBeUndefined();
     });
 });
@@ -127,8 +119,7 @@ describe("DefaultContractHandler", () => {
             type: "default",
             params: {
                 pubKey: "304f9960ebb31cd5f49bd18673042be1ae286019225e08e861233e06ea95fffe",
-                serverPubKey:
-                    "56f810de93e500e745b7dabfcb2b798b216a70a99de7edee79bf1791379bf62d",
+                serverPubKey: "56f810de93e500e745b7dabfcb2b798b216a70a99de7edee79bf1791379bf62d",
                 csvTimelock: timelockToSequence({
                     type: "seconds",
                     value: 86016n,
@@ -162,8 +153,7 @@ describe("DefaultContractHandler", () => {
         };
 
         const serialized = DefaultContractHandler.serializeParams(original);
-        const deserialized =
-            DefaultContractHandler.deserializeParams(serialized);
+        const deserialized = DefaultContractHandler.deserializeParams(serialized);
 
         expect(deserialized.pubKey).toEqual(TEST_PUB_KEY);
         expect(deserialized.serverPubKey).toEqual(TEST_SERVER_PUB_KEY);
@@ -231,22 +221,18 @@ describe("DefaultContractHandler", () => {
             createdAt: Date.now(),
         };
 
-        const paths = DefaultContractHandler.getSpendablePaths(
-            script,
-            contract,
-            {
-                collaborative: true,
-                currentTime: Date.now(),
-                blockHeight: 300,
-                vtxo: createMockVtxo({
-                    status: {
-                        confirmed: true,
-                        block_height: 100,
-                        block_time: 1000,
-                    },
-                }),
-            }
-        );
+        const paths = DefaultContractHandler.getSpendablePaths(script, contract, {
+            collaborative: true,
+            currentTime: Date.now(),
+            blockHeight: 300,
+            vtxo: createMockVtxo({
+                status: {
+                    confirmed: true,
+                    block_height: 100,
+                    block_time: 1000,
+                },
+            }),
+        });
 
         // Should have both forfeit and exit paths when collaborative
         expect(paths.length).toBeGreaterThanOrEqual(2);
@@ -264,22 +250,18 @@ describe("DefaultContractHandler", () => {
             createdAt: Date.now(),
         };
 
-        const paths = DefaultContractHandler.getSpendablePaths(
-            script,
-            contract,
-            {
-                collaborative: false,
-                currentTime: Date.now(),
-                blockHeight: 300,
-                vtxo: createMockVtxo({
-                    status: {
-                        confirmed: true,
-                        block_height: 100,
-                        block_time: 1000,
-                    },
-                }),
-            }
-        );
+        const paths = DefaultContractHandler.getSpendablePaths(script, contract, {
+            collaborative: false,
+            currentTime: Date.now(),
+            blockHeight: 300,
+            vtxo: createMockVtxo({
+                status: {
+                    confirmed: true,
+                    block_height: 100,
+                    block_time: 1000,
+                },
+            }),
+        });
 
         expect(paths).toHaveLength(1);
         expect(paths[0].sequence).toBe(Number(params.csvTimelock));
@@ -300,21 +282,17 @@ describe("DefaultContractHandler", () => {
             createdAt: Date.now(),
         };
 
-        const paths = DefaultContractHandler.getSpendablePaths(
-            script,
-            contract,
-            {
-                collaborative: false,
-                currentTime: Date.now(),
-                vtxo: createMockVtxo({
-                    status: {
-                        confirmed: true,
-                        block_height: 100,
-                        block_time: 1000,
-                    },
-                }),
-            }
-        );
+        const paths = DefaultContractHandler.getSpendablePaths(script, contract, {
+            collaborative: false,
+            currentTime: Date.now(),
+            vtxo: createMockVtxo({
+                status: {
+                    confirmed: true,
+                    block_height: 100,
+                    block_time: 1000,
+                },
+            }),
+        });
 
         expect(paths).toHaveLength(1);
         expect(paths[0].sequence).toBeUndefined();
@@ -336,28 +314,20 @@ describe("DefaultContractHandler", () => {
             status: { confirmed: true, block_height: 100, block_time: 1000 },
         });
 
-        const notMature = DefaultContractHandler.getSpendablePaths(
-            script,
-            contract,
-            {
-                collaborative: false,
-                currentTime: Date.now(),
-                blockHeight: 150,
-                vtxo,
-            }
-        );
+        const notMature = DefaultContractHandler.getSpendablePaths(script, contract, {
+            collaborative: false,
+            currentTime: Date.now(),
+            blockHeight: 150,
+            vtxo,
+        });
         expect(notMature).toHaveLength(0);
 
-        const mature = DefaultContractHandler.getSpendablePaths(
-            script,
-            contract,
-            {
-                collaborative: false,
-                currentTime: Date.now(),
-                blockHeight: 300,
-                vtxo,
-            }
-        );
+        const mature = DefaultContractHandler.getSpendablePaths(script, contract, {
+            collaborative: false,
+            currentTime: Date.now(),
+            blockHeight: 300,
+            vtxo,
+        });
         expect(mature).toHaveLength(1);
         expect(mature[0].sequence).toBe(Number(params.csvTimelock));
     });
@@ -380,15 +350,11 @@ describe("DelegateContractHandler", () => {
         const defaultParams = createDefaultContractParams();
         const delegateParams = createDelegateContractParams();
 
-        const defaultScript =
-            DefaultContractHandler.createScript(defaultParams);
-        const delegateScript =
-            DelegateContractHandler.createScript(delegateParams);
+        const defaultScript = DefaultContractHandler.createScript(defaultParams);
+        const delegateScript = DelegateContractHandler.createScript(delegateParams);
 
         // Same keys but delegate adds a third leaf, so pkScript must differ
-        expect(hex.encode(delegateScript.pkScript)).not.toEqual(
-            hex.encode(defaultScript.pkScript)
-        );
+        expect(hex.encode(delegateScript.pkScript)).not.toEqual(hex.encode(defaultScript.pkScript));
     });
 
     it("should serialize and deserialize params", () => {
@@ -400,18 +366,13 @@ describe("DelegateContractHandler", () => {
         };
 
         const serialized = DelegateContractHandler.serializeParams(original);
-        const deserialized =
-            DelegateContractHandler.deserializeParams(serialized);
+        const deserialized = DelegateContractHandler.deserializeParams(serialized);
 
         expect(deserialized.pubKey).toBeInstanceOf(Uint8Array);
         expect(deserialized.serverPubKey).toBeInstanceOf(Uint8Array);
         expect(deserialized.delegatePubKey).toBeInstanceOf(Uint8Array);
-        expect(Array.from(deserialized.pubKey)).toEqual(
-            Array.from(TEST_PUB_KEY)
-        );
-        expect(Array.from(deserialized.delegatePubKey)).toEqual(
-            Array.from(TEST_DELEGATE_PUB_KEY)
-        );
+        expect(Array.from(deserialized.pubKey)).toEqual(Array.from(TEST_PUB_KEY));
+        expect(Array.from(deserialized.delegatePubKey)).toEqual(Array.from(TEST_DELEGATE_PUB_KEY));
     });
 
     it("should produce identical pkScript after serialize roundtrip", () => {
@@ -425,15 +386,11 @@ describe("DelegateContractHandler", () => {
         const serialized = DelegateContractHandler.serializeParams(original);
         const script1 = DelegateContractHandler.createScript(serialized);
 
-        const deserialized =
-            DelegateContractHandler.deserializeParams(serialized);
-        const reserialized =
-            DelegateContractHandler.serializeParams(deserialized);
+        const deserialized = DelegateContractHandler.deserializeParams(serialized);
+        const reserialized = DelegateContractHandler.serializeParams(deserialized);
         const script2 = DelegateContractHandler.createScript(reserialized);
 
-        expect(hex.encode(script2.pkScript)).toEqual(
-            hex.encode(script1.pkScript)
-        );
+        expect(hex.encode(script2.pkScript)).toEqual(hex.encode(script1.pkScript));
     });
 
     it("should select forfeit path when collaborative", () => {
@@ -526,14 +483,10 @@ describe("DelegateContractHandler", () => {
             createdAt: Date.now(),
         };
 
-        const paths = DelegateContractHandler.getAllSpendingPaths(
-            script,
-            contract,
-            {
-                collaborative: true,
-                currentTime: Date.now(),
-            }
-        );
+        const paths = DelegateContractHandler.getAllSpendingPaths(script, contract, {
+            collaborative: true,
+            currentTime: Date.now(),
+        });
 
         // forfeit + exit + delegate = 3
         expect(paths).toHaveLength(3);
@@ -551,14 +504,10 @@ describe("DelegateContractHandler", () => {
             createdAt: Date.now(),
         };
 
-        const paths = DelegateContractHandler.getAllSpendingPaths(
-            script,
-            contract,
-            {
-                collaborative: false,
-                currentTime: Date.now(),
-            }
-        );
+        const paths = DelegateContractHandler.getAllSpendingPaths(script, contract, {
+            collaborative: false,
+            currentTime: Date.now(),
+        });
 
         // only exit
         expect(paths).toHaveLength(1);
@@ -576,22 +525,18 @@ describe("DelegateContractHandler", () => {
             createdAt: Date.now(),
         };
 
-        const paths = DelegateContractHandler.getSpendablePaths(
-            script,
-            contract,
-            {
-                collaborative: true,
-                currentTime: Date.now(),
-                blockHeight: 300,
-                vtxo: createMockVtxo({
-                    status: {
-                        confirmed: true,
-                        block_height: 100,
-                        block_time: 1000,
-                    },
-                }),
-            }
-        );
+        const paths = DelegateContractHandler.getSpendablePaths(script, contract, {
+            collaborative: true,
+            currentTime: Date.now(),
+            blockHeight: 300,
+            vtxo: createMockVtxo({
+                status: {
+                    confirmed: true,
+                    block_height: 100,
+                    block_time: 1000,
+                },
+            }),
+        });
 
         // forfeit + exit = 2 (delegate path requires manual intervention)
         expect(paths).toHaveLength(2);
@@ -614,43 +559,31 @@ describe("DelegateContractHandler", () => {
         });
 
         // Not mature: only forfeit + delegate (no exit)
-        const notMature = DelegateContractHandler.getSpendablePaths(
-            script,
-            contract,
-            {
-                collaborative: true,
-                currentTime: Date.now(),
-                blockHeight: 150,
-                vtxo,
-            }
-        );
+        const notMature = DelegateContractHandler.getSpendablePaths(script, contract, {
+            collaborative: true,
+            currentTime: Date.now(),
+            blockHeight: 150,
+            vtxo,
+        });
         // forfeit only (exit not spendable yet, delegate requires manual intervention)
         expect(notMature).toHaveLength(1);
 
         // Non-collaborative not mature: no paths at all
-        const nonCollabNotMature = DelegateContractHandler.getSpendablePaths(
-            script,
-            contract,
-            {
-                collaborative: false,
-                currentTime: Date.now(),
-                blockHeight: 150,
-                vtxo,
-            }
-        );
+        const nonCollabNotMature = DelegateContractHandler.getSpendablePaths(script, contract, {
+            collaborative: false,
+            currentTime: Date.now(),
+            blockHeight: 150,
+            vtxo,
+        });
         expect(nonCollabNotMature).toHaveLength(0);
 
         // Mature: forfeit + exit
-        const mature = DelegateContractHandler.getSpendablePaths(
-            script,
-            contract,
-            {
-                collaborative: true,
-                currentTime: Date.now(),
-                blockHeight: 300,
-                vtxo,
-            }
-        );
+        const mature = DelegateContractHandler.getSpendablePaths(script, contract, {
+            collaborative: true,
+            currentTime: Date.now(),
+            blockHeight: 300,
+            vtxo,
+        });
         expect(mature).toHaveLength(2);
     });
 
@@ -666,22 +599,18 @@ describe("DelegateContractHandler", () => {
             createdAt: Date.now(),
         };
 
-        const paths = DelegateContractHandler.getSpendablePaths(
-            script,
-            contract,
-            {
-                collaborative: false,
-                currentTime: Date.now(),
-                blockHeight: 300,
-                vtxo: createMockVtxo({
-                    status: {
-                        confirmed: true,
-                        block_height: 100,
-                        block_time: 1000,
-                    },
-                }),
-            }
-        );
+        const paths = DelegateContractHandler.getSpendablePaths(script, contract, {
+            collaborative: false,
+            currentTime: Date.now(),
+            blockHeight: 300,
+            vtxo: createMockVtxo({
+                status: {
+                    confirmed: true,
+                    block_height: 100,
+                    block_time: 1000,
+                },
+            }),
+        });
 
         expect(paths).toHaveLength(1);
         expect(paths[0].sequence).toBe(Number(params.csvTimelock));
@@ -690,12 +619,9 @@ describe("DelegateContractHandler", () => {
 
 describe("VHTLCContractHandler", () => {
     it("creates the correct script and handles de/serialization", () => {
-        const receiverXOnly =
-            "1e1bb85455fe3f5aed60d101aa4dbdb9e7714f6226769a97a17a5331dadcd53b";
-        const senderXOnly =
-            "0192e796452d6df9697c280542e1560557bcf79a347d925895043136225c7cb4";
-        const serverXOnly =
-            "aad52d58162e9eefeafc7ad8a1cdca8060b5f01df1e7583362d052e266208f88";
+        const receiverXOnly = "1e1bb85455fe3f5aed60d101aa4dbdb9e7714f6226769a97a17a5331dadcd53b";
+        const senderXOnly = "0192e796452d6df9697c280542e1560557bcf79a347d925895043136225c7cb4";
+        const serverXOnly = "aad52d58162e9eefeafc7ad8a1cdca8060b5f01df1e7583362d052e266208f88";
 
         const params = {
             type: "vhtlc",
@@ -735,24 +661,17 @@ describe("VHTLCContractHandler", () => {
         expect(script.unilateralRefundWithoutReceiver()).toBeDefined();
 
         // Verify serialization roundtrip works
-        const deserialized = VHTLCContractHandler.deserializeParams(
-            params.params
-        );
+        const deserialized = VHTLCContractHandler.deserializeParams(params.params);
         const reserialized = VHTLCContractHandler.serializeParams(deserialized);
         const script2 = VHTLCContractHandler.createScript(reserialized);
 
-        expect(hex.encode(script2.pkScript)).toEqual(
-            hex.encode(script.pkScript)
-        );
+        expect(hex.encode(script2.pkScript)).toEqual(hex.encode(script.pkScript));
     });
 
     it("should enforce CSV for unilateral spendable paths", () => {
-        const receiverXOnly =
-            "1e1bb85455fe3f5aed60d101aa4dbdb9e7714f6226769a97a17a5331dadcd53b";
-        const senderXOnly =
-            "0192e796452d6df9697c280542e1560557bcf79a347d925895043136225c7cb4";
-        const serverXOnly =
-            "aad52d58162e9eefeafc7ad8a1cdca8060b5f01df1e7583362d052e266208f88";
+        const receiverXOnly = "1e1bb85455fe3f5aed60d101aa4dbdb9e7714f6226769a97a17a5331dadcd53b";
+        const senderXOnly = "0192e796452d6df9697c280542e1560557bcf79a347d925895043136225c7cb4";
+        const serverXOnly = "aad52d58162e9eefeafc7ad8a1cdca8060b5f01df1e7583362d052e266208f88";
 
         const params = {
             sender: senderXOnly,
@@ -780,41 +699,30 @@ describe("VHTLCContractHandler", () => {
             status: { confirmed: true, block_height: 100, block_time: 1000 },
         });
 
-        const notMature = VHTLCContractHandler.getSpendablePaths(
-            script,
-            contract,
-            {
-                collaborative: false,
-                currentTime: Date.now(),
-                blockHeight: 105,
-                walletPubKey: receiverXOnly,
-                vtxo,
-            }
-        );
+        const notMature = VHTLCContractHandler.getSpendablePaths(script, contract, {
+            collaborative: false,
+            currentTime: Date.now(),
+            blockHeight: 105,
+            walletPubKey: receiverXOnly,
+            vtxo,
+        });
         expect(notMature).toHaveLength(0);
 
-        const mature = VHTLCContractHandler.getSpendablePaths(
-            script,
-            contract,
-            {
-                collaborative: false,
-                currentTime: Date.now(),
-                blockHeight: 200,
-                walletPubKey: receiverXOnly,
-                vtxo,
-            }
-        );
+        const mature = VHTLCContractHandler.getSpendablePaths(script, contract, {
+            collaborative: false,
+            currentTime: Date.now(),
+            blockHeight: 200,
+            walletPubKey: receiverXOnly,
+            vtxo,
+        });
         expect(mature).toHaveLength(1);
         expect(mature[0].sequence).toBe(Number(params.claimDelay));
     });
 
     describe("collaborative refundWithoutReceiver CLTV gating", () => {
-        const receiverXOnly =
-            "1e1bb85455fe3f5aed60d101aa4dbdb9e7714f6226769a97a17a5331dadcd53b";
-        const senderXOnly =
-            "0192e796452d6df9697c280542e1560557bcf79a347d925895043136225c7cb4";
-        const serverXOnly =
-            "aad52d58162e9eefeafc7ad8a1cdca8060b5f01df1e7583362d052e266208f88";
+        const receiverXOnly = "1e1bb85455fe3f5aed60d101aa4dbdb9e7714f6226769a97a17a5331dadcd53b";
+        const senderXOnly = "0192e796452d6df9697c280542e1560557bcf79a347d925895043136225c7cb4";
+        const serverXOnly = "aad52d58162e9eefeafc7ad8a1cdca8060b5f01df1e7583362d052e266208f88";
 
         const buildContract = (refundLocktime: string): Contract => {
             const params = {
@@ -842,16 +750,12 @@ describe("VHTLCContractHandler", () => {
             const contract = buildContract("800000");
             const script = VHTLCContractHandler.createScript(contract.params);
 
-            const paths = VHTLCContractHandler.getSpendablePaths(
-                script,
-                contract,
-                {
-                    collaborative: true,
-                    currentTime: Date.now(), // Unix seconds far above 800000
-                    blockHeight: 799_999,
-                    walletPubKey: senderXOnly,
-                }
-            );
+            const paths = VHTLCContractHandler.getSpendablePaths(script, contract, {
+                collaborative: true,
+                currentTime: Date.now(), // Unix seconds far above 800000
+                blockHeight: 799_999,
+                walletPubKey: senderXOnly,
+            });
 
             expect(paths).toHaveLength(0);
         });
@@ -860,16 +764,12 @@ describe("VHTLCContractHandler", () => {
             const contract = buildContract("800000");
             const script = VHTLCContractHandler.createScript(contract.params);
 
-            const paths = VHTLCContractHandler.getSpendablePaths(
-                script,
-                contract,
-                {
-                    collaborative: true,
-                    currentTime: Date.now(),
-                    blockHeight: 800_000,
-                    walletPubKey: senderXOnly,
-                }
-            );
+            const paths = VHTLCContractHandler.getSpendablePaths(script, contract, {
+                collaborative: true,
+                currentTime: Date.now(),
+                blockHeight: 800_000,
+                walletPubKey: senderXOnly,
+            });
 
             expect(paths).toHaveLength(1);
         });
@@ -878,15 +778,11 @@ describe("VHTLCContractHandler", () => {
             const contract = buildContract("800000");
             const script = VHTLCContractHandler.createScript(contract.params);
 
-            const paths = VHTLCContractHandler.getSpendablePaths(
-                script,
-                contract,
-                {
-                    collaborative: true,
-                    currentTime: Date.now(),
-                    walletPubKey: senderXOnly,
-                }
-            );
+            const paths = VHTLCContractHandler.getSpendablePaths(script, contract, {
+                collaborative: true,
+                currentTime: Date.now(),
+                walletPubKey: senderXOnly,
+            });
 
             expect(paths).toHaveLength(0);
         });
@@ -896,16 +792,12 @@ describe("VHTLCContractHandler", () => {
             const contract = buildContract(future.toString());
             const script = VHTLCContractHandler.createScript(contract.params);
 
-            const paths = VHTLCContractHandler.getSpendablePaths(
-                script,
-                contract,
-                {
-                    collaborative: true,
-                    currentTime: Date.now(),
-                    blockHeight: 1_000_000_000, // irrelevant for timestamp locktime
-                    walletPubKey: senderXOnly,
-                }
-            );
+            const paths = VHTLCContractHandler.getSpendablePaths(script, contract, {
+                collaborative: true,
+                currentTime: Date.now(),
+                blockHeight: 1_000_000_000, // irrelevant for timestamp locktime
+                walletPubKey: senderXOnly,
+            });
 
             expect(paths).toHaveLength(0);
         });
@@ -915,15 +807,11 @@ describe("VHTLCContractHandler", () => {
             const contract = buildContract(past.toString());
             const script = VHTLCContractHandler.createScript(contract.params);
 
-            const paths = VHTLCContractHandler.getSpendablePaths(
-                script,
-                contract,
-                {
-                    collaborative: true,
-                    currentTime: Date.now(),
-                    walletPubKey: senderXOnly,
-                }
-            );
+            const paths = VHTLCContractHandler.getSpendablePaths(script, contract, {
+                collaborative: true,
+                currentTime: Date.now(),
+                walletPubKey: senderXOnly,
+            });
 
             expect(paths).toHaveLength(1);
         });

@@ -1,9 +1,4 @@
-import type {
-    ArkProvider,
-    Identity,
-    IndexerProvider,
-    IWallet,
-} from "@arkade-os/sdk";
+import type { ArkProvider, Identity, IndexerProvider, IWallet } from "@arkade-os/sdk";
 import type { AsyncStorageTaskQueue } from "@arkade-os/sdk/worker/expo";
 import type { BoltzSwapProvider } from "../boltz-swap-provider";
 import type { SwapRepository } from "../repositories/swap-repository";

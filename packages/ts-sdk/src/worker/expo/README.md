@@ -13,11 +13,11 @@ Expo/React Native cannot run a long-lived service worker. Background work is exe
 > `/wallet/expo`, so they stay invisible to Metro's static dependency
 > collector only on the subpath that needs them.
 >
-> | Before | After |
-> | --- | --- |
-> | `import { defineExpoBackgroundTask } from "@arkade-os/sdk/wallet/expo"` | `import { defineExpoBackgroundTask } from "@arkade-os/sdk/wallet/expo/background"` |
+> | Before                                                                                 | After                                                                                                                          |
+> | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+> | `import { defineExpoBackgroundTask } from "@arkade-os/sdk/wallet/expo"`                | `import { defineExpoBackgroundTask } from "@arkade-os/sdk/wallet/expo/background"`                                             |
 > | `background: { taskName, taskQueue, foregroundIntervalMs, minimumBackgroundInterval }` | `background: { taskQueue, foregroundIntervalMs }` + explicit `await registerExpoBackgroundTask(taskName, { minimumInterval })` |
-> | `dispose()` unregistered the OS task | Call `unregisterExpoBackgroundTask(taskName)` yourself |
+> | `dispose()` unregistered the OS task                                                   | Call `unregisterExpoBackgroundTask(taskName)` yourself                                                                         |
 >
 > TypeScript callers get a compile error on the removed fields. **JS callers must update manually** — the old fields are silently ignored and the OS task will never run.
 
@@ -59,8 +59,8 @@ const wallet = await ExpoWallet.setup({
     esploraUrl,
     storage: { walletRepository, contractRepository },
     background: {
-        taskQueue,                          // same instance from step 1
-        foregroundIntervalMs: 20_000,       // poll every 20s while app is active
+        taskQueue, // same instance from step 1
+        foregroundIntervalMs: 20_000, // poll every 20s while app is active
     },
 });
 
@@ -89,14 +89,14 @@ await unregisterExpoBackgroundTask("ark-background-poll");
 
 ### Components
 
-| Module | Path | Role |
-|--------|------|------|
-| **TaskQueue** | `src/worker/expo/taskQueue.ts` | Inbox/outbox interface + `InMemoryTaskQueue` |
-| **AsyncStorageTaskQueue** | `src/worker/expo/asyncStorageTaskQueue.ts` | Persistent queue backed by AsyncStorage |
-| **TaskRunner** | `src/worker/expo/taskRunner.ts` | `TaskProcessor` interface + `runTasks()` orchestration |
-| **Processors** | `src/worker/expo/processors/` | Stateless units that handle one task type each |
-| **ExpoWallet** | `src/wallet/expo/wallet.ts` | Wraps `Wallet`, delegates `IWallet`, manages polling |
-| **Background bridge** | `src/wallet/expo/background.ts` | `defineExpoBackgroundTask`, OS scheduler registration |
+| Module                    | Path                                       | Role                                                   |
+| ------------------------- | ------------------------------------------ | ------------------------------------------------------ |
+| **TaskQueue**             | `src/worker/expo/taskQueue.ts`             | Inbox/outbox interface + `InMemoryTaskQueue`           |
+| **AsyncStorageTaskQueue** | `src/worker/expo/asyncStorageTaskQueue.ts` | Persistent queue backed by AsyncStorage                |
+| **TaskRunner**            | `src/worker/expo/taskRunner.ts`            | `TaskProcessor` interface + `runTasks()` orchestration |
+| **Processors**            | `src/worker/expo/processors/`              | Stateless units that handle one task type each         |
+| **ExpoWallet**            | `src/wallet/expo/wallet.ts`                | Wraps `Wallet`, delegates `IWallet`, manages polling   |
+| **Background bridge**     | `src/wallet/expo/background.ts`            | `defineExpoBackgroundTask`, OS scheduler registration  |
 
 ### Data flow
 
@@ -130,6 +130,7 @@ Foreground resume:
 ### Background rehydration
 
 The background handler runs in a fresh JS context with no shared memory. `ExpoWallet.setup()` persists a lightweight config blob (`PersistedBackgroundConfig`) containing:
+
 - `arkServerUrl` — to create `ExpoIndexerProvider` / `ExpoArkProvider`
 - `pubkeyHex`, `serverPubKeyHex`, `exitTimelock` — to reconstruct `DefaultVtxo.Script` and `extendVtxo`
 

@@ -26,7 +26,7 @@ export class AsyncStorageTaskQueue implements TaskQueue {
 
     constructor(
         private readonly storage: AsyncStorageLike,
-        prefix = "ark:task-queue"
+        prefix = "ark:task-queue",
     ) {
         this.inboxKey = `${prefix}:inbox`;
         this.outboxKey = `${prefix}:outbox`;
@@ -45,7 +45,7 @@ export class AsyncStorageTaskQueue implements TaskQueue {
         const tasks = await this.readList<TaskItem>(this.inboxKey);
         await this.writeList(
             this.inboxKey,
-            tasks.filter((t) => t.id !== id)
+            tasks.filter((t) => t.id !== id),
         );
     }
 
@@ -78,7 +78,7 @@ export class AsyncStorageTaskQueue implements TaskQueue {
         const results = await this.readList<TaskResult>(this.outboxKey);
         await this.writeList(
             this.outboxKey,
-            results.filter((r) => !idSet.has(r.id))
+            results.filter((r) => !idSet.has(r.id)),
         );
     }
 
@@ -89,9 +89,7 @@ export class AsyncStorageTaskQueue implements TaskQueue {
      * Used by @see ExpoWallet.setup to store the wallet parameters
      * that the background handler needs to reconstruct providers.
      */
-    async persistConfig(
-        config: Record<string, unknown> | object
-    ): Promise<void> {
+    async persistConfig(config: Record<string, unknown> | object): Promise<void> {
         await this.storage.setItem(this.configKey, JSON.stringify(config));
     }
 

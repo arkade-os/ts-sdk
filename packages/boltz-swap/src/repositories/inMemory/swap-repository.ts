@@ -11,17 +11,13 @@ export class InMemorySwapRepository implements SwapRepository {
         this.swaps.delete(id);
     }
 
-    async getAllSwaps<T extends BoltzSwap>(
-        filter?: GetSwapsFilter
-    ): Promise<T[]> {
+    async getAllSwaps<T extends BoltzSwap>(filter?: GetSwapsFilter): Promise<T[]> {
         const swaps = [...this.swaps.values()];
         if (!filter || Object.keys(filter).length === 0) return swaps as T[];
         const filtered = this.applySwapsFilter(swaps, filter);
         if (filter.orderBy === "createdAt") {
             const direction = filter.orderDirection === "asc" ? 1 : -1;
-            return filtered
-                .slice()
-                .sort((a, b) => (a.createdAt - b.createdAt) * direction) as T[];
+            return filtered.slice().sort((a, b) => (a.createdAt - b.createdAt) * direction) as T[];
         }
         return filtered as T[];
     }
@@ -30,23 +26,22 @@ export class InMemorySwapRepository implements SwapRepository {
         this.swaps.clear();
     }
 
-    private applySwapsFilter<
-        T extends { id: string; status: string; type: string },
-    >(swaps: (T | undefined)[], filter: GetSwapsFilter): T[] {
+    private applySwapsFilter<T extends { id: string; status: string; type: string }>(
+        swaps: (T | undefined)[],
+        filter: GetSwapsFilter,
+    ): T[] {
         const matches = <T>(value: T, criterion?: T | T[]) => {
             if (criterion === undefined) {
                 return true;
             }
-            return Array.isArray(criterion)
-                ? criterion.includes(value)
-                : value === criterion;
+            return Array.isArray(criterion) ? criterion.includes(value) : value === criterion;
         };
         return swaps.filter(
             (swap): swap is T =>
                 !!swap &&
                 matches(swap.id, filter.id) &&
                 matches(swap.status, filter.status) &&
-                matches(swap.type, filter.type)
+                matches(swap.type, filter.type),
         );
     }
 

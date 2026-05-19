@@ -16,7 +16,7 @@ export interface ExtensionPacket {
 export class UnknownPacket implements ExtensionPacket {
     constructor(
         private readonly packetType: number,
-        private readonly data: Uint8Array
+        private readonly data: Uint8Array,
     ) {}
 
     type(): number {

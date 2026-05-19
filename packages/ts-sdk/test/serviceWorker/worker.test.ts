@@ -49,7 +49,7 @@ const createSelfMock = () => {
             const existing = listeners.get(type) || [];
             listeners.set(
                 type,
-                existing.filter((handler) => handler !== cb)
+                existing.filter((handler) => handler !== cb),
             );
         }),
         setTimeout: vi.fn((fn: () => void) => {
@@ -74,8 +74,7 @@ const createSelfMock = () => {
 
 const defaultInitConfig = {
     wallet: {
-        privateKey:
-            "153cd1982d6704b26da1a4a91baee0c27aeb7ada019adec2ea2ce5c4e717f99c",
+        privateKey: "153cd1982d6704b26da1a4a91baee0c27aeb7ada019adec2ea2ce5c4e717f99c",
     },
     arkServer: {
         url: "https://ark.example.test",
@@ -98,7 +97,7 @@ describe("Worker", () => {
     });
 
     const initializeMessageBus = async (
-        config = defaultInitConfig
+        config = defaultInitConfig,
     ): Promise<{ source: { postMessage: ReturnType<typeof vi.fn> } }> => {
         const messageHandlers = listeners.get("message") || [];
         expect(messageHandlers.length).toBeGreaterThan(0);
@@ -117,9 +116,7 @@ describe("Worker", () => {
     };
 
     it("routes messages to the matching updater and replies to the sender", async () => {
-        const handleMessage = vi
-            .fn()
-            .mockResolvedValue({ tag: "wallet", id: "1" });
+        const handleMessage = vi.fn().mockResolvedValue({ tag: "wallet", id: "1" });
 
         const updater: TestUpdater = {
             messageTag: "wallet",
@@ -138,7 +135,7 @@ describe("Worker", () => {
                     arkProvider: {} as any,
                     readonlyWallet: {} as any,
                 }),
-            }
+            },
         );
         await sw.start();
         await initializeMessageBus();
@@ -178,7 +175,7 @@ describe("Worker", () => {
                     arkProvider: {} as any,
                     readonlyWallet: {} as any,
                 }),
-            }
+            },
         );
         await sw.start();
         await initializeMessageBus();
@@ -211,8 +208,7 @@ describe("Worker", () => {
 
         const config = {
             wallet: {
-                privateKey:
-                    "153cd1982d6704b26da1a4a91baee0c27aeb7ada019adec2ea2ce5c4e717f99c",
+                privateKey: "153cd1982d6704b26da1a4a91baee0c27aeb7ada019adec2ea2ce5c4e717f99c",
             },
             arkServer: {
                 url: "initConfig.arkServerUrl",
@@ -225,15 +221,11 @@ describe("Worker", () => {
             readonlyWallet: {} as any,
         }));
         const walletRepository = new InMemoryWalletRepository();
-        const sw = new MessageBus(
-            walletRepository,
-            new InMemoryContractRepository(),
-            {
-                messageHandlers: [updater],
-                tickIntervalMs: 10,
-                buildServices: buildServicesSpy,
-            }
-        );
+        const sw = new MessageBus(walletRepository, new InMemoryContractRepository(), {
+            messageHandlers: [updater],
+            tickIntervalMs: 10,
+            buildServices: buildServicesSpy,
+        });
         await sw.start();
 
         const messageHandlers = listeners.get("message") || [];
@@ -255,7 +247,7 @@ describe("Worker", () => {
                 arkProvider: {},
                 readonlyWallet: {},
             },
-            { walletRepository }
+            { walletRepository },
         );
     });
 
@@ -276,7 +268,7 @@ describe("Worker", () => {
         const sw = new MessageBus(
             new InMemoryWalletRepository(),
             new InMemoryContractRepository(),
-            { messageHandlers: [updater] }
+            { messageHandlers: [updater] },
         );
         await sw.start();
 
@@ -314,7 +306,7 @@ describe("Worker", () => {
                     arkProvider: {} as any,
                     readonlyWallet: {} as any,
                 }),
-            }
+            },
         );
         await sw.start();
         await initializeMessageBus();
@@ -340,11 +332,7 @@ describe("Worker", () => {
             messageTag: "wallet",
             start: vi.fn().mockResolvedValue(undefined),
             stop: vi.fn().mockResolvedValue(undefined),
-            tick: vi
-                .fn()
-                .mockResolvedValue([
-                    { tag: "wallet", id: "broadcast", broadcast: true },
-                ]),
+            tick: vi.fn().mockResolvedValue([{ tag: "wallet", id: "broadcast", broadcast: true }]),
             handleMessage: vi.fn().mockResolvedValue(null),
         };
 
@@ -353,7 +341,7 @@ describe("Worker", () => {
             new InMemoryContractRepository(),
             {
                 messageHandlers: [updater],
-            }
+            },
         );
         await sw.start();
         await (sw as any).runTick();
@@ -384,8 +372,7 @@ describe("Worker buildServices identity hydration", () => {
 
     const TEST_MNEMONIC =
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-    const TEST_PRIVATE_KEY_HEX =
-        "153cd1982d6704b26da1a4a91baee0c27aeb7ada019adec2ea2ce5c4e717f99c";
+    const TEST_PRIVATE_KEY_HEX = "153cd1982d6704b26da1a4a91baee0c27aeb7ada019adec2ea2ce5c4e717f99c";
 
     const arkServer = {
         url: "https://ark.example.test",
@@ -416,12 +403,12 @@ describe("Worker buildServices identity hydration", () => {
 
     const startBusAndInit = async (
         walletConfig: unknown,
-        initConfig: Record<string, unknown> = {}
+        initConfig: Record<string, unknown> = {},
     ) => {
         const sw = new MessageBus(
             new InMemoryWalletRepository(),
             new InMemoryContractRepository(),
-            { messageHandlers: [] }
+            { messageHandlers: [] },
         );
         await sw.start();
         const source = { postMessage: vi.fn() };
@@ -444,9 +431,7 @@ describe("Worker buildServices identity hydration", () => {
             expect(readonlyCreateSpy).not.toHaveBeenCalled();
             const identity = walletCreateSpy.mock.calls[0][0].identity;
             expect(identity).toBeInstanceOf(SingleKey);
-            expect(warnSpy).toHaveBeenCalledWith(
-                expect.stringMatching(/\[ts-sdk\].*legacy/i)
-            );
+            expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/\[ts-sdk\].*legacy/i));
         });
 
         it("builds a ReadonlyWallet with ReadonlySingleKey from legacy { publicKey }", async () => {
@@ -469,9 +454,7 @@ describe("Worker buildServices identity hydration", () => {
             expect(walletCreateSpy).toHaveBeenCalledOnce();
             const identity = walletCreateSpy.mock.calls[0][0].identity;
             expect(identity).toBeInstanceOf(SingleKey);
-            expect(warnSpy).not.toHaveBeenCalledWith(
-                expect.stringMatching(/\[ts-sdk\].*legacy/i)
-            );
+            expect(warnSpy).not.toHaveBeenCalledWith(expect.stringMatching(/\[ts-sdk\].*legacy/i));
         });
 
         it("hydrates readonly-single-key into a ReadonlySingleKey", async () => {
@@ -494,9 +477,7 @@ describe("Worker buildServices identity hydration", () => {
             expect(walletCreateSpy).toHaveBeenCalledOnce();
             const identity = walletCreateSpy.mock.calls[0][0].identity;
             expect(identity).toBeInstanceOf(SeedIdentity);
-            expect((identity as SeedIdentity).descriptor).toBe(
-                reference.descriptor
-            );
+            expect((identity as SeedIdentity).descriptor).toBe(reference.descriptor);
         });
 
         it("forwards walletMode into Wallet.create for signing wallets", async () => {
@@ -508,7 +489,7 @@ describe("Worker buildServices identity hydration", () => {
                     seed: hex.encode(seed),
                     descriptor: reference.descriptor,
                 },
-                { walletMode: "hd" }
+                { walletMode: "hd" },
             );
 
             expect(walletCreateSpy).toHaveBeenCalledOnce();
@@ -528,8 +509,7 @@ describe("Worker buildServices identity hydration", () => {
                 passphrase,
             });
             expect(walletCreateSpy).toHaveBeenCalledOnce();
-            const identity = walletCreateSpy.mock.calls[0][0]
-                .identity as MnemonicIdentity;
+            const identity = walletCreateSpy.mock.calls[0][0].identity as MnemonicIdentity;
             expect(identity).toBeInstanceOf(MnemonicIdentity);
             // Mnemonic + passphrase are kept off the public instance surface
             // (Appendix A). Verify retention by re-serializing and comparing

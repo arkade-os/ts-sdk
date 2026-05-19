@@ -2,9 +2,7 @@
  * Dynamically imports expo/fetch with fallback to standard fetch.
  * @returns A fetch function suitable for SSE streaming
  */
-export async function getExpoFetch(options?: {
-    requireExpo?: boolean;
-}): Promise<typeof fetch> {
+export async function getExpoFetch(options?: { requireExpo?: boolean }): Promise<typeof fetch> {
     const requireExpo = options?.requireExpo ?? false;
 
     try {
@@ -15,14 +13,14 @@ export async function getExpoFetch(options?: {
         if (requireExpo) {
             throw new Error(
                 "expo/fetch is unavailable in this environment. " +
-                    "Please ensure expo/fetch is installed and properly configured."
+                    "Please ensure expo/fetch is installed and properly configured.",
             );
         }
 
         console.warn(
             "Using standard fetch instead of expo/fetch. " +
                 "Streaming may not be fully supported in some environments.",
-            error
+            error,
         );
         return fetch;
     }
@@ -43,7 +41,7 @@ export async function* sseStreamIterator<T>(
     abortSignal: AbortSignal,
     fetchFn: typeof fetch,
     headers: Record<string, string>,
-    parseData: (data: any) => T | null
+    parseData: (data: any) => T | null,
 ): AsyncGenerator<T, void, unknown> {
     const fetchController = new AbortController();
     const cleanup = () => fetchController.abort();
@@ -59,9 +57,7 @@ export async function* sseStreamIterator<T>(
         });
 
         if (!response.ok) {
-            throw new Error(
-                `Unexpected status ${response.status} when fetching SSE stream`
-            );
+            throw new Error(`Unexpected status ${response.status} when fetching SSE stream`);
         }
 
         if (!response.body) {

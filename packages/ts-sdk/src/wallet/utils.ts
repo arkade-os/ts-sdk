@@ -18,7 +18,7 @@ export const DUST_AMOUNT = 546; // sats
 
 export function extendCoin(
     wallet: { boardingTapscript: ReadonlyWallet["boardingTapscript"] },
-    utxo: Coin
+    utxo: Coin,
 ): ExtendedCoin {
     return {
         ...utxo,
@@ -28,10 +28,7 @@ export function extendCoin(
     };
 }
 
-function extendVtxoFromContract(
-    vtxo: VirtualCoin,
-    contract: Contract
-): ExtendedVirtualCoin {
+function extendVtxoFromContract(vtxo: VirtualCoin, contract: Contract): ExtendedVirtualCoin {
     const handler = contractHandlers.get(contract.type);
     if (!handler) {
         throw new Error(`No handler for contract type '${contract.type}'`);
@@ -68,19 +65,19 @@ function extendVtxoFromContract(
  */
 export function extendVirtualCoinForContract(
     vtxo: VirtualCoin,
-    contractOrMap?: Contract | ReadonlyMap<string, Contract>
+    contractOrMap?: Contract | ReadonlyMap<string, Contract>,
 ): ExtendedVirtualCoin {
     const contract = resolveContract(vtxo, contractOrMap);
     if (!contract) {
         throw new Error(
-            "extendVirtualCoinForContract: no contract matched vtxo.script — callers must resolve the owning contract before annotating"
+            "extendVirtualCoinForContract: no contract matched vtxo.script — callers must resolve the owning contract before annotating",
         );
     }
     return extendVtxoFromContract(vtxo, contract);
 }
 
 function isContractMap(
-    value: Contract | ReadonlyMap<string, Contract>
+    value: Contract | ReadonlyMap<string, Contract>,
 ): value is ReadonlyMap<string, Contract> {
     // A `Contract` is a plain object with a string `type`. `ReadonlyMap` is
     // an interface so `instanceof Map` is not enough to narrow it — but a
@@ -90,7 +87,7 @@ function isContractMap(
 
 function resolveContract(
     vtxo: VirtualCoin,
-    contractOrMap?: Contract | ReadonlyMap<string, Contract>
+    contractOrMap?: Contract | ReadonlyMap<string, Contract>,
 ): Contract | undefined {
     if (!contractOrMap) return undefined;
     if (isContractMap(contractOrMap)) {
@@ -117,7 +114,7 @@ type ValidatedRecipient = Required<Recipient> & { script: Bytes };
 
 export function validateRecipients(
     recipients: Recipient[],
-    dustAmount: number
+    dustAmount: number,
 ): ValidatedRecipient[] {
     const validatedRecipients: ValidatedRecipient[] = [];
 
@@ -138,10 +135,7 @@ export function validateRecipients(
             address: recipient.address,
             assets: recipient.assets ?? [],
             amount,
-            script:
-                amount < dustAmount
-                    ? address.subdustPkScript
-                    : address.pkScript,
+            script: amount < dustAmount ? address.subdustPkScript : address.pkScript,
         });
     }
 

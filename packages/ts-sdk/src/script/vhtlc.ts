@@ -101,11 +101,10 @@ export namespace VHTLC {
                 pubkeys: [sender, receiver],
             }).script;
 
-            const unilateralRefundWithoutReceiverScript =
-                CSVMultisigTapscript.encode({
-                    timelock: unilateralRefundWithoutReceiverDelay,
-                    pubkeys: [sender],
-                }).script;
+            const unilateralRefundWithoutReceiverScript = CSVMultisigTapscript.encode({
+                timelock: unilateralRefundWithoutReceiverDelay,
+                pubkeys: [sender],
+            }).script;
 
             super([
                 claimScript,
@@ -118,13 +117,11 @@ export namespace VHTLC {
 
             this.claimScript = hex.encode(claimScript);
             this.refundScript = hex.encode(refundScript);
-            this.refundWithoutReceiverScript = hex.encode(
-                refundWithoutReceiverScript
-            );
+            this.refundWithoutReceiverScript = hex.encode(refundWithoutReceiverScript);
             this.unilateralClaimScript = hex.encode(unilateralClaimScript);
             this.unilateralRefundScript = hex.encode(unilateralRefundScript);
             this.unilateralRefundWithoutReceiverScript = hex.encode(
-                unilateralRefundWithoutReceiverScript
+                unilateralRefundWithoutReceiverScript,
             );
         }
 
@@ -193,16 +190,10 @@ export namespace VHTLC {
         ) {
             throw new Error("unilateral claim delay must greater than 0");
         }
-        if (
-            unilateralClaimDelay.type === "seconds" &&
-            unilateralClaimDelay.value % 512n !== 0n
-        ) {
+        if (unilateralClaimDelay.type === "seconds" && unilateralClaimDelay.value % 512n !== 0n) {
             throw new Error("seconds timelock must be multiple of 512");
         }
-        if (
-            unilateralClaimDelay.type === "seconds" &&
-            unilateralClaimDelay.value < 512n
-        ) {
+        if (unilateralClaimDelay.type === "seconds" && unilateralClaimDelay.value < 512n) {
             throw new Error("seconds timelock must be greater or equal to 512");
         }
         if (
@@ -212,16 +203,10 @@ export namespace VHTLC {
         ) {
             throw new Error("unilateral refund delay must greater than 0");
         }
-        if (
-            unilateralRefundDelay.type === "seconds" &&
-            unilateralRefundDelay.value % 512n !== 0n
-        ) {
+        if (unilateralRefundDelay.type === "seconds" && unilateralRefundDelay.value % 512n !== 0n) {
             throw new Error("seconds timelock must be multiple of 512");
         }
-        if (
-            unilateralRefundDelay.type === "seconds" &&
-            unilateralRefundDelay.value < 512n
-        ) {
+        if (unilateralRefundDelay.type === "seconds" && unilateralRefundDelay.value < 512n) {
             throw new Error("seconds timelock must be greater or equal to 512");
         }
         if (
@@ -229,9 +214,7 @@ export namespace VHTLC {
             typeof unilateralRefundWithoutReceiverDelay.value !== "bigint" ||
             unilateralRefundWithoutReceiverDelay.value <= 0n
         ) {
-            throw new Error(
-                "unilateral refund without receiver delay must greater than 0"
-            );
+            throw new Error("unilateral refund without receiver delay must greater than 0");
         }
         if (
             unilateralRefundWithoutReceiverDelay.type === "seconds" &&

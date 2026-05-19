@@ -1,7 +1,4 @@
-import {
-    WalletRepository,
-    WalletState,
-} from "../repositories/walletRepository";
+import { WalletRepository, WalletState } from "../repositories/walletRepository";
 
 /** Lag behind real-time to avoid racing with indexer writes. */
 export const SAFETY_LAG_MS = 30_000;
@@ -23,7 +20,7 @@ const walletStateLocks = new WeakMap<WalletRepository, Promise<void>>();
  */
 export async function updateWalletState(
     repo: WalletRepository,
-    updater: (state: WalletState) => WalletState
+    updater: (state: WalletState) => WalletState,
 ): Promise<void> {
     const prev = walletStateLocks.get(repo) ?? Promise.resolve();
     const op = prev.then(async () => {
@@ -33,7 +30,7 @@ export async function updateWalletState(
     // Store a version that never rejects so the chain doesn't break.
     walletStateLocks.set(
         repo,
-        op.catch(() => {})
+        op.catch(() => {}),
     );
     return op;
 }
@@ -81,12 +78,10 @@ export async function getSyncCursor(repo: WalletRepository): Promise<number> {
  */
 export async function advanceSyncCursor(
     repo: WalletRepository,
-    lastUpdatedAt: number
+    lastUpdatedAt: number,
 ): Promise<void> {
     await updateWalletState(repo, (state) => {
-        const current = hasMigrationMarker(state)
-            ? (state.lastSyncTime ?? 0)
-            : 0;
+        const current = hasMigrationMarker(state) ? (state.lastSyncTime ?? 0) : 0;
         return {
             ...state,
             lastSyncTime: Math.max(current, lastUpdatedAt),
@@ -106,8 +101,7 @@ export async function advanceSyncCursor(
  */
 export async function clearSyncCursor(repo: WalletRepository): Promise<void> {
     await updateWalletState(repo, (state) => {
-        const { [CURSOR_MIGRATED_KEY]: _, ...restSettings } =
-            state.settings ?? {};
+        const { [CURSOR_MIGRATED_KEY]: _, ...restSettings } = state.settings ?? {};
         return {
             ...state,
             lastSyncTime: undefined,

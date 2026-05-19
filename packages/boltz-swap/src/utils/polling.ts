@@ -2,7 +2,7 @@ export function poll<T>(
     fn: () => Promise<T>,
     condition: (result: T) => boolean,
     delayMs: number,
-    maxAttempts: number
+    maxAttempts: number,
 ): Promise<T> {
     let attempts = 0;
     return new Promise((resolve, reject) => {

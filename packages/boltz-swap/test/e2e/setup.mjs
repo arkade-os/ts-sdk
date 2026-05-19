@@ -27,10 +27,10 @@ async function waitForBoltzPairs(maxRetries = 30, retryDelay = 2000) {
     console.log("Waiting for Boltz ARK/BTC pairs...");
     for (let i = 0; i < maxRetries; i++) {
         try {
-            const response = execSync(
-                "curl -s http://localhost:9069/v2/swap/submarine",
-                { encoding: "utf8", stdio: "pipe" }
-            );
+            const response = execSync("curl -s http://localhost:9069/v2/swap/submarine", {
+                encoding: "utf8",
+                stdio: "pipe",
+            });
             if (response.includes('"ARK"')) {
                 console.log("  ✔ Boltz pairs ready");
                 return true;

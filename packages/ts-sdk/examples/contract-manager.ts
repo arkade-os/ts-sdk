@@ -31,9 +31,7 @@ import { execSync } from "child_process";
 import { EventSource } from "eventsource";
 globalThis.EventSource = EventSource;
 
-const signerPubkeyRaw = execSync(
-    "curl -s http://localhost:7070/v1/info | jq -r '.signerPubkey'"
-)
+const signerPubkeyRaw = execSync("curl -s http://localhost:7070/v1/info | jq -r '.signerPubkey'")
     .toString()
     .trim();
 
@@ -76,9 +74,9 @@ async function main() {
     console.log("Bob pubkey:", hex.encode(bobPubKey));
 
     // Get current chain tip for locktime
-    const chainTip = await fetch(
-        "http://localhost:3000/blocks/tip/height"
-    ).then((res) => res.json());
+    const chainTip = await fetch("http://localhost:3000/blocks/tip/height").then((res) =>
+        res.json(),
+    );
 
     // Create the VHTLC script for the swap
     const vhtlcScript = new VHTLC.Script({
@@ -92,9 +90,7 @@ async function main() {
         unilateralRefundWithoutReceiverDelay: { type: "blocks", value: 14n },
     });
 
-    const swapAddress = vhtlcScript
-        .address(networks.regtest.hrp, SERVER_PUBLIC_KEY)
-        .encode();
+    const swapAddress = vhtlcScript.address(networks.regtest.hrp, SERVER_PUBLIC_KEY).encode();
     const swapScript = hex.encode(vhtlcScript.pkScript);
 
     console.log("\nVHTLC swap address:", swapAddress);
@@ -127,20 +123,14 @@ async function main() {
     console.log("\nSubscribing to contract events...");
     const stopWatching = manager.onContractEvent((event) => {
         if (event.type === "connection_reset") {
-            console.log(
-                `\n[Event] ${event.type} received from ContractManager.`
-            );
+            console.log(`\n[Event] ${event.type} received from ContractManager.`);
             return;
         }
-        console.log(
-            `\n[Event] ${event.type} on contract ${event.contractScript}`
-        );
+        console.log(`\n[Event] ${event.type} on contract ${event.contractScript}`);
         if (event.vtxos?.length) {
             console.log(`\tVTXOs: ${event.vtxos.length}`);
             for (const vtxo of event.vtxos) {
-                console.log(
-                    `\t\t- ${vtxo.txid}:${vtxo.vout} (${vtxo.value} sats)`
-                );
+                console.log(`\t\t- ${vtxo.txid}:${vtxo.vout} (${vtxo.value} sats)`);
             }
         }
     });
@@ -160,9 +150,7 @@ async function main() {
     console.log("\nChecking contract VTXOs:");
     contractWithVtxos.vtxos.forEach((vtxo) => {
         console.log(`\t\t- ${vtxo.txid}:${vtxo.vout} (${vtxo.value}sats)`);
-        console.log(
-            `\t\t\t virtualStatus: ${JSON.stringify(vtxo.virtualStatus)}`
-        );
+        console.log(`\t\t\t virtualStatus: ${JSON.stringify(vtxo.virtualStatus)}`);
         console.log(`\t\t\t status: ${JSON.stringify(vtxo.status)}`);
         console.log(`\t\t\t isSpent: ${JSON.stringify(vtxo.isSpent)}`);
     });
@@ -204,9 +192,7 @@ async function main() {
     });
 
     // Now check Bob's spendable paths
-    console.log(
-        "\nChecking spendable paths for Bob (receiver with preimage)..."
-    );
+    console.log("\nChecking spendable paths for Bob (receiver with preimage)...");
     paths = await manager.getSpendablePaths({
         contractScript: contract.script,
         vtxo,
@@ -244,10 +230,9 @@ async function main() {
 // For production code, use execFileSync with separated arguments to prevent
 // command injection vulnerabilities.
 async function fundAddress(address: string, amount: number) {
-    execSync(
-        `${arkdExec} ark send --to ${address} --amount ${amount} --password secret`,
-        { stdio: "inherit" }
-    );
+    execSync(`${arkdExec} ark send --to ${address} --amount ${amount} --password secret`, {
+        stdio: "inherit",
+    });
 }
 
 function sleep(ms: number) {

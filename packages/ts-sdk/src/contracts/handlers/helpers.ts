@@ -23,23 +23,19 @@ function extractRawPubKey(value: string): string | undefined {
  */
 export function resolveRole(
     contract: Contract,
-    context: PathContext
+    context: PathContext,
 ): "sender" | "receiver" | undefined {
     // Explicit role takes precedence
     if (context.role === "sender" || context.role === "receiver") {
         return context.role;
     }
 
-    const senderKey = contract.params.sender
-        ? extractRawPubKey(contract.params.sender)
-        : undefined;
+    const senderKey = contract.params.sender ? extractRawPubKey(contract.params.sender) : undefined;
     const receiverKey = contract.params.receiver
         ? extractRawPubKey(contract.params.receiver)
         : undefined;
 
-    const matchRole = (
-        rawWalletKey: string | undefined
-    ): "sender" | "receiver" | undefined => {
+    const matchRole = (rawWalletKey: string | undefined): "sender" | "receiver" | undefined => {
         if (!rawWalletKey) return undefined;
         if (senderKey && rawWalletKey === senderKey) {
             return "sender";
@@ -88,10 +84,7 @@ const CLTV_HEIGHT_THRESHOLD = 500_000_000n;
  *
  * Returns false if the relevant context field is missing.
  */
-export function isCltvSatisfied(
-    context: PathContext,
-    locktime: bigint
-): boolean {
+export function isCltvSatisfied(context: PathContext, locktime: bigint): boolean {
     if (locktime < CLTV_HEIGHT_THRESHOLD) {
         if (context.blockHeight === undefined) return false;
         return BigInt(context.blockHeight) >= locktime;
@@ -103,25 +96,16 @@ export function isCltvSatisfied(
 /**
  * Check if a CSV timelock is currently satisfied for the given context/virtual output.
  */
-export function isCsvSpendable(
-    context: PathContext,
-    sequence?: number
-): boolean {
+export function isCsvSpendable(context: PathContext, sequence?: number): boolean {
     if (sequence === undefined) return true;
     if (!context.vtxo) return false;
     const timelock = sequenceToTimelock(sequence);
 
     if (timelock.type === "blocks") {
-        if (
-            context.blockHeight === undefined ||
-            context.vtxo.status.block_height === undefined
-        ) {
+        if (context.blockHeight === undefined || context.vtxo.status.block_height === undefined) {
             return false;
         }
-        return (
-            context.blockHeight - context.vtxo.status.block_height >=
-            Number(timelock.value)
-        );
+        return context.blockHeight - context.vtxo.status.block_height >= Number(timelock.value);
     }
 
     if (timelock.type === "seconds") {

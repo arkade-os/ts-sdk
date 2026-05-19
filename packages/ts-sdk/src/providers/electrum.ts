@@ -157,7 +157,7 @@ function parseBlockHeader(headerHex: string): {
     const headerBytes = hex.decode(headerHex);
     if (headerBytes.length !== BLOCK_HEADER_SIZE) {
         throw new Error(
-            `Invalid block header size: ${headerBytes.length}, expected ${BLOCK_HEADER_SIZE}`
+            `Invalid block header size: ${headerBytes.length}, expected ${BLOCK_HEADER_SIZE}`,
         );
     }
 
@@ -194,12 +194,11 @@ export class WsElectrumChainSource {
     // Cached chain tip kept fresh by the headers subscription. Initialized
     // lazily on first call to subscribeHeaders().
     private cachedTip: HeaderSubscribeResult | null = null;
-    private headersSubscribePromise: Promise<HeaderSubscribeResult> | null =
-        null;
+    private headersSubscribePromise: Promise<HeaderSubscribeResult> | null = null;
 
     constructor(
         private ws: ElectrumWS,
-        private network: Network
+        private network: Network,
     ) {}
 
     /**
@@ -221,17 +220,15 @@ export class WsElectrumChainSource {
      * more elements may legitimately error (e.g. electrs index lag
      * surfacing as `missingheight` for a subset of heights/txids).
      */
-    async safeBatchRequest<T>(
-        requests: { method: string; params: unknown[] }[]
-    ): Promise<T[]> {
+    async safeBatchRequest<T>(requests: { method: string; params: unknown[] }[]): Promise<T[]> {
         if (requests.length === 0) return [];
         const settled = await Promise.allSettled(
             requests.map((req) =>
                 this.ws.request<T>(
                     req.method,
-                    ...(req.params as Parameters<typeof this.ws.request>[1][])
-                )
-            )
+                    ...(req.params as Parameters<typeof this.ws.request>[1][]),
+                ),
+            ),
         );
         for (const r of settled) {
             if (r.status === "rejected") throw r.reason;
@@ -239,9 +236,7 @@ export class WsElectrumChainSource {
         return settled.map((r) => (r as PromiseFulfilledResult<T>).value);
     }
 
-    async fetchTransactions(
-        txids: string[]
-    ): Promise<{ txID: string; hex: string }[]> {
+    async fetchTransactions(txids: string[]): Promise<{ txID: string; hex: string }[]> {
         const requests = txids.map((txid) => ({
             method: GetTransactionMethod,
             params: [txid],
@@ -267,16 +262,10 @@ export class WsElectrumChainSource {
     }
 
     async fetchVerboseTransaction(txid: string): Promise<VerboseTransaction> {
-        return this.ws.request<VerboseTransaction>(
-            GetTransactionMethod,
-            txid,
-            true
-        );
+        return this.ws.request<VerboseTransaction>(GetTransactionMethod, txid, true);
     }
 
-    async fetchVerboseTransactions(
-        txids: string[]
-    ): Promise<VerboseTransaction[]> {
+    async fetchVerboseTransactions(txids: string[]): Promise<VerboseTransaction[]> {
         if (txids.length === 0) return [];
         const requests = txids.map((txid) => ({
             method: GetTransactionMethod,
@@ -298,7 +287,7 @@ export class WsElectrumChainSource {
         try {
             result = await this.ws.request<{ block_height: number }>(
                 GetTransactionMerkleMethod,
-                txid
+                txid,
             );
         } catch (err) {
             // electrs/Fulcrum raise specific errors when the tx isn't yet in
@@ -309,29 +298,22 @@ export class WsElectrumChainSource {
             // (auth failure, network outage, malformed response) must surface
             // so callers can fail rather than silently treat the tx as
             // unconfirmed forever.
-            if (isTxNotInBlockError(err) || isMissingHeightError(err))
-                return null;
+            if (isTxNotInBlockError(err) || isMissingHeightError(err)) return null;
             throw err;
         }
-        if (
-            !result ||
-            typeof result.block_height !== "number" ||
-            result.block_height <= 0
-        ) {
+        if (!result || typeof result.block_height !== "number" || result.block_height <= 0) {
             return null;
         }
         return { blockHeight: result.block_height };
     }
 
     async unsubscribeScriptStatus(script: Uint8Array): Promise<void> {
-        await this.ws
-            .unsubscribe(SubscribeStatusMethod, toScriptHash(script))
-            .catch(() => {});
+        await this.ws.unsubscribe(SubscribeStatusMethod, toScriptHash(script)).catch(() => {});
     }
 
     async subscribeScriptStatus(
         script: Uint8Array,
-        callback: (scripthash: string, status: string | null) => void
+        callback: (scripthash: string, status: string | null) => void,
     ): Promise<void> {
         const scriptHash = toScriptHash(script);
         await this.ws.subscribe(
@@ -341,33 +323,28 @@ export class WsElectrumChainSource {
                     callback(scripthash as string, status as string | null);
                 }
             },
-            scriptHash
+            scriptHash,
         );
     }
 
-    async fetchHistories(
-        scripts: Uint8Array[]
-    ): Promise<TransactionHistory[][]> {
+    async fetchHistories(scripts: Uint8Array[]): Promise<TransactionHistory[][]> {
         const scriptsHashes = scripts.map((s) => toScriptHash(s));
         return this.safeBatchRequest<TransactionHistory[]>(
             scriptsHashes.map((s) => ({
                 method: GetHistoryMethod,
                 params: [s],
-            }))
+            })),
         );
     }
 
     async fetchHistory(script: Uint8Array): Promise<TransactionHistory[]> {
         const scriptHash = toScriptHash(script);
-        return this.ws.request<TransactionHistory[]>(
-            GetHistoryMethod,
-            scriptHash
-        );
+        return this.ws.request<TransactionHistory[]>(GetHistoryMethod, scriptHash);
     }
 
     async fetchBlockHeaders(heights: number[]): Promise<BlockHeader[]> {
         const responses = await this.safeBatchRequest<string>(
-            heights.map((h) => ({ method: GetBlockHeader, params: [h] }))
+            heights.map((h) => ({ method: GetBlockHeader, params: [h] })),
         );
         return responses.map((hexStr, i) => ({
             height: heights[i],
@@ -393,26 +370,24 @@ export class WsElectrumChainSource {
         if (this.cachedTip) return this.cachedTip;
         if (this.headersSubscribePromise) return this.headersSubscribePromise;
 
-        this.headersSubscribePromise = new Promise<HeaderSubscribeResult>(
-            (resolve, reject) => {
-                let resolved = false;
-                this.ws
-                    .subscribe(SubscribeHeadersMethod, (header: unknown) => {
-                        if (!isHeaderSubscribeResult(header)) return;
-                        this.cachedTip = header;
-                        if (!resolved) {
-                            resolved = true;
-                            resolve(header);
-                        }
-                    })
-                    .catch((err) => {
-                        if (!resolved) {
-                            resolved = true;
-                            reject(err);
-                        }
-                    });
-            }
-        );
+        this.headersSubscribePromise = new Promise<HeaderSubscribeResult>((resolve, reject) => {
+            let resolved = false;
+            this.ws
+                .subscribe(SubscribeHeadersMethod, (header: unknown) => {
+                    if (!isHeaderSubscribeResult(header)) return;
+                    this.cachedTip = header;
+                    if (!resolved) {
+                        resolved = true;
+                        resolve(header);
+                    }
+                })
+                .catch((err) => {
+                    if (!resolved) {
+                        resolved = true;
+                        reject(err);
+                    }
+                });
+        });
 
         try {
             return await this.headersSubscribePromise;
@@ -424,10 +399,7 @@ export class WsElectrumChainSource {
     }
 
     async estimateFees(targetNumberBlocks: number): Promise<number> {
-        const feeRate = await this.ws.request<number>(
-            EstimateFee,
-            targetNumberBlocks
-        );
+        const feeRate = await this.ws.request<number>(EstimateFee, targetNumberBlocks);
         return feeRate;
     }
 
@@ -464,12 +436,10 @@ export class WsElectrumChainSource {
         const result = await this.ws.request<BroadcastPackageResult>(
             BroadcastPackageMethod,
             txHexes,
-            false
+            false,
         );
         if (!result.success) {
-            const detail = result.errors
-                ? JSON.stringify(result.errors)
-                : "unknown error";
+            const detail = result.errors ? JSON.stringify(result.errors) : "unknown error";
             throw new Error(`Package broadcast rejected: ${detail}`);
         }
         // The child txid is not in the response — derive it from the raw
@@ -505,11 +475,9 @@ export class WsElectrumChainSource {
         const scriptHash = toScriptHash(script);
         const unspentsFromElectrum = await this.ws.request<UnspentElectrum[]>(
             ListUnspentMethod,
-            scriptHash
+            scriptHash,
         );
-        const txs = await this.fetchTransactions(
-            unspentsFromElectrum.map((u) => u.tx_hash)
-        );
+        const txs = await this.fetchTransactions(unspentsFromElectrum.map((u) => u.tx_hash));
 
         return unspentsFromElectrum.map((u, index) => {
             const tx = Transaction.fromRaw(hex.decode(txs[index].hex), {
@@ -517,9 +485,7 @@ export class WsElectrumChainSource {
             });
             const output = tx.getOutput(u.tx_pos);
             if (!output.script || output.amount === undefined) {
-                throw new Error(
-                    `Missing output data for ${u.tx_hash}:${u.tx_pos}`
-                );
+                throw new Error(`Missing output data for ${u.tx_hash}:${u.tx_pos}`);
             }
             return {
                 txid: u.tx_hash,
@@ -592,7 +558,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
 
     constructor(
         private ws: ElectrumWS,
-        private network: Network
+        private network: Network,
     ) {
         this.chain = new WsElectrumChainSource(ws, network);
     }
@@ -600,10 +566,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
     async getCoins(address: string): Promise<Coin[]> {
         const script = this.encodeAddress(address);
         const scriptHash = toScriptHash(script);
-        const unspents = await this.ws.request<UnspentElectrum[]>(
-            ListUnspentMethod,
-            scriptHash
-        );
+        const unspents = await this.ws.request<UnspentElectrum[]>(ListUnspentMethod, scriptHash);
 
         return unspents.map((u) => ({
             txid: u.tx_hash,
@@ -657,9 +620,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         throw new Error("Only 1 or 1P1C package can be broadcast");
     }
 
-    async getTxOutspends(
-        txid: string
-    ): Promise<{ spent: boolean; txid: string }[]> {
+    async getTxOutspends(txid: string): Promise<{ spent: boolean; txid: string }[]> {
         // Step 1: fetch the creating tx to get its output scripts (1 round trip)
         const [txResult] = await this.chain.fetchTransactions([txid]);
         const tx = Transaction.fromRaw(hex.decode(txResult.hex), {
@@ -670,31 +631,25 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         const outputScriptHashes: (string | undefined)[] = [];
         for (let i = 0; i < outputCount; i++) {
             const output = tx.getOutput(i);
-            outputScriptHashes.push(
-                output.script ? toScriptHash(output.script) : undefined
-            );
+            outputScriptHashes.push(output.script ? toScriptHash(output.script) : undefined);
         }
 
-        const validScriptHashes = outputScriptHashes.filter(
-            (h): h is string => h !== undefined
-        );
+        const validScriptHashes = outputScriptHashes.filter((h): h is string => h !== undefined);
 
         const results: { spent: boolean; txid: string }[] = Array.from(
             { length: outputCount },
-            () => ({ spent: false, txid: "" })
+            () => ({ spent: false, txid: "" }),
         );
 
         if (validScriptHashes.length === 0) return results;
 
         // Step 2: batch listunspent for all output scripthashes (1 round trip)
         // This tells us exactly which txid:vout pairs are still unspent.
-        const unspentBatch = await this.chain.safeBatchRequest<
-            UnspentElectrum[]
-        >(
+        const unspentBatch = await this.chain.safeBatchRequest<UnspentElectrum[]>(
             validScriptHashes.map((sh) => ({
                 method: ListUnspentMethod,
                 params: [sh],
-            }))
+            })),
         );
 
         const unspentSet = new Set<string>();
@@ -721,13 +676,11 @@ export class ElectrumOnchainProvider implements OnchainProvider {
 
         if (spentIndices.length === 0) return results;
 
-        const histories = await this.chain.safeBatchRequest<
-            TransactionHistory[]
-        >(
+        const histories = await this.chain.safeBatchRequest<TransactionHistory[]>(
             spentScriptHashes.map((sh) => ({
                 method: GetHistoryMethod,
                 params: [sh],
-            }))
+            })),
         );
 
         // For each spent output find the spender in its history.
@@ -738,9 +691,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
 
         for (let j = 0; j < spentIndices.length; j++) {
             const i = spentIndices[j];
-            const candidates = histories[j]
-                .map((h) => h.tx_hash)
-                .filter((hash) => hash !== txid);
+            const candidates = histories[j].map((h) => h.tx_hash).filter((hash) => hash !== txid);
 
             if (candidates.length === 1) {
                 // Fast path: one candidate = the spender
@@ -755,8 +706,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         // Step 4 (rare): batch-fetch all ambiguous candidate txs at once
         if (ambiguousIndices.length > 0) {
             const allCandidateTxids = [...new Set(ambiguousCandidates.flat())];
-            const fetched =
-                await this.chain.fetchTransactions(allCandidateTxids);
+            const fetched = await this.chain.fetchTransactions(allCandidateTxids);
             const txMap = new Map(fetched.map((t) => [t.txID, t.hex]));
 
             for (let j = 0; j < ambiguousIndices.length; j++) {
@@ -764,18 +714,14 @@ export class ElectrumOnchainProvider implements OnchainProvider {
                 for (const candidateTxid of ambiguousCandidates[j]) {
                     const rawHex = txMap.get(candidateTxid);
                     if (!rawHex) continue;
-                    const candidateTx = Transaction.fromRaw(
-                        hex.decode(rawHex),
-                        { allowUnknownOutputs: true, allowUnknownInputs: true }
-                    );
+                    const candidateTx = Transaction.fromRaw(hex.decode(rawHex), {
+                        allowUnknownOutputs: true,
+                        allowUnknownInputs: true,
+                    });
                     let found = false;
                     for (let k = 0; k < candidateTx.inputsLength; k++) {
                         const input = candidateTx.getInput(k);
-                        if (
-                            input.txid &&
-                            hex.encode(input.txid) === txid &&
-                            input.index === i
-                        ) {
+                        if (input.txid && hex.encode(input.txid) === txid && input.index === i) {
                             results[i] = { spent: true, txid: candidateTxid };
                             found = true;
                             break;
@@ -806,7 +752,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
      *   - addresses ← decode each output's scriptPubKey via @scure/btc-signer
      */
     private async historyToExplorerTxs(
-        history: TransactionHistory[]
+        history: TransactionHistory[],
     ): Promise<ExplorerTransaction[]> {
         const txids = history.map((h) => h.tx_hash);
         const rawTxs = await this.chain.fetchTransactions(txids);
@@ -819,29 +765,23 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         // so one missing header doesn't poison the whole history mapping.
         // The old verbose-tx code had the same tolerance via
         // `vtx.blocktime || vtx.time || 0`.
-        const confirmedHeights = [
-            ...new Set(history.map((h) => h.height).filter((h) => h > 0)),
-        ];
+        const confirmedHeights = [...new Set(history.map((h) => h.height).filter((h) => h > 0))];
         const blockTimeByHeight = new Map<number, number>();
         if (confirmedHeights.length > 0) {
             try {
-                const headers =
-                    await this.chain.fetchBlockHeaders(confirmedHeights);
+                const headers = await this.chain.fetchBlockHeaders(confirmedHeights);
                 for (const header of headers) {
-                    blockTimeByHeight.set(
-                        header.height,
-                        parseBlockHeader(header.hex).timestamp
-                    );
+                    blockTimeByHeight.set(header.height, parseBlockHeader(header.hex).timestamp);
                 }
             } catch {
                 const settled = await Promise.allSettled(
-                    confirmedHeights.map((h) => this.chain.fetchBlockHeader(h))
+                    confirmedHeights.map((h) => this.chain.fetchBlockHeader(h)),
                 );
                 settled.forEach((res) => {
                     if (res.status === "fulfilled") {
                         blockTimeByHeight.set(
                             res.value.height,
-                            parseBlockHeader(res.value.hex).timestamp
+                            parseBlockHeader(res.value.hex).timestamp,
                         );
                     }
                     // Rejections leave the height absent → block_time = 0.
@@ -850,11 +790,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         }
 
         return history.map((entry) =>
-            this.buildExplorerTx(
-                entry,
-                rawHexByTxid.get(entry.tx_hash),
-                blockTimeByHeight
-            )
+            this.buildExplorerTx(entry, rawHexByTxid.get(entry.tx_hash), blockTimeByHeight),
         );
     }
 
@@ -868,7 +804,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
     private buildExplorerTx(
         entry: TransactionHistory,
         rawHex: string | undefined,
-        blockTimeByHeight: Map<number, number>
+        blockTimeByHeight: Map<number, number>,
     ): ExplorerTransaction {
         const vout: ExplorerTransaction["vout"] = [];
         if (rawHex) {
@@ -880,14 +816,12 @@ export class ElectrumOnchainProvider implements OnchainProvider {
                 });
             } catch (err) {
                 throw new Error(
-                    `Failed to parse raw tx for ${entry.tx_hash}: ${err instanceof Error ? err.message : String(err)}`
+                    `Failed to parse raw tx for ${entry.tx_hash}: ${err instanceof Error ? err.message : String(err)}`,
                 );
             }
             for (let i = 0; i < tx.outputsLength; i++) {
                 const output = tx.getOutput(i);
-                const scriptHex = output.script
-                    ? hex.encode(output.script)
-                    : "";
+                const scriptHex = output.script ? hex.encode(output.script) : "";
                 vout.push({
                     scriptpubkey_address: scriptHex
                         ? (this.chain.addressForScript(scriptHex) ?? "")
@@ -922,11 +856,8 @@ export class ElectrumOnchainProvider implements OnchainProvider {
     }
 
     async getTxStatus(
-        txid: string
-    ): Promise<
-        | { confirmed: false }
-        | { confirmed: true; blockTime: number; blockHeight: number }
-    > {
+        txid: string,
+    ): Promise<{ confirmed: false } | { confirmed: true; blockTime: number; blockHeight: number }> {
         // Use `transaction.get_merkle` rather than the verbose `transaction.get`
         // because electrs (used by mempool.space, blockstream.info, and the
         // nigiri regtest) doesn't implement verbose. get_merkle is part of the
@@ -941,9 +872,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         // height are still authoritative; only block_time degrades.
         let blockTime = 0;
         try {
-            const header = await this.chain.fetchBlockHeader(
-                merkle.blockHeight
-            );
+            const header = await this.chain.fetchBlockHeader(merkle.blockHeight);
             blockTime = parseBlockHeader(header.hex).timestamp;
         } catch (err) {
             if (!isMissingHeightError(err)) throw err;
@@ -972,7 +901,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
 
     async watchAddresses(
         addresses: string[],
-        eventCallback: (txs: ExplorerTransaction[]) => void
+        eventCallback: (txs: ExplorerTransaction[]) => void,
     ): Promise<() => void> {
         const scripts = addresses.map((addr) => this.encodeAddress(addr));
         const scriptHashes = scripts.map(toScriptHash);
@@ -980,7 +909,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         // scripts/scriptHashes arrays. Server notifications hit this on
         // every push, so the previous indexOf was O(n) per event.
         const scriptByHash = new Map<string, Uint8Array>(
-            scriptHashes.map((h, i) => [h, scripts[i]])
+            scriptHashes.map((h, i) => [h, scripts[i]]),
         );
 
         // Track known history per script to detect new txs.
@@ -988,14 +917,9 @@ export class ElectrumOnchainProvider implements OnchainProvider {
 
         // Initialize known-set in parallel — for a wallet watching many
         // addresses this avoids n sequential round trips on first call.
-        const initialHistories = await Promise.all(
-            scripts.map((s) => this.chain.fetchHistory(s))
-        );
+        const initialHistories = await Promise.all(scripts.map((s) => this.chain.fetchHistory(s)));
         initialHistories.forEach((history, i) => {
-            knownTxids.set(
-                scriptHashes[i],
-                new Set(history.map((h) => h.tx_hash))
-            );
+            knownTxids.set(scriptHashes[i], new Set(history.map((h) => h.tx_hash)));
         });
 
         // Per-scripthash mutex serializing concurrent notifications so
@@ -1004,17 +928,13 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         // one's tail; failures are swallowed to keep the chain alive.
         const inFlight = new Map<string, Promise<void>>();
 
-        const processStatusChange = async (
-            scripthash: string
-        ): Promise<void> => {
+        const processStatusChange = async (scripthash: string): Promise<void> => {
             const script = scriptByHash.get(scripthash);
             if (!script) return;
 
             const history = await this.chain.fetchHistory(script);
             const known = knownTxids.get(scripthash) ?? new Set<string>();
-            const newEntries = history.filter(
-                (entry) => !known.has(entry.tx_hash)
-            );
+            const newEntries = history.filter((entry) => !known.has(entry.tx_hash));
 
             if (newEntries.length === 0) return;
 
@@ -1037,7 +957,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
             // Keep the chain alive even when one link rejects.
             inFlight.set(
                 scripthash,
-                next.catch(() => undefined)
+                next.catch(() => undefined),
             );
             return next;
         };
@@ -1049,23 +969,16 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         try {
             await Promise.all(
                 scripts.map(async (script) => {
-                    await this.chain.subscribeScriptStatus(
-                        script,
-                        (scripthash, status) => {
-                            if (status !== null) {
-                                handleStatusChange(scripthash).catch(
-                                    console.error
-                                );
-                            }
+                    await this.chain.subscribeScriptStatus(script, (scripthash, status) => {
+                        if (status !== null) {
+                            handleStatusChange(scripthash).catch(console.error);
                         }
-                    );
+                    });
                     subscribed.push(script);
-                })
+                }),
             );
         } catch (err) {
-            await Promise.allSettled(
-                subscribed.map((s) => this.chain.unsubscribeScriptStatus(s))
-            );
+            await Promise.allSettled(subscribed.map((s) => this.chain.unsubscribeScriptStatus(s)));
             throw err;
         }
 
@@ -1101,8 +1014,7 @@ function isHeaderSubscribeResult(v: unknown): v is HeaderSubscribeResult {
  * failures (auth/network) propagate.
  */
 function isMissingHeightError(err: unknown): boolean {
-    const msg =
-        err instanceof Error ? err.message : typeof err === "string" ? err : "";
+    const msg = err instanceof Error ? err.message : typeof err === "string" ? err : "";
     return msg.toLowerCase().includes("missingheight");
 }
 
@@ -1114,8 +1026,7 @@ function isMissingHeightError(err: unknown): boolean {
  * malformed response) still propagate.
  */
 function isTxNotInBlockError(err: unknown): boolean {
-    const msg =
-        err instanceof Error ? err.message : typeof err === "string" ? err : "";
+    const msg = err instanceof Error ? err.message : typeof err === "string" ? err : "";
     const normalized = msg.toLowerCase();
     return (
         normalized.includes("not yet in a block") ||

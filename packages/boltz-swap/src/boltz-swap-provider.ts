@@ -1,10 +1,5 @@
 import { Transaction } from "@arkade-os/sdk";
-import {
-    NetworkError,
-    SchemaError,
-    SwapError,
-    SwapNotFoundError,
-} from "./errors";
+import { NetworkError, SchemaError, SwapError, SwapNotFoundError } from "./errors";
 import {
     Chain,
     ChainFeesResponse,
@@ -56,20 +51,12 @@ export type BoltzSwapStatus =
 
 /** Returns true if the status indicates a failed submarine swap. */
 export const isSubmarineFailedStatus = (status: BoltzSwapStatus): boolean => {
-    return [
-        "invoice.failedToPay",
-        "transaction.lockupFailed",
-        "swap.expired",
-    ].includes(status);
+    return ["invoice.failedToPay", "transaction.lockupFailed", "swap.expired"].includes(status);
 };
 
 /** Returns true if the submarine swap has reached a terminal state. */
 export const isSubmarineFinalStatus = (status: BoltzSwapStatus): boolean => {
-    return [
-        "invoice.failedToPay",
-        "transaction.claimed",
-        "swap.expired",
-    ].includes(status);
+    return ["invoice.failedToPay", "transaction.claimed", "swap.expired"].includes(status);
 };
 
 /** Returns true if the submarine swap is still in progress. */
@@ -86,14 +73,8 @@ export const isSubmarinePendingStatus = (status: BoltzSwapStatus): boolean => {
 };
 
 /** Returns true if the submarine swap is eligible for refund. */
-export const isSubmarineRefundableStatus = (
-    status: BoltzSwapStatus
-): boolean => {
-    return [
-        "invoice.failedToPay",
-        "transaction.lockupFailed",
-        "swap.expired",
-    ].includes(status);
+export const isSubmarineRefundableStatus = (status: BoltzSwapStatus): boolean => {
+    return ["invoice.failedToPay", "transaction.lockupFailed", "swap.expired"].includes(status);
 };
 
 /** Returns true if the submarine swap completed successfully. */
@@ -124,11 +105,7 @@ export const isReverseFinalStatus = (status: BoltzSwapStatus): boolean => {
 
 /** Returns true if the reverse swap is still in progress. */
 export const isReversePendingStatus = (status: BoltzSwapStatus): boolean => {
-    return [
-        "swap.created",
-        "transaction.mempool",
-        "transaction.confirmed",
-    ].includes(status);
+    return ["swap.created", "transaction.mempool", "transaction.confirmed"].includes(status);
 };
 
 /** Returns true if the reverse swap VHTLC can be claimed. */
@@ -148,10 +125,7 @@ export const isChainFailedStatus = (status: BoltzSwapStatus): boolean => {
 
 /** Returns true if the chain swap is claimable (server transaction in mempool or confirmed). */
 export const isChainClaimableStatus = (status: BoltzSwapStatus): boolean => {
-    return [
-        "transaction.server.mempool",
-        "transaction.server.confirmed",
-    ].includes(status);
+    return ["transaction.server.mempool", "transaction.server.confirmed"].includes(status);
 };
 
 /** Returns true if the chain swap has reached a terminal state. */
@@ -192,16 +166,12 @@ export const isChainSuccessStatus = (status: BoltzSwapStatus): boolean => {
 };
 
 /** Type guard: narrows BoltzSwap to BoltzReverseSwap. */
-export const isPendingReverseSwap = (
-    swap: BoltzSwap
-): swap is BoltzReverseSwap => {
+export const isPendingReverseSwap = (swap: BoltzSwap): swap is BoltzReverseSwap => {
     return swap.type === "reverse";
 };
 
 /** Type guard: narrows BoltzSwap to BoltzSubmarineSwap. */
-export const isPendingSubmarineSwap = (
-    swap: BoltzSwap
-): swap is BoltzSubmarineSwap => {
+export const isPendingSubmarineSwap = (swap: BoltzSwap): swap is BoltzSubmarineSwap => {
     return swap.type === "submarine";
 };
 
@@ -211,9 +181,7 @@ export const isPendingChainSwap = (swap: BoltzSwap): swap is BoltzChainSwap => {
 };
 
 /** Type guard: checks if swap is a refundable submarine swap (failed + not yet refunded). */
-export const isSubmarineSwapRefundable = (
-    swap: BoltzSwap
-): swap is BoltzSubmarineSwap => {
+export const isSubmarineSwapRefundable = (swap: BoltzSwap): swap is BoltzSubmarineSwap => {
     return (
         isSubmarineRefundableStatus(swap.status) &&
         isPendingSubmarineSwap(swap) &&
@@ -223,9 +191,7 @@ export const isSubmarineSwapRefundable = (
 };
 
 /** Type guard: checks if swap is a refundable chain swap (expired ARK → BTC). */
-export const isChainSwapRefundable = (
-    swap: BoltzSwap
-): swap is BoltzChainSwap => {
+export const isChainSwapRefundable = (swap: BoltzSwap): swap is BoltzChainSwap => {
     return (
         isChainRefundableStatus(swap.status) &&
         isPendingChainSwap(swap) &&
@@ -234,16 +200,12 @@ export const isChainSwapRefundable = (
 };
 
 /** Type guard: checks if swap is a claimable reverse swap. */
-export const isReverseSwapClaimable = (
-    swap: BoltzSwap
-): swap is BoltzReverseSwap => {
+export const isReverseSwapClaimable = (swap: BoltzSwap): swap is BoltzReverseSwap => {
     return isReverseClaimableStatus(swap.status) && isPendingReverseSwap(swap);
 };
 
 /** Type guard: checks if swap is a claimable chain swap. */
-export const isChainSwapClaimable = (
-    swap: BoltzSwap
-): swap is BoltzChainSwap => {
+export const isChainSwapClaimable = (swap: BoltzSwap): swap is BoltzChainSwap => {
     return isChainClaimableStatus(swap.status) && isPendingChainSwap(swap);
 };
 
@@ -272,9 +234,7 @@ export type GetReverseSwapTxIdResponse = {
     timeoutBlockHeight: number;
 };
 
-export const isGetReverseSwapTxIdResponse = (
-    data: any
-): data is GetReverseSwapTxIdResponse => {
+export const isGetReverseSwapTxIdResponse = (data: any): data is GetReverseSwapTxIdResponse => {
     return (
         data &&
         typeof data === "object" &&
@@ -295,25 +255,20 @@ export type GetSwapStatusResponse = {
     };
 };
 
-export const isGetSwapStatusResponse = (
-    data: any
-): data is GetSwapStatusResponse => {
+export const isGetSwapStatusResponse = (data: any): data is GetSwapStatusResponse => {
     return (
         data &&
         typeof data === "object" &&
         typeof data.status === "string" &&
-        (data.zeroConfRejected === undefined ||
-            typeof data.zeroConfRejected === "boolean") &&
+        (data.zeroConfRejected === undefined || typeof data.zeroConfRejected === "boolean") &&
         (data.transaction === undefined ||
             (data.transaction &&
                 typeof data.transaction === "object" &&
                 typeof data.transaction.id === "string" &&
                 (data.transaction.confirmed === undefined ||
                     typeof data.transaction.confirmed === "boolean") &&
-                (data.transaction.eta === undefined ||
-                    typeof data.transaction.eta === "number") &&
-                (data.transaction.hex === undefined ||
-                    typeof data.transaction.hex === "string") &&
+                (data.transaction.eta === undefined || typeof data.transaction.eta === "number") &&
+                (data.transaction.hex === undefined || typeof data.transaction.hex === "string") &&
                 (data.transaction.preimage === undefined ||
                     typeof data.transaction.preimage === "string")))
     );
@@ -337,9 +292,7 @@ type GetSubmarinePairsResponse = {
     };
 };
 
-const isGetSubmarinePairsResponse = (
-    data: any
-): data is GetSubmarinePairsResponse => {
+const isGetSubmarinePairsResponse = (data: any): data is GetSubmarinePairsResponse => {
     return (
         data &&
         typeof data === "object" &&
@@ -381,9 +334,7 @@ type GetReversePairsResponse = {
     };
 };
 
-const isGetReversePairsResponse = (
-    data: any
-): data is GetReversePairsResponse => {
+const isGetReversePairsResponse = (data: any): data is GetReversePairsResponse => {
     return (
         data &&
         typeof data === "object" &&
@@ -433,23 +384,17 @@ export type CreateSubmarineSwapResponse = {
     timeoutBlockHeights?: TimeoutBlockHeights;
 };
 
-export const isCreateSubmarineSwapResponse = (
-    data: any
-): data is CreateSubmarineSwapResponse => {
+export const isCreateSubmarineSwapResponse = (data: any): data is CreateSubmarineSwapResponse => {
     return (
         data &&
         typeof data === "object" &&
         typeof data.id === "string" &&
         typeof data.expectedAmount === "number" &&
         (data.address === undefined || typeof data.address === "string") &&
-        (data.claimPublicKey === undefined ||
-            typeof data.claimPublicKey === "string") &&
-        (data.acceptZeroConf === undefined ||
-            typeof data.acceptZeroConf === "boolean") &&
-        (data.timeoutBlockHeight === undefined ||
-            typeof data.timeoutBlockHeight === "number") &&
-        (data.timeoutBlockHeights === undefined ||
-            isTimeoutBlockHeights(data.timeoutBlockHeights))
+        (data.claimPublicKey === undefined || typeof data.claimPublicKey === "string") &&
+        (data.acceptZeroConf === undefined || typeof data.acceptZeroConf === "boolean") &&
+        (data.timeoutBlockHeight === undefined || typeof data.timeoutBlockHeight === "number") &&
+        (data.timeoutBlockHeights === undefined || isTimeoutBlockHeights(data.timeoutBlockHeights))
     );
 };
 
@@ -457,12 +402,8 @@ export type GetSwapPreimageResponse = {
     preimage: string;
 };
 
-export const isGetSwapPreimageResponse = (
-    data: any
-): data is GetSwapPreimageResponse => {
-    return (
-        data && typeof data === "object" && typeof data.preimage === "string"
-    );
+export const isGetSwapPreimageResponse = (data: any): data is GetSwapPreimageResponse => {
+    return data && typeof data === "object" && typeof data.preimage === "string";
 };
 
 /** Request to create a reverse swap (Lightning → Arkade). */
@@ -495,24 +436,17 @@ export type CreateReverseSwapResponse = {
     timeoutBlockHeights?: TimeoutBlockHeights;
 };
 
-export const isCreateReverseSwapResponse = (
-    data: any
-): data is CreateReverseSwapResponse => {
+export const isCreateReverseSwapResponse = (data: any): data is CreateReverseSwapResponse => {
     return (
         data &&
         typeof data === "object" &&
         typeof data.id === "string" &&
         typeof data.invoice === "string" &&
-        (data.onchainAmount === undefined ||
-            typeof data.onchainAmount === "number") &&
-        (data.lockupAddress === undefined ||
-            typeof data.lockupAddress === "string") &&
-        (data.refundPublicKey === undefined ||
-            typeof data.refundPublicKey === "string") &&
-        (data.timeoutBlockHeight === undefined ||
-            typeof data.timeoutBlockHeight === "number") &&
-        (data.timeoutBlockHeights === undefined ||
-            isTimeoutBlockHeights(data.timeoutBlockHeights))
+        (data.onchainAmount === undefined || typeof data.onchainAmount === "number") &&
+        (data.lockupAddress === undefined || typeof data.lockupAddress === "string") &&
+        (data.refundPublicKey === undefined || typeof data.refundPublicKey === "string") &&
+        (data.timeoutBlockHeight === undefined || typeof data.timeoutBlockHeight === "number") &&
+        (data.timeoutBlockHeights === undefined || isTimeoutBlockHeights(data.timeoutBlockHeights))
     );
 };
 
@@ -526,9 +460,7 @@ export type RefundSubmarineSwapResponse = {
     checkpoint: string;
 };
 
-export const isRefundSubmarineSwapResponse = (
-    data: any
-): data is RefundSubmarineSwapResponse => {
+export const isRefundSubmarineSwapResponse = (data: any): data is RefundSubmarineSwapResponse => {
     return (
         data &&
         typeof data === "object" &&
@@ -547,9 +479,7 @@ export type RefundChainSwapResponse = {
     checkpoint: string;
 };
 
-export const isRefundChainSwapResponse = (
-    data: any
-): data is RefundChainSwapResponse => {
+export const isRefundChainSwapResponse = (data: any): data is RefundChainSwapResponse => {
     return (
         data &&
         typeof data === "object" &&
@@ -656,9 +586,7 @@ type ChainSwapDetailsResponse = {
     bip21?: string;
 };
 
-const isChainSwapDetailsResponse = (
-    data: any
-): data is ChainSwapDetailsResponse => {
+const isChainSwapDetailsResponse = (data: any): data is ChainSwapDetailsResponse => {
     return (
         data &&
         typeof data === "object" &&
@@ -704,9 +632,7 @@ export type CreateChainSwapResponse = {
     lockupDetails: ChainSwapDetailsResponse;
 };
 
-const isCreateChainSwapResponse = (
-    data: any
-): data is CreateChainSwapResponse => {
+const isCreateChainSwapResponse = (data: any): data is CreateChainSwapResponse => {
     return (
         data &&
         typeof data === "object" &&
@@ -722,9 +648,7 @@ export type GetChainClaimDetailsResponse = {
     transactionHash: string;
 };
 
-const isGetChainClaimDetailsResponse = (
-    data: any
-): data is GetChainClaimDetailsResponse => {
+const isGetChainClaimDetailsResponse = (data: any): data is GetChainClaimDetailsResponse => {
     return (
         data &&
         typeof data === "object" &&
@@ -752,16 +676,12 @@ export type PostChainClaimDetailsResponse = {
     partialSignature?: string;
 };
 
-const isPostChainClaimDetailsResponse = (
-    data: any
-): data is PostChainClaimDetailsResponse => {
+const isPostChainClaimDetailsResponse = (data: any): data is PostChainClaimDetailsResponse => {
     return (
         data &&
         typeof data === "object" &&
-        ((typeof data.pubNonce === "string" &&
-            typeof data.partialSignature === "string") ||
-            (typeof data.pubNonce === "undefined" &&
-                typeof data.partialSignature === "undefined"))
+        ((typeof data.pubNonce === "string" && typeof data.partialSignature === "string") ||
+            (typeof data.pubNonce === "undefined" && typeof data.partialSignature === "undefined"))
     );
 };
 
@@ -779,9 +699,7 @@ export type PostChainQuoteRequest = {
 
 export type PostChainQuoteResponse = {};
 
-export const isPostChainQuoteResponse = (
-    data: any
-): data is PostChainQuoteResponse => {
+export const isPostChainQuoteResponse = (data: any): data is PostChainQuoteResponse => {
     return (
         data &&
         typeof data === "object" &&
@@ -798,9 +716,7 @@ export type PostBtcTransactionResponse = {
     id: string;
 };
 
-const isPostBtcTransactionResponse = (
-    data: any
-): data is PostBtcTransactionResponse => {
+const isPostBtcTransactionResponse = (data: any): data is PostBtcTransactionResponse => {
     return data && typeof data === "object" && typeof data.id === "string";
 };
 
@@ -834,14 +750,10 @@ export const isTree = (data: any): data is Tree => {
         typeof data === "object" &&
         isLeaf(data.claimLeaf) &&
         isLeaf(data.refundLeaf) &&
-        (data.covenantClaimLeaf === undefined ||
-            isLeaf(data.covenantClaimLeaf)) &&
-        (data.refundWithoutBoltzLeaf === undefined ||
-            isLeaf(data.refundWithoutBoltzLeaf)) &&
-        (data.unilateralClaimLeaf === undefined ||
-            isLeaf(data.unilateralClaimLeaf)) &&
-        (data.unilateralRefundLeaf === undefined ||
-            isLeaf(data.unilateralRefundLeaf)) &&
+        (data.covenantClaimLeaf === undefined || isLeaf(data.covenantClaimLeaf)) &&
+        (data.refundWithoutBoltzLeaf === undefined || isLeaf(data.refundWithoutBoltzLeaf)) &&
+        (data.unilateralClaimLeaf === undefined || isLeaf(data.unilateralClaimLeaf)) &&
+        (data.unilateralRefundLeaf === undefined || isLeaf(data.unilateralRefundLeaf)) &&
         (data.unilateralRefundWithoutBoltzLeaf === undefined ||
             isLeaf(data.unilateralRefundWithoutBoltzLeaf))
     );
@@ -876,12 +788,10 @@ export const isDetails = (data: any): data is Details => {
                 typeof data.transaction.vout === "number")) &&
         typeof data.lockupAddress === "string" &&
         typeof data.serverPublicKey === "string" &&
-        (data.timeoutBlockHeight === undefined ||
-            typeof data.timeoutBlockHeight === "number") &&
+        (data.timeoutBlockHeight === undefined || typeof data.timeoutBlockHeight === "number") &&
         (data.timeoutBlockHeights === undefined ||
             isTimeoutBlockHeights(data.timeoutBlockHeights)) &&
-        (data.preimageHash === undefined ||
-            typeof data.preimageHash === "string")
+        (data.preimageHash === undefined || typeof data.preimageHash === "string")
     );
 };
 
@@ -908,8 +818,7 @@ export const isRestoredChainSwap = (data: any): data is RestoredChainSwap => {
         typeof data.createdAt === "number" &&
         (data.from === "ARK" || data.from === "BTC") &&
         (data.to === "ARK" || data.to === "BTC") &&
-        (data.preimageHash === undefined ||
-            typeof data.preimageHash === "string") &&
+        (data.preimageHash === undefined || typeof data.preimageHash === "string") &&
         (data.invoice === undefined || typeof data.invoice === "string") &&
         (data.refundDetails === undefined || isDetails(data.refundDetails)) &&
         (data.claimDetails === undefined || isDetails(data.claimDetails))
@@ -928,9 +837,7 @@ export type RestoredSubmarineSwap = {
     invoice?: string;
 };
 
-export const isRestoredSubmarineSwap = (
-    data: any
-): data is RestoredSubmarineSwap => {
+export const isRestoredSubmarineSwap = (data: any): data is RestoredSubmarineSwap => {
     return (
         data &&
         typeof data === "object" &&
@@ -939,8 +846,7 @@ export const isRestoredSubmarineSwap = (
         data.from === "ARK" &&
         data.type === "submarine" &&
         typeof data.createdAt === "number" &&
-        (data.preimageHash === undefined ||
-            typeof data.preimageHash === "string") &&
+        (data.preimageHash === undefined || typeof data.preimageHash === "string") &&
         typeof data.status === "string" &&
         isDetails(data.refundDetails) &&
         (data.invoice === undefined || typeof data.invoice === "string")
@@ -959,9 +865,7 @@ export type RestoredReverseSwap = {
     invoice?: string;
 };
 
-export const isRestoredReverseSwap = (
-    data: any
-): data is RestoredReverseSwap => {
+export const isRestoredReverseSwap = (data: any): data is RestoredReverseSwap => {
     return (
         data &&
         typeof data === "object" &&
@@ -970,8 +874,7 @@ export const isRestoredReverseSwap = (
         data.from === "BTC" &&
         data.type === "reverse" &&
         typeof data.createdAt === "number" &&
-        (data.preimageHash === undefined ||
-            typeof data.preimageHash === "string") &&
+        (data.preimageHash === undefined || typeof data.preimageHash === "string") &&
         typeof data.status === "string" &&
         isDetails(data.claimDetails) &&
         (data.invoice === undefined || typeof data.invoice === "string")
@@ -988,16 +891,14 @@ export type CreateSwapsRestoreResponse = (
     | RestoredSubmarineSwap
 )[];
 
-export const isCreateSwapsRestoreResponse = (
-    data: any
-): data is CreateSwapsRestoreResponse => {
+export const isCreateSwapsRestoreResponse = (data: any): data is CreateSwapsRestoreResponse => {
     return (
         Array.isArray(data) &&
         data.every(
             (item) =>
                 isRestoredChainSwap(item) ||
                 isRestoredReverseSwap(item) ||
-                isRestoredSubmarineSwap(item)
+                isRestoredSubmarineSwap(item),
         )
     );
 };
@@ -1015,8 +916,7 @@ const BASE_URLS: Partial<Record<Network, string>> = {
 const isSwapNotFoundBody = (error: NetworkError): boolean => {
     const needle = "could not find swap";
     const fromJson = error.errorData?.error;
-    if (typeof fromJson === "string" && fromJson.toLowerCase().includes(needle))
-        return true;
+    if (typeof fromJson === "string" && fromJson.toLowerCase().includes(needle)) return true;
     return error.message.toLowerCase().includes(needle);
 };
 
@@ -1037,15 +937,10 @@ export class BoltzSwapProvider {
         this.network = config.network;
         this.referralId = config.referralId ?? "arkade-ts-sdk";
         const apiUrl = config.apiUrl || BASE_URLS[config.network];
-        if (!apiUrl)
-            throw new Error(
-                `API URL is required for network: ${config.network}`
-            );
+        if (!apiUrl) throw new Error(`API URL is required for network: ${config.network}`);
         this.apiUrl = apiUrl;
         this.wsUrl =
-            this.apiUrl
-                .replace(/^http(s)?:\/\//, "ws$1://")
-                .replace("9069", "9004") + "/v2/ws";
+            this.apiUrl.replace(/^http(s)?:\/\//, "ws$1://").replace("9069", "9004") + "/v2/ws";
     }
 
     /** Returns the Boltz API base URL. */
@@ -1066,10 +961,7 @@ export class BoltzSwapProvider {
     /** Returns current Lightning swap fees (submarine + reverse) from Boltz. */
     async getFees(): Promise<FeesResponse> {
         const [submarine, reverse] = await Promise.all([
-            this.request<GetSubmarinePairsResponse>(
-                "/v2/swap/submarine",
-                "GET"
-            ),
+            this.request<GetSubmarinePairsResponse>("/v2/swap/submarine", "GET"),
             this.request<GetReversePairsResponse>("/v2/swap/reverse", "GET"),
         ]);
         if (!isGetSubmarinePairsResponse(submarine))
@@ -1090,10 +982,7 @@ export class BoltzSwapProvider {
 
     /** Returns current Lightning swap min/max limits from Boltz. */
     async getLimits(): Promise<LimitsResponse> {
-        const response = await this.request<GetSubmarinePairsResponse>(
-            "/v2/swap/submarine",
-            "GET"
-        );
+        const response = await this.request<GetSubmarinePairsResponse>("/v2/swap/submarine", "GET");
         if (!isGetSubmarinePairsResponse(response))
             throw new SchemaError({ message: "error fetching limits" });
         return {
@@ -1104,10 +993,7 @@ export class BoltzSwapProvider {
 
     /** Returns the current BTC chain tip height from Boltz. */
     async getChainHeight(): Promise<number> {
-        const response = await this.request<{ BTC: number }>(
-            "/v2/chain/heights",
-            "GET"
-        );
+        const response = await this.request<{ BTC: number }>("/v2/chain/heights", "GET");
         if (typeof response?.BTC !== "number")
             throw new SchemaError({
                 message: "error fetching chain heights",
@@ -1119,7 +1005,7 @@ export class BoltzSwapProvider {
     async getReverseSwapTxId(id: string): Promise<GetReverseSwapTxIdResponse> {
         const res = await this.request<GetReverseSwapTxIdResponse>(
             `/v2/swap/reverse/${id}/transaction`,
-            "GET"
+            "GET",
         );
         if (!isGetReverseSwapTxIdResponse(res))
             throw new SchemaError({
@@ -1139,10 +1025,7 @@ export class BoltzSwapProvider {
     async getSwapStatus(id: string): Promise<GetSwapStatusResponse> {
         let response: GetSwapStatusResponse;
         try {
-            response = await this.request<GetSwapStatusResponse>(
-                `/v2/swap/${id}`,
-                "GET"
-            );
+            response = await this.request<GetSwapStatusResponse>(`/v2/swap/${id}`, "GET");
         } catch (error) {
             if (
                 error instanceof NetworkError &&
@@ -1164,7 +1047,7 @@ export class BoltzSwapProvider {
     async getSwapPreimage(id: string): Promise<GetSwapPreimageResponse> {
         const res = await this.request<GetSwapPreimageResponse>(
             `/v2/swap/submarine/${id}/preimage`,
-            "GET"
+            "GET",
         );
         if (!isGetSwapPreimageResponse(res))
             throw new SchemaError({
@@ -1195,7 +1078,7 @@ export class BoltzSwapProvider {
         const response = await this.request<CreateSubmarineSwapResponse>(
             "/v2/swap/submarine",
             "POST",
-            requestBody
+            requestBody,
         );
         if (!isCreateSubmarineSwapResponse(response))
             throw new SchemaError({ message: "Error creating submarine swap" });
@@ -1229,7 +1112,7 @@ export class BoltzSwapProvider {
         const response = await this.request<CreateReverseSwapResponse>(
             "/v2/swap/reverse",
             "POST",
-            requestBody
+            requestBody,
         );
 
         if (!isCreateReverseSwapResponse(response))
@@ -1254,16 +1137,14 @@ export class BoltzSwapProvider {
             throw new SwapError({ message: "Invalid 'to' chain" });
         if (["BTC", "ARK"].indexOf(from) === -1)
             throw new SwapError({ message: "Invalid 'from' chain" });
-        if (to === from)
-            throw new SwapError({ message: "Invalid swap direction" });
+        if (to === from) throw new SwapError({ message: "Invalid swap direction" });
 
         // validate preimage hash
         if (!preimageHash || preimageHash.length != 64)
             throw new SwapError({ message: "Invalid preimageHash" });
 
         // validate fee
-        if (feeSatsPerByte <= 0)
-            throw new SwapError({ message: "Invalid feeSatsPerByte" });
+        if (feeSatsPerByte <= 0) throw new SwapError({ message: "Invalid feeSatsPerByte" });
 
         // validate lock amounts
         if (
@@ -1271,8 +1152,7 @@ export class BoltzSwapProvider {
             (serverLockAmount === undefined && userLockAmount === undefined)
         )
             throw new SwapError({
-                message:
-                    "Either serverLockAmount or userLockAmount must be provided",
+                message: "Either serverLockAmount or userLockAmount must be provided",
             });
         if (userLockAmount !== undefined && userLockAmount <= 0)
             throw new SwapError({ message: "Invalid userLockAmount" });
@@ -1309,7 +1189,7 @@ export class BoltzSwapProvider {
         const response = await this.request<CreateChainSwapResponse>(
             "/v2/swap/chain",
             "POST",
-            requestBody
+            requestBody,
         );
 
         // validate response
@@ -1323,7 +1203,7 @@ export class BoltzSwapProvider {
     async refundSubmarineSwap(
         swapId: string,
         transaction: Transaction,
-        checkpoint: Transaction
+        checkpoint: Transaction,
     ): Promise<{ transaction: Transaction; checkpoint: Transaction }> {
         // make refund swap request
         const requestBody: RefundSubmarineSwapRequest = {
@@ -1334,7 +1214,7 @@ export class BoltzSwapProvider {
         const response = await this.request<RefundSubmarineSwapResponse>(
             `/v2/swap/submarine/${swapId}/refund/ark`,
             "POST",
-            requestBody
+            requestBody,
         );
 
         if (!isRefundSubmarineSwapResponse(response))
@@ -1343,12 +1223,8 @@ export class BoltzSwapProvider {
             });
 
         return {
-            transaction: Transaction.fromPSBT(
-                base64.decode(response.transaction)
-            ),
-            checkpoint: Transaction.fromPSBT(
-                base64.decode(response.checkpoint)
-            ),
+            transaction: Transaction.fromPSBT(base64.decode(response.transaction)),
+            checkpoint: Transaction.fromPSBT(base64.decode(response.checkpoint)),
         };
     }
 
@@ -1356,7 +1232,7 @@ export class BoltzSwapProvider {
     async refundChainSwap(
         swapId: string,
         transaction: Transaction,
-        checkpoint: Transaction
+        checkpoint: Transaction,
     ): Promise<{ transaction: Transaction; checkpoint: Transaction }> {
         // make refund swap request
         const requestBody: RefundChainSwapRequest = {
@@ -1367,7 +1243,7 @@ export class BoltzSwapProvider {
         const response = await this.request<RefundChainSwapResponse>(
             `/v2/swap/chain/${swapId}/refund/ark`,
             "POST",
-            requestBody
+            requestBody,
         );
 
         if (!isRefundChainSwapResponse(response))
@@ -1376,19 +1252,15 @@ export class BoltzSwapProvider {
             });
 
         return {
-            transaction: Transaction.fromPSBT(
-                base64.decode(response.transaction)
-            ),
-            checkpoint: Transaction.fromPSBT(
-                base64.decode(response.checkpoint)
-            ),
+            transaction: Transaction.fromPSBT(base64.decode(response.transaction)),
+            checkpoint: Transaction.fromPSBT(base64.decode(response.checkpoint)),
         };
     }
 
     /** Monitors swap status updates via WebSocket. Calls update callback on each status change. Resolves when terminal. */
     async monitorSwap(
         swapId: string,
-        update: (type: BoltzSwapStatus, data?: any) => void
+        update: (type: BoltzSwapStatus, data?: any) => void,
     ): Promise<void> {
         return new Promise((resolve, reject) => {
             const webSocket = new globalThis.WebSocket(this.wsUrl);
@@ -1400,11 +1272,7 @@ export class BoltzSwapProvider {
 
             webSocket.onerror = (error) => {
                 clearTimeout(connectionTimeout);
-                reject(
-                    new NetworkError(
-                        `WebSocket error: ${(error as any).message}`
-                    )
-                );
+                reject(new NetworkError(`WebSocket error: ${(error as any).message}`));
             };
 
             webSocket.onopen = () => {
@@ -1414,7 +1282,7 @@ export class BoltzSwapProvider {
                         op: "subscribe",
                         channel: "swap.update",
                         args: [swapId],
-                    })
+                    }),
                 );
             };
 
@@ -1478,10 +1346,7 @@ export class BoltzSwapProvider {
             throw new SwapError({ message: "Invalid chain pair" });
         }
 
-        const response = await this.request<GetChainPairsResponse>(
-            "/v2/swap/chain",
-            "GET"
-        );
+        const response = await this.request<GetChainPairsResponse>("/v2/swap/chain", "GET");
 
         if (!isGetChainPairsResponse(response))
             throw new SchemaError({ message: "error fetching fees" });
@@ -1500,10 +1365,7 @@ export class BoltzSwapProvider {
             throw new SwapError({ message: "Invalid chain pair" });
         }
 
-        const response = await this.request<GetChainPairsResponse>(
-            "/v2/swap/chain",
-            "GET"
-        );
+        const response = await this.request<GetChainPairsResponse>("/v2/swap/chain", "GET");
 
         if (!isGetChainPairsResponse(response))
             throw new SchemaError({ message: "error fetching limits" });
@@ -1521,12 +1383,10 @@ export class BoltzSwapProvider {
     }
 
     /** Gets claim details (pubNonce, publicKey, transactionHash) for cooperative chain swap claiming. */
-    async getChainClaimDetails(
-        swapId: string
-    ): Promise<GetChainClaimDetailsResponse> {
+    async getChainClaimDetails(swapId: string): Promise<GetChainClaimDetailsResponse> {
         const response = await this.request<GetChainClaimDetailsResponse>(
             `/v2/swap/chain/${swapId}/claim`,
-            "GET"
+            "GET",
         );
         if (!isGetChainClaimDetailsResponse(response))
             throw new SchemaError({
@@ -1539,7 +1399,7 @@ export class BoltzSwapProvider {
     async getChainQuote(swapId: string): Promise<GetChainQuoteResponse> {
         const response = await this.request<GetChainQuoteResponse>(
             `/v2/swap/chain/${swapId}/quote`,
-            "GET"
+            "GET",
         );
         if (!isGetChainQuoteResponse(response))
             throw new SchemaError({
@@ -1551,12 +1411,12 @@ export class BoltzSwapProvider {
     /** Accepts a renegotiated quote amount for a chain swap. */
     async postChainQuote(
         swapId: string,
-        request: PostChainQuoteRequest
+        request: PostChainQuoteRequest,
     ): Promise<PostChainQuoteResponse> {
         const response = await this.request<PostChainQuoteResponse>(
             `/v2/swap/chain/${swapId}/quote`,
             "POST",
-            request
+            request,
         );
         if (!isPostChainQuoteResponse(response))
             throw new SchemaError({
@@ -1572,7 +1432,7 @@ export class BoltzSwapProvider {
         const response = await this.request<PostBtcTransactionResponse>(
             "/v2/chain/BTC/transaction",
             "POST",
-            requestBody
+            requestBody,
         );
 
         if (!isPostBtcTransactionResponse(response))
@@ -1586,12 +1446,12 @@ export class BoltzSwapProvider {
     /** Posts claim details (preimage + signing data) or cooperative signature for a chain swap. */
     async postChainClaimDetails(
         swapId: string,
-        request: PostChainClaimDetailsRequest
+        request: PostChainClaimDetailsRequest,
     ): Promise<PostChainClaimDetailsResponse> {
         const response = await this.request<PostChainClaimDetailsResponse>(
             `/v2/swap/chain/${swapId}/claim`,
             "POST",
-            request
+            request,
         );
 
         if (!isPostChainClaimDetailsResponse(response))
@@ -1611,7 +1471,7 @@ export class BoltzSwapProvider {
         const response = await this.request<CreateSwapsRestoreResponse>(
             "/v2/swap/restore",
             "POST",
-            requestBody
+            requestBody,
         );
 
         if (!isCreateSwapsRestoreResponse(response))
@@ -1622,11 +1482,7 @@ export class BoltzSwapProvider {
         return response;
     }
 
-    private async request<T>(
-        path: string,
-        method: "GET" | "POST",
-        body?: unknown
-    ): Promise<T> {
+    private async request<T>(path: string, method: "GET" | "POST", body?: unknown): Promise<T> {
         // Deduplicate concurrent GET requests to the same path so that
         // callers like getFees() + getLimits() (which both hit
         // /v2/swap/submarine) share a single in-flight fetch.
@@ -1642,11 +1498,7 @@ export class BoltzSwapProvider {
         return this.doRequest<T>(path, method, body);
     }
 
-    private async doRequest<T>(
-        path: string,
-        method: "GET" | "POST",
-        body?: unknown
-    ): Promise<T> {
+    private async doRequest<T>(path: string, method: "GET" | "POST", body?: unknown): Promise<T> {
         const url = `${this.apiUrl}${path}`;
         try {
             const response = await globalThis.fetch(url, {
@@ -1673,9 +1525,7 @@ export class BoltzSwapProvider {
             return (await response.json()) as T;
         } catch (error) {
             if (error instanceof NetworkError) throw error;
-            throw new NetworkError(
-                `Request to ${url} failed: ${(error as Error).message}`
-            );
+            throw new NetworkError(`Request to ${url} failed: ${(error as Error).message}`);
         }
     }
 }

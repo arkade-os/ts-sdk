@@ -86,22 +86,13 @@ export const createVHTLCScript = (args: {
         timeoutBlockHeights: vhtlcTimeouts,
     } = args;
     // validate we are using a x-only receiver public key
-    const receiverXOnlyPublicKey = normalizeToXOnlyKey(
-        hex.decode(receiverPubkey),
-        "receiver"
-    );
+    const receiverXOnlyPublicKey = normalizeToXOnlyKey(hex.decode(receiverPubkey), "receiver");
 
     // validate we are using a x-only sender public key
-    const senderXOnlyPublicKey = normalizeToXOnlyKey(
-        hex.decode(senderPubkey),
-        "sender"
-    );
+    const senderXOnlyPublicKey = normalizeToXOnlyKey(hex.decode(senderPubkey), "sender");
 
     // validate we are using a x-only server public key
-    const serverXOnlyPublicKey = normalizeToXOnlyKey(
-        hex.decode(serverPubkey),
-        "server"
-    );
+    const serverXOnlyPublicKey = normalizeToXOnlyKey(hex.decode(serverPubkey), "server");
 
     const vhtlcScript = new VHTLC.Script({
         preimageHash: ripemd160(preimageHash),
@@ -109,25 +100,18 @@ export const createVHTLCScript = (args: {
         receiver: receiverXOnlyPublicKey,
         server: serverXOnlyPublicKey,
         refundLocktime: BigInt(vhtlcTimeouts.refund),
-        unilateralClaimDelay: toBip68RelativeTimelock(
-            vhtlcTimeouts.unilateralClaim
-        ),
-        unilateralRefundDelay: toBip68RelativeTimelock(
-            vhtlcTimeouts.unilateralRefund
-        ),
+        unilateralClaimDelay: toBip68RelativeTimelock(vhtlcTimeouts.unilateralClaim),
+        unilateralRefundDelay: toBip68RelativeTimelock(vhtlcTimeouts.unilateralRefund),
         unilateralRefundWithoutReceiverDelay: toBip68RelativeTimelock(
-            vhtlcTimeouts.unilateralRefundWithoutReceiver
+            vhtlcTimeouts.unilateralRefundWithoutReceiver,
         ),
     });
 
-    if (!vhtlcScript.claimScript)
-        throw new Error("Failed to create VHTLC script");
+    if (!vhtlcScript.claimScript) throw new Error("Failed to create VHTLC script");
 
     // validate vhtlc script
     const hrp = network === "bitcoin" ? "ark" : "tark";
-    const vhtlcAddress = vhtlcScript
-        .address(hrp, serverXOnlyPublicKey)
-        .encode();
+    const vhtlcAddress = vhtlcScript.address(hrp, serverXOnlyPublicKey).encode();
 
     return { vhtlcScript, vhtlcAddress };
 };
@@ -150,7 +134,7 @@ export const joinBatch = async (
         forfeitAddress,
         network,
     }: Pick<ArkInfo, "forfeitPubkey" | "forfeitAddress" | "network">,
-    isRecoverable = true
+    isRecoverable = true,
 ): Promise<string> => {
     const signerSession = identity.signerSession();
     const signerPublicKey = await signerSession.getPublicKey();
@@ -180,11 +164,7 @@ export const joinBatch = async (
         sequence: getSequence(input.tapLeafScript),
     };
 
-    const registerIntent = Intent.create(
-        intentMessage,
-        [intentInput],
-        [output]
-    );
+    const registerIntent = Intent.create(intentMessage, [intentInput], [output]);
     const deleteIntent = Intent.create(deleteMessage, [intentInput]);
 
     const [signedRegisterIntent, signedDeleteIntent] = await Promise.all([
@@ -200,9 +180,7 @@ export const joinBatch = async (
     });
 
     const decodedAddress = Address(
-        network in networks
-            ? networks[network as keyof typeof networks]
-            : networks.bitcoin
+        network in networks ? networks[network as keyof typeof networks] : networks.bitcoin,
     ).decode(forfeitAddress);
 
     try {
@@ -213,17 +191,11 @@ export const joinBatch = async (
             identity,
             signerSession,
             normalizeToXOnlyKey(forfeitPubkey, "forfeit"),
-            isRecoverable ? undefined : OutScript.encode(decodedAddress)
+            isRecoverable ? undefined : OutScript.encode(decodedAddress),
         );
 
-        const topics = [
-            hex.encode(signerPublicKey),
-            `${input.txid}:${input.vout}`,
-        ];
-        const eventStream = arkProvider.getEventStream(
-            abortController.signal,
-            topics
-        );
+        const topics = [hex.encode(signerPublicKey), `${input.txid}:${input.vout}`];
+        const eventStream = arkProvider.getEventStream(abortController.signal, topics);
 
         const commitmentTxid = await Batch.join(eventStream, handler, {
             abortController,
@@ -261,35 +233,26 @@ export const claimVHTLCwithOffchainTx = async (
     input: ArkTxInput,
     output: TransactionOutput,
     arkInfo: ArkInfo,
-    arkProvider: ArkProvider
+    arkProvider: ArkProvider,
 ): Promise<void> => {
     // create the server unroll script for checkpoint transactions
     const rawCheckpointTapscript = hex.decode(arkInfo.checkpointTapscript);
-    const serverUnrollScript = CSVMultisigTapscript.decode(
-        rawCheckpointTapscript
-    );
+    const serverUnrollScript = CSVMultisigTapscript.decode(rawCheckpointTapscript);
 
     // create the offchain transaction to claim the VHTLC
-    const { arkTx, checkpoints } = buildOffchainTx(
-        [input],
-        [output],
-        serverUnrollScript
-    );
+    const { arkTx, checkpoints } = buildOffchainTx([input], [output], serverUnrollScript);
 
     // sign and submit the virtual transaction
     const signedArkTx = await identity.sign(arkTx);
-    const { arkTxid, finalArkTx, signedCheckpointTxs } =
-        await arkProvider.submitTx(
-            base64.encode(signedArkTx.toPSBT()),
-            checkpoints.map((c) => base64.encode(c.toPSBT()))
-        );
+    const { arkTxid, finalArkTx, signedCheckpointTxs } = await arkProvider.submitTx(
+        base64.encode(signedArkTx.toPSBT()),
+        checkpoints.map((c) => base64.encode(c.toPSBT())),
+    );
 
     // verify the server signed the transaction with correct key on the claim leaf
     const finalTx = Transaction.fromPSBT(base64.decode(finalArkTx));
     const serverPubkeyHex = hex.encode(serverXOnlyPublicKey);
-    const claimLeafHash = tapLeafHash(
-        scriptFromTapLeafScript(vhtlcScript.claim())
-    );
+    const claimLeafHash = tapLeafHash(scriptFromTapLeafScript(vhtlcScript.claim()));
     for (let i = 0; i < finalTx.inputsLength; i++) {
         if (!verifySignatures(finalTx, i, [serverPubkeyHex], claimLeafHash)) {
             throw new Error("Invalid final Ark transaction");
@@ -300,19 +263,14 @@ export const claimVHTLCwithOffchainTx = async (
     const finalCheckpoints = await Promise.all(
         signedCheckpointTxs.map(async (c, idx) => {
             const tx = Transaction.fromPSBT(base64.decode(c));
-            const checkpointLeaf =
-                checkpoints[idx].getInput(0).tapLeafScript![0];
-            const cpLeafHash = tapLeafHash(
-                scriptFromTapLeafScript(checkpointLeaf)
-            );
+            const checkpointLeaf = checkpoints[idx].getInput(0).tapLeafScript![0];
+            const cpLeafHash = tapLeafHash(scriptFromTapLeafScript(checkpointLeaf));
             if (!verifySignatures(tx, 0, [serverPubkeyHex], cpLeafHash)) {
-                throw new Error(
-                    "Invalid server signature in checkpoint transaction"
-                );
+                throw new Error("Invalid server signature in checkpoint transaction");
             }
             const signedCheckpoint = await identity.sign(tx, [0]);
             return base64.encode(signedCheckpoint.toPSBT());
-        })
+        }),
     );
 
     // submit the final transaction to the Ark provider
@@ -345,27 +303,26 @@ export const refundVHTLCwithOffchainTx = async (
     refundFunc: (
         swapId: string,
         unsignedRefundTx: Transaction,
-        unsignedCheckpointTx: Transaction
+        unsignedCheckpointTx: Transaction,
     ) => Promise<{
         transaction: Transaction;
         checkpoint: Transaction;
-    }>
+    }>,
 ): Promise<void> => {
     // create the server unroll script for checkpoint transactions
     const rawCheckpointTapscript = hex.decode(arkInfo.checkpointTapscript);
-    const serverUnrollScript = CSVMultisigTapscript.decode(
-        rawCheckpointTapscript
-    );
+    const serverUnrollScript = CSVMultisigTapscript.decode(rawCheckpointTapscript);
 
     // create the virtual transaction to claim the VHTLC
-    const { arkTx: unsignedRefundTx, checkpoints: checkpointPtxs } =
-        buildOffchainTx([input], [output], serverUnrollScript);
+    const { arkTx: unsignedRefundTx, checkpoints: checkpointPtxs } = buildOffchainTx(
+        [input],
+        [output],
+        serverUnrollScript,
+    );
 
     // validate we have one checkpoint transaction
     if (checkpointPtxs.length !== 1)
-        throw new Error(
-            `Expected one checkpoint transaction, got ${checkpointPtxs.length}`
-        );
+        throw new Error(`Expected one checkpoint transaction, got ${checkpointPtxs.length}`);
 
     const unsignedCheckpointTx = checkpointPtxs[0];
 
@@ -373,46 +330,23 @@ export const refundVHTLCwithOffchainTx = async (
     let boltzSignedRefundTx: Transaction;
     let boltzSignedCheckpointTx: Transaction;
     try {
-        const result = await refundFunc(
-            swapId,
-            unsignedRefundTx,
-            unsignedCheckpointTx
-        );
+        const result = await refundFunc(swapId, unsignedRefundTx, unsignedCheckpointTx);
         boltzSignedRefundTx = result.transaction;
         boltzSignedCheckpointTx = result.checkpoint;
     } catch (error) {
-        throw new BoltzRefundError(
-            `Boltz rejected refund for swap ${swapId}`,
-            error
-        );
+        throw new BoltzRefundError(`Boltz rejected refund for swap ${swapId}`, error);
     }
 
     // Verify Boltz signatures before combining
     const boltzXOnlyPublicKeyHex = hex.encode(boltzXOnlyPublicKey);
-    const refundLeafHash = tapLeafHash(
-        scriptFromTapLeafScript(input.tapLeafScript)
-    );
-    if (
-        !verifySignatures(
-            boltzSignedRefundTx,
-            0,
-            [boltzXOnlyPublicKeyHex],
-            refundLeafHash
-        )
-    ) {
+    const refundLeafHash = tapLeafHash(scriptFromTapLeafScript(input.tapLeafScript));
+    if (!verifySignatures(boltzSignedRefundTx, 0, [boltzXOnlyPublicKeyHex], refundLeafHash)) {
         throw new Error("Invalid Boltz signature in refund transaction");
     }
     const checkpointLeaf = unsignedCheckpointTx.getInput(0).tapLeafScript![0];
-    const checkpointLeafHash = tapLeafHash(
-        scriptFromTapLeafScript(checkpointLeaf)
-    );
+    const checkpointLeafHash = tapLeafHash(scriptFromTapLeafScript(checkpointLeaf));
     if (
-        !verifySignatures(
-            boltzSignedCheckpointTx,
-            0,
-            [boltzXOnlyPublicKeyHex],
-            checkpointLeafHash
-        )
+        !verifySignatures(boltzSignedCheckpointTx, 0, [boltzXOnlyPublicKeyHex], checkpointLeafHash)
     ) {
         throw new Error("Invalid Boltz signature in checkpoint transaction");
     }
@@ -422,21 +356,17 @@ export const refundVHTLCwithOffchainTx = async (
     const signedCheckpointTx = await identity.sign(unsignedCheckpointTx);
 
     // combine transactions
-    const combinedSignedRefundTx = combineTapscriptSigs(
-        boltzSignedRefundTx,
-        signedRefundTx
-    );
+    const combinedSignedRefundTx = combineTapscriptSigs(boltzSignedRefundTx, signedRefundTx);
     const combinedSignedCheckpointTx = combineTapscriptSigs(
         boltzSignedCheckpointTx,
-        signedCheckpointTx
+        signedCheckpointTx,
     );
 
     // get server to sign its part of the combined transaction
-    const { arkTxid, finalArkTx, signedCheckpointTxs } =
-        await arkProvider.submitTx(
-            base64.encode(combinedSignedRefundTx.toPSBT()),
-            [base64.encode(unsignedCheckpointTx.toPSBT())]
-        );
+    const { arkTxid, finalArkTx, signedCheckpointTxs } = await arkProvider.submitTx(
+        base64.encode(combinedSignedRefundTx.toPSBT()),
+        [base64.encode(unsignedCheckpointTx.toPSBT())],
+    );
 
     // verify the final tx is properly signed
     const tx = Transaction.fromPSBT(base64.decode(finalArkTx));
@@ -454,35 +384,24 @@ export const refundVHTLCwithOffchainTx = async (
     // validate we received exactly one checkpoint transaction
     if (signedCheckpointTxs.length !== 1) {
         throw new Error(
-            `Expected one signed checkpoint transaction, got ${signedCheckpointTxs.length}`
+            `Expected one signed checkpoint transaction, got ${signedCheckpointTxs.length}`,
         );
     }
 
     // verify and combine the checkpoint signatures
-    const serverSignedCheckpointTx = Transaction.fromPSBT(
-        base64.decode(signedCheckpointTxs[0])
-    );
+    const serverSignedCheckpointTx = Transaction.fromPSBT(base64.decode(signedCheckpointTxs[0]));
     const serverPubkeyHex = hex.encode(serverXOnlyPublicKey);
-    if (
-        !verifySignatures(
-            serverSignedCheckpointTx,
-            0,
-            [serverPubkeyHex],
-            checkpointLeafHash
-        )
-    ) {
+    if (!verifySignatures(serverSignedCheckpointTx, 0, [serverPubkeyHex], checkpointLeafHash)) {
         throw new Error("Invalid server signature in checkpoint transaction");
     }
 
     const finalCheckpointTx = combineTapscriptSigs(
         combinedSignedCheckpointTx,
-        serverSignedCheckpointTx
+        serverSignedCheckpointTx,
     );
 
     // finalize the transaction
-    await arkProvider.finalizeTx(arkTxid, [
-        base64.encode(finalCheckpointTx.toPSBT()),
-    ]);
+    await arkProvider.finalizeTx(arkTxid, [base64.encode(finalCheckpointTx.toPSBT())]);
 };
 
 function scriptFromTapLeafScript(leaf: TapLeafScript): Uint8Array {

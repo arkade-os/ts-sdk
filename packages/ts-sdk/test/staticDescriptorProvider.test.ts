@@ -33,7 +33,7 @@ describe("StaticDescriptorProvider", () => {
 
         it("should return the same descriptor on every call (no rotation)", async () => {
             expect(await provider.getNextSigningDescriptor()).toBe(
-                await provider.getNextSigningDescriptor()
+                await provider.getNextSigningDescriptor(),
             );
         });
     });
@@ -52,9 +52,7 @@ describe("StaticDescriptorProvider", () => {
         });
 
         it("should return true for tr(UPPERCASE)", () => {
-            expect(provider.isOurs(`tr(${pubKeyHex.toUpperCase()})`)).toBe(
-                true
-            );
+            expect(provider.isOurs(`tr(${pubKeyHex.toUpperCase()})`)).toBe(true);
         });
 
         it("should return false for different pubkey", () => {
@@ -62,9 +60,7 @@ describe("StaticDescriptorProvider", () => {
         });
 
         it("should return false for HD descriptor", () => {
-            expect(
-                provider.isOurs("tr([12345678/86'/0'/0']xpubSomething/0/5)")
-            ).toBe(false);
+            expect(provider.isOurs("tr([12345678/86'/0'/0']xpubSomething/0/5)")).toBe(false);
         });
 
         it("should return false for empty string (not throw)", () => {
@@ -75,10 +71,7 @@ describe("StaticDescriptorProvider", () => {
     describe("signMessageWithDescriptor", () => {
         it("should sign with schnorr by default", async () => {
             const message = new Uint8Array(32).fill(42);
-            const signature = await provider.signMessageWithDescriptor(
-                `tr(${pubKeyHex})`,
-                message
-            );
+            const signature = await provider.signMessageWithDescriptor(`tr(${pubKeyHex})`, message);
             expect(signature).toBeInstanceOf(Uint8Array);
             expect(signature).toHaveLength(64);
         });
@@ -88,7 +81,7 @@ describe("StaticDescriptorProvider", () => {
             const signature = await provider.signMessageWithDescriptor(
                 `tr(${pubKeyHex})`,
                 message,
-                "ecdsa"
+                "ecdsa",
             );
             expect(signature).toBeInstanceOf(Uint8Array);
             expect(signature).toHaveLength(64);
@@ -96,20 +89,14 @@ describe("StaticDescriptorProvider", () => {
 
         it("should accept raw hex pubkey", async () => {
             const message = new Uint8Array(32).fill(42);
-            const signature = await provider.signMessageWithDescriptor(
-                pubKeyHex,
-                message
-            );
+            const signature = await provider.signMessageWithDescriptor(pubKeyHex, message);
             expect(signature).toHaveLength(64);
         });
 
         it("should throw for foreign descriptor", async () => {
             const message = new Uint8Array(32).fill(42);
             await expect(
-                provider.signMessageWithDescriptor(
-                    "tr(" + "b".repeat(64) + ")",
-                    message
-                )
+                provider.signMessageWithDescriptor("tr(" + "b".repeat(64) + ")", message),
             ).rejects.toThrow("does not belong");
         });
     });
@@ -127,7 +114,7 @@ describe("StaticDescriptorProvider", () => {
                         descriptor: "tr(" + "b".repeat(64) + ")",
                         tx: null as any,
                     },
-                ])
+                ]),
             ).rejects.toThrow("does not belong");
         });
 
@@ -140,23 +127,18 @@ describe("StaticDescriptorProvider", () => {
                 Object.create(Object.getPrototypeOf(singleKey)),
                 singleKey,
                 {
-                    signMultiple: async (
-                        _requests: SignRequest[]
-                    ): Promise<Transaction[]> => [],
-                }
+                    signMultiple: async (_requests: SignRequest[]): Promise<Transaction[]> => [],
+                },
             );
-            const brokenProvider =
-                await StaticDescriptorProvider.create(brokenIdentity);
+            const brokenProvider = await StaticDescriptorProvider.create(brokenIdentity);
             await expect(
                 brokenProvider.signWithDescriptor([
                     {
                         descriptor: `tr(${pubKeyHex})`,
                         tx: null as any,
                     },
-                ])
-            ).rejects.toThrow(
-                "signMultiple returned 0 transactions, expected 1"
-            );
+                ]),
+            ).rejects.toThrow("signMultiple returned 0 transactions, expected 1");
         });
     });
 });

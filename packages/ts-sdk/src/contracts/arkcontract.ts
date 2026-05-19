@@ -80,9 +80,7 @@ export function decodeArkContract(encoded: string): ParsedArkContract {
     // Extract type from the arkcontract key
     const type = params.get(ARKCONTRACT_PREFIX);
     if (!type) {
-        throw new Error(
-            `Invalid arkcontract string: missing '${ARKCONTRACT_PREFIX}' key`
-        );
+        throw new Error(`Invalid arkcontract string: missing '${ARKCONTRACT_PREFIX}' key`);
     }
 
     // Build data object from all other params
@@ -122,7 +120,7 @@ export function contractFromArkContract(
         label?: string;
         state?: "active" | "inactive";
         metadata?: Record<string, unknown>;
-    } = {}
+    } = {},
 ): Omit<Contract, "script" | "address"> & {
     script?: string;
     address?: string;
@@ -131,9 +129,7 @@ export function contractFromArkContract(
     const handler = contractHandlers.get(parsed.type);
 
     if (!handler) {
-        throw new Error(
-            `No handler registered for contract type '${parsed.type}'`
-        );
+        throw new Error(`No handler registered for contract type '${parsed.type}'`);
     }
 
     // Separate params from runtime data
@@ -168,7 +164,7 @@ export function contractFromArkContractWithAddress(
         label?: string;
         state?: "active" | "inactive";
         metadata?: Record<string, unknown>;
-    } = {}
+    } = {},
 ): Contract {
     const parsed = decodeArkContract(encoded);
     const handler = contractHandlers.getOrThrow(parsed.type);

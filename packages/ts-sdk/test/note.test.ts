@@ -17,7 +17,7 @@ describe("ArkNote", () => {
                 const newNote = new ArkNote(
                     hex.decode(fixture.expectedPreimage),
                     fixture.expectedValue,
-                    fixture.hrp
+                    fixture.hrp,
                 );
                 expect(newNote.toString()).toBe(fixture.str);
 

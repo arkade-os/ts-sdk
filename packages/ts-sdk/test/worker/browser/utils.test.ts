@@ -60,7 +60,7 @@ describe("setupServiceWorker", () => {
             activationTimeoutMs: 30_000,
         });
         const rejection = expect(workerPromise).rejects.toThrow(
-            "Service worker activation timed out after 30000ms"
+            "Service worker activation timed out after 30000ms",
         );
 
         await vi.advanceTimersByTimeAsync(30_000);

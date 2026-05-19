@@ -1797,9 +1797,7 @@
                 "createdAt": 1767111156000
             }
         ],
-        "commitmentsToIgnore": [
-            "575991f757dc9f786506da3c3bb4f5b0e85b2e58df6f5b18d86129d4c7da16b8"
-        ],
+        "commitmentsToIgnore": ["575991f757dc9f786506da3c3bb4f5b0e85b2e58df6f5b18d86129d4c7da16b8"],
         "expected": [
             {
                 "amount": 8883,
@@ -2373,9 +2371,7 @@
                 "createdAt": 1765918004000
             }
         ],
-        "commitmentsToIgnore": [
-            "7f6190187c4f8562540a5ea0f44d087fbba2c748d152cfe3df706e7cb14188e4"
-        ],
+        "commitmentsToIgnore": ["7f6190187c4f8562540a5ea0f44d087fbba2c748d152cfe3df706e7cb14188e4"],
         "sendAllTxTime": {
             "cd6d9132fe5f19705590931b5d51575fbc2cae86e203b0d9dacf0dbe413deee2": 1765971916000
         },

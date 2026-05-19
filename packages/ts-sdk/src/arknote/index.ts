@@ -52,7 +52,7 @@ export class ArkNote implements ExtendedCoin {
     constructor(
         public preimage: Uint8Array,
         public value: number,
-        public HRP = ArkNote.DefaultHRP
+        public HRP = ArkNote.DefaultHRP,
     ) {
         const preimageHash = sha256(this.preimage);
         this.vtxoScript = new VtxoScript([noteTapscript(preimageHash)]);
@@ -93,7 +93,7 @@ export class ArkNote implements ExtendedCoin {
     static decode(data: Uint8Array, hrp = ArkNote.DefaultHRP): ArkNote {
         if (data.length !== ArkNote.Length) {
             throw new Error(
-                `invalid data length: expected ${ArkNote.Length} bytes, got ${data.length}`
+                `invalid data length: expected ${ArkNote.Length} bytes, got ${data.length}`,
             );
         }
 
@@ -116,7 +116,7 @@ export class ArkNote implements ExtendedCoin {
         noteStr = noteStr.trim();
         if (!noteStr.startsWith(hrp)) {
             throw new Error(
-                `invalid human-readable part: expected ${hrp} prefix (note '${noteStr}')`
+                `invalid human-readable part: expected ${hrp} prefix (note '${noteStr}')`,
             );
         }
 

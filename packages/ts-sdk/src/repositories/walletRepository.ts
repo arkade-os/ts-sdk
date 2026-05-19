@@ -57,10 +57,7 @@ export interface WalletRepository extends AsyncDisposable {
      * Save virtual outputs for a script.
      * @optional SDK backends implement this; custom backends fall back to Tier 1.
      */
-    saveVtxosForScript?(
-        key: VtxoRepositoryKey,
-        vtxos: ExtendedVirtualCoin[]
-    ): Promise<void>;
+    saveVtxosForScript?(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void>;
 
     /**
      * Delete stored virtual outputs for a script.

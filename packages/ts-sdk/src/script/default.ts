@@ -1,10 +1,6 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { TapLeafScript, VtxoScript } from "./base";
-import {
-    CSVMultisigTapscript,
-    MultisigTapscript,
-    RelativeTimelock,
-} from "./tapscript";
+import { CSVMultisigTapscript, MultisigTapscript, RelativeTimelock } from "./tapscript";
 import { hex } from "@scure/base";
 
 /**
@@ -47,11 +43,7 @@ export namespace DefaultVtxo {
 
         /** Create the default virtual output script with one forfeit path and one exit path. */
         constructor(readonly options: Options) {
-            const {
-                pubKey,
-                serverPubKey,
-                csvTimelock = Script.DEFAULT_TIMELOCK,
-            } = options;
+            const { pubKey, serverPubKey, csvTimelock = Script.DEFAULT_TIMELOCK } = options;
 
             const forfeitScript = MultisigTapscript.encode({
                 pubkeys: [pubKey, serverPubKey],

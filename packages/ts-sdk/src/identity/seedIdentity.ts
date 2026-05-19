@@ -13,15 +13,9 @@ import {
     scriptExpressions,
     type KeyInfo,
 } from "@bitcoinerlab/descriptors-scure";
-import type {
-    SerializedSigningIdentity,
-    SerializedReadonlyIdentity,
-} from "./serialize";
+import type { SerializedSigningIdentity, SerializedReadonlyIdentity } from "./serialize";
 import { DescriptorSigningRequest } from "./descriptorProvider";
-import {
-    HDCapableIdentity,
-    ReadonlyHDCapableIdentity,
-} from "./hdCapableIdentity";
+import { HDCapableIdentity, ReadonlyHDCapableIdentity } from "./hdCapableIdentity";
 import { descriptorIsOurs, isMainnetDescriptor } from "./descriptor";
 
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
@@ -37,10 +31,7 @@ const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
  * that enumeration path entirely.
  */
 const seedBytes = new WeakMap<SeedIdentity, Uint8Array>();
-const mnemonicMeta = new WeakMap<
-    MnemonicIdentity,
-    { mnemonic: string; passphrase?: string }
->();
+const mnemonicMeta = new WeakMap<MnemonicIdentity, { mnemonic: string; passphrase?: string }>();
 
 /** Used for default BIP86 derivation with network selection. */
 export interface NetworkOptions {
@@ -145,14 +136,10 @@ export class SeedIdentity implements HDCapableIdentity {
         let network: typeof networks.bitcoin;
         if ("descriptor" in opts && typeof opts.descriptor === "string") {
             descriptor = opts.descriptor;
-            network = isMainnetDescriptor(descriptor)
-                ? networks.bitcoin
-                : networks.testnet;
+            network = isMainnetDescriptor(descriptor) ? networks.bitcoin : networks.testnet;
         } else {
             network =
-                ((opts as NetworkOptions).isMainnet ?? true)
-                    ? networks.bitcoin
-                    : networks.testnet;
+                ((opts as NetworkOptions).isMainnet ?? true) ? networks.bitcoin : networks.testnet;
             descriptor = scriptExpressions.trBIP32({
                 masterNode: HDKey.fromMasterSeed(seed, network.bip32),
                 network,
@@ -171,7 +158,7 @@ export class SeedIdentity implements HDCapableIdentity {
             expansion = expand({ descriptor, network, index: 0 });
         } catch (e) {
             throw new Error(
-                `SeedIdentity requires a wildcard descriptor template (must end in "/*)"); ${e instanceof Error ? e.message : String(e)}`
+                `SeedIdentity requires a wildcard descriptor template (must end in "/*)"); ${e instanceof Error ? e.message : String(e)}`,
             );
         }
         const keyInfo = expansion.expansionMap?.["@0"];
@@ -194,9 +181,7 @@ export class SeedIdentity implements HDCapableIdentity {
         const masterNode = HDKey.fromMasterSeed(seed, network.bip32);
         const accountNode = masterNode.derive(`m${keyInfo.originPath}`);
         if (accountNode.publicExtendedKey !== keyInfo.bip32?.toBase58()) {
-            throw new Error(
-                "xpub mismatch: derived key does not match descriptor"
-            );
+            throw new Error("xpub mismatch: derived key does not match descriptor");
         }
 
         // Derive the private key for index 0 using the full path
@@ -220,10 +205,7 @@ export class SeedIdentity implements HDCapableIdentity {
      * @param seed - 64-byte seed (typically from mnemonicToSeedSync)
      * @param opts - Network selection or descriptor template.
      */
-    static fromSeed(
-        seed: Uint8Array,
-        opts: SeedIdentityOptions = {}
-    ): SeedIdentity {
+    static fromSeed(seed: Uint8Array, opts: SeedIdentityOptions = {}): SeedIdentity {
         return new SeedIdentity(seed, opts);
     }
 
@@ -241,7 +223,7 @@ export class SeedIdentity implements HDCapableIdentity {
 
     async signMessage(
         message: Uint8Array,
-        signatureType: "schnorr" | "ecdsa" = "schnorr"
+        signatureType: "schnorr" | "ecdsa" = "schnorr",
     ): Promise<Uint8Array> {
         return this.signMessageWithKey(this.derivedKey, message, signatureType);
     }
@@ -269,11 +251,7 @@ export class SeedIdentity implements HDCapableIdentity {
      * `StaticDescriptorProvider` for legacy single-key wallets.
      */
     isOurs(descriptor: string): boolean {
-        return descriptorIsOurs(
-            descriptor,
-            this.descriptor,
-            pubSchnorr(this.derivedKey)
-        );
+        return descriptorIsOurs(descriptor, this.descriptor, pubSchnorr(this.derivedKey));
     }
 
     /**
@@ -284,13 +262,11 @@ export class SeedIdentity implements HDCapableIdentity {
      * `HDDescriptorProvider` or `StaticDescriptorProvider`. Identities keep
      * this method only as backing implementation for descriptor providers.
      */
-    async signWithDescriptor(
-        requests: DescriptorSigningRequest[]
-    ): Promise<Transaction[]> {
+    async signWithDescriptor(requests: DescriptorSigningRequest[]): Promise<Transaction[]> {
         return requests.map((request) => {
             if (!this.isOurs(request.descriptor)) {
                 throw new Error(
-                    `Descriptor ${request.descriptor} does not belong to this identity`
+                    `Descriptor ${request.descriptor} does not belong to this identity`,
                 );
             }
             const key = this.derivePrivateKeyForDescriptor(request.descriptor);
@@ -308,12 +284,10 @@ export class SeedIdentity implements HDCapableIdentity {
     async signMessageWithDescriptor(
         descriptor: string,
         message: Uint8Array,
-        signatureType: "schnorr" | "ecdsa" = "schnorr"
+        signatureType: "schnorr" | "ecdsa" = "schnorr",
     ): Promise<Uint8Array> {
         if (!this.isOurs(descriptor)) {
-            throw new Error(
-                `Descriptor ${descriptor} does not belong to this identity`
-            );
+            throw new Error(`Descriptor ${descriptor} does not belong to this identity`);
         }
         const key = this.derivePrivateKeyForDescriptor(descriptor);
         return this.signMessageWithKey(key, message, signatureType);
@@ -322,20 +296,16 @@ export class SeedIdentity implements HDCapableIdentity {
     // ── internal helpers ─────────────────────────────────────────────
 
     private derivePrivateKeyForDescriptor(descriptor: string): Uint8Array {
-        const network = isMainnetDescriptor(descriptor)
-            ? networks.bitcoin
-            : networks.testnet;
+        const network = isMainnetDescriptor(descriptor) ? networks.bitcoin : networks.testnet;
         const expansion = expand({ descriptor, network });
         if (expansion.isRanged) {
             throw new Error(
-                "Cannot sign with a wildcard descriptor; derive a concrete index first"
+                "Cannot sign with a wildcard descriptor; derive a concrete index first",
             );
         }
         const keyInfo = expansion.expansionMap?.["@0"];
         if (!keyInfo?.path) {
-            throw new Error(
-                "Descriptor must specify a full derivation path for signing"
-            );
+            throw new Error("Descriptor must specify a full derivation path for signing");
         }
         const seed = seedBytes.get(this);
         if (!seed) {
@@ -349,11 +319,7 @@ export class SeedIdentity implements HDCapableIdentity {
         return node.privateKey;
     }
 
-    private signTxWithKey(
-        tx: Transaction,
-        key: Uint8Array,
-        inputIndexes?: number[]
-    ): Transaction {
+    private signTxWithKey(tx: Transaction, key: Uint8Array, inputIndexes?: number[]): Transaction {
         const txCpy = tx.clone();
 
         if (!inputIndexes) {
@@ -362,10 +328,7 @@ export class SeedIdentity implements HDCapableIdentity {
                     throw new Error("Failed to sign transaction");
                 }
             } catch (e) {
-                if (
-                    e instanceof Error &&
-                    e.message.includes("No inputs signed")
-                ) {
+                if (e instanceof Error && e.message.includes("No inputs signed")) {
                     // ignore
                 } else {
                     throw e;
@@ -385,10 +348,9 @@ export class SeedIdentity implements HDCapableIdentity {
     private signMessageWithKey(
         key: Uint8Array,
         message: Uint8Array,
-        signatureType: "schnorr" | "ecdsa"
+        signatureType: "schnorr" | "ecdsa",
     ): Promise<Uint8Array> {
-        if (signatureType === "ecdsa")
-            return signAsync(message, key, { prehash: false });
+        if (signatureType === "ecdsa") return signAsync(message, key, { prehash: false });
         return schnorr.signAsync(message, key);
     }
 }
@@ -426,10 +388,7 @@ export class MnemonicIdentity extends SeedIdentity {
      * @param phrase - BIP39 mnemonic phrase (12 or 24 words)
      * @param opts - Network selection or descriptor template, plus optional passphrase
      */
-    static fromMnemonic(
-        phrase: string,
-        opts: MnemonicOptions = {}
-    ): MnemonicIdentity {
+    static fromMnemonic(phrase: string, opts: MnemonicOptions = {}): MnemonicIdentity {
         if (!validateMnemonic(phrase, wordlist)) {
             throw new Error("Invalid mnemonic");
         }
@@ -473,9 +432,7 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
     readonly descriptor: string;
 
     private constructor(descriptor: string) {
-        const network = isMainnetDescriptor(descriptor)
-            ? networks.bitcoin
-            : networks.testnet;
+        const network = isMainnetDescriptor(descriptor) ? networks.bitcoin : networks.testnet;
         // Library substitutes the wildcard at index 0 and raises
         // "index passed for non-ranged descriptor" if `descriptor` isn't
         // actually a wildcard template — re-wrap so the caller sees
@@ -485,7 +442,7 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
             expansion = expand({ descriptor, network, index: 0 });
         } catch (e) {
             throw new Error(
-                `ReadonlyDescriptorIdentity requires a wildcard descriptor template (must end in "/*)"); ${e instanceof Error ? e.message : String(e)}`
+                `ReadonlyDescriptorIdentity requires a wildcard descriptor template (must end in "/*)"); ${e instanceof Error ? e.message : String(e)}`,
             );
         }
         const keyInfo = expansion.expansionMap?.["@0"];
@@ -494,9 +451,7 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
             throw new Error("Failed to derive public key from descriptor");
         }
         if (!keyInfo.bip32) {
-            throw new Error(
-                "Cannot determine compressed public key parity from descriptor"
-            );
+            throw new Error("Cannot determine compressed public key parity from descriptor");
         }
 
         this.descriptor = descriptor;
@@ -542,11 +497,7 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
      * `StaticDescriptorProvider` for legacy single-key wallets.
      */
     isOurs(descriptor: string): boolean {
-        return descriptorIsOurs(
-            descriptor,
-            this.descriptor,
-            this.indexZero.pubkey!
-        );
+        return descriptorIsOurs(descriptor, this.descriptor, this.indexZero.pubkey!);
     }
 }
 
@@ -575,13 +526,13 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
  * @internal
  */
 export function serializeSeedOwnedSigningIdentity(
-    identity: SeedIdentity
+    identity: SeedIdentity,
 ): SerializedSigningIdentity {
     if (identity instanceof MnemonicIdentity) {
         const meta = mnemonicMeta.get(identity);
         if (!meta) {
             throw new Error(
-                "MnemonicIdentity is missing internal secret state; was it constructed via MnemonicIdentity.fromMnemonic()?"
+                "MnemonicIdentity is missing internal secret state; was it constructed via MnemonicIdentity.fromMnemonic()?",
             );
         }
         const envelope: SerializedSigningIdentity = {
@@ -597,7 +548,7 @@ export function serializeSeedOwnedSigningIdentity(
     const seed = seedBytes.get(identity);
     if (!seed) {
         throw new Error(
-            "SeedIdentity is missing internal secret state; was it constructed via SeedIdentity.fromSeed() or the class constructor?"
+            "SeedIdentity is missing internal secret state; was it constructed via SeedIdentity.fromSeed() or the class constructor?",
         );
     }
     return {
@@ -619,7 +570,7 @@ export function serializeSeedOwnedSigningIdentity(
  * @internal
  */
 export function serializeSeedOwnedReadonlyIdentity(
-    identity: SeedIdentity | ReadonlyDescriptorIdentity
+    identity: SeedIdentity | ReadonlyDescriptorIdentity,
 ): SerializedReadonlyIdentity {
     return {
         type: "readonly-descriptor",

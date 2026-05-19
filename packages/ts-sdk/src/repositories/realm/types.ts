@@ -14,10 +14,6 @@ export interface RealmLike {
     write(callback: () => void): void;
     objects<T = Record<string, unknown>>(schemaName: string): RealmResults<T>;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    create(
-        schemaName: string,
-        values: Record<string, any>,
-        mode?: string
-    ): void;
+    create(schemaName: string, values: Record<string, any>, mode?: string): void;
     delete(objects: unknown): void;
 }

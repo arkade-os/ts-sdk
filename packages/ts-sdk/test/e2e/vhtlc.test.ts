@@ -32,9 +32,7 @@ describe("vhtlc", () => {
 
     let X_ONLY_PUBLIC_KEY: Uint8Array;
     beforeAll(() => {
-        const info = execSync(
-            "curl -fsS --max-time 5 http://localhost:7070/v1/info"
-        );
+        const info = execSync("curl -fsS --max-time 5 http://localhost:7070/v1/info");
         const signerPubkey = JSON.parse(info.toString()).signerPubkey;
         X_ONLY_PUBLIC_KEY = hex.decode(signerPubkey).slice(1);
     });
@@ -66,14 +64,12 @@ describe("vhtlc", () => {
             },
         });
 
-        const address = vhtlcScript
-            .address(networks.regtest.hrp, X_ONLY_PUBLIC_KEY)
-            .encode();
+        const address = vhtlcScript.address(networks.regtest.hrp, X_ONLY_PUBLIC_KEY).encode();
 
         // fund the vhtlc address
         const fundAmount = 1000;
         execCommand(
-            `${arkdExec} ark send --to ${address} --amount ${fundAmount} --password secret`
+            `${arkdExec} ark send --to ${address} --amount ${fundAmount} --password secret`,
         );
 
         await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -92,9 +88,7 @@ describe("vhtlc", () => {
         };
 
         const arkProvider = new RestArkProvider("http://localhost:7070");
-        const indexerProvider = new RestIndexerProvider(
-            "http://localhost:7070"
-        );
+        const indexerProvider = new RestIndexerProvider("http://localhost:7070");
 
         const spendableVtxosResponse = await indexerProvider.getVtxos({
             scripts: [hex.encode(vhtlcScript.pkScript)],
@@ -104,9 +98,7 @@ describe("vhtlc", () => {
 
         const info = await arkProvider.getInfo();
         const rawCheckpointUnrollClosure = hex.decode(info.checkpointTapscript);
-        const checkpointUnrollClosure = CSVMultisigTapscript.decode(
-            rawCheckpointUnrollClosure
-        );
+        const checkpointUnrollClosure = CSVMultisigTapscript.decode(rawCheckpointUnrollClosure);
 
         const vtxo = spendableVtxosResponse.vtxos[0];
 
@@ -124,15 +116,14 @@ describe("vhtlc", () => {
                     amount: BigInt(fundAmount),
                 },
             ],
-            checkpointUnrollClosure
+            checkpointUnrollClosure,
         );
 
         const signedArkTx = await bobVHTLCIdentity.sign(arkTx);
-        const { arkTxid, finalArkTx, signedCheckpointTxs } =
-            await arkProvider.submitTx(
-                base64.encode(signedArkTx.toPSBT()),
-                checkpoints.map((c) => base64.encode(c.toPSBT()))
-            );
+        const { arkTxid, finalArkTx, signedCheckpointTxs } = await arkProvider.submitTx(
+            base64.encode(signedArkTx.toPSBT()),
+            checkpoints.map((c) => base64.encode(c.toPSBT())),
+        );
 
         expect(arkTxid).toBeDefined();
         expect(finalArkTx).toBeDefined();
@@ -144,7 +135,7 @@ describe("vhtlc", () => {
                 const tx = Transaction.fromPSBT(base64.decode(c));
                 const signedCheckpoint = await bobVHTLCIdentity.sign(tx, [0]);
                 return base64.encode(signedCheckpoint.toPSBT());
-            })
+            }),
         );
 
         await arkProvider.finalizeTx(arkTxid, finalCheckpoints);
@@ -182,9 +173,7 @@ describe("vhtlc", () => {
             },
         });
 
-        const address = vhtlcScript
-            .address(networks.regtest.hrp, X_ONLY_PUBLIC_KEY)
-            .encode();
+        const address = vhtlcScript.address(networks.regtest.hrp, X_ONLY_PUBLIC_KEY).encode();
 
         // fund the vhtlc address with settle in order to reduce the chain size
         await alice.wallet.settle({
@@ -197,9 +186,7 @@ describe("vhtlc", () => {
             ],
         });
 
-        const indexerProvider = new RestIndexerProvider(
-            "http://localhost:7070"
-        );
+        const indexerProvider = new RestIndexerProvider("http://localhost:7070");
 
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
@@ -220,7 +207,7 @@ describe("vhtlc", () => {
             vtxo,
             onchainBob,
             onchainBob.provider,
-            indexerProvider
+            indexerProvider,
         );
 
         for await (const done of session) {
@@ -245,34 +232,22 @@ describe("vhtlc", () => {
             tapLeafScript: [vhtlcScript.unilateralClaim()],
             sequence: bip68.encode({ blocks: 9, seconds: undefined }),
         });
-        tx.addOutputAddress(
-            onchainBob.address,
-            BigInt(vtxo.value) - 1000n,
-            onchainBob.network
-        );
+        tx.addOutputAddress(onchainBob.address, BigInt(vtxo.value) - 1000n, onchainBob.network);
         const signedTx = await bob.sign(tx);
         signedTx.finalize();
 
         const currentWitness = signedTx.getInput(0).finalScriptWitness;
         signedTx.updateInput(0, {
-            finalScriptWitness: [
-                currentWitness![0],
-                preimage,
-                ...currentWitness!.slice(1),
-            ],
+            finalScriptWitness: [currentWitness![0], preimage, ...currentWitness!.slice(1)],
         });
 
         // should fail now cause the utxo is locked by CSV
-        await expect(
-            onchainBob.provider.broadcastTransaction(signedTx.hex)
-        ).rejects.toThrow();
+        await expect(onchainBob.provider.broadcastTransaction(signedTx.hex)).rejects.toThrow();
 
         // generate 10 blocks to make the exit path available
         execSync(`nigiri rpc --generate 10`);
 
-        const txid = await onchainBob.provider.broadcastTransaction(
-            signedTx.hex
-        );
+        const txid = await onchainBob.provider.broadcastTransaction(signedTx.hex);
         expect(txid).toBeDefined();
     });
 });

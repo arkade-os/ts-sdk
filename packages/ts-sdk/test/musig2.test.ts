@@ -9,14 +9,10 @@ describe("musig2", () => {
             const { pubkeys, expectedAggregatedKey, tweak, expectedFinalKey } =
                 testData.keyAggregation;
             const publicKeys = pubkeys.map((key) => hex.decode(key));
-            const { preTweakedKey, finalKey } = aggregateKeys(
-                publicKeys,
-                true,
-                { taprootTweak: hex.decode(tweak) }
-            );
-            expect(hex.encode(preTweakedKey.slice(1))).toBe(
-                expectedAggregatedKey
-            );
+            const { preTweakedKey, finalKey } = aggregateKeys(publicKeys, true, {
+                taprootTweak: hex.decode(tweak),
+            });
+            expect(hex.encode(preTweakedKey.slice(1))).toBe(expectedAggregatedKey);
             expect(hex.encode(finalKey.slice(1))).toBe(expectedFinalKey);
         });
     });
@@ -24,14 +20,7 @@ describe("musig2", () => {
     describe("sign", () => {
         it("should correctly generate signature", () => {
             const { inputs, result } = testData.signing;
-            const {
-                secNonce,
-                secretKey,
-                publicKeys,
-                message,
-                options,
-                aggNonce,
-            } = inputs;
+            const { secNonce, secretKey, publicKeys, message, options, aggNonce } = inputs;
 
             const signature = sign(
                 hex.decode(secNonce),
@@ -42,7 +31,7 @@ describe("musig2", () => {
                 {
                     sortKeys: true,
                     taprootTweak: hex.decode(options.taprootTweak),
-                }
+                },
             );
 
             expect(hex.encode(signature.encode())).toBe(result);

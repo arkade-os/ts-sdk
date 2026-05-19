@@ -33,9 +33,7 @@ describe("EsploraProvider", () => {
             const provider = new EsploraProvider("http://localhost:3000");
             const utxos = await provider.getCoins("bc1qtest");
 
-            expect(mockFetch).toHaveBeenCalledWith(
-                "http://localhost:3000/address/bc1qtest/utxo"
-            );
+            expect(mockFetch).toHaveBeenCalledWith("http://localhost:3000/address/bc1qtest/utxo");
             expect(utxos).toEqual(mockUTXOs);
         });
 
@@ -47,7 +45,7 @@ describe("EsploraProvider", () => {
 
             const provider = new EsploraProvider("http://localhost:3000");
             await expect(provider.getCoins("bc1qtest")).rejects.toThrow(
-                "Failed to fetch UTXOs: Not Found"
+                "Failed to fetch UTXOs: Not Found",
             );
         });
     });
@@ -66,9 +64,7 @@ describe("EsploraProvider", () => {
             const provider = new EsploraProvider("http://localhost:3000");
             const feeRate = await provider.getFeeRate();
 
-            expect(mockFetch).toHaveBeenCalledWith(
-                "http://localhost:3000/fee-estimates"
-            );
+            expect(mockFetch).toHaveBeenCalledWith("http://localhost:3000/fee-estimates");
             expect(feeRate).toBe(80);
         });
 
@@ -80,7 +76,7 @@ describe("EsploraProvider", () => {
 
             const provider = new EsploraProvider("http://localhost:3000");
             await expect(provider.getFeeRate()).rejects.toThrow(
-                "Failed to fetch fee rate: Service Unavailable"
+                "Failed to fetch fee rate: Service Unavailable",
             );
         });
     });
@@ -104,7 +100,7 @@ describe("EsploraProvider", () => {
                     method: "POST",
                     headers: { "Content-Type": "text/plain" },
                     body: mockTxHex,
-                })
+                }),
             );
             expect(txid).toBe(mockTxid);
         });
@@ -117,10 +113,8 @@ describe("EsploraProvider", () => {
             });
 
             const provider = new EsploraProvider("http://localhost:3000");
-            await expect(
-                provider.broadcastTransaction(mockTxHex)
-            ).rejects.toThrow(
-                "Failed to broadcast transaction: Invalid transaction"
+            await expect(provider.broadcastTransaction(mockTxHex)).rejects.toThrow(
+                "Failed to broadcast transaction: Invalid transaction",
             );
         });
     });

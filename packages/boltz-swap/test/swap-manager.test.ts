@@ -1,11 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SwapManager, SwapManagerConfig } from "../src/swap-manager";
 import { BoltzSwapProvider } from "../src/boltz-swap-provider";
-import {
-    BoltzChainSwap,
-    BoltzReverseSwap,
-    BoltzSubmarineSwap,
-} from "../src/types";
+import { BoltzChainSwap, BoltzReverseSwap, BoltzSubmarineSwap } from "../src/types";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -219,9 +215,7 @@ describe("SwapManager", () => {
             const consoleWarnSpy = vi.spyOn(console, "warn");
             await swapManager.start([]);
 
-            expect(consoleWarnSpy).toHaveBeenCalledWith(
-                "SwapManager is already running"
-            );
+            expect(consoleWarnSpy).toHaveBeenCalledWith("SwapManager is already running");
         });
 
         it("should stop manager", async () => {
@@ -256,7 +250,7 @@ describe("SwapManager", () => {
                     headers: new Headers({
                         "content-length": "100",
                     }),
-                } as Response)
+                } as Response),
             );
         });
 
@@ -291,7 +285,7 @@ describe("SwapManager", () => {
                     op: "subscribe",
                     channel: "swap.update",
                     args: ["reverse-swap-1"],
-                })
+                }),
             );
 
             expect(mockWebSocket.send).toHaveBeenCalledWith(
@@ -299,7 +293,7 @@ describe("SwapManager", () => {
                     op: "subscribe",
                     channel: "swap.update",
                     args: ["submarine-swap-1"],
-                })
+                }),
             );
         });
 
@@ -351,7 +345,7 @@ describe("SwapManager", () => {
 
             const stats2 = await swapManager.getStats();
             expect(stats2.currentReconnectDelay).toBeGreaterThanOrEqual(
-                stats1.currentReconnectDelay
+                stats1.currentReconnectDelay,
             );
 
             vi.useRealTimers();
@@ -374,7 +368,7 @@ describe("SwapManager", () => {
                     headers: new Headers({
                         "content-length": "100",
                     }),
-                } as Response)
+                } as Response),
             );
         });
 
@@ -418,7 +412,7 @@ describe("SwapManager", () => {
                     op: "subscribe",
                     channel: "swap.update",
                     args: ["reverse-swap-1"],
-                })
+                }),
             );
         });
 
@@ -471,7 +465,7 @@ describe("SwapManager", () => {
                     claim: claimCallback,
                     refund: refundCallback,
                     saveSwap: saveSwapCallback,
-                })
+                }),
             );
 
             // Mock fetch for polling (needed when WebSocket connects)
@@ -485,7 +479,7 @@ describe("SwapManager", () => {
                     headers: new Headers({
                         "content-length": "100",
                     }),
-                } as Response)
+                } as Response),
             );
         });
 
@@ -534,7 +528,7 @@ describe("SwapManager", () => {
             expect(claimCallback).toHaveBeenCalled();
             expect(onActionExecuted).toHaveBeenCalledWith(
                 expect.objectContaining({ id: "reverse-swap-1" }),
-                "claim"
+                "claim",
             );
         });
 
@@ -565,7 +559,7 @@ describe("SwapManager", () => {
             expect(refundCallback).toHaveBeenCalled();
             expect(onActionExecuted).toHaveBeenCalledWith(
                 expect.objectContaining({ id: "submarine-swap-1" }),
-                "refund"
+                "refund",
             );
         });
 
@@ -604,7 +598,7 @@ describe("SwapManager", () => {
                     claim: claimCallback,
                     refund: refundCallback,
                     saveSwap: saveSwapCallback,
-                })
+                }),
             );
 
             await swapManager.start([mockReverseSwap]);
@@ -708,7 +702,7 @@ describe("SwapManager", () => {
                     headers: new Headers({
                         "content-length": "100",
                     }),
-                } as Response)
+                } as Response),
             );
         });
 
@@ -762,7 +756,7 @@ describe("SwapManager", () => {
                     claim: vi.fn().mockResolvedValue(undefined),
                     refund: vi.fn().mockResolvedValue(undefined),
                     saveSwap: vi.fn().mockResolvedValue(undefined),
-                })
+                }),
             );
         });
 
@@ -778,18 +772,15 @@ describe("SwapManager", () => {
             const updateCallback = vi.fn();
             const unsubscribe = await swapManager.subscribeToSwapUpdates(
                 "submarine-swap-1",
-                updateCallback
+                updateCallback,
             );
 
             // Trigger a status update
-            await swapManager["handleSwapStatusUpdate"](
-                freshSwap,
-                "transaction.mempool"
-            );
+            await swapManager["handleSwapStatusUpdate"](freshSwap, "transaction.mempool");
 
             expect(updateCallback).toHaveBeenCalledWith(
                 expect.objectContaining({ id: "submarine-swap-1" }),
-                "invoice.set"
+                "invoice.set",
             );
 
             unsubscribe();
@@ -809,18 +800,15 @@ describe("SwapManager", () => {
             const callback2 = vi.fn();
             const unsubscribe1 = await swapManager.subscribeToSwapUpdates(
                 "submarine-swap-1",
-                callback1
+                callback1,
             );
             const unsubscribe2 = await swapManager.subscribeToSwapUpdates(
                 "submarine-swap-1",
-                callback2
+                callback2,
             );
 
             // Trigger a status update
-            await swapManager["handleSwapStatusUpdate"](
-                freshSwap,
-                "transaction.mempool"
-            );
+            await swapManager["handleSwapStatusUpdate"](freshSwap, "transaction.mempool");
 
             expect(callback1).toHaveBeenCalled();
             expect(callback2).toHaveBeenCalled();
@@ -853,7 +841,7 @@ describe("SwapManager", () => {
                     claim: claimCallback,
                     refund: vi.fn().mockResolvedValue(undefined),
                     saveSwap: vi.fn().mockResolvedValue(undefined),
-                })
+                }),
             );
 
             const claimableSwap = {
@@ -863,20 +851,16 @@ describe("SwapManager", () => {
             await swapManager.start([claimableSwap]);
 
             // Check swap is not being processed initially
-            expect(await swapManager.isProcessing("reverse-swap-1")).toBe(
-                false
-            );
+            expect(await swapManager.isProcessing("reverse-swap-1")).toBe(false);
 
             // Trigger first autonomous action (will start processing)
-            const promise1 =
-                swapManager["executeAutonomousAction"](claimableSwap);
+            const promise1 = swapManager["executeAutonomousAction"](claimableSwap);
 
             // Check swap is now being processed
             expect(await swapManager.isProcessing("reverse-swap-1")).toBe(true);
 
             // Trigger second autonomous action (should be skipped)
-            const promise2 =
-                swapManager["executeAutonomousAction"](claimableSwap);
+            const promise2 = swapManager["executeAutonomousAction"](claimableSwap);
 
             await Promise.all([promise1, promise2]);
 
@@ -884,9 +868,7 @@ describe("SwapManager", () => {
             expect(claimCallback).toHaveBeenCalledTimes(1);
 
             // Check swap is no longer being processed
-            expect(await swapManager.isProcessing("reverse-swap-1")).toBe(
-                false
-            );
+            expect(await swapManager.isProcessing("reverse-swap-1")).toBe(false);
 
             await swapManager.stop();
         });
@@ -931,23 +913,17 @@ describe("SwapManager", () => {
             await swapManager.start([confirmedSwap]);
 
             // Start waiting for completion
-            const waitPromise =
-                swapManager.waitForSwapCompletion("reverse-swap-1");
+            const waitPromise = swapManager.waitForSwapCompletion("reverse-swap-1");
 
             // Simulate status update to final status
             setTimeout(async () => {
-                await swapManager["handleSwapStatusUpdate"](
-                    confirmedSwap,
-                    "invoice.settled"
-                );
+                await swapManager["handleSwapStatusUpdate"](confirmedSwap, "invoice.settled");
             }, 10);
 
             // Should resolve when swap reaches final status
             const result = await waitPromise;
             expect(result.txid).toBe(mockTxId);
-            expect(swapProvider.getReverseSwapTxId).toHaveBeenCalledWith(
-                "reverse-swap-1"
-            );
+            expect(swapProvider.getReverseSwapTxId).toHaveBeenCalledWith("reverse-swap-1");
 
             await swapManager.stop();
         });
@@ -955,9 +931,9 @@ describe("SwapManager", () => {
         it("should reject if swap not found", async () => {
             await swapManager.start([]);
 
-            await expect(
-                swapManager.waitForSwapCompletion("non-existent-swap")
-            ).rejects.toThrow("Swap non-existent-swap not found in manager");
+            await expect(swapManager.waitForSwapCompletion("non-existent-swap")).rejects.toThrow(
+                "Swap non-existent-swap not found in manager",
+            );
 
             await swapManager.stop();
         });
@@ -970,19 +946,16 @@ describe("SwapManager", () => {
             await swapManager.start([completedSwap]);
 
             // Should resolve immediately since swap is already in final status
-            const result =
-                await swapManager.waitForSwapCompletion("reverse-swap-1");
+            const result = await swapManager.waitForSwapCompletion("reverse-swap-1");
             expect(result.txid).toBe(mockTxId);
-            expect(swapProvider.getReverseSwapTxId).toHaveBeenCalledWith(
-                "reverse-swap-1"
-            );
+            expect(swapProvider.getReverseSwapTxId).toHaveBeenCalledWith("reverse-swap-1");
 
             await swapManager.stop();
         });
 
         it("should reject if getReverseSwapTxId fails", async () => {
             vi.spyOn(swapProvider, "getReverseSwapTxId").mockRejectedValue(
-                new Error("Failed to fetch txid")
+                new Error("Failed to fetch txid"),
             );
 
             const completedSwap = {
@@ -991,9 +964,9 @@ describe("SwapManager", () => {
             };
             await swapManager.start([completedSwap]);
 
-            await expect(
-                swapManager.waitForSwapCompletion("reverse-swap-1")
-            ).rejects.toThrow("Failed to fetch txid");
+            await expect(swapManager.waitForSwapCompletion("reverse-swap-1")).rejects.toThrow(
+                "Failed to fetch txid",
+            );
 
             await swapManager.stop();
         });
@@ -1018,7 +991,7 @@ describe("SwapManager", () => {
                     claim: claimCallback,
                     refund: refundCallback,
                     saveSwap: saveSwapCallback,
-                })
+                }),
             );
 
             // Mock fetch for polling
@@ -1032,7 +1005,7 @@ describe("SwapManager", () => {
                     headers: new Headers({
                         "content-length": "100",
                     }),
-                } as Response)
+                } as Response),
             );
         });
 
@@ -1144,7 +1117,7 @@ describe("SwapManager", () => {
                     claim: claimCallback,
                     refund: refundCallback,
                     saveSwap: saveSwapCallback,
-                })
+                }),
             );
 
             const restoredReverseSwap: BoltzReverseSwap = {
@@ -1194,7 +1167,7 @@ describe("SwapManager", () => {
                     headers: new Headers({
                         "content-length": "100",
                     }),
-                } as Response)
+                } as Response),
             );
         });
 
@@ -1250,10 +1223,10 @@ describe("SwapManager", () => {
                         Promise.resolve(
                             JSON.stringify({
                                 error: "could not find swap with id: any",
-                            })
+                            }),
                         ),
                     headers: { get: () => null },
-                } as unknown as Response)
+                } as unknown as Response),
             );
         }
 
@@ -1263,7 +1236,7 @@ describe("SwapManager", () => {
                     ok: true,
                     json: () => Promise.resolve({ status }),
                     headers: new Headers({ "content-length": "100" }),
-                } as Response)
+                } as Response),
             );
         }
 

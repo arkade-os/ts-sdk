@@ -24,10 +24,7 @@ export class IndexedDBStorageAdapter implements StorageAdapter {
         }
 
         return new Promise((resolve, reject) => {
-            const request = globalObject.indexedDB.open(
-                this.dbName,
-                this.version
-            );
+            const request = globalObject.indexedDB.open(this.dbName, this.version);
 
             request.onerror = () => reject(request.error);
             request.onsuccess = () => {

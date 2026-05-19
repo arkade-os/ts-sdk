@@ -10,11 +10,10 @@ export class AsyncStorageAdapter implements StorageAdapter {
     constructor() {
         try {
             // Dynamic import to avoid errors in non-React Native environments
-            this.AsyncStorage =
-                require("@react-native-async-storage/async-storage").default;
+            this.AsyncStorage = require("@react-native-async-storage/async-storage").default;
         } catch (error) {
             throw new Error(
-                "AsyncStorage is not available. Make sure @react-native-async-storage/async-storage is installed in React Native environment."
+                "AsyncStorage is not available. Make sure @react-native-async-storage/async-storage is installed in React Native environment.",
             );
         }
     }

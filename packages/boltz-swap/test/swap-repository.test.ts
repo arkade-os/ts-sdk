@@ -3,10 +3,7 @@ import { InMemorySwapRepository } from "../src/repositories/inMemory/swap-reposi
 import { IndexedDbSwapRepository } from "../src/repositories/IndexedDb/swap-repository";
 import { BoltzReverseSwap, BoltzSubmarineSwap } from "../src/types";
 
-const createReverseSwap = (
-    id: string,
-    status: BoltzReverseSwap["status"]
-): BoltzReverseSwap => ({
+const createReverseSwap = (id: string, status: BoltzReverseSwap["status"]): BoltzReverseSwap => ({
     id,
     type: "reverse",
     createdAt: Date.now() / 1000,
@@ -34,7 +31,7 @@ const createReverseSwap = (
 
 const createSubmarineSwap = (
     id: string,
-    status: BoltzSubmarineSwap["status"]
+    status: BoltzSubmarineSwap["status"],
 ): BoltzSubmarineSwap => ({
     id,
     type: "submarine",
@@ -94,14 +91,8 @@ describe("SwapRepository implementations", () => {
         it("filters swaps by id, status, and type", async () => {
             const reverseA = createReverseSwap("reverse-a", "swap.created");
             const reverseB = createReverseSwap("reverse-b", "swap.expired");
-            const submarineA = createSubmarineSwap(
-                "submarine-a",
-                "invoice.set"
-            );
-            const submarineB = createSubmarineSwap(
-                "submarine-b",
-                "transaction.mempool"
-            );
+            const submarineA = createSubmarineSwap("submarine-a", "invoice.set");
+            const submarineB = createSubmarineSwap("submarine-b", "transaction.mempool");
 
             await repo.saveSwap(reverseA);
             await repo.saveSwap(reverseB);
@@ -137,9 +128,7 @@ describe("SwapRepository implementations", () => {
 
         it("clears all swaps", async () => {
             await repo.saveSwap(createReverseSwap("reverse-1", "swap.created"));
-            await repo.saveSwap(
-                createSubmarineSwap("submarine-1", "invoice.set")
-            );
+            await repo.saveSwap(createSubmarineSwap("submarine-1", "invoice.set"));
 
             await repo.clear();
 
@@ -207,14 +196,8 @@ describe("SwapRepository implementations", () => {
         it("filters swaps by id, status, and type", async () => {
             const reverseA = createReverseSwap("reverse-a", "swap.created");
             const reverseB = createReverseSwap("reverse-b", "swap.expired");
-            const submarineA = createSubmarineSwap(
-                "submarine-a",
-                "invoice.set"
-            );
-            const submarineB = createSubmarineSwap(
-                "submarine-b",
-                "transaction.mempool"
-            );
+            const submarineA = createSubmarineSwap("submarine-a", "invoice.set");
+            const submarineB = createSubmarineSwap("submarine-b", "transaction.mempool");
 
             await repo.saveSwap(reverseA);
             await repo.saveSwap(reverseB);
@@ -250,9 +233,7 @@ describe("SwapRepository implementations", () => {
 
         it("clears all swaps", async () => {
             await repo.saveSwap(createReverseSwap("reverse-1", "swap.created"));
-            await repo.saveSwap(
-                createSubmarineSwap("submarine-1", "invoice.set")
-            );
+            await repo.saveSwap(createSubmarineSwap("submarine-1", "invoice.set"));
 
             await repo.clear();
 

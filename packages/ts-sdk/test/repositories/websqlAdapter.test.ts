@@ -71,9 +71,7 @@ describe("websqlAdapter", () => {
         vi.runAllTimers();
 
         expect(sqliteDb.withTransactionSync).toHaveBeenCalledTimes(1);
-        expect(sqliteDb.getAllSync).toHaveBeenCalledWith("SELECT * FROM foo", [
-            123,
-        ]);
+        expect(sqliteDb.getAllSync).toHaveBeenCalledWith("SELECT * FROM foo", [123]);
         expect(success).toHaveBeenCalledTimes(1);
         const [, resultSet] = success.mock.calls[0];
         expect(resultSet.rows.length).toBe(1);
@@ -94,10 +92,7 @@ describe("websqlAdapter", () => {
 
         vi.runAllTimers();
 
-        expect(sqliteDb.runSync).toHaveBeenCalledWith(
-            "INSERT INTO foo VALUES (?)",
-            ["bar"]
-        );
+        expect(sqliteDb.runSync).toHaveBeenCalledWith("INSERT INTO foo VALUES (?)", ["bar"]);
         const [, resultSet] = success.mock.calls[0];
         expect(resultSet.insertId).toBe(5);
         expect(resultSet.rowsAffected).toBe(2);
@@ -119,16 +114,11 @@ describe("websqlAdapter", () => {
 
         webDb.transaction(
             (tx) => {
-                tx.executeSql(
-                    "INSERT INTO bad VALUES (?)",
-                    [1],
-                    undefined,
-                    stmtError
-                );
+                tx.executeSql("INSERT INTO bad VALUES (?)", [1], undefined, stmtError);
                 tx.executeSql("SELECT * FROM ok", [], stmtSuccess);
             },
             txnError,
-            txnSuccess
+            txnSuccess,
         );
 
         vi.runAllTimers();
@@ -156,7 +146,7 @@ describe("websqlAdapter", () => {
                 tx.executeSql("SELECT * FROM skipped", [], stmtSuccess);
             },
             txnError,
-            txnSuccess
+            txnSuccess,
         );
 
         vi.runAllTimers();
@@ -170,9 +160,7 @@ describe("websqlAdapter", () => {
 
     it("allows success callbacks to enqueue additional statements", async () => {
         const { webDb, sqliteDb } = await createDb("chained-db");
-        sqliteDb.getAllSync
-            .mockReturnValueOnce([{ id: 1 }])
-            .mockReturnValueOnce([{ id: 2 }]);
+        sqliteDb.getAllSync.mockReturnValueOnce([{ id: 1 }]).mockReturnValueOnce([{ id: 2 }]);
 
         const firstSuccess = vi.fn((tx: any) => {
             tx.executeSql("PRAGMA table_info(foo)", [], secondSuccess);

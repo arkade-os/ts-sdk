@@ -76,11 +76,8 @@ export class BIP21 {
                 ? "?" +
                   new URLSearchParams(
                       Object.fromEntries(
-                          Object.entries(queryParams).map(([k, v]) => [
-                              k,
-                              String(v),
-                          ])
-                      )
+                          Object.entries(queryParams).map(([k, v]) => [k, String(v)]),
+                      ),
                   ).toString()
                 : "";
 
@@ -100,9 +97,7 @@ export class BIP21 {
         }
 
         // Remove the `bitcoin:` prefix while preserving the case of the rest.
-        const withoutPrefix = uri.slice(
-            uri.toLowerCase().indexOf("bitcoin:") + 8
-        );
+        const withoutPrefix = uri.slice(uri.toLowerCase().indexOf("bitcoin:") + 8);
 
         const [address, query] = withoutPrefix.split("?");
 

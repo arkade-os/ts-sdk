@@ -27,7 +27,7 @@ type DecodedNode = {
 export class TxTree {
     constructor(
         readonly root: Transaction,
-        readonly children: Map<number, TxTree> = new Map()
+        readonly children: Map<number, TxTree> = new Map(),
     ) {}
 
     static create(chunks: TxTreeNode[]): TxTree {
@@ -73,9 +73,7 @@ export class TxTree {
         }
 
         if (rootTxids.length > 1) {
-            throw new Error(
-                `multiple root chunks found: ${rootTxids.join(", ")}`
-            );
+            throw new Error(`multiple root chunks found: ${rootTxids.join(", ")}`);
         }
 
         const graph = buildGraph(rootTxids[0], chunksByTxid);
@@ -86,7 +84,7 @@ export class TxTree {
         // verify that the number of chunks is equal to the number node in the graph
         if (graph.nbOfNodes() !== chunks.length) {
             throw new Error(
-                `number of chunks (${chunks.length}) is not equal to the number of nodes in the graph (${graph.nbOfNodes()})`
+                `number of chunks (${chunks.length}) is not equal to the number of nodes in the graph (${graph.nbOfNodes()})`,
             );
         }
 
@@ -110,9 +108,7 @@ export class TxTree {
         const nbOfInputs = this.root.inputsLength;
 
         if (nbOfInputs !== 1) {
-            throw new Error(
-                `unexpected number of inputs: ${nbOfInputs}, expected 1`
-            );
+            throw new Error(`unexpected number of inputs: ${nbOfInputs}, expected 1`);
         }
 
         // the children map can't be bigger than the number of outputs (excluding the P2A)
@@ -120,7 +116,7 @@ export class TxTree {
         // that's why we allow len(g.Children) to be less than nbOfOutputs-1
         if (this.children.size > nbOfOutputs - 1) {
             throw new Error(
-                `unexpected number of children: ${this.children.size}, expected maximum ${nbOfOutputs - 1}`
+                `unexpected number of children: ${this.children.size}, expected maximum ${nbOfOutputs - 1}`,
             );
         }
 
@@ -128,7 +124,7 @@ export class TxTree {
         for (const [outputIndex, child] of this.children) {
             if (outputIndex >= nbOfOutputs) {
                 throw new Error(
-                    `output index ${outputIndex} is out of bounds (nb of outputs: ${nbOfOutputs})`
+                    `output index ${outputIndex} is out of bounds (nb of outputs: ${nbOfOutputs})`,
                 );
             }
 
@@ -143,9 +139,7 @@ export class TxTree {
                 hex.encode(childInput.txid) !== parentTxid ||
                 childInput.index !== outputIndex
             ) {
-                throw new Error(
-                    `input of child ${outputIndex} is not the output of the parent`
-                );
+                throw new Error(`input of child ${outputIndex} is not the output of the parent`);
             }
 
             // verify the sum of the child's outputs is equal to the output of the parent
@@ -164,7 +158,7 @@ export class TxTree {
 
             if (childOutputsSum !== parentOutput.amount) {
                 throw new Error(
-                    `sum of child's outputs is not equal to the output of the parent: ${childOutputsSum} != ${parentOutput.amount}`
+                    `sum of child's outputs is not equal to the output of the parent: ${childOutputsSum} != ${parentOutput.amount}`,
                 );
             }
         }
@@ -234,10 +228,7 @@ function hasChild(chunk: DecodedNode, childTxid: string): boolean {
 }
 
 // buildGraph recursively builds the TxGraph starting from the given txid
-function buildGraph(
-    rootTxid: string,
-    chunksByTxid: Map<string, DecodedNode>
-): TxTree | null {
+function buildGraph(rootTxid: string, chunksByTxid: Map<string, DecodedNode>): TxTree | null {
     const chunk = chunksByTxid.get(rootTxid);
     if (!chunk) {
         return null;

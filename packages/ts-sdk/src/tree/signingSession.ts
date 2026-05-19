@@ -19,23 +19,14 @@ export type TreePartialSigs = Map<string, musig2.PartialSig>;
 // create the partial signatures for each transaction in the virtual output tree
 export interface SignerSession {
     getPublicKey(): Promise<Uint8Array>;
-    init(
-        tree: TxTree,
-        scriptRoot: Uint8Array,
-        rootInputAmount: bigint
-    ): Promise<void>;
+    init(tree: TxTree, scriptRoot: Uint8Array, rootInputAmount: bigint): Promise<void>;
     getNonces(): Promise<TreeNonces>;
-    aggregatedNonces(
-        txid: string,
-        noncesByPubkey: TreeNonces
-    ): Promise<{ hasAllNonces: boolean }>;
+    aggregatedNonces(txid: string, noncesByPubkey: TreeNonces): Promise<{ hasAllNonces: boolean }>;
     sign(): Promise<TreePartialSigs>;
 }
 
 export class TreeSignerSession implements SignerSession {
-    static NOT_INITIALIZED = new Error(
-        "session not initialized, call init method"
-    );
+    static NOT_INITIALIZED = new Error("session not initialized, call init method");
 
     private myNonces: Map<string, musig2.Nonces> | null = null;
     private aggregateNonces: TreeNonces | null = null;
@@ -50,11 +41,7 @@ export class TreeSignerSession implements SignerSession {
         return new TreeSignerSession(secretKey);
     }
 
-    async init(
-        tree: TxTree,
-        scriptRoot: Uint8Array,
-        rootInputAmount: bigint
-    ): Promise<void> {
+    async init(tree: TxTree, scriptRoot: Uint8Array, rootInputAmount: bigint): Promise<void> {
         this.graph = tree;
         this.scriptRoot = scriptRoot;
         this.rootSharedOutputAmount = rootInputAmount;
@@ -81,7 +68,7 @@ export class TreeSignerSession implements SignerSession {
 
     async aggregatedNonces(
         txid: string,
-        noncesByPubkey: TreeNonces
+        noncesByPubkey: TreeNonces,
     ): Promise<{ hasAllNonces: boolean }> {
         if (!this.graph) throw ErrMissingVtxoGraph;
         if (!this.aggregateNonces) {
@@ -107,7 +94,7 @@ export class TreeSignerSession implements SignerSession {
         if (!tx) throw new Error(`missing tx for txid ${txid}`);
 
         const cosigners = getArkPsbtFields(tx.root, 0, CosignerPublicKey).map(
-            (c) => hex.encode(c.key.subarray(1)) // xonly pubkey
+            (c) => hex.encode(c.key.subarray(1)), // xonly pubkey
         );
 
         const pubNonces: Uint8Array[] = [];
@@ -174,24 +161,18 @@ export class TreeSignerSession implements SignerSession {
         const prevoutAmounts: bigint[] = [];
         const prevoutScripts: Uint8Array[] = [];
 
-        const cosigners = getArkPsbtFields(g.root, 0, CosignerPublicKey).map(
-            (c) => c.key
-        );
+        const cosigners = getArkPsbtFields(g.root, 0, CosignerPublicKey).map((c) => c.key);
 
         const { finalKey } = musig2.aggregateKeys(cosigners, true, {
             taprootTweak: this.scriptRoot,
         });
 
-        for (
-            let inputIndex = 0;
-            inputIndex < g.root.inputsLength;
-            inputIndex++
-        ) {
+        for (let inputIndex = 0; inputIndex < g.root.inputsLength; inputIndex++) {
             const prevout = getPrevOutput(
                 finalKey,
                 this.graph,
                 this.rootSharedOutputAmount,
-                g.root
+                g.root,
             );
             prevoutAmounts.push(prevout.amount);
             prevoutScripts.push(prevout.script);
@@ -201,7 +182,7 @@ export class TreeSignerSession implements SignerSession {
             0, // always first input
             prevoutScripts,
             SigHash.DEFAULT,
-            prevoutAmounts
+            prevoutAmounts,
         );
 
         return musig2.sign(
@@ -213,7 +194,7 @@ export class TreeSignerSession implements SignerSession {
             {
                 taprootTweak: this.scriptRoot,
                 sortKeys: true,
-            }
+            },
         );
     }
 }
@@ -222,7 +203,7 @@ export class TreeSignerSession implements SignerSession {
 export async function validateTreeSigs(
     finalAggregatedKey: Uint8Array,
     sharedOutputAmount: bigint,
-    vtxoTree: TxTree
+    vtxoTree: TxTree,
 ): Promise<void> {
     // Iterate through each level of the tree
     for (const g of vtxoTree.iterator()) {
@@ -235,27 +216,18 @@ export async function validateTreeSigs(
         }
 
         // Get the previous output information
-        const prevout = getPrevOutput(
-            finalAggregatedKey,
-            vtxoTree,
-            sharedOutputAmount,
-            g.root
-        );
+        const prevout = getPrevOutput(finalAggregatedKey, vtxoTree, sharedOutputAmount, g.root);
 
         // Calculate the message that was signed
         const message = g.root.preimageWitnessV1(
             0, // always first input
             [prevout.script],
             SigHash.DEFAULT,
-            [prevout.amount]
+            [prevout.amount],
         );
 
         // Verify the signature
-        const isValid = schnorr.verify(
-            input.tapKeySig,
-            message,
-            finalAggregatedKey
-        );
+        const isValid = schnorr.verify(input.tapKeySig, message, finalAggregatedKey);
 
         if (!isValid) {
             throw new Error("invalid signature");
@@ -272,7 +244,7 @@ function getPrevOutput(
     finalKey: Uint8Array,
     graph: TxTree,
     sharedOutputAmount: bigint,
-    tx: Transaction
+    tx: Transaction,
 ): PrevOutput {
     // generate P2TR script from musig2 final key
     const pkScript = Script.encode(["OP_1", finalKey.slice(1)]);

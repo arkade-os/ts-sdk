@@ -34,10 +34,7 @@ export interface TaskDependencies {
  */
 export interface TaskProcessor<TDeps = TaskDependencies> {
     readonly taskType: string;
-    execute(
-        item: TaskItem,
-        deps: TDeps
-    ): Promise<Omit<TaskResult, "id" | "executedAt">>;
+    execute(item: TaskItem, deps: TDeps): Promise<Omit<TaskResult, "id" | "executedAt">>;
 }
 
 /**
@@ -54,7 +51,7 @@ export interface TaskProcessor<TDeps = TaskDependencies> {
 export async function runTasks<TDeps = TaskDependencies>(
     queue: TaskQueue,
     processors: TaskProcessor<TDeps>[],
-    deps: TDeps
+    deps: TDeps,
 ): Promise<TaskResult[]> {
     const tasks = await queue.getTasks();
     const processorMap = new Map(processors.map((p) => [p.taskType, p]));
@@ -80,10 +77,7 @@ export async function runTasks<TDeps = TaskDependencies>(
                     type: task.type,
                     status: "failed",
                     data: {
-                        error:
-                            error instanceof Error
-                                ? error.message
-                                : String(error),
+                        error: error instanceof Error ? error.message : String(error),
                     },
                 };
             }
@@ -122,9 +116,7 @@ export interface CreateTaskDependenciesOptions {
  * (e.g. bare React Native with `react-native-background-fetch`)
  * can build deps without depending on Expo.
  */
-export function createTaskDependencies(
-    options: CreateTaskDependenciesOptions
-): TaskDependencies {
+export function createTaskDependencies(options: CreateTaskDependenciesOptions): TaskDependencies {
     return {
         ...options,
         extendVtxo: (vtxo: VirtualCoin, contract: Contract) =>

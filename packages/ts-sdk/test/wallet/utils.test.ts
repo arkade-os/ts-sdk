@@ -47,21 +47,15 @@ describe("extendVirtualCoinForContract", () => {
 
     it("throws when vtxo.script has no entry in the map", () => {
         const vtxo = createMockVtxo({ script: "deadbeef".repeat(8) });
-        const map = new Map<string, Contract>([
-            [delegateContract.script, delegateContract],
-        ]);
+        const map = new Map<string, Contract>([[delegateContract.script, delegateContract]]);
 
-        expect(() => extendVirtualCoinForContract(vtxo, map)).toThrow(
-            /no contract matched/
-        );
+        expect(() => extendVirtualCoinForContract(vtxo, map)).toThrow(/no contract matched/);
     });
 
     it("throws when no second argument is provided", () => {
         const vtxo = createMockVtxo({ script: TEST_DELEGATE_SCRIPT });
 
-        expect(() => extendVirtualCoinForContract(vtxo)).toThrow(
-            /no contract matched/
-        );
+        expect(() => extendVirtualCoinForContract(vtxo)).toThrow(/no contract matched/);
     });
 
     it("uses a directly-passed Contract without consulting vtxo.script", () => {
@@ -78,9 +72,7 @@ describe("extendVirtualCoinForContract", () => {
     it("throws when the map is empty", () => {
         const vtxo = createMockVtxo({ script: TEST_DELEGATE_SCRIPT });
 
-        expect(() => extendVirtualCoinForContract(vtxo, new Map())).toThrow(
-            /no contract matched/
-        );
+        expect(() => extendVirtualCoinForContract(vtxo, new Map())).toThrow(/no contract matched/);
     });
 
     it("routes two VTXOs from different contracts to different tapscripts", () => {
@@ -95,10 +87,7 @@ describe("extendVirtualCoinForContract", () => {
         ]);
 
         const extendedDefault = extendVirtualCoinForContract(defaultVtxo, map);
-        const extendedDelegate = extendVirtualCoinForContract(
-            delegateVtxo,
-            map
-        );
+        const extendedDelegate = extendVirtualCoinForContract(delegateVtxo, map);
 
         expect(extendedDefault.tapTree).not.toEqual(extendedDelegate.tapTree);
     });
@@ -111,8 +100,6 @@ describe("extendVirtualCoinForContract", () => {
         };
         const map = new Map<string, Contract>([[bogus.script, bogus]]);
 
-        expect(() => extendVirtualCoinForContract(vtxo, map)).toThrow(
-            /handler/
-        );
+        expect(() => extendVirtualCoinForContract(vtxo, map)).toThrow(/handler/);
     });
 });

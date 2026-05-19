@@ -53,9 +53,7 @@ export interface HDCapableIdentity extends ReadonlyHDCapableIdentity, Identity {
      * `HDDescriptorProvider` or `StaticDescriptorProvider`. Identities keep
      * this method only as backing implementation for descriptor providers.
      */
-    signWithDescriptor(
-        requests: DescriptorSigningRequest[]
-    ): Promise<Transaction[]>;
+    signWithDescriptor(requests: DescriptorSigningRequest[]): Promise<Transaction[]>;
 
     /**
      * Signs a message using the key derived from `descriptor`.
@@ -67,7 +65,7 @@ export interface HDCapableIdentity extends ReadonlyHDCapableIdentity, Identity {
     signMessageWithDescriptor(
         descriptor: string,
         message: Uint8Array,
-        signatureType?: "schnorr" | "ecdsa"
+        signatureType?: "schnorr" | "ecdsa",
     ): Promise<Uint8Array>;
 }
 
@@ -79,9 +77,7 @@ export interface HDCapableIdentity extends ReadonlyHDCapableIdentity, Identity {
  * the HD path (e.g. installing an `HDDescriptorProvider`) without
  * coupling to a concrete identity class.
  */
-export function isHDCapableIdentity(
-    value: unknown
-): value is HDCapableIdentity {
+export function isHDCapableIdentity(value: unknown): value is HDCapableIdentity {
     if (typeof value !== "object" || value === null) return false;
     const v = value as Record<string, unknown>;
     return (

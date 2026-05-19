@@ -6,10 +6,7 @@ export interface Identity extends ReadonlyIdentity {
     signerSession(): SignerSession;
 
     /** Sign an arbitrary message using the requested signature type. */
-    signMessage(
-        message: Uint8Array,
-        signatureType: "schnorr" | "ecdsa"
-    ): Promise<Uint8Array>;
+    signMessage(message: Uint8Array, signatureType: "schnorr" | "ecdsa"): Promise<Uint8Array>;
 
     /**
      * Sign the provided transaction inputs.
@@ -55,9 +52,7 @@ export interface BatchSignableIdentity extends Identity {
 }
 
 /** Type guard for identities that support batch signing. */
-export function isBatchSignable(
-    identity: Identity
-): identity is BatchSignableIdentity {
+export function isBatchSignable(identity: Identity): identity is BatchSignableIdentity {
     return (
         "signMultiple" in identity &&
         typeof (identity as BatchSignableIdentity).signMultiple === "function"
@@ -75,11 +70,7 @@ export type {
     SeedIdentityOptions,
     MnemonicOptions,
 } from "./seedIdentity";
-export {
-    SeedIdentity,
-    MnemonicIdentity,
-    ReadonlyDescriptorIdentity,
-} from "./seedIdentity";
+export { SeedIdentity, MnemonicIdentity, ReadonlyDescriptorIdentity } from "./seedIdentity";
 export * from "./serialize";
 
 // Descriptor utilities
@@ -92,16 +83,10 @@ export {
 export type { ParsedHDDescriptor } from "./descriptor";
 
 // Descriptor provider interface
-export type {
-    DescriptorProvider,
-    DescriptorSigningRequest,
-} from "./descriptorProvider";
+export type { DescriptorProvider, DescriptorSigningRequest } from "./descriptorProvider";
 
 // HD capability markers — readonly (xpub-only) and signing variants
-export type {
-    HDCapableIdentity,
-    ReadonlyHDCapableIdentity,
-} from "./hdCapableIdentity";
+export type { HDCapableIdentity, ReadonlyHDCapableIdentity } from "./hdCapableIdentity";
 export { isHDCapableIdentity } from "./hdCapableIdentity";
 
 // Static descriptor provider (wrapper for legacy Identity)

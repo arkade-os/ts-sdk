@@ -30,7 +30,7 @@ export function createVHTLCBatchHandler(
     session: SignerSession,
     sweepPublicKey: Uint8Array,
     forfeitOutputScript?: Bytes, // undefined if recoverable
-    connectorIndex: number = 0
+    connectorIndex: number = 0,
 ) {
     const utf8IntentId = new TextEncoder().encode(intentId);
     const intentIdHash = sha256(utf8IntentId);
@@ -39,9 +39,7 @@ export function createVHTLCBatchHandler(
     let sweepTapTreeRoot: Uint8Array | undefined;
 
     return {
-        onBatchStarted: async (
-            event: BatchStartedEvent
-        ): Promise<{ skip: boolean }> => {
+        onBatchStarted: async (event: BatchStartedEvent): Promise<{ skip: boolean }> => {
             let skip = true;
 
             // check if our intent ID hash matches any in the event
@@ -73,7 +71,7 @@ export function createVHTLCBatchHandler(
         },
         onTreeSigningStarted: async (
             event: TreeSigningStartedEvent,
-            vtxoTree: TxTree
+            vtxoTree: TxTree,
         ): Promise<{ skip: boolean }> => {
             if (!session) {
                 return { skip: true };
@@ -82,9 +80,7 @@ export function createVHTLCBatchHandler(
                 throw new Error("Sweep tap tree root not set");
             }
 
-            const xOnlyPublicKeys = event.cosignersPublicKeys.map((k) =>
-                k.slice(2)
-            );
+            const xOnlyPublicKeys = event.cosignersPublicKeys.map((k) => k.slice(2));
             const signerPublicKey = await session.getPublicKey();
             const xonlySignerPublicKey = signerPublicKey.subarray(1);
 
@@ -94,9 +90,7 @@ export function createVHTLCBatchHandler(
             }
 
             // validate the unsigned vtxo tree
-            const commitmentTx = Transaction.fromPSBT(
-                base64.decode(event.unsignedCommitmentTx)
-            );
+            const commitmentTx = Transaction.fromPSBT(base64.decode(event.unsignedCommitmentTx));
             validateVtxoTxGraph(vtxoTree, commitmentTx, sweepTapTreeRoot);
 
             // TODO check if our registered outputs are in the vtxo tree
@@ -115,17 +109,12 @@ export function createVHTLCBatchHandler(
 
             return { skip: false };
         },
-        onTreeNonces: async (
-            event: TreeNoncesEvent
-        ): Promise<{ fullySigned: boolean }> => {
+        onTreeNonces: async (event: TreeNoncesEvent): Promise<{ fullySigned: boolean }> => {
             if (!session) {
                 return { fullySigned: true }; // Signing complete (no signing needed)
             }
 
-            const { hasAllNonces } = await session.aggregatedNonces(
-                event.txid,
-                event.nonces
-            );
+            const { hasAllNonces } = await session.aggregatedNonces(event.txid, event.nonces);
 
             // wait to receive and aggregate all nonces before sending signatures
             if (!hasAllNonces) return { fullySigned: false };
@@ -133,17 +122,13 @@ export function createVHTLCBatchHandler(
             const signatures = await session.sign();
             const pubkey = hex.encode(await session.getPublicKey());
 
-            await arkProvider.submitTreeSignatures(
-                event.id,
-                pubkey,
-                signatures
-            );
+            await arkProvider.submitTreeSignatures(event.id, pubkey, signatures);
             return { fullySigned: true };
         },
         onBatchFinalization: async (
             event: BatchFinalizationEvent,
             _?: TxTree,
-            connectorTree?: TxTree
+            connectorTree?: TxTree,
         ): Promise<void> => {
             if (!forfeitOutputScript) {
                 // no need to create a forfeit transaction, skip
@@ -151,27 +136,23 @@ export function createVHTLCBatchHandler(
             }
 
             if (!connectorTree) {
-                throw new Error(
-                    "BatchFinalizationEvent: expected connector tree to be defined"
-                );
+                throw new Error("BatchFinalizationEvent: expected connector tree to be defined");
             }
 
             validateConnectorsTxGraph(event.commitmentTx, connectorTree);
             const connectors = connectorTree.leaves();
             if (connectors.length <= connectorIndex) {
                 throw new Error(
-                    `BatchFinalizationEvent: expected connector tree has ${connectors.length} leaves, expected at least ${connectorIndex + 1}`
+                    `BatchFinalizationEvent: expected connector tree has ${connectors.length} leaves, expected at least ${connectorIndex + 1}`,
                 );
             }
             const forfeitTx = createForfeitTx(
                 vhtlc,
                 forfeitOutputScript,
-                connectors[connectorIndex]
+                connectors[connectorIndex],
             );
             const signedForfeitTx = await identity.sign(forfeitTx);
-            await arkProvider.submitSignedForfeitTxs([
-                base64.encode(signedForfeitTx.toPSBT()),
-            ]);
+            await arkProvider.submitSignedForfeitTxs([base64.encode(signedForfeitTx.toPSBT())]);
         },
     };
 }
@@ -179,7 +160,7 @@ export function createVHTLCBatchHandler(
 function createForfeitTx(
     input: ArkTxInput,
     forfeitOutputScript: Bytes,
-    connector: Transaction
+    connector: Transaction,
 ): Transaction {
     const connectorTxId = connector.id;
     const connectorOutput = connector.getOutput(0);
@@ -219,6 +200,6 @@ function createForfeitTx(
             },
         ],
         forfeitOutputScript,
-        sequence
+        sequence,
     );
 }

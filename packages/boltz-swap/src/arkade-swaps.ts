@@ -77,10 +77,7 @@ import {
 } from "./utils/boltz-swap-tx";
 import { decodeInvoice, getInvoicePaymentHash } from "./utils/decoding";
 import { normalizeToXOnlyKey } from "./utils/signatures";
-import {
-    extractInvoiceAmount,
-    extractTimeLockFromLeafOutput,
-} from "./utils/restoration";
+import { extractInvoiceAmount, extractTimeLockFromLeafOutput } from "./utils/restoration";
 import { SwapManager, SwapManagerClient } from "./swap-manager";
 import {
     saveSwap,
@@ -115,9 +112,7 @@ type SubmarineVHTLCContext = {
      * VHTLC timeout fields from the Boltz response. `refund` is an absolute
      * Unix timestamp (CLTV); the unilateral fields are BIP68 relative delays.
      */
-    vhtlcTimeouts: NonNullable<
-        BoltzSubmarineSwap["response"]["timeoutBlockHeights"]
-    >;
+    vhtlcTimeouts: NonNullable<BoltzSubmarineSwap["response"]["timeoutBlockHeights"]>;
     ourXOnlyPublicKey: Uint8Array;
     serverXOnlyPublicKey: Uint8Array;
     boltzXOnlyPublicKey: Uint8Array;
@@ -139,9 +134,7 @@ type SubmarineScanPrepared =
       };
 
 const dedupeVtxos = (vtxos: VirtualCoin[]): VirtualCoin[] => [
-    ...new Map(
-        vtxos.map((vtxo) => [`${vtxo.txid}:${vtxo.vout}`, vtxo] as const)
-    ).values(),
+    ...new Map(vtxos.map((vtxo) => [`${vtxo.txid}:${vtxo.vout}`, vtxo] as const)).values(),
 ];
 
 const hasNonEmptyString = (value: unknown): value is string =>
@@ -149,7 +142,7 @@ const hasNonEmptyString = (value: unknown): value is string =>
 
 const canRecoverViaBoltz3of3 = (
     refundableVtxos: VirtualCoin[],
-    swap: BoltzSubmarineSwap
+    swap: BoltzSubmarineSwap,
 ): boolean => {
     const hasRequiredSwapMetadata =
         hasNonEmptyString(swap.id) &&
@@ -162,9 +155,7 @@ const canRecoverViaBoltz3of3 = (
 
     // Pre-CLTV Boltz co-signing only works for normal spendable VTXOs.
     // Swept/recoverable VTXOs must wait for refundWithoutReceiver.
-    return refundableVtxos.some(
-        (vtxo) => !vtxo.isSpent && !isRecoverable(vtxo)
-    );
+    return refundableVtxos.some((vtxo) => !vtxo.isSpent && !isRecoverable(vtxo));
 };
 
 /**
@@ -225,12 +216,8 @@ export class ArkadeSwaps {
             return new ArkadeSwaps(config as ArkadeSwapsConfig);
         }
 
-        const arkProvider =
-            config.arkProvider ?? (config.wallet as any).arkProvider;
-        if (!arkProvider)
-            throw new Error(
-                "Ark provider is required either in wallet or config."
-            );
+        const arkProvider = config.arkProvider ?? (config.wallet as any).arkProvider;
+        if (!arkProvider) throw new Error("Ark provider is required either in wallet or config.");
 
         const arkInfo = await arkProvider.getInfo();
         const network = arkInfo.network as Network;
@@ -245,20 +232,13 @@ export class ArkadeSwaps {
 
         this.wallet = config.wallet;
         // Prioritize wallet providers, fallback to config providers for backward compatibility
-        const arkProvider =
-            config.arkProvider ?? (config.wallet as any).arkProvider;
-        if (!arkProvider)
-            throw new Error(
-                "Ark provider is required either in wallet or config."
-            );
+        const arkProvider = config.arkProvider ?? (config.wallet as any).arkProvider;
+        if (!arkProvider) throw new Error("Ark provider is required either in wallet or config.");
         this.arkProvider = arkProvider;
 
-        const indexerProvider =
-            config.indexerProvider ?? (config.wallet as any).indexerProvider;
+        const indexerProvider = config.indexerProvider ?? (config.wallet as any).indexerProvider;
         if (!indexerProvider)
-            throw new Error(
-                "Indexer provider is required either in wallet or config."
-            );
+            throw new Error("Indexer provider is required either in wallet or config.");
         this.indexerProvider = indexerProvider;
 
         this.swapProvider = config.swapProvider;
@@ -276,17 +256,12 @@ export class ArkadeSwaps {
         // - false: disabled
         if (config.swapManager !== false) {
             const swapManagerConfig =
-                !config.swapManager || config.swapManager === true
-                    ? {}
-                    : config.swapManager;
+                !config.swapManager || config.swapManager === true ? {} : config.swapManager;
 
             // Extract autostart (defaults to true) before passing to SwapManager
             const shouldAutostart = swapManagerConfig.autoStart ?? true;
 
-            this.swapManager = new SwapManager(
-                this.swapProvider,
-                swapManagerConfig
-            );
+            this.swapManager = new SwapManager(this.swapProvider, swapManagerConfig);
 
             // Set up callbacks for all swap types
             this.swapManager.setCallbacks({
@@ -311,8 +286,7 @@ export class ArkadeSwaps {
                 saveSwap: async (swap: BoltzSwap) => {
                     await saveSwap(swap, {
                         saveReverseSwap: this.savePendingReverseSwap.bind(this),
-                        saveSubmarineSwap:
-                            this.savePendingSubmarineSwap.bind(this),
+                        saveSubmarineSwap: this.savePendingSubmarineSwap.bind(this),
                         saveChainSwap: this.savePendingChainSwap.bind(this),
                     });
                 },
@@ -332,15 +306,11 @@ export class ArkadeSwaps {
     // Storage helpers
     // =========================================================================
 
-    private async savePendingReverseSwap(
-        swap: BoltzReverseSwap
-    ): Promise<void> {
+    private async savePendingReverseSwap(swap: BoltzReverseSwap): Promise<void> {
         await this.swapRepository.saveSwap(swap);
     }
 
-    private async savePendingSubmarineSwap(
-        swap: BoltzSubmarineSwap
-    ): Promise<void> {
+    private async savePendingSubmarineSwap(swap: BoltzSubmarineSwap): Promise<void> {
         await this.swapRepository.saveSwap(swap);
     }
 
@@ -348,17 +318,13 @@ export class ArkadeSwaps {
         await this.swapRepository.saveSwap(swap);
     }
 
-    private async getPendingReverseSwapsFromStorage(): Promise<
-        BoltzReverseSwap[]
-    > {
+    private async getPendingReverseSwapsFromStorage(): Promise<BoltzReverseSwap[]> {
         return this.swapRepository.getAllSwaps<BoltzReverseSwap>({
             type: "reverse",
         });
     }
 
-    private async getPendingSubmarineSwapsFromStorage(): Promise<
-        BoltzSubmarineSwap[]
-    > {
+    private async getPendingSubmarineSwapsFromStorage(): Promise<BoltzSubmarineSwap[]> {
         return this.swapRepository.getAllSwaps<BoltzSubmarineSwap>({
             type: "submarine",
         });
@@ -382,7 +348,7 @@ export class ArkadeSwaps {
     async startSwapManager(): Promise<void> {
         if (!this.swapManager) {
             throw new Error(
-                "SwapManager is not enabled. Provide 'swapManager' config in ArkadeSwapsConfig."
+                "SwapManager is not enabled. Provide 'swapManager' config in ArkadeSwapsConfig.",
             );
         }
 
@@ -449,7 +415,7 @@ export class ArkadeSwaps {
      * @throws {SwapError} If amount is <= 0 or wallet key retrieval fails.
      */
     async createLightningInvoice(
-        args: CreateLightningInvoiceRequest
+        args: CreateLightningInvoiceRequest,
     ): Promise<CreateLightningInvoiceResponse> {
         const pendingSwap = await this.createReverseSwap(args);
         const decodedInvoice = decodeInvoice(pendingSwap.response.invoice);
@@ -470,16 +436,11 @@ export class ArkadeSwaps {
      * @returns The pending reverse swap, added to SwapManager if enabled.
      * @throws {SwapError} If amount is <= 0 or key retrieval fails.
      */
-    async createReverseSwap(
-        args: CreateLightningInvoiceRequest
-    ): Promise<BoltzReverseSwap> {
+    async createReverseSwap(args: CreateLightningInvoiceRequest): Promise<BoltzReverseSwap> {
         // validate amount
-        if (args.amount <= 0)
-            throw new SwapError({ message: "Amount must be greater than 0" });
+        if (args.amount <= 0) throw new SwapError({ message: "Amount must be greater than 0" });
 
-        const claimPublicKey = hex.encode(
-            await this.wallet.identity.compressedPublicKey()
-        );
+        const claimPublicKey = hex.encode(await this.wallet.identity.compressedPublicKey());
         if (!claimPublicKey)
             throw new SwapError({
                 message: "Failed to get claim public key from wallet",
@@ -488,22 +449,18 @@ export class ArkadeSwaps {
         // create random preimage and its hash
         const preimage = randomBytes(32);
         const preimageHash = hex.encode(sha256(preimage));
-        if (!preimageHash)
-            throw new SwapError({ message: "Failed to get preimage hash" });
+        if (!preimageHash) throw new SwapError({ message: "Failed to get preimage hash" });
 
         // build request object for reverse swap
         const swapRequest: CreateReverseSwapRequest = {
             invoiceAmount: args.amount,
             claimPublicKey,
             preimageHash,
-            ...(args.description?.trim()
-                ? { description: args.description.trim() }
-                : {}),
+            ...(args.description?.trim() ? { description: args.description.trim() } : {}),
         };
 
         // make reverse swap request
-        const swapResponse =
-            await this.swapProvider.createReverseSwap(swapRequest);
+        const swapResponse = await this.swapProvider.createReverseSwap(swapRequest);
 
         const pendingSwap: BoltzReverseSwap = {
             id: swapResponse.id,
@@ -534,9 +491,7 @@ export class ArkadeSwaps {
     async claimVHTLC(pendingSwap: BoltzReverseSwap): Promise<void> {
         // restored swaps may not have preimage
         if (!pendingSwap.preimage)
-            throw new Error(
-                `Swap ${pendingSwap.id}: preimage is required to claim VHTLC`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: preimage is required to claim VHTLC`);
 
         const {
             refundPublicKey,
@@ -544,9 +499,7 @@ export class ArkadeSwaps {
             timeoutBlockHeights: vhtlcTimeouts,
         } = pendingSwap.response;
         if (!refundPublicKey || !lockupAddress || !vhtlcTimeouts)
-            throw new Error(
-                `Swap ${pendingSwap.id}: incomplete reverse swap response`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: incomplete reverse swap response`);
 
         const preimage = hex.decode(pendingSwap.preimage);
         const arkInfo = await this.arkProvider.getInfo();
@@ -555,19 +508,19 @@ export class ArkadeSwaps {
         const receiverXOnly = normalizeToXOnlyKey(
             await this.wallet.identity.xOnlyPublicKey(),
             "our",
-            pendingSwap.id
+            pendingSwap.id,
         );
 
         const senderXOnly = normalizeToXOnlyKey(
             hex.decode(refundPublicKey),
             "boltz",
-            pendingSwap.id
+            pendingSwap.id,
         );
 
         const serverXOnly = normalizeToXOnlyKey(
             hex.decode(arkInfo.signerPubkey),
             "server",
-            pendingSwap.id
+            pendingSwap.id,
         );
 
         // build expected VHTLC script
@@ -582,11 +535,11 @@ export class ArkadeSwaps {
 
         if (!vhtlcScript.claimScript)
             throw new Error(
-                `Swap ${pendingSwap.id}: failed to create VHTLC script for reverse swap`
+                `Swap ${pendingSwap.id}: failed to create VHTLC script for reverse swap`,
             );
         if (vhtlcAddress !== lockupAddress)
             throw new Error(
-                `Swap ${pendingSwap.id}: VHTLC address mismatch. Expected ${lockupAddress}, got ${vhtlcAddress}`
+                `Swap ${pendingSwap.id}: VHTLC address mismatch. Expected ${lockupAddress}, got ${vhtlcAddress}`,
             );
 
         let vtxo;
@@ -599,16 +552,12 @@ export class ArkadeSwaps {
                 break;
             }
             if (attempt < CLAIM_VTXO_RETRY_ATTEMPTS) {
-                await new Promise((resolve) =>
-                    setTimeout(resolve, CLAIM_VTXO_RETRY_DELAY_MS)
-                );
+                await new Promise((resolve) => setTimeout(resolve, CLAIM_VTXO_RETRY_DELAY_MS));
             }
         }
 
         if (!vtxo) {
-            throw new Error(
-                `Swap ${pendingSwap.id}: no spendable virtual coins found`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: no spendable virtual coins found`);
         }
 
         if (vtxo.isSpent) {
@@ -626,10 +575,7 @@ export class ArkadeSwaps {
             script: ArkAddress.decode(address).pkScript,
         };
 
-        const vhtlcIdentity = claimVHTLCIdentity(
-            this.wallet.identity,
-            preimage
-        );
+        const vhtlcIdentity = claimVHTLCIdentity(this.wallet.identity, preimage);
 
         let finalStatus: BoltzSwapStatus | undefined;
 
@@ -644,7 +590,7 @@ export class ArkadeSwaps {
                 input,
                 output,
                 arkInfo,
-                this.arkProvider
+                this.arkProvider,
             );
             finalStatus = (await this.getSwapStatus(pendingSwap.id)).status;
         }
@@ -653,7 +599,7 @@ export class ArkadeSwaps {
         await updateReverseSwapStatus(
             pendingSwap,
             finalStatus,
-            this.savePendingReverseSwap.bind(this)
+            this.savePendingReverseSwap.bind(this),
         );
     }
 
@@ -666,31 +612,21 @@ export class ArkadeSwaps {
      * @throws {SwapExpiredError} If the swap exceeds its time limit.
      * @throws {TransactionFailedError} If the on-chain transaction fails.
      */
-    async waitAndClaim(
-        pendingSwap: BoltzReverseSwap
-    ): Promise<{ txid: string }> {
+    async waitAndClaim(pendingSwap: BoltzReverseSwap): Promise<{ txid: string }> {
         // If SwapManager is enabled and has this swap, delegate to it
-        if (
-            this.swapManager &&
-            (await this.swapManager.hasSwap(pendingSwap.id))
-        ) {
+        if (this.swapManager && (await this.swapManager.hasSwap(pendingSwap.id))) {
             return this.swapManager.waitForSwapCompletion(pendingSwap.id);
         }
 
         // Otherwise use manual monitoring
         return new Promise<{ txid: string }>((resolve, reject) => {
-            const onStatusUpdate = async (
-                status: BoltzSwapStatus,
-                data: any
-            ) => {
-                const saveStatus = (
-                    additionalFields?: Partial<BoltzReverseSwap>
-                ) =>
+            const onStatusUpdate = async (status: BoltzSwapStatus, data: any) => {
+                const saveStatus = (additionalFields?: Partial<BoltzReverseSwap>) =>
                     updateReverseSwapStatus(
                         pendingSwap,
                         status,
                         this.savePendingReverseSwap.bind(this),
-                        additionalFields
+                        additionalFields,
                     );
 
                 switch (status) {
@@ -701,17 +637,16 @@ export class ArkadeSwaps {
                         break;
                     case "invoice.settled": {
                         await saveStatus();
-                        const swapStatus =
-                            await this.swapProvider.getReverseSwapTxId(
-                                pendingSwap.id
-                            );
+                        const swapStatus = await this.swapProvider.getReverseSwapTxId(
+                            pendingSwap.id,
+                        );
                         const txid = swapStatus.id;
 
                         if (!txid || txid.trim() === "") {
                             reject(
                                 new SwapError({
                                     message: `Transaction ID not available for settled swap ${pendingSwap.id}.`,
-                                })
+                                }),
                             );
                             break;
                         }
@@ -725,7 +660,7 @@ export class ArkadeSwaps {
                             new InvoiceExpiredError({
                                 isRefundable: true,
                                 pendingSwap,
-                            })
+                            }),
                         );
                         break;
                     case "swap.expired":
@@ -734,17 +669,16 @@ export class ArkadeSwaps {
                             new SwapExpiredError({
                                 isRefundable: true,
                                 pendingSwap,
-                            })
+                            }),
                         );
                         break;
                     case "transaction.failed":
                         await saveStatus();
                         reject(
                             new TransactionFailedError({
-                                message:
-                                    data?.failureReason ?? "Transaction failed",
+                                message: data?.failureReason ?? "Transaction failed",
                                 isRefundable: true,
-                            })
+                            }),
                         );
                         break;
                     case "transaction.refunded":
@@ -757,9 +691,7 @@ export class ArkadeSwaps {
                 }
             };
 
-            this.swapProvider
-                .monitorSwap(pendingSwap.id, onStatusUpdate)
-                .catch(reject);
+            this.swapProvider.monitorSwap(pendingSwap.id, onStatusUpdate).catch(reject);
         });
     }
 
@@ -775,13 +707,11 @@ export class ArkadeSwaps {
      * @throws {TransactionFailedError} If the payment fails (auto-refunds if possible).
      */
     async sendLightningPayment(
-        args: SendLightningPaymentRequest
+        args: SendLightningPaymentRequest,
     ): Promise<SendLightningPaymentResponse> {
         const pendingSwap = await this.createSubmarineSwap(args);
         if (!pendingSwap.response.address)
-            throw new Error(
-                `Swap ${pendingSwap.id}: missing address in submarine swap response`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: missing address in submarine swap response`);
 
         // save pending swap to storage
         await this.savePendingSubmarineSwap(pendingSwap);
@@ -805,7 +735,7 @@ export class ArkadeSwaps {
                 await updateSubmarineSwapStatus(
                     pendingSwap,
                     finalStatus.status,
-                    this.savePendingSubmarineSwap.bind(this)
+                    this.savePendingSubmarineSwap.bind(this),
                 );
             }
             throw new TransactionFailedError();
@@ -818,12 +748,8 @@ export class ArkadeSwaps {
      * @returns The pending submarine swap, added to SwapManager if enabled.
      * @throws {SwapError} If invoice is missing or key retrieval fails.
      */
-    async createSubmarineSwap(
-        args: SendLightningPaymentRequest
-    ): Promise<BoltzSubmarineSwap> {
-        const refundPublicKey = hex.encode(
-            await this.wallet.identity.compressedPublicKey()
-        );
+    async createSubmarineSwap(args: SendLightningPaymentRequest): Promise<BoltzSubmarineSwap> {
+        const refundPublicKey = hex.encode(await this.wallet.identity.compressedPublicKey());
         if (!refundPublicKey)
             throw new SwapError({
                 message: "Failed to get refund public key from wallet",
@@ -838,8 +764,7 @@ export class ArkadeSwaps {
         };
 
         // make submarine swap request
-        const swapResponse =
-            await this.swapProvider.createSubmarineSwap(swapRequest);
+        const swapResponse = await this.swapProvider.createSubmarineSwap(swapRequest);
 
         // create pending swap object
         const pendingSwap: BoltzSubmarineSwap = {
@@ -873,40 +798,35 @@ export class ArkadeSwaps {
      */
     private async buildSubmarineVHTLCContext(
         swap: BoltzSubmarineSwap,
-        arkInfo?: ArkInfo
+        arkInfo?: ArkInfo,
     ): Promise<SubmarineVHTLCContext> {
         const preimageHash = swap.request.invoice
             ? getInvoicePaymentHash(swap.request.invoice)
             : swap.preimageHash;
         if (!preimageHash)
-            throw new Error(
-                `Swap ${swap.id}: preimage hash is required to refund VHTLC`
-            );
+            throw new Error(`Swap ${swap.id}: preimage hash is required to refund VHTLC`);
 
         const resolvedArkInfo = arkInfo ?? (await this.arkProvider.getInfo());
 
         const ourXOnlyPublicKey = normalizeToXOnlyKey(
             await this.wallet.identity.xOnlyPublicKey(),
             "our",
-            swap.id
+            swap.id,
         );
         const serverXOnlyPublicKey = normalizeToXOnlyKey(
             hex.decode(resolvedArkInfo.signerPubkey),
             "server",
-            swap.id
+            swap.id,
         );
 
-        const { claimPublicKey, timeoutBlockHeights: vhtlcTimeouts } =
-            swap.response;
+        const { claimPublicKey, timeoutBlockHeights: vhtlcTimeouts } = swap.response;
         if (!claimPublicKey || !vhtlcTimeouts)
-            throw new Error(
-                `Swap ${swap.id}: incomplete submarine swap response`
-            );
+            throw new Error(`Swap ${swap.id}: incomplete submarine swap response`);
 
         const boltzXOnlyPublicKey = normalizeToXOnlyKey(
             hex.decode(claimPublicKey),
             "boltz",
-            swap.id
+            swap.id,
         );
 
         const { vhtlcScript, vhtlcAddress } = this.createVHTLCScript({
@@ -919,14 +839,12 @@ export class ArkadeSwaps {
         });
 
         if (!vhtlcScript.claimScript)
-            throw new Error(
-                `Swap ${swap.id}: failed to create VHTLC script for submarine swap`
-            );
+            throw new Error(`Swap ${swap.id}: failed to create VHTLC script for submarine swap`);
 
         if (vhtlcAddress !== swap.response.address)
             throw new Error(
                 `VHTLC address mismatch for swap ${swap.id}: ` +
-                    `expected ${swap.response.address}, got ${vhtlcAddress}`
+                    `expected ${swap.response.address}, got ${vhtlcAddress}`,
             );
 
         // Use the locally-reconstructed script, not the Boltz response
@@ -958,7 +876,7 @@ export class ArkadeSwaps {
      */
     private async lookupSubmarineVHTLC(
         swap: BoltzSubmarineSwap,
-        arkInfo?: ArkInfo
+        arkInfo?: ArkInfo,
     ): Promise<SubmarineVHTLCLookup> {
         const context = await this.buildSubmarineVHTLCContext(swap, arkInfo);
         // Query VTXOs using the locally-reconstructed script (not the Boltz
@@ -975,10 +893,7 @@ export class ArkadeSwaps {
                 recoverableOnly: true,
             }),
         ]);
-        const refundableVtxos = dedupeVtxos([
-            ...spendableResult.vtxos,
-            ...recoverableResult.vtxos,
-        ]);
+        const refundableVtxos = dedupeVtxos([...spendableResult.vtxos, ...recoverableResult.vtxos]);
 
         // Only query "all VTXOs" when the refundable set is empty — that's
         // the only path where we need to distinguish empty cases.
@@ -989,9 +904,7 @@ export class ArkadeSwaps {
             });
             diagnostic = {
                 totalVtxoCount: allVtxos.length,
-                allSpent:
-                    allVtxos.length > 0 &&
-                    allVtxos.every((vtxo) => vtxo.isSpent),
+                allSpent: allVtxos.length > 0 && allVtxos.every((vtxo) => vtxo.isSpent),
             };
         }
 
@@ -1004,23 +917,14 @@ export class ArkadeSwaps {
 
     private submarineRecoveryInfoFromLookup(
         swap: BoltzSubmarineSwap,
-        lookup: Pick<
-            SubmarineVHTLCLookup,
-            "vhtlcTimeouts" | "refundableVtxos" | "diagnostic"
-        >
+        lookup: Pick<SubmarineVHTLCLookup, "vhtlcTimeouts" | "refundableVtxos" | "diagnostic">,
     ): SubmarineRecoveryInfo {
         const { refundableVtxos, diagnostic, vhtlcTimeouts } = lookup;
 
         if (refundableVtxos.length > 0) {
-            const cltvSatisfied = isSubmarineRefundLocktimeReached(
-                vhtlcTimeouts.refund
-            );
-            const amountSats = refundableVtxos.reduce(
-                (sum, vtxo) => sum + Number(vtxo.value),
-                0
-            );
-            const isRecoverable =
-                cltvSatisfied || canRecoverViaBoltz3of3(refundableVtxos, swap);
+            const cltvSatisfied = isSubmarineRefundLocktimeReached(vhtlcTimeouts.refund);
+            const amountSats = refundableVtxos.reduce((sum, vtxo) => sum + Number(vtxo.value), 0);
+            const isRecoverable = cltvSatisfied || canRecoverViaBoltz3of3(refundableVtxos, swap);
             return {
                 swap,
                 status: isRecoverable ? "recoverable" : "pre_cltv",
@@ -1070,7 +974,7 @@ export class ArkadeSwaps {
      */
     async refundVHTLC(
         pendingSwap: BoltzSubmarineSwap,
-        cachedArkInfo?: ArkInfo
+        cachedArkInfo?: ArkInfo,
     ): Promise<SubmarineRefundOutcome> {
         const address = await this.wallet.getAddress();
         if (!address) throw new Error("Failed to get ark address from wallet");
@@ -1089,24 +993,18 @@ export class ArkadeSwaps {
         if (refundableVtxos.length === 0) {
             if (!diagnostic || diagnostic.totalVtxoCount === 0) {
                 throw new Error(
-                    `Swap ${pendingSwap.id}: VHTLC not found for address ${pendingSwap.response.address}`
+                    `Swap ${pendingSwap.id}: VHTLC not found for address ${pendingSwap.response.address}`,
                 );
             }
             if (diagnostic.allSpent) {
-                throw new Error(
-                    `Swap ${pendingSwap.id}: VHTLC is already spent`
-                );
+                throw new Error(`Swap ${pendingSwap.id}: VHTLC is already spent`);
             }
-            throw new Error(
-                `Swap ${pendingSwap.id}: VHTLC has no refundable VTXOs yet`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: VHTLC has no refundable VTXOs yet`);
         }
 
         const outputScript = ArkAddress.decode(address).pkScript;
         const refundWithoutReceiverLeaf = vhtlcScript.refundWithoutReceiver();
-        const cltvSatisfied = isSubmarineRefundLocktimeReached(
-            vhtlcTimeouts.refund
-        );
+        const cltvSatisfied = isSubmarineRefundLocktimeReached(vhtlcTimeouts.refund);
 
         // Refund every unspent VTXO at the contract address.
         // Throttle between Boltz API calls to avoid 429 rate-limiting.
@@ -1136,7 +1034,7 @@ export class ArkadeSwaps {
                     input,
                     output,
                     arkInfo,
-                    isRecoverableVtxo
+                    isRecoverableVtxo,
                 );
                 sweptCount++;
                 continue;
@@ -1150,7 +1048,7 @@ export class ArkadeSwaps {
                         `cannot be refunded yet — refundWithoutReceiver locktime has not passed ` +
                         `(refundLocktime=${vhtlcTimeouts.refund}, ` +
                         `currentTimestamp=${Math.floor(Date.now() / 1000)}). ` +
-                        `Refund will be retried after locktime.`
+                        `Refund will be retried after locktime.`,
                 );
                 skippedCount++;
                 continue;
@@ -1176,9 +1074,7 @@ export class ArkadeSwaps {
                     input,
                     output,
                     arkInfo,
-                    this.swapProvider.refundSubmarineSwap.bind(
-                        this.swapProvider
-                    )
+                    this.swapProvider.refundSubmarineSwap.bind(this.swapProvider),
                 );
                 boltzCallCount++;
                 sweptCount++;
@@ -1197,7 +1093,7 @@ export class ArkadeSwaps {
                             `refundWithoutReceiver locktime has not passed yet ` +
                             `(currentTimestamp=${Math.floor(Date.now() / 1000)}, ` +
                             `locktime=${vhtlcTimeouts.refund}). ` +
-                            `Refund will be retried after locktime.`
+                            `Refund will be retried after locktime.`,
                     );
                     skippedCount++;
                     continue;
@@ -1205,20 +1101,14 @@ export class ArkadeSwaps {
 
                 logger.warn(
                     `Swap ${pendingSwap.id}: Boltz rejected VTXO outpoint, ` +
-                        `falling back to refundWithoutReceiver via joinBatch`
+                        `falling back to refundWithoutReceiver via joinBatch`,
                 );
                 const fallbackInput = {
                     ...vtxo,
                     tapLeafScript: refundWithoutReceiverLeaf,
                     tapTree: vhtlcScript.encode(),
                 };
-                await this.joinBatch(
-                    this.wallet.identity,
-                    fallbackInput,
-                    output,
-                    arkInfo,
-                    false
-                );
+                await this.joinBatch(this.wallet.identity, fallbackInput, output, arkInfo, false);
                 sweptCount++;
             }
         }
@@ -1234,7 +1124,7 @@ export class ArkadeSwaps {
                 pendingSwap,
                 pendingSwap.status, // Keep current status
                 this.savePendingSubmarineSwap.bind(this),
-                { refundable: true, refunded: fullyRefunded }
+                { refundable: true, refunded: fullyRefunded },
             );
         }
 
@@ -1255,13 +1145,8 @@ export class ArkadeSwaps {
      *
      * @param swap - The submarine swap to inspect.
      */
-    async inspectSubmarineRecovery(
-        swap: BoltzSubmarineSwap
-    ): Promise<SubmarineRecoveryInfo> {
-        if (
-            !isSubmarineSuccessStatus(swap.status) &&
-            !isSubmarineRefundableStatus(swap.status)
-        ) {
+    async inspectSubmarineRecovery(swap: BoltzSubmarineSwap): Promise<SubmarineRecoveryInfo> {
+        if (!isSubmarineSuccessStatus(swap.status) && !isSubmarineRefundableStatus(swap.status)) {
             return {
                 swap,
                 status: "invalid_swap",
@@ -1303,15 +1188,13 @@ export class ArkadeSwaps {
      * and does not query Boltz swap status.
      */
     async scanRecoverableSubmarineSwaps(): Promise<SubmarineRecoveryInfo[]> {
-        const submarineSwaps =
-            await this.swapRepository.getAllSwaps<BoltzSubmarineSwap>({
-                type: "submarine",
-            });
+        const submarineSwaps = await this.swapRepository.getAllSwaps<BoltzSubmarineSwap>({
+            type: "submarine",
+        });
 
         const candidates = submarineSwaps.filter(
             (swap) =>
-                isSubmarineSuccessStatus(swap.status) ||
-                isSubmarineRefundableStatus(swap.status)
+                isSubmarineSuccessStatus(swap.status) || isSubmarineRefundableStatus(swap.status),
         );
 
         let arkInfo: ArkInfo | undefined;
@@ -1336,10 +1219,7 @@ export class ArkadeSwaps {
                 try {
                     return {
                         swap,
-                        context: await this.buildSubmarineVHTLCContext(
-                            swap,
-                            arkInfo
-                        ),
+                        context: await this.buildSubmarineVHTLCContext(swap, arkInfo),
                     };
                 } catch (err) {
                     return {
@@ -1347,18 +1227,14 @@ export class ArkadeSwaps {
                         error: err instanceof Error ? err.message : String(err),
                     };
                 }
-            })
+            }),
         );
 
         const valid = prepared.filter(
-            (
-                item
-            ): item is Extract<SubmarineScanPrepared, { context: unknown }> =>
-                "context" in item
+            (item): item is Extract<SubmarineScanPrepared, { context: unknown }> =>
+                "context" in item,
         );
-        const scripts = [
-            ...new Set(valid.map(({ context }) => context.vhtlcPkScriptHex)),
-        ];
+        const scripts = [...new Set(valid.map(({ context }) => context.vhtlcPkScriptHex))];
 
         const refundableByScript = new Map<string, VirtualCoin[]>();
         if (scripts.length > 0) {
@@ -1392,16 +1268,13 @@ export class ArkadeSwaps {
                     status: "invalid_swap" as const,
                     vtxoCount: 0,
                     amountSats: 0,
-                    refundLocktime:
-                        item.swap.response.timeoutBlockHeights?.refund,
+                    refundLocktime: item.swap.response.timeoutBlockHeights?.refund,
                     error: item.error,
                 };
             }
 
             const refundableVtxos =
-                refundableByScript.get(
-                    item.context.vhtlcPkScriptHex.toLowerCase()
-                ) ?? [];
+                refundableByScript.get(item.context.vhtlcPkScriptHex.toLowerCase()) ?? [];
             return this.submarineRecoveryInfoFromLookup(item.swap, {
                 ...item.context,
                 refundableVtxos,
@@ -1420,7 +1293,7 @@ export class ArkadeSwaps {
      */
     async recoverSubmarineFunds(
         swap: BoltzSubmarineSwap,
-        arkInfo?: ArkInfo
+        arkInfo?: ArkInfo,
     ): Promise<SubmarineRefundOutcome> {
         return this.refundVHTLC(swap, arkInfo);
     }
@@ -1435,7 +1308,7 @@ export class ArkadeSwaps {
      * batch joins.
      */
     async recoverAllSubmarineFunds(
-        swaps: BoltzSubmarineSwap[]
+        swaps: BoltzSubmarineSwap[],
     ): Promise<SubmarineRecoveryResult[]> {
         const results: SubmarineRecoveryResult[] = [];
         let arkInfo: ArkInfo | undefined;
@@ -1481,23 +1354,19 @@ export class ArkadeSwaps {
      * @throws {InvoiceFailedToPayError} If Boltz fails to route the payment.
      * @throws {TransactionLockupFailedError} If the lockup transaction fails.
      */
-    async waitForSwapSettlement(
-        pendingSwap: BoltzSubmarineSwap
-    ): Promise<{ preimage: string }> {
+    async waitForSwapSettlement(pendingSwap: BoltzSubmarineSwap): Promise<{ preimage: string }> {
         return new Promise<{ preimage: string }>((resolve, reject) => {
             let isResolved = false;
 
             const onStatusUpdate = async (status: BoltzSwapStatus) => {
                 if (isResolved) return;
 
-                const saveStatus = (
-                    additionalFields?: Partial<BoltzSubmarineSwap>
-                ) =>
+                const saveStatus = (additionalFields?: Partial<BoltzSubmarineSwap>) =>
                     updateSubmarineSwapStatus(
                         pendingSwap,
                         status,
                         this.savePendingSubmarineSwap.bind(this),
-                        additionalFields
+                        additionalFields,
                     );
 
                 switch (status) {
@@ -1508,7 +1377,7 @@ export class ArkadeSwaps {
                             new SwapExpiredError({
                                 isRefundable: true,
                                 pendingSwap,
-                            })
+                            }),
                         );
                         break;
                     case "invoice.failedToPay":
@@ -1518,7 +1387,7 @@ export class ArkadeSwaps {
                             new InvoiceFailedToPayError({
                                 isRefundable: true,
                                 pendingSwap,
-                            })
+                            }),
                         );
                         break;
                     case "transaction.lockupFailed":
@@ -1528,15 +1397,14 @@ export class ArkadeSwaps {
                             new TransactionLockupFailedError({
                                 isRefundable: true,
                                 pendingSwap,
-                            })
+                            }),
                         );
                         break;
                     case "transaction.claimed": {
                         isResolved = true;
-                        const { preimage } =
-                            await this.swapProvider.getSwapPreimage(
-                                pendingSwap.id
-                            );
+                        const { preimage } = await this.swapProvider.getSwapPreimage(
+                            pendingSwap.id,
+                        );
                         await saveStatus({ preimage });
                         resolve({ preimage });
                         break;
@@ -1547,14 +1415,12 @@ export class ArkadeSwaps {
                 }
             };
 
-            this.swapProvider
-                .monitorSwap(pendingSwap.id, onStatusUpdate)
-                .catch((error) => {
-                    if (!isResolved) {
-                        isResolved = true;
-                        reject(error);
-                    }
-                });
+            this.swapProvider.monitorSwap(pendingSwap.id, onStatusUpdate).catch((error) => {
+                if (!isResolved) {
+                    isResolved = true;
+                    reject(error);
+                }
+            });
         });
     }
 
@@ -1609,16 +1475,9 @@ export class ArkadeSwaps {
      * @param pendingSwap - The pending chain swap to monitor.
      * @returns The transaction ID of the claimed HTLC.
      */
-    async waitAndClaimBtc(
-        pendingSwap: BoltzChainSwap
-    ): Promise<{ txid: string }> {
-        if (
-            this.swapManager &&
-            (await this.swapManager.hasSwap(pendingSwap.id))
-        ) {
-            const { txid } = await this.swapManager.waitForSwapCompletion(
-                pendingSwap.id
-            );
+    async waitAndClaimBtc(pendingSwap: BoltzChainSwap): Promise<{ txid: string }> {
+        if (this.swapManager && (await this.swapManager.hasSwap(pendingSwap.id))) {
+            const { txid } = await this.swapManager.waitForSwapCompletion(pendingSwap.id);
             return { txid };
         }
         return new Promise<{ txid: string }>((resolve, reject) => {
@@ -1632,7 +1491,7 @@ export class ArkadeSwaps {
                 status: BoltzSwapStatus,
                 data: {
                     failureReason?: string;
-                }
+                },
             ) => {
                 const updateSwapStatus = async (): Promise<BoltzChainSwap> => {
                     swap.status = status;
@@ -1654,9 +1513,7 @@ export class ArkadeSwaps {
                     }
                     case "transaction.claimed":
                         await updateSwapStatus();
-                        const claimedStatus = await this.getSwapStatus(
-                            pendingSwap.id
-                        );
+                        const claimedStatus = await this.getSwapStatus(pendingSwap.id);
                         resolve({
                             txid: claimedStatus.transaction?.id ?? "",
                         });
@@ -1669,7 +1526,7 @@ export class ArkadeSwaps {
                                     message: `Failed to renegotiate quote: ${err.message}`,
                                     isRefundable: true,
                                     pendingSwap: swap,
-                                })
+                                }),
                             );
                         });
                         break;
@@ -1679,7 +1536,7 @@ export class ArkadeSwaps {
                             new SwapExpiredError({
                                 isRefundable: true,
                                 pendingSwap: swap,
-                            })
+                            }),
                         );
                         break;
                     case "transaction.failed":
@@ -1688,7 +1545,7 @@ export class ArkadeSwaps {
                             new TransactionFailedError({
                                 message: data.failureReason,
                                 isRefundable: true,
-                            })
+                            }),
                         );
                         break;
                     case "transaction.refunded":
@@ -1701,9 +1558,7 @@ export class ArkadeSwaps {
                 }
             };
 
-            this.swapProvider
-                .monitorSwap(swap.id, onStatusUpdate)
-                .catch(reject);
+            this.swapProvider.monitorSwap(swap.id, onStatusUpdate).catch(reject);
         });
     }
 
@@ -1713,29 +1568,19 @@ export class ArkadeSwaps {
      */
     async claimBtc(pendingSwap: BoltzChainSwap): Promise<void> {
         if (!pendingSwap.toAddress)
-            throw new Error(
-                `Swap ${pendingSwap.id}: destination address is required`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: destination address is required`);
 
         if (!pendingSwap.response.claimDetails.swapTree)
-            throw new Error(
-                `Swap ${pendingSwap.id}: missing swap tree in claim details`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: missing swap tree in claim details`);
 
         if (!pendingSwap.response.claimDetails.serverPublicKey)
-            throw new Error(
-                `Swap ${pendingSwap.id}: missing server public key in claim details`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: missing server public key in claim details`);
 
         const swapStatus = await this.getSwapStatus(pendingSwap.id);
         if (!swapStatus.transaction?.hex)
-            throw new Error(
-                `Swap ${pendingSwap.id}: BTC transaction hex is required`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: BTC transaction hex is required`);
 
-        const lockupTx = Transaction.fromRaw(
-            hex.decode(swapStatus.transaction.hex)
-        );
+        const lockupTx = Transaction.fromRaw(hex.decode(swapStatus.transaction.hex));
 
         const arkInfo = await this.arkProvider.getInfo();
 
@@ -1746,23 +1591,21 @@ export class ArkadeSwaps {
                   ? MUTINYNET_NETWORK
                   : REGTEST_NETWORK;
 
-        const swapTree = deserializeSwapTree(
-            pendingSwap.response.claimDetails.swapTree
-        );
+        const swapTree = deserializeSwapTree(pendingSwap.response.claimDetails.swapTree);
 
         const musig = tweakMusig(
             createMusig(hex.decode(pendingSwap.ephemeralKey), [
                 hex.decode(pendingSwap.response.claimDetails.serverPublicKey),
                 secp256k1.getPublicKey(hex.decode(pendingSwap.ephemeralKey)),
             ]),
-            swapTree.tree
+            swapTree.tree,
         );
         const swapOutput = detectSwapOutput(musig.aggPubkey, lockupTx);
 
         const feeToDeliverExactAmount = BigInt(
             pendingSwap.request.serverLockAmount
                 ? pendingSwap.request.serverLockAmount - pendingSwap.amount
-                : 0
+                : 0,
         );
 
         const claimTx = targetFee(pendingSwap.feeSatsPerByte, (fee) =>
@@ -1773,21 +1616,16 @@ export class ArkadeSwaps {
                     vout: swapOutput.vout!,
                     transactionId: lockupTx.id,
                 },
-                OutScript.encode(
-                    Address(network).decode(pendingSwap.toAddress!)
-                ),
-                feeToDeliverExactAmount > fee ? feeToDeliverExactAmount : fee
-            )
+                OutScript.encode(Address(network).decode(pendingSwap.toAddress!)),
+                feeToDeliverExactAmount > fee ? feeToDeliverExactAmount : fee,
+            ),
         );
 
         const musigMessage = musig
             .message(
-                claimTx.preimageWitnessV1(
-                    0,
-                    [swapOutput.script!],
-                    SigHash.DEFAULT,
-                    [swapOutput.amount!]
-                )
+                claimTx.preimageWitnessV1(0, [swapOutput.script!], SigHash.DEFAULT, [
+                    swapOutput.amount!,
+                ]),
             )
             .generateNonce();
 
@@ -1800,20 +1638,16 @@ export class ArkadeSwaps {
                     transaction: claimTx.hex,
                     index: 0,
                 },
-            }
+            },
         );
 
         if (!signedTxData.pubNonce || !signedTxData.partialSignature)
-            throw new Error(
-                `Swap ${pendingSwap.id}: invalid signature data from server`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: invalid signature data from server`);
 
         const musigSession = musigMessage
             .aggregateNonces([
                 [
-                    hex.decode(
-                        pendingSwap.response.claimDetails.serverPublicKey
-                    ),
+                    hex.decode(pendingSwap.response.claimDetails.serverPublicKey),
                     hex.decode(signedTxData.pubNonce),
                 ],
             ])
@@ -1821,7 +1655,7 @@ export class ArkadeSwaps {
 
         musigSession.addPartial(
             hex.decode(pendingSwap.response.claimDetails.serverPublicKey),
-            hex.decode(signedTxData.partialSignature)
+            hex.decode(signedTxData.partialSignature),
         );
         const musigSigned = musigSession.signPartial();
 
@@ -1838,14 +1672,10 @@ export class ArkadeSwaps {
      */
     async refundArk(pendingSwap: BoltzChainSwap): Promise<void> {
         if (!pendingSwap.response.lockupDetails.serverPublicKey)
-            throw new Error(
-                `Swap ${pendingSwap.id}: missing server public key in lockup details`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: missing server public key in lockup details`);
 
         if (!pendingSwap.response.lockupDetails.timeouts)
-            throw new Error(
-                `Swap ${pendingSwap.id}: missing timeouts in lockup details`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: missing timeouts in lockup details`);
 
         const arkInfo = await this.arkProvider.getInfo();
 
@@ -1854,23 +1684,23 @@ export class ArkadeSwaps {
         const ourXOnlyPublicKey = normalizeToXOnlyKey(
             await this.wallet.identity.xOnlyPublicKey(),
             "user",
-            pendingSwap.id
+            pendingSwap.id,
         );
 
         const serverXOnlyPublicKey = normalizeToXOnlyKey(
             hex.decode(arkInfo.signerPubkey),
             "server",
-            pendingSwap.id
+            pendingSwap.id,
         );
 
         const boltzXOnlyPublicKey = normalizeToXOnlyKey(
             hex.decode(pendingSwap.response.lockupDetails.serverPublicKey),
             "boltz",
-            pendingSwap.id
+            pendingSwap.id,
         );
 
         const vhtlcPkScript = ArkAddress.decode(
-            pendingSwap.response.lockupDetails.lockupAddress
+            pendingSwap.response.lockupDetails.lockupAddress,
         ).pkScript;
 
         // get spendable VTXOs from the lockup address
@@ -1880,7 +1710,7 @@ export class ArkadeSwaps {
 
         if (vtxos.length === 0) {
             throw new Error(
-                `Swap ${pendingSwap.id}: VHTLC not found for address ${pendingSwap.response.lockupDetails.lockupAddress}`
+                `Swap ${pendingSwap.id}: VHTLC not found for address ${pendingSwap.response.lockupDetails.lockupAddress}`,
             );
         }
 
@@ -1900,9 +1730,7 @@ export class ArkadeSwaps {
         });
 
         if (!vhtlcScript.refundScript)
-            throw new Error(
-                `Swap ${pendingSwap.id}: failed to create VHTLC script for chain swap`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: failed to create VHTLC script for chain swap`);
 
         if (pendingSwap.response.lockupDetails.lockupAddress !== vhtlcAddress) {
             throw new SwapError({
@@ -1938,7 +1766,7 @@ export class ArkadeSwaps {
                 input,
                 output,
                 arkInfo,
-                this.swapProvider.refundChainSwap.bind(this.swapProvider)
+                this.swapProvider.refundChainSwap.bind(this.swapProvider),
             );
         }
 
@@ -1999,16 +1827,9 @@ export class ArkadeSwaps {
      * @param pendingSwap - The pending chain swap to monitor.
      * @returns The transaction ID of the claimed VHTLC.
      */
-    async waitAndClaimArk(
-        pendingSwap: BoltzChainSwap
-    ): Promise<{ txid: string }> {
-        if (
-            this.swapManager &&
-            (await this.swapManager.hasSwap(pendingSwap.id))
-        ) {
-            const { txid } = await this.swapManager.waitForSwapCompletion(
-                pendingSwap.id
-            );
+    async waitAndClaimArk(pendingSwap: BoltzChainSwap): Promise<{ txid: string }> {
+        if (this.swapManager && (await this.swapManager.hasSwap(pendingSwap.id))) {
+            const { txid } = await this.swapManager.waitForSwapCompletion(pendingSwap.id);
             return { txid };
         }
         return new Promise<{ txid: string }>((resolve, reject) => {
@@ -2022,7 +1843,7 @@ export class ArkadeSwaps {
                 status: BoltzSwapStatus,
                 data: {
                     failureReason?: string;
-                }
+                },
             ) => {
                 const updateSwapStatus = () => {
                     swap.status = status;
@@ -2038,23 +1859,16 @@ export class ArkadeSwaps {
                         break;
                     case "transaction.claimed":
                         await updateSwapStatus();
-                        const claimedStatus = await this.getSwapStatus(
-                            pendingSwap.id
-                        );
+                        const claimedStatus = await this.getSwapStatus(pendingSwap.id);
                         resolve({
                             txid: claimedStatus.transaction?.id ?? "",
                         });
                         break;
                     case "transaction.claim.pending":
                         await updateSwapStatus();
-                        await this.signCooperativeClaimForServer(swap).catch(
-                            (err) => {
-                                logger.error(
-                                    `Failed to sign cooperative claim for ${swap.id}:`,
-                                    err
-                                );
-                            }
-                        );
+                        await this.signCooperativeClaimForServer(swap).catch((err) => {
+                            logger.error(`Failed to sign cooperative claim for ${swap.id}:`, err);
+                        });
                         break;
                     case "transaction.lockupFailed":
                         await updateSwapStatus();
@@ -2064,7 +1878,7 @@ export class ArkadeSwaps {
                                     message: `Failed to renegotiate quote: ${err.message}`,
                                     isRefundable: false, // TODO btc refund not implemented yet
                                     pendingSwap: swap,
-                                })
+                                }),
                             );
                         });
                         break;
@@ -2074,7 +1888,7 @@ export class ArkadeSwaps {
                             new SwapExpiredError({
                                 isRefundable: false, // TODO btc refund not implemented yet
                                 pendingSwap: swap,
-                            })
+                            }),
                         );
                         break;
                     case "transaction.failed":
@@ -2083,7 +1897,7 @@ export class ArkadeSwaps {
                             new TransactionFailedError({
                                 message: data.failureReason,
                                 isRefundable: false, // TODO btc refund not implemented yet
-                            })
+                            }),
                         );
                         break;
                     case "transaction.refunded":
@@ -2096,9 +1910,7 @@ export class ArkadeSwaps {
                 }
             };
 
-            this.swapProvider
-                .monitorSwap(swap.id, onStatusUpdate)
-                .catch(reject);
+            this.swapProvider.monitorSwap(swap.id, onStatusUpdate).catch(reject);
         });
     }
 
@@ -2109,19 +1921,13 @@ export class ArkadeSwaps {
      */
     async claimArk(pendingSwap: BoltzChainSwap): Promise<void> {
         if (!pendingSwap.toAddress)
-            throw new Error(
-                `Swap ${pendingSwap.id}: destination address is required`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: destination address is required`);
 
         if (!pendingSwap.response.claimDetails.serverPublicKey)
-            throw new Error(
-                `Swap ${pendingSwap.id}: missing server public key in claim details`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: missing server public key in claim details`);
 
         if (!pendingSwap.response.claimDetails.timeouts)
-            throw new Error(
-                `Swap ${pendingSwap.id}: missing timeouts in claim details`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: missing timeouts in claim details`);
 
         const arkInfo = await this.arkProvider.getInfo();
         const preimage = hex.decode(pendingSwap.preimage);
@@ -2130,18 +1936,15 @@ export class ArkadeSwaps {
         // build expected VHTLC script
         const receiverXOnlyPublicKey = normalizeToXOnlyKey(
             pendingSwap.request.claimPublicKey,
-            "receiver"
+            "receiver",
         );
 
         const senderXOnlyPublicKey = normalizeToXOnlyKey(
             pendingSwap.response.claimDetails.serverPublicKey!,
-            "sender"
+            "sender",
         );
 
-        const serverXOnlyPublicKey = normalizeToXOnlyKey(
-            arkInfo.signerPubkey,
-            "server"
-        );
+        const serverXOnlyPublicKey = normalizeToXOnlyKey(arkInfo.signerPubkey, "server");
 
         const { vhtlcAddress, vhtlcScript } = this.createVHTLCScript({
             network: arkInfo.network,
@@ -2153,9 +1956,7 @@ export class ArkadeSwaps {
         });
 
         if (!vhtlcScript.claimScript)
-            throw new Error(
-                `Swap ${pendingSwap.id}: failed to create VHTLC script for chain swap`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: failed to create VHTLC script for chain swap`);
 
         if (pendingSwap.response.claimDetails.lockupAddress !== vhtlcAddress) {
             throw new SwapError({
@@ -2174,16 +1975,12 @@ export class ArkadeSwaps {
                 break;
             }
             if (attempt < CLAIM_VTXO_RETRY_ATTEMPTS) {
-                await new Promise((resolve) =>
-                    setTimeout(resolve, CLAIM_VTXO_RETRY_DELAY_MS)
-                );
+                await new Promise((resolve) => setTimeout(resolve, CLAIM_VTXO_RETRY_DELAY_MS));
             }
         }
 
         if (!vtxo) {
-            throw new Error(
-                `Swap ${pendingSwap.id}: no spendable virtual coins found`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: no spendable virtual coins found`);
         }
 
         const input = {
@@ -2198,10 +1995,7 @@ export class ArkadeSwaps {
         };
 
         // Use shared identity utility for preimage witness
-        const vhtlcIdentity = claimVHTLCIdentity(
-            this.wallet.identity,
-            preimage
-        );
+        const vhtlcIdentity = claimVHTLCIdentity(this.wallet.identity, preimage);
 
         if (isRecoverable(vtxo)) {
             await this.joinBatch(vhtlcIdentity, input, output, arkInfo);
@@ -2213,7 +2007,7 @@ export class ArkadeSwaps {
                 input,
                 output,
                 arkInfo,
-                this.arkProvider
+                this.arkProvider,
             );
         }
 
@@ -2229,22 +2023,14 @@ export class ArkadeSwaps {
      * Sign a cooperative claim for the server in BTC => ARK swaps.
      * @param pendingSwap - The pending chain swap.
      */
-    async signCooperativeClaimForServer(
-        pendingSwap: BoltzChainSwap
-    ): Promise<void> {
+    async signCooperativeClaimForServer(pendingSwap: BoltzChainSwap): Promise<void> {
         if (!pendingSwap.response.lockupDetails.swapTree)
-            throw new Error(
-                `Swap ${pendingSwap.id}: missing swap tree in lockup details`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: missing swap tree in lockup details`);
 
         if (!pendingSwap.response.lockupDetails.serverPublicKey)
-            throw new Error(
-                `Swap ${pendingSwap.id}: missing server public key in lockup details`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: missing server public key in lockup details`);
 
-        const claimDetails = await this.swapProvider.getChainClaimDetails(
-            pendingSwap.id
-        );
+        const claimDetails = await this.swapProvider.getChainClaimDetails(pendingSwap.id);
 
         // Verify the server key from the claim response matches the one
         // stored at swap creation. MuSig2 requires consistent keys across
@@ -2252,7 +2038,7 @@ export class ArkadeSwaps {
         const serverPubKey = pendingSwap.response.lockupDetails.serverPublicKey;
         if (claimDetails.publicKey !== serverPubKey) {
             throw new Error(
-                `Swap ${pendingSwap.id}: server public key mismatch — claim response has ${claimDetails.publicKey}, expected ${serverPubKey}`
+                `Swap ${pendingSwap.id}: server public key mismatch — claim response has ${claimDetails.publicKey}, expected ${serverPubKey}`,
             );
         }
 
@@ -2261,8 +2047,7 @@ export class ArkadeSwaps {
                 hex.decode(serverPubKey),
                 secp256k1.getPublicKey(hex.decode(pendingSwap.ephemeralKey)),
             ]),
-            deserializeSwapTree(pendingSwap.response.lockupDetails.swapTree)
-                .tree
+            deserializeSwapTree(pendingSwap.response.lockupDetails.swapTree).tree,
         );
 
         const musigNonces = musig
@@ -2270,9 +2055,7 @@ export class ArkadeSwaps {
             .generateNonce()
             .aggregateNonces([
                 [
-                    hex.decode(
-                        pendingSwap.response.lockupDetails.serverPublicKey
-                    ),
+                    hex.decode(pendingSwap.response.lockupDetails.serverPublicKey),
                     hex.decode(claimDetails.pubNonce),
                 ],
             ])
@@ -2294,13 +2077,9 @@ export class ArkadeSwaps {
      * @param pendingSwap - The pending swap to wait for and claim.
      * @returns The transaction ID of the claim.
      */
-    async waitAndClaimChain(
-        pendingSwap: BoltzChainSwap
-    ): Promise<{ txid: string }> {
-        if (pendingSwap.request.to === "ARK")
-            return this.waitAndClaimArk(pendingSwap);
-        if (pendingSwap.request.to === "BTC")
-            return this.waitAndClaimBtc(pendingSwap);
+    async waitAndClaimChain(pendingSwap: BoltzChainSwap): Promise<{ txid: string }> {
+        if (pendingSwap.request.to === "ARK") return this.waitAndClaimArk(pendingSwap);
+        if (pendingSwap.request.to === "BTC") return this.waitAndClaimBtc(pendingSwap);
         throw new SwapError({
             message: `Unsupported swap destination: ${pendingSwap.request.to}`,
         });
@@ -2323,15 +2102,12 @@ export class ArkadeSwaps {
         senderLockAmount?: number;
         receiverLockAmount?: number;
     }): Promise<BoltzChainSwap> {
-        const { to, from, receiverLockAmount, senderLockAmount, toAddress } =
-            args;
+        const { to, from, receiverLockAmount, senderLockAmount, toAddress } = args;
 
-        if (!toAddress)
-            throw new SwapError({ message: "Destination address is required" });
+        if (!toAddress) throw new SwapError({ message: "Destination address is required" });
 
         const feeSatsPerByte = args.feeSatsPerByte ?? 1;
-        if (feeSatsPerByte <= 0)
-            throw new SwapError({ message: "Invalid feeSatsPerByte" });
+        if (feeSatsPerByte <= 0) throw new SwapError({ message: "Invalid feeSatsPerByte" });
 
         let amount, serverLockAmount, userLockAmount;
 
@@ -2339,8 +2115,7 @@ export class ArkadeSwaps {
             amount = receiverLockAmount;
             const fees = await this.getFees(from, to);
             serverLockAmount =
-                receiverLockAmount +
-                (fees as ChainFeesResponse).minerFees.user.claim;
+                receiverLockAmount + (fees as ChainFeesResponse).minerFees.user.claim;
         } else if (senderLockAmount) {
             amount = senderLockAmount;
             userLockAmount = senderLockAmount;
@@ -2353,8 +2128,7 @@ export class ArkadeSwaps {
         // create random preimage and its hash
         const preimage = randomBytes(32);
         const preimageHash = hex.encode(sha256(preimage));
-        if (!preimageHash)
-            throw new SwapError({ message: "Failed to get preimage hash" });
+        if (!preimageHash) throw new SwapError({ message: "Failed to get preimage hash" });
 
         // ephemeral keys for BTC chain claim/refund
         const ephemeralKey = secp256k1.utils.randomSecretKey();
@@ -2390,8 +2164,7 @@ export class ArkadeSwaps {
             userLockAmount,
         };
 
-        const swapResponse =
-            await this.swapProvider.createChainSwap(swapRequest);
+        const swapResponse = await this.swapProvider.createChainSwap(swapRequest);
 
         const pendingSwap: BoltzChainSwap = {
             amount,
@@ -2429,24 +2202,16 @@ export class ArkadeSwaps {
 
         if (from === "ARK") {
             if (!swap.response.lockupDetails.serverPublicKey)
-                throw new Error(
-                    `Swap ${swap.id}: missing serverPublicKey in lockup details`
-                );
+                throw new Error(`Swap ${swap.id}: missing serverPublicKey in lockup details`);
             if (!swap.response.lockupDetails.timeouts)
-                throw new Error(
-                    `Swap ${swap.id}: missing timeouts in lockup details`
-                );
+                throw new Error(`Swap ${swap.id}: missing timeouts in lockup details`);
         }
 
         if (to === "ARK") {
             if (!swap.response.claimDetails.serverPublicKey)
-                throw new Error(
-                    `Swap ${swap.id}: missing serverPublicKey in claim details`
-                );
+                throw new Error(`Swap ${swap.id}: missing serverPublicKey in claim details`);
             if (!swap.response.claimDetails.timeouts)
-                throw new Error(
-                    `Swap ${swap.id}: missing timeouts in claim details`
-                );
+                throw new Error(`Swap ${swap.id}: missing timeouts in claim details`);
         }
 
         const lockupAddress =
@@ -2464,9 +2229,7 @@ export class ArkadeSwaps {
                 ? swap.response.claimDetails.serverPublicKey!
                 : swap.request.refundPublicKey;
 
-        const serverPubkey = hex.encode(
-            normalizeToXOnlyKey(arkInfo.signerPubkey, "server")
-        );
+        const serverPubkey = hex.encode(normalizeToXOnlyKey(arkInfo.signerPubkey, "server"));
 
         const vhtlcTimeouts =
             to === "ARK"
@@ -2520,16 +2283,9 @@ export class ArkadeSwaps {
         input: ArkTxInput,
         output: TransactionOutput,
         arkInfo: ArkInfo,
-        isRecoverable = true
+        isRecoverable = true,
     ): Promise<string> {
-        return joinBatch(
-            this.arkProvider,
-            identity,
-            input,
-            output,
-            arkInfo,
-            isRecoverable
-        );
+        return joinBatch(this.arkProvider, identity, input, output, arkInfo, isRecoverable);
     }
 
     /**
@@ -2558,10 +2314,7 @@ export class ArkadeSwaps {
      */
     async getFees(): Promise<FeesResponse>;
     async getFees(from: Chain, to: Chain): Promise<ChainFeesResponse>;
-    async getFees(
-        from?: Chain,
-        to?: Chain
-    ): Promise<FeesResponse | ChainFeesResponse> {
+    async getFees(from?: Chain, to?: Chain): Promise<FeesResponse | ChainFeesResponse> {
         if (from && to) {
             return this.swapProvider.getChainFees(from, to);
         }
@@ -2601,9 +2354,7 @@ export class ArkadeSwaps {
     async getPendingSubmarineSwaps(): Promise<BoltzSubmarineSwap[]> {
         const swaps = await this.getPendingSubmarineSwapsFromStorage();
         if (!swaps) return [];
-        return swaps.filter(
-            (swap: BoltzSubmarineSwap) => swap.status === "invoice.set"
-        );
+        return swaps.filter((swap: BoltzSubmarineSwap) => swap.status === "invoice.set");
     }
 
     /**
@@ -2612,9 +2363,7 @@ export class ArkadeSwaps {
     async getPendingReverseSwaps(): Promise<BoltzReverseSwap[]> {
         const swaps = await this.getPendingReverseSwapsFromStorage();
         if (!swaps) return [];
-        return swaps.filter(
-            (swap: BoltzReverseSwap) => swap.status === "swap.created"
-        );
+        return swaps.filter((swap: BoltzReverseSwap) => swap.status === "swap.created");
     }
 
     /**
@@ -2655,15 +2404,12 @@ export class ArkadeSwaps {
                         updateReverseSwapStatus(
                             swap,
                             status,
-                            this.savePendingReverseSwap.bind(this)
-                        )
+                            this.savePendingReverseSwap.bind(this),
+                        ),
                     )
                     .catch((error) => {
-                        logger.error(
-                            `Failed to refresh swap status for ${swap.id}:`,
-                            error
-                        );
-                    })
+                        logger.error(`Failed to refresh swap status for ${swap.id}:`, error);
+                    }),
             );
         }
         for (const swap of await this.getPendingSubmarineSwapsFromStorage()) {
@@ -2674,30 +2420,22 @@ export class ArkadeSwaps {
                         updateSubmarineSwapStatus(
                             swap,
                             status,
-                            this.savePendingSubmarineSwap.bind(this)
-                        )
+                            this.savePendingSubmarineSwap.bind(this),
+                        ),
                     )
                     .catch((error) => {
-                        logger.error(
-                            `Failed to refresh swap status for ${swap.id}:`,
-                            error
-                        );
-                    })
+                        logger.error(`Failed to refresh swap status for ${swap.id}:`, error);
+                    }),
             );
         }
         for (const swap of await this.getPendingChainSwapsFromStorage()) {
             if (isChainFinalStatus(swap.status)) continue;
             promises.push(
                 this.getSwapStatus(swap.id)
-                    .then(({ status }) =>
-                        this.savePendingChainSwap({ ...swap, status })
-                    )
+                    .then(({ status }) => this.savePendingChainSwap({ ...swap, status }))
                     .catch((error) => {
-                        logger.error(
-                            `Failed to refresh swap status for ${swap.id}:`,
-                            error
-                        );
-                    })
+                        logger.error(`Failed to refresh swap status for ${swap.id}:`, error);
+                    }),
             );
         }
 
@@ -2720,9 +2458,7 @@ export class ArkadeSwaps {
         reverseSwaps: BoltzReverseSwap[];
         submarineSwaps: BoltzSubmarineSwap[];
     }> {
-        const publicKey = hex.encode(
-            await this.wallet.identity.compressedPublicKey()
-        );
+        const publicKey = hex.encode(await this.wallet.identity.compressedPublicKey());
         if (!publicKey) throw new Error("Failed to get public key from wallet");
 
         const fees = boltzFees ?? (await this.swapProvider.getFees());
@@ -2762,19 +2498,17 @@ export class ArkadeSwaps {
                         refundPublicKey: serverPublicKey,
                         timeoutBlockHeights: timeoutBlockHeights ?? {
                             refund: extractTimeLockFromLeafOutput(
-                                tree.refundWithoutBoltzLeaf?.output ?? ""
+                                tree.refundWithoutBoltzLeaf?.output ?? "",
                             ),
                             unilateralClaim: extractTimeLockFromLeafOutput(
-                                tree.unilateralClaimLeaf?.output ?? ""
+                                tree.unilateralClaimLeaf?.output ?? "",
                             ),
                             unilateralRefund: extractTimeLockFromLeafOutput(
-                                tree.unilateralRefundLeaf?.output ?? ""
+                                tree.unilateralRefundLeaf?.output ?? "",
                             ),
-                            unilateralRefundWithoutReceiver:
-                                extractTimeLockFromLeafOutput(
-                                    tree.unilateralRefundWithoutBoltzLeaf
-                                        ?.output ?? ""
-                                ),
+                            unilateralRefundWithoutReceiver: extractTimeLockFromLeafOutput(
+                                tree.unilateralRefundWithoutBoltzLeaf?.output ?? "",
+                            ),
                         },
                     },
                     status,
@@ -2782,28 +2516,18 @@ export class ArkadeSwaps {
                     preimage: "",
                 } as BoltzReverseSwap);
             } else if (isRestoredSubmarineSwap(swap)) {
-                const {
-                    amount,
-                    lockupAddress,
-                    serverPublicKey,
-                    tree,
-                    timeoutBlockHeights,
-                } = swap.refundDetails;
+                const { amount, lockupAddress, serverPublicKey, tree, timeoutBlockHeights } =
+                    swap.refundDetails;
 
                 let preimage = "";
                 // Skip preimage fetch for terminal swaps — nothing actionable
                 // and it avoids unnecessary API calls / 429s.
                 if (!isSubmarineFinalStatus(status)) {
                     try {
-                        const data = await this.swapProvider.getSwapPreimage(
-                            swap.id
-                        );
+                        const data = await this.swapProvider.getSwapPreimage(swap.id);
                         preimage = data.preimage;
                     } catch (error) {
-                        logger.warn(
-                            `Failed to restore preimage for submarine swap ${id}`,
-                            error
-                        );
+                        logger.warn(`Failed to restore preimage for submarine swap ${id}`, error);
                     }
                 }
 
@@ -2825,19 +2549,17 @@ export class ArkadeSwaps {
                         claimPublicKey: serverPublicKey,
                         timeoutBlockHeights: timeoutBlockHeights ?? {
                             refund: extractTimeLockFromLeafOutput(
-                                tree.refundWithoutBoltzLeaf?.output ?? ""
+                                tree.refundWithoutBoltzLeaf?.output ?? "",
                             ),
                             unilateralClaim: extractTimeLockFromLeafOutput(
-                                tree.unilateralClaimLeaf?.output ?? ""
+                                tree.unilateralClaimLeaf?.output ?? "",
                             ),
                             unilateralRefund: extractTimeLockFromLeafOutput(
-                                tree.unilateralRefundLeaf?.output ?? ""
+                                tree.unilateralRefundLeaf?.output ?? "",
                             ),
-                            unilateralRefundWithoutReceiver:
-                                extractTimeLockFromLeafOutput(
-                                    tree.unilateralRefundWithoutBoltzLeaf
-                                        ?.output ?? ""
-                                ),
+                            unilateralRefundWithoutReceiver: extractTimeLockFromLeafOutput(
+                                tree.unilateralRefundWithoutBoltzLeaf?.output ?? "",
+                            ),
                         },
                     },
                 } as BoltzSubmarineSwap);
@@ -2845,12 +2567,8 @@ export class ArkadeSwaps {
                 const refundDetails = swap.refundDetails;
                 if (!refundDetails) continue;
 
-                const {
-                    amount,
-                    lockupAddress,
-                    serverPublicKey,
-                    timeoutBlockHeight,
-                } = refundDetails;
+                const { amount, lockupAddress, serverPublicKey, timeoutBlockHeight } =
+                    refundDetails;
 
                 chainSwaps.push({
                     id,
@@ -2890,20 +2608,14 @@ export class ArkadeSwaps {
     /**
      * Enrich a restored reverse swap with its preimage.
      */
-    enrichReverseSwapPreimage(
-        swap: BoltzReverseSwap,
-        preimage: string
-    ): BoltzReverseSwap {
+    enrichReverseSwapPreimage(swap: BoltzReverseSwap, preimage: string): BoltzReverseSwap {
         return enrichReverseSwapPreimage(swap, preimage);
     }
 
     /**
      * Enrich a restored submarine swap with its invoice.
      */
-    enrichSubmarineSwapInvoice(
-        swap: BoltzSubmarineSwap,
-        invoice: string
-    ): BoltzSubmarineSwap {
+    enrichSubmarineSwapInvoice(swap: BoltzSubmarineSwap, invoice: string): BoltzSubmarineSwap {
         return enrichSubmarineSwapInvoice(swap, invoice);
     }
 }
@@ -2920,35 +2632,19 @@ export interface IArkadeSwaps extends AsyncDisposable {
     stopSwapManager(): Promise<void>;
     getSwapManager(): SwapManagerClient | null;
     createLightningInvoice(
-        args: CreateLightningInvoiceRequest
+        args: CreateLightningInvoiceRequest,
     ): Promise<CreateLightningInvoiceResponse>;
-    sendLightningPayment(
-        args: SendLightningPaymentRequest
-    ): Promise<SendLightningPaymentResponse>;
-    createSubmarineSwap(
-        args: SendLightningPaymentRequest
-    ): Promise<BoltzSubmarineSwap>;
-    createReverseSwap(
-        args: CreateLightningInvoiceRequest
-    ): Promise<BoltzReverseSwap>;
+    sendLightningPayment(args: SendLightningPaymentRequest): Promise<SendLightningPaymentResponse>;
+    createSubmarineSwap(args: SendLightningPaymentRequest): Promise<BoltzSubmarineSwap>;
+    createReverseSwap(args: CreateLightningInvoiceRequest): Promise<BoltzReverseSwap>;
     claimVHTLC(pendingSwap: BoltzReverseSwap): Promise<void>;
-    refundVHTLC(
-        pendingSwap: BoltzSubmarineSwap
-    ): Promise<SubmarineRefundOutcome>;
-    inspectSubmarineRecovery(
-        swap: BoltzSubmarineSwap
-    ): Promise<SubmarineRecoveryInfo>;
+    refundVHTLC(pendingSwap: BoltzSubmarineSwap): Promise<SubmarineRefundOutcome>;
+    inspectSubmarineRecovery(swap: BoltzSubmarineSwap): Promise<SubmarineRecoveryInfo>;
     scanRecoverableSubmarineSwaps(): Promise<SubmarineRecoveryInfo[]>;
-    recoverSubmarineFunds(
-        swap: BoltzSubmarineSwap
-    ): Promise<SubmarineRefundOutcome>;
-    recoverAllSubmarineFunds(
-        swaps: BoltzSubmarineSwap[]
-    ): Promise<SubmarineRecoveryResult[]>;
+    recoverSubmarineFunds(swap: BoltzSubmarineSwap): Promise<SubmarineRefundOutcome>;
+    recoverAllSubmarineFunds(swaps: BoltzSubmarineSwap[]): Promise<SubmarineRecoveryResult[]>;
     waitAndClaim(pendingSwap: BoltzReverseSwap): Promise<{ txid: string }>;
-    waitForSwapSettlement(
-        pendingSwap: BoltzSubmarineSwap
-    ): Promise<{ preimage: string }>;
+    waitForSwapSettlement(pendingSwap: BoltzSubmarineSwap): Promise<{ preimage: string }>;
     restoreSwaps(boltzFees?: FeesResponse): Promise<{
         chainSwaps: BoltzChainSwap[];
         reverseSwaps: BoltzReverseSwap[];
@@ -2992,7 +2688,7 @@ export interface IArkadeSwaps extends AsyncDisposable {
         input: ArkTxInput,
         output: TransactionOutput,
         arkInfo: ArkInfo,
-        isRecoverable?: boolean
+        isRecoverable?: boolean,
     ): Promise<string>;
     createVHTLCScript(args: {
         network: string;
@@ -3012,14 +2708,8 @@ export interface IArkadeSwaps extends AsyncDisposable {
     getSwapHistory(): Promise<BoltzSwap[]>;
     refreshSwapsStatus(): Promise<void>;
     getSwapStatus(swapId: string): Promise<GetSwapStatusResponse>;
-    enrichReverseSwapPreimage(
-        swap: BoltzReverseSwap,
-        preimage: string
-    ): BoltzReverseSwap;
-    enrichSubmarineSwapInvoice(
-        swap: BoltzSubmarineSwap,
-        invoice: string
-    ): BoltzSubmarineSwap;
+    enrichReverseSwapPreimage(swap: BoltzReverseSwap, preimage: string): BoltzReverseSwap;
+    enrichSubmarineSwapInvoice(swap: BoltzSubmarineSwap, invoice: string): BoltzSubmarineSwap;
     /**
      * Reset all swap state: stops the SwapManager and clears the swap repository.
      *

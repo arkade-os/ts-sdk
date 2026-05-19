@@ -38,11 +38,7 @@ describe("ElectrumOnchainProvider integration tests", () => {
         // Make sure the connection is actually open before the first test —
         // ws-electrumx-client lazy-connects on the first request, so any
         // setup error surfaces here rather than inside a test body.
-        const version = await ws.request<[string, string]>(
-            "server.version",
-            "ts-sdk-e2e",
-            "1.4"
-        );
+        const version = await ws.request<[string, string]>("server.version", "ts-sdk-e2e", "1.4");
         expect(Array.isArray(version)).toBe(true);
     }, 15_000);
 
@@ -66,7 +62,7 @@ describe("ElectrumOnchainProvider integration tests", () => {
             // not register a new one server-side.
             const tipAgain = await provider.getChainTip();
             expect(tipAgain.height).toBeGreaterThanOrEqual(tip.height);
-        }
+        },
     );
 
     it(
@@ -81,7 +77,7 @@ describe("ElectrumOnchainProvider integration tests", () => {
                 expect(feeRate).toBeGreaterThanOrEqual(1);
                 expect(Number.isInteger(feeRate)).toBe(true);
             }
-        }
+        },
     );
 
     it(
@@ -89,11 +85,7 @@ describe("ElectrumOnchainProvider integration tests", () => {
         { timeout: 30_000 },
         async () => {
             const identity = SingleKey.fromRandomBytes();
-            const wallet = await OnchainWallet.create(
-                identity,
-                "regtest",
-                provider
-            );
+            const wallet = await OnchainWallet.create(identity, "regtest", provider);
 
             // Fresh wallet: no coins, no history.
             expect(await provider.getCoins(wallet.address)).toEqual([]);
@@ -117,9 +109,8 @@ describe("ElectrumOnchainProvider integration tests", () => {
             const fundingTx = txs.find((tx) =>
                 tx.vout.some(
                     (out) =>
-                        out.scriptpubkey_address === wallet.address &&
-                        Number(out.value) === sats
-                )
+                        out.scriptpubkey_address === wallet.address && Number(out.value) === sats,
+                ),
             );
             expect(fundingTx).toBeDefined();
             expect(fundingTx!.txid).toBe(coins[0].txid);
@@ -135,7 +126,7 @@ describe("ElectrumOnchainProvider integration tests", () => {
             } else {
                 expect(status).toEqual({ confirmed: false });
             }
-        }
+        },
     );
 
     it(
@@ -146,12 +137,12 @@ describe("ElectrumOnchainProvider integration tests", () => {
             const alice = await OnchainWallet.create(
                 SingleKey.fromRandomBytes(),
                 "regtest",
-                provider
+                provider,
             );
             const bob = await OnchainWallet.create(
                 SingleKey.fromRandomBytes(),
                 "regtest",
-                provider
+                provider,
             );
 
             faucet(alice.address, 0.001);
@@ -176,7 +167,7 @@ describe("ElectrumOnchainProvider integration tests", () => {
             // spent (any vout pointing to Bob's coin counts).
             const aliceFinalBalance = await alice.getBalance();
             expect(aliceFinalBalance).toBeLessThan(100_000);
-        }
+        },
     );
 
     it(
@@ -186,19 +177,16 @@ describe("ElectrumOnchainProvider integration tests", () => {
             const alice = await OnchainWallet.create(
                 SingleKey.fromRandomBytes(),
                 "regtest",
-                provider
+                provider,
             );
             const bob = await OnchainWallet.create(
                 SingleKey.fromRandomBytes(),
                 "regtest",
-                provider
+                provider,
             );
 
             faucet(alice.address, 0.001);
-            await waitFor(
-                async () =>
-                    (await provider.getCoins(alice.address)).length === 1
-            );
+            await waitFor(async () => (await provider.getCoins(alice.address)).length === 1);
 
             const aliceCoins = await provider.getCoins(alice.address);
             expect(aliceCoins).toHaveLength(1);
@@ -211,9 +199,7 @@ describe("ElectrumOnchainProvider integration tests", () => {
                 feeRate: 2,
             });
             await waitFor(async () =>
-                (await provider.getTxOutspends(fundingTxid)).some(
-                    (o) => o.spent
-                )
+                (await provider.getTxOutspends(fundingTxid)).some((o) => o.spent),
             );
 
             const outspends = await provider.getTxOutspends(fundingTxid);
@@ -222,46 +208,35 @@ describe("ElectrumOnchainProvider integration tests", () => {
             expect(spentOutput).toBeDefined();
             expect(spentOutput!.txid).toMatch(/^[0-9a-f]{64}$/);
             expect(spentOutput!.txid).not.toBe(fundingTxid);
-        }
+        },
     );
 
-    it(
-        "delivers funded txs to the watchAddresses callback",
-        { timeout: 30_000 },
-        async () => {
-            const wallet = await OnchainWallet.create(
-                SingleKey.fromRandomBytes(),
-                "regtest",
-                provider
-            );
+    it("delivers funded txs to the watchAddresses callback", { timeout: 30_000 }, async () => {
+        const wallet = await OnchainWallet.create(SingleKey.fromRandomBytes(), "regtest", provider);
 
-            const seen: string[] = [];
-            const stop = await provider.watchAddresses(
-                [wallet.address],
-                (txs) => {
-                    for (const tx of txs) seen.push(tx.txid);
-                }
-            );
+        const seen: string[] = [];
+        const stop = await provider.watchAddresses([wallet.address], (txs) => {
+            for (const tx of txs) seen.push(tx.txid);
+        });
 
-            try {
-                faucet(wallet.address, 0.0005);
-                // Subscriptions deliver via electrs's mempool notification.
-                // Poll the captured array — finishes as soon as electrs
-                // pushes the notification, much shorter than a fixed sleep
-                // in the common case.
-                await waitFor(async () => seen.length >= 1, {
-                    timeout: 30_000,
-                });
+        try {
+            faucet(wallet.address, 0.0005);
+            // Subscriptions deliver via electrs's mempool notification.
+            // Poll the captured array — finishes as soon as electrs
+            // pushes the notification, much shorter than a fixed sleep
+            // in the common case.
+            await waitFor(async () => seen.length >= 1, {
+                timeout: 30_000,
+            });
 
-                // The reported txid must match the on-chain coin we can
-                // independently fetch via listunspent.
-                const coins = await provider.getCoins(wallet.address);
-                expect(seen).toContain(coins[0].txid);
-            } finally {
-                stop();
-            }
+            // The reported txid must match the on-chain coin we can
+            // independently fetch via listunspent.
+            const coins = await provider.getCoins(wallet.address);
+            expect(seen).toContain(coins[0].txid);
+        } finally {
+            stop();
         }
-    );
+    });
 
     it(
         "exposes WsElectrumChainSource.fetchHistories as a batch round-trip",
@@ -269,16 +244,8 @@ describe("ElectrumOnchainProvider integration tests", () => {
         // electrs's own indexing latency under CI load.
         { timeout: 40_000 },
         async () => {
-            const a = await OnchainWallet.create(
-                SingleKey.fromRandomBytes(),
-                "regtest",
-                provider
-            );
-            const b = await OnchainWallet.create(
-                SingleKey.fromRandomBytes(),
-                "regtest",
-                provider
-            );
+            const a = await OnchainWallet.create(SingleKey.fromRandomBytes(), "regtest", provider);
+            const b = await OnchainWallet.create(SingleKey.fromRandomBytes(), "regtest", provider);
             faucet(a.address, 0.0001);
             faucet(b.address, 0.0002);
 
@@ -307,7 +274,7 @@ describe("ElectrumOnchainProvider integration tests", () => {
             expect(histories!).toHaveLength(2);
             expect(histories![0].length).toBeGreaterThanOrEqual(1);
             expect(histories![1].length).toBeGreaterThanOrEqual(1);
-        }
+        },
     );
 });
 
@@ -324,11 +291,7 @@ describe("OnchainWallet over ElectrumOnchainProvider", () => {
         provider = new ElectrumOnchainProvider(ws, networks.regtest);
         // Force the connection to come up before the test starts so latency
         // stays out of the test budget.
-        await ws.request<[string, string]>(
-            "server.version",
-            "ts-sdk-e2e",
-            "1.4"
-        );
+        await ws.request<[string, string]>("server.version", "ts-sdk-e2e", "1.4");
     }, 15_000);
 
     afterAll(async () => {
@@ -342,12 +305,12 @@ describe("OnchainWallet over ElectrumOnchainProvider", () => {
             const alice = await OnchainWallet.create(
                 SingleKey.fromRandomBytes(),
                 "regtest",
-                provider
+                provider,
             );
             const bob = await OnchainWallet.create(
                 SingleKey.fromRandomBytes(),
                 "regtest",
-                provider
+                provider,
             );
 
             expect(await alice.getBalance()).toBe(0);
@@ -367,7 +330,7 @@ describe("OnchainWallet over ElectrumOnchainProvider", () => {
 
             expect(await bob.getBalance()).toBe(sendAmount);
             expect(await alice.getBalance()).toBeLessThan(sats);
-        }
+        },
     );
 });
 

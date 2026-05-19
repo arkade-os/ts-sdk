@@ -1,14 +1,8 @@
 import { expand, networks } from "@bitcoinerlab/descriptors-scure";
 import { isMainnetDescriptor } from "../identity/descriptor";
-import {
-    DescriptorProvider,
-    DescriptorSigningRequest,
-} from "../identity/descriptorProvider";
+import { DescriptorProvider, DescriptorSigningRequest } from "../identity/descriptorProvider";
 import { HDCapableIdentity } from "../identity/hdCapableIdentity";
-import {
-    WalletRepository,
-    WalletState,
-} from "../repositories/walletRepository";
+import { WalletRepository, WalletState } from "../repositories/walletRepository";
 import { Transaction } from "../utils/transaction";
 import { updateWalletState } from "../utils/syncCursors";
 import {
@@ -68,12 +62,10 @@ const HD_SETTINGS_KEY = "hd";
  * // next: tr([fp/86'/0'/0']xpub/0/1)
  * ```
  */
-export class HDDescriptorProvider
-    implements DescriptorProvider, ReceiveRotatorFactory
-{
+export class HDDescriptorProvider implements DescriptorProvider, ReceiveRotatorFactory {
     private constructor(
         private readonly identity: HDCapableIdentity,
-        private readonly walletRepository: WalletRepository
+        private readonly walletRepository: WalletRepository,
     ) {}
 
     /**
@@ -84,7 +76,7 @@ export class HDDescriptorProvider
      */
     static async create(
         identity: HDCapableIdentity,
-        walletRepository: WalletRepository
+        walletRepository: WalletRepository,
     ): Promise<HDDescriptorProvider> {
         return new HDDescriptorProvider(identity, walletRepository);
     }
@@ -98,10 +90,7 @@ export class HDDescriptorProvider
      */
     async getNextSigningDescriptor(): Promise<string> {
         return this.mutate((settings) => {
-            const next =
-                settings.lastIndexUsed === undefined
-                    ? 0
-                    : settings.lastIndexUsed + 1;
+            const next = settings.lastIndexUsed === undefined ? 0 : settings.lastIndexUsed + 1;
             settings.lastIndexUsed = next;
             return this.materializeAt(next);
         });
@@ -140,9 +129,7 @@ export class HDDescriptorProvider
      * to the identity's signing primitives — the identity, not the provider,
      * holds the seed.
      */
-    async signWithDescriptor(
-        requests: DescriptorSigningRequest[]
-    ): Promise<Transaction[]> {
+    async signWithDescriptor(requests: DescriptorSigningRequest[]): Promise<Transaction[]> {
         return this.identity.signWithDescriptor(requests);
     }
 
@@ -150,13 +137,9 @@ export class HDDescriptorProvider
     async signMessageWithDescriptor(
         descriptor: string,
         message: Uint8Array,
-        signatureType: "schnorr" | "ecdsa" = "schnorr"
+        signatureType: "schnorr" | "ecdsa" = "schnorr",
     ): Promise<Uint8Array> {
-        return this.identity.signMessageWithDescriptor(
-            descriptor,
-            message,
-            signatureType
-        );
+        return this.identity.signMessageWithDescriptor(descriptor, message, signatureType);
     }
 
     /**
@@ -166,7 +149,7 @@ export class HDDescriptorProvider
      * {@link WalletReceiveRotator.defaultBoot}.
      */
     async createReceiveRotator(
-        opts: ReceiveRotatorBootOpts
+        opts: ReceiveRotatorBootOpts,
     ): Promise<ReceiveRotatorBoot | undefined> {
         return WalletReceiveRotator.defaultBoot(this, opts);
     }
@@ -182,14 +165,12 @@ export class HDDescriptorProvider
      */
     private materializeAt(index: number): string {
         const descriptor = this.identity.descriptor;
-        const network = isMainnetDescriptor(descriptor)
-            ? networks.bitcoin
-            : networks.testnet;
+        const network = isMainnetDescriptor(descriptor) ? networks.bitcoin : networks.testnet;
         const expansion = expand({ descriptor, network, index });
         const keyInfo = expansion.expansionMap?.["@0"];
         if (!keyInfo?.keyExpression) {
             throw new Error(
-                `HDDescriptorProvider: cannot materialize descriptor at index ${index}`
+                `HDDescriptorProvider: cannot materialize descriptor at index ${index}`,
             );
         }
         return `tr(${keyInfo.keyExpression})`;
@@ -230,9 +211,7 @@ export class HDDescriptorProvider
      * Fail loud rather than silently derive garbage.
      */
     private parseSettings(state: WalletState): HDWalletSettings {
-        const stored = state.settings?.[HD_SETTINGS_KEY] as
-            | HDWalletSettings
-            | undefined;
+        const stored = state.settings?.[HD_SETTINGS_KEY] as HDWalletSettings | undefined;
         const expected = this.identity.descriptor;
         if (!stored) {
             return { descriptor: expected };
@@ -240,7 +219,7 @@ export class HDDescriptorProvider
         if (stored.descriptor !== expected) {
             throw new Error(
                 `HD descriptor mismatch: stored "${stored.descriptor}", expected "${expected}". ` +
-                    `Refusing to reuse HD state from a different identity.`
+                    `Refusing to reuse HD state from a different identity.`,
             );
         }
         if (
@@ -250,7 +229,7 @@ export class HDDescriptorProvider
                 stored.lastIndexUsed < 0)
         ) {
             throw new Error(
-                `Corrupt HD settings: lastIndexUsed is not a non-negative integer (got ${String(stored.lastIndexUsed)}).`
+                `Corrupt HD settings: lastIndexUsed is not a non-negative integer (got ${String(stored.lastIndexUsed)}).`,
             );
         }
         // Shallow clone so the closure may mutate without aliasing the repo's copy.

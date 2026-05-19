@@ -33,15 +33,14 @@ export const createMockIndexerProvider = (): IndexerProvider => ({
 });
 
 // Test keys for creating valid contracts (valid secp256k1 x-only public keys)
-export const TEST_PUB_KEY_HEX =
-    "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+export const TEST_PUB_KEY_HEX = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 export const TEST_SERVER_PUB_KEY_HEX =
     "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
 export const TEST_PUB_KEY = hex.decode(TEST_PUB_KEY_HEX);
 export const TEST_SERVER_PUB_KEY = hex.decode(TEST_SERVER_PUB_KEY_HEX);
 // Real-looking x-only pubkey (needed for 3-key multisig in DelegateVtxo)
 export const TEST_DELEGATE_PUB_KEY = hex.decode(
-    "f8352deebdf5658d95875d89656112b1dd150f176c702eea4f91a91527e48e26"
+    "f8352deebdf5658d95875d89656112b1dd150f176c702eea4f91a91527e48e26",
 );
 
 // Helper to create valid default contract params
@@ -83,9 +82,7 @@ export const testDelegateScript = new DelegateVtxo.Script({
 export const TEST_DELEGATE_SCRIPT = hex.encode(testDelegateScript.pkScript);
 
 // Helper to create a mock VTXO
-export const createMockVtxo = (
-    overrides: Partial<VirtualCoin> = {}
-): VirtualCoin => ({
+export const createMockVtxo = (overrides: Partial<VirtualCoin> = {}): VirtualCoin => ({
     txid: hex.encode(new Uint8Array(32).fill(1)),
     vout: 0,
     value: 100000,
@@ -100,7 +97,7 @@ export const createMockVtxo = (
 
 // Helper to create a mock ExtendedVirtualCoin
 export const createMockExtendedVtxo = (
-    overrides: Partial<ExtendedVirtualCoin> = {}
+    overrides: Partial<ExtendedVirtualCoin> = {},
 ): ExtendedVirtualCoin =>
     ({
         ...createMockVtxo(),
@@ -113,7 +110,7 @@ export const createMockExtendedVtxo = (
 // Helper to create a mock ContractVtxo
 export const createMockContractVtxo = (
     contractScript: string,
-    overrides: Partial<ContractVtxo> = {}
+    overrides: Partial<ContractVtxo> = {},
 ): ContractVtxo => ({
     ...createMockExtendedVtxo(),
     contractScript,

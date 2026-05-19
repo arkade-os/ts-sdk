@@ -27,8 +27,7 @@ export type TapLeafScript = [
     Bytes,
 ];
 
-export const TapTreeCoder: (typeof PSBTOutput.tapTree)[2] =
-    PSBTOutput.tapTree[2];
+export const TapTreeCoder: (typeof PSBTOutput.tapTree)[2] = PSBTOutput.tapTree[2];
 
 export function scriptFromTapLeafScript(leaf: TapLeafScript): Bytes {
     return leaf[1].subarray(0, leaf[1].length - 1); // remove the version byte
@@ -75,22 +74,18 @@ export class VtxoScript {
         // the scripts must be reversed only HERE while we compute the tweaked public key
         // but the original order should be preserved while encoding as taptree
         // note: .slice().reverse() is used instead of .reverse() to avoid mutating the original array
-        const list =
-            scripts.length % 2 !== 0 ? scripts.slice().reverse() : scripts;
+        const list = scripts.length % 2 !== 0 ? scripts.slice().reverse() : scripts;
 
         const tapTree = taprootListToTree(
             list.map((script) => ({
                 script,
                 leafVersion: TAP_LEAF_VERSION,
-            }))
+            })),
         );
 
         const payment = p2tr(TAPROOT_UNSPENDABLE_KEY, tapTree, undefined, true);
 
-        if (
-            !payment.tapLeafScript ||
-            payment.tapLeafScript.length !== scripts.length
-        ) {
+        if (!payment.tapLeafScript || payment.tapLeafScript.length !== scripts.length) {
             throw new Error("invalid scripts");
         }
 
@@ -110,7 +105,7 @@ export class VtxoScript {
                 depth: 1,
                 version: TAP_LEAF_VERSION,
                 script,
-            }))
+            })),
         );
         return tapTree;
     }
@@ -154,7 +149,7 @@ export class VtxoScript {
      */
     findLeaf(scriptHex: string): TapLeafScript {
         const leaf = this.leaves.find(
-            (leaf) => hex.encode(scriptFromTapLeafScript(leaf)) === scriptHex
+            (leaf) => hex.encode(scriptFromTapLeafScript(leaf)) === scriptHex,
         )!;
         if (!leaf) {
             throw new Error(`leaf '${scriptHex}' not found`);
@@ -168,23 +163,16 @@ export class VtxoScript {
      * @returns CSV-based exit paths found in the leaves
      * @see getSequence
      */
-    exitPaths(): Array<
-        CSVMultisigTapscript.Type | ConditionCSVMultisigTapscript.Type
-    > {
-        const paths: Array<
-            CSVMultisigTapscript.Type | ConditionCSVMultisigTapscript.Type
-        > = [];
+    exitPaths(): Array<CSVMultisigTapscript.Type | ConditionCSVMultisigTapscript.Type> {
+        const paths: Array<CSVMultisigTapscript.Type | ConditionCSVMultisigTapscript.Type> = [];
         for (const leaf of this.leaves) {
             try {
                 const script = scriptFromTapLeafScript(leaf);
                 if (CSVMultisigTapscript.isScriptValid(script) === true) {
                     const tapScript = CSVMultisigTapscript.decode(script);
                     paths.push(tapScript);
-                } else if (
-                    ConditionCSVMultisigTapscript.isScriptValid(script) === true
-                ) {
-                    const tapScript =
-                        ConditionCSVMultisigTapscript.decode(script);
+                } else if (ConditionCSVMultisigTapscript.isScriptValid(script) === true) {
+                    const tapScript = ConditionCSVMultisigTapscript.decode(script);
                     paths.push(tapScript);
                 }
             } catch (e) {
@@ -220,10 +208,7 @@ export function getSequence(tapLeafScript: TapLeafScript): number | undefined {
 
     try {
         const scriptWithLeafVersion = tapLeafScript[1];
-        const script = scriptWithLeafVersion.subarray(
-            0,
-            scriptWithLeafVersion.length - 1
-        );
+        const script = scriptWithLeafVersion.subarray(0, scriptWithLeafVersion.length - 1);
         try {
             const params = CSVMultisigTapscript.decode(script).params;
             sequence = timelockToSequence(params.timelock);

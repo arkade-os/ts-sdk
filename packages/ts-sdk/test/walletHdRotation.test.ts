@@ -25,8 +25,7 @@ import type { Contract, ContractEvent, ExtendedVirtualCoin } from "../src";
 
 const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-const SERVER_PUBKEY_HEX =
-    "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
 const mockArkInfo = {
     signerPubkey: SERVER_PUBKEY_HEX,
@@ -66,8 +65,7 @@ beforeEach(() => {
         if (url.includes("subscribe") || url.includes("subscriptions"))
             return reply({ subscriptionId: "sub-1" });
         // Indexer: anything asking for vtxos — default to empty.
-        if (url.includes("vtxo") || url.includes("scripts"))
-            return reply({ vtxos: [] });
+        if (url.includes("vtxo") || url.includes("scripts")) return reply({ vtxos: [] });
         // Esplora-style onchain calls (boarding coins etc.) — empty array.
         return reply([]);
     });
@@ -79,7 +77,7 @@ afterEach(() => {
 
 function makeHdWallet(
     walletRepo?: InMemoryWalletRepository,
-    contractRepo?: InMemoryContractRepository
+    contractRepo?: InMemoryContractRepository,
 ) {
     const identity = MnemonicIdentity.fromMnemonic(MNEMONIC, {
         isMainnet: false,
@@ -93,8 +91,7 @@ function makeHdWallet(
         arkServerUrl: "http://localhost:7070",
         storage: {
             walletRepository: walletRepo ?? new InMemoryWalletRepository(),
-            contractRepository:
-                contractRepo ?? new InMemoryContractRepository(),
+            contractRepository: contractRepo ?? new InMemoryContractRepository(),
         },
     });
 }
@@ -124,9 +121,7 @@ describe("Wallet HD rotation", () => {
             // initializeContractManager registers one entry per
             // walletContractTimelocks; the wallet always has at least one.
             expect(contracts.length).toBeGreaterThan(0);
-            const newest = contracts.sort(
-                (a, b) => b.createdAt - a.createdAt
-            )[0];
+            const newest = contracts.sort((a, b) => b.createdAt - a.createdAt)[0];
             expect(newest.script).toBe(wallet.defaultContractScript);
 
             await wallet.dispose();
@@ -146,9 +141,7 @@ describe("Wallet HD rotation", () => {
 
             const all = await contractRepo.getContracts({});
             expect(all.length).toBeGreaterThan(0);
-            const tagged = all.filter(
-                (c) => c.metadata?.source === "wallet-receive"
-            );
+            const tagged = all.filter((c) => c.metadata?.source === "wallet-receive");
             expect(tagged).toHaveLength(0);
 
             await wallet.dispose();
@@ -158,7 +151,7 @@ describe("Wallet HD rotation", () => {
             const repo = new InMemoryWalletRepository();
             const wallet = await Wallet.create({
                 identity: SingleKey.fromHex(
-                    "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2"
+                    "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
                 ),
                 arkServerUrl: "http://localhost:7070",
                 storage: {
@@ -193,9 +186,7 @@ describe("Wallet HD rotation", () => {
                 .mockRejectedValueOnce(new Error("simulated install failure"))
                 .mockResolvedValueOnce(undefined);
 
-            await expect(wallet.getVtxoManager()).rejects.toThrow(
-                /simulated install failure/
-            );
+            await expect(wallet.getVtxoManager()).rejects.toThrow(/simulated install failure/);
             // Neither side of the cache was set.
             expect((wallet as any)._vtxoManager).toBeUndefined();
             expect((wallet as any)._receiveRotatorInstalled).toBe(false);
@@ -213,10 +204,7 @@ describe("Wallet HD rotation", () => {
 
     describe("rotation", () => {
         it("advances the receive index when vtxo_received fires for the current contract", async () => {
-            const rotateSpy = vi.spyOn(
-                HDDescriptorProvider.prototype,
-                "getNextSigningDescriptor"
-            );
+            const rotateSpy = vi.spyOn(HDDescriptorProvider.prototype, "getNextSigningDescriptor");
             const wallet = await makeHdWallet();
 
             const scriptBefore = wallet.defaultContractScript;
@@ -235,9 +223,7 @@ describe("Wallet HD rotation", () => {
             };
             // Drive the registered callbacks directly — one of them is our
             // rotation handler.
-            for (const cb of (manager as any).eventCallbacks as Set<
-                (e: ContractEvent) => void
-            >) {
+            for (const cb of (manager as any).eventCallbacks as Set<(e: ContractEvent) => void>) {
                 cb(event);
             }
 
@@ -270,9 +256,7 @@ describe("Wallet HD rotation", () => {
                 contract: { script: scriptBefore } as never,
                 timestamp: Date.now(),
             };
-            for (const cb of (manager as any).eventCallbacks as Set<
-                (e: ContractEvent) => void
-            >) {
+            for (const cb of (manager as any).eventCallbacks as Set<(e: ContractEvent) => void>) {
                 cb(event);
             }
             await (wallet as any)._receiveRotator?.drain();
@@ -291,10 +275,7 @@ describe("Wallet HD rotation", () => {
         });
 
         it("ignores vtxo_received for other contract scripts", async () => {
-            const rotateSpy = vi.spyOn(
-                HDDescriptorProvider.prototype,
-                "getNextSigningDescriptor"
-            );
+            const rotateSpy = vi.spyOn(HDDescriptorProvider.prototype, "getNextSigningDescriptor");
             const wallet = await makeHdWallet();
             const manager = await wallet.getContractManager();
             rotateSpy.mockClear();
@@ -306,9 +287,7 @@ describe("Wallet HD rotation", () => {
                 contract: { script: "unrelated-script" } as never,
                 timestamp: Date.now(),
             };
-            for (const cb of (manager as any).eventCallbacks as Set<
-                (e: ContractEvent) => void
-            >) {
+            for (const cb of (manager as any).eventCallbacks as Set<(e: ContractEvent) => void>) {
                 cb(event);
             }
             await (wallet as any)._receiveRotator?.drain();
@@ -319,17 +298,12 @@ describe("Wallet HD rotation", () => {
         });
 
         it("ignores non-vtxo_received event types", async () => {
-            const rotateSpy = vi.spyOn(
-                HDDescriptorProvider.prototype,
-                "getNextSigningDescriptor"
-            );
+            const rotateSpy = vi.spyOn(HDDescriptorProvider.prototype, "getNextSigningDescriptor");
             const wallet = await makeHdWallet();
             const manager = await wallet.getContractManager();
             rotateSpy.mockClear();
 
-            for (const cb of (manager as any).eventCallbacks as Set<
-                (e: ContractEvent) => void
-            >) {
+            for (const cb of (manager as any).eventCallbacks as Set<(e: ContractEvent) => void>) {
                 cb({ type: "connection_reset", timestamp: Date.now() });
             }
             await (wallet as any)._receiveRotator?.drain();
@@ -364,9 +338,7 @@ describe("Wallet HD rotation", () => {
                 contract: { script: scriptBefore } as never,
                 timestamp: Date.now(),
             };
-            for (const cb of (manager as any).eventCallbacks as Set<
-                (e: ContractEvent) => void
-            >) {
+            for (const cb of (manager as any).eventCallbacks as Set<(e: ContractEvent) => void>) {
                 cb(event);
             }
             await (wallet as any)._receiveRotator?.drain();
@@ -406,9 +378,7 @@ describe("Wallet HD rotation", () => {
             // that fails (counter = 1, backoff window opens). The
             // second arrives inside that window and must short-circuit
             // — no second `createContract` call.
-            for (const cb of (manager as any).eventCallbacks as Set<
-                (e: ContractEvent) => void
-            >) {
+            for (const cb of (manager as any).eventCallbacks as Set<(e: ContractEvent) => void>) {
                 cb(event);
                 cb(event);
             }
@@ -441,9 +411,7 @@ describe("Wallet HD rotation", () => {
                 contract: { script: scriptV0 } as never,
                 timestamp: Date.now(),
             };
-            for (const cb of (manager as any).eventCallbacks as Set<
-                (e: ContractEvent) => void
-            >) {
+            for (const cb of (manager as any).eventCallbacks as Set<(e: ContractEvent) => void>) {
                 cb(event);
             }
             await (first as any)._receiveRotator?.drain();
@@ -508,15 +476,13 @@ describe("Wallet HD rotation", () => {
                 contract: { script: baselineScript } as never,
                 timestamp: Date.now(),
             };
-            for (const cb of (manager as any).eventCallbacks as Set<
-                (e: ContractEvent) => void
-            >) {
+            for (const cb of (manager as any).eventCallbacks as Set<(e: ContractEvent) => void>) {
                 cb(event);
             }
             await (wallet as any)._receiveRotator?.drain();
 
             const baseline = (await contractRepo.getContracts({})).find(
-                (c) => c.script === baselineScript
+                (c) => c.script === baselineScript,
             );
             expect(baseline).toBeDefined();
             expect(baseline!.state).toBe("active");
@@ -565,18 +531,18 @@ describe("Wallet HD rotation", () => {
             expect(tagged2Script).not.toBe(tagged1Script);
 
             const tagged1 = (await contractRepo.getContracts({})).find(
-                (c) => c.script === tagged1Script
+                (c) => c.script === tagged1Script,
             );
             expect(tagged1).toBeDefined();
             expect(tagged1!.state).toBe("inactive");
 
             // Baseline still active. tagged-2 is the new active display.
             const baseline = (await contractRepo.getContracts({})).find(
-                (c) => c.script === baselineScript
+                (c) => c.script === baselineScript,
             );
             expect(baseline!.state).toBe("active");
             const tagged2 = (await contractRepo.getContracts({})).find(
-                (c) => c.script === tagged2Script
+                (c) => c.script === tagged2Script,
             );
             expect(tagged2!.state).toBe("active");
             expect(tagged2!.metadata?.source).toBe("wallet-receive");
@@ -607,9 +573,7 @@ describe("Wallet HD rotation", () => {
                 contract: { script: baselineScript } as never,
                 timestamp: Date.now(),
             };
-            for (const cb of (manager as any).eventCallbacks as Set<
-                (e: ContractEvent) => void
-            >) {
+            for (const cb of (manager as any).eventCallbacks as Set<(e: ContractEvent) => void>) {
                 cb(event);
             }
             await (first as any)._receiveRotator?.drain();
@@ -627,9 +591,7 @@ describe("Wallet HD rotation", () => {
             const all = await contractRepo.getContracts({});
 
             // The rotated display is exactly ONE tagged contract.
-            const tagged = all.filter(
-                (c) => c.metadata?.source === "wallet-receive"
-            );
+            const tagged = all.filter((c) => c.metadata?.source === "wallet-receive");
             expect(tagged).toHaveLength(1);
             expect(tagged[0].script).toBe(rotatedScript);
 
@@ -672,9 +634,7 @@ describe("Wallet HD rotation", () => {
                 contract: { script: baselineScript } as never,
                 timestamp: Date.now(),
             };
-            for (const cb of (manager as any).eventCallbacks as Set<
-                (e: ContractEvent) => void
-            >) {
+            for (const cb of (manager as any).eventCallbacks as Set<(e: ContractEvent) => void>) {
                 cb(event);
             }
             await (wallet as any)._receiveRotator?.drain();
@@ -683,7 +643,7 @@ describe("Wallet HD rotation", () => {
             // at index 0 is still in the repo, still active, still
             // untagged.
             const baseline = (await contractRepo.getContracts({})).find(
-                (c) => c.script === baselineScript
+                (c) => c.script === baselineScript,
             );
             expect(baseline).toBeDefined();
             expect(baseline!.state).toBe("active");
@@ -691,7 +651,7 @@ describe("Wallet HD rotation", () => {
 
             // Exactly one tagged contract exists — the rotated display.
             const tagged = (await contractRepo.getContracts({})).filter(
-                (c) => c.metadata?.source === "wallet-receive"
+                (c) => c.metadata?.source === "wallet-receive",
             );
             expect(tagged).toHaveLength(1);
             expect(tagged[0].script).not.toBe(baselineScript);
@@ -743,18 +703,13 @@ describe("Wallet HD rotation", () => {
             const wallet = await makeHdWallet();
             const manager = await wallet.getVtxoManager();
 
-            const rotator = (wallet as any)
-                ._receiveRotator as WalletReceiveRotator;
+            const rotator = (wallet as any)._receiveRotator as WalletReceiveRotator;
             const rotatorDisposeSpy = vi
                 .spyOn(rotator, "dispose")
-                .mockRejectedValueOnce(
-                    new Error("simulated rotator disposal failure")
-                );
+                .mockRejectedValueOnce(new Error("simulated rotator disposal failure"));
             const managerDisposeSpy = vi.spyOn(manager, "dispose");
 
-            await expect(wallet.dispose()).rejects.toThrow(
-                /simulated rotator disposal failure/
-            );
+            await expect(wallet.dispose()).rejects.toThrow(/simulated rotator disposal failure/);
 
             // The manager was disposed despite the rotator failure.
             expect(managerDisposeSpy).toHaveBeenCalledTimes(1);
@@ -764,10 +719,7 @@ describe("Wallet HD rotation", () => {
         });
 
         it("unsubscribes the rotation handler", async () => {
-            const rotateSpy = vi.spyOn(
-                HDDescriptorProvider.prototype,
-                "getNextSigningDescriptor"
-            );
+            const rotateSpy = vi.spyOn(HDDescriptorProvider.prototype, "getNextSigningDescriptor");
             const wallet = await makeHdWallet();
             const manager = await wallet.getContractManager();
             const scriptBefore = wallet.defaultContractScript;
@@ -784,9 +736,7 @@ describe("Wallet HD rotation", () => {
                 contract: { script: scriptBefore } as never,
                 timestamp: Date.now(),
             };
-            for (const cb of (manager as any).eventCallbacks as Set<
-                (e: ContractEvent) => void
-            >) {
+            for (const cb of (manager as any).eventCallbacks as Set<(e: ContractEvent) => void>) {
                 cb(event);
             }
             expect(rotateSpy).not.toHaveBeenCalled();
@@ -820,10 +770,8 @@ describe("Wallet HD rotation", () => {
             };
         }
 
-        const PUBKEY_A =
-            "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
-        const PUBKEY_B =
-            "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+        const PUBKEY_A = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+        const PUBKEY_B = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
 
         it("'static' skips HD wiring even for HD-capable identities", async () => {
             const repo = new InMemoryWalletRepository();
@@ -882,7 +830,7 @@ describe("Wallet HD rotation", () => {
             await expect(
                 Wallet.create({
                     identity: SingleKey.fromHex(
-                        "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2"
+                        "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
                     ),
                     walletMode: "hd",
                     arkServerUrl: "http://localhost:7070",
@@ -890,7 +838,7 @@ describe("Wallet HD rotation", () => {
                         walletRepository: new InMemoryWalletRepository(),
                         contractRepository: new InMemoryContractRepository(),
                     },
-                })
+                }),
             ).rejects.toThrow(/walletMode 'hd' requires/i);
         });
 
@@ -903,7 +851,7 @@ describe("Wallet HD rotation", () => {
             const repo = new InMemoryWalletRepository();
             const wallet = await Wallet.create({
                 identity: SingleKey.fromHex(
-                    "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2"
+                    "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
                 ),
                 walletMode: provider as never,
                 arkServerUrl: "http://localhost:7070",
@@ -937,7 +885,7 @@ describe("Wallet HD rotation", () => {
             await expect(
                 Wallet.create({
                     identity: SingleKey.fromHex(
-                        "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2"
+                        "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
                     ),
                     walletMode: provider as never,
                     arkServerUrl: "http://localhost:7070",
@@ -945,7 +893,7 @@ describe("Wallet HD rotation", () => {
                         walletRepository: new InMemoryWalletRepository(),
                         contractRepository: new InMemoryContractRepository(),
                     },
-                })
+                }),
             ).rejects.toThrow(/HSM unavailable/);
         });
     });
@@ -973,7 +921,7 @@ describe("Wallet HD rotation", () => {
         // Returns the rotated default contract record.
         async function rotateOnce(
             wallet: Wallet,
-            contractRepo: InMemoryContractRepository
+            contractRepo: InMemoryContractRepository,
         ): Promise<Contract> {
             const scriptBefore = wallet.defaultContractScript;
             const manager = await wallet.getContractManager();
@@ -984,9 +932,7 @@ describe("Wallet HD rotation", () => {
                 contract: { script: scriptBefore } as never,
                 timestamp: Date.now(),
             };
-            for (const cb of (manager as any).eventCallbacks as Set<
-                (e: ContractEvent) => void
-            >) {
+            for (const cb of (manager as any).eventCallbacks as Set<(e: ContractEvent) => void>) {
                 cb(event);
             }
             await (wallet as any)._receiveRotator?.drain();
@@ -995,9 +941,7 @@ describe("Wallet HD rotation", () => {
             expect(rotatedScript).not.toBe(scriptBefore);
 
             const rotated = (await contractRepo.getContracts({})).find(
-                (c) =>
-                    c.script === rotatedScript &&
-                    c.metadata?.source === "wallet-receive"
+                (c) => c.script === rotatedScript && c.metadata?.source === "wallet-receive",
             );
             if (!rotated) {
                 throw new Error("rotated contract not found in repo");
@@ -1005,10 +949,7 @@ describe("Wallet HD rotation", () => {
             return rotated;
         }
 
-        function makeVtxoForContract(
-            contract: Contract,
-            txid?: string
-        ): ExtendedVirtualCoin {
+        function makeVtxoForContract(contract: Contract, txid?: string): ExtendedVirtualCoin {
             const params = contract.params;
             const pubKey = hex.decode(params.pubKey);
             const serverPubKey = hex.decode(params.serverPubKey);
@@ -1038,7 +979,7 @@ describe("Wallet HD rotation", () => {
         // entries (PSBT canonical: `[[ {pubKey, leafHash}, signature ], ...]`).
         function tapscriptSignerPubkeysHex(
             txOrPsbtBase64: Transaction | string,
-            inputIndex: number
+            inputIndex: number,
         ): string[] {
             const tx =
                 typeof txOrPsbtBase64 === "string"
@@ -1061,28 +1002,17 @@ describe("Wallet HD rotation", () => {
 
             const rotated = await rotateOnce(wallet, contractRepo);
             const rotatedPubKeyHex = rotated.params.pubKey;
-            const baselinePubKeyHex = hex.encode(
-                await wallet.identity.xOnlyPublicKey()
-            );
+            const baselinePubKeyHex = hex.encode(await wallet.identity.xOnlyPublicKey());
             // Sanity: rotation must have produced a non-baseline pubkey,
             // otherwise the test isn't exercising the descriptor branch.
             expect(rotatedPubKeyHex).not.toBe(baselinePubKeyHex);
 
             const coin = makeVtxoForContract(rotated);
-            const intent = await wallet.makeRegisterIntentSignature(
-                [coin],
-                [],
-                [],
-                []
-            );
+            const intent = await wallet.makeRegisterIntentSignature([coin], [], [], []);
             const proof = Transaction.fromPSBT(base64.decode(intent.proof));
 
-            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(
-                rotatedPubKeyHex
-            );
-            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(
-                rotatedPubKeyHex
-            );
+            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(rotatedPubKeyHex);
+            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(rotatedPubKeyHex);
 
             await wallet.dispose();
         });
@@ -1103,12 +1033,8 @@ describe("Wallet HD rotation", () => {
             const proof = Transaction.fromPSBT(base64.decode(intent.proof));
             const rotatedPubKeyHex = rotated.params.pubKey;
 
-            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(
-                rotatedPubKeyHex
-            );
-            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(
-                rotatedPubKeyHex
-            );
+            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(rotatedPubKeyHex);
+            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(rotatedPubKeyHex);
 
             await wallet.dispose();
         });
@@ -1130,12 +1056,8 @@ describe("Wallet HD rotation", () => {
             const proof = Transaction.fromPSBT(base64.decode(intent.proof));
             const rotatedPubKeyHex = rotated.params.pubKey;
 
-            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(
-                rotatedPubKeyHex
-            );
-            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(
-                rotatedPubKeyHex
-            );
+            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(rotatedPubKeyHex);
+            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(rotatedPubKeyHex);
 
             await wallet.dispose();
         });
@@ -1154,7 +1076,7 @@ describe("Wallet HD rotation", () => {
             // resolve coin1.script → baseline contract → identity sign.
             const baselineScript = wallet.defaultContractScript;
             const baseline = (await contractRepo.getContracts({})).find(
-                (c) => c.script === baselineScript
+                (c) => c.script === baselineScript,
             )!;
             expect(baseline.metadata?.source).toBeUndefined();
 
@@ -1168,7 +1090,7 @@ describe("Wallet HD rotation", () => {
                 [rotatedCoin, baselineCoin],
                 [],
                 [],
-                []
+                [],
             );
             const proof = Transaction.fromPSBT(base64.decode(intent.proof));
 
@@ -1176,16 +1098,10 @@ describe("Wallet HD rotation", () => {
             const baselinePubKeyHex = baseline.params.pubKey;
 
             // Tx-input 0 (toSpend) and tx-input 1 = coin[0] = rotated.
-            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(
-                rotatedPubKeyHex
-            );
-            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(
-                rotatedPubKeyHex
-            );
+            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(rotatedPubKeyHex);
+            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(rotatedPubKeyHex);
             // Tx-input 2 = coin[1] = baseline.
-            expect(tapscriptSignerPubkeysHex(proof, 2)).toContain(
-                baselinePubKeyHex
-            );
+            expect(tapscriptSignerPubkeysHex(proof, 2)).toContain(baselinePubKeyHex);
 
             await wallet.dispose();
         });
@@ -1209,7 +1125,7 @@ describe("Wallet HD rotation", () => {
             const orphanPubKeyHex =
                 "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
             const baseline = (await contractRepo.getContracts({})).find(
-                (c) => c.script === wallet.defaultContractScript
+                (c) => c.script === wallet.defaultContractScript,
             )!;
             const orphanScript = new DefaultVtxo.Script({
                 pubKey: hex.decode(orphanPubKeyHex),
@@ -1244,19 +1160,14 @@ describe("Wallet HD rotation", () => {
             } as Contract);
 
             await expect(
-                wallet.makeRegisterIntentSignature([orphanCoin], [], [], [])
+                wallet.makeRegisterIntentSignature([orphanCoin], [], [], []),
             ).rejects.toBeInstanceOf(MissingSigningDescriptorError);
 
             // Re-throw to capture the typed instance and assert on its
             // exposed fields (test the contract on the error, not just
             // the message).
             try {
-                await wallet.makeRegisterIntentSignature(
-                    [orphanCoin],
-                    [],
-                    [],
-                    []
-                );
+                await wallet.makeRegisterIntentSignature([orphanCoin], [], [], []);
                 throw new Error("expected throw");
             } catch (err) {
                 expect(err).toBeInstanceOf(MissingSigningDescriptorError);
@@ -1289,7 +1200,7 @@ describe("Wallet HD rotation", () => {
             // x-only pubkey so the script is well-formed.
             const cosignerScript = new DefaultVtxo.Script({
                 pubKey: hex.decode(
-                    "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+                    "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
                 ),
                 serverPubKey: SERVER_PUBKEY,
                 csvTimelock: {
@@ -1316,17 +1227,13 @@ describe("Wallet HD rotation", () => {
                 [rotatedCoin, cosignerCoin],
                 [],
                 [],
-                []
+                [],
             );
             const proof = Transaction.fromPSBT(base64.decode(intent.proof));
 
             // Tx-input 0 / 1 = rotated coin → signed.
-            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(
-                rotated.params.pubKey
-            );
-            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(
-                rotated.params.pubKey
-            );
+            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(rotated.params.pubKey);
+            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(rotated.params.pubKey);
             // Tx-input 2 = cosigner-shape coin → no signatures (the
             // wallet doesn't own it; the router skipped it exactly the
             // way today's tx.sign would silently skip an unsignable
@@ -1389,12 +1296,8 @@ describe("Wallet HD rotation", () => {
             expect(finalizeSpy).toHaveBeenCalledTimes(1);
             expect(submittedArkTxB64).toBeDefined();
 
-            const arkTx = Transaction.fromPSBT(
-                base64.decode(submittedArkTxB64!)
-            );
-            expect(tapscriptSignerPubkeysHex(arkTx, 0)).toContain(
-                rotated.params.pubKey
-            );
+            const arkTx = Transaction.fromPSBT(base64.decode(submittedArkTxB64!));
+            expect(tapscriptSignerPubkeysHex(arkTx, 0)).toContain(rotated.params.pubKey);
 
             submitSpy.mockRestore();
             finalizeSpy.mockRestore();
@@ -1411,7 +1314,7 @@ describe("Wallet HD rotation", () => {
             const wallet = await makeHdWallet(walletRepo, contractRepo);
 
             const baseline = (await contractRepo.getContracts({})).find(
-                (c) => c.script === wallet.defaultContractScript
+                (c) => c.script === wallet.defaultContractScript,
             )!;
             const baselinePubKeyHex = baseline.params.pubKey;
             const coin = makeVtxoForContract(baseline);
@@ -1438,15 +1341,11 @@ describe("Wallet HD rotation", () => {
                         amount: BigInt(coin.value - 1000),
                         script: wallet.arkAddress.pkScript,
                     },
-                ]
+                ],
             );
 
-            const arkTx = Transaction.fromPSBT(
-                base64.decode(submittedArkTxB64!)
-            );
-            expect(tapscriptSignerPubkeysHex(arkTx, 0)).toContain(
-                baselinePubKeyHex
-            );
+            const arkTx = Transaction.fromPSBT(base64.decode(submittedArkTxB64!));
+            expect(tapscriptSignerPubkeysHex(arkTx, 0)).toContain(baselinePubKeyHex);
 
             submitSpy.mockRestore();
             finalizeSpy.mockRestore();
@@ -1462,32 +1361,22 @@ describe("Wallet HD rotation", () => {
             const contractRepo = new InMemoryContractRepository();
             const wallet = await makeHdWallet(walletRepo, contractRepo);
 
-            const provider = (wallet as any)
-                ._descriptorProvider as HDDescriptorProvider;
+            const provider = (wallet as any)._descriptorProvider as HDDescriptorProvider;
             const signSpy = vi.spyOn(provider, "signWithDescriptor");
 
             const baselineScript = wallet.defaultContractScript;
             const baseline = (await contractRepo.getContracts({})).find(
-                (c) => c.script === baselineScript
+                (c) => c.script === baselineScript,
             )!;
             const coin = makeVtxoForContract(baseline);
 
-            const intent = await wallet.makeRegisterIntentSignature(
-                [coin],
-                [],
-                [],
-                []
-            );
+            const intent = await wallet.makeRegisterIntentSignature([coin], [], [], []);
             const proof = Transaction.fromPSBT(base64.decode(intent.proof));
 
             expect(signSpy).not.toHaveBeenCalled();
             // Baseline pubkey signs both inputs as expected.
-            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(
-                baseline.params.pubKey
-            );
-            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(
-                baseline.params.pubKey
-            );
+            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(baseline.params.pubKey);
+            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(baseline.params.pubKey);
 
             signSpy.mockRestore();
             await wallet.dispose();

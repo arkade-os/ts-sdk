@@ -1,13 +1,5 @@
-import {
-    ArkTransaction,
-    ExtendedCoin,
-    ExtendedVirtualCoin,
-} from "../../wallet";
-import {
-    WalletRepository,
-    WalletState,
-    VtxoRepositoryKey,
-} from "../walletRepository";
+import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
+import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
 
 /**
@@ -26,16 +18,9 @@ export class InMemoryWalletRepository implements WalletRepository {
         return this.vtxosByAddress.get(address) ?? [];
     }
 
-    async saveVtxos(
-        address: string,
-        vtxos: ExtendedVirtualCoin[]
-    ): Promise<void> {
+    async saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void> {
         const existing = this.vtxosByAddress.get(address) ?? [];
-        const next = mergeByKey(
-            existing,
-            vtxos,
-            (item) => `${item.txid}:${item.vout}`
-        );
+        const next = mergeByKey(existing, vtxos, (item) => `${item.txid}:${item.vout}`);
         this.vtxosByAddress.set(address, next);
     }
 
@@ -53,24 +38,17 @@ export class InMemoryWalletRepository implements WalletRepository {
             }
         }
         // Dedup by outpoint (last-write-wins across address buckets)
-        return mergeByKey(
-            [],
-            allMatches,
-            (item) => `${item.txid}:${item.vout}`
-        );
+        return mergeByKey([], allMatches, (item) => `${item.txid}:${item.vout}`);
     }
 
-    async saveVtxosForScript(
-        key: VtxoRepositoryKey,
-        vtxos: ExtendedVirtualCoin[]
-    ): Promise<void> {
+    async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
         if (!key.address) {
             throw new Error("InMemoryWalletRepository requires an address");
         }
         for (const vtxo of vtxos) {
             if (!isVtxoForScript(vtxo, key.script)) {
                 throw new Error(
-                    `VTXO ${vtxo.txid}:${vtxo.vout} script mismatch: expected ${key.script}, got ${vtxo.script}`
+                    `VTXO ${vtxo.txid}:${vtxo.vout} script mismatch: expected ${key.script}, got ${vtxo.script}`,
                 );
             }
         }
@@ -94,11 +72,7 @@ export class InMemoryWalletRepository implements WalletRepository {
 
     async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
         const existing = this.utxosByAddress.get(address) ?? [];
-        const next = mergeByKey(
-            existing,
-            utxos,
-            (item) => `${item.txid}:${item.vout}`
-        );
+        const next = mergeByKey(existing, utxos, (item) => `${item.txid}:${item.vout}`);
         this.utxosByAddress.set(address, next);
     }
 
@@ -110,10 +84,7 @@ export class InMemoryWalletRepository implements WalletRepository {
         return this.txsByAddress.get(address) ?? [];
     }
 
-    async saveTransactions(
-        address: string,
-        txs: ArkTransaction[]
-    ): Promise<void> {
+    async saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {
         const existing = this.txsByAddress.get(address) ?? [];
         const next = mergeByKey(existing, txs, serializeTxKey);
         this.txsByAddress.set(address, next);
@@ -149,11 +120,7 @@ function serializeTxKey(tx: ArkTransaction): string {
     return `${key.boardingTxid}:${key.commitmentTxid}:${key.arkTxid}`;
 }
 
-function mergeByKey<T>(
-    existing: T[],
-    incoming: T[],
-    toKey: (item: T) => string
-): T[] {
+function mergeByKey<T>(existing: T[], incoming: T[], toKey: (item: T) => string): T[] {
     const next = new Map<string, T>();
     existing.forEach((item) => {
         next.set(toKey(item), item);

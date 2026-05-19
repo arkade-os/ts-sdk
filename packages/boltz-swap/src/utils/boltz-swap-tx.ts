@@ -76,11 +76,8 @@ const sortTree = (nodes: WeightedNode[]): TapTree => {
     return sub(sorted);
 };
 
-export const deserializeSwapTree = (
-    tree: string | SerializedTree
-): SwapTree => {
-    const parsed: SerializedTree =
-        typeof tree === "string" ? JSON.parse(tree) : tree;
+export const deserializeSwapTree = (tree: string | SerializedTree): SwapTree => {
+    const parsed: SerializedTree = typeof tree === "string" ? JSON.parse(tree) : tree;
     const claimLeaf = deserializeLeaf(parsed.claimLeaf);
     const refundLeaf = deserializeLeaf(parsed.refundLeaf);
     return {
@@ -140,9 +137,7 @@ export const taprootHashTree = (tree: TapTree): HashedTree => {
 
 export const tweakMusig = (musig: MusigKeyAgg, tree: TapTree): MusigKeyAgg => {
     const tweak = taprootHashTree(tree).hash;
-    return musig.xonlyTweakAdd(
-        schnorr.utils.taggedHash("TapTweak", musig.aggPubkey, tweak)
-    );
+    return musig.xonlyTweakAdd(schnorr.utils.taggedHash("TapTweak", musig.aggPubkey, tweak));
 };
 
 // ---------------------------------------------------------------------------
@@ -154,14 +149,12 @@ const toXOnly = (pubKey: Uint8Array): Uint8Array => {
     if (pubKey.length === 33) {
         if (pubKey[0] !== 0x02 && pubKey[0] !== 0x03) {
             throw new Error(
-                `Invalid compressed public key prefix: 0x${pubKey[0].toString(16).padStart(2, "0")}`
+                `Invalid compressed public key prefix: 0x${pubKey[0].toString(16).padStart(2, "0")}`,
             );
         }
         return pubKey.subarray(1, 33);
     }
-    throw new Error(
-        `Invalid public key length: expected 32 or 33 bytes, got ${pubKey.length}`
-    );
+    throw new Error(`Invalid public key length: expected 32 or 33 bytes, got ${pubKey.length}`);
 };
 
 const p2trScript = (publicKey: Uint8Array): Uint8Array =>
@@ -169,7 +162,7 @@ const p2trScript = (publicKey: Uint8Array): Uint8Array =>
 
 export const detectSwapOutput = (
     tweakedKey: Uint8Array,
-    transaction: Transaction
+    transaction: Transaction,
 ): DetectedSwapOutput => {
     const target = p2trScript(tweakedKey);
     for (let vout = 0; vout < transaction.outputsLength; vout++) {
@@ -199,10 +192,9 @@ export const constructClaimTransaction = (
         script: Uint8Array;
     },
     destinationScript: Uint8Array,
-    fee: bigint
+    fee: bigint,
 ): Transaction => {
-    if (fee < BigInt(0) || fee >= utxo.amount)
-        throw new Error("fee exceeds utxo amount");
+    if (fee < BigInt(0) || fee >= utxo.amount) throw new Error("fee exceeds utxo amount");
 
     const tx = new Transaction({ version: 2 });
 
@@ -232,10 +224,8 @@ export const constructClaimTransaction = (
 
 export const targetFee = (
     satPerVbyte: number,
-    constructTx: (fee: bigint) => Transaction
+    constructTx: (fee: bigint) => Transaction,
 ): Transaction => {
     const tx = constructTx(BigInt(1));
-    return constructTx(
-        BigInt(Math.ceil((tx.vsize + tx.inputsLength) * satPerVbyte))
-    );
+    return constructTx(BigInt(Math.ceil((tx.vsize + tx.inputsLength) * satPerVbyte)));
 };

@@ -22,7 +22,7 @@ export const DB_VERSION = 3;
 export function initDatabase(
     db: IDBDatabase,
     oldVersion: number,
-    transaction: IDBTransaction | null
+    transaction: IDBTransaction | null,
 ): void {
     // Create wallet stores
     if (!db.objectStoreNames.contains(STORE_VTXOS)) {
@@ -113,12 +113,7 @@ export function initDatabase(
 
     if (!db.objectStoreNames.contains(STORE_TRANSACTIONS)) {
         const transactionsStore = db.createObjectStore(STORE_TRANSACTIONS, {
-            keyPath: [
-                "address",
-                "keyBoardingTxid",
-                "keyCommitmentTxid",
-                "keyArkTxid",
-            ],
+            keyPath: ["address", "keyBoardingTxid", "keyCommitmentTxid", "keyArkTxid"],
         });
 
         if (!transactionsStore.indexNames.contains("address")) {

@@ -37,22 +37,16 @@ const findKeyIndex = (keys: readonly PublicKey[], target: PublicKey): number =>
 const assertPublicKeys = (keys: PublicKey[]): void => {
     const seen = new Set<string>();
     for (const key of keys) {
-        if (key.length !== 33)
-            throw new Error(`public key must be 33 bytes, got ${key.length}`);
+        if (key.length !== 33) throw new Error(`public key must be 33 bytes, got ${key.length}`);
         const enc = hex.encode(key);
         if (seen.has(enc)) throw new Error(`duplicate public key ${enc}`);
         seen.add(enc);
     }
 };
 
-export const aggregateKeys = (
-    publicKeys: readonly PublicKey[],
-    tweak?: Uint8Array
-): Uint8Array => {
+export const aggregateKeys = (publicKeys: readonly PublicKey[], tweak?: Uint8Array): Uint8Array => {
     assertPublicKeys([...publicKeys]);
-    return keyAggExport(
-        keyAggregate([...publicKeys], tweak ? [tweak] : [], tweak ? [true] : [])
-    );
+    return keyAggExport(keyAggregate([...publicKeys], tweak ? [tweak] : [], tweak ? [true] : []));
 };
 
 // ---------------------------------------------------------------------------
@@ -67,7 +61,7 @@ export class MusigKeyAgg {
         private readonly myIndex: number,
         readonly aggPubkey: PublicKey,
         readonly internalKey: PublicKey,
-        private readonly _tweak?: Uint8Array
+        private readonly _tweak?: Uint8Array,
     ) {}
 
     xonlyTweakAdd(tweak: Uint8Array): MusigKeyAgg {
@@ -79,7 +73,7 @@ export class MusigKeyAgg {
             this.myIndex,
             aggregateKeys(this.publicKeys, tweak),
             this.internalKey,
-            tweak
+            tweak,
         );
     }
 
@@ -91,7 +85,7 @@ export class MusigKeyAgg {
             this.myIndex,
             this.aggPubkey,
             this._tweak,
-            msg
+            msg,
         );
     }
 }
@@ -104,16 +98,11 @@ export class MusigWithMessage {
         private readonly myIndex: number,
         private readonly aggPubkey: PublicKey,
         private readonly tweak: Uint8Array | undefined,
-        private readonly msg: Uint8Array
+        private readonly msg: Uint8Array,
     ) {}
 
     generateNonce(): MusigWithNonce {
-        const nonce = nonceGen(
-            this.myPublicKey,
-            this.privateKey,
-            this.aggPubkey,
-            this.msg
-        );
+        const nonce = nonceGen(this.myPublicKey, this.privateKey, this.aggPubkey, this.msg);
         return new MusigWithNonce(
             this.privateKey,
             this.myPublicKey,
@@ -122,7 +111,7 @@ export class MusigWithMessage {
             this.aggPubkey,
             this.tweak,
             this.msg,
-            nonce
+            nonce,
         );
     }
 }
@@ -136,7 +125,7 @@ export class MusigWithNonce {
         private readonly aggPubkey: PublicKey,
         private readonly tweak: Uint8Array | undefined,
         private readonly msg: Uint8Array,
-        private readonly nonce: Nonces
+        private readonly nonce: Nonces,
     ) {}
 
     get publicNonce(): NonceBytes {
@@ -182,7 +171,7 @@ export class MusigWithNonce {
             this.msg,
             this.nonce,
             Object.freeze(ordered),
-            aggregatedNonce
+            aggregatedNonce,
         );
     }
 }
@@ -198,7 +187,7 @@ export class MusigNoncesAggregated {
         private readonly msg: Uint8Array,
         private readonly nonce: Nonces,
         private readonly pubNonces: readonly NonceBytes[],
-        private readonly aggregatedNonce: NonceBytes
+        private readonly aggregatedNonce: NonceBytes,
     ) {}
 
     get publicNonce(): NonceBytes {
@@ -211,7 +200,7 @@ export class MusigNoncesAggregated {
             [...this.publicKeys],
             this.msg,
             this.tweak ? [this.tweak] : [],
-            this.tweak ? [true] : []
+            this.tweak ? [true] : [],
         );
         return new MusigSession(
             this.privateKey,
@@ -219,7 +208,7 @@ export class MusigNoncesAggregated {
             this.myIndex,
             this.nonce,
             this.pubNonces,
-            session
+            session,
         );
     }
 }
@@ -233,7 +222,7 @@ export class MusigSession {
         private readonly myIndex: number,
         private readonly nonce: Nonces,
         private readonly pubNonces: readonly NonceBytes[],
-        private readonly session: Session
+        private readonly session: Session,
     ) {
         this.partialSignatures = Array(publicKeys.length).fill(null);
     }
@@ -242,10 +231,7 @@ export class MusigSession {
         return this.nonce.public;
     }
 
-    addPartial(
-        publicKeyOrIndex: PublicKey | number,
-        signature: PartialSignature
-    ): this {
+    addPartial(publicKeyOrIndex: PublicKey | number, signature: PartialSignature): this {
         const index =
             typeof publicKeyOrIndex === "number"
                 ? publicKeyOrIndex
@@ -253,13 +239,7 @@ export class MusigSession {
         if (index < 0 || index >= this.publicKeys.length)
             throw new Error("public key not found or index out of range");
 
-        if (
-            !this.session.partialSigVerify(
-                signature,
-                [...this.pubNonces],
-                index
-            )
-        ) {
+        if (!this.session.partialSigVerify(signature, [...this.pubNonces], index)) {
             throw new Error("invalid partial signature");
         }
         this.partialSignatures[index] = signature;
@@ -269,12 +249,7 @@ export class MusigSession {
     signPartial(): MusigSigned {
         const sig = this.session.sign(this.nonce.secret, this.privateKey, true);
         this.partialSignatures[this.myIndex] = sig;
-        return new MusigSigned(
-            this.session,
-            [...this.partialSignatures],
-            sig,
-            this.nonce.public
-        );
+        return new MusigSigned(this.session, [...this.partialSignatures], sig, this.nonce.public);
     }
 }
 
@@ -283,16 +258,14 @@ export class MusigSigned {
         private readonly session: Session,
         private readonly partialSignatures: Array<PartialSignature | null>,
         readonly ourPartialSignature: PartialSignature,
-        readonly publicNonce: NonceBytes
+        readonly publicNonce: NonceBytes,
     ) {}
 
     aggregatePartials(): Uint8Array {
         if (this.partialSignatures.some((s) => s === null)) {
             throw new Error("not all partial signatures are set");
         }
-        return this.session.partialSigAgg(
-            this.partialSignatures as PartialSignature[]
-        );
+        return this.session.partialSigAgg(this.partialSignatures as PartialSignature[]);
     }
 }
 
@@ -300,12 +273,8 @@ export class MusigSigned {
 // Factory
 // ---------------------------------------------------------------------------
 
-export const create = (
-    privateKey: PrivateKey,
-    publicKeys: readonly PublicKey[]
-): MusigKeyAgg => {
-    if (publicKeys.length < 2)
-        throw new Error("need at least 2 keys to aggregate");
+export const create = (privateKey: PrivateKey, publicKeys: readonly PublicKey[]): MusigKeyAgg => {
+    if (publicKeys.length < 2) throw new Error("need at least 2 keys to aggregate");
 
     const keys = [...publicKeys];
     assertPublicKeys(keys);
@@ -316,12 +285,5 @@ export const create = (
     if (myIndex === -1) throw new Error("our key is not in publicKeys");
 
     const aggPubkey = aggregateKeys(keys);
-    return new MusigKeyAgg(
-        privateKey,
-        myPublicKey,
-        keys,
-        myIndex,
-        aggPubkey,
-        aggPubkey
-    );
+    return new MusigKeyAgg(privateKey, myPublicKey, keys, myIndex, aggPubkey, aggPubkey);
 };

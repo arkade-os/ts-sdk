@@ -3,10 +3,8 @@ import { hex } from "@scure/base";
 import { DefaultContractHandler } from "../../../src/contracts/handlers/default";
 import { DefaultVtxo } from "../../../src";
 
-const TEST_PUB_KEY_HEX =
-    "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
-const TEST_SERVER_PUB_KEY_HEX =
-    "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+const TEST_PUB_KEY_HEX = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+const TEST_SERVER_PUB_KEY_HEX = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
 const TEST_PUB_KEY = hex.decode(TEST_PUB_KEY_HEX);
 const TEST_SERVER_PUB_KEY = hex.decode(TEST_SERVER_PUB_KEY_HEX);
 
@@ -78,8 +76,7 @@ describe("DefaultContractHandler descriptor support", () => {
             csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
         };
         const serialized = DefaultContractHandler.serializeParams(original);
-        const deserialized =
-            DefaultContractHandler.deserializeParams(serialized);
+        const deserialized = DefaultContractHandler.deserializeParams(serialized);
         expect(deserialized.pubKey).toEqual(original.pubKey);
         expect(deserialized.serverPubKey).toEqual(original.serverPubKey);
     });

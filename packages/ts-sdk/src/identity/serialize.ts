@@ -42,17 +42,11 @@ export type SerializedReadonlyIdentity =
     | { type: "readonly-single-key"; publicKey: string }
     | { type: "readonly-descriptor"; descriptor: string };
 
-export type SerializedIdentity =
-    | SerializedSigningIdentity
-    | SerializedReadonlyIdentity;
+export type SerializedIdentity = SerializedSigningIdentity | SerializedReadonlyIdentity;
 
 /** Type guard — true for signing envelopes, false for readonly envelopes. */
-export function isSigningSerialized(
-    s: SerializedIdentity
-): s is SerializedSigningIdentity {
-    return (
-        s.type === "single-key" || s.type === "seed" || s.type === "mnemonic"
-    );
+export function isSigningSerialized(s: SerializedIdentity): s is SerializedSigningIdentity {
+    return s.type === "single-key" || s.type === "seed" || s.type === "mnemonic";
 }
 
 /** Identity that can expose a raw 32-byte private key via `toHex()`. */
@@ -70,9 +64,7 @@ function hasToHex(identity: Identity): identity is HexExportableIdentity {
  * duck-typed `toHex()` fallback preserves compatibility with existing
  * `SingleKey`-like implementations.
  */
-export function serializeSigningIdentity(
-    identity: Identity
-): SerializedSigningIdentity {
+export function serializeSigningIdentity(identity: Identity): SerializedSigningIdentity {
     // Seed-backed identities (including MnemonicIdentity, which extends
     // SeedIdentity) delegate to the colocated helper so secret material
     // stays behind the WeakMap-backed internal state in seedIdentity.ts.
@@ -85,9 +77,7 @@ export function serializeSigningIdentity(
     if (hasToHex(identity)) {
         return { type: "single-key", privateKey: identity.toHex() };
     }
-    throw new Error(
-        "Unsupported signing identity: cannot serialize for service-worker transport"
-    );
+    throw new Error("Unsupported signing identity: cannot serialize for service-worker transport");
 }
 
 /**
@@ -99,12 +89,9 @@ export function serializeSigningIdentity(
  * boundary must use {@link serializeSigningIdentity}.
  */
 export async function serializeReadonlyIdentity(
-    identity: ReadonlyIdentity
+    identity: ReadonlyIdentity,
 ): Promise<SerializedReadonlyIdentity> {
-    if (
-        identity instanceof SeedIdentity ||
-        identity instanceof ReadonlyDescriptorIdentity
-    ) {
+    if (identity instanceof SeedIdentity || identity instanceof ReadonlyDescriptorIdentity) {
         return serializeSeedOwnedReadonlyIdentity(identity);
     }
     return {
@@ -124,9 +111,7 @@ export async function serializeReadonlyIdentity(
  * so the `descriptor` field is passed straight through to the
  * template-only factories.
  */
-export function hydrateIdentity(
-    s: SerializedIdentity
-): Identity | ReadonlyIdentity {
+export function hydrateIdentity(s: SerializedIdentity): Identity | ReadonlyIdentity {
     switch (s.type) {
         case "single-key":
             return SingleKey.fromHex(s.privateKey);
@@ -150,9 +135,7 @@ export function hydrateIdentity(
             // undefined, which callers would then cast to Identity and
             // crash downstream with an opaque error.
             throw new Error(
-                `Unknown serialized identity type: ${String(
-                    (s as { type: unknown }).type
-                )}`
+                `Unknown serialized identity type: ${String((s as { type: unknown }).type)}`,
             );
     }
 }
@@ -164,9 +147,7 @@ export function hydrateIdentity(
  *
  * @deprecated Use {@link SerializedIdentity}.
  */
-export type LegacySerializedIdentity =
-    | { privateKey: string }
-    | { publicKey: string };
+export type LegacySerializedIdentity = { privateKey: string } | { publicKey: string };
 
 let warnedLegacyShape = false;
 
@@ -181,7 +162,7 @@ let warnedLegacyShape = false;
  * {@link serializeReadonlyIdentity}.
  */
 export function normalizeSerializedIdentity(
-    shape: SerializedIdentity | LegacySerializedIdentity
+    shape: SerializedIdentity | LegacySerializedIdentity,
 ): SerializedIdentity {
     if ("type" in shape) {
         assertValidSerializedIdentity(shape);
@@ -193,7 +174,7 @@ export function normalizeSerializedIdentity(
             "[ts-sdk] Received legacy serialized identity shape " +
                 "(privateKey/publicKey). Upgrade the page build to the latest " +
                 "@arkade-os/sdk — this compatibility path will be removed in " +
-                "the next major."
+                "the next major.",
         );
     }
     if ("privateKey" in shape && typeof shape.privateKey === "string") {
@@ -213,14 +194,12 @@ export function normalizeSerializedIdentity(
  * with an opaque `"Cannot read properties of undefined"` deep inside a
  * hydrator.
  */
-function assertValidSerializedIdentity(s: {
-    type: unknown;
-}): asserts s is SerializedIdentity {
+function assertValidSerializedIdentity(s: { type: unknown }): asserts s is SerializedIdentity {
     const kind = s.type;
     const bad = (field: string, expected: string): never => {
         throw new Error(
             `Malformed serialized identity ({ type: ${JSON.stringify(kind)} }): ` +
-                `missing or invalid "${field}" (expected ${expected})`
+                `missing or invalid "${field}" (expected ${expected})`,
         );
     };
     const asStr = (key: string): string => {
@@ -251,8 +230,6 @@ function assertValidSerializedIdentity(s: {
             asStr("descriptor");
             return;
         default:
-            throw new Error(
-                `Unknown serialized identity type: ${String(kind)}`
-            );
+            throw new Error(`Unknown serialized identity type: ${String(kind)}`);
     }
 }

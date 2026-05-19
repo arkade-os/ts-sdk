@@ -3,12 +3,7 @@ import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import { SQLiteWalletRepository } from "../src/repositories/sqlite/walletRepository";
 import type { SQLExecutor } from "../src/repositories/sqlite/types";
-import type {
-    ExtendedVirtualCoin,
-    ExtendedCoin,
-    ArkTransaction,
-    TxType,
-} from "../src/wallet";
+import type { ExtendedVirtualCoin, ExtendedCoin, ArkTransaction, TxType } from "../src/wallet";
 import type { TapLeafScript } from "../src/script/base";
 import type { WalletState } from "../src/repositories/walletRepository";
 
@@ -28,9 +23,7 @@ function createMockSQLExecutor(): SQLExecutor {
     function parseCreateTable(sql: string): { name: string; pk: string[] } {
         // Matches both `CREATE TABLE IF NOT EXISTS <name>` and the bare
         // `CREATE TABLE <name>` form used by the vtxos migration rebuild.
-        const nameMatch = sql.match(
-            /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)/i
-        );
+        const nameMatch = sql.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)/i);
         if (!nameMatch) throw new Error(`Cannot parse CREATE TABLE: ${sql}`);
         const name = nameMatch[1];
         const pkMatch = sql.match(/PRIMARY\s+KEY\s*\(([^)]+)\)/i);
@@ -49,9 +42,7 @@ function createMockSQLExecutor(): SQLExecutor {
         table: string;
         columns: string[];
     } {
-        const match = sql.match(
-            /INSERT\s+OR\s+REPLACE\s+INTO\s+(\w+)\s*\(([^)]+)\)/i
-        );
+        const match = sql.match(/INSERT\s+OR\s+REPLACE\s+INTO\s+(\w+)\s*\(([^)]+)\)/i);
         if (!match) throw new Error(`Cannot parse INSERT OR REPLACE: ${sql}`);
         const table = match[1];
         const columns = match[2].split(",").map((s) => s.trim());
@@ -121,9 +112,7 @@ function createMockSQLExecutor(): SQLExecutor {
 
             // DROP TABLE [IF EXISTS] <name> — used by the vtxos migration
             // rebuild to remove the old table after copying rows out.
-            const dropMatch = trimmed.match(
-                /^DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(\w+)/i
-            );
+            const dropMatch = trimmed.match(/^DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(\w+)/i);
             if (dropMatch) {
                 const tableName = dropMatch[1];
                 const ifExists = /IF\s+EXISTS/i.test(trimmed);
@@ -136,9 +125,7 @@ function createMockSQLExecutor(): SQLExecutor {
 
             // ALTER TABLE <old> RENAME TO <new> — used by the rebuild step to
             // swap the temp table into place.
-            const renameMatch = trimmed.match(
-                /^ALTER\s+TABLE\s+(\w+)\s+RENAME\s+TO\s+(\w+)/i
-            );
+            const renameMatch = trimmed.match(/^ALTER\s+TABLE\s+(\w+)\s+RENAME\s+TO\s+(\w+)/i);
             if (renameMatch) {
                 const [, oldName, newName] = renameMatch;
                 const t = tables.get(oldName);
@@ -150,7 +137,7 @@ function createMockSQLExecutor(): SQLExecutor {
 
             // INSERT INTO <tmp> (cols) SELECT cols FROM <src> — rebuild copy.
             const insertSelectMatch = trimmed.match(
-                /^INSERT\s+INTO\s+(\w+)\s*\([^)]+\)\s*SELECT\s+[\s\S]+\s+FROM\s+(\w+)/i
+                /^INSERT\s+INTO\s+(\w+)\s*\([^)]+\)\s*SELECT\s+[\s\S]+\s+FROM\s+(\w+)/i,
             );
             if (insertSelectMatch) {
                 const [, dest, src] = insertSelectMatch;
@@ -168,16 +155,13 @@ function createMockSQLExecutor(): SQLExecutor {
             // UPDATE <table> SET <col> = ? WHERE <col1> = ? AND <col2> = ? —
             // used by the migration backfill.
             const updateMatch = trimmed.match(
-                /^UPDATE\s+(\w+)\s+SET\s+(\w+)\s*=\s*\?\s+WHERE\s+(\w+)\s*=\s*\?\s+AND\s+(\w+)\s*=\s*\?/i
+                /^UPDATE\s+(\w+)\s+SET\s+(\w+)\s*=\s*\?\s+WHERE\s+(\w+)\s*=\s*\?\s+AND\s+(\w+)\s*=\s*\?/i,
             );
             if (updateMatch) {
                 const [, tableName, setCol, whereCol1, whereCol2] = updateMatch;
                 const t = getTable(tableName);
                 for (const row of t.rows.values()) {
-                    if (
-                        row[whereCol1] === params?.[1] &&
-                        row[whereCol2] === params?.[2]
-                    ) {
+                    if (row[whereCol1] === params?.[1] && row[whereCol2] === params?.[2]) {
                         row[setCol] = params?.[0];
                     }
                 }
@@ -220,9 +204,7 @@ function createMockSQLExecutor(): SQLExecutor {
             // ALTER TABLE ADD COLUMN is used for lazy migrations. Simulate
             // the real SQLite behaviour: if the column already exists, raise
             // a "duplicate column" error so the impl's catch branch matches.
-            const alterMatch = trimmed.match(
-                /^ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)/i
-            );
+            const alterMatch = trimmed.match(/^ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)/i);
             if (alterMatch) {
                 const [, tableName, colName] = alterMatch;
                 const t = tables.get(tableName);
@@ -241,7 +223,7 @@ function createMockSQLExecutor(): SQLExecutor {
 
         async get<T = Record<string, unknown>>(
             sql: string,
-            params?: unknown[]
+            params?: unknown[],
         ): Promise<T | undefined> {
             const trimmed = sql.trim();
 
@@ -269,10 +251,7 @@ function createMockSQLExecutor(): SQLExecutor {
             return undefined;
         },
 
-        async all<T = Record<string, unknown>>(
-            sql: string,
-            params?: unknown[]
-        ): Promise<T[]> {
+        async all<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
             const trimmed = sql.trim();
 
             // PRAGMA table_info(<name>) — the vtxos migration reads the
@@ -281,9 +260,7 @@ function createMockSQLExecutor(): SQLExecutor {
             // row; tables created by the canonical `vtxosCreateSql` branch
             // never go through this path, so an empty result (no existing
             // `script` column) is fine for the fresh-install case.
-            const pragmaMatch = trimmed.match(
-                /^PRAGMA\s+table_info\s*\(\s*(\w+)\s*\)/i
-            );
+            const pragmaMatch = trimmed.match(/^PRAGMA\s+table_info\s*\(\s*(\w+)\s*\)/i);
             if (pragmaMatch) {
                 const tableName = pragmaMatch[1];
                 const t = tables.get(tableName);
@@ -296,8 +273,7 @@ function createMockSQLExecutor(): SQLExecutor {
                 })) as T[];
             }
 
-            const { table, whereCol, orderByCol, orderDir } =
-                parseSelect(trimmed);
+            const { table, whereCol, orderByCol, orderDir } = parseSelect(trimmed);
             const t = getTable(table);
 
             let results: Record<string, unknown>[] = [];
@@ -340,11 +316,7 @@ function createMockTapLeafScript(): TapLeafScript {
     return [controlBlock, script];
 }
 
-function createMockVtxo(
-    txid: string,
-    vout: number,
-    value: number
-): ExtendedVirtualCoin {
+function createMockVtxo(txid: string, vout: number, value: number): ExtendedVirtualCoin {
     const tapLeaf = createMockTapLeafScript();
     return {
         txid,
@@ -369,11 +341,7 @@ function createMockVtxo(
     };
 }
 
-function createMockVtxoWithExtras(
-    txid: string,
-    vout: number,
-    value: number
-): ExtendedVirtualCoin {
+function createMockVtxoWithExtras(txid: string, vout: number, value: number): ExtendedVirtualCoin {
     const tapLeaf = createMockTapLeafScript();
     return {
         txid,
@@ -405,11 +373,7 @@ function createMockVtxoWithExtras(
     };
 }
 
-function createMockUtxo(
-    txid: string,
-    vout: number,
-    value: number
-): ExtendedCoin {
+function createMockUtxo(txid: string, vout: number, value: number): ExtendedCoin {
     const tapLeaf = createMockTapLeafScript();
     return {
         txid,
@@ -427,11 +391,7 @@ function createMockUtxo(
     };
 }
 
-function createMockUtxoWithExtras(
-    txid: string,
-    vout: number,
-    value: number
-): ExtendedCoin {
+function createMockUtxoWithExtras(txid: string, vout: number, value: number): ExtendedCoin {
     const tapLeaf = createMockTapLeafScript();
     return {
         txid,
@@ -452,7 +412,7 @@ function createMockTransaction(
     key: { boardingTxid?: string; commitmentTxid?: string; arkTxid?: string },
     type: TxType,
     amount: number,
-    createdAt?: number
+    createdAt?: number,
 ): ArkTransaction {
     return {
         key: {
@@ -527,14 +487,9 @@ describe("SQLiteWalletRepository", () => {
             expect(retrieved.settledBy).toBe("settled-by-tx");
             expect(retrieved.arkTxId).toBe("ark-tx-123");
             expect(retrieved.virtualStatus.state).toBe("settled");
-            expect(retrieved.virtualStatus.commitmentTxIds).toEqual([
-                "commit-tx-1",
-                "commit-tx-2",
-            ]);
+            expect(retrieved.virtualStatus.commitmentTxIds).toEqual(["commit-tx-1", "commit-tx-2"]);
             expect(retrieved.virtualStatus.batchExpiry).toBe(1700100000);
-            expect(retrieved.assets).toEqual([
-                { assetId: "asset-1", amount: 500n },
-            ]);
+            expect(retrieved.assets).toEqual([{ assetId: "asset-1", amount: 500n }]);
             // extraWitness round-trip (Uint8Array)
             expect(retrieved.extraWitness).toBeDefined();
             expect(retrieved.extraWitness!.length).toBe(2);
@@ -551,19 +506,17 @@ describe("SQLiteWalletRepository", () => {
 
             // tapTree should survive serialization
             expect(retrieved.tapTree).toBeInstanceOf(Uint8Array);
-            expect(hex.encode(retrieved.tapTree)).toBe(
-                hex.encode(vtxo.tapTree)
-            );
+            expect(hex.encode(retrieved.tapTree)).toBe(hex.encode(vtxo.tapTree));
 
             // TapLeafScript control block fields
             expect(retrieved.forfeitTapLeafScript[0].version).toBe(
-                vtxo.forfeitTapLeafScript[0].version
+                vtxo.forfeitTapLeafScript[0].version,
             );
-            expect(
-                hex.encode(retrieved.forfeitTapLeafScript[0].internalKey)
-            ).toBe(hex.encode(vtxo.forfeitTapLeafScript[0].internalKey));
+            expect(hex.encode(retrieved.forfeitTapLeafScript[0].internalKey)).toBe(
+                hex.encode(vtxo.forfeitTapLeafScript[0].internalKey),
+            );
             expect(hex.encode(retrieved.forfeitTapLeafScript[1])).toBe(
-                hex.encode(vtxo.forfeitTapLeafScript[1])
+                hex.encode(vtxo.forfeitTapLeafScript[1]),
             );
         });
 
@@ -610,12 +563,8 @@ describe("SQLiteWalletRepository", () => {
         it("should delete VTXOs for one address without affecting another", async () => {
             const address1 = "address-1";
             const address2 = "address-2";
-            await repository.saveVtxos(address1, [
-                createMockVtxo("tx1", 0, 10000),
-            ]);
-            await repository.saveVtxos(address2, [
-                createMockVtxo("tx2", 0, 20000),
-            ]);
+            await repository.saveVtxos(address1, [createMockVtxo("tx1", 0, 10000)]);
+            await repository.saveVtxos(address2, [createMockVtxo("tx2", 0, 20000)]);
 
             await repository.deleteVtxos(address1);
 
@@ -631,9 +580,7 @@ describe("SQLiteWalletRepository", () => {
             const [retrieved] = await repository.getVtxos(testAddress);
 
             expect(retrieved.createdAt).toBeInstanceOf(Date);
-            expect(retrieved.createdAt.toISOString()).toBe(
-                "2024-06-15T10:30:00.000Z"
-            );
+            expect(retrieved.createdAt.toISOString()).toBe("2024-06-15T10:30:00.000Z");
         });
 
         it("should handle VTXO with isSpent undefined", async () => {
@@ -660,10 +607,9 @@ describe("SQLiteWalletRepository", () => {
                     script: script1,
                 };
 
-                await repository.saveVtxosForScript(
-                    { script: script1, address: address1 },
-                    [vtxo1]
-                );
+                await repository.saveVtxosForScript({ script: script1, address: address1 }, [
+                    vtxo1,
+                ]);
                 const retrieved = await repository.getVtxosForScript(script1);
 
                 expect(retrieved).toHaveLength(1);
@@ -680,10 +626,7 @@ describe("SQLiteWalletRepository", () => {
                 };
 
                 await expect(
-                    repository.saveVtxosForScript(
-                        { script: script1, address: address1 },
-                        [vtxo1]
-                    )
+                    repository.saveVtxosForScript({ script: script1, address: address1 }, [vtxo1]),
                 ).rejects.toThrow();
             });
 
@@ -785,12 +728,8 @@ describe("SQLiteWalletRepository", () => {
         it("should handle multiple addresses independently", async () => {
             const address1 = "address-1";
             const address2 = "address-2";
-            await repository.saveUtxos(address1, [
-                createMockUtxo("tx1", 0, 10000),
-            ]);
-            await repository.saveUtxos(address2, [
-                createMockUtxo("tx2", 0, 20000),
-            ]);
+            await repository.saveUtxos(address1, [createMockUtxo("tx1", 0, 10000)]);
+            await repository.saveUtxos(address2, [createMockUtxo("tx2", 0, 20000)]);
 
             const retrieved1 = await repository.getUtxos(address1);
             const retrieved2 = await repository.getUtxos(address2);
@@ -807,11 +746,9 @@ describe("SQLiteWalletRepository", () => {
             const [retrieved] = await repository.getUtxos(testAddress);
 
             expect(retrieved.tapTree).toBeInstanceOf(Uint8Array);
-            expect(hex.encode(retrieved.tapTree)).toBe(
-                hex.encode(utxo.tapTree)
-            );
+            expect(hex.encode(retrieved.tapTree)).toBe(hex.encode(utxo.tapTree));
             expect(retrieved.forfeitTapLeafScript[0].version).toBe(
-                utxo.forfeitTapLeafScript[0].version
+                utxo.forfeitTapLeafScript[0].version,
             );
         });
     });
@@ -825,28 +762,22 @@ describe("SQLiteWalletRepository", () => {
         });
 
         it("should save and retrieve transactions", async () => {
-            const tx1 = createMockTransaction(
-                { arkTxid: "atx1" },
-                "SENT" as TxType,
-                10000,
-                1000
-            );
+            const tx1 = createMockTransaction({ arkTxid: "atx1" }, "SENT" as TxType, 10000, 1000);
             const tx2 = createMockTransaction(
                 { boardingTxid: "btx2" },
                 "RECEIVED" as TxType,
                 20000,
-                2000
+                2000,
             );
             const tx3 = createMockTransaction(
                 { commitmentTxid: "ctx3" },
                 "RECEIVED" as TxType,
                 30000,
-                3000
+                3000,
             );
 
             await repository.saveTransactions(testAddress, [tx1, tx2, tx3]);
-            const retrieved =
-                await repository.getTransactionHistory(testAddress);
+            const retrieved = await repository.getTransactionHistory(testAddress);
 
             expect(retrieved).toHaveLength(3);
             expect(retrieved[0].key.arkTxid).toBe("atx1");
@@ -862,24 +793,18 @@ describe("SQLiteWalletRepository", () => {
                 { arkTxid: "atx-late" },
                 "SENT" as TxType,
                 5000,
-                3000
+                3000,
             );
             const tx2 = createMockTransaction(
                 { arkTxid: "atx-early" },
                 "RECEIVED" as TxType,
                 7000,
-                1000
+                1000,
             );
-            const tx3 = createMockTransaction(
-                { arkTxid: "atx-mid" },
-                "SENT" as TxType,
-                3000,
-                2000
-            );
+            const tx3 = createMockTransaction({ arkTxid: "atx-mid" }, "SENT" as TxType, 3000, 2000);
 
             await repository.saveTransactions(testAddress, [tx1, tx2, tx3]);
-            const retrieved =
-                await repository.getTransactionHistory(testAddress);
+            const retrieved = await repository.getTransactionHistory(testAddress);
 
             expect(retrieved).toHaveLength(3);
             expect(retrieved[0].key.arkTxid).toBe("atx-early");
@@ -888,40 +813,28 @@ describe("SQLiteWalletRepository", () => {
         });
 
         it("should update existing transaction when saving with same key (upsert)", async () => {
-            const tx1 = createMockTransaction(
-                { arkTxid: "atx1" },
-                "SENT" as TxType,
-                10000,
-                1000
-            );
+            const tx1 = createMockTransaction({ arkTxid: "atx1" }, "SENT" as TxType, 10000, 1000);
             await repository.saveTransactions(testAddress, [tx1]);
 
             const tx1Updated = createMockTransaction(
                 { arkTxid: "atx1" },
                 "SENT" as TxType,
                 15000,
-                1000
+                1000,
             );
             await repository.saveTransactions(testAddress, [tx1Updated]);
 
-            const retrieved =
-                await repository.getTransactionHistory(testAddress);
+            const retrieved = await repository.getTransactionHistory(testAddress);
             expect(retrieved).toHaveLength(1);
             expect(retrieved[0].amount).toBe(15000);
         });
 
         it("should delete transactions for an address", async () => {
-            const tx1 = createMockTransaction(
-                { arkTxid: "atx1" },
-                "SENT" as TxType,
-                10000,
-                1000
-            );
+            const tx1 = createMockTransaction({ arkTxid: "atx1" }, "SENT" as TxType, 10000, 1000);
             await repository.saveTransactions(testAddress, [tx1]);
 
             await repository.deleteTransactions(testAddress);
-            const retrieved =
-                await repository.getTransactionHistory(testAddress);
+            const retrieved = await repository.getTransactionHistory(testAddress);
 
             expect(retrieved).toEqual([]);
         });
@@ -944,8 +857,7 @@ describe("SQLiteWalletRepository", () => {
             };
 
             await repository.saveTransactions(testAddress, [tx]);
-            const [retrieved] =
-                await repository.getTransactionHistory(testAddress);
+            const [retrieved] = await repository.getTransactionHistory(testAddress);
 
             expect(retrieved.settled).toBe(true);
             expect(retrieved.assets).toEqual([
@@ -958,17 +870,12 @@ describe("SQLiteWalletRepository", () => {
             const address1 = "address-1";
             const address2 = "address-2";
 
-            const tx1 = createMockTransaction(
-                { arkTxid: "atx1" },
-                "SENT" as TxType,
-                10000,
-                1000
-            );
+            const tx1 = createMockTransaction({ arkTxid: "atx1" }, "SENT" as TxType, 10000, 1000);
             const tx2 = createMockTransaction(
                 { arkTxid: "atx2" },
                 "RECEIVED" as TxType,
                 20000,
-                2000
+                2000,
             );
 
             await repository.saveTransactions(address1, [tx1]);
@@ -1037,27 +944,16 @@ describe("SQLiteWalletRepository", () => {
 
     describe("clear()", () => {
         it("should clear all data from all tables", async () => {
-            await repository.saveVtxos(testAddress, [
-                createMockVtxo("tx1", 0, 10000),
-            ]);
-            await repository.saveUtxos(testAddress, [
-                createMockUtxo("tx2", 0, 20000),
-            ]);
+            await repository.saveVtxos(testAddress, [createMockVtxo("tx1", 0, 10000)]);
+            await repository.saveUtxos(testAddress, [createMockUtxo("tx2", 0, 20000)]);
             await repository.saveTransactions(testAddress, [
-                createMockTransaction(
-                    { arkTxid: "atx1" },
-                    "SENT" as TxType,
-                    5000,
-                    1000
-                ),
+                createMockTransaction({ arkTxid: "atx1" }, "SENT" as TxType, 5000, 1000),
             ]);
             await repository.clear();
 
             expect(await repository.getVtxos(testAddress)).toEqual([]);
             expect(await repository.getUtxos(testAddress)).toEqual([]);
-            expect(await repository.getTransactionHistory(testAddress)).toEqual(
-                []
-            );
+            expect(await repository.getTransactionHistory(testAddress)).toEqual([]);
             expect(await repository.getWalletState()).toBeNull();
         });
     });
@@ -1070,9 +966,7 @@ describe("SQLiteWalletRepository", () => {
                 prefix: "myapp_",
             });
             // Should work without interference from the default-prefixed repo
-            await customRepo.saveVtxos(testAddress, [
-                createMockVtxo("tx-custom", 0, 9000),
-            ]);
+            await customRepo.saveVtxos(testAddress, [createMockVtxo("tx-custom", 0, 9000)]);
             const retrieved = await customRepo.getVtxos(testAddress);
             expect(retrieved).toHaveLength(1);
             expect(retrieved[0].txid).toBe("tx-custom");
@@ -1082,12 +976,8 @@ describe("SQLiteWalletRepository", () => {
             const repoA = new SQLiteWalletRepository(db, { prefix: "a_" });
             const repoB = new SQLiteWalletRepository(db, { prefix: "b_" });
 
-            await repoA.saveVtxos(testAddress, [
-                createMockVtxo("tx-a", 0, 1000),
-            ]);
-            await repoB.saveVtxos(testAddress, [
-                createMockVtxo("tx-b", 0, 2000),
-            ]);
+            await repoA.saveVtxos(testAddress, [createMockVtxo("tx-a", 0, 1000)]);
+            await repoB.saveVtxos(testAddress, [createMockVtxo("tx-b", 0, 2000)]);
 
             const fromA = await repoA.getVtxos(testAddress);
             const fromB = await repoB.getVtxos(testAddress);
@@ -1103,9 +993,7 @@ describe("SQLiteWalletRepository", () => {
 
     describe("[Symbol.asyncDispose]", () => {
         it("should be a no-op and not throw", async () => {
-            await expect(
-                repository[Symbol.asyncDispose]()
-            ).resolves.toBeUndefined();
+            await expect(repository[Symbol.asyncDispose]()).resolves.toBeUndefined();
         });
     });
 });

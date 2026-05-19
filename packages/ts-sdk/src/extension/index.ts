@@ -87,17 +87,13 @@ export class Extension {
             throw new Error("expected OP_RETURN");
         }
 
-        const dataPushes = decoded
-            .slice(1)
-            .filter((x): x is Uint8Array => x instanceof Uint8Array);
+        const dataPushes = decoded.slice(1).filter((x): x is Uint8Array => x instanceof Uint8Array);
         if (dataPushes.length === 0) {
             throw new Error("missing magic prefix: EOF");
         }
 
         // Concatenate all data pushes (handles OP_PUSHDATA1/2/4)
-        const payload = new Uint8Array(
-            dataPushes.reduce((acc, d) => acc + d.length, 0)
-        );
+        const payload = new Uint8Array(dataPushes.reduce((acc, d) => acc + d.length, 0));
         let offset = 0;
         for (const d of dataPushes) {
             payload.set(d, offset);
@@ -110,7 +106,7 @@ export class Extension {
             !equalBytes(payload.slice(0, ARKADE_MAGIC.length), ARKADE_MAGIC)
         ) {
             throw new Error(
-                `expected magic prefix ${hex.encode(ARKADE_MAGIC)}, got ${hex.encode(payload.slice(0, Math.min(payload.length, ARKADE_MAGIC.length)))}`
+                `expected magic prefix ${hex.encode(ARKADE_MAGIC)}, got ${hex.encode(payload.slice(0, Math.min(payload.length, ARKADE_MAGIC.length)))}`,
             );
         }
 

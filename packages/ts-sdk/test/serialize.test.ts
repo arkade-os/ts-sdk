@@ -19,8 +19,7 @@ import {
 
 const TEST_MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-const TEST_PRIVATE_KEY_HEX =
-    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const TEST_PRIVATE_KEY_HEX = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 afterEach(() => {
     vi.restoreAllMocks();
@@ -101,9 +100,7 @@ describe("serializeSigningIdentity", () => {
                 throw new Error("unused");
             },
         } as unknown as Parameters<typeof serializeSigningIdentity>[0];
-        expect(() => serializeSigningIdentity(opaque)).toThrow(
-            /Unsupported signing identity/
-        );
+        expect(() => serializeSigningIdentity(opaque)).toThrow(/Unsupported signing identity/);
     });
 });
 
@@ -113,11 +110,8 @@ describe("serializeReadonlyIdentity", () => {
         const readonly = await signing.toReadonly();
         const envelope = await serializeReadonlyIdentity(readonly);
         expect(envelope.type).toBe("readonly-single-key");
-        if (envelope.type !== "readonly-single-key")
-            throw new Error("unreachable");
-        expect(envelope.publicKey).toBe(
-            hex.encode(await readonly.compressedPublicKey())
-        );
+        if (envelope.type !== "readonly-single-key") throw new Error("unreachable");
+        expect(envelope.publicKey).toBe(hex.encode(await readonly.compressedPublicKey()));
         expect(isSigningSerialized(envelope)).toBe(false);
     });
 
@@ -125,11 +119,8 @@ describe("serializeReadonlyIdentity", () => {
         const signing = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
         const envelope = await serializeReadonlyIdentity(signing);
         expect(envelope.type).toBe("readonly-single-key");
-        if (envelope.type !== "readonly-single-key")
-            throw new Error("unreachable");
-        expect(envelope.publicKey).toBe(
-            hex.encode(await signing.compressedPublicKey())
-        );
+        if (envelope.type !== "readonly-single-key") throw new Error("unreachable");
+        expect(envelope.publicKey).toBe(hex.encode(await signing.compressedPublicKey()));
         expect(JSON.stringify(envelope)).not.toContain(TEST_PRIVATE_KEY_HEX);
     });
 
@@ -163,9 +154,7 @@ describe("serializeReadonlyIdentity", () => {
         const mnemonic = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: true,
         });
-        const readonly = ReadonlyDescriptorIdentity.fromDescriptor(
-            mnemonic.descriptor
-        );
+        const readonly = ReadonlyDescriptorIdentity.fromDescriptor(mnemonic.descriptor);
         const envelope = await serializeReadonlyIdentity(readonly);
         expect(envelope).toEqual({
             type: "readonly-descriptor",
@@ -180,15 +169,13 @@ describe("hydrateIdentity round-trip", () => {
         const rehydrated = hydrateIdentity(serializeSigningIdentity(original));
         expect(rehydrated).toBeInstanceOf(SingleKey);
         expect(Array.from(await rehydrated.xOnlyPublicKey())).toEqual(
-            Array.from(await original.xOnlyPublicKey())
+            Array.from(await original.xOnlyPublicKey()),
         );
     });
 
     it("SingleKey produces equal signMessage output after round-trip", async () => {
         const original = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
-        const rehydrated = hydrateIdentity(
-            serializeSigningIdentity(original)
-        ) as SingleKey;
+        const rehydrated = hydrateIdentity(serializeSigningIdentity(original)) as SingleKey;
         const message = new Uint8Array(32).fill(7);
         const [sigA, sigB] = await Promise.all([
             original.signMessage(message, "ecdsa"),
@@ -200,39 +187,33 @@ describe("hydrateIdentity round-trip", () => {
     it("ReadonlySingleKey -> readonly-single-key -> ReadonlySingleKey preserves pubkey", async () => {
         const signing = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
         const original = await signing.toReadonly();
-        const rehydrated = hydrateIdentity(
-            await serializeReadonlyIdentity(original)
-        );
+        const rehydrated = hydrateIdentity(await serializeReadonlyIdentity(original));
         expect(rehydrated).toBeInstanceOf(ReadonlySingleKey);
         expect(Array.from(await rehydrated.xOnlyPublicKey())).toEqual(
-            Array.from(await original.xOnlyPublicKey())
+            Array.from(await original.xOnlyPublicKey()),
         );
     });
 
     it("SeedIdentity -> seed -> SeedIdentity preserves keys and descriptor", async () => {
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);
         const original = SeedIdentity.fromSeed(seed, { isMainnet: true });
-        const rehydrated = hydrateIdentity(
-            serializeSigningIdentity(original)
-        ) as SeedIdentity;
+        const rehydrated = hydrateIdentity(serializeSigningIdentity(original)) as SeedIdentity;
         expect(rehydrated).toBeInstanceOf(SeedIdentity);
         expect(rehydrated.descriptor).toBe(original.descriptor);
         expect(Array.from(await rehydrated.xOnlyPublicKey())).toEqual(
-            Array.from(await original.xOnlyPublicKey())
+            Array.from(await original.xOnlyPublicKey()),
         );
         const message = new Uint8Array(32).fill(11);
-        expect(
-            Array.from(await rehydrated.signMessage(message, "ecdsa"))
-        ).toEqual(Array.from(await original.signMessage(message, "ecdsa")));
+        expect(Array.from(await rehydrated.signMessage(message, "ecdsa"))).toEqual(
+            Array.from(await original.signMessage(message, "ecdsa")),
+        );
     });
 
     it("MnemonicIdentity -> mnemonic -> MnemonicIdentity preserves class and keys", async () => {
         const original = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: true,
         });
-        const rehydrated = hydrateIdentity(
-            serializeSigningIdentity(original)
-        ) as MnemonicIdentity;
+        const rehydrated = hydrateIdentity(serializeSigningIdentity(original)) as MnemonicIdentity;
         expect(rehydrated).toBeInstanceOf(MnemonicIdentity);
         expect(rehydrated.descriptor).toBe(original.descriptor);
         // Secret state (mnemonic, passphrase) is off the public instance
@@ -244,7 +225,7 @@ describe("hydrateIdentity round-trip", () => {
             descriptor: original.descriptor,
         });
         expect(Array.from(await rehydrated.xOnlyPublicKey())).toEqual(
-            Array.from(await original.xOnlyPublicKey())
+            Array.from(await original.xOnlyPublicKey()),
         );
     });
 
@@ -254,9 +235,7 @@ describe("hydrateIdentity round-trip", () => {
             isMainnet: true,
             passphrase,
         });
-        const rehydrated = hydrateIdentity(
-            serializeSigningIdentity(original)
-        ) as MnemonicIdentity;
+        const rehydrated = hydrateIdentity(serializeSigningIdentity(original)) as MnemonicIdentity;
         expect(serializeSigningIdentity(rehydrated)).toEqual({
             type: "mnemonic",
             mnemonic: TEST_MNEMONIC,
@@ -264,7 +243,7 @@ describe("hydrateIdentity round-trip", () => {
             passphrase,
         });
         expect(Array.from(await rehydrated.xOnlyPublicKey())).toEqual(
-            Array.from(await original.xOnlyPublicKey())
+            Array.from(await original.xOnlyPublicKey()),
         );
     });
 
@@ -276,12 +255,8 @@ describe("hydrateIdentity round-trip", () => {
         // Appendix A: secrets live in a module-private WeakMap, not on the
         // instance. Property access returns undefined and enumeration does
         // not reveal them.
-        expect(
-            (identity as unknown as Record<string, unknown>).mnemonic
-        ).toBeUndefined();
-        expect(
-            (identity as unknown as Record<string, unknown>).passphrase
-        ).toBeUndefined();
+        expect((identity as unknown as Record<string, unknown>).mnemonic).toBeUndefined();
+        expect((identity as unknown as Record<string, unknown>).passphrase).toBeUndefined();
         const ownKeys = Object.keys(identity);
         expect(ownKeys).not.toContain("mnemonic");
         expect(ownKeys).not.toContain("passphrase");
@@ -290,9 +265,7 @@ describe("hydrateIdentity round-trip", () => {
     it("does not expose seed as a public instance field", () => {
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-        expect(
-            (identity as unknown as Record<string, unknown>).seed
-        ).toBeUndefined();
+        expect((identity as unknown as Record<string, unknown>).seed).toBeUndefined();
         expect(Object.keys(identity)).not.toContain("seed");
     });
 
@@ -331,13 +304,11 @@ describe("hydrateIdentity round-trip", () => {
         const original = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             descriptor: testnetReference.descriptor,
         });
-        const rehydrated = hydrateIdentity(
-            serializeSigningIdentity(original)
-        ) as MnemonicIdentity;
+        const rehydrated = hydrateIdentity(serializeSigningIdentity(original)) as MnemonicIdentity;
         expect(rehydrated.descriptor).toBe(testnetReference.descriptor);
         expect(rehydrated.descriptor).toBe(testnetReference.descriptor);
         expect(Array.from(await rehydrated.xOnlyPublicKey())).toEqual(
-            Array.from(await testnetReference.xOnlyPublicKey())
+            Array.from(await testnetReference.xOnlyPublicKey()),
         );
     });
 
@@ -348,7 +319,7 @@ describe("hydrateIdentity round-trip", () => {
         const rehydrated = hydrateIdentity(envelope);
         expect(rehydrated).toBeInstanceOf(ReadonlyDescriptorIdentity);
         expect(Array.from(await rehydrated.xOnlyPublicKey())).toEqual(
-            Array.from(await signing.xOnlyPublicKey())
+            Array.from(await signing.xOnlyPublicKey()),
         );
     });
 });
@@ -385,14 +356,11 @@ describe("normalizeSerializedIdentity", () => {
 
     it("maps legacy envelopes to hydrate-compatible output", async () => {
         vi.spyOn(console, "warn").mockImplementation(() => {});
-        const legacyReadonly: SerializedReadonlyIdentity =
-            normalizeSerializedIdentity({
-                publicKey: hex.encode(
-                    await SingleKey.fromHex(
-                        TEST_PRIVATE_KEY_HEX
-                    ).compressedPublicKey()
-                ),
-            }) as SerializedReadonlyIdentity;
+        const legacyReadonly: SerializedReadonlyIdentity = normalizeSerializedIdentity({
+            publicKey: hex.encode(
+                await SingleKey.fromHex(TEST_PRIVATE_KEY_HEX).compressedPublicKey(),
+            ),
+        }) as SerializedReadonlyIdentity;
         const rehydrated = hydrateIdentity(legacyReadonly);
         expect(rehydrated).toBeInstanceOf(ReadonlySingleKey);
     });
@@ -402,7 +370,7 @@ describe("normalizeSerializedIdentity", () => {
             normalizeSerializedIdentity({
                 type: "evil",
                 privateKey: TEST_PRIVATE_KEY_HEX,
-            } as unknown as SerializedSigningIdentity)
+            } as unknown as SerializedSigningIdentity),
         ).toThrow(/Unknown serialized identity type: evil/);
     });
 
@@ -412,34 +380,34 @@ describe("normalizeSerializedIdentity", () => {
         expect(() =>
             normalizeSerializedIdentity({
                 type: "single-key",
-            } as unknown as SerializedSigningIdentity)
+            } as unknown as SerializedSigningIdentity),
         ).toThrow(/Malformed.*"single-key".*"privateKey"/);
 
         expect(() =>
             normalizeSerializedIdentity({
                 type: "readonly-single-key",
-            } as unknown as SerializedReadonlyIdentity)
+            } as unknown as SerializedReadonlyIdentity),
         ).toThrow(/Malformed.*"readonly-single-key".*"publicKey"/);
 
         expect(() =>
             normalizeSerializedIdentity({
                 type: "seed",
                 descriptor: "tr(...)",
-            } as unknown as SerializedSigningIdentity)
+            } as unknown as SerializedSigningIdentity),
         ).toThrow(/Malformed.*"seed".*"seed"/);
 
         expect(() =>
             normalizeSerializedIdentity({
                 type: "seed",
                 seed: "abcd",
-            } as unknown as SerializedSigningIdentity)
+            } as unknown as SerializedSigningIdentity),
         ).toThrow(/Malformed.*"seed".*"descriptor"/);
 
         expect(() =>
             normalizeSerializedIdentity({
                 type: "mnemonic",
                 descriptor: "tr(...)",
-            } as unknown as SerializedSigningIdentity)
+            } as unknown as SerializedSigningIdentity),
         ).toThrow(/Malformed.*"mnemonic".*"mnemonic"/);
 
         expect(() =>
@@ -448,13 +416,13 @@ describe("normalizeSerializedIdentity", () => {
                 mnemonic: TEST_MNEMONIC,
                 descriptor: "tr(...)",
                 passphrase: 42,
-            } as unknown as SerializedSigningIdentity)
+            } as unknown as SerializedSigningIdentity),
         ).toThrow(/Malformed.*"mnemonic".*"passphrase"/);
 
         expect(() =>
             normalizeSerializedIdentity({
                 type: "readonly-descriptor",
-            } as unknown as SerializedReadonlyIdentity)
+            } as unknown as SerializedReadonlyIdentity),
         ).toThrow(/Malformed.*"readonly-descriptor".*"descriptor"/);
     });
 
@@ -476,7 +444,7 @@ describe("hydrateIdentity defensive default", () => {
             hydrateIdentity({
                 type: "evil",
                 privateKey: "00",
-            } as unknown as SerializedSigningIdentity)
+            } as unknown as SerializedSigningIdentity),
         ).toThrow(/Unknown serialized identity type: evil/);
     });
 });
@@ -487,21 +455,21 @@ describe("isSigningSerialized", () => {
             isSigningSerialized({
                 type: "single-key",
                 privateKey: TEST_PRIVATE_KEY_HEX,
-            })
+            }),
         ).toBe(true);
         expect(
             isSigningSerialized({
                 type: "seed",
                 seed: hex.encode(mnemonicToSeedSync(TEST_MNEMONIC)),
                 descriptor: "irrelevant-for-guard",
-            })
+            }),
         ).toBe(true);
         expect(
             isSigningSerialized({
                 type: "mnemonic",
                 mnemonic: TEST_MNEMONIC,
                 descriptor: "irrelevant-for-guard",
-            })
+            }),
         ).toBe(true);
     });
 
@@ -510,13 +478,13 @@ describe("isSigningSerialized", () => {
             isSigningSerialized({
                 type: "readonly-single-key",
                 publicKey: hex.encode(new Uint8Array(33)),
-            })
+            }),
         ).toBe(false);
         expect(
             isSigningSerialized({
                 type: "readonly-descriptor",
                 descriptor: "irrelevant-for-guard",
-            })
+            }),
         ).toBe(false);
     });
 });
@@ -525,12 +493,10 @@ describe("identity barrel public surface", () => {
     it("does not re-export the SDK-internal seed-owned serializer helpers", async () => {
         const barrel = await import("../src/identity");
         expect(
-            (barrel as Record<string, unknown>)
-                .serializeSeedOwnedSigningIdentity
+            (barrel as Record<string, unknown>).serializeSeedOwnedSigningIdentity,
         ).toBeUndefined();
         expect(
-            (barrel as Record<string, unknown>)
-                .serializeSeedOwnedReadonlyIdentity
+            (barrel as Record<string, unknown>).serializeSeedOwnedReadonlyIdentity,
         ).toBeUndefined();
     });
 
@@ -538,19 +504,13 @@ describe("identity barrel public surface", () => {
         const barrel = await import("../src/identity");
         expect(barrel.SeedIdentity).toBe(SeedIdentity);
         expect(barrel.MnemonicIdentity).toBe(MnemonicIdentity);
-        expect(barrel.ReadonlyDescriptorIdentity).toBe(
-            ReadonlyDescriptorIdentity
-        );
+        expect(barrel.ReadonlyDescriptorIdentity).toBe(ReadonlyDescriptorIdentity);
         expect(barrel.SingleKey).toBe(SingleKey);
         expect(barrel.ReadonlySingleKey).toBe(ReadonlySingleKey);
         expect(barrel.serializeSigningIdentity).toBe(serializeSigningIdentity);
-        expect(barrel.serializeReadonlyIdentity).toBe(
-            serializeReadonlyIdentity
-        );
+        expect(barrel.serializeReadonlyIdentity).toBe(serializeReadonlyIdentity);
         expect(barrel.hydrateIdentity).toBe(hydrateIdentity);
-        expect(barrel.normalizeSerializedIdentity).toBe(
-            normalizeSerializedIdentity
-        );
+        expect(barrel.normalizeSerializedIdentity).toBe(normalizeSerializedIdentity);
         expect(barrel.isSigningSerialized).toBe(isSigningSerialized);
     });
 });

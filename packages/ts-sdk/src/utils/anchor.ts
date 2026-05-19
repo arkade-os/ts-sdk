@@ -25,7 +25,7 @@ export function findP2AOutput(tx: Transaction): TransactionInputUpdate {
         if (output.script && hex.encode(output.script) === hexP2Ascript) {
             if (output.amount !== P2A.amount) {
                 throw new Error(
-                    `P2A output has wrong amount, expected ${P2A.amount} got ${output.amount}`
+                    `P2A output has wrong amount, expected ${P2A.amount} got ${output.amount}`,
                 );
             }
 

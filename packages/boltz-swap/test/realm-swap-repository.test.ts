@@ -1,10 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { RealmSwapRepository } from "../src/repositories/realm/swap-repository";
-import type {
-    BoltzReverseSwap,
-    BoltzSubmarineSwap,
-    BoltzChainSwap,
-} from "../src/types";
+import type { BoltzReverseSwap, BoltzSubmarineSwap, BoltzChainSwap } from "../src/types";
 
 // ── Mock Realm ──────────────────────────────────────────────────────────
 
@@ -40,9 +36,7 @@ function createMockRealm() {
         const resultSet: ResultSet = Object.assign(arr, {
             filtered(query: string, ...args: unknown[]): ResultSet {
                 // Parse conditions separated by AND
-                const conditions = query
-                    .split(/\s+AND\s+/i)
-                    .map((c) => c.trim());
+                const conditions = query.split(/\s+AND\s+/i).map((c) => c.trim());
                 let filtered = [...arr];
 
                 for (const cond of conditions) {
@@ -50,16 +44,12 @@ function createMockRealm() {
                     const inMatch = cond.match(/(\w+)\s+IN\s+\{([^}]+)\}/i);
                     if (inMatch) {
                         const col = inMatch[1];
-                        const placeholders = inMatch[2]
-                            .split(",")
-                            .map((p) => p.trim());
+                        const placeholders = inMatch[2].split(",").map((p) => p.trim());
                         const values = placeholders.map((p) => {
                             const idx = parseInt(p.replace("$", ""), 10);
                             return args[idx];
                         });
-                        filtered = filtered.filter((r) =>
-                            values.includes(r[col])
-                        );
+                        filtered = filtered.filter((r) => values.includes(r[col]));
                         continue;
                     }
 
@@ -79,7 +69,7 @@ function createMockRealm() {
 
             sorted(
                 field: string,
-                reverse?: boolean
+                reverse?: boolean,
             ): Record<string, unknown>[] & {
                 filtered: typeof resultSet.filtered;
                 sorted: typeof resultSet.sorted;
@@ -101,11 +91,7 @@ function createMockRealm() {
             fn();
         },
 
-        create(
-            schemaName: string,
-            obj: Record<string, unknown>,
-            _mode?: string
-        ): void {
+        create(schemaName: string, obj: Record<string, unknown>, _mode?: string): void {
             const table = getStore(schemaName);
             // Primary key is "id" for BoltzSwap
             const pk = obj.id as string;
@@ -134,10 +120,7 @@ function createMockRealm() {
 
 // ── Test Fixture Factories ──────────────────────────────────────────────
 
-const createReverseSwap = (
-    id: string,
-    status: BoltzReverseSwap["status"]
-): BoltzReverseSwap => ({
+const createReverseSwap = (id: string, status: BoltzReverseSwap["status"]): BoltzReverseSwap => ({
     id,
     type: "reverse",
     createdAt: Date.now() / 1000,
@@ -165,7 +148,7 @@ const createReverseSwap = (
 
 const createSubmarineSwap = (
     id: string,
-    status: BoltzSubmarineSwap["status"]
+    status: BoltzSubmarineSwap["status"],
 ): BoltzSubmarineSwap => ({
     id,
     type: "submarine",
@@ -193,7 +176,7 @@ const createSubmarineSwap = (
 const createChainSwap = (
     id: string,
     status: BoltzChainSwap["status"],
-    overrides?: Partial<BoltzChainSwap>
+    overrides?: Partial<BoltzChainSwap>,
 ): BoltzChainSwap => ({
     id,
     type: "chain",
@@ -323,9 +306,7 @@ describe("RealmSwapRepository", () => {
     it("filters by type (single)", async () => {
         await repo.saveSwap(createReverseSwap("r1", "swap.created"));
         await repo.saveSwap(createSubmarineSwap("s1", "invoice.set"));
-        await repo.saveSwap(
-            createChainSwap("c1", "transaction.server.mempool")
-        );
+        await repo.saveSwap(createChainSwap("c1", "transaction.server.mempool"));
 
         const result = await repo.getAllSwaps({ type: "chain" });
 
@@ -336,9 +317,7 @@ describe("RealmSwapRepository", () => {
     it("filters by type (array)", async () => {
         await repo.saveSwap(createReverseSwap("r1", "swap.created"));
         await repo.saveSwap(createSubmarineSwap("s1", "invoice.set"));
-        await repo.saveSwap(
-            createChainSwap("c1", "transaction.server.mempool")
-        );
+        await repo.saveSwap(createChainSwap("c1", "transaction.server.mempool"));
 
         const result = await repo.getAllSwaps({
             type: ["reverse", "chain"],

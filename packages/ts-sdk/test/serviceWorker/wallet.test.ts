@@ -42,7 +42,7 @@ function structuredCloneResponse(response: any): any {
 
 const createServiceWorkerHarness = (
     responder?: (message: any) => any,
-    options?: { handlePing?: boolean }
+    options?: { handlePing?: boolean },
 ) => {
     const handlePing = options?.handlePing ?? true;
     const listeners = new Set<MessageHandler>();
@@ -62,7 +62,7 @@ const createServiceWorkerHarness = (
                 listeners.forEach((handler) =>
                     handler({
                         data: { id: message.id, tag: "PONG" },
-                    })
+                    }),
                 );
                 return;
             }
@@ -82,16 +82,13 @@ const createServiceWorkerHarness = (
     return { navigatorServiceWorker, serviceWorker, emit, listeners };
 };
 
-const createWallet = (
-    serviceWorker: ServiceWorker,
-    messageTag: string = DEFAULT_MESSAGE_TAG
-) =>
+const createWallet = (serviceWorker: ServiceWorker, messageTag: string = DEFAULT_MESSAGE_TAG) =>
     new (ServiceWorkerReadonlyWallet as any)(
         serviceWorker,
         {} as any,
         new InMemoryWalletRepository(),
         new InMemoryContractRepository(),
-        messageTag
+        messageTag,
     ) as ServiceWorkerReadonlyWallet;
 
 describe("ServiceWorkerReadonlyWallet", () => {
@@ -106,10 +103,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
     it("passes the activation timeout through setup", async () => {
         const serviceWorker = { state: "activated" } as ServiceWorker;
         const setupServiceWorkerMock = vi
-            .spyOn(
-                await import("../../src/worker/browser/utils"),
-                "setupServiceWorker"
-            )
+            .spyOn(await import("../../src/worker/browser/utils"), "setupServiceWorker")
             .mockResolvedValue(serviceWorker);
         const createMock = vi
             .spyOn(ServiceWorkerReadonlyWallet, "create")
@@ -126,19 +120,16 @@ describe("ServiceWorkerReadonlyWallet", () => {
             path: "/sw.js",
             activationTimeoutMs: 30_000,
         });
-        expect(createMock).toHaveBeenCalledWith(
-            expect.objectContaining({ serviceWorker })
-        );
+        expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ serviceWorker }));
     });
 
     it("sends GET_ADDRESS and returns the payload", async () => {
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness((message) => ({
-                id: message.id,
-                tag: messageTag,
-                type: "ADDRESS",
-                payload: { address: "bc1-test" },
-            }));
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
+            id: message.id,
+            tag: messageTag,
+            type: "ADDRESS",
+            payload: { address: "bc1-test" },
+        }));
 
         vi.stubGlobal("navigator", {
             serviceWorker: navigatorServiceWorker,
@@ -151,21 +142,18 @@ describe("ServiceWorkerReadonlyWallet", () => {
             expect.objectContaining({
                 tag: messageTag,
                 type: "GET_ADDRESS",
-            })
+            }),
         );
     });
 
     it("returns boarding UTXOs from BOARDING_UTXOS payload", async () => {
-        const utxos = [
-            { txid: "tx", vout: 0, value: 1, status: { confirmed: true } },
-        ];
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness((message) => ({
-                id: message.id,
-                tag: messageTag,
-                type: "BOARDING_UTXOS",
-                payload: { utxos },
-            }));
+        const utxos = [{ txid: "tx", vout: 0, value: 1, status: { confirmed: true } }];
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
+            id: message.id,
+            tag: messageTag,
+            type: "BOARDING_UTXOS",
+            payload: { utxos },
+        }));
 
         vi.stubGlobal("navigator", {
             serviceWorker: navigatorServiceWorker,
@@ -176,12 +164,11 @@ describe("ServiceWorkerReadonlyWallet", () => {
     });
 
     it("rejects when the response contains an error", async () => {
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness((message) => ({
-                id: message.id,
-                tag: messageTag,
-                error: new Error("boom"),
-            }));
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
+            id: message.id,
+            tag: messageTag,
+            error: new Error("boom"),
+        }));
 
         vi.stubGlobal("navigator", {
             serviceWorker: navigatorServiceWorker,
@@ -197,62 +184,61 @@ describe("ServiceWorkerReadonlyWallet", () => {
         const contractsWithVtxos = [{ contract, vtxos: [] }];
         const paths = [{ id: "p1" }];
 
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness((message) => {
-                switch (message.type) {
-                    case "CREATE_CONTRACT":
-                        return {
-                            id: message.id,
-                            tag: messageTag,
-                            type: "CONTRACT_CREATED",
-                            payload: { contract },
-                        };
-                    case "GET_CONTRACTS":
-                        return {
-                            id: message.id,
-                            tag: messageTag,
-                            type: "CONTRACTS",
-                            payload: { contracts },
-                        };
-                    case "GET_CONTRACTS_WITH_VTXOS":
-                        return {
-                            id: message.id,
-                            tag: messageTag,
-                            type: "CONTRACTS_WITH_VTXOS",
-                            payload: { contracts: contractsWithVtxos },
-                        };
-                    case "UPDATE_CONTRACT":
-                        return {
-                            id: message.id,
-                            tag: messageTag,
-                            type: "CONTRACT_UPDATED",
-                            payload: { contract },
-                        };
-                    case "DELETE_CONTRACT":
-                        return {
-                            id: message.id,
-                            tag: messageTag,
-                            type: "CONTRACT_DELETED",
-                            payload: { deleted: true },
-                        };
-                    case "GET_SPENDABLE_PATHS":
-                        return {
-                            id: message.id,
-                            tag: messageTag,
-                            type: "SPENDABLE_PATHS",
-                            payload: { paths },
-                        };
-                    case "IS_CONTRACT_MANAGER_WATCHING":
-                        return {
-                            id: message.id,
-                            tag: messageTag,
-                            type: "CONTRACT_WATCHING",
-                            payload: { isWatching: true },
-                        };
-                    default:
-                        return null;
-                }
-            });
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            switch (message.type) {
+                case "CREATE_CONTRACT":
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "CONTRACT_CREATED",
+                        payload: { contract },
+                    };
+                case "GET_CONTRACTS":
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "CONTRACTS",
+                        payload: { contracts },
+                    };
+                case "GET_CONTRACTS_WITH_VTXOS":
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "CONTRACTS_WITH_VTXOS",
+                        payload: { contracts: contractsWithVtxos },
+                    };
+                case "UPDATE_CONTRACT":
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "CONTRACT_UPDATED",
+                        payload: { contract },
+                    };
+                case "DELETE_CONTRACT":
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "CONTRACT_DELETED",
+                        payload: { deleted: true },
+                    };
+                case "GET_SPENDABLE_PATHS":
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "SPENDABLE_PATHS",
+                        payload: { paths },
+                    };
+                case "IS_CONTRACT_MANAGER_WATCHING":
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "CONTRACT_WATCHING",
+                        payload: { isWatching: true },
+                    };
+                default:
+                    return null;
+            }
+        });
 
         vi.stubGlobal("navigator", {
             serviceWorker: navigatorServiceWorker,
@@ -267,26 +253,22 @@ describe("ServiceWorkerReadonlyWallet", () => {
                 params: {},
                 script: "00",
                 address: "addr",
-            } as any)
+            } as any),
         ).resolves.toEqual(contract);
         await expect(manager.getContracts()).resolves.toEqual(contracts);
-        await expect(manager.getContractsWithVtxos({} as any)).resolves.toEqual(
-            contractsWithVtxos
-        );
-        await expect(
-            manager.updateContract("c1", { label: "new" })
-        ).resolves.toEqual(contract);
+        await expect(manager.getContractsWithVtxos({} as any)).resolves.toEqual(contractsWithVtxos);
+        await expect(manager.updateContract("c1", { label: "new" })).resolves.toEqual(contract);
         await expect(manager.deleteContract("c1")).resolves.toBeUndefined();
-        await expect(
-            manager.getSpendablePaths({ contractScript: "c1" } as any)
-        ).resolves.toEqual(paths);
+        await expect(manager.getSpendablePaths({ contractScript: "c1" } as any)).resolves.toEqual(
+            paths,
+        );
         await expect(manager.isWatching()).resolves.toBe(true);
 
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({
                 tag: messageTag,
                 type: "CREATE_CONTRACT",
-            })
+            }),
         );
     });
 
@@ -330,7 +312,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
 const createSWWallet = (
     serviceWorker: ServiceWorker,
     messageTag: string = DEFAULT_MESSAGE_TAG,
-    hasDelegator: boolean = false
+    hasDelegator: boolean = false,
 ) =>
     new (ServiceWorkerWallet as any)(
         serviceWorker,
@@ -338,7 +320,7 @@ const createSWWallet = (
         new InMemoryWalletRepository(),
         new InMemoryContractRepository(),
         messageTag,
-        hasDelegator
+        hasDelegator,
     ) as ServiceWorkerWallet;
 
 describe("ServiceWorkerWallet", () => {
@@ -350,8 +332,7 @@ describe("ServiceWorkerWallet", () => {
     });
 
     it("getDelegatorManager returns undefined when no delegator configured", async () => {
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness();
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness();
 
         vi.stubGlobal("navigator", {
             serviceWorker: navigatorServiceWorker,
@@ -368,30 +349,29 @@ describe("ServiceWorkerWallet", () => {
             delegatorAddress: "tark1addr",
         };
 
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness((message) => {
-                switch (message.type) {
-                    case "GET_DELEGATE_INFO":
-                        return {
-                            id: message.id,
-                            tag: messageTag,
-                            type: "DELEGATE_INFO",
-                            payload: { info: delegateInfo },
-                        };
-                    case "DELEGATE":
-                        return {
-                            id: message.id,
-                            tag: messageTag,
-                            type: "DELEGATE_SUCCESS",
-                            payload: {
-                                delegated: [{ txid: "abc", vout: 0 }],
-                                failed: [],
-                            },
-                        };
-                    default:
-                        return null;
-                }
-            });
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            switch (message.type) {
+                case "GET_DELEGATE_INFO":
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "DELEGATE_INFO",
+                        payload: { info: delegateInfo },
+                    };
+                case "DELEGATE":
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "DELEGATE_SUCCESS",
+                        payload: {
+                            delegated: [{ txid: "abc", vout: 0 }],
+                            failed: [],
+                        },
+                    };
+                default:
+                    return null;
+            }
+        });
 
         vi.stubGlobal("navigator", {
             serviceWorker: navigatorServiceWorker,
@@ -406,13 +386,10 @@ describe("ServiceWorkerWallet", () => {
             expect.objectContaining({
                 tag: messageTag,
                 type: "GET_DELEGATE_INFO",
-            })
+            }),
         );
 
-        const result = await manager!.delegate(
-            [{ txid: "abc", vout: 0 }] as any,
-            "dest-addr"
-        );
+        const result = await manager!.delegate([{ txid: "abc", vout: 0 }] as any, "dest-addr");
         expect(result).toEqual({
             delegated: [{ txid: "abc", vout: 0 }],
             failed: [],
@@ -421,7 +398,7 @@ describe("ServiceWorkerWallet", () => {
             expect.objectContaining({
                 tag: messageTag,
                 type: "DELEGATE",
-            })
+            }),
         );
     });
 });
@@ -441,20 +418,14 @@ describe("sendMessage reinitialize on SW restart", () => {
         },
     };
 
-    const createWalletWithConfig = (
-        serviceWorker: ServiceWorker,
-        tag = messageTag
-    ) => {
+    const createWalletWithConfig = (serviceWorker: ServiceWorker, tag = messageTag) => {
         const wallet = createWallet(serviceWorker, tag);
         (wallet as any).initConfig = stubConfig.initConfig;
         (wallet as any).initWalletPayload = stubConfig.initWalletPayload;
         return wallet;
     };
 
-    const createSWWalletWithConfig = (
-        serviceWorker: ServiceWorker,
-        tag = messageTag
-    ) => {
+    const createSWWalletWithConfig = (serviceWorker: ServiceWorker, tag = messageTag) => {
         const wallet = createSWWallet(serviceWorker, tag);
         (wallet as any).initConfig = stubConfig.initConfig;
         (wallet as any).initWalletPayload = stubConfig.initWalletPayload;
@@ -467,41 +438,40 @@ describe("sendMessage reinitialize on SW restart", () => {
 
     it("retries after re-initializing when SW returns 'MessageBus not initialized'", async () => {
         let swInitialized = false;
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness((message) => {
-                if (message.tag === "INITIALIZE_MESSAGE_BUS") {
-                    swInitialized = true;
-                    return {
-                        id: message.id,
-                        tag: "INITIALIZE_MESSAGE_BUS",
-                    };
-                }
-                if (message.type === "INIT_WALLET") {
-                    return {
-                        id: message.id,
-                        tag: messageTag,
-                        type: "WALLET_INITIALIZED",
-                    };
-                }
-                if (!swInitialized) {
-                    return {
-                        id: message.id,
-                        tag: messageTag,
-                        // Across the ServiceWorker boundary the custom error is transformed in a primitive Error type
-                        // and `name` is lost
-                        error: new Error(MESSAGE_BUS_NOT_INITIALIZED),
-                    };
-                }
-                if (message.type === "GET_ADDRESS") {
-                    return {
-                        id: message.id,
-                        tag: messageTag,
-                        type: "ADDRESS",
-                        payload: { address: "bc1-reinit" },
-                    };
-                }
-                return null;
-            });
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.tag === "INITIALIZE_MESSAGE_BUS") {
+                swInitialized = true;
+                return {
+                    id: message.id,
+                    tag: "INITIALIZE_MESSAGE_BUS",
+                };
+            }
+            if (message.type === "INIT_WALLET") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "WALLET_INITIALIZED",
+                };
+            }
+            if (!swInitialized) {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    // Across the ServiceWorker boundary the custom error is transformed in a primitive Error type
+                    // and `name` is lost
+                    error: new Error(MESSAGE_BUS_NOT_INITIALIZED),
+                };
+            }
+            if (message.type === "GET_ADDRESS") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "ADDRESS",
+                    payload: { address: "bc1-reinit" },
+                };
+            }
+            return null;
+        });
 
         vi.stubGlobal("navigator", {
             serviceWorker: navigatorServiceWorker,
@@ -514,345 +484,80 @@ describe("sendMessage reinitialize on SW restart", () => {
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({
                 tag: "INITIALIZE_MESSAGE_BUS",
-            })
+            }),
         );
     });
 
     it("throws after exhausting retries", async () => {
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness((message) => {
-                if (message.tag === "INITIALIZE_MESSAGE_BUS") {
-                    return {
-                        id: message.id,
-                        tag: "INITIALIZE_MESSAGE_BUS",
-                    };
-                }
-                if (message.type === "INIT_WALLET") {
-                    return {
-                        id: message.id,
-                        tag: messageTag,
-                        type: "WALLET_INITIALIZED",
-                    };
-                }
-                // Always return not-initialized (simulates persistent failure)
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.tag === "INITIALIZE_MESSAGE_BUS") {
                 return {
                     id: message.id,
-                    tag: message.tag ?? messageTag,
-                    error: new Error(MESSAGE_BUS_NOT_INITIALIZED),
+                    tag: "INITIALIZE_MESSAGE_BUS",
                 };
-            });
+            }
+            if (message.type === "INIT_WALLET") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "WALLET_INITIALIZED",
+                };
+            }
+            // Always return not-initialized (simulates persistent failure)
+            return {
+                id: message.id,
+                tag: message.tag ?? messageTag,
+                error: new Error(MESSAGE_BUS_NOT_INITIALIZED),
+            };
+        });
 
         vi.stubGlobal("navigator", {
             serviceWorker: navigatorServiceWorker,
         } as any);
 
         const wallet = createWalletWithConfig(serviceWorker as any);
-        await expect(wallet.getAddress()).rejects.toThrow(
-            MESSAGE_BUS_NOT_INITIALIZED
-        );
+        await expect(wallet.getAddress()).rejects.toThrow(MESSAGE_BUS_NOT_INITIALIZED);
 
         // Should have tried 3 times (1 initial + 2 retries)
         const addressCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "GET_ADDRESS"
+            ([msg]: any) => msg.type === "GET_ADDRESS",
         );
         expect(addressCalls).toHaveLength(3);
     });
 
     it("deduplicates concurrent reinitializations", async () => {
         let swInitialized = false;
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness((message) => {
-                if (message.tag === "INITIALIZE_MESSAGE_BUS") {
-                    swInitialized = true;
-                    return {
-                        id: message.id,
-                        tag: "INITIALIZE_MESSAGE_BUS",
-                    };
-                }
-                if (message.type === "INIT_WALLET") {
-                    return {
-                        id: message.id,
-                        tag: messageTag,
-                        type: "WALLET_INITIALIZED",
-                    };
-                }
-                if (!swInitialized) {
-                    return {
-                        id: message.id,
-                        tag: messageTag,
-                        error: new Error(MESSAGE_BUS_NOT_INITIALIZED),
-                    };
-                }
-                switch (message.type) {
-                    case "GET_ADDRESS":
-                        return {
-                            id: message.id,
-                            tag: messageTag,
-                            type: "ADDRESS",
-                            payload: { address: "bc1-dedup" },
-                        };
-                    case "GET_BALANCE":
-                        return {
-                            id: message.id,
-                            tag: messageTag,
-                            type: "BALANCE",
-                            payload: {
-                                onchain: { confirmed: 0, unconfirmed: 0 },
-                                offchain: {
-                                    settled: 0,
-                                    preconfirmed: 0,
-                                    recoverable: 0,
-                                },
-                                total: 0,
-                            },
-                        };
-                    default:
-                        return null;
-                }
-            });
-
-        vi.stubGlobal("navigator", {
-            serviceWorker: navigatorServiceWorker,
-        } as any);
-
-        const wallet = createWalletWithConfig(serviceWorker as any);
-
-        // Both fail simultaneously, triggering concurrent reinit
-        const [address, balance] = await Promise.all([
-            wallet.getAddress(),
-            wallet.getBalance(),
-        ]);
-
-        expect(address).toBe("bc1-dedup");
-        expect(balance.total).toBe(0);
-
-        // INITIALIZE_MESSAGE_BUS should have been sent only once
-        const initCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.tag === "INITIALIZE_MESSAGE_BUS"
-        );
-        expect(initCalls).toHaveLength(1);
-    });
-
-    it("does not retry for errors other than 'MessageBus not initialized'", async () => {
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness((message) => ({
-                id: message.id,
-                tag: messageTag,
-                error: new Error("something else went wrong"),
-            }));
-
-        vi.stubGlobal("navigator", {
-            serviceWorker: navigatorServiceWorker,
-        } as any);
-
-        const wallet = createWalletWithConfig(serviceWorker as any);
-        await expect(wallet.getAddress()).rejects.toThrow(
-            "something else went wrong"
-        );
-
-        // Should have tried only once (no retry for unrelated errors)
-        const addressCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "GET_ADDRESS"
-        );
-        expect(addressCalls).toHaveLength(1);
-    });
-
-    it("retries streaming operations (settle) after dead-SW reinitialize", async () => {
-        let swInitialized = false;
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness((message) => {
-                if (message.tag === "INITIALIZE_MESSAGE_BUS") {
-                    swInitialized = true;
-                    return {
-                        id: message.id,
-                        tag: "INITIALIZE_MESSAGE_BUS",
-                    };
-                }
-                if (message.type === "INIT_WALLET") {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.tag === "INITIALIZE_MESSAGE_BUS") {
+                swInitialized = true;
+                return {
+                    id: message.id,
+                    tag: "INITIALIZE_MESSAGE_BUS",
+                };
+            }
+            if (message.type === "INIT_WALLET") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "WALLET_INITIALIZED",
+                };
+            }
+            if (!swInitialized) {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    error: new Error(MESSAGE_BUS_NOT_INITIALIZED),
+                };
+            }
+            switch (message.type) {
+                case "GET_ADDRESS":
                     return {
                         id: message.id,
                         tag: messageTag,
-                        type: "WALLET_INITIALIZED",
+                        type: "ADDRESS",
+                        payload: { address: "bc1-dedup" },
                     };
-                }
-                if (!swInitialized) {
-                    return {
-                        id: message.id,
-                        tag: messageTag,
-                        error: new Error(MESSAGE_BUS_NOT_INITIALIZED),
-                    };
-                }
-                if (message.type === "SETTLE") {
-                    return {
-                        id: message.id,
-                        tag: messageTag,
-                        type: "SETTLE_SUCCESS",
-                        payload: { txid: "txid-after-reinit" },
-                    };
-                }
-                return null;
-            });
-
-        vi.stubGlobal("navigator", {
-            serviceWorker: navigatorServiceWorker,
-        } as any);
-
-        const wallet = createSWWalletWithConfig(serviceWorker as any);
-        const txid = await wallet.settle();
-
-        expect(txid).toBe("txid-after-reinit");
-        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                tag: "INITIALIZE_MESSAGE_BUS",
-            })
-        );
-    });
-});
-
-describe("in-flight request deduplication", () => {
-    const handler = new WalletMessageHandler();
-    const messageTag = handler.messageTag;
-
-    afterEach(() => {
-        vi.restoreAllMocks();
-        vi.unstubAllGlobals();
-    });
-
-    it("deduplicates concurrent identical reads", async () => {
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness((message) => {
-                if (message.type === "GET_BALANCE") {
-                    return {
-                        id: message.id,
-                        tag: messageTag,
-                        type: "BALANCE",
-                        payload: {
-                            onchain: { confirmed: 100, unconfirmed: 0 },
-                            offchain: {
-                                settled: 0,
-                                preconfirmed: 0,
-                                recoverable: 0,
-                            },
-                            total: 100,
-                        },
-                    };
-                }
-                return null;
-            });
-
-        vi.stubGlobal("navigator", {
-            serviceWorker: navigatorServiceWorker,
-        } as any);
-
-        const wallet = createWallet(serviceWorker as any, messageTag);
-        const [b1, b2] = await Promise.all([
-            wallet.getBalance(),
-            wallet.getBalance(),
-        ]);
-
-        expect(b1.total).toBe(100);
-        expect(b2.total).toBe(100);
-
-        const balanceCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "GET_BALANCE"
-        );
-        expect(balanceCalls).toHaveLength(1);
-    });
-
-    it("does not dedup state-mutating requests", async () => {
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness((message) => {
-                if (message.type === "SEND_BITCOIN") {
-                    return {
-                        id: message.id,
-                        tag: messageTag,
-                        type: "SEND_BITCOIN_SUCCESS",
-                        payload: { txid: "tx-" + message.id },
-                    };
-                }
-                return null;
-            });
-
-        vi.stubGlobal("navigator", {
-            serviceWorker: navigatorServiceWorker,
-        } as any);
-
-        const wallet = createSWWallet(serviceWorker as any, messageTag);
-        await Promise.all([
-            wallet.sendBitcoin({ address: "addr", amount: 1000 }),
-            wallet.sendBitcoin({ address: "addr", amount: 1000 }),
-        ]);
-
-        const sendCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "SEND_BITCOIN"
-        );
-        expect(sendCalls).toHaveLength(2);
-    });
-
-    it("deduplicates requests with identical payloads", async () => {
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness((message) => {
-                if (message.type === "GET_VTXOS") {
-                    return {
-                        id: message.id,
-                        tag: messageTag,
-                        type: "VTXOS",
-                        payload: { vtxos: [] },
-                    };
-                }
-                return null;
-            });
-
-        vi.stubGlobal("navigator", {
-            serviceWorker: navigatorServiceWorker,
-        } as any);
-
-        const wallet = createWallet(serviceWorker as any, messageTag);
-        await Promise.all([
-            wallet.getVtxos({ withRecoverable: true }),
-            wallet.getVtxos({ withRecoverable: true }),
-        ]);
-
-        const vtxoCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "GET_VTXOS"
-        );
-        expect(vtxoCalls).toHaveLength(1);
-    });
-
-    it("does NOT dedup different payloads", async () => {
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness((message) => {
-                if (message.type === "GET_VTXOS") {
-                    return {
-                        id: message.id,
-                        tag: messageTag,
-                        type: "VTXOS",
-                        payload: { vtxos: [] },
-                    };
-                }
-                return null;
-            });
-
-        vi.stubGlobal("navigator", {
-            serviceWorker: navigatorServiceWorker,
-        } as any);
-
-        const wallet = createWallet(serviceWorker as any, messageTag);
-        await Promise.all([
-            wallet.getVtxos({ withRecoverable: true }),
-            wallet.getVtxos({ withRecoverable: false }),
-        ]);
-
-        const vtxoCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "GET_VTXOS"
-        );
-        expect(vtxoCalls).toHaveLength(2);
-    });
-
-    it("cache clears after settlement so sequential calls hit SW", async () => {
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness((message) => {
-                if (message.type === "GET_BALANCE") {
+                case "GET_BALANCE":
                     return {
                         id: message.id,
                         tag: messageTag,
@@ -867,9 +572,255 @@ describe("in-flight request deduplication", () => {
                             total: 0,
                         },
                     };
-                }
-                return null;
-            });
+                default:
+                    return null;
+            }
+        });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createWalletWithConfig(serviceWorker as any);
+
+        // Both fail simultaneously, triggering concurrent reinit
+        const [address, balance] = await Promise.all([wallet.getAddress(), wallet.getBalance()]);
+
+        expect(address).toBe("bc1-dedup");
+        expect(balance.total).toBe(0);
+
+        // INITIALIZE_MESSAGE_BUS should have been sent only once
+        const initCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.tag === "INITIALIZE_MESSAGE_BUS",
+        );
+        expect(initCalls).toHaveLength(1);
+    });
+
+    it("does not retry for errors other than 'MessageBus not initialized'", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
+            id: message.id,
+            tag: messageTag,
+            error: new Error("something else went wrong"),
+        }));
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createWalletWithConfig(serviceWorker as any);
+        await expect(wallet.getAddress()).rejects.toThrow("something else went wrong");
+
+        // Should have tried only once (no retry for unrelated errors)
+        const addressCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_ADDRESS",
+        );
+        expect(addressCalls).toHaveLength(1);
+    });
+
+    it("retries streaming operations (settle) after dead-SW reinitialize", async () => {
+        let swInitialized = false;
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.tag === "INITIALIZE_MESSAGE_BUS") {
+                swInitialized = true;
+                return {
+                    id: message.id,
+                    tag: "INITIALIZE_MESSAGE_BUS",
+                };
+            }
+            if (message.type === "INIT_WALLET") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "WALLET_INITIALIZED",
+                };
+            }
+            if (!swInitialized) {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    error: new Error(MESSAGE_BUS_NOT_INITIALIZED),
+                };
+            }
+            if (message.type === "SETTLE") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "SETTLE_SUCCESS",
+                    payload: { txid: "txid-after-reinit" },
+                };
+            }
+            return null;
+        });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createSWWalletWithConfig(serviceWorker as any);
+        const txid = await wallet.settle();
+
+        expect(txid).toBe("txid-after-reinit");
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tag: "INITIALIZE_MESSAGE_BUS",
+            }),
+        );
+    });
+});
+
+describe("in-flight request deduplication", () => {
+    const handler = new WalletMessageHandler();
+    const messageTag = handler.messageTag;
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+    });
+
+    it("deduplicates concurrent identical reads", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type === "GET_BALANCE") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "BALANCE",
+                    payload: {
+                        onchain: { confirmed: 100, unconfirmed: 0 },
+                        offchain: {
+                            settled: 0,
+                            preconfirmed: 0,
+                            recoverable: 0,
+                        },
+                        total: 100,
+                    },
+                };
+            }
+            return null;
+        });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        const [b1, b2] = await Promise.all([wallet.getBalance(), wallet.getBalance()]);
+
+        expect(b1.total).toBe(100);
+        expect(b2.total).toBe(100);
+
+        const balanceCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_BALANCE",
+        );
+        expect(balanceCalls).toHaveLength(1);
+    });
+
+    it("does not dedup state-mutating requests", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type === "SEND_BITCOIN") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "SEND_BITCOIN_SUCCESS",
+                    payload: { txid: "tx-" + message.id },
+                };
+            }
+            return null;
+        });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        await Promise.all([
+            wallet.sendBitcoin({ address: "addr", amount: 1000 }),
+            wallet.sendBitcoin({ address: "addr", amount: 1000 }),
+        ]);
+
+        const sendCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "SEND_BITCOIN",
+        );
+        expect(sendCalls).toHaveLength(2);
+    });
+
+    it("deduplicates requests with identical payloads", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type === "GET_VTXOS") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "VTXOS",
+                    payload: { vtxos: [] },
+                };
+            }
+            return null;
+        });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        await Promise.all([
+            wallet.getVtxos({ withRecoverable: true }),
+            wallet.getVtxos({ withRecoverable: true }),
+        ]);
+
+        const vtxoCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_VTXOS",
+        );
+        expect(vtxoCalls).toHaveLength(1);
+    });
+
+    it("does NOT dedup different payloads", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type === "GET_VTXOS") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "VTXOS",
+                    payload: { vtxos: [] },
+                };
+            }
+            return null;
+        });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        await Promise.all([
+            wallet.getVtxos({ withRecoverable: true }),
+            wallet.getVtxos({ withRecoverable: false }),
+        ]);
+
+        const vtxoCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_VTXOS",
+        );
+        expect(vtxoCalls).toHaveLength(2);
+    });
+
+    it("cache clears after settlement so sequential calls hit SW", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type === "GET_BALANCE") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "BALANCE",
+                    payload: {
+                        onchain: { confirmed: 0, unconfirmed: 0 },
+                        offchain: {
+                            settled: 0,
+                            preconfirmed: 0,
+                            recoverable: 0,
+                        },
+                        total: 0,
+                    },
+                };
+            }
+            return null;
+        });
 
         vi.stubGlobal("navigator", {
             serviceWorker: navigatorServiceWorker,
@@ -881,45 +832,37 @@ describe("in-flight request deduplication", () => {
         await wallet.getBalance();
 
         const balanceCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "GET_BALANCE"
+            ([msg]: any) => msg.type === "GET_BALANCE",
         );
         expect(balanceCalls).toHaveLength(2);
     });
 
     it("shares error across deduped callers", async () => {
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness((message) => {
-                if (message.type === "GET_BALANCE") {
-                    return {
-                        id: message.id,
-                        tag: messageTag,
-                        error: new Error("server exploded"),
-                    };
-                }
-                return null;
-            });
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type === "GET_BALANCE") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    error: new Error("server exploded"),
+                };
+            }
+            return null;
+        });
 
         vi.stubGlobal("navigator", {
             serviceWorker: navigatorServiceWorker,
         } as any);
 
         const wallet = createWallet(serviceWorker as any, messageTag);
-        const results = await Promise.allSettled([
-            wallet.getBalance(),
-            wallet.getBalance(),
-        ]);
+        const results = await Promise.allSettled([wallet.getBalance(), wallet.getBalance()]);
 
         expect(results[0].status).toBe("rejected");
         expect(results[1].status).toBe("rejected");
-        expect((results[0] as PromiseRejectedResult).reason.message).toContain(
-            "server exploded"
-        );
-        expect((results[1] as PromiseRejectedResult).reason.message).toContain(
-            "server exploded"
-        );
+        expect((results[0] as PromiseRejectedResult).reason.message).toContain("server exploded");
+        expect((results[1] as PromiseRejectedResult).reason.message).toContain("server exploded");
 
         const balanceCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "GET_BALANCE"
+            ([msg]: any) => msg.type === "GET_BALANCE",
         );
         expect(balanceCalls).toHaveLength(1);
     });
@@ -940,10 +883,7 @@ describe("preflight ping", () => {
         },
     };
 
-    const createWalletWithConfig = (
-        serviceWorker: ServiceWorker,
-        tag = messageTag
-    ) => {
+    const createWalletWithConfig = (serviceWorker: ServiceWorker, tag = messageTag) => {
         const wallet = createWallet(serviceWorker, tag);
         (wallet as any).initConfig = stubConfig.initConfig;
         (wallet as any).initWalletPayload = stubConfig.initWalletPayload;
@@ -957,29 +897,28 @@ describe("preflight ping", () => {
     });
 
     it("ping succeeds → request proceeds normally", async () => {
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness((message) => {
-                if (message.type === "GET_BALANCE") {
-                    return {
-                        id: message.id,
-                        tag: messageTag,
-                        type: "BALANCE",
-                        payload: {
-                            onchain: {
-                                confirmed: 42,
-                                unconfirmed: 0,
-                            },
-                            offchain: {
-                                settled: 0,
-                                preconfirmed: 0,
-                                recoverable: 0,
-                            },
-                            total: 42,
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type === "GET_BALANCE") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "BALANCE",
+                    payload: {
+                        onchain: {
+                            confirmed: 42,
+                            unconfirmed: 0,
                         },
-                    };
-                }
-                return null;
-            });
+                        offchain: {
+                            settled: 0,
+                            preconfirmed: 0,
+                            recoverable: 0,
+                        },
+                        total: 42,
+                    },
+                };
+            }
+            return null;
+        });
 
         vi.stubGlobal("navigator", {
             serviceWorker: navigatorServiceWorker,
@@ -990,43 +929,42 @@ describe("preflight ping", () => {
 
         expect(balance.total).toBe(42);
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({ tag: "PING" })
+            expect.objectContaining({ tag: "PING" }),
         );
     });
 
     it("reinitializes when ping fails (dead SW)", async () => {
         vi.useFakeTimers();
 
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness(
-                (message) => {
-                    if (message.tag === "INITIALIZE_MESSAGE_BUS") {
-                        return {
-                            id: message.id,
-                            tag: "INITIALIZE_MESSAGE_BUS",
-                        };
-                    }
-                    if (message.type === "INIT_WALLET") {
-                        return {
-                            id: message.id,
-                            tag: messageTag,
-                            type: "WALLET_INITIALIZED",
-                        };
-                    }
-                    if (message.type === "GET_ADDRESS") {
-                        return {
-                            id: message.id,
-                            tag: messageTag,
-                            type: "ADDRESS",
-                            payload: {
-                                address: "bc1-revived",
-                            },
-                        };
-                    }
-                    return null;
-                },
-                { handlePing: false }
-            );
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness(
+            (message) => {
+                if (message.tag === "INITIALIZE_MESSAGE_BUS") {
+                    return {
+                        id: message.id,
+                        tag: "INITIALIZE_MESSAGE_BUS",
+                    };
+                }
+                if (message.type === "INIT_WALLET") {
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "WALLET_INITIALIZED",
+                    };
+                }
+                if (message.type === "GET_ADDRESS") {
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "ADDRESS",
+                        payload: {
+                            address: "bc1-revived",
+                        },
+                    };
+                }
+                return null;
+            },
+            { handlePing: false },
+        );
 
         vi.stubGlobal("navigator", {
             serviceWorker: navigatorServiceWorker,
@@ -1043,45 +981,44 @@ describe("preflight ping", () => {
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({
                 tag: "INITIALIZE_MESSAGE_BUS",
-            })
+            }),
         );
     });
 
     it("deduplicates concurrent pings", async () => {
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness((message) => {
-                switch (message.type) {
-                    case "GET_ADDRESS":
-                        return {
-                            id: message.id,
-                            tag: messageTag,
-                            type: "ADDRESS",
-                            payload: {
-                                address: "bc1-dedup",
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            switch (message.type) {
+                case "GET_ADDRESS":
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "ADDRESS",
+                        payload: {
+                            address: "bc1-dedup",
+                        },
+                    };
+                case "GET_BALANCE":
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "BALANCE",
+                        payload: {
+                            onchain: {
+                                confirmed: 0,
+                                unconfirmed: 0,
                             },
-                        };
-                    case "GET_BALANCE":
-                        return {
-                            id: message.id,
-                            tag: messageTag,
-                            type: "BALANCE",
-                            payload: {
-                                onchain: {
-                                    confirmed: 0,
-                                    unconfirmed: 0,
-                                },
-                                offchain: {
-                                    settled: 0,
-                                    preconfirmed: 0,
-                                    recoverable: 0,
-                                },
-                                total: 0,
+                            offchain: {
+                                settled: 0,
+                                preconfirmed: 0,
+                                recoverable: 0,
                             },
-                        };
-                    default:
-                        return null;
-                }
-            });
+                            total: 0,
+                        },
+                    };
+                default:
+                    return null;
+            }
+        });
 
         vi.stubGlobal("navigator", {
             serviceWorker: navigatorServiceWorker,
@@ -1091,7 +1028,7 @@ describe("preflight ping", () => {
         await Promise.all([wallet.getAddress(), wallet.getBalance()]);
 
         const pingCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.tag === "PING"
+            ([msg]: any) => msg.tag === "PING",
         );
         expect(pingCalls).toHaveLength(1);
     });
@@ -1099,10 +1036,9 @@ describe("preflight ping", () => {
     it("ping times out after 2s, not 30s", async () => {
         vi.useFakeTimers();
 
-        const { navigatorServiceWorker, serviceWorker } =
-            createServiceWorkerHarness(undefined, {
-                handlePing: false,
-            });
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness(undefined, {
+            handlePing: false,
+        });
 
         vi.stubGlobal("navigator", {
             serviceWorker: navigatorServiceWorker,
@@ -1113,9 +1049,7 @@ describe("preflight ping", () => {
 
         // Attach rejection handler before advancing timers to
         // avoid unhandled-rejection warning
-        const assertion = expect(pingPromise).rejects.toBeInstanceOf(
-            ServiceWorkerTimeoutError
-        );
+        const assertion = expect(pingPromise).rejects.toBeInstanceOf(ServiceWorkerTimeoutError);
         await vi.advanceTimersByTimeAsync(2_000);
         await assertion;
     });
@@ -1125,8 +1059,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
     const messageTag = DEFAULT_MESSAGE_TAG;
     const TEST_MNEMONIC =
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-    const TEST_PRIVATE_KEY_HEX =
-        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const TEST_PRIVATE_KEY_HEX = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     const initResponder = (message: any) => {
         if (message.tag === "INITIALIZE_MESSAGE_BUS") {
@@ -1159,7 +1092,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         postMessage: ReturnType<typeof vi.fn>;
     }): unknown => {
         const call = serviceWorker.postMessage.mock.calls.find(
-            ([msg]: any) => msg?.tag === "INITIALIZE_MESSAGE_BUS"
+            ([msg]: any) => msg?.tag === "INITIALIZE_MESSAGE_BUS",
         );
         expect(call).toBeDefined();
         return call![0].config.wallet;
@@ -1169,7 +1102,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         postMessage: ReturnType<typeof vi.fn>;
     }): any => {
         const call = serviceWorker.postMessage.mock.calls.find(
-            ([msg]: any) => msg?.tag === "INITIALIZE_MESSAGE_BUS"
+            ([msg]: any) => msg?.tag === "INITIALIZE_MESSAGE_BUS",
         );
         expect(call).toBeDefined();
         return call![0];
@@ -1179,7 +1112,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         postMessage: ReturnType<typeof vi.fn>;
     }): any => {
         const call = serviceWorker.postMessage.mock.calls.find(
-            ([msg]: any) => msg?.type === "INIT_WALLET"
+            ([msg]: any) => msg?.type === "INIT_WALLET",
         );
         expect(call).toBeDefined();
         return call![0];
@@ -1218,10 +1151,10 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         });
 
         expect(getInitializeMessage(serviceWorker).config.arkServer.url).toBe(
-            DEFAULT_ARKADE_SERVER_URL
+            DEFAULT_ARKADE_SERVER_URL,
         );
         expect(getInitWalletMessage(serviceWorker).payload.arkServerUrl).toBe(
-            DEFAULT_ARKADE_SERVER_URL
+            DEFAULT_ARKADE_SERVER_URL,
         );
     });
 
@@ -1239,9 +1172,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
             storage: storage(),
         });
 
-        expect(getInitializeMessage(serviceWorker).config.walletMode).toBe(
-            "hd"
-        );
+        expect(getInitializeMessage(serviceWorker).config.walletMode).toBe("hd");
     });
 
     it("ServiceWorkerReadonlyWallet.create uses the default Arkade server URL when omitted", async () => {
@@ -1256,10 +1187,10 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         });
 
         expect(getInitializeMessage(serviceWorker).config.arkServer.url).toBe(
-            DEFAULT_ARKADE_SERVER_URL
+            DEFAULT_ARKADE_SERVER_URL,
         );
         expect(getInitWalletMessage(serviceWorker).payload.arkServerUrl).toBe(
-            DEFAULT_ARKADE_SERVER_URL
+            DEFAULT_ARKADE_SERVER_URL,
         );
     });
 
@@ -1351,9 +1282,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         const reference = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: true,
         });
-        const identity = ReadonlyDescriptorIdentity.fromDescriptor(
-            reference.descriptor
-        );
+        const identity = ReadonlyDescriptorIdentity.fromDescriptor(reference.descriptor);
 
         await ServiceWorkerReadonlyWallet.create({
             serviceWorker: serviceWorker as any,
@@ -1416,7 +1345,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
     it("ServiceWorkerWallet.create rejects a ReadonlyIdentity input", async () => {
         const { serviceWorker } = setup();
         const readonly = ReadonlySingleKey.fromPublicKey(
-            await SingleKey.fromHex(TEST_PRIVATE_KEY_HEX).compressedPublicKey()
+            await SingleKey.fromHex(TEST_PRIVATE_KEY_HEX).compressedPublicKey(),
         );
 
         await expect(
@@ -1425,7 +1354,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
                 arkServerUrl: "https://ark.test",
                 identity: readonly as any,
                 storage: storage(),
-            })
+            }),
         ).rejects.toThrow(/requires a signing Identity/);
     });
 });

@@ -1,9 +1,4 @@
-import {
-    RestArkProvider,
-    SettlementEvent,
-    TxNotification,
-    isFetchTimeoutError,
-} from "./ark";
+import { RestArkProvider, SettlementEvent, TxNotification, isFetchTimeoutError } from "./ark";
 import { getExpoFetch, sseStreamIterator } from "./expoUtils";
 
 /**
@@ -26,7 +21,7 @@ export class ExpoArkProvider extends RestArkProvider {
 
     override async *getEventStream(
         signal: AbortSignal,
-        topics: string[]
+        topics: string[],
     ): AsyncIterableIterator<SettlementEvent> {
         const expoFetch = await getExpoFetch();
         const url = `${this.serverUrl}/v1/batch/events`;
@@ -37,24 +32,18 @@ export class ExpoArkProvider extends RestArkProvider {
 
         while (!signal?.aborted) {
             try {
-                yield* sseStreamIterator(
-                    url + queryParams,
-                    signal,
-                    expoFetch,
-                    {},
-                    (data) => {
-                        // Handle different response structures
-                        // v8 mesh API might wrap in {result: ...} or send directly
-                        const eventData = data.result || data;
+                yield* sseStreamIterator(url + queryParams, signal, expoFetch, {}, (data) => {
+                    // Handle different response structures
+                    // v8 mesh API might wrap in {result: ...} or send directly
+                    const eventData = data.result || data;
 
-                        // Skip heartbeat messages
-                        if (eventData.heartbeat !== undefined) {
-                            return null;
-                        }
-
-                        return this.parseSettlementEvent(eventData);
+                    // Skip heartbeat messages
+                    if (eventData.heartbeat !== undefined) {
+                        return null;
                     }
-                );
+
+                    return this.parseSettlementEvent(eventData);
+                });
             } catch (error) {
                 if (error instanceof Error && error.name === "AbortError") {
                     break;
@@ -73,9 +62,7 @@ export class ExpoArkProvider extends RestArkProvider {
         }
     }
 
-    override async *getTransactionsStream(
-        signal: AbortSignal
-    ): AsyncIterableIterator<{
+    override async *getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
         commitmentTx?: TxNotification;
         arkTx?: TxNotification;
     }> {

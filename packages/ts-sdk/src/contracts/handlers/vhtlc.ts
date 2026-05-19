@@ -1,12 +1,7 @@
 import { hex } from "@scure/base";
 import { VHTLC } from "../../script/vhtlc";
 import { RelativeTimelock } from "../../script/tapscript";
-import {
-    Contract,
-    ContractHandler,
-    PathContext,
-    PathSelection,
-} from "../types";
+import { Contract, ContractHandler, PathContext, PathSelection } from "../types";
 import { isCltvSatisfied, isCsvSpendable, resolveRole } from "./helpers";
 import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
 
@@ -39,10 +34,7 @@ export interface VHTLCContractParams {
  * - unilateralRefund: Sender + Receiver after CSV delay
  * - unilateralRefundWithoutReceiver: Sender after CSV delay
  */
-export const VHTLCContractHandler: ContractHandler<
-    VHTLCContractParams,
-    VHTLC.Script
-> = {
+export const VHTLCContractHandler: ContractHandler<VHTLCContractParams, VHTLC.Script> = {
     type: "vhtlc",
 
     createScript(params: Record<string, string>): VHTLC.Script {
@@ -57,14 +49,10 @@ export const VHTLCContractHandler: ContractHandler<
             server: hex.encode(params.server),
             hash: hex.encode(params.preimageHash),
             refundLocktime: params.refundLocktime.toString(),
-            claimDelay: timelockToSequence(
-                params.unilateralClaimDelay
-            ).toString(),
-            refundDelay: timelockToSequence(
-                params.unilateralRefundDelay
-            ).toString(),
+            claimDelay: timelockToSequence(params.unilateralClaimDelay).toString(),
+            refundDelay: timelockToSequence(params.unilateralRefundDelay).toString(),
             refundNoReceiverDelay: timelockToSequence(
-                params.unilateralRefundWithoutReceiverDelay
+                params.unilateralRefundWithoutReceiverDelay,
             ).toString(),
         };
     },
@@ -77,11 +65,9 @@ export const VHTLCContractHandler: ContractHandler<
             preimageHash: hex.decode(params.hash),
             refundLocktime: BigInt(params.refundLocktime),
             unilateralClaimDelay: sequenceToTimelock(Number(params.claimDelay)),
-            unilateralRefundDelay: sequenceToTimelock(
-                Number(params.refundDelay)
-            ),
+            unilateralRefundDelay: sequenceToTimelock(Number(params.refundDelay)),
             unilateralRefundWithoutReceiverDelay: sequenceToTimelock(
-                Number(params.refundNoReceiverDelay)
+                Number(params.refundNoReceiverDelay),
             ),
         };
     },
@@ -96,7 +82,7 @@ export const VHTLCContractHandler: ContractHandler<
     selectPath(
         script: VHTLC.Script,
         contract: Contract,
-        context: PathContext
+        context: PathContext,
     ): PathSelection | null {
         const role = resolveRole(contract, context);
         const preimage = contract.params?.preimage;
@@ -156,7 +142,7 @@ export const VHTLCContractHandler: ContractHandler<
     getAllSpendingPaths(
         script: VHTLC.Script,
         contract: Contract,
-        context: PathContext
+        context: PathContext,
     ): PathSelection[] {
         const role = resolveRole(contract, context);
         const paths: PathSelection[] = [];
@@ -205,7 +191,7 @@ export const VHTLCContractHandler: ContractHandler<
     getSpendablePaths(
         script: VHTLC.Script,
         contract: Contract,
-        context: PathContext
+        context: PathContext,
     ): PathSelection[] {
         const role = resolveRole(contract, context);
         const paths: PathSelection[] = [];

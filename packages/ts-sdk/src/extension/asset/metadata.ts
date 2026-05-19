@@ -11,7 +11,7 @@ import { BufferReader, BufferWriter } from "./utils";
 export class Metadata {
     private constructor(
         readonly key: Uint8Array,
-        readonly value: Uint8Array
+        readonly value: Uint8Array,
     ) {}
 
     /** Create a metadata entry from raw key and value bytes. */
@@ -130,9 +130,7 @@ export class MetadataList {
     /** Decode a metadata list from a buffer reader. */
     static fromReader(reader: BufferReader): MetadataList {
         const count = Number(reader.readVarUint());
-        const items = Array.from({ length: count }, () =>
-            Metadata.fromReader(reader)
-        );
+        const items = Array.from({ length: count }, () => Metadata.fromReader(reader));
         return new MetadataList(items);
     }
 
@@ -173,19 +171,12 @@ function computeMetadataLeafHash(md: Metadata): Uint8Array {
     writer.writeByte(MetadataList.ARK_LEAF_VERSION);
     writer.writeVarSlice(md.key);
     writer.writeVarSlice(md.value);
-    return schnorr.utils.taggedHash(
-        MetadataList.ARK_LEAF_TAG,
-        writer.toBytes()
-    );
+    return schnorr.utils.taggedHash(MetadataList.ARK_LEAF_TAG, writer.toBytes());
 }
 
 function computeMetadataBranchHash(a: Uint8Array, b: Uint8Array): Uint8Array {
     const [smaller, larger] = compareBytes(a, b) === -1 ? [a, b] : [b, a];
-    return schnorr.utils.taggedHash(
-        MetadataList.ARK_BRANCH_TAG,
-        smaller,
-        larger
-    );
+    return schnorr.utils.taggedHash(MetadataList.ARK_BRANCH_TAG, smaller, larger);
 }
 
 function buildMetadataMerkleTree(leaves: Metadata[]): Uint8Array[][] {
@@ -198,9 +189,7 @@ function buildMetadataMerkleTree(leaves: Metadata[]): Uint8Array[][] {
         const next: Uint8Array[] = [];
         for (let i = 0; i < current.length; i += 2) {
             if (i + 1 < current.length) {
-                next.push(
-                    computeMetadataBranchHash(current[i], current[i + 1])
-                );
+                next.push(computeMetadataBranchHash(current[i], current[i + 1]));
             } else {
                 next.push(current[i]);
             }

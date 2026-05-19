@@ -2,12 +2,7 @@ import { IndexerProvider, SubscriptionResponse } from "../providers/indexer";
 import { VirtualCoin } from "../wallet";
 import { extendVirtualCoinForContract } from "../wallet/utils";
 import { WalletRepository } from "../repositories/walletRepository";
-import {
-    Contract,
-    ContractVtxo,
-    ContractEventCallback,
-    ContractEvent,
-} from "./types";
+import { Contract, ContractVtxo, ContractEventCallback, ContractEvent } from "./types";
 import { isEventSourceError } from "../providers/utils";
 import { filterVtxosForScript, getVtxosForContract } from "./vtxoOwnership";
 
@@ -76,11 +71,7 @@ interface ContractState {
 /**
  * Connection state for the watcher.
  */
-type ConnectionState =
-    | "disconnected"
-    | "connecting"
-    | "connected"
-    | "reconnecting";
+type ConnectionState = "disconnected" | "connecting" | "connected" | "reconnecting";
 
 /**
  * Watches multiple contracts for virtual output state changes with resilient connection handling.
@@ -185,10 +176,7 @@ export class ContractWatcher {
             // Apply the same script gate used by getContractVtxos so a legacy
             // wrong-script row in the address bucket can't seed the baseline
             // and then look "spent" on the first poll.
-            const cached = await getVtxosForContract(
-                this.config.walletRepository,
-                state.contract
-            );
+            const cached = await getVtxosForContract(this.config.walletRepository, state.contract);
             for (const vtxo of cached) {
                 if (vtxo.isSpent) continue;
                 const key = `${vtxo.txid}:${vtxo.vout}`;
@@ -201,7 +189,7 @@ export class ContractWatcher {
             // known vtxos.
             console.error(
                 `ContractWatcher: failed to seed lastKnownVtxos for ${state.contract.script}`,
-                error
+                error,
             );
         }
     }
@@ -256,10 +244,7 @@ export class ContractWatcher {
      */
     getWatchedContracts(): Contract[] {
         return Array.from(this.contracts.values())
-            .filter(
-                (s) =>
-                    s.contract.state === "active" || s.lastKnownVtxos.size > 0
-            )
+            .filter((s) => s.contract.state === "active" || s.lastKnownVtxos.size > 0)
             .map((s) => s.contract);
     }
 
@@ -278,11 +263,7 @@ export class ContractWatcher {
 
         const asyncResults = contractsToQuery
             .filter((_) => {
-                if (
-                    contractScripts &&
-                    !contractScripts.includes(_.contract.script)
-                )
-                    return false;
+                if (contractScripts && !contractScripts.includes(_.contract.script)) return false;
                 return true;
             })
             .map(async (state): Promise<[[string, ContractVtxo[]]] | []> => {
@@ -351,9 +332,7 @@ export class ContractWatcher {
         // Unsubscribe
         if (this.subscriptionId) {
             try {
-                await this.config.indexerProvider.unsubscribeForScripts(
-                    this.subscriptionId
-                );
+                await this.config.indexerProvider.unsubscribeForScripts(this.subscriptionId);
             } catch {
                 // Ignore unsubscribe errors
             }
@@ -415,9 +394,7 @@ export class ContractWatcher {
                 // Error management must be implemented to ensure the connection
                 // is restored and events are fired.
                 if (isEventSourceError(e)) {
-                    console.debug(
-                        "ContractWatcher subscription disconnected; reconnecting"
-                    );
+                    console.debug("ContractWatcher subscription disconnected; reconnecting");
                 } else {
                     console.error(e);
                 }
@@ -451,7 +428,7 @@ export class ContractWatcher {
             this.reconnectAttempts >= this.config.maxReconnectAttempts
         ) {
             console.error(
-                `ContractWatcher: Max reconnection attempts (${this.config.maxReconnectAttempts}) reached`
+                `ContractWatcher: Max reconnection attempts (${this.config.maxReconnectAttempts}) reached`,
             );
             return;
         }
@@ -461,9 +438,8 @@ export class ContractWatcher {
 
         // Calculate delay with exponential backoff
         const delay = Math.min(
-            this.config.reconnectDelayMs *
-                Math.pow(2, this.reconnectAttempts - 1),
-            this.config.maxReconnectDelayMs
+            this.config.reconnectDelayMs * Math.pow(2, this.reconnectAttempts - 1),
+            this.config.maxReconnectDelayMs,
         );
 
         this.reconnectTimeoutId = setTimeout(() => {
@@ -483,10 +459,7 @@ export class ContractWatcher {
         this.failsafePollIntervalId = setInterval(() => {
             if (this.isWatching) {
                 this.pollAllContracts().catch((error) => {
-                    console.error(
-                        "ContractWatcher failsafe poll failed:",
-                        error
-                    );
+                    console.error("ContractWatcher failsafe poll failed:", error);
                 });
             }
         }, this.config.failsafePollIntervalMs);
@@ -518,9 +491,7 @@ export class ContractWatcher {
                 if (!state) continue;
 
                 const currentVtxos = vtxosMap.get(contractScript) || [];
-                const currentKeys = new Set(
-                    currentVtxos.map((v) => `${v.txid}:${v.vout}`)
-                );
+                const currentKeys = new Set(currentVtxos.map((v) => `${v.txid}:${v.vout}`));
 
                 // Find new virtual outputs and add them to the contract's state
                 const newVtxos: VirtualCoin[] = [];
@@ -543,23 +514,13 @@ export class ContractWatcher {
 
                 // Emit events
                 if (newVtxos.length > 0) {
-                    this.emitVtxoEvent(
-                        contractScript,
-                        newVtxos,
-                        "vtxo_received",
-                        now
-                    );
+                    this.emitVtxoEvent(contractScript, newVtxos, "vtxo_received", now);
                 }
 
                 if (spentVtxos.length > 0) {
                     // Note: We can't distinguish spent vs swept from polling alone
                     // The subscription provides more accurate event types
-                    this.emitVtxoEvent(
-                        contractScript,
-                        spentVtxos,
-                        "vtxo_spent",
-                        now
-                    );
+                    this.emitVtxoEvent(contractScript, spentVtxos, "vtxo_spent", now);
                 }
             }
         } catch (error) {
@@ -581,11 +542,9 @@ export class ContractWatcher {
         // leaving `listenLoop` parked behind the reconnect timer. Kick
         // `connect` now so streaming resumes without waiting on the
         // backoff. `skipUpdate` avoids re-issuing `subscribeForScripts`.
-        const justGotSubscription =
-            !hadSubscription && this.subscriptionId !== undefined;
+        const justGotSubscription = !hadSubscription && this.subscriptionId !== undefined;
         const listenerParked =
-            this.connectionState === "disconnected" ||
-            this.connectionState === "reconnecting";
+            this.connectionState === "disconnected" || this.connectionState === "reconnecting";
         if (this.isWatching && justGotSubscription && listenerParked) {
             if (this.reconnectTimeoutId) {
                 clearTimeout(this.reconnectTimeoutId);
@@ -593,10 +552,7 @@ export class ContractWatcher {
             }
             this.reconnectAttempts = 0;
             this.connect(true).catch((error) => {
-                console.warn(
-                    "ContractWatcher cold-start connect failed:",
-                    error
-                );
+                console.warn("ContractWatcher cold-start connect failed:", error);
             });
         }
     }
@@ -612,9 +568,7 @@ export class ContractWatcher {
         if (scriptsToWatch.length === 0) {
             if (this.subscriptionId) {
                 try {
-                    await this.config.indexerProvider.unsubscribeForScripts(
-                        this.subscriptionId
-                    );
+                    await this.config.indexerProvider.unsubscribeForScripts(this.subscriptionId);
                 } catch {
                     // Ignore
                 }
@@ -624,11 +578,10 @@ export class ContractWatcher {
         }
 
         try {
-            this.subscriptionId =
-                await this.config.indexerProvider.subscribeForScripts(
-                    scriptsToWatch,
-                    this.subscriptionId
-                );
+            this.subscriptionId = await this.config.indexerProvider.subscribeForScripts(
+                scriptsToWatch,
+                this.subscriptionId,
+            );
         } catch (error) {
             // If we sent a stale subscription ID that the server no longer
             // recognises, clear it and retry to create a fresh subscription.
@@ -636,14 +589,11 @@ export class ContractWatcher {
             // message field looks like "subscription <uuid> not found".
             // All other errors (network failures, parse errors, etc.) are rethrown.
             const isStale =
-                error instanceof Error &&
-                /subscription\s+\S+\s+not\s+found/i.test(error.message);
+                error instanceof Error && /subscription\s+\S+\s+not\s+found/i.test(error.message);
             if (this.subscriptionId && isStale) {
                 this.subscriptionId = undefined;
                 this.subscriptionId =
-                    await this.config.indexerProvider.subscribeForScripts(
-                        scriptsToWatch
-                    );
+                    await this.config.indexerProvider.subscribeForScripts(scriptsToWatch);
             } else {
                 throw error;
             }
@@ -664,7 +614,7 @@ export class ContractWatcher {
 
         const subscription = this.config.indexerProvider.getSubscription(
             this.subscriptionId,
-            this.abortController.signal
+            this.abortController.signal,
         );
 
         for await (const update of subscription) {
@@ -688,19 +638,11 @@ export class ContractWatcher {
         const timestamp = Date.now();
 
         if (update.newVtxos?.length) {
-            this.processSubscriptionVtxos(
-                update.newVtxos,
-                "vtxo_received",
-                timestamp
-            );
+            this.processSubscriptionVtxos(update.newVtxos, "vtxo_received", timestamp);
         }
 
         if (update.spentVtxos?.length) {
-            this.processSubscriptionVtxos(
-                update.spentVtxos,
-                "vtxo_spent",
-                timestamp
-            );
+            this.processSubscriptionVtxos(update.spentVtxos, "vtxo_spent", timestamp);
         }
     }
 
@@ -714,7 +656,7 @@ export class ContractWatcher {
     private processSubscriptionVtxos(
         vtxos: VirtualCoin[],
         eventType: ContractEvent["type"],
-        timestamp: number
+        timestamp: number,
     ): void {
         const byContract = new Map<string, VirtualCoin[]>();
         let unknownScript = 0;
@@ -736,7 +678,7 @@ export class ContractWatcher {
             // can correlate "VTXO state drift" reports with subscription
             // drops rather than chase phantom bugs.
             console.debug(
-                `ContractWatcher.processSubscriptionVtxos[${eventType}]: dropped ${unknownScript} unknown-script VTXOs (${vtxos.length} total)`
+                `ContractWatcher.processSubscriptionVtxos[${eventType}]: dropped ${unknownScript} unknown-script VTXOs (${vtxos.length} total)`,
             );
         }
 
@@ -752,12 +694,7 @@ export class ContractWatcher {
                     }
                 }
             }
-            this.emitVtxoEvent(
-                contractScript,
-                bucketVtxos,
-                eventType,
-                timestamp
-            );
+            this.emitVtxoEvent(contractScript, bucketVtxos, eventType, timestamp);
         }
     }
 
@@ -768,7 +705,7 @@ export class ContractWatcher {
         contractScript: string,
         vtxos: VirtualCoin[],
         eventType: ContractEvent["type"],
-        timestamp: number
+        timestamp: number,
     ): void {
         if (!this.eventCallback) return;
         const state = this.contracts.get(contractScript);
@@ -777,10 +714,7 @@ export class ContractWatcher {
         const extended: ContractVtxo[] = [];
         for (const v of vtxos) {
             try {
-                const extendedVtxo = extendVirtualCoinForContract(
-                    v,
-                    state.contract
-                );
+                const extendedVtxo = extendVirtualCoinForContract(v, state.contract);
                 extended.push({ ...extendedVtxo, contractScript });
             } catch (err) {
                 console.warn(`failed to extend vtxo ${v.txid}:${v.vout}`, err);

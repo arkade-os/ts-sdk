@@ -1,13 +1,5 @@
-import {
-    ExtendedCoin,
-    ExtendedVirtualCoin,
-    ArkTransaction,
-} from "../../wallet";
-import {
-    WalletRepository,
-    WalletState,
-    VtxoRepositoryKey,
-} from "../walletRepository";
+import { ExtendedCoin, ExtendedVirtualCoin, ArkTransaction } from "../../wallet";
+import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
 import {
     STORE_VTXOS,
     STORE_UTXOS,
@@ -40,20 +32,13 @@ export class IndexedDBWalletRepository implements WalletRepository {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
-                    [
-                        STORE_VTXOS,
-                        STORE_UTXOS,
-                        STORE_TRANSACTIONS,
-                        STORE_WALLET_STATE,
-                    ],
-                    "readwrite"
+                    [STORE_VTXOS, STORE_UTXOS, STORE_TRANSACTIONS, STORE_WALLET_STATE],
+                    "readwrite",
                 );
                 const vtxosStore = transaction.objectStore(STORE_VTXOS);
                 const utxosStore = transaction.objectStore(STORE_UTXOS);
-                const transactionsStore =
-                    transaction.objectStore(STORE_TRANSACTIONS);
-                const walletStateStore =
-                    transaction.objectStore(STORE_WALLET_STATE);
+                const transactionsStore = transaction.objectStore(STORE_TRANSACTIONS);
+                const walletStateStore = transaction.objectStore(STORE_WALLET_STATE);
 
                 const requests = [
                     vtxosStore.clear(),
@@ -94,9 +79,8 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 const transaction = db.transaction([STORE_VTXOS], "readonly");
                 const store = transaction.objectStore(STORE_VTXOS);
                 const index = store.index("address");
-                const request: IDBRequest<
-                    (SerializedVtxo & { address: string })[]
-                > = index.getAll(address);
+                const request: IDBRequest<(SerializedVtxo & { address: string })[]> =
+                    index.getAll(address);
 
                 request.onerror = () => reject(request.error);
                 request.onsuccess = () => {
@@ -119,10 +103,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
         }
     }
 
-    async saveVtxos(
-        address: string,
-        vtxos: ExtendedVirtualCoin[]
-    ): Promise<void> {
+    async saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void> {
         try {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
@@ -150,10 +131,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 transaction.onerror = () => reject(transaction.error);
             });
         } catch (error) {
-            console.error(
-                `Failed to save VTXOs for address ${address}:`,
-                error
-            );
+            console.error(`Failed to save VTXOs for address ${address}:`, error);
             throw error;
         }
     }
@@ -179,10 +157,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 };
             });
         } catch (error) {
-            console.error(
-                `Failed to clear VTXOs for address ${address}:`,
-                error
-            );
+            console.error(`Failed to clear VTXOs for address ${address}:`, error);
             throw error;
         }
     }
@@ -194,26 +169,20 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 const transaction = db.transaction([STORE_VTXOS], "readonly");
                 const store = transaction.objectStore(STORE_VTXOS);
                 const index = store.index("script");
-                const request: IDBRequest<
-                    (SerializedVtxo & { address: string })[]
-                > = index.getAll(script);
+                const request: IDBRequest<(SerializedVtxo & { address: string })[]> =
+                    index.getAll(script);
 
                 request.onerror = () => reject(request.error);
                 request.onsuccess = () => {
                     const results = request.result || [];
                     try {
                         // Defensive filter: only rows whose script matches.
-                        const matching = results.filter(
-                            (r) => r.script === script
-                        );
+                        const matching = results.filter((r) => r.script === script);
 
                         // Dedup same outpoint rows across address buckets.
                         // Work on raw rows so the address field is available
                         // for the canonicality tiebreaker.
-                        const byOutpoint = new Map<
-                            string,
-                            SerializedVtxo & { address: string }
-                        >();
+                        const byOutpoint = new Map<string, SerializedVtxo & { address: string }>();
                         for (const row of matching) {
                             const outpoint = `${row.txid}:${row.vout}`;
                             const existing = byOutpoint.get(outpoint);
@@ -225,11 +194,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
                                 byOutpoint.set(outpoint, row);
                             }
                         }
-                        resolve(
-                            Array.from(byOutpoint.values()).map(
-                                deserializeVtxoWithBackfill
-                            )
-                        );
+                        resolve(Array.from(byOutpoint.values()).map(deserializeVtxoWithBackfill));
                     } catch (err) {
                         reject(err);
                     }
@@ -241,17 +206,14 @@ export class IndexedDBWalletRepository implements WalletRepository {
         }
     }
 
-    async saveVtxosForScript(
-        key: VtxoRepositoryKey,
-        vtxos: ExtendedVirtualCoin[]
-    ): Promise<void> {
+    async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
         if (!key.address) {
             throw new Error("IndexedDBWalletRepository requires an address");
         }
         for (const vtxo of vtxos) {
             if (!isVtxoForScript(vtxo, key.script)) {
                 throw new Error(
-                    `VTXO ${vtxo.txid}:${vtxo.vout} script mismatch: expected ${key.script}, got ${vtxo.script}`
+                    `VTXO ${vtxo.txid}:${vtxo.vout} script mismatch: expected ${key.script}, got ${vtxo.script}`,
                 );
             }
         }
@@ -334,10 +296,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 transaction.onerror = () => reject(transaction.error);
             });
         } catch (error) {
-            console.error(
-                `Failed to save UTXOs for address ${address}:`,
-                error
-            );
+            console.error(`Failed to save UTXOs for address ${address}:`, error);
             throw error;
         }
     }
@@ -363,10 +322,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 };
             });
         } catch (error) {
-            console.error(
-                `Failed to clear UTXOs for address ${address}:`,
-                error
-            );
+            console.error(`Failed to clear UTXOs for address ${address}:`, error);
             throw error;
         }
     }
@@ -375,10 +331,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
         try {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
-                const transaction = db.transaction(
-                    [STORE_TRANSACTIONS],
-                    "readonly"
-                );
+                const transaction = db.transaction([STORE_TRANSACTIONS], "readonly");
                 const store = transaction.objectStore(STORE_TRANSACTIONS);
                 const index = store.index("address");
                 const request = index.getAll(address);
@@ -390,25 +343,16 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 };
             });
         } catch (error) {
-            console.error(
-                `Failed to get transaction history for address ${address}:`,
-                error
-            );
+            console.error(`Failed to get transaction history for address ${address}:`, error);
             return [];
         }
     }
 
-    async saveTransactions(
-        address: string,
-        txs: ArkTransaction[]
-    ): Promise<void> {
+    async saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {
         try {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
-                const transaction = db.transaction(
-                    [STORE_TRANSACTIONS],
-                    "readwrite"
-                );
+                const transaction = db.transaction([STORE_TRANSACTIONS], "readwrite");
                 const store = transaction.objectStore(STORE_TRANSACTIONS);
 
                 // Queue all put operations
@@ -426,14 +370,10 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 // Handle transaction completion
                 transaction.oncomplete = () => resolve();
                 transaction.onerror = () => reject(transaction.error);
-                transaction.onabort = () =>
-                    reject(new Error("Transaction aborted"));
+                transaction.onabort = () => reject(new Error("Transaction aborted"));
             });
         } catch (error) {
-            console.error(
-                `Failed to save transactions for address ${address}:`,
-                error
-            );
+            console.error(`Failed to save transactions for address ${address}:`, error);
             throw error;
         }
     }
@@ -442,10 +382,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
         try {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
-                const transaction = db.transaction(
-                    [STORE_TRANSACTIONS],
-                    "readwrite"
-                );
+                const transaction = db.transaction([STORE_TRANSACTIONS], "readwrite");
                 const store = transaction.objectStore(STORE_TRANSACTIONS);
                 const index = store.index("address");
                 const request = index.openCursor(IDBKeyRange.only(address));
@@ -462,10 +399,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 };
             });
         } catch (error) {
-            console.error(
-                `Failed to clear transactions for address ${address}:`,
-                error
-            );
+            console.error(`Failed to clear transactions for address ${address}:`, error);
             throw error;
         }
     }
@@ -474,10 +408,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
         try {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
-                const transaction = db.transaction(
-                    [STORE_WALLET_STATE],
-                    "readonly"
-                );
+                const transaction = db.transaction([STORE_WALLET_STATE], "readonly");
                 const store = transaction.objectStore(STORE_WALLET_STATE);
                 const request = store.get("state");
 
@@ -501,10 +432,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
         try {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
-                const transaction = db.transaction(
-                    [STORE_WALLET_STATE],
-                    "readwrite"
-                );
+                const transaction = db.transaction([STORE_WALLET_STATE], "readwrite");
                 const store = transaction.objectStore(STORE_WALLET_STATE);
                 const item = {
                     key: "state",
@@ -531,9 +459,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
 // Post-migration every row has `script`, but the backfill is idempotent: if a
 // legacy row is ever read before the upgrade-path completes, derive `script`
 // from `address` the same way the indexer would have populated it.
-function deserializeVtxoWithBackfill(
-    o: SerializedVtxo & { address: string }
-): ExtendedVirtualCoin {
+function deserializeVtxoWithBackfill(o: SerializedVtxo & { address: string }): ExtendedVirtualCoin {
     if (!o.script) {
         o = { ...o, script: scriptFromArkAddress(o.address) };
     }
@@ -550,10 +476,7 @@ function isCanonicalRow(row: RawVtxoRow): boolean {
     }
 }
 
-function shouldReplaceVtxo(
-    existing: RawVtxoRow,
-    incoming: RawVtxoRow
-): boolean {
+function shouldReplaceVtxo(existing: RawVtxoRow, incoming: RawVtxoRow): boolean {
     const existingCanonical = isCanonicalRow(existing);
     const incomingCanonical = isCanonicalRow(incoming);
 

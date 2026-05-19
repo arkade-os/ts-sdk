@@ -1,26 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { hex } from "@scure/base";
-import {
-    InMemoryContractRepository,
-    InMemoryWalletRepository,
-    SingleKey,
-    Wallet,
-} from "../../src";
+import { InMemoryContractRepository, InMemoryWalletRepository, SingleKey, Wallet } from "../../src";
 import { ArkProvider } from "../../src/providers/ark";
 import { DelegatorProvider } from "../../src/providers/delegator";
 import { OnchainProvider } from "../../src/providers/onchain";
 import { IndexerProvider } from "../../src/providers/indexer";
 import { VirtualCoin } from "../../src/wallet";
 
-const mockPrivKeyHex =
-    "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
+const mockPrivKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
 
 // A second pubkey for the server (x-only, 32 bytes, with 02 prefix for getInfo)
-const serverPubKeyHex =
-    "e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdb";
+const serverPubKeyHex = "e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdb";
 // Delegate pubkey (x-only, 32 bytes)
-const delegatePubKeyHex =
-    "f8352deebdf5658d95875d89656112b1dd150f176c702eea4f91a91527e48e26";
+const delegatePubKeyHex = "f8352deebdf5658d95875d89656112b1dd150f176c702eea4f91a91527e48e26";
 
 function createMockArkProvider(): ArkProvider {
     return {
@@ -164,19 +156,15 @@ describe("Cross-contract spending", () => {
         const defaultVtxo = makeMockVirtualCoin(0xaa, 1000);
         const delegateVtxo = makeMockVirtualCoin(0xbb, 1000);
 
-        (mockIndexer.getVtxos as any).mockImplementation(
-            (opts: { scripts?: string[] }) => {
-                const scripts = opts?.scripts ?? [];
-                const vtxos = scripts.flatMap((s: string) => {
-                    if (s === defaultContract.script)
-                        return [{ ...defaultVtxo, script: s }];
-                    if (s === delegateContract.script)
-                        return [{ ...delegateVtxo, script: s }];
-                    return [];
-                });
-                return Promise.resolve({ vtxos });
-            }
-        );
+        (mockIndexer.getVtxos as any).mockImplementation((opts: { scripts?: string[] }) => {
+            const scripts = opts?.scripts ?? [];
+            const vtxos = scripts.flatMap((s: string) => {
+                if (s === defaultContract.script) return [{ ...defaultVtxo, script: s }];
+                if (s === delegateContract.script) return [{ ...delegateVtxo, script: s }];
+                return [];
+            });
+            return Promise.resolve({ vtxos });
+        });
 
         // getVtxos (public) should see VTXOs from both contracts.
         const allVtxos = await wallet.getVtxos();

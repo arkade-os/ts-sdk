@@ -16,7 +16,7 @@ export const verifySignatures = (
     tx: Transaction,
     inputIndex: number,
     requiredSigners: string[],
-    expectedLeafHash: Uint8Array
+    expectedLeafHash: Uint8Array,
 ): boolean => {
     try {
         // signatures should be valid
@@ -28,9 +28,8 @@ export const verifySignatures = (
         return requiredSigners.every((signer) =>
             input.tapScriptSig?.some(
                 ([{ pubKey, leafHash }]) =>
-                    hex.encode(pubKey) === signer &&
-                    hex.encode(leafHash) === expectedHex
-            )
+                    hex.encode(pubKey) === signer && hex.encode(leafHash) === expectedHex,
+            ),
         );
     } catch (_) {
         return false;
@@ -47,16 +46,15 @@ export const verifySignatures = (
 export const normalizeToXOnlyKey = (
     someKey: Uint8Array | string,
     keyName = "",
-    swapId = ""
+    swapId = "",
 ): Uint8Array => {
-    const keyBytes =
-        typeof someKey === "string" ? hex.decode(someKey) : someKey;
+    const keyBytes = typeof someKey === "string" ? hex.decode(someKey) : someKey;
     if (keyBytes.length === 33) {
         return keyBytes.slice(1);
     }
     if (keyBytes.length !== 32) {
         throw new Error(
-            `Invalid ${keyName} key length: ${keyBytes.length} ${swapId ? "for swap " + swapId : ""}`
+            `Invalid ${keyName} key length: ${keyBytes.length} ${swapId ? "for swap " + swapId : ""}`,
         );
     }
     return keyBytes;

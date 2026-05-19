@@ -1,10 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { mnemonicToSeedSync } from "@scure/bip39";
-import {
-    HDKey,
-    networks,
-    scriptExpressions,
-} from "@bitcoinerlab/descriptors-scure";
+import { HDKey, networks, scriptExpressions } from "@bitcoinerlab/descriptors-scure";
 import { hex } from "@scure/base";
 import {
     isDescriptor,
@@ -20,11 +16,7 @@ const TEST_MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
 /** Generate a real HD descriptor from the test mnemonic. */
-function makeDescriptor(opts: {
-    isMainnet?: boolean;
-    change?: number;
-    index?: number;
-}): string {
+function makeDescriptor(opts: { isMainnet?: boolean; change?: number; index?: number }): string {
     const { isMainnet = true, change = 0, index = 0 } = opts;
     const network = isMainnet ? networks.bitcoin : networks.testnet;
     const seed = mnemonicToSeedSync(TEST_MNEMONIC);
@@ -89,9 +81,7 @@ describe("normalizeToDescriptor", () => {
         expect(normalizeToDescriptor(desc)).toBe(desc);
     });
     it("should throw on empty string", () => {
-        expect(() => normalizeToDescriptor("")).toThrow(
-            "expected a non-empty string"
-        );
+        expect(() => normalizeToDescriptor("")).toThrow("expected a non-empty string");
     });
 });
 
@@ -106,9 +96,7 @@ describe("extractPubKey", () => {
     });
     it("should throw for HD descriptor", () => {
         const desc = makeDescriptor({ index: 5 });
-        expect(() => extractPubKey(desc)).toThrow(
-            "Cannot extract pubkey from HD descriptor"
-        );
+        expect(() => extractPubKey(desc)).toThrow("Cannot extract pubkey from HD descriptor");
     });
     it("should handle uppercase hex", () => {
         const pubkey = getXOnlyPubKey().toUpperCase();
@@ -153,7 +141,7 @@ describe("parseHDDescriptor", () => {
         const result = parseHDDescriptor(desc);
         expect(result).not.toBeNull();
         expect(result!.xpub).toBe(
-            "xpub6BgBgsespWvERF3LHQu6CnqdvfEvtMcQjYrcRzx53QJjSxarj2afYWcLteoGVky7D3UKDP9QyrLprQ3VCECoY49yfdDEHGCtMMj92pReUsQ"
+            "xpub6BgBgsespWvERF3LHQu6CnqdvfEvtMcQjYrcRzx53QJjSxarj2afYWcLteoGVky7D3UKDP9QyrLprQ3VCECoY49yfdDEHGCtMMj92pReUsQ",
         );
     });
 });
@@ -162,9 +150,7 @@ describe("isMainnetDescriptor", () => {
     it("returns false for tpub-prefixed descriptors", () => {
         // tpub is shared across testnet/signet/regtest/mutinynet — we
         // can only tell mainnet vs not, never which non-mainnet.
-        expect(isMainnetDescriptor(makeDescriptor({ isMainnet: false }))).toBe(
-            false
-        );
+        expect(isMainnetDescriptor(makeDescriptor({ isMainnet: false }))).toBe(false);
     });
 
     it("returns true for xpub-prefixed descriptors", () => {
@@ -176,7 +162,7 @@ describe("descriptorIsOurs", () => {
     const seed = mnemonicToSeedSync(TEST_MNEMONIC);
     const us = SeedIdentity.fromSeed(seed, { isMainnet: true });
     const otherSeed = mnemonicToSeedSync(
-        "legal winner thank year wave sausage worth useful legal winner thank yellow"
+        "legal winner thank year wave sausage worth useful legal winner thank yellow",
     );
     const other = SeedIdentity.fromSeed(otherSeed, { isMainnet: true });
 
@@ -202,19 +188,11 @@ describe("descriptorIsOurs", () => {
         // branch; pass a placeholder template just to satisfy the
         // signature.
         const placeholderTemplate = us.descriptor;
-        expect(
-            descriptorIsOurs(
-                `tr(${getXOnlyPubKey()})`,
-                placeholderTemplate,
-                pubkey
-            )
-        ).toBe(true);
+        expect(descriptorIsOurs(`tr(${getXOnlyPubKey()})`, placeholderTemplate, pubkey)).toBe(true);
     });
 
     it("returns false for non-descriptor strings", () => {
         const pubkey = hex.decode(getXOnlyPubKey());
-        expect(
-            descriptorIsOurs("not a descriptor", us.descriptor, pubkey)
-        ).toBe(false);
+        expect(descriptorIsOurs("not a descriptor", us.descriptor, pubkey)).toBe(false);
     });
 });

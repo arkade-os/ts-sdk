@@ -22,12 +22,7 @@ import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
 import { DelegateVtxo } from "./script/delegate";
-import {
-    MessageHandler,
-    RequestEnvelope,
-    ResponseEnvelope,
-    MessageBus,
-} from "./worker/messageBus";
+import { MessageHandler, RequestEnvelope, ResponseEnvelope, MessageBus } from "./worker/messageBus";
 import {
     VtxoScript,
     EncodedVtxoScript,
@@ -84,11 +79,7 @@ import {
     MissingSigningDescriptorError,
 } from "./wallet/wallet";
 import { TxTree, TxTreeNode } from "./tree/txTree";
-import {
-    SignerSession,
-    TreeNonces,
-    TreePartialSigs,
-} from "./tree/signingSession";
+import { SignerSession, TreeNonces, TreePartialSigs } from "./tree/signingSession";
 import { Ramps } from "./wallet/ramps";
 import { HDDescriptorProvider } from "./wallet/hdDescriptorProvider";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
@@ -98,10 +89,7 @@ import {
     ServiceWorkerReadonlyWallet,
     DEFAULT_MESSAGE_TIMEOUTS,
 } from "./wallet/serviceWorker/wallet";
-import type {
-    MessageTimeouts,
-    ServiceWorkerWalletMode,
-} from "./wallet/serviceWorker/wallet";
+import type { MessageTimeouts, ServiceWorkerWalletMode } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { setupServiceWorker } from "./worker/browser/utils";
 import {
@@ -206,10 +194,7 @@ import { AnchorBumper, P2A } from "./utils/anchor";
 import { TxWeightEstimator, type VSize } from "./utils/txSizeEstimator";
 import { Unroll } from "./wallet/unroll";
 import { ArkError, maybeArkError } from "./providers/errors";
-import {
-    validateVtxoTxGraph,
-    validateConnectorsTxGraph,
-} from "./tree/validation";
+import { validateVtxoTxGraph, validateConnectorsTxGraph } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
 import {
     IndexedDBWalletRepository,

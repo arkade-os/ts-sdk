@@ -1,9 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { InMemoryTaskQueue } from "../../../src/worker/expo/taskQueue";
-import {
-    runTasks,
-    type TaskProcessor,
-} from "../../../src/worker/expo/taskRunner";
+import { runTasks, type TaskProcessor } from "../../../src/worker/expo/taskRunner";
 
 describe("runTasks", () => {
     it("runs matching processors and persists results", async () => {

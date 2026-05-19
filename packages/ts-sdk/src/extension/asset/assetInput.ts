@@ -43,11 +43,7 @@ export class AssetInput {
     }
 
     /** Create an intent-backed asset input referencing an external intent transaction. */
-    static createIntent(
-        txid: string,
-        vin: number,
-        amount: bigint | number
-    ): AssetInput {
+    static createIntent(txid: string, vin: number, amount: bigint | number): AssetInput {
         if (!txid || txid.length === 0) {
             throw new Error("missing input intent txid");
         }
@@ -224,9 +220,7 @@ export class AssetInputs {
             // verify the same input vin is not duplicated
             if (assetInput.input.type === AssetInputType.Local) {
                 if (seen.has(assetInput.input.vin)) {
-                    throw new Error(
-                        `duplicated input vin ${assetInput.input.vin}`
-                    );
+                    throw new Error(`duplicated input vin ${assetInput.input.vin}`);
                 }
                 seen.add(assetInput.input.vin);
                 continue;

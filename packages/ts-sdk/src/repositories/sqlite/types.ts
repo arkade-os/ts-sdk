@@ -13,12 +13,6 @@
  */
 export interface SQLExecutor {
     run(sql: string, params?: unknown[]): Promise<void>;
-    get<T = Record<string, unknown>>(
-        sql: string,
-        params?: unknown[]
-    ): Promise<T | undefined>;
-    all<T = Record<string, unknown>>(
-        sql: string,
-        params?: unknown[]
-    ): Promise<T[]>;
+    get<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T | undefined>;
+    all<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
 }

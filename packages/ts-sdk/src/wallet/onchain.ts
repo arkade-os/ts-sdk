@@ -3,11 +3,7 @@ import { P2TR } from "@scure/btc-signer/payment.js";
 import { Coin, DEFAULT_NETWORK_NAME, SendBitcoinParams } from ".";
 import { Identity } from "../identity";
 import { getNetwork, Network, NetworkName } from "../networks";
-import {
-    ESPLORA_URL,
-    EsploraProvider,
-    OnchainProvider,
-} from "../providers/onchain";
+import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
 import { AnchorBumper, findP2AOutput, P2A } from "../utils/anchor";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Transaction } from "../utils/transaction";
@@ -41,7 +37,7 @@ export class OnchainWallet implements AnchorBumper {
         private identity: Identity,
         network: Network,
         onchainP2TR: P2TR,
-        provider: OnchainProvider
+        provider: OnchainProvider,
     ) {
         this.network = network;
         this.onchainP2TR = onchainP2TR;
@@ -61,7 +57,7 @@ export class OnchainWallet implements AnchorBumper {
     static async create(
         identity: Identity,
         networkName: NetworkName = DEFAULT_NETWORK_NAME,
-        provider?: OnchainProvider
+        provider?: OnchainProvider,
     ): Promise<OnchainWallet> {
         const pubkey = await identity.xOnlyPublicKey();
         if (!pubkey) {
@@ -69,16 +65,10 @@ export class OnchainWallet implements AnchorBumper {
         }
 
         const network = getNetwork(networkName);
-        const onchainProvider =
-            provider || new EsploraProvider(ESPLORA_URL[networkName]);
+        const onchainProvider = provider || new EsploraProvider(ESPLORA_URL[networkName]);
         const onchainP2TR = p2tr(pubkey, undefined, network);
 
-        return new OnchainWallet(
-            identity,
-            network,
-            onchainP2TR,
-            onchainProvider
-        );
+        return new OnchainWallet(identity, network, onchainP2TR, onchainProvider);
     }
 
     get address(): string {
@@ -138,7 +128,7 @@ export class OnchainWallet implements AnchorBumper {
         coins: Coin[],
         amount: number,
         feeRate: number,
-        recipientAddress: string
+        recipientAddress: string,
     ): { inputs: Coin[]; changeAmount: bigint; fee: number } {
         const MAX_ITERATIONS = 10;
         let fee = 0;
@@ -206,7 +196,7 @@ export class OnchainWallet implements AnchorBumper {
             coins,
             params.amount,
             feeRate,
-            params.address
+            params.address,
         );
 
         if (!inputs) {
@@ -230,11 +220,7 @@ export class OnchainWallet implements AnchorBumper {
         }
 
         // Add payment output
-        tx.addOutputAddress(
-            params.address,
-            BigInt(params.amount),
-            this.network
-        );
+        tx.addOutputAddress(params.address, BigInt(params.amount), this.network);
 
         if (changeAmount >= BigInt(DUST_AMOUNT)) {
             tx.addOutputAddress(this.address, changeAmount, this.network);
@@ -281,7 +267,7 @@ export class OnchainWallet implements AnchorBumper {
         const fee = Math.ceil(feeRate * packageVSize);
         if (!fee) {
             throw new Error(
-                `invalid fee, got ${fee} with vsize ${packageVSize}, feeRate ${feeRate}`
+                `invalid fee, got ${fee} with vsize ${packageVSize}, feeRate ${feeRate}`,
             );
         }
 
@@ -301,11 +287,7 @@ export class OnchainWallet implements AnchorBumper {
             });
         }
 
-        child.addOutputAddress(
-            this.address,
-            P2A.amount + selected.changeAmount,
-            this.network
-        );
+        child.addOutputAddress(this.address, P2A.amount + selected.changeAmount, this.network);
 
         // Sign inputs and Finalize
         child = await this.identity.sign(child);
@@ -333,7 +315,7 @@ export class OnchainWallet implements AnchorBumper {
 export function selectCoins(
     coins: Coin[],
     targetAmount: number,
-    forceChange: boolean = false
+    forceChange: boolean = false,
 ): {
     inputs: Coin[];
     changeAmount: bigint;
@@ -361,11 +343,7 @@ export function selectCoins(
         selectedCoins.push(coin);
         selectedAmount += coin.value;
 
-        if (
-            forceChange
-                ? selectedAmount > targetAmount
-                : selectedAmount >= targetAmount
-        ) {
+        if (forceChange ? selectedAmount > targetAmount : selectedAmount >= targetAmount) {
             break;
         }
     }

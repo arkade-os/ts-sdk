@@ -2,11 +2,7 @@ import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import { WalletRepository, WalletState } from "../walletRepository";
 import { StorageAdapter } from "../../storage";
-import {
-    ArkTransaction,
-    ExtendedCoin,
-    ExtendedVirtualCoin,
-} from "../../wallet";
+import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
 import { TapLeafScript } from "../../script/base";
 import {
     serializeAssets,
@@ -86,22 +82,16 @@ export class WalletRepositoryImpl implements WalletRepository {
             const parsed = JSON.parse(stored) as ExtendedVirtualCoin[];
             return parsed.map(deserializeVtxo);
         } catch (error) {
-            console.error(
-                `Failed to parse VTXOs for address ${address}:`,
-                error
-            );
+            console.error(`Failed to parse VTXOs for address ${address}:`, error);
             return [];
         }
     }
 
-    async saveVtxos(
-        address: string,
-        vtxos: ExtendedVirtualCoin[]
-    ): Promise<void> {
+    async saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void> {
         const storedVtxos = await this.getVtxos(address);
         for (const vtxo of vtxos) {
             const existing = storedVtxos.findIndex(
-                (v) => v.txid === vtxo.txid && v.vout === vtxo.vout
+                (v) => v.txid === vtxo.txid && v.vout === vtxo.vout,
             );
             if (existing !== -1) {
                 storedVtxos[existing] = vtxo;
@@ -111,7 +101,7 @@ export class WalletRepositoryImpl implements WalletRepository {
         }
         await this.storage.setItem(
             getVtxosStorageKey(address),
-            JSON.stringify(storedVtxos.map(serializeVtxo))
+            JSON.stringify(storedVtxos.map(serializeVtxo)),
         );
     }
 
@@ -131,10 +121,7 @@ export class WalletRepositoryImpl implements WalletRepository {
             const parsed = JSON.parse(stored) as ExtendedCoin[];
             return parsed.map(deserializeUtxo);
         } catch (error) {
-            console.error(
-                `Failed to parse UTXOs for address ${address}:`,
-                error
-            );
+            console.error(`Failed to parse UTXOs for address ${address}:`, error);
             return [];
         }
     }
@@ -143,7 +130,7 @@ export class WalletRepositoryImpl implements WalletRepository {
         const storedUtxos = await this.getUtxos(address);
         utxos.forEach((utxo) => {
             const existing = storedUtxos.findIndex(
-                (u) => u.txid === utxo.txid && u.vout === utxo.vout
+                (u) => u.txid === utxo.txid && u.vout === utxo.vout,
             );
             if (existing !== -1) {
                 storedUtxos[existing] = utxo;
@@ -153,7 +140,7 @@ export class WalletRepositoryImpl implements WalletRepository {
         });
         await this.storage.setItem(
             getUtxosStorageKey(address),
-            JSON.stringify(storedUtxos.map(serializeUtxo))
+            JSON.stringify(storedUtxos.map(serializeUtxo)),
         );
     }
 
@@ -172,30 +159,22 @@ export class WalletRepositoryImpl implements WalletRepository {
         if (!stored) return [];
 
         try {
-            const parsed = JSON.parse(stored) as Array<
-                ReturnType<typeof serializeTransaction>
-            >;
+            const parsed = JSON.parse(stored) as Array<ReturnType<typeof serializeTransaction>>;
             return parsed.map(deserializeTransaction);
         } catch (error) {
-            console.error(
-                `Failed to parse transactions for address ${address}:`,
-                error
-            );
+            console.error(`Failed to parse transactions for address ${address}:`, error);
             return [];
         }
     }
 
-    async saveTransactions(
-        address: string,
-        txs: ArkTransaction[]
-    ): Promise<void> {
+    async saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {
         const storedTransactions = await this.getTransactionHistory(address);
         for (const tx of txs) {
             const existing = storedTransactions.findIndex(
                 (t) =>
                     t.key.boardingTxid === tx.key.boardingTxid &&
                     t.key.commitmentTxid === tx.key.commitmentTxid &&
-                    t.key.arkTxid === tx.key.arkTxid
+                    t.key.arkTxid === tx.key.arkTxid,
             );
             if (existing !== -1) {
                 storedTransactions[existing] = tx;
@@ -205,7 +184,7 @@ export class WalletRepositoryImpl implements WalletRepository {
         }
         await this.storage.setItem(
             getTransactionsStorageKey(address),
-            JSON.stringify(storedTransactions.map(serializeTransaction))
+            JSON.stringify(storedTransactions.map(serializeTransaction)),
         );
     }
 
@@ -231,10 +210,7 @@ export class WalletRepositoryImpl implements WalletRepository {
     }
 
     async saveWalletState(state: WalletState): Promise<void> {
-        await this.storage.setItem(
-            walletStateStorageKey,
-            JSON.stringify(state)
-        );
+        await this.storage.setItem(walletStateStorageKey, JSON.stringify(state));
     }
 
     // New method added in V2, not implemented for legacy

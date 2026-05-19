@@ -14,12 +14,10 @@ describe("buildTransactionHistory", () => {
             // - Expected: 1 sent tx of 500 sats (1000 - 500 change)
             // - Actual bug: 2 sent txs (1000 sats and 500 sats)
 
-            const arkTxId =
-                "98b1cdc34d006e0956b1a828c65cd222780348d94b706a69a933ee58b19ab8e0";
+            const arkTxId = "98b1cdc34d006e0956b1a828c65cd222780348d94b706a69a933ee58b19ab8e0";
             const commitmentTxId =
                 "3a74555034c7f3c8053d0b30441178630dd98f645d9ed42aa9425fdc2279e159";
-            const spentByTxId =
-                "90a9f4b835db83cc55a67bc5f362d139e81eb268f4f30b156cc8b0e5a1fdd6b0";
+            const spentByTxId = "90a9f4b835db83cc55a67bc5f362d139e81eb268f4f30b156cc8b0e5a1fdd6b0";
             const baseDate = new Date("2025-10-31T20:00:00Z");
 
             // The original vtxo that was spent (1000 sats)
@@ -66,16 +64,12 @@ describe("buildTransactionHistory", () => {
             const transactions = await buildTransactionHistory(
                 [resultVtxo0, spentVtxo],
                 [],
-                boardingBatchTxids
+                boardingBatchTxids,
             );
 
             // Filter for sent and received transactions
-            const sentTxs = transactions.filter(
-                (tx) => tx.type === TxType.TxSent
-            );
-            const receivedTxs = transactions.filter(
-                (tx) => tx.type === TxType.TxReceived
-            );
+            const sentTxs = transactions.filter((tx) => tx.type === TxType.TxSent);
+            const receivedTxs = transactions.filter((tx) => tx.type === TxType.TxReceived);
 
             // Expected behavior:
             // - No received transactions (we didn't receive new funds)
@@ -96,12 +90,10 @@ describe("buildTransactionHistory", () => {
             // - This is essentially a self-transfer or split
             // - Should show as 0 net sent (or possibly not show at all)
 
-            const arkTxId =
-                "98b1cdc34d006e0956b1a828c65cd222780348d94b706a69a933ee58b19ab8e0";
+            const arkTxId = "98b1cdc34d006e0956b1a828c65cd222780348d94b706a69a933ee58b19ab8e0";
             const commitmentTxId =
                 "3a74555034c7f3c8053d0b30441178630dd98f645d9ed42aa9425fdc2279e159";
-            const spentByTxId =
-                "90a9f4b835db83cc55a67bc5f362d139e81eb268f4f30b156cc8b0e5a1fdd6b0";
+            const spentByTxId = "90a9f4b835db83cc55a67bc5f362d139e81eb268f4f30b156cc8b0e5a1fdd6b0";
             const baseDate = new Date("2025-10-31T20:00:00Z");
 
             const spentVtxo: VirtualCoin = {
@@ -157,14 +149,10 @@ describe("buildTransactionHistory", () => {
             const transactions = await buildTransactionHistory(
                 [resultVtxo0, resultVtxo1],
                 [],
-                new Set<string>()
+                new Set<string>(),
             );
-            const sentTxs = transactions.filter(
-                (tx) => tx.type === TxType.TxSent
-            );
-            const receivedTxs = transactions.filter(
-                (tx) => tx.type === TxType.TxReceived
-            );
+            const sentTxs = transactions.filter((tx) => tx.type === TxType.TxSent);
+            const receivedTxs = transactions.filter((tx) => tx.type === TxType.TxReceived);
 
             // When both outputs come back to the user, it's a self-transfer
             // spentAmount (1000) - resultedAmount (1000) = 0
@@ -203,11 +191,9 @@ describe("buildTransactionHistory", () => {
             const transactions = await buildTransactionHistory(
                 [receivedVtxo],
                 [],
-                boardingBatchTxids
+                boardingBatchTxids,
             );
-            const receivedTxs = transactions.filter(
-                (tx) => tx.type === TxType.TxReceived
-            );
+            const receivedTxs = transactions.filter((tx) => tx.type === TxType.TxReceived);
 
             expect(receivedTxs).toHaveLength(1);
             expect(receivedTxs[0].amount).toBe(1000);
@@ -237,9 +223,7 @@ describe("buildTransactionHistory", () => {
 
             expect(txs).toHaveLength(1);
             expect(txs[0].type).toBe(TxType.TxReceived);
-            expect(txs[0].assets).toStrictEqual([
-                { assetId: assetA, amount: 50n },
-            ]);
+            expect(txs[0].assets).toStrictEqual([{ assetId: assetA, amount: 50n }]);
         });
 
         it("should include assets on batch received transaction", async () => {
@@ -319,18 +303,12 @@ describe("buildTransactionHistory", () => {
                 assets: [{ assetId: assetA, amount: 30n }],
             };
 
-            const txs = await buildTransactionHistory(
-                [spentVtxo, changeVtxo],
-                [],
-                new Set()
-            );
+            const txs = await buildTransactionHistory([spentVtxo, changeVtxo], [], new Set());
 
             const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
             expect(sentTxs).toHaveLength(1);
             expect(sentTxs[0].amount).toBe(600);
-            expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetA, amount: -70n },
-            ]);
+            expect(sentTxs[0].assets).toStrictEqual([{ assetId: assetA, amount: -70n }]);
         });
 
         it("should omit assets on sent tx when all assets go to change", async () => {
@@ -361,11 +339,7 @@ describe("buildTransactionHistory", () => {
                 assets: [{ assetId: assetA, amount: 50n }],
             };
 
-            const txs = await buildTransactionHistory(
-                [spentVtxo, changeVtxo],
-                [],
-                new Set()
-            );
+            const txs = await buildTransactionHistory([spentVtxo, changeVtxo], [], new Set());
 
             const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
             expect(sentTxs).toHaveLength(1);
@@ -392,11 +366,7 @@ describe("buildTransactionHistory", () => {
                 ],
             };
 
-            const txs = await buildTransactionHistory(
-                [spentVtxo],
-                [],
-                new Set()
-            );
+            const txs = await buildTransactionHistory([spentVtxo], [], new Set());
 
             const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
             expect(sentTxs).toHaveLength(1);
@@ -438,19 +408,13 @@ describe("buildTransactionHistory", () => {
                 assets: [{ assetId: assetA, amount: 20n }],
             };
 
-            const txs = await buildTransactionHistory(
-                [forfeitVtxo, changeVtxo],
-                [],
-                new Set()
-            );
+            const txs = await buildTransactionHistory([forfeitVtxo, changeVtxo], [], new Set());
 
             const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
             expect(sentTxs).toHaveLength(1);
             expect(sentTxs[0].tag).toBe("exit");
             expect(sentTxs[0].amount).toBe(1500);
-            expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetA, amount: -60n },
-            ]);
+            expect(sentTxs[0].assets).toStrictEqual([{ assetId: assetA, amount: -60n }]);
         });
 
         it("should include assets on exit sent without change", async () => {
@@ -469,19 +433,13 @@ describe("buildTransactionHistory", () => {
                 assets: [{ assetId: assetB, amount: 75n }],
             };
 
-            const txs = await buildTransactionHistory(
-                [forfeitVtxo],
-                [],
-                new Set()
-            );
+            const txs = await buildTransactionHistory([forfeitVtxo], [], new Set());
 
             const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
             expect(sentTxs).toHaveLength(1);
             expect(sentTxs[0].tag).toBe("exit");
             expect(sentTxs[0].amount).toBe(1000);
-            expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetB, amount: -75n },
-            ]);
+            expect(sentTxs[0].assets).toStrictEqual([{ assetId: assetB, amount: -75n }]);
         });
 
         it("should include assets on issuance (self-send with new assets in change)", async () => {
@@ -511,18 +469,12 @@ describe("buildTransactionHistory", () => {
                 assets: [{ assetId: assetA, amount: 100n }],
             };
 
-            const txs = await buildTransactionHistory(
-                [spentVtxo, changeVtxo],
-                [],
-                new Set()
-            );
+            const txs = await buildTransactionHistory([spentVtxo, changeVtxo], [], new Set());
 
             const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
             expect(sentTxs).toHaveLength(1);
             expect(sentTxs[0].amount).toBe(0);
-            expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetA, amount: 100n },
-            ]);
+            expect(sentTxs[0].assets).toStrictEqual([{ assetId: assetA, amount: 100n }]);
         });
 
         it("should include assets on reissuance (change has more assets than spent)", async () => {
@@ -553,18 +505,12 @@ describe("buildTransactionHistory", () => {
                 assets: [{ assetId: assetA, amount: 150n }],
             };
 
-            const txs = await buildTransactionHistory(
-                [spentVtxo, changeVtxo],
-                [],
-                new Set()
-            );
+            const txs = await buildTransactionHistory([spentVtxo, changeVtxo], [], new Set());
 
             const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
             expect(sentTxs).toHaveLength(1);
             expect(sentTxs[0].amount).toBe(0);
-            expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetA, amount: 100n },
-            ]);
+            expect(sentTxs[0].assets).toStrictEqual([{ assetId: assetA, amount: 100n }]);
         });
 
         it("should include negative assets on burn (self-send with fewer assets in change)", async () => {
@@ -596,19 +542,13 @@ describe("buildTransactionHistory", () => {
                 isSpent: false,
             };
 
-            const txs = await buildTransactionHistory(
-                [spentVtxo, changeVtxo],
-                [],
-                new Set()
-            );
+            const txs = await buildTransactionHistory([spentVtxo, changeVtxo], [], new Set());
 
             const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
             expect(sentTxs).toHaveLength(1);
             expect(sentTxs[0].amount).toBe(0);
             // Negative = assets lost/burned
-            expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetA, amount: -100n },
-            ]);
+            expect(sentTxs[0].assets).toStrictEqual([{ assetId: assetA, amount: -100n }]);
         });
 
         it("should handle mixed operation: burn + issuance + transfer in same tx", async () => {
@@ -648,11 +588,7 @@ describe("buildTransactionHistory", () => {
                 ],
             };
 
-            const txs = await buildTransactionHistory(
-                [spentVtxo, changeVtxo],
-                [],
-                new Set()
-            );
+            const txs = await buildTransactionHistory([spentVtxo, changeVtxo], [], new Set());
 
             const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
             expect(sentTxs).toHaveLength(1);
@@ -696,11 +632,7 @@ describe("buildTransactionHistory", () => {
                 ],
             };
 
-            const txs = await buildTransactionHistory(
-                [spentVtxo1, spentVtxo2],
-                [],
-                new Set()
-            );
+            const txs = await buildTransactionHistory([spentVtxo1, spentVtxo2], [], new Set());
 
             const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
             expect(sentTxs).toHaveLength(1);
@@ -725,8 +657,7 @@ describe("buildTransactionHistory", () => {
             }) => {
                 it(`should handle history from ${address}`, async () => {
                     const getTxCreatedAt = sendAllTxTime
-                        ? (txid: string) =>
-                              Promise.resolve((sendAllTxTime as any)[txid] ?? 0)
+                        ? (txid: string) => Promise.resolve((sendAllTxTime as any)[txid] ?? 0)
                         : undefined;
                     const transactions = await buildTransactionHistory(
                         vtxos.map((_) => ({
@@ -735,20 +666,18 @@ describe("buildTransactionHistory", () => {
                         })) as VirtualCoin[],
                         allBoardingTxs as ArkTransaction[],
                         new Set(commitmentsToIgnore),
-                        getTxCreatedAt
+                        getTxCreatedAt,
                     );
                     expect(transactions).toStrictEqual(expected);
 
                     const balance = transactions.reduce(
                         (acc, tx) =>
-                            tx.type === TxType.TxReceived
-                                ? acc + tx.amount
-                                : acc - tx.amount,
-                        0
+                            tx.type === TxType.TxReceived ? acc + tx.amount : acc - tx.amount,
+                        0,
                     );
                     expect(balance).toBe(expectedBalance);
                 });
-            }
+            },
         );
     });
 });

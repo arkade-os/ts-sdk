@@ -20,7 +20,7 @@ import { BufferReader, BufferWriter, isZeroBytes } from "./utils";
 export class AssetId {
     private constructor(
         readonly txid: Uint8Array,
-        readonly groupIndex: number
+        readonly groupIndex: number,
     ) {}
 
     /**
@@ -46,7 +46,7 @@ export class AssetId {
 
         if (buf.length !== TX_HASH_SIZE) {
             throw new Error(
-                `invalid txid length: got ${buf.length} bytes, want ${TX_HASH_SIZE} bytes`
+                `invalid txid length: got ${buf.length} bytes, want ${TX_HASH_SIZE} bytes`,
             );
         }
 
@@ -86,7 +86,7 @@ export class AssetId {
         }
         if (buf.length !== ASSET_ID_SIZE) {
             throw new Error(
-                `invalid asset id length: got ${buf.length} bytes, want ${ASSET_ID_SIZE} bytes`
+                `invalid asset id length: got ${buf.length} bytes, want ${ASSET_ID_SIZE} bytes`,
             );
         }
         const reader = new BufferReader(buf);
@@ -124,14 +124,8 @@ export class AssetId {
         if (isZeroBytes(this.txid)) {
             throw new Error("empty txid");
         }
-        if (
-            !Number.isInteger(this.groupIndex) ||
-            this.groupIndex < 0 ||
-            this.groupIndex > 0xffff
-        ) {
-            throw new Error(
-                `invalid group index: ${this.groupIndex}, must be in range [0, 65535]`
-            );
+        if (!Number.isInteger(this.groupIndex) || this.groupIndex < 0 || this.groupIndex > 0xffff) {
+            throw new Error(`invalid group index: ${this.groupIndex}, must be in range [0, 65535]`);
         }
     }
 
@@ -145,7 +139,7 @@ export class AssetId {
     static fromReader(reader: BufferReader): AssetId {
         if (reader.remaining() < ASSET_ID_SIZE) {
             throw new Error(
-                `invalid asset id length: got ${reader.remaining()}, want ${ASSET_ID_SIZE}`
+                `invalid asset id length: got ${reader.remaining()}, want ${ASSET_ID_SIZE}`,
             );
         }
 

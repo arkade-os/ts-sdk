@@ -15,15 +15,12 @@ export class AssetOutput {
 
     private constructor(
         readonly vout: number,
-        readonly amount: bigint
+        readonly amount: bigint,
     ) {}
 
     /** Create a local asset output referencing a transaction output index. */
     static create(vout: number, amount: bigint | number): AssetOutput {
-        const output = new AssetOutput(
-            vout,
-            typeof amount === "number" ? BigInt(amount) : amount
-        );
+        const output = new AssetOutput(vout, typeof amount === "number" ? BigInt(amount) : amount);
         output.validate();
         return output;
     }
@@ -64,14 +61,8 @@ export class AssetOutput {
 
     /** Validate the asset output fields. */
     validate(): void {
-        if (
-            !Number.isInteger(this.vout) ||
-            this.vout < 0 ||
-            this.vout > 0xffff
-        ) {
-            throw new Error(
-                "asset output vout must be an integer in range [0, 65535]"
-            );
+        if (!Number.isInteger(this.vout) || this.vout < 0 || this.vout > 0xffff) {
+            throw new Error("asset output vout must be an integer in range [0, 65535]");
         }
         if (this.amount <= 0n) {
             throw new Error("asset output amount must be greater than 0");

@@ -32,12 +32,7 @@ import {
     type SubmarineRecoveryResult,
     type SubmarineRefundOutcome,
 } from "../types";
-import {
-    ArkProvider,
-    RestArkProvider,
-    IndexerProvider,
-    RestIndexerProvider,
-} from "@arkade-os/sdk";
+import { ArkProvider, RestArkProvider, IndexerProvider, RestIndexerProvider } from "@arkade-os/sdk";
 import { ArkadeSwaps } from "../arkade-swaps";
 import type { SwapManagerClient } from "../swap-manager";
 
@@ -643,8 +638,7 @@ export type SwapManagerEventMessage =
       };
 
 export class ArkadeSwapsMessageHandler
-    implements
-        MessageHandler<ArkadeSwapsUpdaterRequest, ArkadeSwapsUpdaterResponse>
+    implements MessageHandler<ArkadeSwapsUpdaterRequest, ArkadeSwapsUpdaterResponse>
 {
     static messageTag = DEFAULT_MESSAGE_TAG;
     readonly messageTag = ArkadeSwapsMessageHandler.messageTag;
@@ -665,10 +659,7 @@ export class ArkadeSwapsMessageHandler
         return sm;
     }
 
-    async start(opts: {
-        wallet?: IWallet;
-        readonlyWallet: IReadonlyWallet;
-    }): Promise<void> {
+    async start(opts: { wallet?: IWallet; readonlyWallet: IReadonlyWallet }): Promise<void> {
         if (!opts.wallet) throw new Error("Wallet is required");
         this.wallet = opts.wallet;
     }
@@ -708,18 +699,14 @@ export class ArkadeSwapsMessageHandler
         return LONG_RUNNING_ARKADE_SWAPS_REQUEST_TYPES.has(message.type);
     }
 
-    private tagged(
-        res: Partial<ArkadeSwapsUpdaterResponse>
-    ): ArkadeSwapsUpdaterResponse {
+    private tagged(res: Partial<ArkadeSwapsUpdaterResponse>): ArkadeSwapsUpdaterResponse {
         return {
             ...res,
             tag: this.messageTag,
         } as ArkadeSwapsUpdaterResponse;
     }
 
-    private async broadcastEvent(
-        event: SwapManagerEventMessage
-    ): Promise<void> {
+    private async broadcastEvent(event: SwapManagerEventMessage): Promise<void> {
         const sw: any = self as any;
         if (!sw?.clients?.matchAll) return;
         const clients = await sw.clients.matchAll();
@@ -732,9 +719,7 @@ export class ArkadeSwapsMessageHandler
         }
     }
 
-    async handleMessage(
-        message: ArkadeSwapsUpdaterRequest
-    ): Promise<ArkadeSwapsUpdaterResponse> {
+    async handleMessage(message: ArkadeSwapsUpdaterRequest): Promise<ArkadeSwapsUpdaterResponse> {
         const id = message.id;
         if (message.type === "INIT_ARKADE_SWAPS") {
             try {
@@ -758,9 +743,7 @@ export class ArkadeSwapsMessageHandler
         try {
             switch (message.type) {
                 case "CREATE_LIGHTNING_INVOICE": {
-                    const res = await this.handler.createLightningInvoice(
-                        message.payload
-                    );
+                    const res = await this.handler.createLightningInvoice(message.payload);
                     return this.tagged({
                         id,
                         type: "LIGHTNING_INVOICE_CREATED",
@@ -769,9 +752,7 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "SEND_LIGHTNING_PAYMENT": {
-                    const res = await this.handler.sendLightningPayment(
-                        message.payload
-                    );
+                    const res = await this.handler.sendLightningPayment(message.payload);
                     return this.tagged({
                         id,
                         type: "LIGHTNING_PAYMENT_SENT",
@@ -780,9 +761,7 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "CREATE_SUBMARINE_SWAP": {
-                    const res = await this.handler.createSubmarineSwap(
-                        message.payload
-                    );
+                    const res = await this.handler.createSubmarineSwap(message.payload);
                     return this.tagged({
                         id,
                         type: "SUBMARINE_SWAP_CREATED",
@@ -791,9 +770,7 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "CREATE_REVERSE_SWAP": {
-                    const res = await this.handler.createReverseSwap(
-                        message.payload
-                    );
+                    const res = await this.handler.createReverseSwap(message.payload);
                     return this.tagged({
                         id,
                         type: "REVERSE_SWAP_CREATED",
@@ -806,9 +783,7 @@ export class ArkadeSwapsMessageHandler
                     return this.tagged({ id, type: "VHTLC_CLAIMED" });
 
                 case "REFUND_VHTLC": {
-                    const outcome = await this.handler.refundVHTLC(
-                        message.payload
-                    );
+                    const outcome = await this.handler.refundVHTLC(message.payload);
                     return this.tagged({
                         id,
                         type: "VHTLC_REFUNDED",
@@ -817,9 +792,7 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "INSPECT_SUBMARINE_RECOVERY": {
-                    const info = await this.handler.inspectSubmarineRecovery(
-                        message.payload
-                    );
+                    const info = await this.handler.inspectSubmarineRecovery(message.payload);
                     return this.tagged({
                         id,
                         type: "SUBMARINE_RECOVERY_INSPECTED",
@@ -828,8 +801,7 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "SCAN_RECOVERABLE_SUBMARINE_SWAPS": {
-                    const infos =
-                        await this.handler.scanRecoverableSubmarineSwaps();
+                    const infos = await this.handler.scanRecoverableSubmarineSwaps();
                     return this.tagged({
                         id,
                         type: "RECOVERABLE_SUBMARINE_SWAPS_SCANNED",
@@ -838,9 +810,7 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "RECOVER_SUBMARINE_FUNDS": {
-                    const outcome = await this.handler.recoverSubmarineFunds(
-                        message.payload
-                    );
+                    const outcome = await this.handler.recoverSubmarineFunds(message.payload);
                     return this.tagged({
                         id,
                         type: "SUBMARINE_FUNDS_RECOVERED",
@@ -849,9 +819,7 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "RECOVER_ALL_SUBMARINE_FUNDS": {
-                    const results = await this.handler.recoverAllSubmarineFunds(
-                        message.payload
-                    );
+                    const results = await this.handler.recoverAllSubmarineFunds(message.payload);
                     return this.tagged({
                         id,
                         type: "ALL_SUBMARINE_FUNDS_RECOVERED",
@@ -860,9 +828,7 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "WAIT_AND_CLAIM": {
-                    const res = await this.handler.waitAndClaim(
-                        message.payload
-                    );
+                    const res = await this.handler.waitAndClaim(message.payload);
                     return this.tagged({
                         id,
                         type: "WAIT_AND_CLAIMED",
@@ -871,9 +837,7 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "WAIT_FOR_SWAP_SETTLEMENT": {
-                    const res = await this.handler.waitForSwapSettlement(
-                        message.payload
-                    );
+                    const res = await this.handler.waitForSwapSettlement(message.payload);
                     return this.tagged({
                         id,
                         type: "SWAP_SETTLED",
@@ -882,9 +846,7 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "RESTORE_SWAPS": {
-                    const res = await this.handler.restoreSwaps(
-                        message.payload
-                    );
+                    const res = await this.handler.restoreSwaps(message.payload);
                     return this.tagged({
                         id,
                         type: "SWAPS_RESTORED",
@@ -895,7 +857,7 @@ export class ArkadeSwapsMessageHandler
                 case "ENRICH_REVERSE_SWAP_PREIMAGE": {
                     const res = this.handler.enrichReverseSwapPreimage(
                         message.payload.swap,
-                        message.payload.preimage
+                        message.payload.preimage,
                     );
                     return this.tagged({
                         id,
@@ -907,7 +869,7 @@ export class ArkadeSwapsMessageHandler
                 case "ENRICH_SUBMARINE_SWAP_INVOICE": {
                     const res = this.handler.enrichSubmarineSwapInvoice(
                         message.payload.swap,
-                        message.payload.invoice
+                        message.payload.invoice,
                     );
                     return this.tagged({
                         id,
@@ -918,28 +880,20 @@ export class ArkadeSwapsMessageHandler
 
                 case "GET_FEES": {
                     const res = message.payload
-                        ? await this.handler.getFees(
-                              message.payload.from,
-                              message.payload.to
-                          )
+                        ? await this.handler.getFees(message.payload.from, message.payload.to)
                         : await this.handler.getFees();
                     return this.tagged({ id, type: "FEES", payload: res });
                 }
 
                 case "GET_LIMITS": {
                     const res = message.payload
-                        ? await this.handler.getLimits(
-                              message.payload.from,
-                              message.payload.to
-                          )
+                        ? await this.handler.getLimits(message.payload.from, message.payload.to)
                         : await this.handler.getLimits();
                     return this.tagged({ id, type: "LIMITS", payload: res });
                 }
 
                 case "GET_SWAP_STATUS": {
-                    const res = await this.handler.getSwapStatus(
-                        message.payload.swapId
-                    );
+                    const res = await this.handler.getSwapStatus(message.payload.swapId);
                     return this.tagged({
                         id,
                         type: "SWAP_STATUS",
@@ -1006,9 +960,7 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "CREATE_CHAIN_SWAP": {
-                    const res = await this.handler.createChainSwap(
-                        message.payload
-                    );
+                    const res = await this.handler.createChainSwap(message.payload);
                     return this.tagged({
                         id,
                         type: "CHAIN_SWAP_CREATED",
@@ -1017,9 +969,7 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "WAIT_AND_CLAIM_CHAIN": {
-                    const res = await this.handler.waitAndClaimChain(
-                        message.payload
-                    );
+                    const res = await this.handler.waitAndClaimChain(message.payload);
                     return this.tagged({
                         id,
                         type: "CHAIN_CLAIMED",
@@ -1028,9 +978,7 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "WAIT_AND_CLAIM_ARK": {
-                    const res = await this.handler.waitAndClaimArk(
-                        message.payload
-                    );
+                    const res = await this.handler.waitAndClaimArk(message.payload);
                     return this.tagged({
                         id,
                         type: "ARK_CLAIMED",
@@ -1039,9 +987,7 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "WAIT_AND_CLAIM_BTC": {
-                    const res = await this.handler.waitAndClaimBtc(
-                        message.payload
-                    );
+                    const res = await this.handler.waitAndClaimBtc(message.payload);
                     return this.tagged({
                         id,
                         type: "BTC_CLAIMED",
@@ -1062,9 +1008,7 @@ export class ArkadeSwapsMessageHandler
                     return this.tagged({ id, type: "ARK_REFUND_EXECUTED" });
 
                 case "SIGN_SERVER_CLAIM":
-                    await this.handler.signCooperativeClaimForServer(
-                        message.payload
-                    );
+                    await this.handler.signCooperativeClaimForServer(message.payload);
                     return this.tagged({ id, type: "SERVER_CLAIM_SIGNED" });
 
                 case "VERIFY_CHAIN_SWAP": {
@@ -1079,9 +1023,7 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "QUOTE_SWAP": {
-                    const amount = await this.handler.quoteSwap(
-                        message.payload.swapId
-                    );
+                    const amount = await this.handler.quoteSwap(message.payload.swapId);
                     return this.tagged({
                         id,
                         type: "SWAP_QUOTED",
@@ -1106,15 +1048,12 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "SM-REMOVE_SWAP": {
-                    await this.getSwapManagerOrThrow().removeSwap(
-                        message.payload.swapId
-                    );
+                    await this.getSwapManagerOrThrow().removeSwap(message.payload.swapId);
                     return this.tagged({ id, type: "SM-SWAP_REMOVED" });
                 }
 
                 case "SM-GET_PENDING_SWAPS": {
-                    const res =
-                        await this.getSwapManagerOrThrow().getPendingSwaps();
+                    const res = await this.getSwapManagerOrThrow().getPendingSwaps();
                     return this.tagged({
                         id,
                         type: "SM-PENDING_SWAPS",
@@ -1123,9 +1062,7 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "SM-HAS_SWAP": {
-                    const has = await this.getSwapManagerOrThrow().hasSwap(
-                        message.payload.swapId
-                    );
+                    const has = await this.getSwapManagerOrThrow().hasSwap(message.payload.swapId);
                     return this.tagged({
                         id,
                         type: "SM-HAS_SWAP_RESULT",
@@ -1134,10 +1071,9 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "SM-IS_PROCESSING": {
-                    const processing =
-                        await this.getSwapManagerOrThrow().isProcessing(
-                            message.payload.swapId
-                        );
+                    const processing = await this.getSwapManagerOrThrow().isProcessing(
+                        message.payload.swapId,
+                    );
                     return this.tagged({
                         id,
                         type: "SM-IS_PROCESSING_RESULT",
@@ -1155,10 +1091,9 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "SM-WAIT_FOR_COMPLETION": {
-                    const res =
-                        await this.getSwapManagerOrThrow().waitForSwapCompletion(
-                            message.payload.swapId
-                        );
+                    const res = await this.getSwapManagerOrThrow().waitForSwapCompletion(
+                        message.payload.swapId,
+                    );
                     return this.tagged({
                         id,
                         type: "SM-COMPLETED",
@@ -1239,9 +1174,7 @@ export class ArkadeSwapsMessageHandler
                 await this.broadcastEvent({
                     tag: this.messageTag,
                     type: "SM-EVENT-WS_DISCONNECTED",
-                    payload: error
-                        ? { errorMessage: error.message }
-                        : undefined,
+                    payload: error ? { errorMessage: error.message } : undefined,
                 });
             });
         }

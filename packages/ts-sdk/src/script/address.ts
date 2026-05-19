@@ -47,18 +47,17 @@ export class ArkAddress {
         readonly serverPubKey: Bytes,
         readonly vtxoTaprootKey: Bytes,
         readonly hrp: string = DEFAULT_ARKADE_HRP,
-        readonly version: number = 0
+        readonly version: number = 0,
     ) {
         if (serverPubKey.length !== 32) {
             throw new Error(
-                "Invalid server public key length, expected 32 bytes, got " +
-                    serverPubKey.length
+                "Invalid server public key length, expected 32 bytes, got " + serverPubKey.length,
             );
         }
         if (vtxoTaprootKey.length !== 32) {
             throw new Error(
                 "Invalid vtxo taproot public key length, expected 32 bytes, got " +
-                    vtxoTaprootKey.length
+                    vtxoTaprootKey.length,
             );
         }
     }
@@ -80,21 +79,14 @@ export class ArkAddress {
 
         // First the version byte, then 32 bytes server pubkey, then 32 bytes vtxo taproot public key.
         if (data.length !== 1 + 32 + 32) {
-            throw new Error(
-                "Invalid data length, expected 65 bytes, got " + data.length
-            );
+            throw new Error("Invalid data length, expected 65 bytes, got " + data.length);
         }
 
         const version = data[0];
         const serverPubKey = data.slice(1, 33);
         const vtxoTaprootPubKey = data.slice(33, 65);
 
-        return new ArkAddress(
-            serverPubKey,
-            vtxoTaprootPubKey,
-            decoded.prefix,
-            version
-        );
+        return new ArkAddress(serverPubKey, vtxoTaprootPubKey, decoded.prefix, version);
     }
 
     /**

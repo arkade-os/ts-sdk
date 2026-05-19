@@ -1,8 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import {
-    openDatabase,
-    closeDatabase,
-} from "../src/repositories/indexedDB/manager";
+import { openDatabase, closeDatabase } from "../src/repositories/indexedDB/manager";
 
 let dbCounter = 0;
 function getUniqueDbName(prefix: string): string {
@@ -34,7 +31,7 @@ describe("db manager", () => {
         await openDatabase(dbName, 1, initDb);
 
         await expect(openDatabase(dbName, 2, initDb)).rejects.toThrow(
-            /already opened with version 1/
+            /already opened with version 1/,
         );
 
         const closed = await closeDatabase(dbName);

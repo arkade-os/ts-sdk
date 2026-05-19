@@ -47,9 +47,7 @@ export interface ArkTapscript<T extends TapscriptType, Params> {
  * console.log("type:", arkTapscript.type);
  * ```
  */
-export function decodeTapscript(
-    script: Uint8Array
-): ArkTapscript<TapscriptType, any> {
+export function decodeTapscript(script: Uint8Array): ArkTapscript<TapscriptType, any> {
     const types = [
         MultisigTapscript,
         CSVMultisigTapscript,
@@ -66,9 +64,7 @@ export function decodeTapscript(
         }
     }
 
-    throw new Error(
-        `Failed to decode: script ${hex.encode(script)} is not a valid tapscript`
-    );
+    throw new Error(`Failed to decode: script ${hex.encode(script)} is not a valid tapscript`);
 }
 
 /**
@@ -102,9 +98,7 @@ export namespace MultisigTapscript {
 
         for (const pubkey of params.pubkeys) {
             if (pubkey.length !== 32) {
-                throw new Error(
-                    `Invalid pubkey length: expected 32, got ${pubkey.length}`
-                );
+                throw new Error(`Invalid pubkey length: expected 32, got ${pubkey.length}`);
             }
         }
 
@@ -154,7 +148,7 @@ export namespace MultisigTapscript {
                 return decodeChecksig(script);
             } catch (error2) {
                 throw new Error(
-                    `Failed to decode script: ${error2 instanceof Error ? error2.message : String(error2)}`
+                    `Failed to decode script: ${error2 instanceof Error ? error2.message : String(error2)}`,
                 );
             }
         }
@@ -173,9 +167,7 @@ export namespace MultisigTapscript {
             // If it's a data push, it should be a 32-byte pubkey
             if (typeof op !== "string" && typeof op !== "number") {
                 if (op.length !== 32) {
-                    throw new Error(
-                        `Invalid pubkey length: expected 32, got ${op.length}`
-                    );
+                    throw new Error(`Invalid pubkey length: expected 32, got ${op.length}`);
                 }
                 pubkeys.push(op);
 
@@ -184,9 +176,7 @@ export namespace MultisigTapscript {
                     i + 1 >= asm.length ||
                     (asm[i + 1] !== "CHECKSIGADD" && asm[i + 1] !== "CHECKSIG")
                 ) {
-                    throw new Error(
-                        "Expected CHECKSIGADD or CHECKSIG after pubkey"
-                    );
+                    throw new Error("Expected CHECKSIGADD or CHECKSIG after pubkey");
                 }
                 i++; // Skip the CHECKSIGADD op
                 continue;
@@ -215,9 +205,7 @@ export namespace MultisigTapscript {
             type: MultisigType.CHECKSIGADD,
         });
         if (hex.encode(reconstructed.script) !== hex.encode(script)) {
-            throw new Error(
-                "Invalid script format: script reconstruction mismatch"
-            );
+            throw new Error("Invalid script format: script reconstruction mismatch");
         }
 
         return {
@@ -239,9 +227,7 @@ export namespace MultisigTapscript {
             // If it's a data push, it should be a 32-byte pubkey
             if (typeof op !== "string" && typeof op !== "number") {
                 if (op.length !== 32) {
-                    throw new Error(
-                        `Invalid pubkey length: expected 32, got ${op.length}`
-                    );
+                    throw new Error(`Invalid pubkey length: expected 32, got ${op.length}`);
                 }
                 pubkeys.push(op);
 
@@ -252,9 +238,7 @@ export namespace MultisigTapscript {
 
                 const nextOp = asm[i + 1];
                 if (nextOp !== "CHECKSIGVERIFY" && nextOp !== "CHECKSIG") {
-                    throw new Error(
-                        "Expected CHECKSIGVERIFY or CHECKSIG after pubkey"
-                    );
+                    throw new Error("Expected CHECKSIGVERIFY or CHECKSIG after pubkey");
                 }
 
                 // Last operation must be CHECKSIG, not CHECKSIGVERIFY
@@ -274,9 +258,7 @@ export namespace MultisigTapscript {
         // Verify the script by re-encoding and comparing
         const reconstructed = encode({ pubkeys, type: MultisigType.CHECKSIG });
         if (hex.encode(reconstructed.script) !== hex.encode(script)) {
-            throw new Error(
-                "Invalid script format: script reconstruction mismatch"
-            );
+            throw new Error("Invalid script format: script reconstruction mismatch");
         }
 
         return {
@@ -316,15 +298,11 @@ export namespace CSVMultisigTapscript {
     export function encode(params: Params): Type {
         for (const pubkey of params.pubkeys) {
             if (pubkey.length !== 32) {
-                throw new Error(
-                    `Invalid pubkey length: expected 32, got ${pubkey.length}`
-                );
+                throw new Error(`Invalid pubkey length: expected 32, got ${pubkey.length}`);
             }
         }
 
-        const sequence = MinimalScriptNum.encode(
-            BigInt(timelockToSequence(params.timelock))
-        );
+        const sequence = MinimalScriptNum.encode(BigInt(timelockToSequence(params.timelock)));
 
         const asm: ScriptType = [
             sequence.length === 1 ? sequence[0] : sequence,
@@ -332,10 +310,7 @@ export namespace CSVMultisigTapscript {
             "DROP",
         ];
         const multisigScript = MultisigTapscript.encode(params);
-        const script = new Uint8Array([
-            ...Script.encode(asm),
-            ...multisigScript.script,
-        ]);
+        const script = new Uint8Array([...Script.encode(asm), ...multisigScript.script]);
 
         return {
             type: TapscriptType.CSVMultisig,
@@ -365,7 +340,7 @@ export namespace CSVMultisigTapscript {
             multisig = MultisigTapscript.decode(multisigScript);
         } catch (error) {
             throw new Error(
-                `Invalid multisig script: ${error instanceof Error ? error.message : String(error)}`
+                `Invalid multisig script: ${error instanceof Error ? error.message : String(error)}`,
             );
         }
 
@@ -373,9 +348,7 @@ export namespace CSVMultisigTapscript {
         if (typeof sequence === "number") {
             sequenceNum = sequence;
         } else {
-            sequenceNum = Number(
-                MinimalScriptNum.decode(sequence as Uint8Array)
-            );
+            sequenceNum = Number(MinimalScriptNum.decode(sequence as Uint8Array));
         }
         const timelock = sequenceToTimelock(sequenceNum);
 
@@ -385,9 +358,7 @@ export namespace CSVMultisigTapscript {
         });
 
         if (hex.encode(reconstructed.script) !== hex.encode(script)) {
-            throw new Error(
-                "Invalid script format: script reconstruction mismatch"
-            );
+            throw new Error("Invalid script format: script reconstruction mismatch");
         }
 
         return {
@@ -418,9 +389,7 @@ export namespace CSVMultisigTapscript {
         }
 
         if (asm[1] !== "CHECKSEQUENCEVERIFY" || asm[2] !== "DROP") {
-            return new Error(
-                "Invalid script: expected CHECKSEQUENCEVERIFY DROP"
-            );
+            return new Error("Invalid script: expected CHECKSEQUENCEVERIFY DROP");
         }
 
         return true;
@@ -480,19 +449,15 @@ export namespace ConditionCSVMultisigTapscript {
             throw Error("Invalid script: missing VERIFY operation");
         }
 
-        const conditionScript = new Uint8Array(
-            Script.encode(asm.slice(0, verifyIndex))
-        );
-        const csvMultisigScript = new Uint8Array(
-            Script.encode(asm.slice(verifyIndex + 1))
-        );
+        const conditionScript = new Uint8Array(Script.encode(asm.slice(0, verifyIndex)));
+        const csvMultisigScript = new Uint8Array(Script.encode(asm.slice(verifyIndex + 1)));
 
         let csvMultisig: CSVMultisigTapscript.Type;
         try {
             csvMultisig = CSVMultisigTapscript.decode(csvMultisigScript);
         } catch (error) {
             throw new Error(
-                `Invalid CSV multisig script: ${error instanceof Error ? error.message : String(error)}`
+                `Invalid CSV multisig script: ${error instanceof Error ? error.message : String(error)}`,
             );
         }
 
@@ -502,9 +467,7 @@ export namespace ConditionCSVMultisigTapscript {
         });
 
         if (hex.encode(reconstructed.script) !== hex.encode(script)) {
-            throw new Error(
-                "Invalid script format: script reconstruction mismatch"
-            );
+            throw new Error("Invalid script format: script reconstruction mismatch");
         }
 
         return {
@@ -603,19 +566,15 @@ export namespace ConditionMultisigTapscript {
             throw Error("Invalid script: missing VERIFY operation");
         }
 
-        const conditionScript = new Uint8Array(
-            Script.encode(asm.slice(0, verifyIndex))
-        );
-        const multisigScript = new Uint8Array(
-            Script.encode(asm.slice(verifyIndex + 1))
-        );
+        const conditionScript = new Uint8Array(Script.encode(asm.slice(0, verifyIndex)));
+        const multisigScript = new Uint8Array(Script.encode(asm.slice(verifyIndex + 1)));
 
         let multisig: MultisigTapscript.Type;
         try {
             multisig = MultisigTapscript.decode(multisigScript);
         } catch (error) {
             throw new Error(
-                `Invalid multisig script: ${error instanceof Error ? error.message : String(error)}`
+                `Invalid multisig script: ${error instanceof Error ? error.message : String(error)}`,
             );
         }
 
@@ -625,9 +584,7 @@ export namespace ConditionMultisigTapscript {
         });
 
         if (hex.encode(reconstructed.script) !== hex.encode(script)) {
-            throw new Error(
-                "Invalid script format: script reconstruction mismatch"
-            );
+            throw new Error("Invalid script format: script reconstruction mismatch");
         }
 
         return {
@@ -733,9 +690,7 @@ export namespace CLTVMultisigTapscript {
         }
 
         if (asm[1] !== "CHECKLOCKTIMEVERIFY" || asm[2] !== "DROP") {
-            throw new Error(
-                "Invalid script: expected CHECKLOCKTIMEVERIFY DROP"
-            );
+            throw new Error("Invalid script: expected CHECKLOCKTIMEVERIFY DROP");
         }
 
         const multisigScript = new Uint8Array(Script.encode(asm.slice(3)));
@@ -745,7 +700,7 @@ export namespace CLTVMultisigTapscript {
             multisig = MultisigTapscript.decode(multisigScript);
         } catch (error) {
             throw new Error(
-                `Invalid multisig script: ${error instanceof Error ? error.message : String(error)}`
+                `Invalid multisig script: ${error instanceof Error ? error.message : String(error)}`,
             );
         }
 
@@ -762,9 +717,7 @@ export namespace CLTVMultisigTapscript {
         });
 
         if (hex.encode(reconstructed.script) !== hex.encode(script)) {
-            throw new Error(
-                "Invalid script format: script reconstruction mismatch"
-            );
+            throw new Error("Invalid script format: script reconstruction mismatch");
         }
 
         return {
@@ -791,15 +744,11 @@ export namespace CLTVMultisigTapscript {
 
         const locktime = asm[0];
         if (typeof locktime === "string") {
-            return new Error(
-                "Invalid script: expected locktime as number or bytes"
-            );
+            return new Error("Invalid script: expected locktime as number or bytes");
         }
 
         if (asm[1] !== "CHECKLOCKTIMEVERIFY" || asm[2] !== "DROP") {
-            return new Error(
-                "Invalid script: expected CHECKLOCKTIMEVERIFY DROP"
-            );
+            return new Error("Invalid script: expected CHECKLOCKTIMEVERIFY DROP");
         }
 
         return true;

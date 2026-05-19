@@ -1,11 +1,6 @@
 import { NETWORK, TEST_NETWORK } from "@scure/btc-signer/utils.js";
 
-export type NetworkName =
-    | "bitcoin"
-    | "testnet"
-    | "signet"
-    | "mutinynet"
-    | "regtest";
+export type NetworkName = "bitcoin" | "testnet" | "signet" | "mutinynet" | "regtest";
 
 export interface Network {
     hrp: string;
@@ -30,7 +25,7 @@ export const networks = {
             pubKeyHash: 0x6f,
             scriptHash: 0xc4,
         },
-        "tark"
+        "tark",
     ),
 };
 

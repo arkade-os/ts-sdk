@@ -47,31 +47,21 @@ describe("Common", () => {
         // { name: "With Mnemonic", factory: createTestArkWalletWithMnemonic },
     ]) {
         describe(name, () => {
-            it(
-                "should settle a boarding UTXO",
-                { timeout: 60000 },
-                async () => {
-                    const alice = await factory();
+            it("should settle a boarding UTXO", { timeout: 60000 }, async () => {
+                const alice = await factory();
 
-                    const boardingAddress =
-                        await alice.wallet.getBoardingAddress();
+                const boardingAddress = await alice.wallet.getBoardingAddress();
 
-                    // faucet
-                    execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+                // faucet
+                execCommand(`nigiri faucet ${boardingAddress} 0.001`);
 
-                    await waitFor(
-                        async () =>
-                            (await alice.wallet.getBoardingUtxos()).length > 0
-                    );
+                await waitFor(async () => (await alice.wallet.getBoardingUtxos()).length > 0);
 
-                    const { fees } = await alice.wallet.arkProvider.getInfo();
+                const { fees } = await alice.wallet.arkProvider.getInfo();
 
-                    const settleTxid = await new Ramps(alice.wallet).onboard(
-                        fees
-                    );
-                    expect(settleTxid).toBeDefined();
-                }
-            );
+                const settleTxid = await new Ramps(alice.wallet).onboard(fees);
+                expect(settleTxid).toBeDefined();
+            });
 
             it("should settle a VTXO", { timeout: 60000 }, async () => {
                 // Create fresh wallet instance for this test
@@ -81,7 +71,7 @@ describe("Common", () => {
 
                 const fundAmount = 1000;
                 execCommand(
-                    `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
+                    `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`,
                 );
 
                 await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -104,66 +94,61 @@ describe("Common", () => {
                 expect(settleTxid).toBeDefined();
             });
 
-            it(
-                "should settle 2 clients in the same batch",
-                { timeout: 60000 },
-                async () => {
-                    const alice = await factory();
-                    const bob = await factory();
+            it("should settle 2 clients in the same batch", { timeout: 60000 }, async () => {
+                const alice = await factory();
+                const bob = await factory();
 
-                    const aliceOffchainAddress =
-                        await alice.wallet.getAddress();
-                    expect(aliceOffchainAddress).toBeDefined();
+                const aliceOffchainAddress = await alice.wallet.getAddress();
+                expect(aliceOffchainAddress).toBeDefined();
 
-                    const bobOffchainAddress = await bob.wallet.getAddress();
-                    expect(bobOffchainAddress).toBeDefined();
+                const bobOffchainAddress = await bob.wallet.getAddress();
+                expect(bobOffchainAddress).toBeDefined();
 
-                    const fundAmount = 1000;
-                    execCommand(
-                        `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
-                    );
-                    execCommand(
-                        `${arkdExec} ark send --to ${bobOffchainAddress} --amount ${fundAmount} --password secret`
-                    );
+                const fundAmount = 1000;
+                execCommand(
+                    `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`,
+                );
+                execCommand(
+                    `${arkdExec} ark send --to ${bobOffchainAddress} --amount ${fundAmount} --password secret`,
+                );
 
-                    await new Promise((resolve) => setTimeout(resolve, 1000));
+                await new Promise((resolve) => setTimeout(resolve, 1000));
 
-                    const virtualCoins = await alice.wallet.getVtxos();
-                    expect(virtualCoins).toHaveLength(1);
-                    const aliceVtxo = virtualCoins[0];
-                    expect(aliceVtxo.txid).toBeDefined();
+                const virtualCoins = await alice.wallet.getVtxos();
+                expect(virtualCoins).toHaveLength(1);
+                const aliceVtxo = virtualCoins[0];
+                expect(aliceVtxo.txid).toBeDefined();
 
-                    const bobVirtualCoins = await bob.wallet.getVtxos();
-                    expect(bobVirtualCoins).toHaveLength(1);
-                    const bobVtxo = bobVirtualCoins[0];
-                    expect(bobVtxo.txid).toBeDefined();
+                const bobVirtualCoins = await bob.wallet.getVtxos();
+                expect(bobVirtualCoins).toHaveLength(1);
+                const bobVtxo = bobVirtualCoins[0];
+                expect(bobVtxo.txid).toBeDefined();
 
-                    const [aliceSettleTxid, bobSettleTxid] = await Promise.all([
-                        alice.wallet.settle({
-                            inputs: [aliceVtxo],
-                            outputs: [
-                                {
-                                    address: aliceOffchainAddress!,
-                                    amount: BigInt(fundAmount),
-                                },
-                            ],
-                        }),
-                        bob.wallet.settle({
-                            inputs: [bobVtxo],
-                            outputs: [
-                                {
-                                    address: bobOffchainAddress!,
-                                    amount: BigInt(fundAmount),
-                                },
-                            ],
-                        }),
-                    ]);
+                const [aliceSettleTxid, bobSettleTxid] = await Promise.all([
+                    alice.wallet.settle({
+                        inputs: [aliceVtxo],
+                        outputs: [
+                            {
+                                address: aliceOffchainAddress!,
+                                amount: BigInt(fundAmount),
+                            },
+                        ],
+                    }),
+                    bob.wallet.settle({
+                        inputs: [bobVtxo],
+                        outputs: [
+                            {
+                                address: bobOffchainAddress!,
+                                amount: BigInt(fundAmount),
+                            },
+                        ],
+                    }),
+                ]);
 
-                    expect(aliceSettleTxid).toBeDefined();
-                    expect(bobSettleTxid).toBeDefined();
-                    expect(aliceSettleTxid).toBe(bobSettleTxid);
-                }
-            );
+                expect(aliceSettleTxid).toBeDefined();
+                expect(bobSettleTxid).toBeDefined();
+                expect(aliceSettleTxid).toBe(bobSettleTxid);
+            });
 
             it(
                 "should perform a complete offchain roundtrip payment",
@@ -174,8 +159,7 @@ describe("Common", () => {
                     const bob = await factory();
 
                     // Get addresses
-                    const aliceOffchainAddress =
-                        await alice.wallet.getAddress();
+                    const aliceOffchainAddress = await alice.wallet.getAddress();
                     const bobOffchainAddress = await bob.wallet.getAddress();
                     expect(aliceOffchainAddress).toBeDefined();
                     expect(bobOffchainAddress).toBeDefined();
@@ -193,7 +177,7 @@ describe("Common", () => {
                     // Use a smaller amount for testing
                     const fundAmount = 10000;
                     execCommand(
-                        `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
+                        `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`,
                     );
 
                     await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -209,8 +193,7 @@ describe("Common", () => {
                     expect(vtxo.virtualStatus.state).toBe("preconfirmed");
 
                     // Check Alice's balance after funding
-                    const aliceBalanceAfterFunding =
-                        await alice.wallet.getBalance();
+                    const aliceBalanceAfterFunding = await alice.wallet.getBalance();
                     expect(aliceBalanceAfterFunding.total).toBe(fundAmount);
 
                     // Send from Alice to Bob offchain
@@ -228,190 +211,163 @@ describe("Common", () => {
                     const bobFinalBalance = await bob.wallet.getBalance();
                     // Verify the transaction was successful
                     expect(bobFinalBalance.total).toBe(sendAmount);
-                    expect(aliceFinalBalance.total).toBe(
-                        fundAmount - sendAmount
-                    );
-                }
+                    expect(aliceFinalBalance.total).toBe(fundAmount - sendAmount);
+                },
             );
 
-            it(
-                "should return transaction history",
-                { timeout: 60000 },
-                async () => {
-                    const alice = await factory();
-                    const bob = await factory();
+            it("should return transaction history", { timeout: 60000 }, async () => {
+                const alice = await factory();
+                const bob = await factory();
 
-                    // Get addresses
-                    const aliceOffchainAddress =
-                        await alice.wallet.getAddress();
-                    const bobOffchainAddress = await bob.wallet.getAddress();
-                    expect(aliceOffchainAddress).toBeDefined();
-                    expect(bobOffchainAddress).toBeDefined();
+                // Get addresses
+                const aliceOffchainAddress = await alice.wallet.getAddress();
+                const bobOffchainAddress = await bob.wallet.getAddress();
+                expect(aliceOffchainAddress).toBeDefined();
+                expect(bobOffchainAddress).toBeDefined();
 
-                    // Alice onboarding
-                    const boardingAmount = 10000;
-                    const boardingAddress =
-                        await alice.wallet.getBoardingAddress();
-                    execCommand(
-                        `nigiri faucet ${boardingAddress} ${boardingAmount * 0.00000001}`
-                    );
+                // Alice onboarding
+                const boardingAmount = 10000;
+                const boardingAddress = await alice.wallet.getBoardingAddress();
+                execCommand(`nigiri faucet ${boardingAddress} ${boardingAmount * 0.00000001}`);
 
-                    await new Promise((resolve) => setTimeout(resolve, 5000));
+                await new Promise((resolve) => setTimeout(resolve, 5000));
 
-                    // Get boarding utxos
-                    const boardingInputs =
-                        await alice.wallet.getBoardingUtxos();
-                    expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
+                // Get boarding utxos
+                const boardingInputs = await alice.wallet.getBoardingUtxos();
+                expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
 
-                    await alice.wallet.settle({
-                        inputs: boardingInputs,
-                        outputs: [
-                            {
-                                address: aliceOffchainAddress!,
-                                amount: BigInt(boardingAmount),
-                            },
-                        ],
-                    });
+                await alice.wallet.settle({
+                    inputs: boardingInputs,
+                    outputs: [
+                        {
+                            address: aliceOffchainAddress!,
+                            amount: BigInt(boardingAmount),
+                        },
+                    ],
+                });
 
-                    // Wait for the transaction to be processed
-                    execCommand("nigiri rpc --generate 1");
-                    await new Promise((resolve) => setTimeout(resolve, 5000));
+                // Wait for the transaction to be processed
+                execCommand("nigiri rpc --generate 1");
+                await new Promise((resolve) => setTimeout(resolve, 5000));
 
-                    // Check history before sending to bob
-                    let aliceHistory =
-                        await alice.wallet.getTransactionHistory();
-                    expect(aliceHistory).toBeDefined();
-                    expect(aliceHistory.length).toBe(1); // should have boarding tx
+                // Check history before sending to bob
+                let aliceHistory = await alice.wallet.getTransactionHistory();
+                expect(aliceHistory).toBeDefined();
+                expect(aliceHistory.length).toBe(1); // should have boarding tx
 
-                    // Check boarding transaction
-                    expect(aliceHistory[0].type).toBe(TxType.TxReceived);
-                    expect(aliceHistory[0].amount).toBe(boardingAmount);
-                    expect(aliceHistory[0].settled).toBe(true);
-                    expect(
-                        aliceHistory[0].key.boardingTxid.length
-                    ).toBeGreaterThan(0);
+                // Check boarding transaction
+                expect(aliceHistory[0].type).toBe(TxType.TxReceived);
+                expect(aliceHistory[0].amount).toBe(boardingAmount);
+                expect(aliceHistory[0].settled).toBe(true);
+                expect(aliceHistory[0].key.boardingTxid.length).toBeGreaterThan(0);
 
-                    // Send from Alice to Bob offchain
-                    const sendAmount = 5000;
-                    const sendTxid = await alice.wallet.send({
-                        address: bobOffchainAddress!,
-                        amount: sendAmount,
-                    });
+                // Send from Alice to Bob offchain
+                const sendAmount = 5000;
+                const sendTxid = await alice.wallet.send({
+                    address: bobOffchainAddress!,
+                    amount: sendAmount,
+                });
 
-                    // Wait for the transaction to be processed
-                    await new Promise((resolve) => setTimeout(resolve, 5000));
+                // Wait for the transaction to be processed
+                await new Promise((resolve) => setTimeout(resolve, 5000));
 
-                    // Check final balances
-                    const aliceFinalBalance = await alice.wallet.getBalance();
-                    const bobFinalBalance = await bob.wallet.getBalance();
-                    expect(bobFinalBalance.total).toBe(sendAmount);
-                    expect(aliceFinalBalance.total).toBe(
-                        boardingAmount - sendAmount
-                    );
+                // Check final balances
+                const aliceFinalBalance = await alice.wallet.getBalance();
+                const bobFinalBalance = await bob.wallet.getBalance();
+                expect(bobFinalBalance.total).toBe(sendAmount);
+                expect(aliceFinalBalance.total).toBe(boardingAmount - sendAmount);
 
-                    // Get transaction history for Alice
-                    aliceHistory = await alice.wallet.getTransactionHistory();
-                    expect(aliceHistory).toBeDefined();
-                    expect(aliceHistory.length).toBe(2); // Should have at least receive and send transactions
+                // Get transaction history for Alice
+                aliceHistory = await alice.wallet.getTransactionHistory();
+                expect(aliceHistory).toBeDefined();
+                expect(aliceHistory.length).toBe(2); // Should have at least receive and send transactions
 
-                    const [sendTx, fundingTx] = aliceHistory;
+                const [sendTx, fundingTx] = aliceHistory;
 
-                    // Check funding transaction
-                    expect(fundingTx.type).toBe(TxType.TxReceived);
-                    expect(fundingTx.amount).toBe(boardingAmount);
-                    expect(fundingTx.settled).toBe(true);
-                    expect(fundingTx.key.boardingTxid.length).toBeGreaterThan(
-                        0
-                    );
+                // Check funding transaction
+                expect(fundingTx.type).toBe(TxType.TxReceived);
+                expect(fundingTx.amount).toBe(boardingAmount);
+                expect(fundingTx.settled).toBe(true);
+                expect(fundingTx.key.boardingTxid.length).toBeGreaterThan(0);
 
-                    // Check send transaction
-                    expect(sendTx.type).toBe(TxType.TxSent);
-                    expect(sendTx.amount).toBe(sendAmount);
-                    expect(sendTx.key.arkTxid.length).toBeGreaterThan(0);
-                    expect(sendTx.key.arkTxid).toBe(sendTxid);
+                // Check send transaction
+                expect(sendTx.type).toBe(TxType.TxSent);
+                expect(sendTx.amount).toBe(sendAmount);
+                expect(sendTx.key.arkTxid.length).toBeGreaterThan(0);
+                expect(sendTx.key.arkTxid).toBe(sendTxid);
 
-                    // Get transaction history for Bob
-                    const bobHistory = await bob.wallet.getTransactionHistory();
-                    expect(bobHistory).toBeDefined();
-                    expect(bobHistory.length).toBe(1); // Should have at least the receive transaction
+                // Get transaction history for Bob
+                const bobHistory = await bob.wallet.getTransactionHistory();
+                expect(bobHistory).toBeDefined();
+                expect(bobHistory.length).toBe(1); // Should have at least the receive transaction
 
-                    // Verify Bob's receive transaction
-                    const [bobsReceiveTx] = bobHistory;
-                    expect(bobsReceiveTx.type).toBe(TxType.TxReceived);
-                    expect(bobsReceiveTx.amount).toBe(sendAmount);
-                    expect(bobsReceiveTx.settled).toBe(false);
-                    expect(bobsReceiveTx.key.arkTxid.length).toBeGreaterThan(0);
+                // Verify Bob's receive transaction
+                const [bobsReceiveTx] = bobHistory;
+                expect(bobsReceiveTx.type).toBe(TxType.TxReceived);
+                expect(bobsReceiveTx.amount).toBe(sendAmount);
+                expect(bobsReceiveTx.settled).toBe(false);
+                expect(bobsReceiveTx.key.arkTxid.length).toBeGreaterThan(0);
 
-                    // Bob settles the received VTXO
-                    let bobInputs = await bob.wallet.getVtxos();
-                    await bob.wallet.settle({
-                        inputs: bobInputs,
-                        outputs: [
-                            {
-                                address: bobOffchainAddress!,
-                                amount: BigInt(sendAmount),
-                            },
-                        ],
-                    });
+                // Bob settles the received VTXO
+                let bobInputs = await bob.wallet.getVtxos();
+                await bob.wallet.settle({
+                    inputs: bobInputs,
+                    outputs: [
+                        {
+                            address: bobOffchainAddress!,
+                            amount: BigInt(sendAmount),
+                        },
+                    ],
+                });
 
-                    // Wait for the transaction to be processed
-                    execCommand("nigiri rpc --generate 1");
-                    await new Promise((resolve) => setTimeout(resolve, 5000));
+                // Wait for the transaction to be processed
+                execCommand("nigiri rpc --generate 1");
+                await new Promise((resolve) => setTimeout(resolve, 5000));
 
-                    // Verify Bob's history
-                    const bobHistoryAfterSettling =
-                        await bob.wallet.getTransactionHistory();
-                    expect(bobHistoryAfterSettling).toBeDefined();
-                    expect(bobHistoryAfterSettling.length).toBe(1);
-                    const [bobsReceiveTxAfterSettling] =
-                        bobHistoryAfterSettling;
-                    expect(bobsReceiveTxAfterSettling.type).toBe(
-                        TxType.TxReceived
-                    );
-                    expect(bobsReceiveTxAfterSettling.amount).toBe(sendAmount);
-                    expect(bobsReceiveTxAfterSettling.settled).toBe(true);
+                // Verify Bob's history
+                const bobHistoryAfterSettling = await bob.wallet.getTransactionHistory();
+                expect(bobHistoryAfterSettling).toBeDefined();
+                expect(bobHistoryAfterSettling.length).toBe(1);
+                const [bobsReceiveTxAfterSettling] = bobHistoryAfterSettling;
+                expect(bobsReceiveTxAfterSettling.type).toBe(TxType.TxReceived);
+                expect(bobsReceiveTxAfterSettling.amount).toBe(sendAmount);
+                expect(bobsReceiveTxAfterSettling.settled).toBe(true);
 
-                    // Bob does a collaborative exit to alice's boarding address
-                    bobInputs = await bob.wallet.getVtxos();
-                    const amount = bobInputs.reduce(
-                        (acc, input) => acc + input.value,
-                        0
-                    );
-                    const bobExitTxid = await bob.wallet.settle({
-                        inputs: bobInputs,
-                        outputs: [
-                            {
-                                address: boardingAddress!,
-                                amount: BigInt(amount),
-                            },
-                        ],
-                    });
+                // Bob does a collaborative exit to alice's boarding address
+                bobInputs = await bob.wallet.getVtxos();
+                const amount = bobInputs.reduce((acc, input) => acc + input.value, 0);
+                const bobExitTxid = await bob.wallet.settle({
+                    inputs: bobInputs,
+                    outputs: [
+                        {
+                            address: boardingAddress!,
+                            amount: BigInt(amount),
+                        },
+                    ],
+                });
 
-                    expect(bobExitTxid).toBeDefined();
+                expect(bobExitTxid).toBeDefined();
 
-                    // Wait for the transaction to be processed
-                    execCommand("nigiri rpc --generate 1");
-                    await new Promise((resolve) => setTimeout(resolve, 5000));
+                // Wait for the transaction to be processed
+                execCommand("nigiri rpc --generate 1");
+                await new Promise((resolve) => setTimeout(resolve, 5000));
 
-                    // Check bob's history
-                    const bobHistoryAfterExit =
-                        await bob.wallet.getTransactionHistory();
-                    expect(bobHistoryAfterExit).toBeDefined();
-                    expect(bobHistoryAfterExit.length).toBe(2);
-                    const [bobsExitTx] = bobHistoryAfterExit;
-                    expect(bobsExitTx.type).toBe(TxType.TxSent);
-                    expect(bobsExitTx.amount).toBe(amount);
+                // Check bob's history
+                const bobHistoryAfterExit = await bob.wallet.getTransactionHistory();
+                expect(bobHistoryAfterExit).toBeDefined();
+                expect(bobHistoryAfterExit.length).toBe(2);
+                const [bobsExitTx] = bobHistoryAfterExit;
+                expect(bobsExitTx.type).toBe(TxType.TxSent);
+                expect(bobsExitTx.amount).toBe(amount);
 
-                    // Check alice's history
-                    const aliceHistoryAfterExit =
-                        await alice.wallet.getTransactionHistory();
-                    expect(aliceHistoryAfterExit).toBeDefined();
-                    expect(aliceHistoryAfterExit.length).toBe(3);
-                    const [alicesExitTx] = aliceHistoryAfterExit;
-                    expect(alicesExitTx.type).toBe(TxType.TxReceived);
-                    expect(alicesExitTx.amount).toBe(amount);
-                }
-            );
+                // Check alice's history
+                const aliceHistoryAfterExit = await alice.wallet.getTransactionHistory();
+                expect(aliceHistoryAfterExit).toBeDefined();
+                expect(aliceHistoryAfterExit.length).toBe(3);
+                const [alicesExitTx] = aliceHistoryAfterExit;
+                expect(alicesExitTx.type).toBe(TxType.TxReceived);
+                expect(alicesExitTx.amount).toBe(amount);
+            });
 
             it("should redeem a note", { timeout: 60000 }, async () => {
                 // Create fresh wallet instance for this test
@@ -421,9 +377,7 @@ describe("Common", () => {
 
                 const fundAmount = 1000;
 
-                const arknote = execCommand(
-                    `${arkdExec} arkd note --amount ${fundAmount}`
-                );
+                const arknote = execCommand(`${arkdExec} arkd note --amount ${fundAmount}`);
 
                 const settleTxid = await alice.wallet.settle({
                     inputs: [ArkNote.fromString(arknote)],
@@ -485,10 +439,7 @@ describe("Common", () => {
                 const vtxo = virtualCoins[0];
                 expect(vtxo.txid).toBeDefined();
 
-                const onchainAlice = await OnchainWallet.create(
-                    alice.identity,
-                    "regtest"
-                );
+                const onchainAlice = await OnchainWallet.create(alice.identity, "regtest");
 
                 execCommand(`nigiri faucet ${onchainAlice.address} 0.001`);
 
@@ -498,7 +449,7 @@ describe("Common", () => {
                     { txid: vtxo.txid, vout: vtxo.vout },
                     onchainAlice,
                     onchainAlice.provider,
-                    new RestIndexerProvider("http://localhost:7070")
+                    new RestIndexerProvider("http://localhost:7070"),
                 );
 
                 for await (const done of session) {
@@ -523,8 +474,7 @@ describe("Common", () => {
                 async () => {
                     const alice = await factory();
 
-                    const boardingAddress =
-                        await alice.wallet.getBoardingAddress();
+                    const boardingAddress = await alice.wallet.getBoardingAddress();
                     const offchainAddress = await alice.wallet.getAddress();
 
                     execCommand(`nigiri faucet ${boardingAddress} 0.0001`);
@@ -534,8 +484,7 @@ describe("Common", () => {
                         return b.length > 0;
                     });
 
-                    const boardingInputs =
-                        await alice.wallet.getBoardingUtxos();
+                    const boardingInputs = await alice.wallet.getBoardingUtxos();
                     expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
 
                     await alice.wallet.settle({
@@ -560,10 +509,7 @@ describe("Common", () => {
                     const vtxo = virtualCoins[0];
                     expect(vtxo.txid).toBeDefined();
 
-                    const onchainAlice = await OnchainWallet.create(
-                        alice.identity,
-                        "regtest"
-                    );
+                    const onchainAlice = await OnchainWallet.create(alice.identity, "regtest");
 
                     execCommand(`nigiri faucet ${onchainAlice.address} 0.001`);
                     await waitFor(async () => {
@@ -575,7 +521,7 @@ describe("Common", () => {
                         { txid: vtxo.txid, vout: vtxo.vout },
                         onchainAlice,
                         onchainAlice.provider,
-                        new RestIndexerProvider("http://localhost:7070")
+                        new RestIndexerProvider("http://localhost:7070"),
                     );
 
                     for await (const done of session) {
@@ -594,40 +540,28 @@ describe("Common", () => {
                     const unrolled = virtualCoinsAfterExit[0];
                     expect(unrolled.isUnrolled).toBe(true);
 
-                    const exits = VtxoScript.decode(
-                        unrolled.tapTree
-                    ).exitPaths();
+                    const exits = VtxoScript.decode(unrolled.tapTree).exitPaths();
                     expect(exits.length).toBeGreaterThan(0);
 
-                    const txStatus =
-                        await alice.wallet.onchainProvider.getTxStatus(
-                            unrolled.txid
-                        );
+                    const txStatus = await alice.wallet.onchainProvider.getTxStatus(unrolled.txid);
                     expect(txStatus.confirmed).toBe(true);
 
                     // Keep this aligned with availableExitPath() selection logic,
                     // which currently returns the first mature exit path.
                     const exitTimelock = exits[0].params.timelock;
-                    const chainTip =
-                        await alice.wallet.onchainProvider.getChainTip();
+                    const chainTip = await alice.wallet.onchainProvider.getChainTip();
                     if (exitTimelock.type === "blocks") {
-                        const requiredHeight =
-                            txStatus.blockHeight + Number(exitTimelock.value);
+                        const requiredHeight = txStatus.blockHeight + Number(exitTimelock.value);
                         expect(chainTip.height).toBeLessThan(requiredHeight);
                     } else {
-                        const requiredTime =
-                            txStatus.blockTime + Number(exitTimelock.value);
+                        const requiredTime = txStatus.blockTime + Number(exitTimelock.value);
                         expect(chainTip.time).toBeLessThan(requiredTime);
                     }
 
                     await expect(
-                        Unroll.completeUnroll(
-                            alice.wallet,
-                            [unrolled.txid],
-                            onchainAlice.address
-                        )
+                        Unroll.completeUnroll(alice.wallet, [unrolled.txid], onchainAlice.address),
                     ).rejects.toThrow(/no available exit path found/i);
-                }
+                },
             );
 
             it(
@@ -636,8 +570,7 @@ describe("Common", () => {
                 async () => {
                     const alice = await factory();
 
-                    const boardingAddress =
-                        await alice.wallet.getBoardingAddress();
+                    const boardingAddress = await alice.wallet.getBoardingAddress();
                     const offchainAddress = await alice.wallet.getAddress();
 
                     execCommand(`nigiri faucet ${boardingAddress} 0.0001`);
@@ -647,8 +580,7 @@ describe("Common", () => {
                         return b.length > 0;
                     });
 
-                    const boardingInputs =
-                        await alice.wallet.getBoardingUtxos();
+                    const boardingInputs = await alice.wallet.getBoardingUtxos();
                     expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
 
                     await alice.wallet.settle({
@@ -673,10 +605,7 @@ describe("Common", () => {
                     const vtxo = virtualCoins[0];
                     expect(vtxo.txid).toBeDefined();
 
-                    const onchainAlice = await OnchainWallet.create(
-                        alice.identity,
-                        "regtest"
-                    );
+                    const onchainAlice = await OnchainWallet.create(alice.identity, "regtest");
 
                     execCommand(`nigiri faucet ${onchainAlice.address} 0.001`);
                     await waitFor(async () => {
@@ -688,7 +617,7 @@ describe("Common", () => {
                         { txid: vtxo.txid, vout: vtxo.vout },
                         onchainAlice,
                         onchainAlice.provider,
-                        new RestIndexerProvider("http://localhost:7070")
+                        new RestIndexerProvider("http://localhost:7070"),
                     );
 
                     for await (const done of session) {
@@ -707,62 +636,43 @@ describe("Common", () => {
                     const unrolled = virtualCoinsAfterExit[0];
                     expect(unrolled.isUnrolled).toBe(true);
 
-                    const exits = VtxoScript.decode(
-                        unrolled.tapTree
-                    ).exitPaths();
+                    const exits = VtxoScript.decode(unrolled.tapTree).exitPaths();
                     expect(exits.length).toBeGreaterThan(0);
 
-                    const txStatus =
-                        await alice.wallet.onchainProvider.getTxStatus(
-                            unrolled.txid
-                        );
+                    const txStatus = await alice.wallet.onchainProvider.getTxStatus(unrolled.txid);
                     expect(txStatus.confirmed).toBe(true);
 
                     // Keep this aligned with availableExitPath() selection logic,
                     // which currently returns the first mature exit path.
                     const exitTimelock = exits[0].params.timelock;
                     if (exitTimelock.type === "blocks") {
-                        const chainTip =
-                            await alice.wallet.onchainProvider.getChainTip();
-                        const requiredHeight =
-                            txStatus.blockHeight + Number(exitTimelock.value);
-                        const remainingBlocks = Math.max(
-                            0,
-                            requiredHeight - chainTip.height
-                        );
+                        const chainTip = await alice.wallet.onchainProvider.getChainTip();
+                        const requiredHeight = txStatus.blockHeight + Number(exitTimelock.value);
+                        const remainingBlocks = Math.max(0, requiredHeight - chainTip.height);
                         if (remainingBlocks > 0) {
-                            execCommand(
-                                `nigiri rpc --generate ${remainingBlocks}`
-                            );
+                            execCommand(`nigiri rpc --generate ${remainingBlocks}`);
                             // Wait for the onchain provider to observe the new
                             // tip; nigiri-mined blocks are not always visible
                             // to esplora the instant `nigiri rpc` returns.
                             await waitFor(async () => {
-                                const tip =
-                                    await alice.wallet.onchainProvider.getChainTip();
+                                const tip = await alice.wallet.onchainProvider.getChainTip();
                                 return tip.height >= requiredHeight;
                             });
                         }
                     } else {
-                        const requiredTime =
-                            txStatus.blockTime + Number(exitTimelock.value);
-                        const initialTip =
-                            await alice.wallet.onchainProvider.getChainTip();
+                        const requiredTime = txStatus.blockTime + Number(exitTimelock.value);
+                        const initialTip = await alice.wallet.onchainProvider.getChainTip();
                         let blocksMined = 0;
                         for (let i = 0; i < 300; i += 1) {
-                            const chainTip =
-                                await alice.wallet.onchainProvider.getChainTip();
+                            const chainTip = await alice.wallet.onchainProvider.getChainTip();
                             if (chainTip.time >= requiredTime) {
                                 break;
                             }
                             execCommand(`nigiri rpc --generate 1`);
                             blocksMined += 1;
                         }
-                        const finalTip =
-                            await alice.wallet.onchainProvider.getChainTip();
-                        expect(finalTip.time).toBeGreaterThanOrEqual(
-                            requiredTime
-                        );
+                        const finalTip = await alice.wallet.onchainProvider.getChainTip();
+                        expect(finalTip.time).toBeGreaterThanOrEqual(requiredTime);
                         if (initialTip.time < requiredTime) {
                             expect(blocksMined).toBeGreaterThan(0);
                         }
@@ -772,17 +682,14 @@ describe("Common", () => {
                     const completeTxid = await Unroll.completeUnroll(
                         alice.wallet,
                         [unrolled.txid],
-                        onchainAlice.address
+                        onchainAlice.address,
                     );
                     expect(completeTxid).toBeDefined();
 
                     execCommand(`nigiri rpc --generate 1`);
 
                     await waitFor(async () => {
-                        const status =
-                            await alice.wallet.onchainProvider.getTxStatus(
-                                completeTxid
-                            );
+                        const status = await alice.wallet.onchainProvider.getTxStatus(completeTxid);
                         return status.confirmed;
                     });
 
@@ -790,7 +697,7 @@ describe("Common", () => {
                         const afterBalance = await onchainAlice.getBalance();
                         return afterBalance > beforeBalance;
                     });
-                }
+                },
             );
 
             it("should exit collaboratively", { timeout: 60000 }, async () => {
@@ -801,7 +708,7 @@ describe("Common", () => {
                 // faucet offchain address
                 const fundAmount = 10_000;
                 execCommand(
-                    `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
+                    `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`,
                 );
 
                 await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -810,254 +717,208 @@ describe("Common", () => {
 
                 const exitTxid = await new Ramps(alice.wallet).offboard(
                     onchainAlice.wallet.address,
-                    feeInfo.fees
+                    feeInfo.fees,
                 );
 
                 expect(exitTxid).toBeDefined();
             });
 
-            it(
-                "should settle a recoverable VTXO",
-                { timeout: 60000 },
-                async () => {
-                    const alice = await factory();
-                    const aliceOffchainAddress =
-                        await alice.wallet.getAddress();
-                    const boardingAddress =
-                        await alice.wallet.getBoardingAddress();
-                    expect(aliceOffchainAddress).toBeDefined();
+            it("should settle a recoverable VTXO", { timeout: 60000 }, async () => {
+                const alice = await factory();
+                const aliceOffchainAddress = await alice.wallet.getAddress();
+                const boardingAddress = await alice.wallet.getBoardingAddress();
+                expect(aliceOffchainAddress).toBeDefined();
 
-                    // faucet
-                    execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+                // faucet
+                execCommand(`nigiri faucet ${boardingAddress} 0.001`);
 
-                    await new Promise((resolve) => setTimeout(resolve, 5000));
+                await new Promise((resolve) => setTimeout(resolve, 5000));
 
-                    const boardingInputs =
-                        await alice.wallet.getBoardingUtxos();
-                    expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
+                const boardingInputs = await alice.wallet.getBoardingUtxos();
+                expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
 
-                    await alice.wallet.settle({
-                        inputs: boardingInputs,
-                        outputs: [
-                            {
-                                address: aliceOffchainAddress!,
-                                amount: BigInt(100_000),
-                            },
-                        ],
-                    });
+                await alice.wallet.settle({
+                    inputs: boardingInputs,
+                    outputs: [
+                        {
+                            address: aliceOffchainAddress!,
+                            amount: BigInt(100_000),
+                        },
+                    ],
+                });
 
-                    // give some time for the server to be swept
-                    await new Promise((resolve) => setTimeout(resolve, 10000));
+                // give some time for the server to be swept
+                await new Promise((resolve) => setTimeout(resolve, 10000));
 
-                    const vtxos = await alice.wallet.getVtxos({
-                        withRecoverable: false,
-                    });
-                    expect(vtxos).toHaveLength(1);
-                    const vtxo = vtxos[0];
-                    expect(vtxo.txid).toBeDefined();
-                    expect(vtxo.virtualStatus.state).toBe("settled");
+                const vtxos = await alice.wallet.getVtxos({
+                    withRecoverable: false,
+                });
+                expect(vtxos).toHaveLength(1);
+                const vtxo = vtxos[0];
+                expect(vtxo.txid).toBeDefined();
+                expect(vtxo.virtualStatus.state).toBe("settled");
 
-                    // generate 25 blocks to make the vtxo swept (expiry set to 20 blocks)
-                    execCommand(`nigiri rpc --generate 25`);
+                // generate 25 blocks to make the vtxo swept (expiry set to 20 blocks)
+                execCommand(`nigiri rpc --generate 25`);
 
-                    // wait until indexer reflects the swept instead of sleeping.
-                    await waitFor(async () => {
-                        const v = await alice.wallet.getVtxos({
-                            withRecoverable: true,
-                        });
-                        return v.some(
-                            (c) =>
-                                c.txid === vtxo.txid &&
-                                c.virtualStatus.state === "swept"
-                        );
-                    });
-
-                    // get vtxos including the recoverable ones
-                    const vtxosAfterSweep = await alice.wallet.getVtxos({
+                // wait until indexer reflects the swept instead of sleeping.
+                await waitFor(async () => {
+                    const v = await alice.wallet.getVtxos({
                         withRecoverable: true,
                     });
+                    return v.some((c) => c.txid === vtxo.txid && c.virtualStatus.state === "swept");
+                });
 
-                    // assert
-                    expect(vtxosAfterSweep).toHaveLength(1);
-                    const vtxoAfterSweep = vtxosAfterSweep[0];
-                    expect(vtxoAfterSweep.txid).toBe(vtxo.txid);
-                    expect(vtxoAfterSweep.virtualStatus.state).toBe("swept");
-                    expect(vtxoAfterSweep.spentBy).toBe("");
+                // get vtxos including the recoverable ones
+                const vtxosAfterSweep = await alice.wallet.getVtxos({
+                    withRecoverable: true,
+                });
 
-                    const settleTxid = await alice.wallet.settle({
-                        inputs: [vtxoAfterSweep],
-                        outputs: [
-                            {
-                                address: aliceOffchainAddress!,
-                                amount: BigInt(100_000),
-                            },
-                        ],
-                    });
+                // assert
+                expect(vtxosAfterSweep).toHaveLength(1);
+                const vtxoAfterSweep = vtxosAfterSweep[0];
+                expect(vtxoAfterSweep.txid).toBe(vtxo.txid);
+                expect(vtxoAfterSweep.virtualStatus.state).toBe("swept");
+                expect(vtxoAfterSweep.spentBy).toBe("");
 
-                    expect(settleTxid).toBeDefined();
-                }
-            );
+                const settleTxid = await alice.wallet.settle({
+                    inputs: [vtxoAfterSweep],
+                    outputs: [
+                        {
+                            address: aliceOffchainAddress!,
+                            amount: BigInt(100_000),
+                        },
+                    ],
+                });
 
-            it(
-                "should be notified of offchain incoming funds",
-                { timeout: 10000 },
-                async () => {
-                    const alice = await factory();
-                    const aliceAddress = await alice.wallet.getAddress();
-                    expect(aliceAddress).toBeDefined();
+                expect(settleTxid).toBeDefined();
+            });
 
-                    let notified = false;
-                    const fundAmount = 10000;
+            it("should be notified of offchain incoming funds", { timeout: 10000 }, async () => {
+                const alice = await factory();
+                const aliceAddress = await alice.wallet.getAddress();
+                expect(aliceAddress).toBeDefined();
 
-                    // set up the notification
-                    alice.wallet.notifyIncomingFunds((notification) => {
-                        const now = new Date();
-                        expect(notification.type).toBe("vtxo");
-                        let newVtxos: VirtualCoin[] = [];
-                        if (notification.type === "vtxo") {
-                            newVtxos = notification.newVtxos;
-                        }
-                        expect(newVtxos).toHaveLength(1);
-                        expect(newVtxos[0].spentBy).toBeFalsy();
-                        expect(newVtxos[0].value).toBe(fundAmount);
-                        expect(newVtxos[0].virtualStatus.state).toBe(
-                            "preconfirmed"
-                        );
-                        const age =
-                            now.getTime() - newVtxos[0].createdAt.getTime();
-                        expect(age).toBeLessThanOrEqual(4000);
-                        notified = true;
-                    });
+                let notified = false;
+                const fundAmount = 10000;
 
-                    // wait for the notification to be set up
-                    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-                    // fund the offchain address using faucet
-                    faucetOffchain(aliceAddress!, fundAmount);
-
-                    // wait for the transaction to be processed
-                    await new Promise((resolve) => setTimeout(resolve, 6000));
-                    expect(notified).toBeTruthy();
-                }
-            );
-
-            it(
-                "should be notified of onchain incoming funds",
-                { timeout: 60000 },
-                async () => {
-                    const alice = await factory();
-                    const aliceBoardingAddress =
-                        await alice.wallet.getBoardingAddress();
-                    expect(aliceBoardingAddress).toBeDefined();
-
-                    let notified = false;
-                    const fundAmount = 10000;
-
-                    // set up the notification
-                    alice.wallet.notifyIncomingFunds((notification) => {
-                        const now = new Date();
-                        expect(notification.type).toBe("utxo");
-                        let utxos: Coin[] = [];
-                        if (notification.type == "utxo") {
-                            utxos = notification.coins;
-                        }
-                        expect(utxos).toHaveLength(1);
-                        expect(utxos[0].value).toBe(fundAmount);
-                        expect(utxos[0].status.confirmed).toBeTruthy();
-                        expect(utxos[0].status.block_time).toBeDefined();
-                        const age =
-                            now.getTime() - utxos[0].status.block_time! * 1000;
-                        expect(age).toBeLessThanOrEqual(10000);
-                        notified = true;
-                    });
-
-                    // wait for the notification to be set up
-                    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-                    // fund the onchain address using faucet
-                    faucetOnchain(aliceBoardingAddress!, fundAmount);
-
-                    // wait for the transaction to be processed
-                    await new Promise((resolve) => setTimeout(resolve, 10000));
-
-                    expect(notified).toBeTruthy();
-                }
-            );
-
-            it(
-                "should wait for offchain incoming funds",
-                { timeout: 6000 },
-                async () => {
-                    const alice = await factory();
-                    const aliceAddress = await alice.wallet.getAddress();
-                    expect(aliceAddress).toBeDefined();
-
+                // set up the notification
+                alice.wallet.notifyIncomingFunds((notification) => {
                     const now = new Date();
-                    const fundAmount = 10000;
-
-                    // faucet in a few moments
-                    setTimeout(
-                        () => faucetOffchain(aliceAddress!, fundAmount),
-                        1000
-                    );
-
-                    // wait for coins to arrive
-                    const notification = await waitForIncomingFunds(
-                        alice.wallet
-                    );
+                    expect(notification.type).toBe("vtxo");
                     let newVtxos: VirtualCoin[] = [];
                     if (notification.type === "vtxo") {
                         newVtxos = notification.newVtxos;
                     }
-
-                    // assert
                     expect(newVtxos).toHaveLength(1);
                     expect(newVtxos[0].spentBy).toBeFalsy();
                     expect(newVtxos[0].value).toBe(fundAmount);
-                    expect(newVtxos[0].virtualStatus.state).toBe(
-                        "preconfirmed"
-                    );
+                    expect(newVtxos[0].virtualStatus.state).toBe("preconfirmed");
                     const age = now.getTime() - newVtxos[0].createdAt.getTime();
                     expect(age).toBeLessThanOrEqual(4000);
-                }
-            );
+                    notified = true;
+                });
 
-            it(
-                "should wait for onchain incoming funds",
-                { timeout: 60000 },
-                async () => {
-                    const alice = await factory();
-                    const aliceBoardingAddress =
-                        await alice.wallet.getBoardingAddress();
-                    expect(aliceBoardingAddress).toBeDefined();
+                // wait for the notification to be set up
+                await new Promise((resolve) => setTimeout(resolve, 1000));
 
+                // fund the offchain address using faucet
+                faucetOffchain(aliceAddress!, fundAmount);
+
+                // wait for the transaction to be processed
+                await new Promise((resolve) => setTimeout(resolve, 6000));
+                expect(notified).toBeTruthy();
+            });
+
+            it("should be notified of onchain incoming funds", { timeout: 60000 }, async () => {
+                const alice = await factory();
+                const aliceBoardingAddress = await alice.wallet.getBoardingAddress();
+                expect(aliceBoardingAddress).toBeDefined();
+
+                let notified = false;
+                const fundAmount = 10000;
+
+                // set up the notification
+                alice.wallet.notifyIncomingFunds((notification) => {
                     const now = new Date();
-                    const fundAmount = 10000;
-
-                    // faucet in a few moments
-                    setTimeout(
-                        () => faucetOnchain(aliceBoardingAddress!, fundAmount),
-                        1000
-                    );
-
-                    // wait for coins to arrive
-                    const notification = await waitForIncomingFunds(
-                        alice.wallet
-                    );
+                    expect(notification.type).toBe("utxo");
                     let utxos: Coin[] = [];
-                    if (notification.type === "utxo") {
+                    if (notification.type == "utxo") {
                         utxos = notification.coins;
                     }
-
-                    // assert
                     expect(utxos).toHaveLength(1);
                     expect(utxos[0].value).toBe(fundAmount);
+                    expect(utxos[0].status.confirmed).toBeTruthy();
                     expect(utxos[0].status.block_time).toBeDefined();
-                    const age =
-                        now.getTime() - utxos[0].status.block_time! * 1000;
+                    const age = now.getTime() - utxos[0].status.block_time! * 1000;
                     expect(age).toBeLessThanOrEqual(10000);
+                    notified = true;
+                });
+
+                // wait for the notification to be set up
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+
+                // fund the onchain address using faucet
+                faucetOnchain(aliceBoardingAddress!, fundAmount);
+
+                // wait for the transaction to be processed
+                await new Promise((resolve) => setTimeout(resolve, 10000));
+
+                expect(notified).toBeTruthy();
+            });
+
+            it("should wait for offchain incoming funds", { timeout: 6000 }, async () => {
+                const alice = await factory();
+                const aliceAddress = await alice.wallet.getAddress();
+                expect(aliceAddress).toBeDefined();
+
+                const now = new Date();
+                const fundAmount = 10000;
+
+                // faucet in a few moments
+                setTimeout(() => faucetOffchain(aliceAddress!, fundAmount), 1000);
+
+                // wait for coins to arrive
+                const notification = await waitForIncomingFunds(alice.wallet);
+                let newVtxos: VirtualCoin[] = [];
+                if (notification.type === "vtxo") {
+                    newVtxos = notification.newVtxos;
                 }
-            );
+
+                // assert
+                expect(newVtxos).toHaveLength(1);
+                expect(newVtxos[0].spentBy).toBeFalsy();
+                expect(newVtxos[0].value).toBe(fundAmount);
+                expect(newVtxos[0].virtualStatus.state).toBe("preconfirmed");
+                const age = now.getTime() - newVtxos[0].createdAt.getTime();
+                expect(age).toBeLessThanOrEqual(4000);
+            });
+
+            it("should wait for onchain incoming funds", { timeout: 60000 }, async () => {
+                const alice = await factory();
+                const aliceBoardingAddress = await alice.wallet.getBoardingAddress();
+                expect(aliceBoardingAddress).toBeDefined();
+
+                const now = new Date();
+                const fundAmount = 10000;
+
+                // faucet in a few moments
+                setTimeout(() => faucetOnchain(aliceBoardingAddress!, fundAmount), 1000);
+
+                // wait for coins to arrive
+                const notification = await waitForIncomingFunds(alice.wallet);
+                let utxos: Coin[] = [];
+                if (notification.type === "utxo") {
+                    utxos = notification.coins;
+                }
+
+                // assert
+                expect(utxos).toHaveLength(1);
+                expect(utxos[0].value).toBe(fundAmount);
+                expect(utxos[0].status.block_time).toBeDefined();
+                const age = now.getTime() - utxos[0].status.block_time! * 1000;
+                expect(age).toBeLessThanOrEqual(10000);
+            });
 
             it("should send subdust amount", { timeout: 60000 }, async () => {
                 const alice = await factory();
@@ -1068,7 +929,7 @@ describe("Common", () => {
 
                 const fundAmount = 10_000;
                 execCommand(
-                    `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
+                    `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`,
                 );
 
                 await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -1090,7 +951,7 @@ describe("Common", () => {
                     bob.wallet.send({
                         address: bobOffchainAddress!,
                         amount: 1,
-                    })
+                    }),
                 ).rejects.toThrow("Insufficient funds");
 
                 // bob shouldn't be able to settle cause the total amount is less than the dust amount
@@ -1121,179 +982,156 @@ describe("Common", () => {
                 }
             });
 
-            it(
-                "should register and delete intents",
-                { timeout: 60000 },
-                async () => {
-                    const provider = new RestArkProvider(
-                        "http://localhost:7070"
-                    );
+            it("should register and delete intents", { timeout: 60000 }, async () => {
+                const provider = new RestArkProvider("http://localhost:7070");
 
-                    // Create fresh wallet instances for this test
-                    const alice = await factory();
-                    const bob = await factory();
-                    expect(alice).toBeDefined();
-                    expect(bob).toBeDefined();
+                // Create fresh wallet instances for this test
+                const alice = await factory();
+                const bob = await factory();
+                expect(alice).toBeDefined();
+                expect(bob).toBeDefined();
 
-                    // Get addresses
-                    const bobPubkey = await bob.identity.xOnlyPublicKey();
-                    const aliceAddress = await alice.wallet.getAddress();
-                    const bobAddress = await bob.wallet.getAddress();
-                    expect(aliceAddress).toBeDefined();
-                    expect(bobAddress).toBeDefined();
-                    expect(bobPubkey).toBeDefined();
+                // Get addresses
+                const bobPubkey = await bob.identity.xOnlyPublicKey();
+                const aliceAddress = await alice.wallet.getAddress();
+                const bobAddress = await bob.wallet.getAddress();
+                expect(aliceAddress).toBeDefined();
+                expect(bobAddress).toBeDefined();
+                expect(bobPubkey).toBeDefined();
 
-                    const fundAmount = 10000;
-                    execCommand(
-                        `${arkdExec} ark send --to ${aliceAddress} --amount ${fundAmount} --password secret`
-                    );
-                    await new Promise((resolve) => setTimeout(resolve, 1000));
+                const fundAmount = 10000;
+                execCommand(
+                    `${arkdExec} ark send --to ${aliceAddress} --amount ${fundAmount} --password secret`,
+                );
+                await new Promise((resolve) => setTimeout(resolve, 1000));
 
-                    // Check virtual coins after funding
-                    const virtualCoins = await alice.wallet.getVtxos();
-                    expect(virtualCoins).toHaveLength(1);
-                    const vtxo = virtualCoins[0];
-                    expect(vtxo.txid).toBeDefined();
+                // Check virtual coins after funding
+                const virtualCoins = await alice.wallet.getVtxos();
+                expect(virtualCoins).toHaveLength(1);
+                const vtxo = virtualCoins[0];
+                expect(vtxo.txid).toBeDefined();
 
-                    const cosignerPubkeys = [hex.encode(bobPubkey)];
-                    const onchainOutputsIndexes: number[] = [];
-                    const outputs = [
+                const cosignerPubkeys = [hex.encode(bobPubkey)];
+                const onchainOutputsIndexes: number[] = [];
+                const outputs = [
+                    {
+                        script: ArkAddress.decode(bobAddress).pkScript,
+                        amount: BigInt(5000),
+                    },
+                ];
+
+                const intent = await alice.wallet.makeRegisterIntentSignature(
+                    virtualCoins,
+                    outputs,
+                    onchainOutputsIndexes,
+                    cosignerPubkeys,
+                );
+
+                const deleteIntent = await alice.wallet.makeDeleteIntentSignature(virtualCoins);
+
+                // register intent
+                const registerResponse = await provider.registerIntent(intent);
+                expect(registerResponse).toBeDefined();
+
+                // should fail to register the same intent again
+                try {
+                    await provider.registerIntent(intent);
+                } catch (error: any) {
+                    expect(error).toBeDefined();
+                    expect(error).toBeInstanceOf(ArkError);
+                    expect(error.message).toContain("INTERNAL_ERROR (0)");
+                    expect(error.message).toContain("already registered by another intent");
+                    expect(error.code).toBe(0);
+                    expect(error.name).toBe("INTERNAL_ERROR");
+                }
+
+                // delete intent
+                await provider.deleteIntent(deleteIntent);
+            });
+
+            it("should finalize pending transactions", { timeout: 60000 }, async () => {
+                const alice = await factory();
+                const aliceOffchainAddress = await alice.wallet.getAddress();
+                expect(aliceOffchainAddress).toBeDefined();
+
+                const fundAmount = 21000; // 0.00021 BTC
+                faucetOffchain(aliceOffchainAddress!, fundAmount);
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+
+                const vtxos = await alice.wallet.getVtxos();
+                expect(vtxos.length).toBeGreaterThan(0);
+                const vtxo = vtxos[0];
+
+                // should be empty initially
+                const { finalized, pending } = await alice.wallet.finalizePendingTxs();
+                expect(finalized).toHaveLength(0);
+                expect(pending).toHaveLength(0);
+
+                const arkProvider = new RestArkProvider("http://localhost:7070");
+                const serverInfo = await arkProvider.getInfo();
+                const checkpointTapscript = CSVMultisigTapscript.decode(
+                    hex.decode(serverInfo.checkpointTapscript),
+                );
+
+                // build an offchain transaction manually
+                const { arkTx, checkpoints } = buildOffchainTx(
+                    [
                         {
-                            script: ArkAddress.decode(bobAddress).pkScript,
-                            amount: BigInt(5000),
+                            ...vtxo,
+                            tapLeafScript: vtxo.forfeitTapLeafScript,
                         },
-                    ];
+                    ],
+                    [
+                        {
+                            script: alice.wallet.offchainTapscript.pkScript,
+                            amount: BigInt(fundAmount),
+                        },
+                    ],
+                    checkpointTapscript,
+                );
 
-                    const intent =
-                        await alice.wallet.makeRegisterIntentSignature(
-                            virtualCoins,
-                            outputs,
-                            onchainOutputsIndexes,
-                            cosignerPubkeys
-                        );
+                const signedArkTx = await alice.identity.sign(arkTx);
 
-                    const deleteIntent =
-                        await alice.wallet.makeDeleteIntentSignature(
-                            virtualCoins
-                        );
+                // submit the transaction (but don't finalize it yet - this creates a pending tx)
+                const { arkTxid } = await arkProvider.submitTx(
+                    base64.encode(signedArkTx.toPSBT()),
+                    checkpoints.map((c) => base64.encode(c.toPSBT())),
+                );
+                expect(arkTxid).toBeDefined();
 
-                    // register intent
-                    const registerResponse =
-                        await provider.registerIntent(intent);
-                    expect(registerResponse).toBeDefined();
+                await new Promise((resolve) => setTimeout(resolve, 1000));
 
-                    // should fail to register the same intent again
+                let incomingFunds: VirtualCoin[] = [];
+                let incomingErr: Error | null = null;
+                const incomingFundsPromise = (async () => {
                     try {
-                        await provider.registerIntent(intent);
-                    } catch (error: any) {
-                        expect(error).toBeDefined();
-                        expect(error).toBeInstanceOf(ArkError);
-                        expect(error.message).toContain("INTERNAL_ERROR (0)");
-                        expect(error.message).toContain(
-                            "already registered by another intent"
-                        );
-                        expect(error.code).toBe(0);
-                        expect(error.name).toBe("INTERNAL_ERROR");
-                    }
-
-                    // delete intent
-                    await provider.deleteIntent(deleteIntent);
-                }
-            );
-
-            it(
-                "should finalize pending transactions",
-                { timeout: 60000 },
-                async () => {
-                    const alice = await factory();
-                    const aliceOffchainAddress =
-                        await alice.wallet.getAddress();
-                    expect(aliceOffchainAddress).toBeDefined();
-
-                    const fundAmount = 21000; // 0.00021 BTC
-                    faucetOffchain(aliceOffchainAddress!, fundAmount);
-                    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-                    const vtxos = await alice.wallet.getVtxos();
-                    expect(vtxos.length).toBeGreaterThan(0);
-                    const vtxo = vtxos[0];
-
-                    // should be empty initially
-                    const { finalized, pending } =
-                        await alice.wallet.finalizePendingTxs();
-                    expect(finalized).toHaveLength(0);
-                    expect(pending).toHaveLength(0);
-
-                    const arkProvider = new RestArkProvider(
-                        "http://localhost:7070"
-                    );
-                    const serverInfo = await arkProvider.getInfo();
-                    const checkpointTapscript = CSVMultisigTapscript.decode(
-                        hex.decode(serverInfo.checkpointTapscript)
-                    );
-
-                    // build an offchain transaction manually
-                    const { arkTx, checkpoints } = buildOffchainTx(
-                        [
-                            {
-                                ...vtxo,
-                                tapLeafScript: vtxo.forfeitTapLeafScript,
-                            },
-                        ],
-                        [
-                            {
-                                script: alice.wallet.offchainTapscript.pkScript,
-                                amount: BigInt(fundAmount),
-                            },
-                        ],
-                        checkpointTapscript
-                    );
-
-                    const signedArkTx = await alice.identity.sign(arkTx);
-
-                    // submit the transaction (but don't finalize it yet - this creates a pending tx)
-                    const { arkTxid } = await arkProvider.submitTx(
-                        base64.encode(signedArkTx.toPSBT()),
-                        checkpoints.map((c) => base64.encode(c.toPSBT()))
-                    );
-                    expect(arkTxid).toBeDefined();
-
-                    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-                    let incomingFunds: VirtualCoin[] = [];
-                    let incomingErr: Error | null = null;
-                    const incomingFundsPromise = (async () => {
-                        try {
-                            const result = await waitForIncomingFunds(
-                                alice.wallet
-                            );
-                            if (result.type === "vtxo") {
-                                incomingFunds = result.newVtxos;
-                            }
-                        } catch (err) {
-                            incomingErr = err as Error;
+                        const result = await waitForIncomingFunds(alice.wallet);
+                        if (result.type === "vtxo") {
+                            incomingFunds = result.newVtxos;
                         }
-                    })();
+                    } catch (err) {
+                        incomingErr = err as Error;
+                    }
+                })();
 
-                    // Set the pending tx flag (normally set by buildAndSubmitOffchainTx)
-                    // so finalizePendingTxs doesn't early-exit.
-                    await alice.wallet.walletRepository.saveWalletState({
-                        settings: { hasPendingTx: true },
-                    });
+                // Set the pending tx flag (normally set by buildAndSubmitOffchainTx)
+                // so finalizePendingTxs doesn't early-exit.
+                await alice.wallet.walletRepository.saveWalletState({
+                    settings: { hasPendingTx: true },
+                });
 
-                    const res = await alice.wallet.finalizePendingTxs();
-                    expect(res.finalized).toHaveLength(1);
-                    expect(res.finalized[0]).toBe(arkTxid);
-                    expect(res.pending).toHaveLength(1);
-                    expect(res.pending[0]).toBe(arkTxid);
+                const res = await alice.wallet.finalizePendingTxs();
+                expect(res.finalized).toHaveLength(1);
+                expect(res.finalized[0]).toBe(arkTxid);
+                expect(res.pending).toHaveLength(1);
+                expect(res.pending[0]).toBe(arkTxid);
 
-                    await incomingFundsPromise;
+                await incomingFundsPromise;
 
-                    expect(incomingErr).toBeNull();
-                    expect(incomingFunds).toHaveLength(1);
-                    expect(incomingFunds[0].txid).toBe(arkTxid);
-                }
-            );
+                expect(incomingErr).toBeNull();
+                expect(incomingFunds).toHaveLength(1);
+                expect(incomingFunds[0].txid).toBe(arkTxid);
+            });
 
             it("Ramps should handle fees", { timeout: 60000 }, async () => {
                 const alice = await factory();
@@ -1303,10 +1141,7 @@ describe("Common", () => {
                 // faucet 100_000 sats
                 execCommand(`nigiri faucet ${boardingAddress} 0.001`);
 
-                await waitFor(
-                    async () =>
-                        (await alice.wallet.getBoardingUtxos()).length > 0
-                );
+                await waitFor(async () => (await alice.wallet.getBoardingUtxos()).length > 0);
 
                 try {
                     setFees({ onchainInput: "1000.0" });
@@ -1315,9 +1150,7 @@ describe("Common", () => {
 
                     expect(fees.intentFee.onchainInput).toBe("1000.0");
 
-                    const settleTxid = await new Ramps(alice.wallet).onboard(
-                        fees
-                    );
+                    const settleTxid = await new Ramps(alice.wallet).onboard(fees);
                     expect(settleTxid).toBeDefined();
 
                     const vtxos = await alice.wallet.getVtxos();
@@ -1352,7 +1185,7 @@ describe("Delegate", () => {
         await delegatorManager?.delegate(
             [vtxoBeforeDelegate],
             await alice.wallet.getAddress(),
-            new Date(Date.now() + 1000)
+            new Date(Date.now() + 1000),
         );
 
         // wait for the delegate to be completed
@@ -1378,10 +1211,10 @@ describe("Delegator Lifecycle", () => {
             const contractRepository = new InMemoryContractRepository();
             const identity = createTestIdentity();
 
-            const onchainProvider = new EsploraProvider(
-                "http://localhost:3000",
-                { forcePolling: true, pollingInterval: 2000 }
-            );
+            const onchainProvider = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+                pollingInterval: 2000,
+            });
 
             // Phase 1 — No delegator
             const wallet1 = await Wallet.create({
@@ -1407,9 +1240,7 @@ describe("Delegator Lifecycle", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
-                delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7012"
-                ),
+                delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
                 settlementConfig: false,
             });
 
@@ -1459,16 +1290,12 @@ describe("Delegator Lifecycle", () => {
             const contractsAfter = await manager2.getContractsWithVtxos({
                 type: ["delegate"],
             });
-            const delegateVtxosAfter = contractsAfter[0].vtxos.filter(
-                (v) => !v.isSpent
-            );
+            const delegateVtxosAfter = contractsAfter[0].vtxos.filter((v) => !v.isSpent);
             const spentDelegateOutpoints = delegateVtxosBefore.filter(
                 (before) =>
                     !delegateVtxosAfter.some(
-                        (after) =>
-                            after.txid === before.txid &&
-                            after.vout === before.vout
-                    )
+                        (after) => after.txid === before.txid && after.vout === before.vout,
+                    ),
             );
             expect(spentDelegateOutpoints.length).toBeGreaterThan(0);
 
@@ -1518,19 +1345,15 @@ describe("Delegator Lifecycle", () => {
             const contracts3After = await manager3.getContractsWithVtxos({
                 type: ["delegate"],
             });
-            const delegateVtxos3After = contracts3After[0].vtxos.filter(
-                (v) => !v.isSpent
-            );
+            const delegateVtxos3After = contracts3After[0].vtxos.filter((v) => !v.isSpent);
             const spentDelegate3 = delegateVtxos3Before.filter(
                 (before) =>
                     !delegateVtxos3After.some(
-                        (after) =>
-                            after.txid === before.txid &&
-                            after.vout === before.vout
-                    )
+                        (after) => after.txid === before.txid && after.vout === before.vout,
+                    ),
             );
             expect(spentDelegate3.length).toBeGreaterThan(0);
-        }
+        },
     );
 });
 
@@ -1545,10 +1368,10 @@ describe("Cross-contract spending", () => {
             const contractRepository = new InMemoryContractRepository();
             const identity = createTestIdentity();
 
-            const onchainProvider = new EsploraProvider(
-                "http://localhost:3000",
-                { forcePolling: true, pollingInterval: 2000 }
-            );
+            const onchainProvider = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+                pollingInterval: 2000,
+            });
 
             // Step 1 — No delegator: receive 1000 to default address
             const wallet1 = await Wallet.create({
@@ -1574,9 +1397,7 @@ describe("Cross-contract spending", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
-                delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7012"
-                ),
+                delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
                 settlementConfig: false,
             });
 
@@ -1626,16 +1447,12 @@ describe("Cross-contract spending", () => {
             const contractsAfter = await manager.getContractsWithVtxos({
                 type: ["delegate"],
             });
-            const delegateVtxosAfterUnspent = contractsAfter[0].vtxos.filter(
-                (v) => !v.isSpent
-            );
+            const delegateVtxosAfterUnspent = contractsAfter[0].vtxos.filter((v) => !v.isSpent);
             const spentDelegateVtxos = delegateVtxosBefore.filter(
                 (before) =>
                     !delegateVtxosAfterUnspent.some(
-                        (after) =>
-                            after.txid === before.txid &&
-                            after.vout === before.vout
-                    )
+                        (after) => after.txid === before.txid && after.vout === before.vout,
+                    ),
             );
             expect(spentDelegateVtxos.length).toBeGreaterThan(0);
 
@@ -1655,12 +1472,10 @@ describe("Cross-contract spending", () => {
             const delegateContractAfter = await manager.getContractsWithVtxos({
                 type: ["delegate"],
             });
-            const delegateUnspentAfter = delegateContractAfter[0].vtxos.filter(
-                (v) => !v.isSpent
-            );
+            const delegateUnspentAfter = delegateContractAfter[0].vtxos.filter((v) => !v.isSpent);
             // At least one unspent VTXO on delegate = the change output
             expect(delegateUnspentAfter.length).toBeGreaterThan(0);
-        }
+        },
     );
 
     it(
@@ -1671,10 +1486,10 @@ describe("Cross-contract spending", () => {
             const contractRepository = new InMemoryContractRepository();
             const identity = createTestIdentity();
 
-            const onchainProvider = new EsploraProvider(
-                "http://localhost:3000",
-                { forcePolling: true, pollingInterval: 2000 }
-            );
+            const onchainProvider = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+                pollingInterval: 2000,
+            });
 
             // Step 1 — No delegator: receive 1000 to default address
             const wallet1 = await Wallet.create({
@@ -1694,9 +1509,7 @@ describe("Cross-contract spending", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
-                delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7012"
-                ),
+                delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
                 settlementConfig: false,
             });
 
@@ -1752,16 +1565,12 @@ describe("Cross-contract spending", () => {
             const contractsAfter = await manager.getContractsWithVtxos({
                 type: ["delegate"],
             });
-            const delegateVtxosAfterUnspent = contractsAfter[0].vtxos.filter(
-                (v) => !v.isSpent
-            );
+            const delegateVtxosAfterUnspent = contractsAfter[0].vtxos.filter((v) => !v.isSpent);
             const spentDelegateVtxos = delegateVtxosBefore.filter(
                 (before) =>
                     !delegateVtxosAfterUnspent.some(
-                        (after) =>
-                            after.txid === before.txid &&
-                            after.vout === before.vout
-                    )
+                        (after) => after.txid === before.txid && after.vout === before.vout,
+                    ),
             );
             expect(spentDelegateVtxos.length).toBeGreaterThan(0);
 
@@ -1781,12 +1590,10 @@ describe("Cross-contract spending", () => {
             const delegateContractAfter = await manager.getContractsWithVtxos({
                 type: ["delegate"],
             });
-            const delegateUnspentAfter = delegateContractAfter[0].vtxos.filter(
-                (v) => !v.isSpent
-            );
+            const delegateUnspentAfter = delegateContractAfter[0].vtxos.filter((v) => !v.isSpent);
             // At least one unspent VTXO on delegate = the change output
             expect(delegateUnspentAfter.length).toBeGreaterThan(0);
-        }
+        },
     );
 });
 
@@ -1812,7 +1619,7 @@ describe("Asset integration tests", () => {
         const vtxosBefore = await alice.wallet.getVtxos();
         expect(vtxosBefore.length).toBeGreaterThan(0);
         const assetVtxo = vtxosBefore.find((v) =>
-            v.assets?.some((a) => a.assetId === issueResult.assetId)
+            v.assets?.some((a) => a.assetId === issueResult.assetId),
         );
         expect(assetVtxo).toBeDefined();
 
@@ -1850,91 +1657,75 @@ describe("Asset integration tests", () => {
         expect(assetTotal).toBe(issueAmount);
     });
 
-    it(
-        "should issue an asset without control asset",
-        { timeout: 60000 },
-        async () => {
-            const alice = await createTestArkWallet();
-            const aliceAddress = await alice.wallet.getAddress();
+    it("should issue an asset without control asset", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const aliceAddress = await alice.wallet.getAddress();
 
-            // fund alice offchain
-            const fundAmount = 10_000;
-            faucetOffchain(aliceAddress!, fundAmount);
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+        // fund alice offchain
+        const fundAmount = 10_000;
+        faucetOffchain(aliceAddress!, fundAmount);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
 
-            // issue an asset
-            const amount = 1000n;
-            const result = await alice.wallet.assetManager.issue({ amount });
+        // issue an asset
+        const amount = 1000n;
+        const result = await alice.wallet.assetManager.issue({ amount });
 
-            expect(result.arkTxId).toBeDefined();
-            expect(result.assetId).toBeDefined();
+        expect(result.arkTxId).toBeDefined();
+        expect(result.assetId).toBeDefined();
 
-            await new Promise((resolve) => setTimeout(resolve, 3000));
+        await new Promise((resolve) => setTimeout(resolve, 3000));
 
-            // verify the asset appears on a vtxo
-            const vtxos = await alice.wallet.getVtxos();
-            expect(vtxos.length).toBeGreaterThan(0);
+        // verify the asset appears on a vtxo
+        const vtxos = await alice.wallet.getVtxos();
+        expect(vtxos.length).toBeGreaterThan(0);
 
-            const assetVtxo = vtxos.find((v) =>
-                v.assets?.some((a) => a.assetId === result.assetId)
-            );
-            expect(assetVtxo).toBeDefined();
+        const assetVtxo = vtxos.find((v) => v.assets?.some((a) => a.assetId === result.assetId));
+        expect(assetVtxo).toBeDefined();
 
-            const asset = assetVtxo!.assets!.find(
-                (a) => a.assetId === result.assetId
-            );
-            expect(asset!.amount).toBe(amount);
-        }
-    );
+        const asset = assetVtxo!.assets!.find((a) => a.assetId === result.assetId);
+        expect(asset!.amount).toBe(amount);
+    });
 
-    it(
-        "should issue an asset with existing control asset",
-        { timeout: 60000 },
-        async () => {
-            const alice = await createTestArkWallet();
-            const aliceAddress = await alice.wallet.getAddress();
+    it("should issue an asset with existing control asset", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const aliceAddress = await alice.wallet.getAddress();
 
-            const fundAmount = 10_000;
-            faucetOffchain(aliceAddress!, fundAmount);
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+        const fundAmount = 10_000;
+        faucetOffchain(aliceAddress!, fundAmount);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
 
-            // first issuance to create a control asset
-            const firstIssueResult = await alice.wallet.assetManager.issue({
-                amount: 1n,
-            });
+        // first issuance to create a control asset
+        const firstIssueResult = await alice.wallet.assetManager.issue({
+            amount: 1n,
+        });
 
-            // Wait for round completion so change VTXO is indexed
-            await new Promise((resolve) => setTimeout(resolve, 2000));
+        // Wait for round completion so change VTXO is indexed
+        await new Promise((resolve) => setTimeout(resolve, 2000));
 
-            // second issuance to create a new asset using the control asset
-            const secondIssueResult = await alice.wallet.assetManager.issue({
-                amount: 500n,
-                controlAssetId: firstIssueResult.assetId,
-            });
+        // second issuance to create a new asset using the control asset
+        const secondIssueResult = await alice.wallet.assetManager.issue({
+            amount: 500n,
+            controlAssetId: firstIssueResult.assetId,
+        });
 
-            expect(secondIssueResult.arkTxId).toBeDefined();
-            expect(secondIssueResult.assetId).toBeDefined();
+        expect(secondIssueResult.arkTxId).toBeDefined();
+        expect(secondIssueResult.assetId).toBeDefined();
 
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
 
-            // verify both the issued asset and control asset appear
-            const vtxos = await alice.wallet.getVtxos();
-            expect(vtxos.length).toBeGreaterThan(0);
+        // verify both the issued asset and control asset appear
+        const vtxos = await alice.wallet.getVtxos();
+        expect(vtxos.length).toBeGreaterThan(0);
 
-            const allAssets = vtxos.flatMap((v) => v.assets ?? []);
-            const issuedAsset = allAssets.find(
-                (a) => a.assetId === secondIssueResult.assetId
-            );
-            expect(issuedAsset).toBeDefined();
-            expect(issuedAsset!.amount).toBe(500n);
+        const allAssets = vtxos.flatMap((v) => v.assets ?? []);
+        const issuedAsset = allAssets.find((a) => a.assetId === secondIssueResult.assetId);
+        expect(issuedAsset).toBeDefined();
+        expect(issuedAsset!.amount).toBe(500n);
 
-            const controlAsset = allAssets.find(
-                (a) => a.assetId === firstIssueResult.assetId
-            );
-            expect(controlAsset).toBeDefined();
-            expect(controlAsset!.amount).toBe(1n);
-        }
-    );
+        const controlAsset = allAssets.find((a) => a.assetId === firstIssueResult.assetId);
+        expect(controlAsset).toBeDefined();
+        expect(controlAsset!.amount).toBe(1n);
+    });
 
     it("should issue an asset with metadata", { timeout: 60000 }, async () => {
         const alice = await createTestArkWallet();
@@ -1961,9 +1752,7 @@ describe("Asset integration tests", () => {
 
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
-        const assetDetails = await alice.wallet.assetManager.getAssetDetails(
-            issueResult.assetId
-        );
+        const assetDetails = await alice.wallet.assetManager.getAssetDetails(issueResult.assetId);
         expect(assetDetails.metadata).toBeDefined();
         expect(assetDetails.metadata).toEqual(metadata);
     });
@@ -2013,9 +1802,7 @@ describe("Asset integration tests", () => {
         expect(totalAssetAmount).toBe(500n + reissueAmount);
 
         // control asset should still exist
-        const controlAsset = allAssets.find(
-            (a) => a.assetId === firstIssueResult.assetId
-        );
+        const controlAsset = allAssets.find((a) => a.assetId === firstIssueResult.assetId);
         expect(controlAsset).toBeDefined();
     });
 
@@ -2082,63 +1869,55 @@ describe("Asset integration tests", () => {
         // verify asset is gone
         const vtxos = await alice.wallet.getVtxos();
         const allAssets = vtxos.flatMap((v) => v.assets ?? []);
-        const remaining = allAssets.filter(
-            (a) => a.assetId === issueResult.assetId
-        );
+        const remaining = allAssets.filter((a) => a.assetId === issueResult.assetId);
         expect(remaining).toHaveLength(0);
     });
 
-    it(
-        "should send an asset to another wallet",
-        { timeout: 60000 },
-        async () => {
-            const alice = await createTestArkWallet();
-            const bob = await createTestArkWallet();
+    it("should send an asset to another wallet", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const bob = await createTestArkWallet();
 
-            const aliceAddress = await alice.wallet.getAddress();
-            const bobAddress = await bob.wallet.getAddress();
+        const aliceAddress = await alice.wallet.getAddress();
+        const bobAddress = await bob.wallet.getAddress();
 
-            const fundAmount = 20_000;
-            faucetOffchain(aliceAddress!, fundAmount);
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+        const fundAmount = 20_000;
+        faucetOffchain(aliceAddress!, fundAmount);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
 
-            // alice issues an asset
-            const issueAmount = 1000n;
-            const issueResult = await alice.wallet.assetManager.issue({
-                amount: issueAmount,
-            });
+        // alice issues an asset
+        const issueAmount = 1000n;
+        const issueResult = await alice.wallet.assetManager.issue({
+            amount: issueAmount,
+        });
 
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
 
-            // alice sends some asset to bob
-            const sendAmount = 400n;
-            const sendTxid = await alice.wallet.send({
-                address: bobAddress!,
-                amount: 0,
-                assets: [{ assetId: issueResult.assetId, amount: sendAmount }],
-            });
+        // alice sends some asset to bob
+        const sendAmount = 400n;
+        const sendTxid = await alice.wallet.send({
+            address: bobAddress!,
+            amount: 0,
+            assets: [{ assetId: issueResult.assetId, amount: sendAmount }],
+        });
 
-            expect(sendTxid).toBeDefined();
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+        expect(sendTxid).toBeDefined();
+        await new Promise((resolve) => setTimeout(resolve, 1000));
 
-            // verify bob received the asset
-            const bobVtxos = await bob.wallet.getVtxos();
-            const bobAssets = bobVtxos.flatMap((v) => v.assets ?? []);
-            const bobAsset = bobAssets.find(
-                (a) => a.assetId === issueResult.assetId
-            );
-            expect(bobAsset).toBeDefined();
-            expect(bobAsset!.amount).toBe(sendAmount);
+        // verify bob received the asset
+        const bobVtxos = await bob.wallet.getVtxos();
+        const bobAssets = bobVtxos.flatMap((v) => v.assets ?? []);
+        const bobAsset = bobAssets.find((a) => a.assetId === issueResult.assetId);
+        expect(bobAsset).toBeDefined();
+        expect(bobAsset!.amount).toBe(sendAmount);
 
-            // verify alice has the remaining asset as change
-            const aliceVtxos = await alice.wallet.getVtxos();
-            const aliceAssets = aliceVtxos.flatMap((v) => v.assets ?? []);
-            const aliceRemaining = aliceAssets
-                .filter((a) => a.assetId === issueResult.assetId)
-                .reduce((s, a) => s + a.amount, 0n);
-            expect(aliceRemaining).toBe(issueAmount - sendAmount);
-        }
-    );
+        // verify alice has the remaining asset as change
+        const aliceVtxos = await alice.wallet.getVtxos();
+        const aliceAssets = aliceVtxos.flatMap((v) => v.assets ?? []);
+        const aliceRemaining = aliceAssets
+            .filter((a) => a.assetId === issueResult.assetId)
+            .reduce((s, a) => s + a.amount, 0n);
+        expect(aliceRemaining).toBe(issueAmount - sendAmount);
+    });
 
     it("should send all units of an asset", { timeout: 60000 }, async () => {
         const alice = await createTestArkWallet();
@@ -2205,7 +1984,7 @@ describe("Asset integration tests", () => {
         const vtxosBefore = await alice.wallet.getVtxos();
         expect(vtxosBefore.length).toBeGreaterThan(0);
         const assetVtxo = vtxosBefore.find((v) =>
-            v.assets?.some((a) => a.assetId === issueResult.assetId)
+            v.assets?.some((a) => a.assetId === issueResult.assetId),
         );
         expect(assetVtxo).toBeDefined();
 
@@ -2245,10 +2024,10 @@ describe("Asset integration tests", () => {
             const contractRepository = new InMemoryContractRepository();
             const identity = createTestIdentity();
 
-            const onchainProvider = new EsploraProvider(
-                "http://localhost:3000",
-                { forcePolling: true, pollingInterval: 2000 }
-            );
+            const onchainProvider = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+                pollingInterval: 2000,
+            });
 
             // Phase 1 — No delegator: fund and issue asset on default address
             const wallet1 = await Wallet.create({
@@ -2277,9 +2056,7 @@ describe("Asset integration tests", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
-                delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7012"
-                ),
+                delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
                 settlementConfig: false,
             });
 
@@ -2324,14 +2101,10 @@ describe("Asset integration tests", () => {
             // Verify bob received the assets
             const bobVtxos = await bob.wallet.getVtxos();
             const bobAssets = bobVtxos.flatMap((v) => v.assets ?? []);
-            const bobAsset1 = bobAssets.find(
-                (a) => a.assetId === issueResult1.assetId
-            );
+            const bobAsset1 = bobAssets.find((a) => a.assetId === issueResult1.assetId);
             expect(bobAsset1).toBeDefined();
             expect(bobAsset1!.amount).toBe(50n);
-            const bobAsset2 = bobAssets.find(
-                (a) => a.assetId === issueResult2.assetId
-            );
+            const bobAsset2 = bobAssets.find((a) => a.assetId === issueResult2.assetId);
             expect(bobAsset2).toBeDefined();
             expect(bobAsset2!.amount).toBe(100n);
 
@@ -2387,12 +2160,10 @@ describe("Asset integration tests", () => {
             // Verify bob received the asset from phase 3
             const bobVtxos3 = await bob.wallet.getVtxos();
             const bobAssets3 = bobVtxos3.flatMap((v) => v.assets ?? []);
-            const bobAsset3 = bobAssets3.find(
-                (a) => a.assetId === issueResult3.assetId
-            );
+            const bobAsset3 = bobAssets3.find((a) => a.assetId === issueResult3.assetId);
             expect(bobAsset3).toBeDefined();
             expect(bobAsset3!.amount).toBe(150n);
-        }
+        },
     );
 
     it(
@@ -2403,10 +2174,10 @@ describe("Asset integration tests", () => {
             const contractRepository = new InMemoryContractRepository();
             const identity = createTestIdentity();
 
-            const onchainProvider = new EsploraProvider(
-                "http://localhost:3000",
-                { forcePolling: true, pollingInterval: 2000 }
-            );
+            const onchainProvider = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+                pollingInterval: 2000,
+            });
 
             // Step 1 — No delegator: fund default address and issue asset
             const wallet1 = await Wallet.create({
@@ -2435,9 +2206,7 @@ describe("Asset integration tests", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
-                delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7012"
-                ),
+                delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
                 settlementConfig: false,
             });
 
@@ -2473,9 +2242,7 @@ describe("Asset integration tests", () => {
             // Verify bob received the asset
             const bobVtxos = await bob.wallet.getVtxos();
             const bobAssets = bobVtxos.flatMap((v) => v.assets ?? []);
-            const bobAsset = bobAssets.find(
-                (a) => a.assetId === issueResult.assetId
-            );
+            const bobAsset = bobAssets.find((a) => a.assetId === issueResult.assetId);
             expect(bobAsset).toBeDefined();
             expect(bobAsset!.amount).toBe(200n);
 
@@ -2496,11 +2263,9 @@ describe("Asset integration tests", () => {
             const delegateContractAfter = await manager.getContractsWithVtxos({
                 type: ["delegate"],
             });
-            const delegateUnspent = delegateContractAfter[0].vtxos.filter(
-                (v) => !v.isSpent
-            );
+            const delegateUnspent = delegateContractAfter[0].vtxos.filter((v) => !v.isSpent);
             expect(delegateUnspent.length).toBeGreaterThan(0);
-        }
+        },
     );
 
     it(
@@ -2511,10 +2276,10 @@ describe("Asset integration tests", () => {
             const contractRepository = new InMemoryContractRepository();
             const identity = createTestIdentity();
 
-            const onchainProvider = new EsploraProvider(
-                "http://localhost:3000",
-                { forcePolling: true, pollingInterval: 2000 }
-            );
+            const onchainProvider = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+                pollingInterval: 2000,
+            });
 
             // Step 1 — Create wallet without delegator
             const wallet1 = await Wallet.create({
@@ -2534,9 +2299,7 @@ describe("Asset integration tests", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
-                delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7012"
-                ),
+                delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
                 settlementConfig: false,
             });
 
@@ -2582,9 +2345,7 @@ describe("Asset integration tests", () => {
             // Verify bob received the asset
             const bobVtxos = await bob.wallet.getVtxos();
             const bobAssets = bobVtxos.flatMap((v) => v.assets ?? []);
-            const bobAsset = bobAssets.find(
-                (a) => a.assetId === issueResult.assetId
-            );
+            const bobAsset = bobAssets.find((a) => a.assetId === issueResult.assetId);
             expect(bobAsset).toBeDefined();
             expect(bobAsset!.amount).toBe(200n);
 
@@ -2605,10 +2366,8 @@ describe("Asset integration tests", () => {
             const delegateContractAfter = await manager.getContractsWithVtxos({
                 type: ["delegate"],
             });
-            const delegateUnspent = delegateContractAfter[0].vtxos.filter(
-                (v) => !v.isSpent
-            );
+            const delegateUnspent = delegateContractAfter[0].vtxos.filter((v) => !v.isSpent);
             expect(delegateUnspent.length).toBeGreaterThan(0);
-        }
+        },
     );
 });

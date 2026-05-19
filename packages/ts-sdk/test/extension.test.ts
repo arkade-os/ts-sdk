@@ -1,12 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { hex } from "@scure/base";
 import { Extension } from "../src/extension";
-import {
-    AssetGroup,
-    AssetRef,
-    AssetOutput,
-    Packet,
-} from "../src/extension/asset";
+import { AssetGroup, AssetRef, AssetOutput, Packet } from "../src/extension/asset";
 import { Transaction } from "../src/utils/transaction";
 import extensionFixtures from "./fixtures/extension_fixtures.json";
 
@@ -96,14 +91,14 @@ describe("Extension", () => {
 
         describe("newExtensionFromTx", () => {
             function makeExtTx(
-                extraOutputs: Array<{ script: Uint8Array; amount: bigint }> = []
+                extraOutputs: Array<{ script: Uint8Array; amount: bigint }> = [],
             ): Transaction {
                 const group = AssetGroup.create(
                     null,
                     AssetRef.fromGroupIndex(0),
                     [],
                     [AssetOutput.create(0, 21000000n)],
-                    []
+                    [],
                 );
                 const packet = Packet.create([group]);
                 const ext = Extension.create([packet]);
@@ -121,9 +116,7 @@ describe("Extension", () => {
             });
 
             it("extension among multiple outputs", () => {
-                const tx = makeExtTx([
-                    { script: new Uint8Array([0x51]), amount: 1000n },
-                ]);
+                const tx = makeExtTx([{ script: new Uint8Array([0x51]), amount: 1000n }]);
                 const ext = Extension.fromTx(tx);
                 expect(ext).toBeDefined();
                 expect(ext.getAssetPacket()).not.toBeNull();
@@ -133,14 +126,14 @@ describe("Extension", () => {
                 const tx = new Transaction();
                 tx.addOutput({ script: new Uint8Array([0x51]), amount: 1000n });
                 expect(() => Extension.fromTx(tx)).toThrow(
-                    "no extension output found in transaction"
+                    "no extension output found in transaction",
                 );
             });
 
             it("no outputs throws", () => {
                 const tx = new Transaction();
                 expect(() => Extension.fromTx(tx)).toThrow(
-                    "no extension output found in transaction"
+                    "no extension output found in transaction",
                 );
             });
         });
@@ -159,7 +152,7 @@ describe("Extension", () => {
                 AssetRef.fromGroupIndex(0),
                 [],
                 [AssetOutput.create(0, 21000000n)],
-                []
+                [],
             );
             const packet = Packet.create([group]);
             const ext = Extension.create([packet]);
@@ -178,9 +171,7 @@ describe("Extension", () => {
             extFixtures.invalid.newExtensionFromBytes.forEach((v) => {
                 it(v.name, () => {
                     const data = v.hex ? hex.decode(v.hex) : new Uint8Array(0);
-                    expect(() => Extension.fromBytes(data)).toThrow(
-                        v.expectedError
-                    );
+                    expect(() => Extension.fromBytes(data)).toThrow(v.expectedError);
                 });
             });
         });

@@ -1,11 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { SQLiteSwapRepository } from "../src/repositories/sqlite/swap-repository";
 import type { SQLExecutor } from "@arkade-os/sdk/repositories/sqlite";
-import type {
-    BoltzReverseSwap,
-    BoltzSubmarineSwap,
-    BoltzChainSwap,
-} from "../src/types";
+import type { BoltzReverseSwap, BoltzSubmarineSwap, BoltzChainSwap } from "../src/types";
 
 // ── Mock SQLExecutor ────────────────────────────────────────────────────
 
@@ -38,9 +34,7 @@ function createMockExecutor(): SQLExecutor {
 
             // CREATE TABLE IF NOT EXISTS
             if (/^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS/i.test(trimmed)) {
-                const match = trimmed.match(
-                    /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+(\w+)/i
-                );
+                const match = trimmed.match(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+(\w+)/i);
                 if (match) getTable(match[1]);
                 return;
             }
@@ -50,7 +44,7 @@ function createMockExecutor(): SQLExecutor {
 
             // INSERT OR REPLACE INTO <table> (<cols>) VALUES (?, ?, ...)
             const insertMatch = trimmed.match(
-                /INSERT\s+OR\s+REPLACE\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i
+                /INSERT\s+OR\s+REPLACE\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i,
             );
             if (insertMatch) {
                 const tableName = insertMatch[1];
@@ -66,9 +60,7 @@ function createMockExecutor(): SQLExecutor {
             }
 
             // DELETE FROM <table> WHERE id = ?
-            const deleteWhereMatch = trimmed.match(
-                /DELETE\s+FROM\s+(\w+)\s+WHERE\s+id\s*=\s*\?/i
-            );
+            const deleteWhereMatch = trimmed.match(/DELETE\s+FROM\s+(\w+)\s+WHERE\s+id\s*=\s*\?/i);
             if (deleteWhereMatch) {
                 const table = getTable(deleteWhereMatch[1]);
                 table.delete(String(params?.[0]));
@@ -86,22 +78,17 @@ function createMockExecutor(): SQLExecutor {
 
         async get<T = Record<string, unknown>>(
             sql: string,
-            params?: unknown[]
+            params?: unknown[],
         ): Promise<T | undefined> {
             const rows = await this.all<T>(sql, params);
             return rows[0];
         },
 
-        async all<T = Record<string, unknown>>(
-            sql: string,
-            params?: unknown[]
-        ): Promise<T[]> {
+        async all<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
             const trimmed = sql.trim();
 
             // Parse: SELECT <cols> FROM <table> [WHERE ...] [ORDER BY ...]
-            const selectMatch = trimmed.match(
-                /SELECT\s+(.+?)\s+FROM\s+(\w+)(.*)/is
-            );
+            const selectMatch = trimmed.match(/SELECT\s+(.+?)\s+FROM\s+(\w+)(.*)/is);
             if (!selectMatch) return [];
 
             const colsPart = selectMatch[1].trim();
@@ -112,15 +99,11 @@ function createMockExecutor(): SQLExecutor {
             let rows = Array.from(table.values());
 
             // Parse WHERE clause
-            const whereMatch = rest.match(
-                /WHERE\s+(.+?)(?:\s+ORDER\s+BY\s+|$)/is
-            );
+            const whereMatch = rest.match(/WHERE\s+(.+?)(?:\s+ORDER\s+BY\s+|$)/is);
             if (whereMatch) {
                 const whereClause = whereMatch[1].trim();
                 // Split on AND
-                const conditions = whereClause
-                    .split(/\s+AND\s+/i)
-                    .map((c) => c.trim());
+                const conditions = whereClause.split(/\s+AND\s+/i).map((c) => c.trim());
 
                 let paramIdx = 0;
                 for (const cond of conditions) {
@@ -128,15 +111,9 @@ function createMockExecutor(): SQLExecutor {
                     const inMatch = cond.match(/(\w+)\s+IN\s*\(([^)]+)\)/i);
                     if (inMatch) {
                         const col = inMatch[1];
-                        const placeholders = inMatch[2]
-                            .split(",")
-                            .map((p) => p.trim());
-                        const values = placeholders.map(
-                            () => params?.[paramIdx++]
-                        );
-                        rows = rows.filter((r) =>
-                            values.includes(r[col] as any)
-                        );
+                        const placeholders = inMatch[2].split(",").map((p) => p.trim());
+                        const values = placeholders.map(() => params?.[paramIdx++]);
+                        rows = rows.filter((r) => values.includes(r[col] as any));
                         continue;
                     }
 
@@ -165,9 +142,7 @@ function createMockExecutor(): SQLExecutor {
 
             // Project columns
             const requestedCols =
-                colsPart === "*"
-                    ? null
-                    : colsPart.split(",").map((c) => c.trim());
+                colsPart === "*" ? null : colsPart.split(",").map((c) => c.trim());
 
             return rows.map((row) => {
                 if (!requestedCols) return row as T;
@@ -183,10 +158,7 @@ function createMockExecutor(): SQLExecutor {
 
 // ── Test Fixture Factories ──────────────────────────────────────────────
 
-const createReverseSwap = (
-    id: string,
-    status: BoltzReverseSwap["status"]
-): BoltzReverseSwap => ({
+const createReverseSwap = (id: string, status: BoltzReverseSwap["status"]): BoltzReverseSwap => ({
     id,
     type: "reverse",
     createdAt: Date.now() / 1000,
@@ -214,7 +186,7 @@ const createReverseSwap = (
 
 const createSubmarineSwap = (
     id: string,
-    status: BoltzSubmarineSwap["status"]
+    status: BoltzSubmarineSwap["status"],
 ): BoltzSubmarineSwap => ({
     id,
     type: "submarine",
@@ -242,7 +214,7 @@ const createSubmarineSwap = (
 const createChainSwap = (
     id: string,
     status: BoltzChainSwap["status"],
-    overrides?: Partial<BoltzChainSwap>
+    overrides?: Partial<BoltzChainSwap>,
 ): BoltzChainSwap => ({
     id,
     type: "chain",
@@ -372,9 +344,7 @@ describe("SQLiteSwapRepository", () => {
     it("filters by type (single)", async () => {
         await repo.saveSwap(createReverseSwap("r1", "swap.created"));
         await repo.saveSwap(createSubmarineSwap("s1", "invoice.set"));
-        await repo.saveSwap(
-            createChainSwap("c1", "transaction.server.mempool")
-        );
+        await repo.saveSwap(createChainSwap("c1", "transaction.server.mempool"));
 
         const result = await repo.getAllSwaps({ type: "chain" });
 
@@ -385,9 +355,7 @@ describe("SQLiteSwapRepository", () => {
     it("filters by type (array)", async () => {
         await repo.saveSwap(createReverseSwap("r1", "swap.created"));
         await repo.saveSwap(createSubmarineSwap("s1", "invoice.set"));
-        await repo.saveSwap(
-            createChainSwap("c1", "transaction.server.mempool")
-        );
+        await repo.saveSwap(createChainSwap("c1", "transaction.server.mempool"));
 
         const result = await repo.getAllSwaps({
             type: ["reverse", "chain"],

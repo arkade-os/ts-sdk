@@ -44,9 +44,7 @@ export class InputSignerRouter {
     async sign(tx: Transaction, jobs: InputSigningJob[]): Promise<Transaction> {
         if (jobs.length === 0) return tx;
 
-        const distinctScripts = Array.from(
-            new Set(jobs.map((j) => hex.encode(j.lookupScript)))
-        );
+        const distinctScripts = Array.from(new Set(jobs.map((j) => hex.encode(j.lookupScript))));
         const contracts = await this.deps.contractRepository.getContracts({
             script: distinctScripts,
         });
@@ -59,9 +57,7 @@ export class InputSignerRouter {
             }
         }
 
-        const baselinePubKeyHex = hex.encode(
-            await this.deps.identity.xOnlyPublicKey()
-        );
+        const baselinePubKeyHex = hex.encode(await this.deps.identity.xOnlyPublicKey());
         const boardingScriptHex = hex.encode(this.deps.boardingPkScript);
 
         const identityIndexes: number[] = [];
@@ -98,7 +94,7 @@ export class InputSignerRouter {
             if (typeof descriptor !== "string" || descriptor.length === 0) {
                 throw new MissingSigningDescriptorError(
                     contract.script,
-                    contract.type as "default" | "delegate"
+                    contract.type as "default" | "delegate",
                 );
             }
 
@@ -120,19 +116,16 @@ export class InputSignerRouter {
                 throw new DescriptorSigningProviderMissingError();
             }
 
-            const sortedDescriptors = Array.from(
-                descriptorGroups.keys()
-            ).sort();
+            const sortedDescriptors = Array.from(descriptorGroups.keys()).sort();
             for (const descriptor of sortedDescriptors) {
                 const indexes = descriptorGroups.get(descriptor)!;
-                const [next] =
-                    await this.deps.descriptorProvider.signWithDescriptor([
-                        {
-                            tx: signed,
-                            descriptor,
-                            inputIndexes: indexes,
-                        },
-                    ]);
+                const [next] = await this.deps.descriptorProvider.signWithDescriptor([
+                    {
+                        tx: signed,
+                        descriptor,
+                        inputIndexes: indexes,
+                    },
+                ]);
                 signed = next;
             }
         }

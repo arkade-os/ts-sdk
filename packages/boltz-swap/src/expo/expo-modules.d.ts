@@ -19,7 +19,7 @@ declare module "expo-task-manager" {
             data: unknown;
             error: { code: string | number; message: string } | null;
             executionInfo: { eventId: string; taskName: string };
-        }) => Promise<unknown>
+        }) => Promise<unknown>,
     ): void;
 }
 
@@ -27,7 +27,7 @@ declare module "expo-background-task" {
     export const BackgroundTaskResult: { Success: 1; Failed: 2 };
     export function registerTaskAsync(
         taskName: string,
-        options?: { minimumInterval?: number }
+        options?: { minimumInterval?: number },
     ): Promise<void>;
     export function unregisterTaskAsync(taskName: string): Promise<void>;
 }

@@ -27,9 +27,7 @@ class ContractHandlerRegistry {
      */
     register(handler: ContractHandler<unknown>): void {
         if (this.handlers.has(handler.type)) {
-            throw new Error(
-                `Contract handler for type '${handler.type}' is already registered`
-            );
+            throw new Error(`Contract handler for type '${handler.type}' is already registered`);
         }
         this.handlers.set(handler.type, handler);
     }
@@ -54,9 +52,7 @@ class ContractHandlerRegistry {
     getOrThrow(type: string): ContractHandler<unknown> {
         const handler = this.get(type);
         if (!handler) {
-            throw new Error(
-                `No contract handler registered for type '${type}'`
-            );
+            throw new Error(`No contract handler registered for type '${type}'`);
         }
         return handler;
     }

@@ -25,14 +25,10 @@ describe("ArkAddress", () => {
                 const addr = ArkAddress.decode(fixture.addr);
 
                 // Check server public key matches expected
-                expect(hex.encode(addr.serverPubKey)).toBe(
-                    fixture.expectedServerKey.slice(2)
-                ); // Remove '02' prefix
+                expect(hex.encode(addr.serverPubKey)).toBe(fixture.expectedServerKey.slice(2)); // Remove '02' prefix
 
                 // Check VTXO taproot key matches expected
-                expect(hex.encode(addr.vtxoTaprootKey)).toBe(
-                    fixture.expectedUserKey.slice(2)
-                ); // Remove '02' prefix
+                expect(hex.encode(addr.vtxoTaprootKey)).toBe(fixture.expectedUserKey.slice(2)); // Remove '02' prefix
 
                 // Check version matches expected
                 expect(addr.version).toBe(fixture.expectedVersion);

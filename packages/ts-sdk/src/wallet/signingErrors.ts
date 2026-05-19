@@ -8,14 +8,14 @@ export class MissingSigningDescriptorError extends Error {
 
     constructor(
         readonly contractScript: string,
-        readonly contractType: "default" | "delegate"
+        readonly contractType: "default" | "delegate",
     ) {
         super(
             `Cannot sign input for ${contractType} contract ${contractScript}: ` +
                 `metadata.signingDescriptor is missing. This wallet was rotated ` +
                 `on an earlier build that did not persist signing descriptors. ` +
                 `Manually set metadata.signingDescriptor on the contract record, ` +
-                `or restore from a pre-rotation snapshot.`
+                `or restore from a pre-rotation snapshot.`,
         );
     }
 }
@@ -28,8 +28,6 @@ export class DescriptorSigningProviderMissingError extends Error {
     readonly name = "DescriptorSigningProviderMissingError";
 
     constructor() {
-        super(
-            "Descriptor signing requested but no DescriptorProvider was wired into this wallet"
-        );
+        super("Descriptor signing requested but no DescriptorProvider was wired into this wallet");
     }
 }

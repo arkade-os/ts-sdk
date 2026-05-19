@@ -51,7 +51,7 @@ export class Ramps {
         feeInfo: FeeInfo,
         boardingUtxos?: ExtendedCoin[],
         amount?: bigint,
-        eventCallback?: (event: SettlementEvent) => void
+        eventCallback?: (event: SettlementEvent) => void,
     ): ReturnType<IWallet["settle"]> {
         boardingUtxos = boardingUtxos ?? (await this.wallet.getBoardingUtxos());
 
@@ -80,9 +80,7 @@ export class Ramps {
         let change = 0n;
         if (amount) {
             if (amount > totalAmount) {
-                throw new Error(
-                    "Amount is greater than total amount of boarding utxos after fees"
-                );
+                throw new Error("Amount is greater than total amount of boarding utxos after fees");
             }
             change = totalAmount - amount;
         }
@@ -101,7 +99,7 @@ export class Ramps {
 
         if (BigInt(outputFee.satoshis) > amount) {
             throw new Error(
-                `can't deduct fees from onboard amount (${outputFee.satoshis} > ${amount})`
+                `can't deduct fees from onboard amount (${outputFee.satoshis} > ${amount})`,
             );
         }
         amount -= BigInt(outputFee.satoshis);
@@ -126,7 +124,7 @@ export class Ramps {
                 inputs: filteredBoardingUtxos,
                 outputs,
             },
-            eventCallback
+            eventCallback,
         );
     }
 
@@ -152,7 +150,7 @@ export class Ramps {
         destinationAddress: string,
         feeInfo: FeeInfo,
         amount?: bigint,
-        eventCallback?: (event: SettlementEvent) => void
+        eventCallback?: (event: SettlementEvent) => void,
     ): ReturnType<IWallet["settle"]> {
         const vtxos = await this.wallet.getVtxos({
             withRecoverable: true,
@@ -167,10 +165,7 @@ export class Ramps {
         for (const vtxo of vtxos) {
             const inputFee = estimator.evalOffchainInput({
                 amount: BigInt(vtxo.value),
-                type:
-                    vtxo.virtualStatus.state === "swept"
-                        ? "recoverable"
-                        : "vtxo",
+                type: vtxo.virtualStatus.state === "swept" ? "recoverable" : "vtxo",
                 weight: 0,
                 birth: vtxo.createdAt,
                 expiry: vtxo.virtualStatus.batchExpiry
@@ -193,9 +188,7 @@ export class Ramps {
         let change = 0n;
         if (amount) {
             if (amount > totalAmount) {
-                throw new Error(
-                    "Amount is greater than total amount of vtxos after fees"
-                );
+                throw new Error("Amount is greater than total amount of vtxos after fees");
             }
             change = totalAmount - amount;
         }
@@ -224,9 +217,7 @@ export class Ramps {
         }
 
         if (!destinationScript) {
-            throw new Error(
-                `Failed to decode destination address: ${destinationAddress}`
-            );
+            throw new Error(`Failed to decode destination address: ${destinationAddress}`);
         }
 
         const outputFee = estimator.evalOnchainOutput({
@@ -236,7 +227,7 @@ export class Ramps {
 
         if (BigInt(outputFee.satoshis) > amount) {
             throw new Error(
-                `can't deduct fees from offboard amount (${outputFee.satoshis} > ${amount})`
+                `can't deduct fees from offboard amount (${outputFee.satoshis} > ${amount})`,
             );
         }
         amount -= BigInt(outputFee.satoshis);
@@ -261,7 +252,7 @@ export class Ramps {
                 inputs: filteredVtxos,
                 outputs,
             },
-            eventCallback
+            eventCallback,
         );
     }
 }

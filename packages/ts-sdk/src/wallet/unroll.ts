@@ -6,10 +6,7 @@ import { ChainTx, ChainTxType, IndexerProvider } from "../providers/indexer";
 import { AnchorBumper } from "../utils/anchor";
 import { OnchainProvider } from "../providers/onchain";
 import { ExtendedVirtualCoin, Outpoint } from ".";
-import {
-    ConditionCSVMultisigTapscript,
-    CSVMultisigTapscript,
-} from "../script/tapscript";
+import { ConditionCSVMultisigTapscript, CSVMultisigTapscript } from "../script/tapscript";
 import { VtxoScript } from "../script/base";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Wallet } from "./wallet";
@@ -93,7 +90,7 @@ export namespace Unroll {
             readonly toUnroll: Outpoint & { chain: ChainTx[] },
             readonly bumper: AnchorBumper,
             readonly explorer: OnchainProvider,
-            readonly indexer: IndexerProvider
+            readonly indexer: IndexerProvider,
         ) {}
 
         /** Create an unroll session by loading the virtual output chain from the indexer. */
@@ -101,15 +98,10 @@ export namespace Unroll {
             toUnroll: Outpoint,
             bumper: AnchorBumper,
             explorer: OnchainProvider,
-            indexer: IndexerProvider
+            indexer: IndexerProvider,
         ): Promise<Session> {
             const { chain } = await indexer.getVtxoChain(toUnroll);
-            return new Session(
-                { ...toUnroll, chain },
-                bumper,
-                explorer,
-                indexer
-            );
+            return new Session({ ...toUnroll, chain }, bumper, explorer, indexer);
         }
 
         /**
@@ -135,9 +127,7 @@ export namespace Unroll {
 
                 try {
                     // Check if the transaction is confirmed onchain
-                    const txInfo = await this.explorer.getTxStatus(
-                        chainTx.txid
-                    );
+                    const txInfo = await this.explorer.getTxStatus(chainTx.txid);
 
                     // If found but not confirmed, it means the tx is in the mempool
                     // An unilateral exit is running, we must wait for it to be confirmed
@@ -164,9 +154,7 @@ export namespace Unroll {
             }
 
             // Get the virtual transaction data
-            const virtualTxs = await this.indexer.getVirtualTxs([
-                nextTxToBroadcast.txid,
-            ]);
+            const virtualTxs = await this.indexer.getVirtualTxs([nextTxToBroadcast.txid]);
 
             if (virtualTxs.txs.length === 0) {
                 throw new Error(`Tx ${nextTxToBroadcast.txid} not found`);
@@ -232,13 +220,9 @@ export namespace Unroll {
     export async function completeUnroll(
         wallet: Wallet,
         vtxoTxids: string[],
-        outputAddress: string
+        outputAddress: string,
     ): Promise<string> {
-        const signedTx = await prepareUnrollTransaction(
-            wallet,
-            vtxoTxids,
-            outputAddress
-        );
+        const signedTx = await prepareUnrollTransaction(wallet, vtxoTxids, outputAddress);
         await wallet.onchainProvider.broadcastTransaction(signedTx.hex);
         return signedTx.id;
     }
@@ -255,7 +239,7 @@ export namespace Unroll {
 export async function prepareUnrollTransaction(
     wallet: Wallet,
     vtxoTxIds: string[],
-    outputAddress: string
+    outputAddress: string,
 ): Promise<Transaction> {
     const chainTip = await wallet.onchainProvider.getChainTip();
 
@@ -272,7 +256,7 @@ export async function prepareUnrollTransaction(
     for (const vtxo of vtxos) {
         if (!vtxo.isUnrolled) {
             throw new Error(
-                `Vtxo ${vtxo.txid}:${vtxo.vout} is not fully unrolled, use unroll first`
+                `Vtxo ${vtxo.txid}:${vtxo.vout} is not fully unrolled, use unroll first`,
             );
         }
 
@@ -284,21 +268,15 @@ export async function prepareUnrollTransaction(
         const exit = availableExitPath(
             { height: txStatus.blockHeight, time: txStatus.blockTime },
             chainTip,
-            vtxo
+            vtxo,
         );
         if (!exit) {
-            throw new Error(
-                `no available exit path found for vtxo ${vtxo.txid}:${vtxo.vout}`
-            );
+            throw new Error(`no available exit path found for vtxo ${vtxo.txid}:${vtxo.vout}`);
         }
 
-        const spendingLeaf = VtxoScript.decode(vtxo.tapTree).findLeaf(
-            hex.encode(exit.script)
-        );
+        const spendingLeaf = VtxoScript.decode(vtxo.tapTree).findLeaf(hex.encode(exit.script));
         if (!spendingLeaf) {
-            throw new Error(
-                `spending leaf not found for vtxo ${vtxo.txid}:${vtxo.vout}`
-            );
+            throw new Error(`spending leaf not found for vtxo ${vtxo.txid}:${vtxo.vout}`);
         }
 
         totalAmount += BigInt(vtxo.value);
@@ -317,7 +295,7 @@ export async function prepareUnrollTransaction(
         txWeightEstimator.addTapscriptInput(
             64,
             spendingLeaf[1].length,
-            TaprootControlBlock.encode(spendingLeaf[0]).length
+            TaprootControlBlock.encode(spendingLeaf[0]).length,
         );
     }
 
@@ -359,16 +337,12 @@ function sleep(ms: number): Promise<void> {
 
 function doUnroll(
     onchainProvider: OnchainProvider,
-    pkg: Unroll.UnrollStep["pkg"]
+    pkg: Unroll.UnrollStep["pkg"],
 ): () => Promise<void> {
-    return () =>
-        onchainProvider.broadcastTransaction(...pkg).then(() => undefined);
+    return () => onchainProvider.broadcastTransaction(...pkg).then(() => undefined);
 }
 
-function doWait(
-    onchainProvider: OnchainProvider,
-    txid: string
-): () => Promise<void> {
+function doWait(onchainProvider: OnchainProvider, txid: string): () => Promise<void> {
     return () => {
         return new Promise((resolve, reject) => {
             const interval = setInterval(async () => {
@@ -395,22 +369,16 @@ type BlockTime = {
 function availableExitPath(
     confirmedAt: BlockTime,
     current: BlockTime,
-    vtxo: ExtendedVirtualCoin
+    vtxo: ExtendedVirtualCoin,
 ): CSVMultisigTapscript.Type | ConditionCSVMultisigTapscript.Type | undefined {
     const exits = VtxoScript.decode(vtxo.tapTree).exitPaths();
     for (const exit of exits) {
         if (exit.params.timelock.type === "blocks") {
-            if (
-                current.height >=
-                confirmedAt.height + Number(exit.params.timelock.value)
-            ) {
+            if (current.height >= confirmedAt.height + Number(exit.params.timelock.value)) {
                 return exit;
             }
         } else {
-            if (
-                current.time >=
-                confirmedAt.time + Number(exit.params.timelock.value)
-            ) {
+            if (current.time >= confirmedAt.time + Number(exit.params.timelock.value)) {
                 return exit;
             }
         }

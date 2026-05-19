@@ -5,10 +5,7 @@ import Database from "better-sqlite3";
 import { ArkAddress } from "../../src";
 import type { TapLeafScript } from "../../src/script/base";
 import { runArkRealmMigrations } from "../../src/repositories/realm/schemas";
-import {
-    openDatabase,
-    closeDatabase,
-} from "../../src/repositories/indexedDB/manager";
+import { openDatabase, closeDatabase } from "../../src/repositories/indexedDB/manager";
 import {
     initDatabase,
     STORE_VTXOS,
@@ -24,23 +21,16 @@ import type { SQLExecutor } from "../../src/repositories/sqlite/types";
 // the script from the address so they need a real one.
 const TEST_SERVER_PUBKEY = new Uint8Array(32).fill(7);
 const TEST_VTXO_TAPROOT_KEY = new Uint8Array(32).fill(9);
-const TEST_ARK_ADDRESS = new ArkAddress(
-    TEST_SERVER_PUBKEY,
-    TEST_VTXO_TAPROOT_KEY,
-    "ark"
-).encode();
+const TEST_ARK_ADDRESS = new ArkAddress(TEST_SERVER_PUBKEY, TEST_VTXO_TAPROOT_KEY, "ark").encode();
 const EXPECTED_PK_SCRIPT_HEX = hex.encode(
-    new ArkAddress(TEST_SERVER_PUBKEY, TEST_VTXO_TAPROOT_KEY, "ark").pkScript
+    new ArkAddress(TEST_SERVER_PUBKEY, TEST_VTXO_TAPROOT_KEY, "ark").pkScript,
 );
 
 describe("Realm migration: runArkRealmMigrations", () => {
     // A minimal stand-in for the Realm handles passed to `onMigration`. The
     // real Realm exposes `.objects(name)` returning an indexable array-like;
     // we only need the subset the migration touches.
-    function makeRealm(
-        schemaVersion: number,
-        vtxos: Record<string, unknown>[]
-    ) {
+    function makeRealm(schemaVersion: number, vtxos: Record<string, unknown>[]) {
         return {
             schemaVersion,
             objects: (name: string) => {
@@ -101,16 +91,12 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
     // `initDatabase` is guarded by `oldVersion >= 1 && oldVersion < 3`; that
     // predicate is plain arithmetic and not worth a separate test.
     let nameSeq = 0;
-    const getUniqueDbName = () =>
-        `ark-migration-test-${Date.now()}-${nameSeq++}`;
+    const getUniqueDbName = () => `ark-migration-test-${Date.now()}-${nameSeq++}`;
 
     function makeTapLeaf(): TapLeafScript {
         const controlBlockBytes = new Uint8Array(33);
         controlBlockBytes[0] = 0xc0;
-        return [
-            TaprootControlBlock.decode(controlBlockBytes),
-            new Uint8Array(20).fill(2),
-        ];
+        return [TaprootControlBlock.decode(controlBlockBytes), new Uint8Array(20).fill(2)];
     }
 
     it("backfills script on legacy rows missing it", async () => {
@@ -141,16 +127,14 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
                 tx.onerror = () => reject(tx.error);
             });
 
-            const backfilled = await new Promise<
-                { script?: string } | undefined
-            >((resolve, reject) => {
-                const tx = db.transaction([STORE_VTXOS], "readonly");
-                const req = tx
-                    .objectStore(STORE_VTXOS)
-                    .get([TEST_ARK_ADDRESS, "legacy-tx", 0]);
-                req.onsuccess = () => resolve(req.result);
-                req.onerror = () => reject(req.error);
-            });
+            const backfilled = await new Promise<{ script?: string } | undefined>(
+                (resolve, reject) => {
+                    const tx = db.transaction([STORE_VTXOS], "readonly");
+                    const req = tx.objectStore(STORE_VTXOS).get([TEST_ARK_ADDRESS, "legacy-tx", 0]);
+                    req.onsuccess = () => resolve(req.result);
+                    req.onerror = () => reject(req.error);
+                },
+            );
 
             expect(backfilled?.script).toBe(EXPECTED_PK_SCRIPT_HEX);
         } finally {
@@ -184,16 +168,12 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
                 tx.onerror = () => reject(tx.error);
             });
 
-            const row = await new Promise<{ script?: string } | undefined>(
-                (resolve, reject) => {
-                    const tx = db.transaction([STORE_VTXOS], "readonly");
-                    const req = tx
-                        .objectStore(STORE_VTXOS)
-                        .get([TEST_ARK_ADDRESS, "preset-tx", 0]);
-                    req.onsuccess = () => resolve(req.result);
-                    req.onerror = () => reject(req.error);
-                }
-            );
+            const row = await new Promise<{ script?: string } | undefined>((resolve, reject) => {
+                const tx = db.transaction([STORE_VTXOS], "readonly");
+                const req = tx.objectStore(STORE_VTXOS).get([TEST_ARK_ADDRESS, "preset-tx", 0]);
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
 
             expect(row?.script).toBe("5120abcd");
         } finally {
@@ -232,11 +212,7 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
             await new Promise<void>((resolve, reject) => {
                 const tx = db.transaction([STORE_VTXOS], "readwrite");
                 const store = tx.objectStore(STORE_VTXOS);
-                const getReq = store.get([
-                    TEST_ARK_ADDRESS,
-                    "read-backfill-tx",
-                    0,
-                ]);
+                const getReq = store.get([TEST_ARK_ADDRESS, "read-backfill-tx", 0]);
                 getReq.onsuccess = () => {
                     const row = getReq.result as Record<string, unknown>;
                     delete row.script;
@@ -268,7 +244,7 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
                 db
                     .transaction([STORE_VTXOS], "readonly")
                     .objectStore(STORE_VTXOS)
-                    .indexNames.contains("script")
+                    .indexNames.contains("script"),
             ).toBe(true);
 
             await new Promise<void>((resolve, reject) => {
@@ -290,18 +266,15 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
                 tx.onerror = () => reject(tx.error);
             });
 
-            const hits = await new Promise<{ txid: string }[]>(
-                (resolve, reject) => {
-                    const tx = db.transaction([STORE_VTXOS], "readonly");
-                    const req = tx
-                        .objectStore(STORE_VTXOS)
-                        .index("script")
-                        .getAll(EXPECTED_PK_SCRIPT_HEX);
-                    req.onsuccess = () =>
-                        resolve(req.result as { txid: string }[]);
-                    req.onerror = () => reject(req.error);
-                }
-            );
+            const hits = await new Promise<{ txid: string }[]>((resolve, reject) => {
+                const tx = db.transaction([STORE_VTXOS], "readonly");
+                const req = tx
+                    .objectStore(STORE_VTXOS)
+                    .index("script")
+                    .getAll(EXPECTED_PK_SCRIPT_HEX);
+                req.onsuccess = () => resolve(req.result as { txid: string }[]);
+                req.onerror = () => reject(req.error);
+            });
 
             expect(hits.map((h) => h.txid)).toContain("indexed-backfill-tx");
         } finally {
@@ -348,7 +321,7 @@ describe("SQLite migration: migrateVtxosTable", () => {
     // upgraded across that window has `script TEXT` nullable.
     const LEGACY_V0B_SCHEMA = LEGACY_V0_SCHEMA.replace(
         "PRIMARY KEY (txid, vout)",
-        "script TEXT, PRIMARY KEY (txid, vout)"
+        "script TEXT, PRIMARY KEY (txid, vout)",
     );
 
     function createExecutor(db: Database.Database): SQLExecutor {
@@ -357,16 +330,10 @@ describe("SQLite migration: migrateVtxosTable", () => {
                 db.prepare(sql).run(...((params ?? []) as unknown[] as []));
             },
             async get<T>(sql: string, params?: unknown[]) {
-                return db
-                    .prepare(sql)
-                    .get(...((params ?? []) as unknown[] as [])) as
-                    | T
-                    | undefined;
+                return db.prepare(sql).get(...((params ?? []) as unknown[] as [])) as T | undefined;
             },
             async all<T>(sql: string, params?: unknown[]) {
-                return db
-                    .prepare(sql)
-                    .all(...((params ?? []) as unknown[] as [])) as T[];
+                return db.prepare(sql).all(...((params ?? []) as unknown[] as [])) as T[];
             },
         };
     }
@@ -378,7 +345,7 @@ describe("SQLite migration: migrateVtxosTable", () => {
                 txid, vout, value, address, tap_tree,
                 forfeit_cb, forfeit_s, intent_cb, intent_s,
                 status_json, virtual_status_json, created_at
-            ) VALUES (?, 0, 1000, ?, '', '', '', '', '', '{}', '{}', '2024-01-01')`
+            ) VALUES (?, 0, 1000, ?, '', '', '', '', '', '{}', '{}', '2024-01-01')`,
         ).run(txid, address);
     }
 
@@ -387,20 +354,18 @@ describe("SQLite migration: migrateVtxosTable", () => {
         db: Database.Database,
         txid: string,
         address: string,
-        script: string | null
+        script: string | null,
     ) {
         db.prepare(
             `INSERT INTO ark_vtxos (
                 txid, vout, value, address, tap_tree,
                 forfeit_cb, forfeit_s, intent_cb, intent_s,
                 status_json, virtual_status_json, created_at, script
-            ) VALUES (?, 0, 1000, ?, '', '', '', '', '', '{}', '{}', '2024-01-01', ?)`
+            ) VALUES (?, 0, 1000, ?, '', '', '', '', '', '{}', '{}', '2024-01-01', ?)`,
         ).run(txid, address, script);
     }
 
-    function vtxosCols(
-        db: Database.Database
-    ): Array<{ name: string; notnull: number }> {
+    function vtxosCols(db: Database.Database): Array<{ name: string; notnull: number }> {
         return db.prepare(`PRAGMA table_info(ark_vtxos)`).all() as Array<{
             name: string;
             notnull: number;
@@ -411,7 +376,7 @@ describe("SQLite migration: migrateVtxosTable", () => {
         return !!db
             .prepare(
                 `SELECT name FROM sqlite_master
-                 WHERE type='table' AND name='ark_vtxos__migrate_tmp'`
+                 WHERE type='table' AND name='ark_vtxos__migrate_tmp'`,
             )
             .get();
     }
@@ -458,14 +423,12 @@ describe("SQLite migration: migrateVtxosTable", () => {
         const scriptCol = vtxosCols(db).find((c) => c.name === "script");
         expect(scriptCol?.notnull).toBe(1);
 
-        const rows = db
-            .prepare(`SELECT txid, script FROM ark_vtxos ORDER BY txid`)
-            .all() as Array<{ txid: string; script: string }>;
+        const rows = db.prepare(`SELECT txid, script FROM ark_vtxos ORDER BY txid`).all() as Array<{
+            txid: string;
+            script: string;
+        }>;
         expect(rows).toHaveLength(2);
-        expect(rows.map((r) => r.script)).toEqual([
-            EXPECTED_PK_SCRIPT_HEX,
-            EXPECTED_PK_SCRIPT_HEX,
-        ]);
+        expect(rows.map((r) => r.script)).toEqual([EXPECTED_PK_SCRIPT_HEX, EXPECTED_PK_SCRIPT_HEX]);
         expect(tempTableExists(db)).toBe(false);
     });
 
@@ -480,10 +443,11 @@ describe("SQLite migration: migrateVtxosTable", () => {
 
         const rows = Object.fromEntries(
             (
-                db
-                    .prepare(`SELECT txid, script FROM ark_vtxos`)
-                    .all() as Array<{ txid: string; script: string }>
-            ).map((r) => [r.txid, r.script])
+                db.prepare(`SELECT txid, script FROM ark_vtxos`).all() as Array<{
+                    txid: string;
+                    script: string;
+                }>
+            ).map((r) => [r.txid, r.script]),
         );
         // Backfill fills NULLs from the owning address…
         expect(rows["legacy-null"]).toBe(EXPECTED_PK_SCRIPT_HEX);
@@ -500,18 +464,18 @@ describe("SQLite migration: migrateVtxosTable", () => {
         // Second pass via a fresh repo instance: the early-return path
         // means the table's rowid sequence is not disturbed by a rebuild.
         const beforeRowid = (
-            db
-                .prepare(`SELECT rowid FROM ark_vtxos WHERE txid = ?`)
-                .get("already-migrated") as { rowid: number }
+            db.prepare(`SELECT rowid FROM ark_vtxos WHERE txid = ?`).get("already-migrated") as {
+                rowid: number;
+            }
         ).rowid;
 
         const repo2 = new SQLiteWalletRepository(executor);
         await repo2.getWalletState();
 
         const afterRowid = (
-            db
-                .prepare(`SELECT rowid FROM ark_vtxos WHERE txid = ?`)
-                .get("already-migrated") as { rowid: number }
+            db.prepare(`SELECT rowid FROM ark_vtxos WHERE txid = ?`).get("already-migrated") as {
+                rowid: number;
+            }
         ).rowid;
         expect(afterRowid).toBe(beforeRowid);
         expect(tempTableExists(db)).toBe(false);
@@ -528,9 +492,9 @@ describe("SQLite migration: migrateVtxosTable", () => {
         await expect(repo.getVtxos(TEST_ARK_ADDRESS)).rejects.toThrow();
 
         // Original rows intact, schema unchanged, no orphan tmp table.
-        const rows = db
-            .prepare(`SELECT txid FROM ark_vtxos ORDER BY txid`)
-            .all() as Array<{ txid: string }>;
+        const rows = db.prepare(`SELECT txid FROM ark_vtxos ORDER BY txid`).all() as Array<{
+            txid: string;
+        }>;
         expect(rows.map((r) => r.txid)).toEqual(["bad", "valid"]);
         expect(vtxosCols(db).some((c) => c.name === "script")).toBe(false);
         expect(tempTableExists(db)).toBe(false);
@@ -556,14 +520,13 @@ describe("SQLite migration: migrateVtxosTable", () => {
         };
         const crashingRepo = new SQLiteWalletRepository(crashingExecutor);
 
-        await expect(crashingRepo.getVtxos(TEST_ARK_ADDRESS)).rejects.toThrow(
-            /simulated crash/
-        );
+        await expect(crashingRepo.getVtxos(TEST_ARK_ADDRESS)).rejects.toThrow(/simulated crash/);
 
         // Data and schema restored exactly as they were pre-migration.
-        const rows = db
-            .prepare(`SELECT txid, address FROM ark_vtxos`)
-            .all() as Array<{ txid: string; address: string }>;
+        const rows = db.prepare(`SELECT txid, address FROM ark_vtxos`).all() as Array<{
+            txid: string;
+            address: string;
+        }>;
         expect(rows).toEqual([{ txid: "keep-me", address: TEST_ARK_ADDRESS }]);
         expect(vtxosCols(db).some((c) => c.name === "script")).toBe(false);
         expect(tempTableExists(db)).toBe(false);

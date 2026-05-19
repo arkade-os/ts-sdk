@@ -196,7 +196,7 @@ export interface ArkProvider {
     /** Submit a signed Arkade transaction and its checkpoint transactions. */
     submitTx(
         signedArkTx: string,
-        checkpointTxs: string[]
+        checkpointTxs: string[],
     ): Promise<{
         arkTxid: string;
         finalArkTx: string;
@@ -207,9 +207,7 @@ export interface ArkProvider {
     finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void>;
 
     /** Register a signed intent with the Arkade server. */
-    registerIntent(
-        intent: SignedIntent<Intent.RegisterMessage>
-    ): Promise<string>;
+    registerIntent(intent: SignedIntent<Intent.RegisterMessage>): Promise<string>;
 
     /** Delete a previously registered intent. */
     deleteIntent(intent: SignedIntent<Intent.DeleteMessage>): Promise<void>;
@@ -218,30 +216,20 @@ export interface ArkProvider {
     confirmRegistration(intentId: string): Promise<void>;
 
     /** Submit musig2 tree nonces for a batch signing session. */
-    submitTreeNonces(
-        batchId: string,
-        pubkey: string,
-        nonces: TreeNonces
-    ): Promise<void>;
+    submitTreeNonces(batchId: string, pubkey: string, nonces: TreeNonces): Promise<void>;
 
     /** Submit musig2 partial signatures for a batch signing session. */
     submitTreeSignatures(
         batchId: string,
         pubkey: string,
-        signatures: TreePartialSigs
+        signatures: TreePartialSigs,
     ): Promise<void>;
 
     /** Submit signed forfeit transactions for cooperative settlement. */
-    submitSignedForfeitTxs(
-        signedForfeitTxs: string[],
-        signedCommitmentTx?: string
-    ): Promise<void>;
+    submitSignedForfeitTxs(signedForfeitTxs: string[], signedCommitmentTx?: string): Promise<void>;
 
     /** Open the settlement event stream for the given topics. */
-    getEventStream(
-        signal: AbortSignal,
-        topics: string[]
-    ): AsyncIterableIterator<SettlementEvent>;
+    getEventStream(signal: AbortSignal, topics: string[]): AsyncIterableIterator<SettlementEvent>;
 
     /** Stream transaction notifications emitted by the Arkade server. */
     getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
@@ -250,9 +238,7 @@ export interface ArkProvider {
     }>;
 
     /** Fetch pending transactions for a signed get-pending-tx intent. */
-    getPendingTxs(
-        intent: SignedIntent<Intent.GetPendingTxMessage>
-    ): Promise<PendingTx[]>;
+    getPendingTxs(intent: SignedIntent<Intent.GetPendingTxMessage>): Promise<PendingTx[]>;
 }
 
 /**
@@ -273,10 +259,7 @@ export class RestArkProvider implements ArkProvider {
         const response = await fetch(url);
         if (!response.ok) {
             const errorText = await response.text();
-            handleError(
-                errorText,
-                `Failed to get server info: ${response.statusText}`
-            );
+            handleError(errorText, `Failed to get server info: ${response.statusText}`);
         }
         const fromServer = await response.json();
         return {
@@ -297,21 +280,12 @@ export class RestArkProvider implements ArkProvider {
             forfeitPubkey: fromServer.forfeitPubkey ?? "",
             network: fromServer.network ?? "",
             scheduledSession:
-                "scheduledSession" in fromServer &&
-                fromServer.scheduledSession != null
+                "scheduledSession" in fromServer && fromServer.scheduledSession != null
                     ? {
-                          duration: BigInt(
-                              fromServer.scheduledSession.duration ?? 0
-                          ),
-                          nextStartTime: BigInt(
-                              fromServer.scheduledSession.nextStartTime ?? 0
-                          ),
-                          nextEndTime: BigInt(
-                              fromServer.scheduledSession.nextEndTime ?? 0
-                          ),
-                          period: BigInt(
-                              fromServer.scheduledSession.period ?? 0
-                          ),
+                          duration: BigInt(fromServer.scheduledSession.duration ?? 0),
+                          nextStartTime: BigInt(fromServer.scheduledSession.nextStartTime ?? 0),
+                          nextEndTime: BigInt(fromServer.scheduledSession.nextEndTime ?? 0),
+                          period: BigInt(fromServer.scheduledSession.period ?? 0),
                           fees: fromServer.scheduledSession.fees ?? {},
                       }
                     : undefined,
@@ -329,7 +303,7 @@ export class RestArkProvider implements ArkProvider {
 
     async submitTx(
         signedArkTx: string,
-        checkpointTxs: string[]
+        checkpointTxs: string[],
     ): Promise<{
         arkTxid: string;
         finalArkTx: string;
@@ -349,10 +323,7 @@ export class RestArkProvider implements ArkProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
-            handleError(
-                errorText,
-                `Failed to submit virtual transaction: ${errorText}`
-            );
+            handleError(errorText, `Failed to submit virtual transaction: ${errorText}`);
         }
 
         const data = await response.json();
@@ -363,10 +334,7 @@ export class RestArkProvider implements ArkProvider {
         };
     }
 
-    async finalizeTx(
-        arkTxid: string,
-        finalCheckpointTxs: string[]
-    ): Promise<void> {
+    async finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void> {
         const url = `${this.serverUrl}/v1/tx/finalize`;
         const response = await fetch(url, {
             method: "POST",
@@ -381,16 +349,11 @@ export class RestArkProvider implements ArkProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
-            handleError(
-                errorText,
-                `Failed to finalize offchain transaction: ${errorText}`
-            );
+            handleError(errorText, `Failed to finalize offchain transaction: ${errorText}`);
         }
     }
 
-    async registerIntent(
-        intent: SignedIntent<Intent.RegisterMessage>
-    ): Promise<string> {
+    async registerIntent(intent: SignedIntent<Intent.RegisterMessage>): Promise<string> {
         const url = `${this.serverUrl}/v1/batch/registerIntent`;
         const response = await fetch(url, {
             method: "POST",
@@ -414,9 +377,7 @@ export class RestArkProvider implements ArkProvider {
         return data.intentId;
     }
 
-    async deleteIntent(
-        intent: SignedIntent<Intent.DeleteMessage>
-    ): Promise<void> {
+    async deleteIntent(intent: SignedIntent<Intent.DeleteMessage>): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/deleteIntent`;
         const response = await fetch(url, {
             method: "POST",
@@ -451,18 +412,11 @@ export class RestArkProvider implements ArkProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
-            handleError(
-                errorText,
-                `Failed to confirm registration: ${errorText}`
-            );
+            handleError(errorText, `Failed to confirm registration: ${errorText}`);
         }
     }
 
-    async submitTreeNonces(
-        batchId: string,
-        pubkey: string,
-        nonces: TreeNonces
-    ): Promise<void> {
+    async submitTreeNonces(batchId: string, pubkey: string, nonces: TreeNonces): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/tree/submitNonces`;
         const response = await fetch(url, {
             method: "POST",
@@ -478,17 +432,14 @@ export class RestArkProvider implements ArkProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
-            handleError(
-                errorText,
-                `Failed to submit tree nonces: ${errorText}`
-            );
+            handleError(errorText, `Failed to submit tree nonces: ${errorText}`);
         }
     }
 
     async submitTreeSignatures(
         batchId: string,
         pubkey: string,
-        signatures: TreePartialSigs
+        signatures: TreePartialSigs,
     ): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/tree/submitSignatures`;
         const response = await fetch(url, {
@@ -505,16 +456,13 @@ export class RestArkProvider implements ArkProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
-            handleError(
-                errorText,
-                `Failed to submit tree signatures: ${errorText}`
-            );
+            handleError(errorText, `Failed to submit tree signatures: ${errorText}`);
         }
     }
 
     async submitSignedForfeitTxs(
         signedForfeitTxs: string[],
-        signedCommitmentTx?: string
+        signedCommitmentTx?: string,
     ): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/submitForfeitTxs`;
         const response = await fetch(url, {
@@ -530,17 +478,11 @@ export class RestArkProvider implements ArkProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
-            handleError(
-                errorText,
-                `Failed to submit forfeit transactions: ${response.statusText}`
-            );
+            handleError(errorText, `Failed to submit forfeit transactions: ${response.statusText}`);
         }
     }
 
-    getEventStream(
-        signal: AbortSignal,
-        topics: string[]
-    ): AsyncIterableIterator<SettlementEvent> {
+    getEventStream(signal: AbortSignal, topics: string[]): AsyncIterableIterator<SettlementEvent> {
         const url = `${this.serverUrl}/v1/batch/events`;
         const queryParams =
             topics.length > 0
@@ -563,9 +505,7 @@ export class RestArkProvider implements ArkProvider {
 
             try {
                 while (!signal?.aborted) {
-                    const currentIterator = eventSourceIterator(
-                        new EventSource(url + queryParams)
-                    );
+                    const currentIterator = eventSourceIterator(new EventSource(url + queryParams));
                     iterator = currentIterator;
 
                     try {
@@ -574,8 +514,7 @@ export class RestArkProvider implements ArkProvider {
 
                             try {
                                 const data = JSON.parse(event.data);
-                                const settlementEvent =
-                                    self.parseSettlementEvent(data);
+                                const settlementEvent = self.parseSettlementEvent(data);
                                 if (settlementEvent) {
                                     yield settlementEvent;
                                 }
@@ -587,8 +526,7 @@ export class RestArkProvider implements ArkProvider {
                     } catch (error) {
                         if (
                             signal?.aborted ||
-                            (error instanceof Error &&
-                                error.name === "AbortError")
+                            (error instanceof Error && error.name === "AbortError")
                         ) {
                             break;
                         }
@@ -642,9 +580,7 @@ export class RestArkProvider implements ArkProvider {
             try {
                 while (!signal?.aborted) {
                     try {
-                        const currentIterator = eventSourceIterator(
-                            new EventSource(url)
-                        );
+                        const currentIterator = eventSourceIterator(new EventSource(url));
                         iterator = currentIterator;
 
                         for await (const event of currentIterator) {
@@ -652,24 +588,19 @@ export class RestArkProvider implements ArkProvider {
 
                             try {
                                 const data = JSON.parse(event.data);
-                                const txNotification =
-                                    self.parseTransactionNotification(data);
+                                const txNotification = self.parseTransactionNotification(data);
                                 if (txNotification) {
                                     yield txNotification;
                                 }
                             } catch (err) {
-                                console.error(
-                                    "Failed to parse transaction notification:",
-                                    err
-                                );
+                                console.error("Failed to parse transaction notification:", err);
                                 throw err;
                             }
                         }
                     } catch (error) {
                         if (
                             signal?.aborted ||
-                            (error instanceof Error &&
-                                error.name === "AbortError")
+                            (error instanceof Error && error.name === "AbortError")
                         ) {
                             break;
                         }
@@ -706,9 +637,7 @@ export class RestArkProvider implements ArkProvider {
         return gen;
     }
 
-    async getPendingTxs(
-        intent: SignedIntent<Intent.GetPendingTxMessage>
-    ): Promise<PendingTx[]> {
+    async getPendingTxs(intent: SignedIntent<Intent.GetPendingTxMessage>): Promise<PendingTx[]> {
         const url = `${this.serverUrl}/v1/tx/pending`;
         const response = await fetch(url, {
             method: "POST",
@@ -725,10 +654,7 @@ export class RestArkProvider implements ArkProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
-            handleError(
-                errorText,
-                `Failed to get pending transactions: ${errorText}`
-            );
+            handleError(errorText, `Failed to get pending transactions: ${errorText}`);
         }
 
         const data = await response.json();
@@ -736,7 +662,7 @@ export class RestArkProvider implements ArkProvider {
     }
 
     protected parseSettlementEvent(
-        data: ProtoTypes.GetEventStreamResponse
+        data: ProtoTypes.GetEventStreamResponse,
     ): SettlementEvent | null {
         // Check for BatchStarted event
         if (data.batchStarted) {
@@ -781,8 +707,7 @@ export class RestArkProvider implements ArkProvider {
                 type: SettlementEventType.TreeSigningStarted,
                 id: data.treeSigningStarted.id,
                 cosignersPublicKeys: data.treeSigningStarted.cosignersPubkeys,
-                unsignedCommitmentTx:
-                    data.treeSigningStarted.unsignedCommitmentTx,
+                unsignedCommitmentTx: data.treeSigningStarted.unsignedCommitmentTx,
             };
         }
 
@@ -805,11 +730,9 @@ export class RestArkProvider implements ArkProvider {
         // Check for TreeTx event
         if (data.treeTx) {
             const children = Object.fromEntries(
-                Object.entries(data.treeTx.children).map(
-                    ([outputIndex, txid]) => {
-                        return [parseInt(outputIndex), txid];
-                    }
-                )
+                Object.entries(data.treeTx.children).map(([outputIndex, txid]) => {
+                    return [parseInt(outputIndex), txid];
+                }),
             );
 
             return {
@@ -853,7 +776,7 @@ export class RestArkProvider implements ArkProvider {
     }
 
     protected parseTransactionNotification(
-        data: ProtoTypes.GetTransactionsStreamResponse
+        data: ProtoTypes.GetTransactionsStreamResponse,
     ): { commitmentTx?: TxNotification; arkTx?: TxNotification } | null {
         if (data.commitmentTx) {
             return {
@@ -861,8 +784,7 @@ export class RestArkProvider implements ArkProvider {
                     txid: data.commitmentTx.txid,
                     tx: data.commitmentTx.tx,
                     spentVtxos: data.commitmentTx.spentVtxos.map(mapVtxo),
-                    spendableVtxos:
-                        data.commitmentTx.spendableVtxos.map(mapVtxo),
+                    spendableVtxos: data.commitmentTx.spendableVtxos.map(mapVtxo),
                     checkpointTxs: data.commitmentTx.checkpointTxs,
                 },
             };
@@ -898,9 +820,7 @@ function encodeMusig2Nonces(nonces: TreeNonces): Record<string, string> {
     return noncesObject;
 }
 
-function encodeMusig2Signatures(
-    signatures: TreePartialSigs
-): Record<string, string> {
+function encodeMusig2Signatures(signatures: TreePartialSigs): Record<string, string> {
     const sigObject: Record<string, string> = {};
     for (const [txid, sig] of signatures) {
         sigObject[txid] = hex.encode(sig.encode());
@@ -915,7 +835,7 @@ function decodeMusig2Nonces(noncesObject: Record<string, string>): TreeNonces {
                 throw new Error("invalid nonce");
             }
             return [txid, { pubNonce: hex.decode(nonce) }];
-        })
+        }),
     );
 }
 
@@ -1071,8 +991,7 @@ export function isFetchTimeoutError(err: any): boolean {
         if (!(error instanceof Error)) return false;
 
         // TODO: get something more robust than this
-        const isCloudflare524 =
-            error.name === "TypeError" && error.message === "Failed to fetch";
+        const isCloudflare524 = error.name === "TypeError" && error.message === "Failed to fetch";
 
         return (
             isCloudflare524 ||

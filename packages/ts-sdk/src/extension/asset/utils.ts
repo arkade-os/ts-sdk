@@ -20,14 +20,10 @@ export class BufferWriter {
     writeVarUint(value: bigint | number): void {
         if (typeof value === "number") {
             if (!Number.isInteger(value) || value < 0) {
-                throw new RangeError(
-                    "writeVarUint: value must be a non-negative integer"
-                );
+                throw new RangeError("writeVarUint: value must be a non-negative integer");
             }
         } else if (value < 0n) {
-            throw new RangeError(
-                "writeVarUint: value must be a non-negative integer"
-            );
+            throw new RangeError("writeVarUint: value must be a non-negative integer");
         }
         const val = typeof value === "number" ? BigInt(value) : value;
         const bytes: number[] = [];
@@ -78,11 +74,7 @@ export class BufferReader {
         if (this.offset + size > this.view.byteLength) {
             throw new Error("unexpected end of buffer");
         }
-        const result = new Uint8Array(
-            this.view.buffer,
-            this.view.byteOffset + this.offset,
-            size
-        );
+        const result = new Uint8Array(this.view.buffer, this.view.byteOffset + this.offset, size);
         this.offset += size;
         return result;
     }

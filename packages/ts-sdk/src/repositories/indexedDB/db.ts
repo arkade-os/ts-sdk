@@ -28,8 +28,4 @@ export {
     deserializeUtxo,
 } from "../serialization";
 
-export type {
-    SerializedTapLeaf,
-    SerializedVtxo,
-    SerializedUtxo,
-} from "../serialization";
+export type { SerializedTapLeaf, SerializedVtxo, SerializedUtxo } from "../serialization";

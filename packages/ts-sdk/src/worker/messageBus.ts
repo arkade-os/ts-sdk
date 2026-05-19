@@ -1,9 +1,6 @@
 /// <reference lib="webworker" />
 
-import {
-    getActiveServiceWorker,
-    setupServiceWorkerOnce,
-} from "./browser/service-worker-manager";
+import { getActiveServiceWorker, setupServiceWorkerOnce } from "./browser/service-worker-manager";
 import { ArkProvider, RestArkProvider } from "../providers/ark";
 import { RestDelegatorProvider } from "../providers/delegator";
 import {
@@ -20,10 +17,7 @@ import type { SettlementConfig } from "../wallet/vtxo-manager";
 import type { ContractWatcherConfig } from "../contracts/contractWatcher";
 import { ContractRepository, WalletRepository } from "../repositories";
 import { getRandomId } from "../wallet/utils";
-import {
-    MessageBusNotInitializedError,
-    ServiceWorkerTimeoutError,
-} from "./errors";
+import { MessageBusNotInitializedError, ServiceWorkerTimeoutError } from "./errors";
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -62,7 +56,7 @@ export interface MessageHandler<
         },
         repositories: {
             walletRepository: WalletRepository;
-        }
+        },
     ): Promise<void>;
 
     /** Called once when the SW is shutting down */
@@ -169,9 +163,7 @@ export class MessageBus {
     private tickInProgress = false;
     private debug = false;
     private initialized = false;
-    private readonly buildServicesFn: (
-        config: Initialize["config"]
-    ) => Promise<{
+    private readonly buildServicesFn: (config: Initialize["config"]) => Promise<{
         arkProvider: ArkProvider;
         wallet?: Wallet;
         readonlyWallet: ReadonlyWallet;
@@ -189,7 +181,7 @@ export class MessageBus {
             messageTimeoutOverrides = {},
             debug = false,
             buildServices,
-        }: Options
+        }: Options,
     ) {
         this.handlers = new Map(messageHandlers.map((u) => [u.messageTag, u]));
         this.tickIntervalMs = tickIntervalMs;
@@ -242,9 +234,7 @@ export class MessageBus {
 
         self.removeEventListener("message", this.boundOnMessage);
 
-        await Promise.all(
-            Array.from(this.handlers.values()).map((updater) => updater.stop())
-        );
+        await Promise.all(Array.from(this.handlers.values()).map((updater) => updater.stop()));
     }
 
     private scheduleNextTick() {
@@ -252,10 +242,7 @@ export class MessageBus {
         if (this.tickTimeout !== null) return;
         if (this.tickInProgress) return;
 
-        this.tickTimeout = self.setTimeout(
-            () => this.runTick(),
-            this.tickIntervalMs
-        );
+        this.tickTimeout = self.setTimeout(() => this.runTick(), this.tickIntervalMs);
     }
 
     private async runTick() {
@@ -276,13 +263,10 @@ export class MessageBus {
                     const response = await this.withTimeout(
                         updater.tick(now),
                         this.resolveTimeoutMs(tickLabel, updater.messageTag),
-                        tickLabel
+                        tickLabel,
                     );
                     if (this.debug)
-                        console.log(
-                            `[${updater.messageTag}] outgoing tick response:`,
-                            response
-                        );
+                        console.log(`[${updater.messageTag}] outgoing tick response:`, response);
                     if (response && response.length > 0) {
                         self.clients
                             .matchAll({
@@ -298,11 +282,7 @@ export class MessageBus {
                             });
                     }
                 } catch (err) {
-                    if (this.debug)
-                        console.error(
-                            `[${updater.messageTag}] tick failed`,
-                            err
-                        );
+                    if (this.debug) console.error(`[${updater.messageTag}] tick failed`, err);
                 }
             }
         } finally {
@@ -324,9 +304,7 @@ export class MessageBus {
             // half-reset handlers. Restored to true after start() completes.
             this.initialized = false;
             await Promise.all(
-                Array.from(this.handlers.values()).map((h) =>
-                    h.stop().catch(() => {})
-                )
+                Array.from(this.handlers.values()).map((h) => h.stop().catch(() => {})),
             );
         }
         // Recompute the active timeout map from scratch so a prior init's
@@ -339,8 +317,7 @@ export class MessageBus {
         const services = await this.buildServicesFn(config);
         // Start all handlers
         for (const updater of this.handlers.values()) {
-            if (this.debug)
-                console.log(`Starting updater: ${updater.messageTag}`);
+            if (this.debug) console.log(`Starting updater: ${updater.messageTag}`);
             await updater.start(services, {
                 walletRepository: this.walletRepository,
             });
@@ -413,11 +390,7 @@ export class MessageBus {
         const { id, tag, broadcast } = event.data as RequestEnvelope;
 
         if (tag === "PING") {
-            this.deliverResponse(
-                event.source,
-                { id, tag: "PONG" },
-                { id, tag: "PONG" }
-            );
+            this.deliverResponse(event.source, { id, tag: "PONG" }, { id, tag: "PONG" });
             return;
         }
 
@@ -438,10 +411,7 @@ export class MessageBus {
 
         if (!this.initialized) {
             if (this.debug)
-                console.warn(
-                    "Event received before initialization, dropping",
-                    event.data
-                );
+                console.warn("Event received before initialization, dropping", event.data);
             // Send error response so the caller's promise rejects instead of
             // hanging forever. This happens when the browser kills and restarts
             // the service worker — the new instance has initialized=false and
@@ -454,28 +424,23 @@ export class MessageBus {
                     tag: fallbackTag,
                     error: new MessageBusNotInitializedError(),
                 },
-                { id, tag: fallbackTag }
+                { id, tag: fallbackTag },
             );
             return;
         }
 
         if (!id || !tag) {
             if (this.debug)
-                console.error(
-                    "Invalid message received, missing required fields:",
-                    event.data
-                );
+                console.error("Invalid message received, missing required fields:", event.data);
             const fallbackTag = tag ?? "unknown";
             this.deliverResponse(
                 event.source,
                 {
                     id,
                     tag: fallbackTag,
-                    error: new TypeError(
-                        "Invalid message received, missing required fields"
-                    ),
+                    error: new TypeError("Invalid message received, missing required fields"),
                 },
-                { id, tag: fallbackTag }
+                { id, tag: fallbackTag },
             );
             return;
         }
@@ -486,10 +451,7 @@ export class MessageBus {
             const updaters = Array.from(this.handlers.values());
             const entries = updaters.map((updater) => {
                 const label = this.labelFor(messageType, updater.messageTag);
-                const timeoutMs = this.resolveTimeoutMs(
-                    messageType,
-                    updater.messageTag
-                );
+                const timeoutMs = this.resolveTimeoutMs(messageType, updater.messageTag);
                 const handlerPromise = updater.handleMessage(event.data);
                 const raced = updater.isLongRunning?.(event.data)
                     ? handlerPromise
@@ -497,9 +459,7 @@ export class MessageBus {
                 return { updater, handlerPromise, raced };
             });
 
-            const results = await Promise.allSettled(
-                entries.map((e) => e.raced)
-            );
+            const results = await Promise.allSettled(entries.map((e) => e.raced));
 
             results.forEach((result, index) => {
                 const { updater, handlerPromise } = entries[index];
@@ -513,20 +473,13 @@ export class MessageBus {
                     this.deliverResponse(
                         event.source,
                         response ?? { id, tag: handlerTag },
-                        context
+                        context,
                     );
                 } else {
                     if (this.debug)
-                        console.error(
-                            `[${handlerTag}] handleMessage failed`,
-                            result.reason
-                        );
+                        console.error(`[${handlerTag}] handleMessage failed`, result.reason);
                     const error = toError(result.reason);
-                    this.deliverResponse(
-                        event.source,
-                        { id, tag: handlerTag, error },
-                        context
-                    );
+                    this.deliverResponse(event.source, { id, tag: handlerTag, error }, context);
                     // If the error was a timeout, keep watching the
                     // underlying handler and surface its eventual result
                     // under the same id.
@@ -536,7 +489,7 @@ export class MessageBus {
                             event.source,
                             id,
                             handlerTag,
-                            messageType
+                            messageType,
                         );
                     }
                 }
@@ -546,8 +499,7 @@ export class MessageBus {
 
         const updater = this.handlers.get(tag);
         if (!updater) {
-            if (this.debug)
-                console.warn(`[${tag}] unknown message tag, ignoring message`);
+            if (this.debug) console.warn(`[${tag}] unknown message tag, ignoring message`);
             this.deliverResponse(
                 event.source,
                 {
@@ -555,7 +507,7 @@ export class MessageBus {
                     tag,
                     error: new Error(`Unknown handler tag: ${tag}`),
                 },
-                { id, tag, messageType }
+                { id, tag, messageType },
             );
             return;
         }
@@ -568,16 +520,11 @@ export class MessageBus {
             const response = updater.isLongRunning?.(event.data)
                 ? await handlerPromise
                 : await this.withTimeout(handlerPromise, timeoutMs, label);
-            if (this.debug)
-                console.log(`[${tag}] outgoing response:`, response);
+            if (this.debug) console.log(`[${tag}] outgoing response:`, response);
             // Always deliver a response so the caller's message id never
             // goes silent. A handler returning null/undefined yields an
             // explicit ack envelope.
-            this.deliverResponse(
-                event.source,
-                response ?? { id, tag },
-                context
-            );
+            this.deliverResponse(event.source, response ?? { id, tag }, context);
         } catch (err) {
             if (this.debug) console.error(`[${tag}] handleMessage failed`, err);
             const error = toError(err);
@@ -585,13 +532,7 @@ export class MessageBus {
             // When we abandoned the handler via timeout, keep watching it
             // so the client's message id eventually gets a final response.
             if (err instanceof ServiceWorkerTimeoutError) {
-                this.attachLateDelivery(
-                    handlerPromise,
-                    event.source,
-                    id,
-                    tag,
-                    messageType
-                );
+                this.attachLateDelivery(handlerPromise, event.source, id, tag, messageType);
             }
         }
     }
@@ -602,18 +543,14 @@ export class MessageBus {
      * `attachLateDelivery` after catching the timeout to surface the
      * eventual result so the message id does not go silent.
      */
-    private withTimeout<T>(
-        promise: Promise<T>,
-        timeoutMs: number,
-        label: string
-    ): Promise<T> {
+    private withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
         if (timeoutMs <= 0) return promise;
         return new Promise((resolve, reject) => {
             const timer = self.setTimeout(() => {
                 reject(
                     new ServiceWorkerTimeoutError(
-                        `Message handler timed out after ${timeoutMs}ms (${label})`
-                    )
+                        `Message handler timed out after ${timeoutMs}ms (${label})`,
+                    ),
                 );
             }, timeoutMs);
             promise.then(
@@ -624,7 +561,7 @@ export class MessageBus {
                 (err) => {
                     self.clearTimeout(timer);
                     reject(err);
-                }
+                },
             );
         });
     }
@@ -644,25 +581,14 @@ export class MessageBus {
      * precedence over handler-tag overrides, with the bus-wide default
      * (`messageTimeoutMs`) as the final fallback.
      */
-    private resolveTimeoutMs(
-        messageType: string | undefined,
-        handlerTag: string
-    ): number {
+    private resolveTimeoutMs(messageType: string | undefined, handlerTag: string): number {
         if (
             messageType &&
-            Object.prototype.hasOwnProperty.call(
-                this.messageTimeoutOverrides,
-                messageType
-            )
+            Object.prototype.hasOwnProperty.call(this.messageTimeoutOverrides, messageType)
         ) {
             return this.messageTimeoutOverrides[messageType];
         }
-        if (
-            Object.prototype.hasOwnProperty.call(
-                this.messageTimeoutOverrides,
-                handlerTag
-            )
-        ) {
+        if (Object.prototype.hasOwnProperty.call(this.messageTimeoutOverrides, handlerTag)) {
             return this.messageTimeoutOverrides[handlerTag];
         }
         return this.messageTimeoutMs;
@@ -675,10 +601,7 @@ export class MessageBus {
      * client actually triggered (e.g. SETTLE) rather than just the
      * handler that received it (e.g. WALLET_UPDATER).
      */
-    private labelFor(
-        messageType: string | undefined,
-        handlerTag: string
-    ): string {
+    private labelFor(messageType: string | undefined, handlerTag: string): string {
         return messageType ? `${messageType} via ${handlerTag}` : handlerTag;
     }
 
@@ -690,17 +613,14 @@ export class MessageBus {
     private deliverResponse(
         source: ExtendableMessageEvent["source"],
         response: ResponseEnvelope,
-        context: { id?: string; tag: string; messageType?: string }
+        context: { id?: string; tag: string; messageType?: string },
     ): void {
         if (!source) {
             if (this.debug)
-                console.warn(
-                    `[${context.tag}] cannot deliver response: event.source is null`,
-                    {
-                        id: context.id,
-                        messageType: context.messageType,
-                    }
-                );
+                console.warn(`[${context.tag}] cannot deliver response: event.source is null`, {
+                    id: context.id,
+                    messageType: context.messageType,
+                });
             return;
         }
         source.postMessage(response);
@@ -719,7 +639,7 @@ export class MessageBus {
         source: ExtendableMessageEvent["source"],
         id: string,
         tag: string,
-        messageType: string | undefined
+        messageType: string | undefined,
     ): void {
         const context = { id, tag, messageType };
         const record: LateDelivery = {
@@ -734,10 +654,10 @@ export class MessageBus {
                         id,
                         tag,
                         error: new Error(
-                            `Operation abandoned: handler did not complete within ${LATE_DELIVERY_GRACE_MS}ms after timeout (${this.labelFor(messageType, tag)})`
+                            `Operation abandoned: handler did not complete within ${LATE_DELIVERY_GRACE_MS}ms after timeout (${this.labelFor(messageType, tag)})`,
                         ),
                     },
-                    context
+                    context,
                 );
             }, LATE_DELIVERY_GRACE_MS),
         };
@@ -756,12 +676,8 @@ export class MessageBus {
                 record.settled = true;
                 self.clearTimeout(record.deadline);
                 this.lateDeliveries.delete(record);
-                this.deliverResponse(
-                    source,
-                    { id, tag, error: toError(err) },
-                    context
-                );
-            }
+                this.deliverResponse(source, { id, tag, error: toError(err) }, context);
+            },
         );
     }
 

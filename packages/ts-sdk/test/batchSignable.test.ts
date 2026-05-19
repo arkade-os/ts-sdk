@@ -1,10 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import {
-    isBatchSignable,
-    BatchSignableIdentity,
-    SignRequest,
-    Identity,
-} from "../src/identity";
+import { isBatchSignable, BatchSignableIdentity, SignRequest, Identity } from "../src/identity";
 import { Transaction } from "../src/utils/transaction";
 import { SignerSession, TreeSignerSession } from "../src/tree/signingSession";
 
@@ -29,15 +24,14 @@ function stubIdentity(): Identity {
 }
 
 function stubBatchIdentity(
-    signMultipleFn?: (requests: SignRequest[]) => Promise<Transaction[]>
+    signMultipleFn?: (requests: SignRequest[]) => Promise<Transaction[]>,
 ): BatchSignableIdentity {
     const base = stubIdentity();
     return {
         ...base,
         signMultiple:
             signMultipleFn ??
-            (async (requests: SignRequest[]) =>
-                requests.map((r) => r.tx.clone())),
+            (async (requests: SignRequest[]) => requests.map((r) => r.tx.clone())),
     };
 }
 
@@ -86,10 +80,7 @@ describe("BatchSignableIdentity contract", () => {
         });
 
         const tx = new Transaction();
-        await identity.signMultiple([
-            { tx: tx.clone(), inputIndexes: [0, 2] },
-            { tx: tx.clone() },
-        ]);
+        await identity.signMultiple([{ tx: tx.clone(), inputIndexes: [0, 2] }, { tx: tx.clone() }]);
 
         expect(receivedRequests[0].inputIndexes).toEqual([0, 2]);
         expect(receivedRequests[1].inputIndexes).toBeUndefined();
@@ -105,11 +96,7 @@ describe("BatchSignableIdentity contract", () => {
         });
 
         const tx = new Transaction();
-        await identity.signMultiple([
-            { tx: tx.clone() },
-            { tx: tx.clone() },
-            { tx: tx.clone() },
-        ]);
+        await identity.signMultiple([{ tx: tx.clone() }, { tx: tx.clone() }, { tx: tx.clone() }]);
 
         expect(markers).toEqual(["signed-0", "signed-1", "signed-2"]);
     });

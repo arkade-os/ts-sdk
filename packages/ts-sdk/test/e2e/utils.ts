@@ -28,7 +28,7 @@ function ensureArkCliInitialized(): void {
     try {
         execSync(
             `${arkdExec} ark init --password secret --server-url localhost:7070 --explorer http://chopsticks:3000`,
-            { stdio: "pipe" }
+            { stdio: "pipe" },
         );
     } catch {
         // already initialized — ignore
@@ -146,9 +146,7 @@ export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> 
 }
 
 export function faucetOffchain(address: string, amount: number): void {
-    execCommand(
-        `${arkdExec} ark send --to ${address} --amount ${amount} --password secret`
-    );
+    execCommand(`${arkdExec} ark send --to ${address} --amount ${amount} --password secret`);
 }
 
 export function faucetOnchain(address: string, amount: number): void {
@@ -156,10 +154,7 @@ export function faucetOnchain(address: string, amount: number): void {
     execCommand(`nigiri faucet ${address} ${btc}`);
 }
 
-export async function createVtxo(
-    alice: TestArkWallet,
-    amount: number
-): Promise<string> {
+export async function createVtxo(alice: TestArkWallet, amount: number): Promise<string> {
     const address = await alice.wallet.getAddress();
     if (!address) throw new Error("Offchain address not defined.");
 
@@ -176,9 +171,7 @@ export async function createVtxo(
         outputs: [
             {
                 address,
-                amount: BigInt(
-                    virtualCoins.reduce((sum, vtxo) => sum + vtxo.value, 0)
-                ),
+                amount: BigInt(virtualCoins.reduce((sum, vtxo) => sum + vtxo.value, 0)),
             },
         ],
     });
@@ -218,7 +211,7 @@ export function clearFees(): void {
 
 export async function waitFor(
     fn: () => Promise<boolean>,
-    { timeout = 25_000, interval = 250 } = {}
+    { timeout = 25_000, interval = 250 } = {},
 ): Promise<void> {
     const start = Date.now();
     while (Date.now() - start < timeout) {
@@ -236,7 +229,7 @@ export async function waitFor(
  */
 export function createOverrideInfoArkProvider(
     real: ArkProvider,
-    overrides: Partial<ArkInfo>
+    overrides: Partial<ArkInfo>,
 ): ArkProvider {
     return new Proxy(real, {
         get(target, prop, receiver) {

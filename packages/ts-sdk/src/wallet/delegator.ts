@@ -49,7 +49,7 @@ export interface IDelegatorManager {
     delegate(
         vtxos: ContractVtxo[],
         destination: string,
-        delegateAt?: Date
+        delegateAt?: Date,
     ): Promise<{
         delegated: Outpoint[];
         failed: { outpoints: Outpoint[]; error: unknown }[];
@@ -64,7 +64,7 @@ export class DelegatorManagerImpl implements IDelegatorManager {
     constructor(
         readonly delegatorProvider: DelegatorProvider,
         readonly arkInfoProvider: Pick<ArkProvider, "getInfo">,
-        readonly identity: Identity
+        readonly identity: Identity,
     ) {}
 
     async getDelegateInfo(): Promise<DelegateInfo> {
@@ -74,7 +74,7 @@ export class DelegatorManagerImpl implements IDelegatorManager {
     async delegate(
         vtxos: ContractVtxo[],
         destination: string,
-        delegateAt?: Date
+        delegateAt?: Date,
     ): Promise<{
         delegated: Outpoint[];
         failed: { outpoints: Outpoint[]; error: unknown }[];
@@ -94,8 +94,7 @@ export class DelegatorManagerImpl implements IDelegatorManager {
         // ExtendedVirtualCoin shape required by makeDelegateForfeitTx.
         const eligible = vtxos.filter(
             (v): v is ContractVtxo & ExtendedVirtualCoin =>
-                isAnnotated(v) &&
-                findDelegateTapLeaf(v, delegateInfo.pubkey) !== undefined
+                isAnnotated(v) && findDelegateTapLeaf(v, delegateInfo.pubkey) !== undefined,
         );
         if (eligible.length === 0) {
             return { delegated: [], failed: [] };
@@ -111,7 +110,7 @@ export class DelegatorManagerImpl implements IDelegatorManager {
                     delegateInfo,
                     eligible,
                     destinationScript,
-                    delegateAt
+                    delegateAt,
                 );
             } catch (error) {
                 return {
@@ -136,10 +135,7 @@ export class DelegatorManagerImpl implements IDelegatorManager {
             if (!expiry) continue;
 
             const dayKey = getDayTimestamp(expiry);
-            groupByExpiry.set(dayKey, [
-                ...(groupByExpiry.get(dayKey) ?? []),
-                vtxo,
-            ]);
+            groupByExpiry.set(dayKey, [...(groupByExpiry.get(dayKey) ?? []), vtxo]);
         }
 
         // if no groups, it means we only need to delegate the recoverable virtual outputs
@@ -152,7 +148,7 @@ export class DelegatorManagerImpl implements IDelegatorManager {
                     delegateInfo,
                     recoverableVtxos,
                     destinationScript,
-                    delegateAt
+                    delegateAt,
                 );
             } catch (error) {
                 return {
@@ -181,9 +177,9 @@ export class DelegatorManagerImpl implements IDelegatorManager {
                     arkInfo,
                     delegateInfo,
                     vtxosGroup,
-                    destinationScript
-                )
-            )
+                    destinationScript,
+                ),
+            ),
         );
 
         const delegated: Outpoint[] = [];
@@ -218,26 +214,22 @@ async function delegate(
     delegateInfo: DelegateInfo,
     vtxos: ExtendedVirtualCoin[],
     destinationScript: Bytes,
-    delegateAt?: Date
+    delegateAt?: Date,
 ): Promise<void> {
     if (vtxos.length === 0) {
         throw new Error("unable to delegate: no vtxos provided");
     }
 
     if (!delegatorProvider) {
-        throw new Error(
-            "unable to delegate: delegator provider not configured"
-        );
+        throw new Error("unable to delegate: delegator provider not configured");
     }
 
     if (!delegateAt) {
         const expiryTimestamp = vtxos
-            .filter(
-                (coin) => !isRecoverable(coin) && coin.virtualStatus.batchExpiry
-            )
+            .filter((coin) => !isRecoverable(coin) && coin.virtualStatus.batchExpiry)
             .reduce(
                 (min, coin) => Math.min(min, coin.virtualStatus.batchExpiry!),
-                Number.MAX_SAFE_INTEGER
+                Number.MAX_SAFE_INTEGER,
             );
         if (!expiryTimestamp || expiryTimestamp === Number.MAX_SAFE_INTEGER) {
             // if no expiry (recoverable virtual outputs), delegate 1 minute from now
@@ -260,11 +252,11 @@ async function delegate(
         // replace now() function with the delegateAt timestamp
         offchainInput: fees.intentFee.offchainInput?.replace(
             "now()",
-            `double(${delegateAtSeconds})`
+            `double(${delegateAtSeconds})`,
         ),
         offchainOutput: fees.intentFee.offchainOutput?.replace(
             "now()",
-            `double(${delegateAtSeconds})`
+            `double(${delegateAtSeconds})`,
         ),
     });
 
@@ -329,11 +321,11 @@ async function delegate(
         [],
         [pubkey],
         delegateAtSeconds,
-        destinationScript
+        destinationScript,
     );
 
     const forfeitOutputScript = OutScript.encode(
-        Address(getNetwork(network as NetworkName)).decode(forfeitAddress)
+        Address(getNetwork(network as NetworkName)).decode(forfeitAddress),
     );
 
     const forfeits = await Promise.all(
@@ -345,10 +337,10 @@ async function delegate(
                     dust,
                     pubkey,
                     forfeitOutputScript,
-                    identity
+                    identity,
                 );
                 return base64.encode(forfeit.toPSBT());
-            })
+            }),
     );
 
     await delegatorProvider.delegate(registerIntent, forfeits);
@@ -359,13 +351,11 @@ async function makeDelegateForfeitTx(
     connectorAmount: bigint,
     delegatePubkey: string,
     forfeitOutputScript: Bytes,
-    identity: Identity
+    identity: Identity,
 ): Promise<Transaction> {
     const delegateTapLeaf = findDelegateTapLeaf(input, delegatePubkey);
     if (!delegateTapLeaf) {
-        throw new Error(
-            `delegate tap leaf not found for input: ${input.txid}:${input.vout}`
-        );
+        throw new Error(`delegate tap leaf not found for input: ${input.txid}:${input.vout}`);
     }
 
     const tx = buildForfeitTxWithOutput(
@@ -384,7 +374,7 @@ async function makeDelegateForfeitTx(
         {
             script: forfeitOutputScript,
             amount: BigInt(input.value) + connectorAmount,
-        }
+        },
     );
 
     return identity.sign(tx);
@@ -397,7 +387,7 @@ async function makeSignedDelegateIntent(
     onchainOutputsIndexes: number[],
     cosignerPubKeys: string[],
     validAt: number,
-    destinationScript: Bytes
+    destinationScript: Bytes,
 ): Promise<SignedIntent<Intent.RegisterMessage>> {
     // if some of the inputs hold assets, build the asset packet and append as output
     // in the intent proof tx, there is a "fake" input at index 0
@@ -414,16 +404,11 @@ async function makeSignedDelegateIntent(
 
     let outputAssets: Asset[] | undefined;
 
-    const assetOutputIndex = findDestinationOutputIndex(
-        outputs,
-        destinationScript
-    );
+    const assetOutputIndex = findDestinationOutputIndex(outputs, destinationScript);
 
     if (assetInputs.size > 0) {
         if (assetOutputIndex === -1) {
-            throw new Error(
-                "Cannot assign assets: no output matches the destination address"
-            );
+            throw new Error("Cannot assign assets: no output matches the destination address");
         }
         // collect all input assets and assign them to the first offchain output
         const allAssets = new Map<string, bigint>();
@@ -474,11 +459,9 @@ async function makeSignedDelegateIntent(
  */
 export function findDestinationOutputIndex(
     outputs: TransactionOutput[],
-    destinationScript: Bytes
+    destinationScript: Bytes,
 ): number {
-    return outputs.findIndex(
-        (o) => o.script && equalBytes(o.script, destinationScript)
-    );
+    return outputs.findIndex((o) => o.script && equalBytes(o.script, destinationScript));
 }
 
 function getDayTimestamp(timestamp: number): number {
@@ -489,11 +472,10 @@ function getDayTimestamp(timestamp: number): number {
 
 function findDelegateTapLeaf(
     vtxo: { tapTree?: Bytes },
-    delegatePubkey: string
+    delegatePubkey: string,
 ): TapLeafScript | undefined {
     if (!vtxo.tapTree) return undefined;
-    const pk =
-        delegatePubkey.length === 66 ? delegatePubkey.slice(2) : delegatePubkey;
+    const pk = delegatePubkey.length === 66 ? delegatePubkey.slice(2) : delegatePubkey;
     const vtxoScript = VtxoScript.decode(vtxo.tapTree);
     return vtxoScript.leaves.find((tapLeaf) => {
         const arkTapscript = decodeTapscript(scriptFromTapLeafScript(tapLeaf));

@@ -35,11 +35,8 @@ export function extractTimeLockFromLeafOutput(scriptHex: string): number {
             const data = opcodes[hasCSV - 1];
             if (data instanceof Uint8Array) {
                 const dataBytes = new Uint8Array(data).reverse(); // reverse for little-endian
-                const {
-                    blocks,
-                    seconds,
-                }: { blocks?: number; seconds?: number } = bip68.decode(
-                    parseInt(hex.encode(dataBytes), 16)
+                const { blocks, seconds }: { blocks?: number; seconds?: number } = bip68.decode(
+                    parseInt(hex.encode(dataBytes), 16),
                 );
                 return blocks ?? seconds ?? 0;
             }
@@ -58,10 +55,7 @@ export function extractTimeLockFromLeafOutput(scriptHex: string): number {
  * @param fees fees structure (we need reverse fees)
  * @returns invoice amount in sats before fees
  */
-export function extractInvoiceAmount(
-    amountSats: number | undefined,
-    fees: FeesResponse
-): number {
+export function extractInvoiceAmount(amountSats: number | undefined, fees: FeesResponse): number {
     // validate inputs
     if (!amountSats) return 0;
     const { percentage, minerFees } = fees.reverse;

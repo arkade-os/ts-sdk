@@ -32,24 +32,20 @@ export function isMainnetDescriptor(descriptor: string): boolean {
 export function descriptorIsOurs(
     candidate: string,
     ourDescriptor: string,
-    ourXOnlyPubkey: Uint8Array
+    ourXOnlyPubkey: Uint8Array,
 ): boolean {
     if (!isDescriptor(candidate)) return false;
     try {
         const candidateInfo = expand({
             descriptor: candidate,
-            network: isMainnetDescriptor(candidate)
-                ? networks.bitcoin
-                : networks.testnet,
+            network: isMainnetDescriptor(candidate) ? networks.bitcoin : networks.testnet,
         }).expansionMap?.["@0"];
         if (!candidateInfo) return false;
 
         if (candidateInfo.bip32) {
             const ourBip32 = expand({
                 descriptor: ourDescriptor,
-                network: isMainnetDescriptor(ourDescriptor)
-                    ? networks.bitcoin
-                    : networks.testnet,
+                network: isMainnetDescriptor(ourDescriptor) ? networks.bitcoin : networks.testnet,
             }).expansionMap?.["@0"]?.bip32;
             if (!ourBip32) return false;
             return ourBip32.toBase58() === candidateInfo.bip32.toBase58();
@@ -95,9 +91,7 @@ export function isDescriptor(value: string): boolean {
  */
 export function normalizeToDescriptor(value: string): string {
     if (typeof value !== "string" || value.length === 0) {
-        throw new Error(
-            "normalizeToDescriptor: expected a non-empty string value"
-        );
+        throw new Error("normalizeToDescriptor: expected a non-empty string value");
     }
     if (isDescriptor(value)) {
         return value;
@@ -115,15 +109,11 @@ export function extractPubKey(descriptor: string): string {
         return descriptor;
     }
 
-    const network = isMainnetDescriptor(descriptor)
-        ? networks.bitcoin
-        : networks.testnet;
+    const network = isMainnetDescriptor(descriptor) ? networks.bitcoin : networks.testnet;
     const expansion = expand({ descriptor, network });
 
     if (!expansion.expansionMap) {
-        throw new Error(
-            "Cannot extract pubkey from descriptor: expansion failed."
-        );
+        throw new Error("Cannot extract pubkey from descriptor: expansion failed.");
     }
 
     const key = expansion.expansionMap["@0"];
@@ -132,7 +122,7 @@ export function extractPubKey(descriptor: string): string {
     if (key?.bip32) {
         throw new Error(
             "Cannot extract pubkey from HD descriptor without derivation. " +
-                "Use DescriptorProvider to derive the key from the xpub."
+                "Use DescriptorProvider to derive the key from the xpub.",
         );
     }
 
@@ -156,30 +146,21 @@ export interface ParsedHDDescriptor {
  * HD descriptors have the format: tr([fingerprint/path']xpub/derivation)
  * Returns null if the descriptor is not in HD format.
  */
-export function parseHDDescriptor(
-    descriptor: string
-): ParsedHDDescriptor | null {
+export function parseHDDescriptor(descriptor: string): ParsedHDDescriptor | null {
     if (!isDescriptor(descriptor)) {
         return null;
     }
 
     let expansion;
     try {
-        const network = isMainnetDescriptor(descriptor)
-            ? networks.bitcoin
-            : networks.testnet;
+        const network = isMainnetDescriptor(descriptor) ? networks.bitcoin : networks.testnet;
         expansion = expand({ descriptor, network });
     } catch {
         return null;
     }
 
     const key = expansion.expansionMap?.["@0"];
-    if (
-        !key?.masterFingerprint ||
-        !key.originPath ||
-        !key.keyPath ||
-        !key.bip32
-    ) {
+    if (!key?.masterFingerprint || !key.originPath || !key.keyPath || !key.bip32) {
         return null;
     }
 

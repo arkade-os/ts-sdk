@@ -7,9 +7,7 @@ import { ElectrumOnchainProvider, WsElectrumChainSource } from "../src";
 import { networks } from "../src/networks";
 
 function regtestAddressFromHash(hash160: Uint8Array): string {
-    return Address(networks.regtest).encode(
-        OutScript.decode(p2wpkhScript(hash160))
-    );
+    return Address(networks.regtest).encode(OutScript.decode(p2wpkhScript(hash160)));
 }
 
 /**
@@ -73,10 +71,7 @@ function createMockWS(): {
  * `safeBatchRequest` (the in-house replacement for the library's leaky
  * `batchRequest`) consumes — one ws.request call per batch element.
  */
-function mockBatch<T>(
-    mock: ReturnType<typeof vi.fn>,
-    responses: T[]
-): ReturnType<typeof vi.fn> {
+function mockBatch<T>(mock: ReturnType<typeof vi.fn>, responses: T[]): ReturnType<typeof vi.fn> {
     for (const r of responses) mock.mockResolvedValueOnce(r);
     return mock;
 }
@@ -84,8 +79,7 @@ function mockBatch<T>(
 // Bitcoin genesis block header (mainnet)
 const GENESIS_HEADER_HEX =
     "0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c";
-const GENESIS_BLOCK_HASH =
-    "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
+const GENESIS_BLOCK_HASH = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
 const GENESIS_BLOCK_TIME = 1231006505;
 
 const REGTEST_ADDRESS = "bcrt1q679zsd45msawvr7782r0twvmukns3drlstjt77";
@@ -107,9 +101,7 @@ function buildSegwitTxWithWitness(): {
     // Inputs and outputs must be added BEFORE the witness — @scure/btc-signer
     // locks the output set once any input is finalized.
     tx.addInput({
-        txid: hex.decode(
-            "0000000000000000000000000000000000000000000000000000000000000005"
-        ),
+        txid: hex.decode("0000000000000000000000000000000000000000000000000000000000000005"),
         index: 0,
         sequence: 0xffffffff,
     });
@@ -142,9 +134,7 @@ function buildTestTx(): { txHex: string; scripts: Uint8Array[] } {
         allowUnknownInputs: true,
     });
     tx.addInput({
-        txid: hex.decode(
-            "0000000000000000000000000000000000000000000000000000000000000001"
-        ),
+        txid: hex.decode("0000000000000000000000000000000000000000000000000000000000000001"),
         index: 0,
         sequence: 0xffffffff,
     });
@@ -187,7 +177,7 @@ describe("ElectrumOnchainProvider", () => {
         wsMock = createMockWS();
         provider = new ElectrumOnchainProvider(
             wsMock.ws as unknown as ElectrumWS,
-            networks.regtest
+            networks.regtest,
         );
     });
 
@@ -211,9 +201,7 @@ describe("ElectrumOnchainProvider", () => {
             const coins = await provider.getCoins(REGTEST_ADDRESS);
 
             expect(wsMock.request).toHaveBeenCalledTimes(1);
-            expect(wsMock.request.mock.calls[0][0]).toBe(
-                "blockchain.scripthash.listunspent"
-            );
+            expect(wsMock.request.mock.calls[0][0]).toBe("blockchain.scripthash.listunspent");
             expect(coins).toEqual([
                 {
                     txid: "abcd1234",
@@ -265,9 +253,7 @@ describe("ElectrumOnchainProvider", () => {
             const txid = await provider.broadcastTransaction("0200000000");
             expect(txid).toBe("deadbeef");
             expect(wsMock.request).toHaveBeenCalledTimes(1);
-            expect(wsMock.request.mock.calls[0][0]).toBe(
-                "blockchain.transaction.broadcast"
-            );
+            expect(wsMock.request.mock.calls[0][0]).toBe("blockchain.transaction.broadcast");
         });
 
         it("broadcasts a 1P1C package atomically via broadcast_package and returns the child txid (segwit witness-stripped)", async () => {
@@ -276,11 +262,7 @@ describe("ElectrumOnchainProvider", () => {
             // doesn't return a txid; we must derive the *txid* (legacy
             // hash) — emitting the wtxid would silently break downstream
             // tracking on every Ark transaction.
-            const {
-                txHex: childHex,
-                expectedTxid,
-                expectedWtxid,
-            } = buildSegwitTxWithWitness();
+            const { txHex: childHex, expectedTxid, expectedWtxid } = buildSegwitTxWithWitness();
             // Sanity check: the test fixture must actually exercise the
             // bug path (id != hash means witness data is present).
             expect(expectedTxid).not.toBe(expectedWtxid);
@@ -290,10 +272,7 @@ describe("ElectrumOnchainProvider", () => {
                 errors: null,
             });
 
-            const result = await provider.broadcastTransaction(
-                "parentHex",
-                childHex
-            );
+            const result = await provider.broadcastTransaction("parentHex", childHex);
 
             expect(result).toBe(expectedTxid);
             expect(result).not.toBe(expectedWtxid);
@@ -311,9 +290,9 @@ describe("ElectrumOnchainProvider", () => {
                 errors: [{ txid: "abc", error: "min relay fee not met" }],
             });
 
-            await expect(
-                provider.broadcastTransaction("parentHex", "childHex")
-            ).rejects.toThrow(/min relay fee not met/);
+            await expect(provider.broadcastTransaction("parentHex", "childHex")).rejects.toThrow(
+                /min relay fee not met/,
+            );
         });
 
         it("propagates 'method not found' errors instead of silently falling back", async () => {
@@ -322,21 +301,21 @@ describe("ElectrumOnchainProvider", () => {
             // silently downgrade to sequential broadcast because TRUC
             // packages would fail in subtle ways.
             const methodNotFound = new Error(
-                "unknown method 'blockchain.transaction.broadcast_package'"
+                "unknown method 'blockchain.transaction.broadcast_package'",
             );
             wsMock.request.mockRejectedValueOnce(methodNotFound);
 
-            await expect(
-                provider.broadcastTransaction("parentHex", "childHex")
-            ).rejects.toThrow(/broadcast_package/);
+            await expect(provider.broadcastTransaction("parentHex", "childHex")).rejects.toThrow(
+                /broadcast_package/,
+            );
             // Critical: only one ws.request call — no sequential fallback.
             expect(wsMock.request).toHaveBeenCalledTimes(1);
         });
 
         it("throws for 3+ transactions", async () => {
-            await expect(
-                provider.broadcastTransaction("a", "b", "c")
-            ).rejects.toThrow(/Only 1 or 1P1C package/);
+            await expect(provider.broadcastTransaction("a", "b", "c")).rejects.toThrow(
+                /Only 1 or 1P1C package/,
+            );
         });
     });
 
@@ -348,15 +327,12 @@ describe("ElectrumOnchainProvider", () => {
      */
     function deliverHeadersTip(
         subscribeMock: ReturnType<typeof vi.fn>,
-        tip: { height: number; hex: string }
+        tip: { height: number; hex: string },
     ): void {
         subscribeMock.mockImplementationOnce(
-            async (
-                method: string,
-                cb: (header: { height: number; hex: string }) => void
-            ) => {
+            async (method: string, cb: (header: { height: number; hex: string }) => void) => {
                 if (method === "blockchain.headers") cb(tip);
-            }
+            },
         );
     }
 
@@ -391,17 +367,12 @@ describe("ElectrumOnchainProvider", () => {
 
         it("updates the cached tip when the server pushes a new header", async () => {
             // Stash the callback so we can fire a notification later.
-            let pushHeader:
-                | ((h: { height: number; hex: string }) => void)
-                | undefined;
+            let pushHeader: ((h: { height: number; hex: string }) => void) | undefined;
             wsMock.subscribe.mockImplementationOnce(
-                async (
-                    _method: string,
-                    cb: (h: { height: number; hex: string }) => void
-                ) => {
+                async (_method: string, cb: (h: { height: number; hex: string }) => void) => {
                     pushHeader = cb;
                     cb({ height: 100, hex: GENESIS_HEADER_HEX });
-                }
+                },
             );
 
             const tip1 = await provider.getChainTip();
@@ -421,9 +392,7 @@ describe("ElectrumOnchainProvider", () => {
             // electrs raises an error for txs not yet in a block; fetchTxMerkle
             // catches and returns null. Either error or a resolved {block_height: 0}
             // path is acceptable, but error is the realistic electrs case.
-            wsMock.request.mockRejectedValueOnce(
-                new Error("Transaction not yet in a block")
-            );
+            wsMock.request.mockRejectedValueOnce(new Error("Transaction not yet in a block"));
             expect(await provider.getTxStatus("abc")).toEqual({
                 confirmed: false,
             });
@@ -471,12 +440,8 @@ describe("ElectrumOnchainProvider", () => {
             // Real backend errors (auth, network, malformed payload) MUST
             // surface — silently treating them as "mempool / unconfirmed"
             // would freeze any caller polling getTxStatus on a confirmed tx.
-            wsMock.request.mockRejectedValueOnce(
-                new Error("Authentication required")
-            );
-            await expect(provider.getTxStatus("abc")).rejects.toThrow(
-                /Authentication required/
-            );
+            wsMock.request.mockRejectedValueOnce(new Error("Authentication required"));
+            await expect(provider.getTxStatus("abc")).rejects.toThrow(/Authentication required/);
         });
 
         it("returns confirmed=true with blockTime=0 when block.header races with index lag (missingheight)", async () => {
@@ -504,9 +469,7 @@ describe("ElectrumOnchainProvider", () => {
                 .mockResolvedValueOnce({ block_height: 200 })
                 .mockRejectedValueOnce(new Error("Network unreachable"));
 
-            await expect(provider.getTxStatus("abc")).rejects.toThrow(
-                /Network unreachable/
-            );
+            await expect(provider.getTxStatus("abc")).rejects.toThrow(/Network unreachable/);
         });
     });
 
@@ -523,9 +486,7 @@ describe("ElectrumOnchainProvider", () => {
             const { txHex } = buildTestTx();
 
             // 1. fetchHistory(script) — ws.request
-            wsMock.request.mockResolvedValueOnce([
-                { tx_hash: "tx1", height: 100 },
-            ]);
+            wsMock.request.mockResolvedValueOnce([{ tx_hash: "tx1", height: 100 }]);
             // 2. fetchTransactions([txid]) — ws.batchRequest returns raw hex
             mockBatch(wsMock.request, [txHex]);
             // 3. Per-height fetchBlockHeader for height 100 — ws.request
@@ -550,18 +511,14 @@ describe("ElectrumOnchainProvider", () => {
             // non-verbose form is fine and IS used for raw tx hex; the
             // marker for the verbose form is the boolean second param.
             const verboseTxCalls = wsMock.request.mock.calls.filter(
-                (c) =>
-                    c[0] === "blockchain.transaction.get" &&
-                    c[c.length - 1] === true
+                (c) => c[0] === "blockchain.transaction.get" && c[c.length - 1] === true,
             );
             expect(verboseTxCalls).toHaveLength(0);
         });
 
         it("treats height=0 entries as unconfirmed (mempool)", async () => {
             const { txHex } = buildTestTx();
-            wsMock.request.mockResolvedValueOnce([
-                { tx_hash: "txm", height: 0 },
-            ]);
+            wsMock.request.mockResolvedValueOnce([{ tx_hash: "txm", height: 0 }]);
             mockBatch(wsMock.request, [txHex]);
             // No block headers fetched: zero unique confirmed heights.
 
@@ -585,7 +542,7 @@ describe("ElectrumOnchainProvider", () => {
             const txs = await provider.getTransactions(REGTEST_ADDRESS);
             expect(txs).toHaveLength(3);
             const headerCalls = wsMock.request.mock.calls.filter(
-                (c) => c[0] === "blockchain.block.header"
+                (c) => c[0] === "blockchain.block.header",
             );
             expect(headerCalls).toHaveLength(2);
         });
@@ -646,24 +603,22 @@ describe("ElectrumOnchainProvider", () => {
         });
 
         it("rejects malformed addresses with a descriptive error", async () => {
-            await expect(
-                provider.getTransactions("not-a-real-address")
-            ).rejects.toThrow(/Invalid address not-a-real-address/);
+            await expect(provider.getTransactions("not-a-real-address")).rejects.toThrow(
+                /Invalid address not-a-real-address/,
+            );
         });
 
         it("propagates parse errors with the offending txid (no silent empty vout)", async () => {
             // If the daemon returns gibberish for a tx, surfacing an empty
             // vout would silently hide outputs (e.g. a deposit). Fail loud
             // instead — let the caller decide whether to retry or skip.
-            wsMock.request.mockResolvedValueOnce([
-                { tx_hash: "txbad", height: 100 },
-            ]);
+            wsMock.request.mockResolvedValueOnce([{ tx_hash: "txbad", height: 100 }]);
             mockBatch(wsMock.request, ["zz"]); // not valid hex
             wsMock.request.mockResolvedValueOnce(GENESIS_HEADER_HEX); // header for height 100
 
-            await expect(
-                provider.getTransactions(REGTEST_ADDRESS)
-            ).rejects.toThrow(/Failed to parse raw tx for txbad/);
+            await expect(provider.getTransactions(REGTEST_ADDRESS)).rejects.toThrow(
+                /Failed to parse raw tx for txbad/,
+            );
         });
     });
 
@@ -686,32 +641,26 @@ describe("ElectrumOnchainProvider", () => {
                 async (
                     method: string,
                     cb: (s: string, status: string | null) => void,
-                    scripthash: string
+                    scripthash: string,
                 ) => {
                     if (method === "blockchain.scripthash") {
                         subscribeCallbacks.set(scripthash, cb);
                     }
-                }
+                },
             );
 
             const events: unknown[] = [];
-            const stop = await provider.watchAddresses([addr1, addr2], (txs) =>
-                events.push(txs)
-            );
+            const stop = await provider.watchAddresses([addr1, addr2], (txs) => events.push(txs));
 
             // Both subscribes must have been registered before resolving.
             expect(subscribeCallbacks.size).toBe(2);
 
             // Server pushes a status update for addr1 — provider must refetch
             // history and report the new tx via callback.
-            const [firstScripthash, firstCb] = [
-                ...subscribeCallbacks.entries(),
-            ][0];
+            const [firstScripthash, firstCb] = [...subscribeCallbacks.entries()][0];
             const { txHex } = buildTestTx();
             // 1. fetchHistory(script) — sees a new tx on this script
-            wsMock.request.mockResolvedValueOnce([
-                { tx_hash: "newtx", height: 100 },
-            ]);
+            wsMock.request.mockResolvedValueOnce([{ tx_hash: "newtx", height: 100 }]);
             // 2. fetchTransactions batchRequest for raw tx hex
             mockBatch(wsMock.request, [txHex]);
             // 3. Per-height block.header request (no longer batched)
@@ -749,12 +698,12 @@ describe("ElectrumOnchainProvider", () => {
                 async (
                     method: string,
                     cb: (s: string, status: string | null) => void,
-                    scripthash: string
+                    scripthash: string,
                 ) => {
                     if (method === "blockchain.scripthash") {
                         subscribeCallbacks.set(scripthash, cb);
                     }
-                }
+                },
             );
 
             // Callback throws on first invocation, succeeds on second.
@@ -773,26 +722,20 @@ describe("ElectrumOnchainProvider", () => {
 
             // First notification: history sees newtx, parse succeeds, but
             // the user callback throws.
-            wsMock.request.mockResolvedValueOnce([
-                { tx_hash: "newtx", height: 100 },
-            ]);
+            wsMock.request.mockResolvedValueOnce([{ tx_hash: "newtx", height: 100 }]);
             mockBatch(wsMock.request, [txHex]); // raw tx
             wsMock.request.mockResolvedValueOnce(GENESIS_HEADER_HEX); // header
             cb(scripthash, "status1");
-            for (let i = 0; i < 6; i++)
-                await new Promise((r) => setTimeout(r, 0));
+            for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
             expect(events).toHaveLength(0); // first call threw
 
             // Second notification: same newtx still in history. Provider
             // must NOT have marked it seen — should re-attempt delivery.
-            wsMock.request.mockResolvedValueOnce([
-                { tx_hash: "newtx", height: 100 },
-            ]);
+            wsMock.request.mockResolvedValueOnce([{ tx_hash: "newtx", height: 100 }]);
             mockBatch(wsMock.request, [txHex]);
             wsMock.request.mockResolvedValueOnce(GENESIS_HEADER_HEX);
             cb(scripthash, "status2");
-            for (let i = 0; i < 6; i++)
-                await new Promise((r) => setTimeout(r, 0));
+            for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
 
             expect(events).toHaveLength(1);
             const delivered = (events[0] as Array<{ txid: string }>)[0];
@@ -804,9 +747,7 @@ describe("ElectrumOnchainProvider", () => {
 
     describe("getTxOutspends", () => {
         const { txHex, scripts } = buildTestTx();
-        const parentTxid = hex.encode(
-            sha256(sha256(hex.decode(txHex))).reverse()
-        );
+        const parentTxid = hex.encode(sha256(sha256(hex.decode(txHex))).reverse());
         const scriptHashes = scripts.map(toScriptHash);
 
         it("returns all-unspent when both outputs are in listunspent", async () => {
@@ -842,9 +783,7 @@ describe("ElectrumOnchainProvider", () => {
 
         it("resolves simple spent case via single history candidate", async () => {
             const spenderHex = buildSpendingTx(parentTxid, 0);
-            const spenderTxid = hex.encode(
-                sha256(sha256(hex.decode(spenderHex))).reverse()
-            );
+            const spenderTxid = hex.encode(sha256(sha256(hex.decode(spenderHex))).reverse());
 
             // Step 1: fetchTransactions for creator
             mockBatch(wsMock.request, [txHex]);
@@ -880,15 +819,13 @@ describe("ElectrumOnchainProvider", () => {
             // Create two candidate spenders — only one actually spends vout 0
             const realSpenderHex = buildSpendingTx(parentTxid, 0);
             const realSpenderTxid = hex.encode(
-                sha256(sha256(hex.decode(realSpenderHex))).reverse()
+                sha256(sha256(hex.decode(realSpenderHex))).reverse(),
             );
             const decoyHex = buildSpendingTx(
                 "0000000000000000000000000000000000000000000000000000000000000099",
-                3
+                3,
             );
-            const decoyTxid = hex.encode(
-                sha256(sha256(hex.decode(decoyHex))).reverse()
-            );
+            const decoyTxid = hex.encode(sha256(sha256(hex.decode(decoyHex))).reverse());
 
             // Step 1: fetch parent
             mockBatch(wsMock.request, [txHex]);
@@ -938,10 +875,7 @@ describe("WsElectrumChainSource", () => {
 
     beforeEach(() => {
         wsMock = createMockWS();
-        chain = new WsElectrumChainSource(
-            wsMock.ws as unknown as ElectrumWS,
-            networks.regtest
-        );
+        chain = new WsElectrumChainSource(wsMock.ws as unknown as ElectrumWS, networks.regtest);
     });
 
     describe("fetchBlockHeader / fetchBlockHeaders", () => {
@@ -961,7 +895,7 @@ describe("WsElectrumChainSource", () => {
             ]);
             // Three ws.request calls, no library batchRequest.
             const headerCalls = wsMock.request.mock.calls.filter(
-                (c) => c[0] === "blockchain.block.header"
+                (c) => c[0] === "blockchain.block.header",
             );
             expect(headerCalls).toHaveLength(3);
             expect(wsMock.batchRequest).not.toHaveBeenCalled();
@@ -983,27 +917,21 @@ describe("WsElectrumChainSource", () => {
             // safeBatchRequest forwards the rejection; the chain's retry
             // loop catches it and attempts again.
             wsMock.request
-                .mockRejectedValueOnce(
-                    new Error("daemon error: missingtransaction")
-                )
+                .mockRejectedValueOnce(new Error("daemon error: missingtransaction"))
                 .mockResolvedValueOnce("0200"); // second attempt succeeds
 
             const result = await chain.fetchTransactions(["tx1"]);
             expect(result).toEqual([{ txID: "tx1", hex: "0200" }]);
             // Two ws.request calls (one per attempt).
             const txGetCalls = wsMock.request.mock.calls.filter(
-                (c) => c[0] === "blockchain.transaction.get"
+                (c) => c[0] === "blockchain.transaction.get",
             );
             expect(txGetCalls).toHaveLength(2);
         });
 
         it("propagates non-missing errors immediately", async () => {
-            wsMock.request.mockRejectedValueOnce(
-                new Error("connection refused")
-            );
-            await expect(chain.fetchTransactions(["tx1"])).rejects.toThrow(
-                "connection refused"
-            );
+            wsMock.request.mockRejectedValueOnce(new Error("connection refused"));
+            await expect(chain.fetchTransactions(["tx1"])).rejects.toThrow("connection refused");
         });
     });
 
@@ -1017,33 +945,24 @@ describe("WsElectrumChainSource", () => {
             wsMock.request.mockResolvedValueOnce(0.0002);
             const rate = await chain.estimateFees(6);
             expect(rate).toBe(0.0002);
-            expect(wsMock.request).toHaveBeenCalledWith(
-                "blockchain.estimatefee",
-                6
-            );
+            expect(wsMock.request).toHaveBeenCalledWith("blockchain.estimatefee", 6);
         });
     });
 
     describe("broadcastTransaction", () => {
         it("forwards tx hex to electrum broadcast method", async () => {
             wsMock.request.mockResolvedValueOnce("broadcasttxid");
-            expect(await chain.broadcastTransaction("rawhex")).toBe(
-                "broadcasttxid"
-            );
+            expect(await chain.broadcastTransaction("rawhex")).toBe("broadcasttxid");
             expect(wsMock.request).toHaveBeenCalledWith(
                 "blockchain.transaction.broadcast",
-                "rawhex"
+                "rawhex",
             );
         });
     });
 
     describe("broadcastPackage", () => {
         it("returns the locally-derived txid (witness-stripped) on success", async () => {
-            const {
-                txHex: childHex,
-                expectedTxid,
-                expectedWtxid,
-            } = buildSegwitTxWithWitness();
+            const { txHex: childHex, expectedTxid, expectedWtxid } = buildSegwitTxWithWitness();
             expect(expectedTxid).not.toBe(expectedWtxid);
 
             wsMock.request.mockResolvedValueOnce({
@@ -1051,13 +970,11 @@ describe("WsElectrumChainSource", () => {
                 errors: null,
             });
 
-            expect(await chain.broadcastPackage(["parentHex", childHex])).toBe(
-                expectedTxid
-            );
+            expect(await chain.broadcastPackage(["parentHex", childHex])).toBe(expectedTxid);
             expect(wsMock.request).toHaveBeenCalledWith(
                 "blockchain.transaction.broadcast_package",
                 ["parentHex", childHex],
-                false
+                false,
             );
         });
 
@@ -1068,15 +985,13 @@ describe("WsElectrumChainSource", () => {
             });
 
             await expect(chain.broadcastPackage(["a", "b"])).rejects.toThrow(
-                /txn-mempool-conflict/
+                /txn-mempool-conflict/,
             );
         });
 
         it("throws 'unknown error' when success=false but errors is missing", async () => {
             wsMock.request.mockResolvedValueOnce({ success: false });
-            await expect(chain.broadcastPackage(["a", "b"])).rejects.toThrow(
-                /unknown error/
-            );
+            await expect(chain.broadcastPackage(["a", "b"])).rejects.toThrow(/unknown error/);
         });
     });
 

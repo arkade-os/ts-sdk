@@ -21,10 +21,7 @@ import * as BackgroundTask from "expo-background-task";
 
 import type { TaskItem } from "@arkade-os/sdk/worker/expo";
 import { runTasks } from "@arkade-os/sdk/worker/expo";
-import {
-    ExpoArkProvider,
-    ExpoIndexerProvider,
-} from "@arkade-os/sdk/adapters/expo";
+import { ExpoArkProvider, ExpoIndexerProvider } from "@arkade-os/sdk/adapters/expo";
 import type { IWallet } from "@arkade-os/sdk";
 import { BoltzSwapProvider } from "../boltz-swap-provider";
 import { swapsPollProcessor, SWAP_POLL_TASK_TYPE } from "./swapsPollProcessor";
@@ -57,7 +54,7 @@ function createBackgroundWalletShim(args: {
 }): IWallet {
     const notImplemented = (method: keyof IWallet): never => {
         throw new Error(
-            `[boltz-swap] Background wallet shim: "${String(method)}" is not implemented`
+            `[boltz-swap] Background wallet shim: "${String(method)}" is not implemented`,
         );
     };
 
@@ -68,8 +65,7 @@ function createBackgroundWalletShim(args: {
         getBalance: async () => notImplemented("getBalance"),
         getVtxos: async () => notImplemented("getVtxos"),
         getBoardingUtxos: async () => notImplemented("getBoardingUtxos"),
-        getTransactionHistory: async () =>
-            notImplemented("getTransactionHistory"),
+        getTransactionHistory: async () => notImplemented("getTransactionHistory"),
         getContractManager: async () => notImplemented("getContractManager"),
         getDelegatorManager: async () => notImplemented("getDelegatorManager"),
         sendBitcoin: async () => notImplemented("sendBitcoin"),
@@ -113,14 +109,13 @@ function createBackgroundWalletShim(args: {
  */
 export function defineExpoSwapBackgroundTask(
     taskName: string,
-    options: DefineSwapBackgroundTaskOptions
+    options: DefineSwapBackgroundTaskOptions,
 ): void {
     const { taskQueue, swapRepository, identityFactory } = options;
 
     TaskManager.defineTask(taskName, async () => {
         try {
-            const config =
-                await taskQueue.loadConfig<PersistedSwapBackgroundConfig>();
+            const config = await taskQueue.loadConfig<PersistedSwapBackgroundConfig>();
             if (!config) {
                 // No config persisted yet — ExpoArkadeSwaps.setup() hasn't run.
                 return BackgroundTask.BackgroundTaskResult.Success;
@@ -129,9 +124,7 @@ export function defineExpoSwapBackgroundTask(
             const identity = await identityFactory();
 
             const arkProvider = new ExpoArkProvider(config.arkServerUrl);
-            const indexerProvider = new ExpoIndexerProvider(
-                config.arkServerUrl
-            );
+            const indexerProvider = new ExpoIndexerProvider(config.arkServerUrl);
             const swapProvider = new BoltzSwapProvider({
                 network: config.network,
                 apiUrl: config.boltzApiUrl,
@@ -146,15 +139,9 @@ export function defineExpoSwapBackgroundTask(
                     const pubkey = await identity.xOnlyPublicKey();
                     const serverPubKey = hex.decode(info.signerPubkey);
                     const xOnlyServerPubKey =
-                        serverPubKey.length === 33
-                            ? serverPubKey.slice(1)
-                            : serverPubKey;
+                        serverPubKey.length === 33 ? serverPubKey.slice(1) : serverPubKey;
                     const hrp = info.network === "bitcoin" ? "ark" : "tark";
-                    return new ArkAddress(
-                        xOnlyServerPubKey,
-                        pubkey,
-                        hrp
-                    ).encode();
+                    return new ArkAddress(xOnlyServerPubKey, pubkey, hrp).encode();
                 },
             });
 
@@ -172,9 +159,7 @@ export function defineExpoSwapBackgroundTask(
             // Acknowledge outbox results (no foreground to consume them)
             const results = await taskQueue.getResults();
             if (results.length > 0) {
-                await taskQueue.acknowledgeResults(
-                    results.map((r: { id: string }) => r.id)
-                );
+                await taskQueue.acknowledgeResults(results.map((r: { id: string }) => r.id));
             }
 
             // Re-seed the swap-poll task for the next OS wake
@@ -193,7 +178,7 @@ export function defineExpoSwapBackgroundTask(
         } catch (error) {
             console.error(
                 "[boltz-swap] Background task failed:",
-                error instanceof Error ? error.message : error
+                error instanceof Error ? error.message : error,
             );
             return BackgroundTask.BackgroundTaskResult.Failed;
         }
@@ -215,7 +200,7 @@ export function defineExpoSwapBackgroundTask(
  */
 export async function registerExpoSwapBackgroundTask(
     taskName: string,
-    options?: { minimumInterval?: number }
+    options?: { minimumInterval?: number },
 ): Promise<void> {
     await BackgroundTask.registerTaskAsync(taskName, {
         minimumInterval: options?.minimumInterval ?? 15,
@@ -229,8 +214,6 @@ export async function registerExpoSwapBackgroundTask(
  * task lifecycle is the consumer's responsibility, matching the explicit
  * `register` step.
  */
-export async function unregisterExpoSwapBackgroundTask(
-    taskName: string
-): Promise<void> {
+export async function unregisterExpoSwapBackgroundTask(taskName: string): Promise<void> {
     await BackgroundTask.unregisterTaskAsync(taskName);
 }

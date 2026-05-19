@@ -1,16 +1,6 @@
 import { Environment, ParseResult } from "@marcbachmann/cel-js";
-import {
-    IntentOffchainInputEnv,
-    IntentOnchainInputEnv,
-    IntentOutputEnv,
-} from "./celenv.js";
-import {
-    IntentFeeConfig,
-    OffchainInput,
-    OnchainInput,
-    FeeOutput,
-    FeeAmount,
-} from "./types.js";
+import { IntentOffchainInputEnv, IntentOnchainInputEnv, IntentOutputEnv } from "./celenv.js";
+import { IntentFeeConfig, OffchainInput, OnchainInput, FeeOutput, FeeAmount } from "./types.js";
 
 interface Program {
     program: ParseResult;
@@ -117,7 +107,7 @@ export class Estimator {
         offchainInputs: OffchainInput[],
         onchainInputs: OnchainInput[],
         offchainOutputs: FeeOutput[],
-        onchainOutputs: FeeOutput[]
+        onchainOutputs: FeeOutput[],
     ): FeeAmount {
         let fee = FeeAmount.ZERO;
 
@@ -178,9 +168,7 @@ function parseProgram(text: string, env: Environment): Program {
     // Type check the program
     const checkResult = program.check();
     if (!checkResult.valid) {
-        throw new Error(
-            `type check failed: ${checkResult.error?.message ?? "unknown error"}`
-        );
+        throw new Error(`type check failed: ${checkResult.error?.message ?? "unknown error"}`);
     }
 
     // Verify return type is double

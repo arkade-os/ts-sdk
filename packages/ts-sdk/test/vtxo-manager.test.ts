@@ -28,7 +28,7 @@ type MockWalletOptions = {
 const createMockWallet = (
     vtxos: ExtendedVirtualCoin[] = [],
     arkAddress = "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
-    options: MockWalletOptions = {}
+    options: MockWalletOptions = {},
 ): IWallet => {
     // Provide a default no-op refreshOutpoints stub when the caller-supplied
     // mock omits one — the pre-flight `revalidateBeforeSettle` invokes it
@@ -37,10 +37,7 @@ const createMockWallet = (
         onContractEvent: vi.fn().mockReturnValue(() => {}),
         refreshOutpoints: vi.fn().mockResolvedValue(undefined),
     };
-    if (
-        contractManager &&
-        !(contractManager as Record<string, unknown>).refreshOutpoints
-    ) {
+    if (contractManager && !(contractManager as Record<string, unknown>).refreshOutpoints) {
         (contractManager as Record<string, unknown>).refreshOutpoints = vi
             .fn()
             .mockResolvedValue(undefined);
@@ -49,9 +46,7 @@ const createMockWallet = (
     return {
         getVtxos: vi.fn().mockResolvedValue(vtxos),
         getAddress: vi.fn().mockResolvedValue(arkAddress),
-        getDelegatorManager: vi
-            .fn()
-            .mockResolvedValue(options.delegatorManager),
+        getDelegatorManager: vi.fn().mockResolvedValue(options.delegatorManager),
         getContractManager: vi.fn().mockResolvedValue(contractManager),
         settle: vi.fn().mockResolvedValue("mock-txid"),
         dustAmount: 1000n,
@@ -73,7 +68,7 @@ const flushMicrotasks = async () => {
 const createMockVtxo = (
     value: number,
     state: "settled" | "swept" | "spent" | "preconfirmed" = "settled",
-    isSpent = false
+    isSpent = false,
 ): ExtendedVirtualCoin => {
     return {
         txid: `txid-${value}`,
@@ -215,9 +210,7 @@ describe("VtxoManager - Recovery", () => {
             ]);
             const manager = new VtxoManager(wallet);
 
-            await expect(manager.recoverVtxos()).rejects.toThrow(
-                "No recoverable VTXOs found"
-            );
+            await expect(manager.recoverVtxos()).rejects.toThrow("No recoverable VTXOs found");
         });
 
         it("should settle recoverable VTXOs back to wallet address", async () => {
@@ -241,7 +234,7 @@ describe("VtxoManager - Recovery", () => {
                         },
                     ],
                 },
-                undefined
+                undefined,
             );
         });
 
@@ -267,7 +260,7 @@ describe("VtxoManager - Recovery", () => {
                         },
                     ],
                 },
-                undefined
+                undefined,
             );
         });
 
@@ -294,7 +287,7 @@ describe("VtxoManager - Recovery", () => {
                         },
                     ],
                 },
-                undefined
+                undefined,
             );
         });
 
@@ -308,9 +301,7 @@ describe("VtxoManager - Recovery", () => {
             const wallet = createMockWallet(vtxos, "arkade1myaddress");
             const manager = new VtxoManager(wallet);
 
-            await expect(manager.recoverVtxos()).rejects.toThrow(
-                "No recoverable VTXOs found"
-            );
+            await expect(manager.recoverVtxos()).rejects.toThrow("No recoverable VTXOs found");
         });
 
         it("should include preconfirmed subdust in recovery", async () => {
@@ -335,7 +326,7 @@ describe("VtxoManager - Recovery", () => {
                         },
                     ],
                 },
-                undefined
+                undefined,
             );
         });
 
@@ -347,10 +338,7 @@ describe("VtxoManager - Recovery", () => {
 
             await manager.recoverVtxos(callback);
 
-            expect(wallet.settle).toHaveBeenCalledWith(
-                expect.any(Object),
-                callback
-            );
+            expect(wallet.settle).toHaveBeenCalledWith(expect.any(Object), callback);
         });
     });
 });
@@ -365,7 +353,7 @@ describe("VtxoManager - Lifecycle", () => {
         const wallet = createMockWallet(
             [],
             "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
-            { contractManager }
+            { contractManager },
         );
 
         new VtxoManager(wallet, undefined, {});
@@ -383,7 +371,7 @@ describe("VtxoManager - Lifecycle", () => {
         const wallet = createMockWallet(
             [],
             "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
-            { contractManager }
+            { contractManager },
         );
 
         new VtxoManager(wallet, undefined, false);
@@ -402,7 +390,7 @@ describe("VtxoManager - Lifecycle", () => {
         const wallet = createMockWallet(
             [],
             "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
-            { contractManager }
+            { contractManager },
         );
         const manager = new VtxoManager(wallet, undefined, {});
 
@@ -416,9 +404,7 @@ describe("VtxoManager - Lifecycle", () => {
 describe("VtxoManager - Renewal utilities", () => {
     describe("DEFAULT_RENEWAL_CONFIG", () => {
         it("should have correct default values", () => {
-            expect(DEFAULT_RENEWAL_CONFIG.thresholdMs).toBe(
-                DEFAULT_THRESHOLD_MS
-            );
+            expect(DEFAULT_RENEWAL_CONFIG.thresholdMs).toBe(DEFAULT_THRESHOLD_MS);
         });
     });
 
@@ -521,11 +507,7 @@ describe("VtxoManager - Renewal utilities", () => {
 
             const thresholdMs = 10_000; // 10 seconds threshold
             const dustAmount = 330n; // dust threshold
-            const expiring = getExpiringAndRecoverableVtxos(
-                vtxos,
-                thresholdMs,
-                dustAmount
-            );
+            const expiring = getExpiringAndRecoverableVtxos(vtxos, thresholdMs, dustAmount);
 
             expect(expiring).toHaveLength(2);
             expect(expiring[0].txid).toBe("vtxo1");
@@ -549,11 +531,7 @@ describe("VtxoManager - Renewal utilities", () => {
             ];
 
             const thresholdMs = 10_000; // 10 seconds threshold
-            const expiring = getExpiringAndRecoverableVtxos(
-                vtxos,
-                thresholdMs,
-                330n
-            );
+            const expiring = getExpiringAndRecoverableVtxos(vtxos, thresholdMs, 330n);
 
             expect(expiring).toHaveLength(0);
         });
@@ -596,11 +574,7 @@ describe("VtxoManager - Renewal utilities", () => {
 
             const thresholdMs = 10_000; // 10 seconds threshold
             const dustAmount = 330n; // dust threshold
-            const expiring = getExpiringAndRecoverableVtxos(
-                vtxos,
-                thresholdMs,
-                dustAmount
-            );
+            const expiring = getExpiringAndRecoverableVtxos(vtxos, thresholdMs, dustAmount);
 
             expect(expiring).toHaveLength(3);
             expect(expiring[0].txid).toBe("vtxo1");
@@ -805,9 +779,7 @@ describe("VtxoManager - Renewal", () => {
             const wallet = createMockWallet([]);
             const manager = new VtxoManager(wallet);
 
-            await expect(manager.renewVtxos()).rejects.toThrow(
-                "No VTXOs available to renew"
-            );
+            await expect(manager.renewVtxos()).rejects.toThrow("No VTXOs available to renew");
         });
 
         it("should settle all VTXOs back to wallet address", async () => {
@@ -876,7 +848,7 @@ describe("VtxoManager - Renewal", () => {
             const manager = new VtxoManager(wallet, undefined, {});
 
             await expect(manager.renewVtxos()).rejects.toThrow(
-                "Total amount 900 is below dust threshold 1000"
+                "Total amount 900 is below dust threshold 1000",
             );
         });
 
@@ -927,7 +899,7 @@ describe("VtxoManager - Renewal", () => {
                         },
                     ],
                 },
-                undefined
+                undefined,
             );
         });
 
@@ -955,10 +927,7 @@ describe("VtxoManager - Renewal", () => {
 
             await manager.renewVtxos(callback);
 
-            expect(wallet.settle).toHaveBeenCalledWith(
-                expect.any(Object),
-                callback
-            );
+            expect(wallet.settle).toHaveBeenCalledWith(expect.any(Object), callback);
         });
     });
 });
@@ -966,9 +935,7 @@ describe("VtxoManager - Renewal", () => {
 describe("SettlementConfig", () => {
     describe("DEFAULT_SETTLEMENT_CONFIG", () => {
         it("should have correct default values", () => {
-            expect(DEFAULT_SETTLEMENT_CONFIG.vtxoThreshold).toBe(
-                DEFAULT_THRESHOLD_SECONDS
-            );
+            expect(DEFAULT_SETTLEMENT_CONFIG.vtxoThreshold).toBe(DEFAULT_THRESHOLD_SECONDS);
             expect(DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep).toBe(true);
         });
 
@@ -1034,7 +1001,7 @@ describe("SettlementConfig", () => {
             const manager = new VtxoManager(
                 wallet,
                 { enabled: true, thresholdMs: 999999 },
-                { vtxoThreshold: 42, boardingUtxoSweep: true }
+                { vtxoThreshold: 42, boardingUtxoSweep: true },
             );
 
             expect(manager.settlementConfig).toEqual({
@@ -1210,7 +1177,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
     const createMockBoardingUtxo = (
         value: number,
         blockTime?: number,
-        blockHeight?: number
+        blockHeight?: number,
     ): ExtendedCoin => {
         return {
             txid: `boarding-txid-${value}`,
@@ -1239,30 +1206,22 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             boardingAddress?: string;
             feeRate?: number;
             chainTipHeight?: number;
-        } = {}
+        } = {},
     ) => {
-        const {
-            boardingAddress = "bcrt1qtest",
-            feeRate = 1,
-            chainTipHeight = 1000,
-        } = opts;
+        const { boardingAddress = "bcrt1qtest", feeRate = 1, chainTipHeight = 1000 } = opts;
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
 
-        const mockPkScript = new Uint8Array([
-            0x51,
-            0x20,
-            ...new Array(32).fill(0),
-        ]); // P2TR-like
+        const mockPkScript = new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]); // P2TR-like
 
         return {
             getVtxos: vi.fn().mockResolvedValue([]),
             getAddress: vi
                 .fn()
                 .mockResolvedValue(
-                    "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                    "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
                 ),
             getDelegatorManager: vi.fn().mockResolvedValue(undefined),
             getContractManager: vi.fn().mockResolvedValue(contractManager),
@@ -1390,7 +1349,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             // Explicitly false
             const manager1 = new VtxoManager(wallet, undefined, false);
             await expect(manager1.sweepExpiredBoardingUtxos()).rejects.toThrow(
-                "Boarding UTXO sweep is not enabled"
+                "Boarding UTXO sweep is not enabled",
             );
 
             // Enabled but boardingUtxoSweep explicitly false
@@ -1398,7 +1357,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                 boardingUtxoSweep: false,
             });
             await expect(manager2.sweepExpiredBoardingUtxos()).rejects.toThrow(
-                "Boarding UTXO sweep is not enabled"
+                "Boarding UTXO sweep is not enabled",
             );
         });
 
@@ -1408,7 +1367,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
 
             // Default config enables sweep, so error should be about no UTXOs, not "not enabled"
             await expect(manager.sweepExpiredBoardingUtxos()).rejects.toThrow(
-                "No expired boarding UTXOs to sweep"
+                "No expired boarding UTXOs to sweep",
             );
         });
 
@@ -1418,7 +1377,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
 
             // Empty {} should apply DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep (true)
             await expect(manager.sweepExpiredBoardingUtxos()).rejects.toThrow(
-                "No expired boarding UTXOs to sweep"
+                "No expired boarding UTXOs to sweep",
             );
         });
 
@@ -1429,7 +1388,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             });
 
             await expect(manager.sweepExpiredBoardingUtxos()).rejects.toThrow(
-                "No expired boarding UTXOs to sweep"
+                "No expired boarding UTXOs to sweep",
             );
         });
 
@@ -1440,7 +1399,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                 getAddress: vi
                     .fn()
                     .mockResolvedValue(
-                        "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                        "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
                     ),
                 getDelegatorManager: vi.fn().mockResolvedValue(undefined),
                 getContractManager: vi.fn().mockResolvedValue({
@@ -1448,15 +1407,11 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                     refreshOutpoints: vi.fn().mockResolvedValue(undefined),
                 }),
                 settle: vi.fn().mockResolvedValue("mock-txid"),
-                getBoardingUtxos: vi
-                    .fn()
-                    .mockResolvedValue([createMockBoardingUtxo(10000, 1000)]),
+                getBoardingUtxos: vi.fn().mockResolvedValue([createMockBoardingUtxo(10000, 1000)]),
                 getBoardingAddress: vi.fn().mockResolvedValue("bcrt1qtest"),
                 identity: {
                     sign: vi.fn(),
-                    xOnlyPublicKey: vi
-                        .fn()
-                        .mockResolvedValue(new Uint8Array(32)),
+                    xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
                 },
             } as any;
 
@@ -1465,7 +1420,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             });
 
             await expect(manager.sweepExpiredBoardingUtxos()).rejects.toThrow(
-                "Boarding UTXO sweep requires a Wallet instance"
+                "Boarding UTXO sweep requires a Wallet instance",
             );
         });
     });
@@ -1479,15 +1434,8 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
         });
         const blockExitScriptHex = hex.encode(blockCsvScript.script);
 
-        const createBlockBasedWallet = (
-            boardingUtxos: ExtendedCoin[],
-            chainTipHeight: number
-        ) => {
-            const mockPkScript = new Uint8Array([
-                0x51,
-                0x20,
-                ...new Array(32).fill(0),
-            ]);
+        const createBlockBasedWallet = (boardingUtxos: ExtendedCoin[], chainTipHeight: number) => {
+            const mockPkScript = new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]);
             const contractManager = {
                 onContractEvent: vi.fn().mockReturnValue(() => {}),
                 refreshOutpoints: vi.fn().mockResolvedValue(undefined),
@@ -1498,7 +1446,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                 getAddress: vi
                     .fn()
                     .mockResolvedValue(
-                        "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                        "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
                     ),
                 getDelegatorManager: vi.fn().mockResolvedValue(undefined),
                 getContractManager: vi.fn().mockResolvedValue(contractManager),
@@ -1520,9 +1468,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                 },
                 onchainProvider: {
                     getFeeRate: vi.fn().mockResolvedValue(1),
-                    broadcastTransaction: vi
-                        .fn()
-                        .mockResolvedValue("sweep-txid"),
+                    broadcastTransaction: vi.fn().mockResolvedValue("sweep-txid"),
                     getChainTip: vi.fn().mockResolvedValue({
                         height: chainTipHeight,
                         time: Math.floor(Date.now() / 1000),
@@ -1530,9 +1476,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                     }),
                 },
                 arkProvider: {
-                    getInfo: vi
-                        .fn()
-                        .mockResolvedValue({ fees: { intentFee: {} } }),
+                    getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
                 },
                 network: {
                     bech32: "bcrt",
@@ -1542,9 +1486,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                 },
                 identity: {
                     sign: vi.fn().mockImplementation((tx: any) => tx),
-                    xOnlyPublicKey: vi
-                        .fn()
-                        .mockResolvedValue(new Uint8Array(32)),
+                    xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
                 },
             } as any;
         };
@@ -1807,11 +1749,7 @@ describe("VtxoManager - Periodic settle cooldown", () => {
     const exitScriptHex = hex.encode(csvScript.script);
 
     const buildBoardingWallet = (boardingUtxos: ExtendedCoin[]) => {
-        const mockPkScript = new Uint8Array([
-            0x51,
-            0x20,
-            ...new Array(32).fill(0),
-        ]);
+        const mockPkScript = new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]);
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
@@ -1821,7 +1759,7 @@ describe("VtxoManager - Periodic settle cooldown", () => {
             getAddress: vi
                 .fn()
                 .mockResolvedValue(
-                    "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                    "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
                 ),
             getDelegatorManager: vi.fn().mockResolvedValue(undefined),
             getContractManager: vi.fn().mockResolvedValue(contractManager),
@@ -1889,9 +1827,9 @@ describe("VtxoManager - Periodic settle cooldown", () => {
 
             // First attempt: settle is invoked and throws. Cooldown is armed
             // in finally, failure counter goes to 1.
-            await expect(
-                (manager as any).runPeriodicSettle([utxo])
-            ).rejects.toThrow("round failed");
+            await expect((manager as any).runPeriodicSettle([utxo])).rejects.toThrow(
+                "round failed",
+            );
             expect(wallet.settle).toHaveBeenCalledTimes(1);
 
             // Within the cooldown window (default 30s * 2^1 = 60s), a second
@@ -1923,9 +1861,9 @@ describe("VtxoManager - Periodic settle cooldown", () => {
             });
             manager.dispose();
 
-            await expect(
-                (manager as any).runPeriodicSettle([utxo])
-            ).rejects.toThrow("round failed");
+            await expect((manager as any).runPeriodicSettle([utxo])).rejects.toThrow(
+                "round failed",
+            );
             expect(wallet.settle).toHaveBeenCalledTimes(1);
 
             // First failure → cooldown = 30s * 2^1 = 60s. Advance past that.
@@ -1956,9 +1894,7 @@ describe("VtxoManager - Periodic settle cooldown", () => {
             manager.dispose();
 
             // Attempt 1 → counter becomes 1, next cooldown = 30s * 2^1 = 60s.
-            await expect(
-                (manager as any).runPeriodicSettle([utxo])
-            ).rejects.toThrow();
+            await expect((manager as any).runPeriodicSettle([utxo])).rejects.toThrow();
             expect((manager as any).consecutivePeriodicSettleFailures).toBe(1);
 
             // 30s later (inside 60s cooldown) → skipped, counter unchanged.
@@ -1969,9 +1905,7 @@ describe("VtxoManager - Periodic settle cooldown", () => {
 
             // 61s later → cooldown elapsed, attempt 2 runs and fails.
             nowSpy.mockReturnValue(baseNow + 61_000);
-            await expect(
-                (manager as any).runPeriodicSettle([utxo])
-            ).rejects.toThrow();
+            await expect((manager as any).runPeriodicSettle([utxo])).rejects.toThrow();
             expect(wallet.settle).toHaveBeenCalledTimes(2);
             expect((manager as any).consecutivePeriodicSettleFailures).toBe(2);
 
@@ -2042,9 +1976,7 @@ describe("VtxoManager - Periodic settle cooldown", () => {
             // The unconfirmed UTXO must NOT be marked as known — once it
             // confirms, the next poll should pick it up.
             expect(
-                (manager as any).knownBoardingUtxos.has(
-                    `${unconfirmed.txid}:${unconfirmed.vout}`
-                )
+                (manager as any).knownBoardingUtxos.has(`${unconfirmed.txid}:${unconfirmed.vout}`),
             ).toBe(false);
         } finally {
             nowSpy.mockRestore();
@@ -2074,14 +2006,10 @@ describe("VtxoManager - Periodic settle cooldown", () => {
             expect(callArgs.inputs[0].txid).toBe(confirmed.txid);
             // Known set only tracks the one we actually tried to settle.
             expect(
-                (manager as any).knownBoardingUtxos.has(
-                    `${confirmed.txid}:${confirmed.vout}`
-                )
+                (manager as any).knownBoardingUtxos.has(`${confirmed.txid}:${confirmed.vout}`),
             ).toBe(true);
             expect(
-                (manager as any).knownBoardingUtxos.has(
-                    `${unconfirmed.txid}:${unconfirmed.vout}`
-                )
+                (manager as any).knownBoardingUtxos.has(`${unconfirmed.txid}:${unconfirmed.vout}`),
             ).toBe(false);
         } finally {
             nowSpy.mockRestore();
@@ -2097,15 +2025,8 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
     });
     const exitScriptHex = hex.encode(csvScript.script);
 
-    const buildWallet = (
-        boardingUtxos: ExtendedCoin[],
-        vtxos: ExtendedVirtualCoin[]
-    ) => {
-        const mockPkScript = new Uint8Array([
-            0x51,
-            0x20,
-            ...new Array(32).fill(0),
-        ]);
+    const buildWallet = (boardingUtxos: ExtendedCoin[], vtxos: ExtendedVirtualCoin[]) => {
+        const mockPkScript = new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]);
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
@@ -2115,7 +2036,7 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
             getAddress: vi
                 .fn()
                 .mockResolvedValue(
-                    "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                    "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
                 ),
             getDelegatorManager: vi.fn().mockResolvedValue(undefined),
             getContractManager: vi.fn().mockResolvedValue(contractManager),
@@ -2365,11 +2286,7 @@ describe("VtxoManager - Cross-instance poll guard", () => {
     const exitScriptHex = hex.encode(csvScript.script);
 
     const buildBoardingWallet = (boardingUtxos: ExtendedCoin[]) => {
-        const mockPkScript = new Uint8Array([
-            0x51,
-            0x20,
-            ...new Array(32).fill(0),
-        ]);
+        const mockPkScript = new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]);
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
@@ -2379,7 +2296,7 @@ describe("VtxoManager - Cross-instance poll guard", () => {
             getAddress: vi
                 .fn()
                 .mockResolvedValue(
-                    "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                    "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
                 ),
             getDelegatorManager: vi.fn().mockResolvedValue(undefined),
             getContractManager: vi.fn().mockResolvedValue(contractManager),
@@ -2422,11 +2339,9 @@ describe("VtxoManager - Cross-instance poll guard", () => {
         // getBoardingUtxos.
         const requestSpy = vi
             .fn()
-            .mockImplementation(
-                async (_name: string, _opts: unknown, cb: (l: any) => any) => {
-                    return cb(null);
-                }
-            );
+            .mockImplementation(async (_name: string, _opts: unknown, cb: (l: any) => any) => {
+                return cb(null);
+            });
         vi.stubGlobal("navigator", { locks: { request: requestSpy } });
         vi.useFakeTimers();
 
@@ -2465,14 +2380,12 @@ describe("VtxoManager - Cross-instance poll guard", () => {
     it("runs the poll body when navigator.locks grants the lock", async () => {
         const requestSpy = vi
             .fn()
-            .mockImplementation(
-                async (_name: string, _opts: unknown, cb: (l: any) => any) => {
-                    return cb({
-                        name: "arkade-boarding-poll",
-                        mode: "exclusive",
-                    });
-                }
-            );
+            .mockImplementation(async (_name: string, _opts: unknown, cb: (l: any) => any) => {
+                return cb({
+                    name: "arkade-boarding-poll",
+                    mode: "exclusive",
+                });
+            });
         vi.stubGlobal("navigator", { locks: { request: requestSpy } });
         vi.useFakeTimers();
 
@@ -2504,15 +2417,8 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
     });
     const exitScriptHex = hex.encode(csvScript.script);
 
-    const buildWallet = (
-        boardingUtxos: ExtendedCoin[],
-        vtxos: ExtendedVirtualCoin[]
-    ) => {
-        const mockPkScript = new Uint8Array([
-            0x51,
-            0x20,
-            ...new Array(32).fill(0),
-        ]);
+    const buildWallet = (boardingUtxos: ExtendedCoin[], vtxos: ExtendedVirtualCoin[]) => {
+        const mockPkScript = new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]);
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshVtxos: vi.fn().mockResolvedValue(undefined),
@@ -2524,7 +2430,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
                 getAddress: vi
                     .fn()
                     .mockResolvedValue(
-                        "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                        "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
                     ),
                 getDelegatorManager: vi.fn().mockResolvedValue(undefined),
                 getContractManager: vi.fn().mockResolvedValue(contractManager),
@@ -2545,9 +2451,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
                     }),
                 },
                 arkProvider: {
-                    getInfo: vi
-                        .fn()
-                        .mockResolvedValue({ fees: { intentFee: {} } }),
+                    getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
                 },
                 network: {
                     bech32: "bcrt",
@@ -2557,9 +2461,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
                 },
                 identity: {
                     sign: vi.fn().mockImplementation((tx: any) => tx),
-                    xOnlyPublicKey: vi
-                        .fn()
-                        .mockResolvedValue(new Uint8Array(32)),
+                    xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
                 },
             } as any,
             contractManager,
@@ -2599,9 +2501,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
         const boarding = makeUnexpiredUtxo(10_000);
         const vtxo = makeExpiringVtxo(5_000);
         const { wallet, contractManager } = buildWallet([boarding], [vtxo]);
-        (wallet.settle as any).mockRejectedValue(
-            new Error("VTXO_ALREADY_SPENT")
-        );
+        (wallet.settle as any).mockRejectedValue(new Error("VTXO_ALREADY_SPENT"));
 
         const manager = new VtxoManager(wallet, undefined, {
             boardingUtxoSweep: false,
@@ -2623,9 +2523,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
         const boarding = makeUnexpiredUtxo(10_000);
         const vtxo = makeExpiringVtxo(5_000);
         const { wallet } = buildWallet([boarding], [vtxo]);
-        (wallet.settle as any).mockRejectedValue(
-            new Error("VTXO_ALREADY_SPENT")
-        );
+        (wallet.settle as any).mockRejectedValue(new Error("VTXO_ALREADY_SPENT"));
 
         const manager = new VtxoManager(wallet, undefined, {
             boardingUtxoSweep: false,
@@ -2651,9 +2549,9 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
         });
         manager.dispose();
 
-        await expect(
-            (manager as any).runPeriodicSettle([boarding])
-        ).rejects.toThrow("round failed");
+        await expect((manager as any).runPeriodicSettle([boarding])).rejects.toThrow(
+            "round failed",
+        );
 
         expect((manager as any).consecutivePeriodicSettleFailures).toBe(1);
         // Refresh is reserved for stale-cache signals; generic failures
@@ -2668,9 +2566,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
         try {
             const boarding = makeUnexpiredUtxo(10_000);
             const { wallet, contractManager } = buildWallet([boarding], []);
-            (wallet.settle as any).mockRejectedValue(
-                new Error("VTXO_ALREADY_SPENT")
-            );
+            (wallet.settle as any).mockRejectedValue(new Error("VTXO_ALREADY_SPENT"));
 
             const manager = new VtxoManager(wallet, undefined, {
                 boardingUtxoSweep: false,
@@ -2760,11 +2656,8 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
         const boarding = makeUnexpiredUtxo(10_000);
         const vtxo = makeExpiringVtxo(5_000);
         const { wallet, contractManager } = buildWallet([boarding], [vtxo]);
-        const outpoint =
-            "640048627268a0f1acb9920daaf5a3c6e237cafc707b007afbbd450031038e63:0";
-        (wallet.settle as any).mockRejectedValue(
-            makeStructuredVtxoSpentError(outpoint)
-        );
+        const outpoint = "640048627268a0f1acb9920daaf5a3c6e237cafc707b007afbbd450031038e63:0";
+        (wallet.settle as any).mockRejectedValue(makeStructuredVtxoSpentError(outpoint));
 
         const manager = new VtxoManager(wallet, undefined, {
             boardingUtxoSweep: false,
@@ -2796,9 +2689,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
         const boarding = makeUnexpiredUtxo(10_000);
         const vtxo = makeExpiringVtxo(5_000);
         const { wallet, contractManager } = buildWallet([boarding], [vtxo]);
-        (wallet.settle as any).mockRejectedValue(
-            new Error("VTXO_ALREADY_SPENT")
-        );
+        (wallet.settle as any).mockRejectedValue(new Error("VTXO_ALREADY_SPENT"));
 
         const manager = new VtxoManager(wallet, undefined, {
             boardingUtxoSweep: false,
@@ -2861,9 +2752,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
         // First getVtxos call (initial selection) returns the stale vtxo.
         // Second call (post-refresh) returns nothing — the refresh
         // "discovered" the vtxo is spent.
-        (wallet.getVtxos as any)
-            .mockResolvedValueOnce([vtxo])
-            .mockResolvedValue([]);
+        (wallet.getVtxos as any).mockResolvedValueOnce([vtxo]).mockResolvedValue([]);
 
         const manager = new VtxoManager(wallet, undefined, {
             boardingUtxoSweep: false,
@@ -2888,9 +2777,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
         // refreshVtxos() without surfacing the error.
         const vtxo = makeExpiringVtxo(5_000);
         const { wallet, contractManager } = buildWallet([], [vtxo]);
-        (wallet.settle as any).mockRejectedValue(
-            new Error("VTXO_ALREADY_SPENT")
-        );
+        (wallet.settle as any).mockRejectedValue(new Error("VTXO_ALREADY_SPENT"));
 
         let eventHandler: ((event: any) => void) | undefined;
         contractManager.onContractEvent.mockImplementation((handler) => {

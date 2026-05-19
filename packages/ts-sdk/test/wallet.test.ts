@@ -16,18 +16,11 @@ import {
     type OnchainProvider,
     type DelegatorProvider,
 } from "../src";
-import {
-    TEST_PUB_KEY,
-    TEST_DELEGATE_PUB_KEY,
-    TEST_SERVER_PUB_KEY,
-} from "./contracts/helpers";
+import { TEST_PUB_KEY, TEST_DELEGATE_PUB_KEY, TEST_SERVER_PUB_KEY } from "./contracts/helpers";
 import { DEFAULT_ARKADE_SERVER_URL } from "../src/wallet";
 import type { ExtendedCoin } from "../src/wallet";
 import { ReadonlySingleKey } from "../src/identity/singleKey";
-import {
-    IndexedDBWalletRepository,
-    IndexedDBContractRepository,
-} from "../src/repositories";
+import { IndexedDBWalletRepository, IndexedDBContractRepository } from "../src/repositories";
 import type { Coin, VirtualCoin } from "../src/wallet";
 import { MockEventSource } from "./mocks/eventSource";
 import { timelockToSequence } from "../src/utils/timelock";
@@ -45,11 +38,9 @@ const sharedContractRepo = new IndexedDBContractRepository();
 
 describe("Wallet", () => {
     // Test vector from BIP340
-    const mockPrivKeyHex =
-        "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
+    const mockPrivKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
     // X-only pubkey (without the 02/03 prefix)
-    const mockServerKeyHex =
-        "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    const mockServerKeyHex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
     const mockIdentity = SingleKey.fromHex(mockPrivKeyHex);
 
     beforeEach(async () => {
@@ -88,10 +79,7 @@ describe("Wallet", () => {
                 json: () => Promise.resolve(mockUTXOs),
             });
 
-            const wallet = await OnchainWallet.create(
-                mockIdentity,
-                "mutinynet"
-            );
+            const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
 
             const balance = await wallet.getBalance();
             expect(balance).toBe(100000);
@@ -141,8 +129,7 @@ describe("Wallet", () => {
                             unilateralExitDelay: BigInt(144),
                             roundInterval: BigInt(144),
                             network: "mutinynet",
-                            forfeitAddress:
-                                "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                            forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
                             checkpointTapscript:
                                 "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
                         }),
@@ -207,10 +194,7 @@ describe("Wallet", () => {
                 json: () => Promise.resolve(mockUTXOs),
             });
 
-            const wallet = await OnchainWallet.create(
-                mockIdentity,
-                "mutinynet"
-            );
+            const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
 
             const coins = await wallet.getCoins();
             expect(coins).toEqual(mockUTXOs);
@@ -294,16 +278,13 @@ describe("Wallet", () => {
         });
 
         it("should throw error when amount is negative", async () => {
-            const wallet = await OnchainWallet.create(
-                mockIdentity,
-                "mutinynet"
-            );
+            const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
 
             await expect(
                 wallet.send({
                     address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
                     amount: -1000,
-                })
+                }),
             ).rejects.toThrow("Amount must be positive");
         });
 
@@ -320,37 +301,28 @@ describe("Wallet", () => {
                 json: () => Promise.resolve({ "1": mockFeeRate }),
             });
 
-            const wallet = await OnchainWallet.create(
-                mockIdentity,
-                "mutinynet"
-            );
+            const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
 
             await expect(
                 wallet.send({
                     address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
                     amount: 12500000,
-                })
+                }),
             ).rejects.toThrow("Insufficient funds");
         });
 
         it("should throw when amount is below dust", async () => {
-            const wallet = await OnchainWallet.create(
-                mockIdentity,
-                "mutinynet"
-            );
+            const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
             await expect(
                 wallet.send({
                     address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
                     amount: 545,
-                })
+                }),
             ).rejects.toThrow("Amount is below dust limit");
         });
 
         it("should send funds when change amount is below dust", async () => {
-            const wallet = await OnchainWallet.create(
-                mockIdentity,
-                "mutinynet"
-            );
+            const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
 
             mockFetch.mockResolvedValueOnce({
                 ok: true,
@@ -369,15 +341,12 @@ describe("Wallet", () => {
                 await wallet.send({
                     address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
                     amount: 111500, // With selection of 100000 and 12000, the change is less than dust(546sats)
-                })
+                }),
             ).toEqual(mockTxId);
         });
 
         it("should send amount with correct fees", async () => {
-            const wallet = await OnchainWallet.create(
-                mockIdentity,
-                "mutinynet"
-            );
+            const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
 
             mockFetch.mockResolvedValueOnce({
                 ok: true,
@@ -396,15 +365,12 @@ describe("Wallet", () => {
                 await wallet.send({
                     address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
                     amount: 115000,
-                })
+                }),
             ).toEqual(mockTxId);
         });
 
         it("should calculate different tx sizes for Segwit vs Taproot", async () => {
-            const wallet = await OnchainWallet.create(
-                mockIdentity,
-                "mutinynet"
-            );
+            const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
 
             const coins: Coin[] = [
                 {
@@ -461,10 +427,7 @@ describe("Wallet", () => {
         });
 
         it("should resolve oscillation when change is near dust limit", async () => {
-            const wallet = await OnchainWallet.create(
-                mockIdentity,
-                "mutinynet"
-            );
+            const wallet = await OnchainWallet.create(mockIdentity, "mutinynet");
 
             const feeRate = 10;
             // Calculations for the edge case:
@@ -510,7 +473,7 @@ describe("Wallet", () => {
                 wallet.send({
                     address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
                     amount: sendAmount,
-                })
+                }),
             ).resolves.toBeDefined();
         });
     });
@@ -623,8 +586,7 @@ describe("Wallet", () => {
             expect(address).toBe(readonlyAddress);
 
             const boardingAddress = await wallet.getBoardingAddress();
-            const readonlyBoardingAddress =
-                await readonlyWallet.getBoardingAddress();
+            const readonlyBoardingAddress = await readonlyWallet.getBoardingAddress();
             expect(boardingAddress).toBe(readonlyBoardingAddress);
 
             await wallet.dispose();
@@ -686,8 +648,7 @@ describe("Wallet", () => {
                 if (url.includes("/script/subscribe")) {
                     return Promise.resolve({
                         ok: true,
-                        json: () =>
-                            Promise.resolve({ subscriptionId: "sub-1" }),
+                        json: () => Promise.resolve({ subscriptionId: "sub-1" }),
                     });
                 }
                 if (url.includes("/address/") && url.includes("/utxo")) {
@@ -738,12 +699,9 @@ describe("Wallet", () => {
         };
         const mockBatchExpiry = 1767225600000;
 
-        async function createReadonlyTestWallet(
-            getVtxos: IndexerProvider["getVtxos"]
-        ) {
+        async function createReadonlyTestWallet(getVtxos: IndexerProvider["getVtxos"]) {
             const compressedPubKey = await mockIdentity.compressedPublicKey();
-            const readonlyIdentity =
-                ReadonlySingleKey.fromPublicKey(compressedPubKey);
+            const readonlyIdentity = ReadonlySingleKey.fromPublicKey(compressedPubKey);
             const walletRepository = new InMemoryWalletRepository();
             const contractRepository = new InMemoryContractRepository();
 
@@ -774,7 +732,7 @@ describe("Wallet", () => {
 
         function createMockVtxo(
             script: string,
-            state: "preconfirmed" | "settled" = "preconfirmed"
+            state: "preconfirmed" | "settled" = "preconfirmed",
         ): VirtualCoin {
             return {
                 txid: "11".repeat(32),
@@ -830,12 +788,9 @@ describe("Wallet", () => {
                     };
                 });
 
-            const { wallet, walletRepository } =
-                await createReadonlyTestWallet(getVtxos);
+            const { wallet, walletRepository } = await createReadonlyTestWallet(getVtxos);
 
-            expect((await wallet.getVtxos())[0].virtualStatus.state).toBe(
-                "preconfirmed"
-            );
+            expect((await wallet.getVtxos())[0].virtualStatus.state).toBe("preconfirmed");
 
             state = "settled";
 
@@ -844,9 +799,7 @@ describe("Wallet", () => {
             expect(vtxos[0].virtualStatus.state).toBe("settled");
             expect(vtxos[0].isSpent).toBe(false);
 
-            const cached = await walletRepository.getVtxos(
-                await wallet.getAddress()
-            );
+            const cached = await walletRepository.getVtxos(await wallet.getAddress());
             expect(cached).toHaveLength(1);
             expect(cached[0].virtualStatus.state).toBe("settled");
         });
@@ -865,8 +818,7 @@ describe("Wallet", () => {
                     return { vtxos: [vtxo] };
                 });
 
-            const { wallet, walletRepository } =
-                await createReadonlyTestWallet(getVtxos);
+            const { wallet, walletRepository } = await createReadonlyTestWallet(getVtxos);
 
             expect(await wallet.getVtxos()).toHaveLength(1);
 
@@ -874,9 +826,7 @@ describe("Wallet", () => {
 
             expect(await wallet.getVtxos()).toEqual([]);
 
-            const cached = await walletRepository.getVtxos(
-                await wallet.getAddress()
-            );
+            const cached = await walletRepository.getVtxos(await wallet.getAddress());
             expect(cached).toHaveLength(1);
             expect(cached[0].isSpent).toBe(true);
         });
@@ -895,8 +845,7 @@ describe("Wallet", () => {
                     return { vtxos: [vtxo] };
                 });
 
-            const { wallet, walletRepository } =
-                await createReadonlyTestWallet(getVtxos);
+            const { wallet, walletRepository } = await createReadonlyTestWallet(getVtxos);
 
             const vtxos = await wallet.getVtxos();
             expect(vtxos).toHaveLength(1);
@@ -906,9 +855,7 @@ describe("Wallet", () => {
 
             expect(await wallet.getVtxos()).toEqual([]);
 
-            const cached = await walletRepository.getVtxos(
-                await wallet.getAddress()
-            );
+            const cached = await walletRepository.getVtxos(await wallet.getAddress());
             expect(cached).toHaveLength(1);
             expect(cached[0].isSpent).toBe(true);
         });
@@ -934,8 +881,7 @@ describe("Wallet", () => {
             // extend the same subscription id, so we count
             // `getSubscription` (the actual SSE open).
             const compressedPubKey = await mockIdentity.compressedPublicKey();
-            const readonlyIdentity =
-                ReadonlySingleKey.fromPublicKey(compressedPubKey);
+            const readonlyIdentity = ReadonlySingleKey.fromPublicKey(compressedPubKey);
 
             const getSubscriptionSpy = vi
                 .fn<IndexerProvider["getSubscription"]>()
@@ -951,9 +897,7 @@ describe("Wallet", () => {
                 } as Partial<ArkProvider> as ArkProvider,
                 indexerProvider: {
                     getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
-                    subscribeForScripts: vi
-                        .fn()
-                        .mockResolvedValue("sub-shared"),
+                    subscribeForScripts: vi.fn().mockResolvedValue("sub-shared"),
                     unsubscribeForScripts: vi.fn().mockResolvedValue(undefined),
                     getSubscription: getSubscriptionSpy,
                 } as Partial<IndexerProvider> as IndexerProvider,
@@ -1029,8 +973,7 @@ describe("Wallet", () => {
 
         async function createWalletWithVtxos(txids: string[]) {
             const compressedPubKey = await mockIdentity.compressedPublicKey();
-            const readonlyIdentity =
-                ReadonlySingleKey.fromPublicKey(compressedPubKey);
+            const readonlyIdentity = ReadonlySingleKey.fromPublicKey(compressedPubKey);
             const walletRepository = new InMemoryWalletRepository();
             const contractRepository = new InMemoryContractRepository();
 
@@ -1042,9 +985,7 @@ describe("Wallet", () => {
                         walletScript = opts.scripts[0];
                     }
                     return {
-                        vtxos: txids.map((txid) =>
-                            createMockVtxo(walletScript, txid)
-                        ),
+                        vtxos: txids.map((txid) => createMockVtxo(walletScript, txid)),
                     };
                 });
 
@@ -1076,17 +1017,15 @@ describe("Wallet", () => {
             const { wallet } = await createWalletWithVtxos([txidA, txidB]);
 
             expect((await wallet.getVtxos()).map((v) => v.txid).sort()).toEqual(
-                [txidA, txidB].sort()
+                [txidA, txidB].sort(),
             );
 
             (wallet as any)._pendingSpendOutpoints.add(`${txidA}:0`);
-            expect((await wallet.getVtxos()).map((v) => v.txid)).toEqual([
-                txidB,
-            ]);
+            expect((await wallet.getVtxos()).map((v) => v.txid)).toEqual([txidB]);
 
             (wallet as any)._pendingSpendOutpoints.delete(`${txidA}:0`);
             expect((await wallet.getVtxos()).map((v) => v.txid).sort()).toEqual(
-                [txidA, txidB].sort()
+                [txidA, txidB].sort(),
             );
         });
 
@@ -1100,9 +1039,7 @@ describe("Wallet", () => {
             // Simulating a process restart: a brand-new wallet instance over
             // the same repositories must surface the VTXO (no persistence).
             const { wallet: freshWallet } = await createWalletWithVtxos([txid]);
-            expect((await freshWallet.getVtxos()).map((v) => v.txid)).toEqual([
-                txid,
-            ]);
+            expect((await freshWallet.getVtxos()).map((v) => v.txid)).toEqual([txid]);
         });
 
         it("_addPendingSpends tracks VTXO inputs and ignores boarding UTXOs", () => {
@@ -1122,14 +1059,9 @@ describe("Wallet", () => {
                 status: { confirmed: true },
             };
 
-            (Wallet.prototype as any)._addPendingSpends.call(thisArg, [
-                vtxoInput,
-                boardingInput,
-            ]);
+            (Wallet.prototype as any)._addPendingSpends.call(thisArg, [vtxoInput, boardingInput]);
 
-            expect(Array.from(thisArg._pendingSpendOutpoints)).toEqual([
-                `${vtxoInput.txid}:0`,
-            ]);
+            expect(Array.from(thisArg._pendingSpendOutpoints)).toEqual([`${vtxoInput.txid}:0`]);
         });
 
         it("_removePendingSpends clears only the passed outpoints", () => {
@@ -1149,13 +1081,9 @@ describe("Wallet", () => {
                 },
             };
 
-            (Wallet.prototype as any)._removePendingSpends.call(thisArg, [
-                vtxoInput,
-            ]);
+            (Wallet.prototype as any)._removePendingSpends.call(thisArg, [vtxoInput]);
 
-            expect(Array.from(thisArg._pendingSpendOutpoints)).toEqual([
-                `${"b".repeat(64)}:0`,
-            ]);
+            expect(Array.from(thisArg._pendingSpendOutpoints)).toEqual([`${"b".repeat(64)}:0`]);
         });
     });
 
@@ -1165,10 +1093,7 @@ describe("Wallet", () => {
         const MUTINYNET_DELAY = 144n;
         const DELEGATE_PUBKEY = mockServerKeyHex;
 
-        const mockArkInfo = (
-            network: "bitcoin" | "mutinynet",
-            unilateralExitDelay: bigint
-        ) => ({
+        const mockArkInfo = (network: "bitcoin" | "mutinynet", unilateralExitDelay: bigint) => ({
             signerPubkey: mockServerKeyHex,
             forfeitPubkey: mockServerKeyHex,
             batchExpiry: BigInt(144),
@@ -1189,14 +1114,9 @@ describe("Wallet", () => {
             return timelockToSequence({ value, type }).toString();
         }
 
-        function contractSummaries(
-            contracts: { type: string; params: Record<string, string> }[]
-        ) {
+        function contractSummaries(contracts: { type: string; params: Record<string, string> }[]) {
             return contracts
-                .map(
-                    (contract) =>
-                        `${contract.type}:${contract.params.csvTimelock}`
-                )
+                .map((contract) => `${contract.type}:${contract.params.csvTimelock}`)
                 .sort();
         }
 
@@ -1245,8 +1165,7 @@ describe("Wallet", () => {
         }) {
             const network = config?.network ?? "bitcoin";
             const compressedPubKey = await mockIdentity.compressedPublicKey();
-            const readonlyIdentity =
-                ReadonlySingleKey.fromPublicKey(compressedPubKey);
+            const readonlyIdentity = ReadonlySingleKey.fromPublicKey(compressedPubKey);
             const walletRepository = new InMemoryWalletRepository();
             const contractRepository = new InMemoryContractRepository();
 
@@ -1260,10 +1179,8 @@ describe("Wallet", () => {
                             mockArkInfo(
                                 network,
                                 config?.unilateralExitDelay ??
-                                    (network === "bitcoin"
-                                        ? ARKD_DELAY
-                                        : MUTINYNET_DELAY)
-                            )
+                                    (network === "bitcoin" ? ARKD_DELAY : MUTINYNET_DELAY),
+                            ),
                         ),
                 } as Partial<ArkProvider> as ArkProvider,
                 indexerProvider: createIndexerProvider(),
@@ -1279,9 +1196,7 @@ describe("Wallet", () => {
             return { wallet };
         }
 
-        async function createFullMainnetWallet(config?: {
-            delegatorProvider?: DelegatorProvider;
-        }) {
+        async function createFullMainnetWallet(config?: { delegatorProvider?: DelegatorProvider }) {
             const walletRepository = new InMemoryWalletRepository();
             const contractRepository = new InMemoryContractRepository();
 
@@ -1289,9 +1204,7 @@ describe("Wallet", () => {
                 identity: mockIdentity,
                 arkServerUrl: "http://localhost:7070",
                 arkProvider: {
-                    getInfo: vi
-                        .fn()
-                        .mockResolvedValue(mockArkInfo("bitcoin", ARKD_DELAY)),
+                    getInfo: vi.fn().mockResolvedValue(mockArkInfo("bitcoin", ARKD_DELAY)),
                 } as Partial<ArkProvider> as ArkProvider,
                 indexerProvider: createIndexerProvider(),
                 onchainProvider: createOnchainProvider(),
@@ -1371,8 +1284,8 @@ describe("Wallet", () => {
                 });
                 expect(
                     wallet.walletContractTimelocks.map((timelock) =>
-                        timelockToSequence(timelock).toString()
-                    )
+                        timelockToSequence(timelock).toString(),
+                    ),
                 ).toEqual([
                     sequence(ARKD_DELAY, "seconds"),
                     sequence(MAINNET_LEGACY_DELAY, "seconds"),
@@ -1400,9 +1313,7 @@ describe("Wallet", () => {
                 exitTimelock: override,
             });
 
-            expect(wallet.offchainTapscript.options.csvTimelock).toEqual(
-                override
-            );
+            expect(wallet.offchainTapscript.options.csvTimelock).toEqual(override);
 
             try {
                 const manager = await wallet.getContractManager();
@@ -1468,8 +1379,7 @@ describe("ReadonlyWallet", () => {
         await sharedRepo.clear();
     });
 
-    const mockServerKeyHex =
-        "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    const mockServerKeyHex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
     const mockArkInfo = {
         signerPubkey: mockServerKeyHex,
@@ -1491,14 +1401,12 @@ describe("ReadonlyWallet", () => {
 
     it("should create ReadonlyWallet with ReadonlySingleKey", async () => {
         // Create a regular key first to get the public key
-        const privateKeyHex =
-            "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
+        const privateKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
         const key = SingleKey.fromHex(privateKeyHex);
         const compressedPubKey = await key.compressedPublicKey();
 
         // Create readonly identity
-        const readonlyIdentity =
-            ReadonlySingleKey.fromPublicKey(compressedPubKey);
+        const readonlyIdentity = ReadonlySingleKey.fromPublicKey(compressedPubKey);
 
         mockFetch.mockResolvedValueOnce({
             ok: true,
@@ -1523,8 +1431,7 @@ describe("ReadonlyWallet", () => {
     it("should create ReadonlyWallet with the default Arkade server URL", async () => {
         const key = SingleKey.fromRandomBytes();
         const compressedPubKey = await key.compressedPublicKey();
-        const readonlyIdentity =
-            ReadonlySingleKey.fromPublicKey(compressedPubKey);
+        const readonlyIdentity = ReadonlySingleKey.fromPublicKey(compressedPubKey);
 
         mockFetch.mockResolvedValueOnce({
             ok: true,
@@ -1540,18 +1447,14 @@ describe("ReadonlyWallet", () => {
         });
 
         expect(readonlyWallet).toBeInstanceOf(ReadonlyWallet);
-        expect(mockFetch).toHaveBeenCalledWith(
-            `${DEFAULT_ARKADE_SERVER_URL}/v1/info`
-        );
+        expect(mockFetch).toHaveBeenCalledWith(`${DEFAULT_ARKADE_SERVER_URL}/v1/info`);
     });
 
     it("should query balance with ReadonlyWallet", async () => {
-        const privateKeyHex =
-            "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
+        const privateKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
         const key = SingleKey.fromHex(privateKeyHex);
         const compressedPubKey = await key.compressedPublicKey();
-        const readonlyIdentity =
-            ReadonlySingleKey.fromPublicKey(compressedPubKey);
+        const readonlyIdentity = ReadonlySingleKey.fromPublicKey(compressedPubKey);
 
         const mockUTXOs: Coin[] = [
             {
@@ -1615,12 +1518,10 @@ describe("ReadonlyWallet", () => {
     });
 
     it("should not have transaction methods on ReadonlyWallet", async () => {
-        const privateKeyHex =
-            "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
+        const privateKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
         const key = SingleKey.fromHex(privateKeyHex);
         const compressedPubKey = await key.compressedPublicKey();
-        const readonlyIdentity =
-            ReadonlySingleKey.fromPublicKey(compressedPubKey);
+        const readonlyIdentity = ReadonlySingleKey.fromPublicKey(compressedPubKey);
 
         mockFetch.mockResolvedValueOnce({
             ok: true,
@@ -1657,9 +1558,7 @@ describe("Wallet.safeRegisterIntent", () => {
 
         const registerIntent = vi
             .fn()
-            .mockRejectedValueOnce(
-                new ArkError(0, "duplicated input", "FailedPrecondition")
-            )
+            .mockRejectedValueOnce(new ArkError(0, "duplicated input", "FailedPrecondition"))
             .mockResolvedValueOnce("intent-id-after-retry");
         const deleteIntent = vi.fn().mockResolvedValue(undefined);
 
@@ -1683,7 +1582,7 @@ describe("Wallet.safeRegisterIntent", () => {
         const result = await (Wallet.prototype as any).safeRegisterIntent.call(
             thisArg,
             intent,
-            callerInputs
+            callerInputs,
         );
 
         expect(result).toBe("intent-id-after-retry");
@@ -1700,9 +1599,7 @@ describe("Wallet.safeRegisterIntent", () => {
     it("does not attempt delete/retry for unrelated ArkError codes", async () => {
         const registerIntent = vi
             .fn()
-            .mockRejectedValueOnce(
-                new ArkError(3, "some other failure", "InvalidArgument")
-            );
+            .mockRejectedValueOnce(new ArkError(3, "some other failure", "InvalidArgument"));
         const deleteIntent = vi.fn();
         const makeDeleteIntentSignature = vi.fn();
 
@@ -1716,8 +1613,8 @@ describe("Wallet.safeRegisterIntent", () => {
             (Wallet.prototype as any).safeRegisterIntent.call(
                 thisArg,
                 { proof: "p", message: { type: "register" } },
-                [] as ExtendedCoin[]
-            )
+                [] as ExtendedCoin[],
+            ),
         ).rejects.toThrow("some other failure");
 
         expect(deleteIntent).not.toHaveBeenCalled();
@@ -1767,21 +1664,19 @@ describe("Wallet._settleImpl", () => {
         });
         const createBatchHandler = vi.fn().mockReturnValue({} as Batch.Handler);
         const updateDbAfterSettle = vi.fn().mockResolvedValue(undefined);
-        const batchJoinSpy = vi
-            .spyOn(Batch, "join")
-            .mockImplementation(async (eventIterator) => {
-                callOrder.push("Batch.join");
-                expect(eventIterator).not.toBe(stream);
-                expect(await eventIterator.next()).toEqual({
-                    done: false,
-                    value: primedEvent,
-                });
-                expect(await eventIterator.next()).toEqual({
-                    done: false,
-                    value: secondEvent,
-                });
-                return "commitment-txid";
+        const batchJoinSpy = vi.spyOn(Batch, "join").mockImplementation(async (eventIterator) => {
+            callOrder.push("Batch.join");
+            expect(eventIterator).not.toBe(stream);
+            expect(await eventIterator.next()).toEqual({
+                done: false,
+                value: primedEvent,
             });
+            expect(await eventIterator.next()).toEqual({
+                done: false,
+                value: secondEvent,
+            });
+            return "commitment-txid";
+        });
 
         const thisArg: any = {
             network: "mutinynet",
@@ -1805,13 +1700,10 @@ describe("Wallet._settleImpl", () => {
             updateDbAfterSettle,
         };
 
-        const result = await (Wallet.prototype as any)._settleImpl.call(
-            thisArg,
-            {
-                inputs: [input],
-                outputs: [],
-            }
-        );
+        const result = await (Wallet.prototype as any)._settleImpl.call(thisArg, {
+            inputs: [input],
+            outputs: [],
+        });
 
         expect(result).toBe("commitment-txid");
         expect(callOrder).toEqual([
@@ -1823,24 +1715,14 @@ describe("Wallet._settleImpl", () => {
         ]);
         expect(stream.next).toHaveBeenCalledTimes(2);
         expect(stream.return).toHaveBeenCalledTimes(1);
-        expect(createBatchHandler).toHaveBeenCalledWith(
-            "intent-id",
-            [input],
-            [],
-            undefined
-        );
-        expect(updateDbAfterSettle).toHaveBeenCalledWith(
-            [input],
-            "commitment-txid"
-        );
+        expect(createBatchHandler).toHaveBeenCalledWith("intent-id", [input], [], undefined);
+        expect(updateDbAfterSettle).toHaveBeenCalledWith([input], "commitment-txid");
         batchJoinSpy.mockRestore();
     });
 
     it("closes the primed stream when safeRegisterIntent fails before Batch.join starts", async () => {
         const callOrder: string[] = [];
-        let resolveFirstNext:
-            | ((value: IteratorResult<any>) => void)
-            | undefined = undefined;
+        let resolveFirstNext: ((value: IteratorResult<any>) => void) | undefined = undefined;
         const firstNext = new Promise<IteratorResult<any>>((resolve) => {
             resolveFirstNext = resolve;
         });
@@ -1891,14 +1773,10 @@ describe("Wallet._settleImpl", () => {
             (Wallet.prototype as any)._settleImpl.call(thisArg, {
                 inputs: [input],
                 outputs: [],
-            })
+            }),
         ).rejects.toThrow("register failed");
 
-        expect(callOrder).toEqual([
-            "stream.next",
-            "safeRegisterIntent",
-            "stream.return",
-        ]);
+        expect(callOrder).toEqual(["stream.next", "safeRegisterIntent", "stream.return"]);
         expect(stream.return).toHaveBeenCalledTimes(1);
         expect(deleteIntent).toHaveBeenCalledTimes(1);
         expect(batchJoinSpy).not.toHaveBeenCalled();
@@ -1920,10 +1798,8 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         saveVtxos?: ReturnType<typeof vi.fn>;
         saveTransactions?: ReturnType<typeof vi.fn>;
     }) => {
-        const saveVtxos =
-            overrides.saveVtxos ?? vi.fn().mockResolvedValue(undefined);
-        const saveTransactions =
-            overrides.saveTransactions ?? vi.fn().mockResolvedValue(undefined);
+        const saveVtxos = overrides.saveVtxos ?? vi.fn().mockResolvedValue(undefined);
+        const saveTransactions = overrides.saveTransactions ?? vi.fn().mockResolvedValue(undefined);
         const getContracts = vi.fn().mockResolvedValue(overrides.contracts);
         const getContractManager = vi.fn().mockResolvedValue({
             annotateVtxos: overrides.annotateVtxos,
@@ -1972,11 +1848,10 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
     it("saves single-contract spend rows and the change row under the primary bucket", async () => {
         const input = makeSpentInput(PRIMARY_SCRIPT, "1");
         const annotateVtxos = vi.fn().mockResolvedValue([annotated(input)]);
-        const { thisArg, offchainTapscript, saveVtxos, saveTransactions } =
-            makeThisArg({
-                annotateVtxos,
-                contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
-            });
+        const { thisArg, offchainTapscript, saveVtxos, saveTransactions } = makeThisArg({
+            annotateVtxos,
+            contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
+        });
 
         await (Wallet.prototype as any).updateDbAfterOffchainTx.call(
             thisArg,
@@ -1986,7 +1861,7 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
             1_000, // sentAmount
             4_000n, // changeAmount
             1, // changeVout
-            offchainTapscript
+            offchainTapscript,
         );
 
         // Per-script saves: one for the spent row, one for the change row.
@@ -1999,7 +1874,7 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
                     isSpent: true,
                     script: PRIMARY_SCRIPT,
                 }),
-            ])
+            ]),
         );
         expect(saveVtxos).toHaveBeenCalledWith(
             PRIMARY_ADDR,
@@ -2009,7 +1884,7 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
                     vout: 1,
                     script: PRIMARY_SCRIPT,
                 }),
-            ])
+            ]),
         );
 
         expect(saveTransactions).toHaveBeenCalledTimes(1);
@@ -2021,10 +1896,7 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         const delegateInput = makeSpentInput(DELEGATE_SCRIPT, "2");
         const annotateVtxos = vi
             .fn()
-            .mockResolvedValue([
-                annotated(primaryInput),
-                annotated(delegateInput),
-            ]);
+            .mockResolvedValue([annotated(primaryInput), annotated(delegateInput)]);
         const { thisArg, offchainTapscript, saveVtxos } = makeThisArg({
             annotateVtxos,
             contracts: [
@@ -2041,13 +1913,11 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
             1_000,
             0n, // no change → only spent rows
             0,
-            offchainTapscript
+            offchainTapscript,
         );
 
         expect(saveVtxos).toHaveBeenCalledTimes(2);
-        const calls = new Map(
-            saveVtxos.mock.calls.map(([addr, vtxos]: any) => [addr, vtxos])
-        );
+        const calls = new Map(saveVtxos.mock.calls.map(([addr, vtxos]: any) => [addr, vtxos]));
         expect(calls.get(PRIMARY_ADDR)).toHaveLength(1);
         expect(calls.get(PRIMARY_ADDR)[0].script).toBe(PRIMARY_SCRIPT);
         expect(calls.get(DELEGATE_ADDR)).toHaveLength(1);
@@ -2059,10 +1929,7 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         const delegateInput = makeSpentInput(DELEGATE_SCRIPT, "2");
         const annotateVtxos = vi
             .fn()
-            .mockResolvedValue([
-                annotated(primaryInput),
-                annotated(delegateInput),
-            ]);
+            .mockResolvedValue([annotated(primaryInput), annotated(delegateInput)]);
         const { thisArg, offchainTapscript, saveVtxos } = makeThisArg({
             annotateVtxos,
             contracts: [
@@ -2079,22 +1946,18 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
             1_000,
             4_000n,
             1,
-            offchainTapscript
+            offchainTapscript,
         );
 
         // Per-script saves: primary spent, delegate spent, change (primary script).
         expect(saveVtxos).toHaveBeenCalledTimes(3);
         expect(saveVtxos).toHaveBeenCalledWith(
             PRIMARY_ADDR,
-            expect.arrayContaining([
-                expect.objectContaining({ script: PRIMARY_SCRIPT }),
-            ])
+            expect.arrayContaining([expect.objectContaining({ script: PRIMARY_SCRIPT })]),
         );
         expect(saveVtxos).toHaveBeenCalledWith(
             DELEGATE_ADDR,
-            expect.arrayContaining([
-                expect.objectContaining({ script: DELEGATE_SCRIPT }),
-            ])
+            expect.arrayContaining([expect.objectContaining({ script: DELEGATE_SCRIPT })]),
         );
     });
 
@@ -2117,8 +1980,8 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
                 1_000,
                 0n,
                 0,
-                offchainTapscript
-            )
+                offchainTapscript,
+            ),
         ).rejects.toThrow(/has no script/);
 
         expect(saveVtxos).not.toHaveBeenCalled();
@@ -2145,8 +2008,8 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
                 1_000,
                 0n,
                 0,
-                offchainTapscript
-            )
+                offchainTapscript,
+            ),
         ).rejects.toThrow(/no contract owns script/);
 
         expect(saveVtxos).not.toHaveBeenCalled();
@@ -2181,18 +2044,12 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         });
         // Sanity: the two tapscripts produce distinguishable outputs.
         // Without this, any assertion below would be vacuously true.
-        expect(hex.encode(tapscriptOld.pkScript)).not.toBe(
-            hex.encode(tapscriptNew.pkScript)
-        );
+        expect(hex.encode(tapscriptOld.pkScript)).not.toBe(hex.encode(tapscriptNew.pkScript));
 
         const SPEND_SCRIPT = hex.encode(tapscriptOld.pkScript);
-        const SPEND_ADDR = tapscriptOld
-            .address("ark", TEST_SERVER_PUB_KEY)
-            .encode();
+        const SPEND_ADDR = tapscriptOld.address("ark", TEST_SERVER_PUB_KEY).encode();
         const CHANGE_SCRIPT = hex.encode(tapscriptNew.pkScript);
-        const CHANGE_ADDR = tapscriptNew
-            .address("ark", TEST_SERVER_PUB_KEY)
-            .encode();
+        const CHANGE_ADDR = tapscriptNew.address("ark", TEST_SERVER_PUB_KEY).encode();
 
         const input: VirtualCoin = {
             txid: "1".repeat(64),
@@ -2248,13 +2105,11 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
             1_000,
             4_000n,
             1,
-            tapscriptNew // the snapshot
+            tapscriptNew, // the snapshot
         );
 
         // Find the change-row save (the one keyed by CHANGE_ADDR).
-        const changeCall = saveVtxos.mock.calls.find(
-            ([addr]: any) => addr === CHANGE_ADDR
-        );
+        const changeCall = saveVtxos.mock.calls.find(([addr]: any) => addr === CHANGE_ADDR);
         expect(changeCall).toBeDefined();
         const [, changeRows] = changeCall!;
         expect(changeRows).toHaveLength(1);
@@ -2266,18 +2121,12 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         // `[ControlBlockObject, Uint8Array]` — assert by structural
         // equality on the object and hex equality on the script bytes.
         expect(changeVtxo.script).toBe(CHANGE_SCRIPT);
-        expect(hex.encode(changeVtxo.tapTree)).toBe(
-            hex.encode(tapscriptNew.encode())
-        );
+        expect(hex.encode(changeVtxo.tapTree)).toBe(hex.encode(tapscriptNew.encode()));
         const expectedForfeit = tapscriptNew.forfeit();
         expect(changeVtxo.forfeitTapLeafScript[0]).toEqual(expectedForfeit[0]);
-        expect(hex.encode(changeVtxo.forfeitTapLeafScript[1])).toBe(
-            hex.encode(expectedForfeit[1])
-        );
+        expect(hex.encode(changeVtxo.forfeitTapLeafScript[1])).toBe(hex.encode(expectedForfeit[1]));
         expect(changeVtxo.intentTapLeafScript[0]).toEqual(expectedForfeit[0]);
-        expect(hex.encode(changeVtxo.intentTapLeafScript[1])).toBe(
-            hex.encode(expectedForfeit[1])
-        );
+        expect(hex.encode(changeVtxo.intentTapLeafScript[1])).toBe(hex.encode(expectedForfeit[1]));
 
         // `primaryAddress` (the address `saveTransactions` is keyed by)
         // also derives from the snapshot, not from `this.arkAddress`.
@@ -2302,9 +2151,7 @@ describe("Wallet.updateDbAfterSettle", () => {
         const saveVtxos = vi.fn().mockResolvedValue(undefined);
         const saveUtxos = vi.fn().mockResolvedValue(undefined);
         const deleteUtxos = vi.fn().mockResolvedValue(undefined);
-        const getUtxos = vi
-            .fn()
-            .mockResolvedValue(overrides.currentBoardingUtxos ?? []);
+        const getUtxos = vi.fn().mockResolvedValue(overrides.currentBoardingUtxos ?? []);
         const getContracts = vi.fn().mockResolvedValue(overrides.contracts);
         const getContractManager = vi.fn().mockResolvedValue({
             annotateVtxos: overrides.annotateVtxos,
@@ -2360,11 +2207,7 @@ describe("Wallet.updateDbAfterSettle", () => {
             contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
         });
 
-        await (Wallet.prototype as any).updateDbAfterSettle.call(
-            thisArg,
-            [input],
-            "commitment-tx"
-        );
+        await (Wallet.prototype as any).updateDbAfterSettle.call(thisArg, [input], "commitment-tx");
 
         expect(saveVtxos).toHaveBeenCalledTimes(1);
         const [addr, vtxos] = saveVtxos.mock.calls[0];
@@ -2378,9 +2221,7 @@ describe("Wallet.updateDbAfterSettle", () => {
     it("routes multi-contract settle rows to their owning contract buckets", async () => {
         const primaryInput = makeVtxoInput(PRIMARY_SCRIPT, "1");
         const delegateInput = makeVtxoInput(DELEGATE_SCRIPT, "2");
-        const annotateVtxos = vi
-            .fn()
-            .mockResolvedValue([primaryInput, delegateInput]);
+        const annotateVtxos = vi.fn().mockResolvedValue([primaryInput, delegateInput]);
         const { thisArg, saveVtxos } = makeThisArg({
             annotateVtxos,
             contracts: [
@@ -2392,13 +2233,11 @@ describe("Wallet.updateDbAfterSettle", () => {
         await (Wallet.prototype as any).updateDbAfterSettle.call(
             thisArg,
             [primaryInput, delegateInput],
-            "commitment-tx"
+            "commitment-tx",
         );
 
         expect(saveVtxos).toHaveBeenCalledTimes(2);
-        const calls = new Map(
-            saveVtxos.mock.calls.map(([addr, vtxos]: any) => [addr, vtxos])
-        );
+        const calls = new Map(saveVtxos.mock.calls.map(([addr, vtxos]: any) => [addr, vtxos]));
         expect(calls.get(PRIMARY_ADDR)).toHaveLength(1);
         expect(calls.get(PRIMARY_ADDR)[0].script).toBe(PRIMARY_SCRIPT);
         expect(calls.get(DELEGATE_ADDR)).toHaveLength(1);
@@ -2414,20 +2253,16 @@ describe("Wallet.updateDbAfterSettle", () => {
             status: { confirmed: true },
         };
         const annotateVtxos = vi.fn().mockResolvedValue([]);
-        const { thisArg, saveVtxos, deleteUtxos, saveUtxos, getUtxos } =
-            makeThisArg({
-                annotateVtxos,
-                contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
-                currentBoardingUtxos: [
-                    { txid: boardingInput.txid, vout: 0, value: 10_000 },
-                    otherUtxo,
-                ],
-            });
+        const { thisArg, saveVtxos, deleteUtxos, saveUtxos, getUtxos } = makeThisArg({
+            annotateVtxos,
+            contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
+            currentBoardingUtxos: [{ txid: boardingInput.txid, vout: 0, value: 10_000 }, otherUtxo],
+        });
 
         await (Wallet.prototype as any).updateDbAfterSettle.call(
             thisArg,
             [boardingInput],
-            "commitment-tx"
+            "commitment-tx",
         );
 
         expect(saveVtxos).not.toHaveBeenCalled();
@@ -2438,20 +2273,14 @@ describe("Wallet.updateDbAfterSettle", () => {
 
     it("rethrows when a settled VTXO has no script", async () => {
         const input = makeVtxoInput(PRIMARY_SCRIPT, "1");
-        const annotateVtxos = vi
-            .fn()
-            .mockResolvedValue([{ ...input, script: undefined }]);
+        const annotateVtxos = vi.fn().mockResolvedValue([{ ...input, script: undefined }]);
         const { thisArg, saveVtxos } = makeThisArg({
             annotateVtxos,
             contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
         });
 
         await expect(
-            (Wallet.prototype as any).updateDbAfterSettle.call(
-                thisArg,
-                [input],
-                "commitment-tx"
-            )
+            (Wallet.prototype as any).updateDbAfterSettle.call(thisArg, [input], "commitment-tx"),
         ).rejects.toThrow(/has no script/);
 
         expect(saveVtxos).not.toHaveBeenCalled();
@@ -2467,11 +2296,7 @@ describe("Wallet.updateDbAfterSettle", () => {
         });
 
         await expect(
-            (Wallet.prototype as any).updateDbAfterSettle.call(
-                thisArg,
-                [orphan],
-                "commitment-tx"
-            )
+            (Wallet.prototype as any).updateDbAfterSettle.call(thisArg, [orphan], "commitment-tx"),
         ).rejects.toThrow(/no contract owns script/);
 
         expect(saveVtxos).not.toHaveBeenCalled();

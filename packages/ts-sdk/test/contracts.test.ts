@@ -11,10 +11,7 @@ import { DEFAULT_ARKADE_HRP } from "../src/wallet";
 import type { Contract } from "../src/contracts";
 import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
 import type { IndexerProvider } from "../src/providers/indexer";
-import {
-    ContractRepository,
-    InMemoryWalletRepository,
-} from "../src/repositories";
+import { ContractRepository, InMemoryWalletRepository } from "../src/repositories";
 import {
     createDefaultContractParams,
     createMockIndexerProvider,
@@ -44,8 +41,7 @@ describe("Contracts", () => {
         });
 
         it("should decode an arkcontract string", () => {
-            const encoded =
-                "arkcontract=default&pubKey=abc123&serverPubKey=def456";
+            const encoded = "arkcontract=default&pubKey=abc123&serverPubKey=def456";
             const parsed = decodeArkContract(encoded);
 
             expect(parsed.type).toBe("default");
@@ -54,9 +50,7 @@ describe("Contracts", () => {
         });
 
         it("should throw for invalid arkcontract string", () => {
-            expect(() => decodeArkContract("invalid=string")).toThrow(
-                "Invalid arkcontract string"
-            );
+            expect(() => decodeArkContract("invalid=string")).toThrow("Invalid arkcontract string");
         });
 
         it("should check if string is arkcontract", () => {
@@ -87,20 +81,15 @@ describe("Contracts", () => {
                 createdAt: 0,
             });
 
-            const contract = contractFromArkContractWithAddress(
-                encoded,
-                TEST_SERVER_PUB_KEY
-            );
+            const contract = contractFromArkContractWithAddress(encoded, TEST_SERVER_PUB_KEY);
 
-            expect(contract.address.startsWith(`${DEFAULT_ARKADE_HRP}1`)).toBe(
-                true
-            );
+            expect(contract.address.startsWith(`${DEFAULT_ARKADE_HRP}1`)).toBe(true);
         });
 
         it("should throw for unknown contract type", () => {
             const encoded = "arkcontract=unknown-type&foo=bar";
             expect(() => contractFromArkContract(encoded)).toThrow(
-                "No handler registered for contract type"
+                "No handler registered for contract type",
             );
         });
     });
@@ -128,7 +117,7 @@ describe("Contracts", () => {
                     params: {}, // Missing required pubKey and serverPubKey
                     script: TEST_DEFAULT_SCRIPT,
                     address: "address",
-                })
+                }),
             ).rejects.toThrow();
         });
 
@@ -139,7 +128,7 @@ describe("Contracts", () => {
                     params: createDefaultContractParams(),
                     script: "wrong-script-that-doesnt-match",
                     address: "address",
-                })
+                }),
             ).rejects.toThrow("Script mismatch");
         });
 

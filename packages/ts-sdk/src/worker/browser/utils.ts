@@ -7,7 +7,7 @@ type SetupServiceWorkerOptions = {
 };
 
 function normalizeOptions(
-    pathOrOptions: string | SetupServiceWorkerOptions
+    pathOrOptions: string | SetupServiceWorkerOptions,
 ): Required<SetupServiceWorkerOptions> {
     if (typeof pathOrOptions === "string") {
         return {
@@ -19,19 +19,14 @@ function normalizeOptions(
     return {
         path: pathOrOptions.path,
         activationTimeoutMs:
-            pathOrOptions.activationTimeoutMs ??
-            DEFAULT_SERVICE_WORKER_ACTIVATION_TIMEOUT_MS,
+            pathOrOptions.activationTimeoutMs ?? DEFAULT_SERVICE_WORKER_ACTIVATION_TIMEOUT_MS,
     };
 }
 
 function waitForServiceWorkerReady(timeoutMs: number) {
     return new Promise<ServiceWorkerRegistration>((resolve, reject) => {
         const timeoutId = setTimeout(() => {
-            reject(
-                new Error(
-                    `Service worker activation timed out after ${timeoutMs}ms`
-                )
-            );
+            reject(new Error(`Service worker activation timed out after ${timeoutMs}ms`));
         }, timeoutMs);
 
         navigator.serviceWorker.ready
@@ -56,7 +51,7 @@ function waitForServiceWorkerReady(timeoutMs: number) {
  * ```
  */
 export async function setupServiceWorker(
-    pathOrOptions: string | SetupServiceWorkerOptions
+    pathOrOptions: string | SetupServiceWorkerOptions,
 ): Promise<ServiceWorker> {
     // check if service workers are supported
     if (!("serviceWorker" in navigator)) {
@@ -71,8 +66,7 @@ export async function setupServiceWorker(
     // force update to ensure the service worker is active
     await registration.update();
 
-    const serviceWorker =
-        registration.active || registration.waiting || registration.installing;
+    const serviceWorker = registration.active || registration.waiting || registration.installing;
     if (!serviceWorker) {
         throw new Error("Failed to get service worker instance");
     }
@@ -81,13 +75,10 @@ export async function setupServiceWorker(
         return serviceWorker;
     }
 
-    const readyRegistration =
-        await waitForServiceWorkerReady(activationTimeoutMs);
+    const readyRegistration = await waitForServiceWorkerReady(activationTimeoutMs);
 
     if (!readyRegistration.active) {
-        throw new Error(
-            "Service worker registration is ready but has no active worker"
-        );
+        throw new Error("Service worker registration is ready but has no active worker");
     }
 
     return readyRegistration.active;

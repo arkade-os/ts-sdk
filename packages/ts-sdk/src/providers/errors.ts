@@ -3,7 +3,7 @@ export class ArkError extends Error {
         readonly code: number,
         readonly message: string,
         readonly name: string,
-        readonly metadata?: Record<string, string>
+        readonly metadata?: Record<string, string>,
     ) {
         super(message);
     }

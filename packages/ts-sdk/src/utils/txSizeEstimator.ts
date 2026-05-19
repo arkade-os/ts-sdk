@@ -44,7 +44,7 @@ export class TxWeightEstimator {
         outputCount: number,
         inputSize: number,
         inputWitnessSize: number,
-        outputSize: number
+        outputSize: number,
     ) {
         this.hasWitness = hasWitness;
         this.inputCount = inputCount;
@@ -75,16 +75,14 @@ export class TxWeightEstimator {
     addP2PKHInput(): TxWeightEstimator {
         this.inputCount++;
         this.inputWitnessSize++;
-        this.inputSize +=
-            TxWeightEstimator.INPUT_SIZE +
-            TxWeightEstimator.P2PKH_SCRIPT_SIG_SIZE;
+        this.inputSize += TxWeightEstimator.INPUT_SIZE + TxWeightEstimator.P2PKH_SCRIPT_SIG_SIZE;
         return this;
     }
 
     addTapscriptInput(
         leafWitnessSize: number,
         leafScriptSize: number,
-        leafControlBlockSize: number
+        leafControlBlockSize: number,
     ): TxWeightEstimator {
         const controlBlockWitnessSize =
             1 +
@@ -103,16 +101,13 @@ export class TxWeightEstimator {
 
     addP2WPKHOutput(): TxWeightEstimator {
         this.outputCount++;
-        this.outputSize +=
-            TxWeightEstimator.OUTPUT_SIZE +
-            TxWeightEstimator.P2WPKH_OUTPUT_SIZE;
+        this.outputSize += TxWeightEstimator.OUTPUT_SIZE + TxWeightEstimator.P2WPKH_OUTPUT_SIZE;
         return this;
     }
 
     addP2TROutput(): TxWeightEstimator {
         this.outputCount++;
-        this.outputSize +=
-            TxWeightEstimator.OUTPUT_SIZE + TxWeightEstimator.P2TR_OUTPUT_SIZE;
+        this.outputSize += TxWeightEstimator.OUTPUT_SIZE + TxWeightEstimator.P2TR_OUTPUT_SIZE;
         return this;
     }
 
@@ -152,8 +147,7 @@ export class TxWeightEstimator {
 
         // Add witness data if present
         if (this.hasWitness) {
-            weight +=
-                TxWeightEstimator.WITNESS_HEADER_SIZE + this.inputWitnessSize;
+            weight += TxWeightEstimator.WITNESS_HEADER_SIZE + this.inputWitnessSize;
         }
 
         // Convert weight to vsize (weight / 4, rounded up)
@@ -162,9 +156,7 @@ export class TxWeightEstimator {
 }
 
 const vsize = (weight: number): VSize => {
-    const value = BigInt(
-        Math.ceil(weight / TxWeightEstimator.WITNESS_SCALE_FACTOR)
-    );
+    const value = BigInt(Math.ceil(weight / TxWeightEstimator.WITNESS_SCALE_FACTOR));
     return {
         value,
         fee: (feeRate: bigint) => feeRate * value,

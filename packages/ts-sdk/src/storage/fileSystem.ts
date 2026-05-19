@@ -33,22 +33,16 @@ export class FileSystemStorageAdapter implements StorageAdapter {
         const reservedNames = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
         const keyWithoutExt = key.split(".")[0];
         if (reservedNames.test(keyWithoutExt)) {
-            throw new Error(
-                `Invalid key: '${key}' uses a reserved Windows name`
-            );
+            throw new Error(`Invalid key: '${key}' uses a reserved Windows name`);
         }
 
         // Check for trailing spaces or dots
         if (key.endsWith(" ") || key.endsWith(".")) {
-            throw new Error(
-                "Invalid key: trailing spaces or dots are not allowed"
-            );
+            throw new Error("Invalid key: trailing spaces or dots are not allowed");
         }
 
         // Normalize path separators and sanitize key
-        const normalizedKey = key
-            .replace(/[/\\]/g, "_")
-            .replace(/[^a-zA-Z0-9._-]/g, "_");
+        const normalizedKey = key.replace(/[/\\]/g, "_").replace(/[^a-zA-Z0-9._-]/g, "_");
 
         // Resolve the full path and check for directory traversal
         const resolved = path.resolve(this.basePath, normalizedKey);
@@ -114,7 +108,7 @@ export class FileSystemStorageAdapter implements StorageAdapter {
                     const entryPath = path.join(this.basePath, entry);
                     // Use fs.rm with recursive option to handle both files and directories
                     await fs.rm(entryPath, { recursive: true, force: true });
-                })
+                }),
             );
         } catch (error) {
             console.error("Failed to clear storage directory:", error);

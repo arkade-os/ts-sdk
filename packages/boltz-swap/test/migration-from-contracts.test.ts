@@ -30,14 +30,14 @@ describe("migrateToSwapRepository", () => {
         expect(repo.saveSwap).toHaveBeenCalledTimes(2);
         expect(storage.setItem).toHaveBeenCalledWith(
             "migration-from-storage-adapter-swaps",
-            "done"
+            "done",
         );
     });
 
     it("does not run when migration flag is set", async () => {
         const storage = {
             getItem: vi.fn(async (key: string) =>
-                key === "migration-from-storage-adapter-swaps" ? "done" : null
+                key === "migration-from-storage-adapter-swaps" ? "done" : null,
             ),
             setItem: vi.fn(async () => {}),
         };
@@ -51,8 +51,6 @@ describe("migrateToSwapRepository", () => {
         expect(repo.saveSwap).not.toHaveBeenCalled();
         expect(storage.setItem).not.toHaveBeenCalled();
         expect(storage.getItem).toHaveBeenCalledTimes(1);
-        expect(storage.getItem).toHaveBeenCalledWith(
-            "migration-from-storage-adapter-swaps"
-        );
+        expect(storage.getItem).toHaveBeenCalledWith("migration-from-storage-adapter-swaps");
     });
 });

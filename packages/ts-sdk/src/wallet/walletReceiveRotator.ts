@@ -84,19 +84,14 @@ export interface ReceiveRotatorBootResult {
  * when the provider doesn't implement the extension.
  */
 export interface ReceiveRotatorFactory {
-    createReceiveRotator(
-        opts: ReceiveRotatorBootOpts
-    ): Promise<ReceiveRotatorBoot | undefined>;
+    createReceiveRotator(opts: ReceiveRotatorBootOpts): Promise<ReceiveRotatorBoot | undefined>;
 }
 
 /** Type guard: does this provider implement {@link ReceiveRotatorFactory}? */
 export function hasReceiveRotatorFactory(
-    provider: DescriptorProvider
+    provider: DescriptorProvider,
 ): provider is DescriptorProvider & ReceiveRotatorFactory {
-    return (
-        typeof (provider as Partial<ReceiveRotatorFactory>)
-            .createReceiveRotator === "function"
-    );
+    return typeof (provider as Partial<ReceiveRotatorFactory>).createReceiveRotator === "function";
 }
 
 /**
@@ -109,11 +104,11 @@ interface PeekableDescriptorProvider {
     getCurrentSigningDescriptor(): Promise<string | undefined>;
 }
 function hasPeekableDescriptor(
-    provider: DescriptorProvider
+    provider: DescriptorProvider,
 ): provider is DescriptorProvider & PeekableDescriptorProvider {
     return (
-        typeof (provider as Partial<PeekableDescriptorProvider>)
-            .getCurrentSigningDescriptor === "function"
+        typeof (provider as Partial<PeekableDescriptorProvider>).getCurrentSigningDescriptor ===
+        "function"
     );
 }
 
@@ -185,9 +180,7 @@ export interface RotatableWallet {
      * after construction. The rotator calls this once per rotation
      * after persisting the new display contract.
      */
-    setOffchainTapscriptForRotation(
-        tapscript: DefaultVtxo.Script | DelegateVtxo.Script
-    ): void;
+    setOffchainTapscriptForRotation(tapscript: DefaultVtxo.Script | DelegateVtxo.Script): void;
     getContractManager(): Promise<IContractManager>;
     getAddress(): Promise<string>;
 }
@@ -250,7 +243,7 @@ export class WalletReceiveRotator {
     private constructor(
         private readonly provider: DescriptorProvider,
         priorTaggedScript: string | undefined,
-        logger?: Logger
+        logger?: Logger,
     ) {
         this.currentTaggedScript = priorTaggedScript;
         this.logger = logger ?? console;
@@ -282,19 +275,14 @@ export class WalletReceiveRotator {
         config: WalletConfig,
         setup: ReceiveRotatorBootOpts & {
             offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script;
-        }
+        },
     ): Promise<ReceiveRotatorBootResult | undefined> {
-        const provider = await resolveDescriptorProvider(
-            config,
-            setup.walletRepository
-        );
+        const provider = await resolveDescriptorProvider(config, setup.walletRepository);
         if (!provider) return undefined;
 
         const allowSilentFallback = (config.walletMode ?? "auto") === "auto";
         const expectedContractType: "default" | "delegate" =
-            setup.offchainTapscript instanceof DelegateVtxo.Script
-                ? "delegate"
-                : "default";
+            setup.offchainTapscript instanceof DelegateVtxo.Script ? "delegate" : "default";
         const factoryOpts: ReceiveRotatorBootOpts = {
             walletRepository: setup.walletRepository,
             contractRepository: setup.contractRepository,
@@ -311,10 +299,7 @@ export class WalletReceiveRotator {
             // Only swallow non-rangeable-descriptor errors, and only
             // under `walletMode: 'auto'`. Explicit HD/`DescriptorProvider`
             // callers always see the failure.
-            if (
-                allowSilentFallback &&
-                e instanceof NonRangeableDescriptorError
-            ) {
+            if (allowSilentFallback && e instanceof NonRangeableDescriptorError) {
                 return undefined;
             }
             throw e;
@@ -328,7 +313,7 @@ export class WalletReceiveRotator {
         // that retain the reference across `Wallet.create`).
         const offchainTapscript = equalBytes(
             boot.receivePubkey,
-            setup.offchainTapscript.options.pubKey
+            setup.offchainTapscript.options.pubKey,
         )
             ? setup.offchainTapscript
             : rebuildTapscript(setup.offchainTapscript, boot.receivePubkey);
@@ -353,20 +338,16 @@ export class WalletReceiveRotator {
      */
     static async defaultBoot(
         provider: DescriptorProvider,
-        opts: ReceiveRotatorBootOpts
+        opts: ReceiveRotatorBootOpts,
     ): Promise<ReceiveRotatorBoot> {
         const existing = await pickActiveReceive(
             opts.contractRepository,
             opts.serverPubKey,
-            opts.expectedContractType
+            opts.expectedContractType,
         );
         if (existing) {
             return {
-                rotator: new WalletReceiveRotator(
-                    provider,
-                    existing.script,
-                    opts.logger
-                ),
+                rotator: new WalletReceiveRotator(provider, existing.script, opts.logger),
                 receivePubkey: existing.pubKey,
             };
         }
@@ -434,13 +415,10 @@ export class WalletReceiveRotator {
     private async runRotateWithBackoff(wallet: RotatableWallet): Promise<void> {
         const now = Date.now();
         if (now < this.nextRotationAllowedAt) {
-            this.logger.error(
-                "WalletReceiveRotator: skipping rotation (in backoff)",
-                {
-                    consecutiveFailures: this.consecutiveFailures,
-                    retryInMs: this.nextRotationAllowedAt - now,
-                }
-            );
+            this.logger.error("WalletReceiveRotator: skipping rotation (in backoff)", {
+                consecutiveFailures: this.consecutiveFailures,
+                retryInMs: this.nextRotationAllowedAt - now,
+            });
             return;
         }
         try {
@@ -453,10 +431,7 @@ export class WalletReceiveRotator {
             // `Math.min` on the exponent prevents `2 ** 1024` overflow
             // for pathologically long failure streaks.
             const exponent = Math.min(this.consecutiveFailures, 16);
-            const backoffMs = Math.min(
-                2 ** exponent * 1_000,
-                ROTATION_MAX_BACKOFF_MS
-            );
+            const backoffMs = Math.min(2 ** exponent * 1_000, ROTATION_MAX_BACKOFF_MS);
             this.nextRotationAllowedAt = Date.now() + backoffMs;
             this.logger.error("WalletReceiveRotator: rotation failed", err, {
                 consecutiveFailures: this.consecutiveFailures,
@@ -529,9 +504,7 @@ export class WalletReceiveRotator {
             .encode();
 
         const manager = await wallet.getContractManager();
-        const csvTimelock =
-            newTapscript.options.csvTimelock ??
-            DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        const csvTimelock = newTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
         const csvTimelockStr = timelockToSequence(csvTimelock).toString();
         const serverPubKeyHex = hex.encode(newTapscript.options.serverPubKey);
 
@@ -559,9 +532,7 @@ export class WalletReceiveRotator {
                 params: {
                     pubKey: hex.encode(pubKey),
                     serverPubKey: serverPubKeyHex,
-                    delegatePubKey: hex.encode(
-                        newTapscript.options.delegatePubKey
-                    ),
+                    delegatePubKey: hex.encode(newTapscript.options.delegatePubKey),
                     csvTimelock: csvTimelockStr,
                 },
             });
@@ -607,9 +578,7 @@ export class WalletReceiveRotator {
  * static `tr(pubkey)` inputs.
  */
 function deriveLeafPubkey(descriptor: string): Uint8Array {
-    const network = isMainnetDescriptor(descriptor)
-        ? networks.bitcoin
-        : networks.testnet;
+    const network = isMainnetDescriptor(descriptor) ? networks.bitcoin : networks.testnet;
     // `expand` raises when the descriptor still carries a wildcard or
     // is otherwise non-rangeable. Wrap so callers (most importantly
     // `resolveBoot`'s silent-fallback path) can branch on a typed
@@ -621,7 +590,7 @@ function deriveLeafPubkey(descriptor: string): Uint8Array {
         throw new NonRangeableDescriptorError(
             `Cannot derive leaf pubkey from descriptor (length=${descriptor.length}): ` +
                 `ensure the descriptor is materialized (no wildcard) and parsable.`,
-            { cause: e }
+            { cause: e },
         );
     }
     const key = expansion.expansionMap?.["@0"];
@@ -634,7 +603,7 @@ function deriveLeafPubkey(descriptor: string): Uint8Array {
             `Cannot derive leaf pubkey from descriptor (length=${descriptor.length}): ` +
                 `descriptor parsed but no '@0' pubkey was found in the expansion map. ` +
                 `The rotator expects a materialized tr(xpub/.../*) shape; ensure the ` +
-                `descriptor has no wildcard and that its key resolves into the '@0' slot.`
+                `descriptor has no wildcard and that its key resolves into the '@0' slot.`,
         );
     }
     return key.pubkey;
@@ -651,7 +620,7 @@ function deriveLeafPubkey(descriptor: string): Uint8Array {
  */
 export function rebuildTapscript(
     current: DefaultVtxo.Script | DelegateVtxo.Script,
-    pubKey: Uint8Array
+    pubKey: Uint8Array,
 ): DefaultVtxo.Script | DelegateVtxo.Script {
     if (current instanceof DelegateVtxo.Script) {
         return new DelegateVtxo.Script({ ...current.options, pubKey });
@@ -680,7 +649,7 @@ export function rebuildTapscript(
 async function pickActiveReceive(
     contractRepository: ContractRepository,
     serverPubKey: Uint8Array,
-    expectedType?: "default" | "delegate"
+    expectedType?: "default" | "delegate",
 ): Promise<{ pubKey: Uint8Array; script: string } | undefined> {
     // Both `default` and `delegate` contract types can be the wallet's
     // display address (delegate wallets use the delegate variant). The
@@ -695,7 +664,7 @@ async function pickActiveReceive(
         .filter(
             (c) =>
                 c.params.serverPubKey === serverPubKeyHex &&
-                c.metadata?.source === WALLET_RECEIVE_SOURCE
+                c.metadata?.source === WALLET_RECEIVE_SOURCE,
         )
         .sort((a, b) => b.createdAt - a.createdAt);
     const newest = matching[0];
@@ -725,7 +694,7 @@ async function pickActiveReceive(
  */
 async function resolveDescriptorProvider(
     config: WalletConfig,
-    walletRepository: WalletRepository
+    walletRepository: WalletRepository,
 ): Promise<DescriptorProvider | undefined> {
     const mode: WalletMode = config.walletMode ?? "auto";
 
@@ -754,19 +723,15 @@ async function resolveDescriptorProvider(
         throw new Error(
             "walletMode 'hd' requires an HD-capable identity " +
                 "(SeedIdentity / MnemonicIdentity with a rangeable BIP-32 " +
-                "descriptor) or an explicit DescriptorProvider."
+                "descriptor) or an explicit DescriptorProvider.",
         );
     }
     try {
-        return await HDDescriptorProvider.create(
-            config.identity,
-            walletRepository
-        );
+        return await HDDescriptorProvider.create(config.identity, walletRepository);
     } catch (e) {
         throw new Error(
-            "walletMode 'hd' failed to initialize: " +
-                (e instanceof Error ? e.message : String(e)),
-            { cause: e }
+            "walletMode 'hd' failed to initialize: " + (e instanceof Error ? e.message : String(e)),
+            { cause: e },
         );
     }
 }

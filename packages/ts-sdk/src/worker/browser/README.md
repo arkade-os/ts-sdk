@@ -8,23 +8,23 @@ scheduler.
 ## Files and Responsibilities
 
 - `messageBus.ts` (parent directory)
-  - Defines `MessageHandler`, `RequestEnvelope`, `ResponseEnvelope`, and the
-    `MessageBus` orchestrator.
-  - Registers `install`/`activate` hooks, message routing (by `tag`), and a tick
-    scheduler.
-  - Manages lazy initialization: handlers are not started until the client sends
-    an `INITIALIZE_MESSAGE_BUS` message with wallet/server configuration.
-  - Provides static helpers `MessageBus.setup()` and
-    `MessageBus.getServiceWorker()` for client-side registration.
+    - Defines `MessageHandler`, `RequestEnvelope`, `ResponseEnvelope`, and the
+      `MessageBus` orchestrator.
+    - Registers `install`/`activate` hooks, message routing (by `tag`), and a tick
+      scheduler.
+    - Manages lazy initialization: handlers are not started until the client sends
+      an `INITIALIZE_MESSAGE_BUS` message with wallet/server configuration.
+    - Provides static helpers `MessageBus.setup()` and
+      `MessageBus.getServiceWorker()` for client-side registration.
 - `service-worker-manager.ts`
-  - Browser-side helper for registering a service worker once per path.
-  - Attaches an update handshake: detect `waiting`, send `SKIP_WAITING`, listen for
-    `controllerchange`, and optionally reload (or call callbacks).
-  - Caches registration promises so subsequent calls reuse the same worker.
-  - Provides `setupServiceWorkerOnce()` and `getActiveServiceWorker()`.
+    - Browser-side helper for registering a service worker once per path.
+    - Attaches an update handshake: detect `waiting`, send `SKIP_WAITING`, listen for
+      `controllerchange`, and optionally reload (or call callbacks).
+    - Caches registration promises so subsequent calls reuse the same worker.
+    - Provides `setupServiceWorkerOnce()` and `getActiveServiceWorker()`.
 - `utils.ts`
-  - A simpler, one-off `setupServiceWorker()` helper that registers and waits
-    for activation with a timeout.
+    - A simpler, one-off `setupServiceWorker()` helper that registers and waits
+      for activation with a timeout.
 
 ## Runtime Flow
 
@@ -149,6 +149,7 @@ sw.postMessage({ tag: "echo", id: "req-1", payload: "hello" });
 ```
 
 Notes:
+
 - Each handler must provide a unique `messageTag`.
 - The `id` field correlates responses to requests.
 - Set `broadcast: true` on a request to fan it out to all handlers.
@@ -160,13 +161,13 @@ Notes:
 The `config.wallet` field carries a tagged `SerializedIdentity` envelope so
 that the worker can rehydrate the matching identity class:
 
-| Tag                    | Shape                                                             | Hydrates as                   |
-| ---------------------- | ----------------------------------------------------------------- | ----------------------------- |
-| `single-key`           | `{ type: "single-key", privateKey }`                              | `SingleKey`                   |
-| `seed`                 | `{ type: "seed", seed, descriptor }`                              | `SeedIdentity`                |
-| `mnemonic`             | `{ type: "mnemonic", mnemonic, descriptor, passphrase? }`         | `MnemonicIdentity`            |
-| `readonly-single-key`  | `{ type: "readonly-single-key", publicKey }`                      | `ReadonlySingleKey`           |
-| `readonly-descriptor`  | `{ type: "readonly-descriptor", descriptor }`                     | `ReadonlyDescriptorIdentity`  |
+| Tag                   | Shape                                                     | Hydrates as                  |
+| --------------------- | --------------------------------------------------------- | ---------------------------- |
+| `single-key`          | `{ type: "single-key", privateKey }`                      | `SingleKey`                  |
+| `seed`                | `{ type: "seed", seed, descriptor }`                      | `SeedIdentity`               |
+| `mnemonic`            | `{ type: "mnemonic", mnemonic, descriptor, passphrase? }` | `MnemonicIdentity`           |
+| `readonly-single-key` | `{ type: "readonly-single-key", publicKey }`              | `ReadonlySingleKey`          |
+| `readonly-descriptor` | `{ type: "readonly-descriptor", descriptor }`             | `ReadonlyDescriptorIdentity` |
 
 All payloads are structured-clone safe. Signing envelopes ship the secret
 material needed for signing; readonly envelopes never do. The helpers
@@ -227,6 +228,7 @@ key is ever in transit.
 ## Registering with the built-in update handshake
 
 `setupServiceWorkerOnce` now handles stale workers by:
+
 - forcing an update check,
 - sending `{ type: "SKIP_WAITING" }` to a waiting worker,
 - retrying once after a timeout if it’s still waiting,
@@ -242,12 +244,12 @@ With prompts/callbacks:
 
 ```ts
 await setupServiceWorkerOnce({
-  path: "/service-worker.js",
-  autoReload: false,          // don't reload automatically
-  onNeedRefresh: () => showUpdateBanner(), // called when a new SW is waiting
-  onUpdated: () => console.log("SW activated; reload if desired"),
-  activationTimeoutMs: 10_000,
-  debug: true,
+    path: "/service-worker.js",
+    autoReload: false, // don't reload automatically
+    onNeedRefresh: () => showUpdateBanner(), // called when a new SW is waiting
+    onUpdated: () => console.log("SW activated; reload if desired"),
+    activationTimeoutMs: 10_000,
+    debug: true,
 });
 ```
 
@@ -256,6 +258,6 @@ message and call `skipWaiting()`:
 
 ```ts
 self.addEventListener("message", (event) => {
-  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
+    if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
 });
 ```

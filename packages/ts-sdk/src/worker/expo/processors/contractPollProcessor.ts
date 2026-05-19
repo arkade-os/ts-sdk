@@ -29,14 +29,9 @@ export const contractPollProcessor: TaskProcessor = {
 
     async execute(
         item: TaskItem,
-        deps: TaskDependencies
+        deps: TaskDependencies,
     ): Promise<Omit<TaskResult, "id" | "executedAt">> {
-        const {
-            contractRepository,
-            walletRepository,
-            indexerProvider,
-            extendVtxo,
-        } = deps;
+        const { contractRepository, walletRepository, indexerProvider, extendVtxo } = deps;
 
         const contracts = await contractRepository.getContracts();
         let contractsProcessed = 0;
@@ -70,7 +65,7 @@ export const contractPollProcessor: TaskProcessor = {
             const filtered = warnAndFilterVtxosForScript(
                 allVtxos,
                 contract.script,
-                "contractPollProcessor"
+                "contractPollProcessor",
             );
             await saveVtxosForContract(walletRepository, contract, filtered);
             vtxosSaved += filtered.length;

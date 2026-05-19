@@ -30,9 +30,7 @@ export class InMemoryContractRepository implements ContractRepository {
             if (criterion === undefined) {
                 return true;
             }
-            return Array.isArray(criterion)
-                ? criterion.includes(value)
-                : value === criterion;
+            return Array.isArray(criterion) ? criterion.includes(value) : value === criterion;
         };
 
         const results: Contract[] = [];

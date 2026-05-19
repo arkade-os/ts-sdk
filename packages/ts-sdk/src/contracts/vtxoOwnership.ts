@@ -16,16 +16,13 @@ export function vtxoOutpoint(vtxo: Pick<VirtualCoin, "txid" | "vout">): string {
     return `${vtxo.txid}:${vtxo.vout}`;
 }
 
-export function isVtxoForScript(
-    vtxo: Pick<VirtualCoin, "script">,
-    script: string
-): boolean {
+export function isVtxoForScript(vtxo: Pick<VirtualCoin, "script">, script: string): boolean {
     return !!vtxo.script && vtxo.script === script;
 }
 
 export function filterVtxosForScript<T extends Pick<VirtualCoin, "script">>(
     vtxos: T[],
-    script: string
+    script: string,
 ): T[] {
     return vtxos.filter((v) => isVtxoForScript(v, script));
 }
@@ -49,7 +46,7 @@ export function warnAndFilterVtxosForScript<
     }
     if (rejected.length > 0) {
         console.warn(
-            `${context}: dropped ${rejected.length} wrong-script VTXO(s) for script ${script}: ${rejected.join(", ")}`
+            `${context}: dropped ${rejected.length} wrong-script VTXO(s) for script ${script}: ${rejected.join(", ")}`,
         );
     }
     return matches;
@@ -63,15 +60,13 @@ export function warnAndFilterVtxosForScript<
 export function validateVtxosForScript(
     vtxos: Array<Pick<VirtualCoin, "txid" | "vout" | "script">>,
     script: string,
-    context: string
+    context: string,
 ): void {
     const mismatches = vtxos.filter((v) => !isVtxoForScript(v, script));
     if (mismatches.length === 0) return;
-    const detail = mismatches
-        .map((v) => `${vtxoOutpoint(v)}(script=${v.script ?? ""})`)
-        .join(", ");
+    const detail = mismatches.map((v) => `${vtxoOutpoint(v)}(script=${v.script ?? ""})`).join(", ");
     throw new Error(
-        `${context}: refusing to persist ${mismatches.length} VTXO(s) whose script does not match ${script}: ${detail}`
+        `${context}: refusing to persist ${mismatches.length} VTXO(s) whose script does not match ${script}: ${detail}`,
     );
 }
 
@@ -81,25 +76,22 @@ export function validateVtxosForScript(
  */
 export async function getVtxosForContract(
     repo: WalletRepository,
-    contract: Pick<Contract, "script" | "address">
+    contract: Pick<Contract, "script" | "address">,
 ): Promise<ExtendedVirtualCoin[]> {
     return repo.getVtxosForScript
         ? repo.getVtxosForScript(contract.script)
-        : filterVtxosForScript(
-              await repo.getVtxos(contract.address),
-              contract.script
-          );
+        : filterVtxosForScript(await repo.getVtxos(contract.address), contract.script);
 }
 
 export async function saveVtxosForContract(
     repo: WalletRepository,
     contract: Pick<Contract, "script" | "address">,
-    vtxos: ExtendedVirtualCoin[]
+    vtxos: ExtendedVirtualCoin[],
 ): Promise<void> {
     if (repo.saveVtxosForScript) {
         return repo.saveVtxosForScript(
             { script: contract.script, address: contract.address },
-            vtxos
+            vtxos,
         );
     }
     validateVtxosForScript(vtxos, contract.script, "saveVtxosForContract");

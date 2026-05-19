@@ -9,9 +9,7 @@ const stubNavigator = (serviceWorker: Partial<ServiceWorkerContainer>) => {
     vi.stubGlobal("navigator", { serviceWorker } as Navigator);
 };
 
-const createServiceWorkerContainer = (
-    registration: Partial<ServiceWorkerRegistration> = {}
-) => {
+const createServiceWorkerContainer = (registration: Partial<ServiceWorkerRegistration> = {}) => {
     const listeners = new Map<string, Array<(evt?: Event) => void>>();
     return {
         register: vi.fn().mockResolvedValue(registration),

@@ -1,11 +1,4 @@
-import {
-    AssetGroup,
-    AssetId,
-    AssetRef,
-    AssetInput,
-    AssetOutput,
-    Packet,
-} from "../extension/asset";
+import { AssetGroup, AssetId, AssetRef, AssetInput, AssetOutput, Packet } from "../extension/asset";
 import { Asset, ExtendedVirtualCoin, Recipient, VirtualCoin } from "./index";
 
 /**
@@ -19,7 +12,7 @@ import { Asset, ExtendedVirtualCoin, Recipient, VirtualCoin } from "./index";
 export function createAssetPacket(
     assetInputs: Map<number, Asset[]>,
     receivers: Recipient[],
-    changeReceiver?: Recipient
+    changeReceiver?: Recipient,
 ): Packet {
     // map inputs by asset id
     const inputsByAssetId = new Map<string, AssetInput[]>();
@@ -67,10 +60,7 @@ export function createAssetPacket(
     const groups: AssetGroup[] = [];
 
     // get all unique asset ids from both inputs and outputs
-    const allAssetIds = new Set([
-        ...inputsByAssetId.keys(),
-        ...outputsByAssetId.keys(),
-    ]);
+    const allAssetIds = new Set([...inputsByAssetId.keys(), ...outputsByAssetId.keys()]);
 
     for (const assetIdStr of allAssetIds) {
         const inputs = inputsByAssetId.get(assetIdStr);
@@ -78,13 +68,7 @@ export function createAssetPacket(
 
         const assetId = AssetId.fromString(assetIdStr);
 
-        const group = AssetGroup.create(
-            assetId,
-            null,
-            inputs ?? [],
-            outputs ?? [],
-            []
-        );
+        const group = AssetGroup.create(assetId, null, inputs ?? [], outputs ?? [], []);
 
         groups.push(group);
     }
@@ -99,19 +83,15 @@ export function createAssetPacket(
 export function selectCoinsWithAsset(
     coins: ExtendedVirtualCoin[],
     assetId: string,
-    requiredAmount: bigint
+    requiredAmount: bigint,
 ): { selected: ExtendedVirtualCoin[]; totalAssetAmount: bigint } {
     // filter only coins that have the specified asset
-    const coinsWithAsset = coins.filter((coin) =>
-        coin.assets?.some((a) => a.assetId === assetId)
-    );
+    const coinsWithAsset = coins.filter((coin) => coin.assets?.some((a) => a.assetId === assetId));
 
     // sort by asset amount (smallest first for better selection)
     coinsWithAsset.sort((a, b) => {
-        const amountA =
-            a.assets?.find((asset) => asset.assetId === assetId)?.amount ?? 0n;
-        const amountB =
-            b.assets?.find((asset) => asset.assetId === assetId)?.amount ?? 0n;
+        const amountA = a.assets?.find((asset) => asset.assetId === assetId)?.amount ?? 0n;
+        const amountB = b.assets?.find((asset) => asset.assetId === assetId)?.amount ?? 0n;
         // Array.sort callback returns number; reduce the bigint diff to
         // -1/0/1 (the only thing sort actually consults).
         return amountA < amountB ? -1 : amountA > amountB ? 1 : 0;
@@ -124,14 +104,13 @@ export function selectCoinsWithAsset(
         if (totalAssetAmount >= requiredAmount) break;
 
         selected.push(coin);
-        const assetAmount =
-            coin.assets?.find((a) => a.assetId === assetId)?.amount ?? 0n;
+        const assetAmount = coin.assets?.find((a) => a.assetId === assetId)?.amount ?? 0n;
         totalAssetAmount += assetAmount;
     }
 
     if (totalAssetAmount < requiredAmount) {
         throw new Error(
-            `Insufficient asset balance: have ${totalAssetAmount}, need ${requiredAmount}`
+            `Insufficient asset balance: have ${totalAssetAmount}, need ${requiredAmount}`,
         );
     }
 
@@ -140,7 +119,7 @@ export function selectCoinsWithAsset(
 
 export function computeAssetChange(
     inputAssets: Map<string, bigint>,
-    outputAssets: Map<string, bigint>
+    outputAssets: Map<string, bigint>,
 ): Map<string, bigint> {
     const change = new Map<string, bigint>();
 
@@ -155,9 +134,7 @@ export function computeAssetChange(
     return change;
 }
 
-export function selectedCoinsToAssetInputs(
-    selectedCoins: VirtualCoin[]
-): Map<number, Asset[]> {
+export function selectedCoinsToAssetInputs(selectedCoins: VirtualCoin[]): Map<number, Asset[]> {
     const assetInputs = new Map<number, Asset[]>();
 
     for (let inputIndex = 0; inputIndex < selectedCoins.length; inputIndex++) {

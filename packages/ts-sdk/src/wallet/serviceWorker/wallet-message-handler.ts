@@ -37,11 +37,7 @@ import {
 import { DelegateInfo } from "../../providers/delegator";
 import { ReadonlyWallet, Wallet } from "../wallet";
 import { extendCoin } from "../utils";
-import {
-    MessageHandler,
-    RequestEnvelope,
-    ResponseEnvelope,
-} from "../../worker/messageBus";
+import { MessageHandler, RequestEnvelope, ResponseEnvelope } from "../../worker/messageBus";
 import { Transaction } from "../../utils/transaction";
 import { buildTransactionHistory } from "../../utils/transactionHistory";
 import {
@@ -602,19 +598,14 @@ export class WalletMessageHandler
     }
 
     async tick(_now: number) {
-        const results = await Promise.allSettled(
-            this.onNextTick.map((fn) => fn())
-        );
+        const results = await Promise.allSettled(this.onNextTick.map((fn) => fn()));
         this.onNextTick = [];
         return results
             .map((result) => {
                 if (result.status === "fulfilled") {
                     return result.value;
                 } else {
-                    console.error(
-                        `[${this.messageTag}] tick failed`,
-                        result.reason
-                    );
+                    console.error(`[${this.messageTag}] tick failed`, result.reason);
                     // TODO: how to deliver errors down the stream? a broadcast?
                     return null;
                 }
@@ -653,9 +644,7 @@ export class WalletMessageHandler
         );
     }
 
-    async handleMessage(
-        message: WalletUpdaterRequest
-    ): Promise<WalletUpdaterResponse> {
+    async handleMessage(message: WalletUpdaterRequest): Promise<WalletUpdaterResponse> {
         const id = message.id;
         if (message.type === "INIT_WALLET") {
             await this.handleInitWallet(message);
@@ -696,8 +685,7 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_BOARDING_ADDRESS": {
-                    const address =
-                        await this.readonlyWallet.getBoardingAddress();
+                    const address = await this.readonlyWallet.getBoardingAddress();
                     return this.tagged({
                         id,
                         type: "BOARDING_ADDRESS",
@@ -732,9 +720,7 @@ export class WalletMessageHandler
                 case "GET_TRANSACTION_HISTORY": {
                     const allVtxos = await this.getVtxosFromRepo();
                     const transactions =
-                        (await this.buildTransactionHistoryFromCache(
-                            allVtxos
-                        )) ?? [];
+                        (await this.buildTransactionHistoryFromCache(allVtxos)) ?? [];
                     return this.tagged({
                         id,
                         type: "TRANSACTION_HISTORY",
@@ -742,8 +728,7 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_STATUS": {
-                    const pubKey =
-                        await this.readonlyWallet.identity.xOnlyPublicKey();
+                    const pubKey = await this.readonlyWallet.identity.xOnlyPublicKey();
                     return this.tagged({
                         id,
                         type: "WALLET_STATUS",
@@ -777,11 +762,8 @@ export class WalletMessageHandler
                     });
                 }
                 case "CREATE_CONTRACT": {
-                    const manager =
-                        await this.readonlyWallet.getContractManager();
-                    const contract = await manager.createContract(
-                        message.payload
-                    );
+                    const manager = await this.readonlyWallet.getContractManager();
+                    const contract = await manager.createContract(message.payload);
                     return this.tagged({
                         id,
                         type: "CONTRACT_CREATED",
@@ -789,11 +771,8 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_CONTRACTS": {
-                    const manager =
-                        await this.readonlyWallet.getContractManager();
-                    const contracts = await manager.getContracts(
-                        message.payload.filter
-                    );
+                    const manager = await this.readonlyWallet.getContractManager();
+                    const contracts = await manager.getContracts(message.payload.filter);
                     return this.tagged({
                         id,
                         type: "CONTRACTS",
@@ -801,11 +780,8 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_CONTRACTS_WITH_VTXOS": {
-                    const manager =
-                        await this.readonlyWallet.getContractManager();
-                    const contracts = await manager.getContractsWithVtxos(
-                        message.payload.filter
-                    );
+                    const manager = await this.readonlyWallet.getContractManager();
+                    const contracts = await manager.getContractsWithVtxos(message.payload.filter);
                     return this.tagged({
                         id,
                         type: "CONTRACTS_WITH_VTXOS",
@@ -813,11 +789,8 @@ export class WalletMessageHandler
                     });
                 }
                 case "ANNOTATE_VTXOS": {
-                    const manager =
-                        await this.readonlyWallet.getContractManager();
-                    const annotated = await manager.annotateVtxos(
-                        message.payload.vtxos
-                    );
+                    const manager = await this.readonlyWallet.getContractManager();
+                    const annotated = await manager.annotateVtxos(message.payload.vtxos);
                     return this.tagged({
                         id,
                         type: "ANNOTATED_VTXOS",
@@ -825,11 +798,10 @@ export class WalletMessageHandler
                     });
                 }
                 case "UPDATE_CONTRACT": {
-                    const manager =
-                        await this.readonlyWallet.getContractManager();
+                    const manager = await this.readonlyWallet.getContractManager();
                     const contract = await manager.updateContract(
                         message.payload.script,
-                        message.payload.updates
+                        message.payload.updates,
                     );
                     return this.tagged({
                         id,
@@ -838,8 +810,7 @@ export class WalletMessageHandler
                     });
                 }
                 case "DELETE_CONTRACT": {
-                    const manager =
-                        await this.readonlyWallet.getContractManager();
+                    const manager = await this.readonlyWallet.getContractManager();
                     await manager.deleteContract(message.payload.script);
                     return this.tagged({
                         id,
@@ -848,11 +819,8 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_SPENDABLE_PATHS": {
-                    const manager =
-                        await this.readonlyWallet.getContractManager();
-                    const paths = await manager.getSpendablePaths(
-                        message.payload.options
-                    );
+                    const manager = await this.readonlyWallet.getContractManager();
+                    const paths = await manager.getSpendablePaths(message.payload.options);
                     return this.tagged({
                         id,
                         type: "SPENDABLE_PATHS",
@@ -860,11 +828,8 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_ALL_SPENDING_PATHS": {
-                    const manager =
-                        await this.readonlyWallet.getContractManager();
-                    const paths = await manager.getAllSpendingPaths(
-                        message.payload.options
-                    );
+                    const manager = await this.readonlyWallet.getContractManager();
+                    const paths = await manager.getAllSpendingPaths(message.payload.options);
                     return this.tagged({
                         id,
                         type: "ALL_SPENDING_PATHS",
@@ -872,8 +837,7 @@ export class WalletMessageHandler
                     });
                 }
                 case "IS_CONTRACT_MANAGER_WATCHING": {
-                    const manager =
-                        await this.readonlyWallet.getContractManager();
+                    const manager = await this.readonlyWallet.getContractManager();
                     const isWatching = await manager.isWatching();
                     return this.tagged({
                         id,
@@ -882,21 +846,16 @@ export class WalletMessageHandler
                     });
                 }
                 case "REFRESH_VTXOS": {
-                    const manager =
-                        await this.readonlyWallet.getContractManager();
-                    await manager.refreshVtxos(
-                        (message as RequestRefreshVtxos).payload
-                    );
+                    const manager = await this.readonlyWallet.getContractManager();
+                    await manager.refreshVtxos((message as RequestRefreshVtxos).payload);
                     return this.tagged({
                         id,
                         type: "REFRESH_VTXOS_SUCCESS",
                     });
                 }
                 case "REFRESH_OUTPOINTS": {
-                    const manager =
-                        await this.readonlyWallet.getContractManager();
-                    const { outpoints } = (message as RequestRefreshOutpoints)
-                        .payload;
+                    const manager = await this.readonlyWallet.getContractManager();
+                    const { outpoints } = (message as RequestRefreshOutpoints).payload;
                     await manager.refreshOutpoints(outpoints);
                     return this.tagged({
                         id,
@@ -905,9 +864,7 @@ export class WalletMessageHandler
                 }
                 case "SEND": {
                     const { recipients } = (message as RequestSend).payload;
-                    const txid = await (this.wallet as IWallet).send(
-                        ...recipients
-                    );
+                    const txid = await (this.wallet as IWallet).send(...recipients);
                     return this.tagged({
                         id,
                         type: "SEND_SUCCESS",
@@ -915,12 +872,9 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_ASSET_DETAILS": {
-                    const { assetId } = (message as RequestGetAssetDetails)
-                        .payload;
+                    const { assetId } = (message as RequestGetAssetDetails).payload;
                     const assetDetails =
-                        await this.readonlyWallet.assetManager.getAssetDetails(
-                            assetId
-                        );
+                        await this.readonlyWallet.assetManager.getAssetDetails(assetId);
                     return this.tagged({
                         id,
                         type: "ASSET_DETAILS",
@@ -929,9 +883,7 @@ export class WalletMessageHandler
                 }
                 case "ISSUE": {
                     const { params } = (message as RequestIssue).payload;
-                    const result = await (
-                        this.wallet as IWallet
-                    ).assetManager.issue(params);
+                    const result = await (this.wallet as IWallet).assetManager.issue(params);
                     return this.tagged({
                         id,
                         type: "ISSUE_SUCCESS",
@@ -940,9 +892,7 @@ export class WalletMessageHandler
                 }
                 case "REISSUE": {
                     const { params } = (message as RequestReissue).payload;
-                    const txid = await (
-                        this.wallet as IWallet
-                    ).assetManager.reissue(params);
+                    const txid = await (this.wallet as IWallet).assetManager.reissue(params);
                     return this.tagged({
                         id,
                         type: "REISSUE_SUCCESS",
@@ -951,9 +901,7 @@ export class WalletMessageHandler
                 }
                 case "BURN": {
                     const { params } = (message as RequestBurn).payload;
-                    const txid = await (
-                        this.wallet as IWallet
-                    ).assetManager.burn(params);
+                    const txid = await (this.wallet as IWallet).assetManager.burn(params);
                     return this.tagged({
                         id,
                         type: "BURN_SUCCESS",
@@ -961,9 +909,7 @@ export class WalletMessageHandler
                     });
                 }
                 case "DELEGATE": {
-                    const response = await this.handleDelegate(
-                        message as RequestDelegate
-                    );
+                    const response = await this.handleDelegate(message as RequestDelegate);
                     return this.tagged({ id, ...response });
                 }
                 case "GET_DELEGATE_INFO": {
@@ -988,7 +934,7 @@ export class WalletMessageHandler
                                 id,
                                 type: "RECOVER_VTXOS_EVENT",
                                 payload: e,
-                            })
+                            }),
                         );
                     });
                     return this.tagged({
@@ -1016,7 +962,7 @@ export class WalletMessageHandler
                     const wallet = this.requireWallet();
                     const vtxoManager = await wallet.getVtxoManager();
                     const vtxos = await vtxoManager.getExpiringVtxos(
-                        (message as RequestGetExpiringVtxos).payload.thresholdMs
+                        (message as RequestGetExpiringVtxos).payload.thresholdMs,
                     );
                     return this.tagged({
                         id,
@@ -1033,7 +979,7 @@ export class WalletMessageHandler
                                 id,
                                 type: "RENEW_VTXOS_EVENT",
                                 payload: e,
-                            })
+                            }),
                         );
                     });
                     return this.tagged({
@@ -1097,9 +1043,7 @@ export class WalletMessageHandler
 
         // offchain — split spendable vs swept from single repo read
         const spendableVtxos = allVtxos.filter(isSpendable);
-        const sweptVtxos = allVtxos.filter(
-            (vtxo) => vtxo.virtualStatus.state === "swept"
-        );
+        const sweptVtxos = allVtxos.filter((vtxo) => vtxo.virtualStatus.state === "swept");
 
         let settled = 0;
         let preconfirmed = 0;
@@ -1130,9 +1074,10 @@ export class WalletMessageHandler
                 }
             }
         }
-        const assets = Array.from(assetBalances.entries()).map(
-            ([assetId, amount]) => ({ assetId, amount })
-        );
+        const assets = Array.from(assetBalances.entries()).map(([assetId, amount]) => ({
+            assetId,
+            amount,
+        }));
 
         return {
             boarding: {
@@ -1182,16 +1127,15 @@ export class WalletMessageHandler
         if (this.wallet) {
             try {
                 const vtxos = await this.getVtxosFromRepo();
-                const { pending, finalized } =
-                    await this.wallet.finalizePendingTxs(
-                        vtxos.filter(
-                            (vtxo) =>
-                                vtxo.virtualStatus.state !== "swept" &&
-                                vtxo.virtualStatus.state !== "settled"
-                        )
-                    );
+                const { pending, finalized } = await this.wallet.finalizePendingTxs(
+                    vtxos.filter(
+                        (vtxo) =>
+                            vtxo.virtualStatus.state !== "swept" &&
+                            vtxo.virtualStatus.state !== "settled",
+                    ),
+                );
                 console.info(
-                    `Recovered ${finalized.length}/${pending.length} pending transactions: ${finalized.join(", ")}`
+                    `Recovered ${finalized.length}/${pending.length} pending transactions: ${finalized.join(", ")}`,
                 );
             } catch (error: unknown) {
                 console.error("Error recovering pending transactions:", error);
@@ -1204,8 +1148,8 @@ export class WalletMessageHandler
         const address = await this.readonlyWallet.getAddress();
 
         // subscribe for incoming funds and notify all clients when new funds arrive
-        this.incomingFundsSubscription =
-            await this.readonlyWallet.notifyIncomingFunds(async (funds) => {
+        this.incomingFundsSubscription = await this.readonlyWallet.notifyIncomingFunds(
+            async (funds) => {
                 if (funds.type === "vtxo") {
                     // `funds.newVtxos` / `funds.spentVtxos` are already
                     // ExtendedVirtualCoin — annotation happened inside the
@@ -1228,7 +1172,7 @@ export class WalletMessageHandler
                             // right contract bucket; surface the drop instead
                             // of silently losing the VTXO.
                             console.warn(
-                                `WalletMessageHandler.notifyIncomingFunds: dropping VTXO without script ${v.txid}:${v.vout}`
+                                `WalletMessageHandler.notifyIncomingFunds: dropping VTXO without script ${v.txid}:${v.vout}`,
                             );
                             continue;
                         }
@@ -1244,26 +1188,22 @@ export class WalletMessageHandler
                     }
                     const cm = await this.readonlyWallet!.getContractManager();
                     const contracts = await cm.getContracts();
-                    const addrByScript = new Map(
-                        contracts.map((c) => [c.script, c.address])
-                    );
+                    const addrByScript = new Map(contracts.map((c) => [c.script, c.address]));
                     for (const [script, vtxos] of byScript) {
                         const filtered = warnAndFilterVtxosForScript(
                             vtxos,
                             script,
-                            "WalletMessageHandler.notifyIncomingFunds"
+                            "WalletMessageHandler.notifyIncomingFunds",
                         );
                         if (filtered.length === 0) continue;
                         const targetAddress =
-                            script === walletScript
-                                ? address
-                                : addrByScript.get(script);
+                            script === walletScript ? address : addrByScript.get(script);
                         if (!targetAddress) continue;
                         if (this.walletRepository) {
                             await saveVtxosForContract(
                                 this.walletRepository,
                                 { script, address: targetAddress },
-                                filtered
+                                filtered,
                             );
                         }
                     }
@@ -1274,22 +1214,16 @@ export class WalletMessageHandler
                             type: "VTXO_UPDATE",
                             broadcast: true,
                             payload: { newVtxos, spentVtxos },
-                        })
+                        }),
                     );
                 }
                 if (funds.type === "utxo") {
-                    const utxos = funds.coins.map((utxo) =>
-                        extendCoin(this.readonlyWallet!, utxo)
-                    );
-                    const boardingAddress =
-                        await this.readonlyWallet!.getBoardingAddress();
+                    const utxos = funds.coins.map((utxo) => extendCoin(this.readonlyWallet!, utxo));
+                    const boardingAddress = await this.readonlyWallet!.getBoardingAddress();
                     // save boarding inputs using unified repository
                     // TODO: remove UTXOs by address
                     //  await this.walletRepository.clearUtxos(boardingAddress);
-                    await this.walletRepository?.saveUtxos(
-                        boardingAddress,
-                        utxos
-                    );
+                    await this.walletRepository?.saveUtxos(boardingAddress, utxos);
 
                     // notify all clients about the boarding input state update
                     this.scheduleForNextTick(() =>
@@ -1297,10 +1231,11 @@ export class WalletMessageHandler
                             type: "UTXO_UPDATE",
                             broadcast: true,
                             payload: { coins: utxos },
-                        })
+                        }),
                     );
                 }
-            });
+            },
+        );
 
         // Eagerly start the VtxoManager so its background tasks (auto-renewal,
         // boarding input polling/sweep) run inside the service worker without
@@ -1329,12 +1264,11 @@ export class WalletMessageHandler
 
         // Fetch boarding inputs and save using unified repository
         const boardingAddress = await this.readonlyWallet.getBoardingAddress();
-        const coins =
-            await this.readonlyWallet.onchainProvider.getCoins(boardingAddress);
+        const coins = await this.readonlyWallet.onchainProvider.getCoins(boardingAddress);
         await this.walletRepository.deleteUtxos(boardingAddress);
         await this.walletRepository.saveUtxos(
             boardingAddress,
-            coins.map((utxo) => extendCoin(this.readonlyWallet!, utxo))
+            coins.map((utxo) => extendCoin(this.readonlyWallet!, utxo)),
         );
 
         // Build transaction history from cached virtual outputs (no indexer call)
@@ -1363,7 +1297,7 @@ export class WalletMessageHandler
                     id: message.id,
                     type: "SETTLE_EVENT",
                     payload: e,
-                })
+                }),
             );
         });
 
@@ -1398,9 +1332,7 @@ export class WalletMessageHandler
         } as ResponseSignTransaction;
     }
 
-    private async handleDelegate(
-        message: RequestDelegate
-    ): Promise<ResponseDelegate> {
+    private async handleDelegate(message: RequestDelegate): Promise<ResponseDelegate> {
         const wallet = this.requireWallet();
         const delegatorManager = await wallet.getDelegatorManager();
         if (!delegatorManager) {
@@ -1409,9 +1341,7 @@ export class WalletMessageHandler
 
         const { vtxoOutpoints, destination, delegateAt } = message.payload;
         const allVtxos = await wallet.getVtxos();
-        const outpointSet = new Set(
-            vtxoOutpoints.map((o) => `${o.txid}:${o.vout}`)
-        );
+        const outpointSet = new Set(vtxoOutpoints.map((o) => `${o.txid}:${o.vout}`));
         const filtered = allVtxos
             .filter((v) => outpointSet.has(`${v.txid}:${v.vout}`))
             .map((v) => ({ ...v, contractScript: v.script }));
@@ -1419,7 +1349,7 @@ export class WalletMessageHandler
         const result = await delegatorManager.delegate(
             filtered,
             destination,
-            delegateAt !== undefined ? new Date(delegateAt) : undefined
+            delegateAt !== undefined ? new Date(delegateAt) : undefined,
         );
 
         return {
@@ -1447,8 +1377,7 @@ export class WalletMessageHandler
         }
         const vtxos = await this.getSpendableVtxos();
         const dustAmount = this.readonlyWallet.dustAmount;
-        const includeRecoverable =
-            message.payload.filter?.withRecoverable ?? false;
+        const includeRecoverable = message.payload.filter?.withRecoverable ?? false;
         const filteredVtxos = includeRecoverable
             ? vtxos
             : vtxos.filter((v) => {
@@ -1526,9 +1455,7 @@ export class WalletMessageHandler
         const manager = await this.readonlyWallet.getContractManager();
         const contracts = await manager.getContracts();
         for (const contract of contracts) {
-            addVtxos(
-                await getVtxosForContract(this.walletRepository, contract)
-            );
+            addVtxos(await getVtxosForContract(this.walletRepository, contract));
         }
 
         // Also check the wallet's primary address. Decode it to its script
@@ -1542,7 +1469,7 @@ export class WalletMessageHandler
             walletScript = scriptFromArkAddress(walletAddress);
         } catch (e) {
             throw new Error(
-                `WalletMessageHandler.getVtxosFromRepo: failed to derive script from wallet address ${walletAddress}: ${e instanceof Error ? e.message : String(e)}`
+                `WalletMessageHandler.getVtxosFromRepo: failed to derive script from wallet address ${walletAddress}: ${e instanceof Error ? e.message : String(e)}`,
             );
         }
         const walletVtxos = await this.walletRepository.getVtxos(walletAddress);
@@ -1556,12 +1483,11 @@ export class WalletMessageHandler
      * Falls back to indexer only for uncached transaction timestamps.
      */
     private async buildTransactionHistoryFromCache(
-        vtxos: ExtendedVirtualCoin[]
+        vtxos: ExtendedVirtualCoin[],
     ): Promise<ArkTransaction[] | null> {
         if (!this.readonlyWallet) return null;
 
-        const { boardingTxs, commitmentsToIgnore } =
-            await this.readonlyWallet.getBoardingTxs();
+        const { boardingTxs, commitmentsToIgnore } = await this.readonlyWallet.getBoardingTxs();
 
         // Build a lookup for cached virtual output timestamps, keyed by txid.
         // Multiple virtual outputs can share a txid (different vouts) — we keep the
@@ -1608,18 +1534,11 @@ export class WalletMessageHandler
             }
         }
 
-        const getTxCreatedAt = async (
-            txid: string
-        ): Promise<number | undefined> => {
+        const getTxCreatedAt = async (txid: string): Promise<number | undefined> => {
             return vtxoCreatedAt.get(txid);
         };
 
-        return buildTransactionHistory(
-            vtxos,
-            boardingTxs,
-            commitmentsToIgnore,
-            getTxCreatedAt
-        );
+        return buildTransactionHistory(vtxos, boardingTxs, commitmentsToIgnore, getTxCreatedAt);
     }
 
     private async ensureContractEventBroadcasting() {
@@ -1627,17 +1546,15 @@ export class WalletMessageHandler
         if (this.contractEventsSubscription) return;
         try {
             const manager = await this.readonlyWallet.getContractManager();
-            this.contractEventsSubscription = manager.onContractEvent(
-                (event) => {
-                    this.scheduleForNextTick(() =>
-                        this.tagged({
-                            type: "CONTRACT_EVENT",
-                            broadcast: true,
-                            payload: { event },
-                        })
-                    );
-                }
-            );
+            this.contractEventsSubscription = manager.onContractEvent((event) => {
+                this.scheduleForNextTick(() =>
+                    this.tagged({
+                        type: "CONTRACT_EVENT",
+                        broadcast: true,
+                        payload: { event },
+                    }),
+                );
+            });
         } catch (error) {
             console.error("Error subscribing to contract events:", error);
         }

@@ -4,11 +4,7 @@ import { DEFAULT_SEQUENCE, Script, SigHash } from "@scure/btc-signer";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { ExtendedCoin, VirtualCoin } from "../wallet";
-import {
-    CLTVMultisigTapscript,
-    decodeTapscript,
-    RelativeTimelock,
-} from "../script/tapscript";
+import { CLTVMultisigTapscript, decodeTapscript, RelativeTimelock } from "../script/tapscript";
 import {
     EncodedVtxoScript,
     scriptFromTapLeafScript,
@@ -48,7 +44,7 @@ export type OffchainTx = {
 export function buildOffchainTx(
     inputs: ArkTxInput[],
     outputs: TransactionOutput[],
-    serverUnrollScript: CSVMultisigTapscript.Type
+    serverUnrollScript: CSVMultisigTapscript.Type,
 ): OffchainTx {
     // TODO: use arkd /info
     const MAX_OP_RETURN = 2;
@@ -58,8 +54,7 @@ export function buildOffchainTx(
     for (const [index, output] of outputs.entries()) {
         if (!output.script) throw new Error(`missing output script ${index}`);
         const isExtension = Extension.isExtension(output.script);
-        const isOpReturn =
-            isExtension || Script.decode(output.script)[0] === "RETURN";
+        const isOpReturn = isExtension || Script.decode(output.script)[0] === "RETURN";
         if (isOpReturn) {
             countOpReturn++;
         }
@@ -69,18 +64,14 @@ export function buildOffchainTx(
     }
 
     if (countOpReturn > MAX_OP_RETURN) {
-        throw new Error(
-            `too many OP_RETURN outputs: ${countOpReturn} > ${MAX_OP_RETURN}`
-        );
+        throw new Error(`too many OP_RETURN outputs: ${countOpReturn} > ${MAX_OP_RETURN}`);
     }
 
-    const checkpoints = inputs.map((input) =>
-        buildCheckpointTx(input, serverUnrollScript)
-    );
+    const checkpoints = inputs.map((input) => buildCheckpointTx(input, serverUnrollScript));
 
     const arkTx = buildVirtualTx(
         checkpoints.map((c) => c.input),
-        outputs
+        outputs,
     );
 
     return {
@@ -92,16 +83,11 @@ export function buildOffchainTx(
 function buildVirtualTx(inputs: ArkTxInput[], outputs: TransactionOutput[]) {
     let lockTime = 0n;
     for (const input of inputs) {
-        const tapscript = decodeTapscript(
-            scriptFromTapLeafScript(input.tapLeafScript)
-        );
+        const tapscript = decodeTapscript(scriptFromTapLeafScript(input.tapLeafScript));
         if (CLTVMultisigTapscript.is(tapscript)) {
             if (lockTime !== 0n) {
                 // if a locktime is already set, check if the new locktime is in the same unit
-                if (
-                    isSeconds(lockTime) !==
-                    isSeconds(tapscript.params.absoluteTimelock)
-                ) {
+                if (isSeconds(lockTime) !== isSeconds(tapscript.params.absoluteTimelock)) {
                     throw new Error("cannot mix seconds and blocks locktime");
                 }
             }
@@ -144,12 +130,10 @@ function buildVirtualTx(inputs: ArkTxInput[], outputs: TransactionOutput[]) {
 
 function buildCheckpointTx(
     vtxo: ArkTxInput,
-    serverUnrollScript: CSVMultisigTapscript.Type
+    serverUnrollScript: CSVMultisigTapscript.Type,
 ): { tx: Transaction; input: ArkTxInput } {
     // create the checkpoint virtual output script from collaborative closure
-    const collaborativeClosure = decodeTapscript(
-        scriptFromTapLeafScript(vtxo.tapLeafScript)
-    );
+    const collaborativeClosure = decodeTapscript(scriptFromTapLeafScript(vtxo.tapLeafScript));
 
     // create the checkpoint virtual output script combining collaborative closure and server unroll script
     const checkpointVtxoScript = new VtxoScript([
@@ -165,12 +149,12 @@ function buildCheckpointTx(
                 amount: BigInt(vtxo.value),
                 script: checkpointVtxoScript.pkScript,
             },
-        ]
+        ],
     );
 
     // get the collaborative leaf proof
     const collaborativeLeafProof = checkpointVtxoScript.findLeaf(
-        hex.encode(collaborativeClosure.script)
+        hex.encode(collaborativeClosure.script),
     );
 
     // create the checkpoint input that will be used as input of the virtual tx
@@ -197,18 +181,14 @@ function isSeconds(locktime: bigint): boolean {
 export function hasBoardingTxExpired(
     coin: ExtendedCoin,
     boardingTimelock: RelativeTimelock,
-    chainTipHeight?: number
+    chainTipHeight?: number,
 ) {
     if (!coin.status.block_time) return false;
     if (boardingTimelock.value === 0n) return true;
 
     if (boardingTimelock.type === "blocks") {
-        if (chainTipHeight === undefined || !coin.status.block_height)
-            return false;
-        return (
-            BigInt(chainTipHeight - coin.status.block_height) >=
-            boardingTimelock.value
-        );
+        if (chainTipHeight === undefined || !coin.status.block_height) return false;
+        return BigInt(chainTipHeight - coin.status.block_height) >= boardingTimelock.value;
     }
 
     // validate expiry in terms of seconds
@@ -238,7 +218,7 @@ export function verifyTapscriptSignatures(
     inputIndex: number,
     requiredSigners: string[],
     excludePubkeys: string[] = [],
-    allowedSighashTypes: number[] = [SigHash.DEFAULT]
+    allowedSighashTypes: number[] = [SigHash.DEFAULT],
 ): void {
     const input = tx.getInput(inputIndex);
 
@@ -272,15 +252,14 @@ export function verifyTapscriptSignatures(
 
         // Extract sighash type from signature
         // Schnorr signatures are 64 bytes, with optional 1-byte sighash appended
-        const sighashType =
-            signature.length === 65 ? signature[64] : SigHash.DEFAULT;
+        const sighashType = signature.length === 65 ? signature[64] : SigHash.DEFAULT;
         const sig = signature.subarray(0, 64);
 
         // Verify sighash type is allowed
         if (!allowedSighashTypes.includes(sighashType)) {
             const sighashName = formatSighash(sighashType);
             throw new Error(
-                `Unallowed sighash type ${sighashName} for input ${inputIndex}, pubkey ${pubKeyHex}.`
+                `Unallowed sighash type ${sighashName} for input ${inputIndex}, pubkey ${pubKeyHex}.`,
             );
         }
 
@@ -312,7 +291,7 @@ export function verifyTapscriptSignatures(
 
         if (!matchingScript || matchingVersion === undefined) {
             throw new Error(
-                `Input ${inputIndex}: No tapLeafScript found matching leafHash ${hex.encode(leafHash)}`
+                `Input ${inputIndex}: No tapLeafScript found matching leafHash ${hex.encode(leafHash)}`,
             );
         }
 
@@ -325,33 +304,25 @@ export function verifyTapscriptSignatures(
             prevoutAmounts,
             undefined,
             matchingScript,
-            matchingVersion
+            matchingVersion,
         );
 
         // Verify the schnorr signature
         const isValid = schnorr.verify(sig, message, pubKey);
 
         if (!isValid) {
-            throw new Error(
-                `Invalid signature for input ${inputIndex}, pubkey ${pubKeyHex}`
-            );
+            throw new Error(`Invalid signature for input ${inputIndex}, pubkey ${pubKeyHex}`);
         }
     }
 
     // Verify we have signatures from all required signers (excluding those we're skipping)
-    const signedPubkeys = input.tapScriptSig.map(([data]) =>
-        hex.encode(data.pubKey)
-    );
-    const requiredNotExcluded = requiredSigners.filter(
-        (pk) => !excludePubkeys.includes(pk)
-    );
-    const missingSigners = requiredNotExcluded.filter(
-        (pk) => !signedPubkeys.includes(pk)
-    );
+    const signedPubkeys = input.tapScriptSig.map(([data]) => hex.encode(data.pubKey));
+    const requiredNotExcluded = requiredSigners.filter((pk) => !excludePubkeys.includes(pk));
+    const missingSigners = requiredNotExcluded.filter((pk) => !signedPubkeys.includes(pk));
 
     if (missingSigners.length > 0) {
         throw new Error(
-            `Missing signatures from: ${missingSigners.map((pk) => pk.slice(0, 16)).join(", ")}...`
+            `Missing signatures from: ${missingSigners.map((pk) => pk.slice(0, 16)).join(", ")}...`,
         );
     }
 }
@@ -361,10 +332,7 @@ export function verifyTapscriptSignatures(
  * @param signedTx signed transaction
  * @param originalTx original transaction
  */
-export function combineTapscriptSigs(
-    signedTx: Transaction,
-    originalTx: Transaction
-) {
+export function combineTapscriptSigs(signedTx: Transaction, originalTx: Transaction) {
     for (let i = 0; i < signedTx.inputsLength; i++) {
         const input = originalTx.getInput(i);
         const signedInput = signedTx.getInput(i);

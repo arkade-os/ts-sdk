@@ -1,8 +1,4 @@
-import type {
-    GetSwapsFilter,
-    BoltzSwap,
-    SwapRepository,
-} from "../swap-repository";
+import type { GetSwapsFilter, BoltzSwap, SwapRepository } from "../swap-repository";
 
 /**
  * Realm-based implementation of SwapRepository.
@@ -44,7 +40,7 @@ export class RealmSwapRepository implements SwapRepository {
                     createdAt: swap.createdAt,
                     data: JSON.stringify(swap),
                 },
-                "modified"
+                "modified",
             );
         });
     }
@@ -52,18 +48,14 @@ export class RealmSwapRepository implements SwapRepository {
     async deleteSwap(id: string): Promise<void> {
         await this.ensureInit();
         this.realm.write(() => {
-            const toDelete = this.realm
-                .objects("BoltzSwap")
-                .filtered("id == $0", id);
+            const toDelete = this.realm.objects("BoltzSwap").filtered("id == $0", id);
             if (toDelete.length > 0) {
                 this.realm.delete(toDelete);
             }
         });
     }
 
-    async getAllSwaps<T extends BoltzSwap>(
-        filter?: GetSwapsFilter
-    ): Promise<T[]> {
+    async getAllSwaps<T extends BoltzSwap>(filter?: GetSwapsFilter): Promise<T[]> {
         await this.ensureInit();
 
         // Early return for empty array filters (no possible matches)
@@ -84,27 +76,15 @@ export class RealmSwapRepository implements SwapRepository {
             const filterArgs: any[] = [];
             let argIndex = 0;
 
-            argIndex = this.addFilterCondition(
-                filterParts,
-                filterArgs,
-                "id",
-                filter.id,
-                argIndex
-            );
+            argIndex = this.addFilterCondition(filterParts, filterArgs, "id", filter.id, argIndex);
             argIndex = this.addFilterCondition(
                 filterParts,
                 filterArgs,
                 "status",
                 filter.status,
-                argIndex
+                argIndex,
             );
-            this.addFilterCondition(
-                filterParts,
-                filterArgs,
-                "type",
-                filter.type,
-                argIndex
-            );
+            this.addFilterCondition(filterParts, filterArgs, "type", filter.type, argIndex);
 
             if (filterParts.length > 0) {
                 const query = filterParts.join(" AND ");
@@ -119,7 +99,7 @@ export class RealmSwapRepository implements SwapRepository {
 
         return [...results].map(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (obj: any) => JSON.parse(obj.data) as T
+            (obj: any) => JSON.parse(obj.data) as T,
         );
     }
 
@@ -138,7 +118,7 @@ export class RealmSwapRepository implements SwapRepository {
         args: any[],
         column: string,
         value: string | string[] | undefined,
-        argIndex: number
+        argIndex: number,
     ): number {
         if (value === undefined) return argIndex;
 

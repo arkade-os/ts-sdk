@@ -183,10 +183,7 @@ export interface PathContext {
  * };
  * ```
  */
-export interface ContractHandler<
-    P = Record<string, unknown>,
-    S extends VtxoScript = VtxoScript,
-> {
+export interface ContractHandler<P = Record<string, unknown>, S extends VtxoScript = VtxoScript> {
     /** Contract type managed by this handler. */
     readonly type: string;
 
@@ -217,11 +214,7 @@ export interface ContractHandler<
      *
      * @returns PathSelection if a viable path exists, null otherwise
      */
-    selectPath(
-        script: S,
-        contract: Contract,
-        context: PathContext
-    ): PathSelection | null;
+    selectPath(script: S, contract: Contract, context: PathContext): PathSelection | null;
 
     /**
      * Get all possible spending paths for the current context.
@@ -230,21 +223,13 @@ export interface ContractHandler<
      * Useful for showing users which spending options exist regardless of
      * current spendability.
      */
-    getAllSpendingPaths(
-        script: S,
-        contract: Contract,
-        context: PathContext
-    ): PathSelection[];
+    getAllSpendingPaths(script: S, contract: Contract, context: PathContext): PathSelection[];
 
     /**
      * Get all currently spendable paths.
      * Returns empty array if no paths are available.
      */
-    getSpendablePaths(
-        script: S,
-        contract: Contract,
-        context: PathContext
-    ): PathSelection[];
+    getSpendablePaths(script: S, contract: Contract, context: PathContext): PathSelection[];
 }
 
 /**

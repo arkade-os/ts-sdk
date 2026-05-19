@@ -8,7 +8,7 @@ export function timelockToSequence(timelock: RelativeTimelock): number {
     return bip68.encode(
         timelock.type === "blocks"
             ? { blocks: Number(timelock.value) }
-            : { seconds: Number(timelock.value) }
+            : { seconds: Number(timelock.value) },
     );
 }
 

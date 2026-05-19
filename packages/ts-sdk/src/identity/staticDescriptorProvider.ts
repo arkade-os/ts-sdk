@@ -1,9 +1,6 @@
 import { hex } from "@scure/base";
 import { Identity, isBatchSignable } from ".";
-import {
-    DescriptorProvider,
-    DescriptorSigningRequest,
-} from "./descriptorProvider";
+import { DescriptorProvider, DescriptorSigningRequest } from "./descriptorProvider";
 import { normalizeToDescriptor, extractPubKey } from "./descriptor";
 import { Transaction } from "../utils/transaction";
 
@@ -41,13 +38,11 @@ export class StaticDescriptorProvider implements DescriptorProvider {
         }
     }
 
-    async signWithDescriptor(
-        requests: DescriptorSigningRequest[]
-    ): Promise<Transaction[]> {
+    async signWithDescriptor(requests: DescriptorSigningRequest[]): Promise<Transaction[]> {
         for (const request of requests) {
             if (!this.isOurs(request.descriptor)) {
                 throw new Error(
-                    `Descriptor ${request.descriptor} does not belong to this provider`
+                    `Descriptor ${request.descriptor} does not belong to this provider`,
                 );
             }
         }
@@ -58,11 +53,11 @@ export class StaticDescriptorProvider implements DescriptorProvider {
                 requests.map((r) => ({
                     tx: r.tx,
                     inputIndexes: r.inputIndexes,
-                }))
+                })),
             );
             if (signed.length !== requests.length) {
                 throw new Error(
-                    `signMultiple returned ${signed.length} transactions, expected ${requests.length}`
+                    `signMultiple returned ${signed.length} transactions, expected ${requests.length}`,
                 );
             }
             return signed;
@@ -70,10 +65,7 @@ export class StaticDescriptorProvider implements DescriptorProvider {
 
         const results: Transaction[] = [];
         for (const request of requests) {
-            const signed = await this.identity.sign(
-                request.tx,
-                request.inputIndexes
-            );
+            const signed = await this.identity.sign(request.tx, request.inputIndexes);
             results.push(signed);
         }
         return results;
@@ -82,12 +74,10 @@ export class StaticDescriptorProvider implements DescriptorProvider {
     async signMessageWithDescriptor(
         descriptor: string,
         message: Uint8Array,
-        type: "schnorr" | "ecdsa" = "schnorr"
+        type: "schnorr" | "ecdsa" = "schnorr",
     ): Promise<Uint8Array> {
         if (!this.isOurs(descriptor)) {
-            throw new Error(
-                `Descriptor ${descriptor} does not belong to this provider`
-            );
+            throw new Error(`Descriptor ${descriptor} does not belong to this provider`);
         }
         return this.identity.signMessage(message, type);
     }

@@ -22,10 +22,7 @@ function collectAssets(vtxos: VirtualCoin[]): Asset[] | undefined {
     return Array.from(map, ([assetId, amount]) => ({ assetId, amount }));
 }
 
-function subtractAssets(
-    spent: VirtualCoin[],
-    change: VirtualCoin[]
-): Asset[] | undefined {
+function subtractAssets(spent: VirtualCoin[], change: VirtualCoin[]): Asset[] | undefined {
     const map = new Map<string, bigint>();
     for (const vtxo of change) {
         if (vtxo.assets) {
@@ -64,11 +61,9 @@ export async function buildTransactionHistory(
     vtxos: VirtualCoin[],
     allBoardingTxs: ArkTransaction[],
     commitmentsToIgnore: Set<string>,
-    getTxCreatedAt?: (txid: string) => Promise<number | undefined>
+    getTxCreatedAt?: (txid: string) => Promise<number | undefined>,
 ): Promise<ExtendedArkTransaction[]> {
-    const fromOldestVtxo = [...vtxos].sort(
-        (a, b) => a.createdAt.getTime() - b.createdAt.getTime()
-    );
+    const fromOldestVtxo = [...vtxos].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 
     const sent: ExtendedArkTransaction[] = [];
     let received: ExtendedArkTransaction[] = [];
@@ -78,13 +73,9 @@ export async function buildTransactionHistory(
             // If this virtual output is a leaf and it's not the settlement of a boarding or there's no virtual output refreshed by it,
             // it's translated into a received batch transaction
             if (
-                !commitmentsToIgnore.has(
-                    vtxo.virtualStatus.commitmentTxIds![0]
-                ) &&
-                fromOldestVtxo.filter(
-                    (v) =>
-                        v.settledBy === vtxo.virtualStatus.commitmentTxIds![0]
-                ).length === 0
+                !commitmentsToIgnore.has(vtxo.virtualStatus.commitmentTxIds![0]) &&
+                fromOldestVtxo.filter((v) => v.settledBy === vtxo.virtualStatus.commitmentTxIds![0])
+                    .length === 0
             ) {
                 const assets = collectAssets([vtxo]);
                 received.push({
@@ -100,9 +91,7 @@ export async function buildTransactionHistory(
                     ...(assets && { assets }),
                 });
             }
-        } else if (
-            fromOldestVtxo.filter((v) => v.arkTxId === vtxo.txid).length === 0
-        ) {
+        } else if (fromOldestVtxo.filter((v) => v.arkTxId === vtxo.txid).length === 0) {
             // If this virtual output is preconfirmed and does not spend any other virtual outputs,
             // it's translated into a received offchain transaction
             const assets = collectAssets([vtxo]);
@@ -122,39 +111,25 @@ export async function buildTransactionHistory(
         // - a sent transaction has been already added to avoid duplicates (can happen if many virtual outputs have been spent in the same tx or forfeited in the same batch)
         if (vtxo.isSpent) {
             // If the virtual output is spent offchain, it's translated into an offchain sent tx
-            if (
-                vtxo.arkTxId &&
-                !sent.some((s) => s.key.arkTxid === vtxo.arkTxId)
-            ) {
-                const changes = fromOldestVtxo.filter(
-                    (_) => _.txid === vtxo.arkTxId
-                );
+            if (vtxo.arkTxId && !sent.some((s) => s.key.arkTxid === vtxo.arkTxId)) {
+                const changes = fromOldestVtxo.filter((_) => _.txid === vtxo.arkTxId);
 
                 // We want to find all the other virtual outputs spent by the same transaction to
                 // calculate the full amount of the change.
-                const allSpent = fromOldestVtxo.filter(
-                    (v) => v.arkTxId === vtxo.arkTxId
-                );
-                const spentAmount = allSpent.reduce(
-                    (acc, v) => acc + v.value,
-                    0
-                );
+                const allSpent = fromOldestVtxo.filter((v) => v.arkTxId === vtxo.arkTxId);
+                const spentAmount = allSpent.reduce((acc, v) => acc + v.value, 0);
 
                 let txAmount = 0;
                 let txTime = 0;
                 if (changes.length > 0) {
-                    const changeAmount = changes.reduce(
-                        (acc, v) => acc + v.value,
-                        0
-                    );
+                    const changeAmount = changes.reduce((acc, v) => acc + v.value, 0);
                     txAmount = spentAmount - changeAmount;
                     txTime = changes[0].createdAt.getTime();
                 } else {
                     txAmount = spentAmount;
                     // TODO: fetch the virtual output with /v1/indexer/vtxos?outpoints=<vtxo.arkTxid:0> to know when the tx was made
                     txTime = getTxCreatedAt
-                        ? ((await getTxCreatedAt(vtxo.arkTxId!)) ??
-                          vtxo.createdAt.getTime() + 1)
+                        ? ((await getTxCreatedAt(vtxo.arkTxId!)) ?? vtxo.createdAt.getTime() + 1)
                         : vtxo.createdAt.getTime() + 1;
                 }
 
@@ -180,24 +155,14 @@ export async function buildTransactionHistory(
                 const changes = fromOldestVtxo.filter(
                     (v) =>
                         v.status.isLeaf &&
-                        v.virtualStatus.commitmentTxIds?.every(
-                            (_) => vtxo.settledBy === _
-                        )
+                        v.virtualStatus.commitmentTxIds?.every((_) => vtxo.settledBy === _),
                 );
 
-                const forfeitVtxos = fromOldestVtxo.filter(
-                    (v) => v.settledBy === vtxo.settledBy
-                );
-                const forfeitAmount = forfeitVtxos.reduce(
-                    (acc, v) => acc + v.value,
-                    0
-                );
+                const forfeitVtxos = fromOldestVtxo.filter((v) => v.settledBy === vtxo.settledBy);
+                const forfeitAmount = forfeitVtxos.reduce((acc, v) => acc + v.value, 0);
 
                 if (changes.length > 0) {
-                    const settledAmount = changes.reduce(
-                        (acc, v) => acc + v.value,
-                        0
-                    );
+                    const settledAmount = changes.reduce((acc, v) => acc + v.value, 0);
 
                     // forfeitAmount > settledAmount --> collaborative exit with offchain change
                     // TODO: make this support fees!
@@ -234,9 +199,7 @@ export async function buildTransactionHistory(
     // Boardings are always inbound amounts, and we only hide the ones to ignore.
     const boardingTx = allBoardingTxs.map((tx) => ({ ...tx, tag: "boarding" }));
 
-    const sorted = [...boardingTx, ...sent, ...received].sort(
-        (a, b) => b.createdAt - a.createdAt
-    );
+    const sorted = [...boardingTx, ...sent, ...received].sort((a, b) => b.createdAt - a.createdAt);
 
     return sorted as ExtendedArkTransaction[];
 }

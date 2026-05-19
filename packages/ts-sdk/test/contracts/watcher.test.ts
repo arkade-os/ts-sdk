@@ -48,10 +48,7 @@ describe("ContractWatcher", () => {
         };
 
         await watcher.addContract(contract);
-        expect(mockIndexer.subscribeForScripts).toHaveBeenCalledWith(
-            [contract.script],
-            undefined
-        );
+        expect(mockIndexer.subscribeForScripts).toHaveBeenCalledWith([contract.script], undefined);
     });
 
     it("should exclude inactive contracts without VTXOs from watching", async () => {
@@ -84,9 +81,9 @@ describe("ContractWatcher", () => {
         await watcher.addContract(contract);
         expect(mockIndexer.unsubscribeForScripts).not.toHaveBeenCalled();
         await watcher.stopWatching();
-        expect(
-            mockIndexer.unsubscribeForScripts
-        ).toHaveBeenCalledExactlyOnceWith("mock-subscription-id");
+        expect(mockIndexer.unsubscribeForScripts).toHaveBeenCalledExactlyOnceWith(
+            "mock-subscription-id",
+        );
     });
 
     it("should emit 'connection_reset` event when the subscription cannot be created", async () => {
@@ -166,20 +163,14 @@ describe("ContractWatcher", () => {
             // Reset subscribe mock to track only reconnection calls.
             // Reject when called with the stale ID (server cleaned it up),
             // succeed when called without an ID (fresh subscription).
-            const subscribeMock = mockIndexer.subscribeForScripts as ReturnType<
-                typeof vi.fn
-            >;
+            const subscribeMock = mockIndexer.subscribeForScripts as ReturnType<typeof vi.fn>;
             subscribeMock.mockReset();
-            subscribeMock.mockImplementation(
-                (scripts: string[], existingId?: string) => {
-                    if (existingId) {
-                        return Promise.reject(
-                            new Error(`subscription ${existingId} not found`)
-                        );
-                    }
-                    return Promise.resolve("fresh-subscription-id");
+            subscribeMock.mockImplementation((scripts: string[], existingId?: string) => {
+                if (existingId) {
+                    return Promise.reject(new Error(`subscription ${existingId} not found`));
                 }
-            );
+                return Promise.resolve("fresh-subscription-id");
+            });
 
             // After successful reconnection, make getSubscription hang
             // so we don't trigger another reconnect cycle
@@ -208,7 +199,7 @@ describe("ContractWatcher", () => {
             expect(subscribeMock).toHaveBeenNthCalledWith(
                 1,
                 [contract.script],
-                "mock-subscription-id"
+                "mock-subscription-id",
             );
             expect(subscribeMock).toHaveBeenNthCalledWith(2, [contract.script]);
 
@@ -245,7 +236,7 @@ describe("ContractWatcher", () => {
         expect(mockIndexer.getSubscription).toHaveBeenCalledTimes(1);
         expect(mockIndexer.getSubscription).toHaveBeenCalledWith(
             "mock-subscription-id",
-            expect.anything()
+            expect.anything(),
         );
         expect(watcher.getConnectionState()).toBe("connected");
 
@@ -357,9 +348,7 @@ describe("ContractWatcher", () => {
                 sweptVtxos: [],
             });
 
-            const warnSpy = vi
-                .spyOn(console, "warn")
-                .mockImplementation(() => {});
+            const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
             const events: ContractEvent[] = [];
             try {
                 await watcher.addContract(contract);
@@ -377,9 +366,7 @@ describe("ContractWatcher", () => {
                 expect(vtxo.tapTree).toBeUndefined();
 
                 const fallbackWarn = warnSpy.mock.calls.find(
-                    (call) =>
-                        typeof call[0] === "string" &&
-                        call[0].includes("aabb:7")
+                    (call) => typeof call[0] === "string" && call[0].includes("aabb:7"),
                 );
                 expect(fallbackWarn).toBeDefined();
             } finally {

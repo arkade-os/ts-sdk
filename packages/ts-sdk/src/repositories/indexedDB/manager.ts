@@ -5,10 +5,7 @@ export function getGlobalObject(): {
         if (typeof globalThis.self === "object" && globalThis.self !== null) {
             return { globalObject: globalThis.self };
         }
-        if (
-            typeof globalThis.window === "object" &&
-            globalThis.window !== null
-        ) {
+        if (typeof globalThis.window === "object" && globalThis.window !== null) {
             return { globalObject: globalThis.window };
         }
         return { globalObject: globalThis };
@@ -42,11 +39,7 @@ const refCounts = new Map<string, number>();
 export async function openDatabase(
     dbName: string,
     dbVersion: number,
-    initDatabase: (
-        db: IDBDatabase,
-        oldVersion: number,
-        transaction: IDBTransaction | null
-    ) => void
+    initDatabase: (db: IDBDatabase, oldVersion: number, transaction: IDBTransaction | null) => void,
 ): Promise<IDBDatabase> {
     const { globalObject } = getGlobalObject();
     if (!globalObject.indexedDB) {
@@ -58,7 +51,7 @@ export async function openDatabase(
     if (cached) {
         if (cached.version !== dbVersion) {
             throw new Error(
-                `Database "${dbName}" already opened with version ${cached.version}; requested ${dbVersion}`
+                `Database "${dbName}" already opened with version ${cached.version}; requested ${dbVersion}`,
             );
         }
         refCounts.set(dbName, (refCounts.get(dbName) ?? 0) + 1);
@@ -81,9 +74,7 @@ export async function openDatabase(
             initDatabase(db, event.oldVersion, request.transaction);
         };
         request.onblocked = () => {
-            console.warn(
-                "Database upgrade blocked - close other tabs/connections"
-            );
+            console.warn("Database upgrade blocked - close other tabs/connections");
         };
     });
 

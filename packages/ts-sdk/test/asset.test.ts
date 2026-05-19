@@ -46,9 +46,7 @@ describe("AssetId", () => {
         describe("create", () => {
             assetIdFixtures.invalid.newAssetId.forEach((v) => {
                 it(v.name, () => {
-                    expect(() => AssetId.create(v.txid, v.index)).toThrow(
-                        v.expectedError
-                    );
+                    expect(() => AssetId.create(v.txid, v.index)).toThrow(v.expectedError);
                 });
             });
         });
@@ -56,9 +54,7 @@ describe("AssetId", () => {
         describe("fromString", () => {
             assetIdFixtures.invalid.newAssetIdFromString.forEach((v) => {
                 it(v.name, () => {
-                    expect(() => AssetId.fromString(v.serializedHex)).toThrow(
-                        v.expectedError
-                    );
+                    expect(() => AssetId.fromString(v.serializedHex)).toThrow(v.expectedError);
                 });
             });
         });
@@ -105,9 +101,7 @@ describe("AssetRef", () => {
         describe("from string", () => {
             assetRefFixtures.invalid.newAssetRefFromString.forEach((v) => {
                 it(v.name, () => {
-                    expect(() => AssetRef.fromString(v.serializedHex)).toThrow(
-                        v.expectedError
-                    );
+                    expect(() => AssetRef.fromString(v.serializedHex)).toThrow(v.expectedError);
                 });
             });
         });
@@ -121,11 +115,7 @@ describe("AssetInput", () => {
                 it(v.name, () => {
                     let input: AssetInput;
                     if (v.type === "intent") {
-                        input = AssetInput.createIntent(
-                            v.txid!,
-                            v.vin,
-                            v.amount
-                        );
+                        input = AssetInput.createIntent(v.txid!, v.vin, v.amount);
                     } else {
                         input = AssetInput.create(v.vin, v.amount);
                     }
@@ -150,11 +140,7 @@ describe("AssetInput", () => {
                 it(v.name, () => {
                     const inputs: AssetInput[] = v.inputs.map((inp) => {
                         if (inp.type === "intent") {
-                            return AssetInput.createIntent(
-                                inp.txid!,
-                                inp.vin,
-                                inp.amount
-                            );
+                            return AssetInput.createIntent(inp.txid!, inp.vin, inp.amount);
                         }
                         return AssetInput.create(inp.vin, inp.amount);
                     });
@@ -168,9 +154,7 @@ describe("AssetInput", () => {
                     expect(assetInputs.toString()).toBe(v.serializedHex);
 
                     const fromString = AssetInputs.fromString(v.serializedHex);
-                    expect(fromString.inputs.length).toBe(
-                        assetInputs.inputs.length
-                    );
+                    expect(fromString.inputs.length).toBe(assetInputs.inputs.length);
                 });
             });
         });
@@ -180,9 +164,7 @@ describe("AssetInput", () => {
         describe("newInput", () => {
             assetInputFixtures.invalid.newInput.forEach((v) => {
                 it(v.name, () => {
-                    expect(() =>
-                        AssetInput.createIntent(v.txid, v.vin, v.amount ?? 0)
-                    ).toThrow();
+                    expect(() => AssetInput.createIntent(v.txid, v.vin, v.amount ?? 0)).toThrow();
                 });
             });
         });
@@ -190,9 +172,7 @@ describe("AssetInput", () => {
         describe("fromString", () => {
             assetInputFixtures.invalid.newInputFromString.forEach((v) => {
                 it(v.name, () => {
-                    expect(() =>
-                        AssetInput.fromString(v.serializedHex)
-                    ).toThrow();
+                    expect(() => AssetInput.fromString(v.serializedHex)).toThrow();
                 });
             });
         });
@@ -224,7 +204,7 @@ describe("AssetOutput", () => {
             assetOutputFixtures.valid.newOutputs.forEach((v) => {
                 it(v.name, () => {
                     const outputs = v.outputs.map((out) =>
-                        AssetOutput.create(out.vout, out.amount)
+                        AssetOutput.create(out.vout, out.amount),
                     );
                     const assetOutputs = AssetOutputs.create(outputs);
 
@@ -236,9 +216,7 @@ describe("AssetOutput", () => {
                     expect(assetOutputs.toString()).toBe(v.serializedHex);
 
                     const fromString = AssetOutputs.fromString(v.serializedHex);
-                    expect(fromString.outputs.length).toBe(
-                        assetOutputs.outputs.length
-                    );
+                    expect(fromString.outputs.length).toBe(assetOutputs.outputs.length);
                 });
             });
         });
@@ -248,9 +226,7 @@ describe("AssetOutput", () => {
         describe("fromString", () => {
             assetOutputFixtures.invalid.newOutputFromString.forEach((v) => {
                 it(v.name, () => {
-                    expect(() =>
-                        AssetOutput.fromString(v.serializedHex)
-                    ).toThrow(v.expectedError);
+                    expect(() => AssetOutput.fromString(v.serializedHex)).toThrow(v.expectedError);
                 });
             });
         });
@@ -259,11 +235,9 @@ describe("AssetOutput", () => {
             assetOutputFixtures.invalid.newOutputs.forEach((v) => {
                 it(v.name, () => {
                     const outputs = v.outputs.map((out) =>
-                        AssetOutput.create(out.vout, out.amount)
+                        AssetOutput.create(out.vout, out.amount),
                     );
-                    expect(() => AssetOutputs.create(outputs)).toThrow(
-                        v.expectedError
-                    );
+                    expect(() => AssetOutputs.create(outputs)).toThrow(v.expectedError);
                 });
             });
         });
@@ -294,13 +268,11 @@ describe("Metadata", () => {
     describe("hash", () => {
         metadataFixtures.valid.hash.forEach((v) => {
             it(v.name, () => {
-                const items = v.metadata.map(
-                    (m: { key: string; value: string }) => {
-                        const key = new TextEncoder().encode(m.key);
-                        const value = new TextEncoder().encode(m.value);
-                        return Metadata.create(key, value);
-                    }
-                );
+                const items = v.metadata.map((m: { key: string; value: string }) => {
+                    const key = new TextEncoder().encode(m.key);
+                    const value = new TextEncoder().encode(m.value);
+                    return Metadata.create(key, value);
+                });
                 const hash = new MetadataList(items).hash();
                 expect(hex.encode(hash)).toBe(v.expectedHash);
             });
@@ -313,9 +285,7 @@ describe("Metadata", () => {
                 it(v.name, () => {
                     const key = new TextEncoder().encode(v.key);
                     const value = new TextEncoder().encode(v.value);
-                    expect(() => Metadata.create(key, value)).toThrow(
-                        v.expectedError
-                    );
+                    expect(() => Metadata.create(key, value)).toThrow(v.expectedError);
                 });
             });
         });
@@ -323,9 +293,7 @@ describe("Metadata", () => {
         describe("from string", () => {
             metadataFixtures.invalid.newMetadataFromString.forEach((v) => {
                 it(v.name, () => {
-                    expect(() => Metadata.fromString(v.serializedHex)).toThrow(
-                        v.expectedError
-                    );
+                    expect(() => Metadata.fromString(v.serializedHex)).toThrow(v.expectedError);
                 });
             });
         });
@@ -333,9 +301,7 @@ describe("Metadata", () => {
         describe("metadata list from string", () => {
             metadataFixtures.invalid.newMetadataListFromString.forEach((v) => {
                 it(v.name, () => {
-                    expect(() =>
-                        MetadataList.fromString(v.serializedHex)
-                    ).toThrow(v.expectedError);
+                    expect(() => MetadataList.fromString(v.serializedHex)).toThrow(v.expectedError);
                 });
             });
         });
@@ -376,9 +342,7 @@ function parseAssetId(f: AssetIdFixture | undefined): AssetId | null {
     return AssetId.create(f.txid, f.index ?? 0);
 }
 
-function parseAssetRef(
-    f: (AssetRefFixture & AssetIdFixture) | undefined
-): AssetRef | null {
+function parseAssetRef(f: (AssetRefFixture & AssetIdFixture) | undefined): AssetRef | null {
     if (!f) return null;
     // support controlAsset as { txid, index } (asset ref by id at top level)
     const idFixture = f.assetId ?? (f.txid ? (f as AssetIdFixture) : undefined);
@@ -415,25 +379,19 @@ describe("AssetGroup", () => {
         assetGroupFixtures.valid.forEach((v) => {
             it(v.name, () => {
                 const assetId = parseAssetId(v.assetId as AssetIdFixture);
-                const controlAsset = parseAssetRef(
-                    v.controlAsset as AssetRefFixture
-                );
-                const inputs = (v.inputs || []).map((i) =>
-                    parseAssetInput(i as AssetInputFixture)
-                );
+                const controlAsset = parseAssetRef(v.controlAsset as AssetRefFixture);
+                const inputs = (v.inputs || []).map((i) => parseAssetInput(i as AssetInputFixture));
                 const outputs = (v.outputs || []).map((o) =>
-                    parseAssetOutput(o as AssetOutputFixture)
+                    parseAssetOutput(o as AssetOutputFixture),
                 );
-                const metadata = (v.metadata || []).map((m) =>
-                    parseMetadata(m as MetadataFixture)
-                );
+                const metadata = (v.metadata || []).map((m) => parseMetadata(m as MetadataFixture));
 
                 const assetGroup = AssetGroup.create(
                     assetId,
                     controlAsset,
                     inputs.length ? inputs : [],
                     outputs.length ? outputs : [],
-                    metadata.length ? metadata : []
+                    metadata.length ? metadata : [],
                 );
                 expect(assetGroup).toBeDefined();
 
@@ -445,17 +403,13 @@ describe("AssetGroup", () => {
                 const fromString = AssetGroup.fromString(v.serializedHex);
                 if (assetId) {
                     expect(fromString.assetId).toBeDefined();
-                    expect(fromString.assetId!.toString()).toBe(
-                        assetId.toString()
-                    );
+                    expect(fromString.assetId!.toString()).toBe(assetId.toString());
                 } else {
                     expect(fromString.assetId).toBeNull();
                 }
                 if (controlAsset) {
                     expect(fromString.controlAsset).toBeDefined();
-                    expect(fromString.controlAsset!.toString()).toBe(
-                        controlAsset.toString()
-                    );
+                    expect(fromString.controlAsset!.toString()).toBe(controlAsset.toString());
                 } else {
                     expect(fromString.controlAsset).toBeNull();
                 }
@@ -478,23 +432,13 @@ describe("AssetGroup", () => {
                     };
                     const assetId = parseAssetId(fixture.assetId);
                     const controlAsset = parseAssetRef(fixture.controlAsset);
-                    const inputs = (fixture.inputs || []).map((i) =>
-                        parseAssetInput(i)
-                    );
+                    const inputs = (fixture.inputs || []).map((i) => parseAssetInput(i));
                     const outputs = (fixture.outputs || []).map((o) =>
-                        parseAssetOutput(o as AssetOutputFixture)
+                        parseAssetOutput(o as AssetOutputFixture),
                     );
-                    const metadata = (fixture.metadata || []).map((m) =>
-                        parseMetadata(m)
-                    );
+                    const metadata = (fixture.metadata || []).map((m) => parseMetadata(m));
                     expect(() =>
-                        AssetGroup.create(
-                            assetId,
-                            controlAsset,
-                            inputs,
-                            outputs,
-                            metadata
-                        )
+                        AssetGroup.create(assetId, controlAsset, inputs, outputs, metadata),
                     ).toThrow(fixture.expectedError);
                 });
             });
@@ -503,9 +447,7 @@ describe("AssetGroup", () => {
         describe("fromString", () => {
             assetGroupFixtures.invalid.newAssetGroupFromString.forEach((v) => {
                 it(v.name, () => {
-                    expect(() =>
-                        AssetGroup.fromString(v.serializedHex)
-                    ).toThrow(v.expectedError);
+                    expect(() => AssetGroup.fromString(v.serializedHex)).toThrow(v.expectedError);
                 });
             });
         });
@@ -524,22 +466,16 @@ describe("Packet", () => {
     function parsePacketAsset(f: PacketAssetFixture): AssetGroup {
         const assetId = parseAssetId(f.assetId);
         const controlAsset = parseAssetRef(f.controlAsset);
-        const inputs = (f.inputs || []).map((i) =>
-            parseAssetInput(i as AssetInputFixture)
-        );
-        const outputs = (f.outputs || []).map((o) =>
-            parseAssetOutput(o as AssetOutputFixture)
-        );
-        const metadata = (f.metadata || []).map((m) =>
-            parseMetadata(m as MetadataFixture)
-        );
+        const inputs = (f.inputs || []).map((i) => parseAssetInput(i as AssetInputFixture));
+        const outputs = (f.outputs || []).map((o) => parseAssetOutput(o as AssetOutputFixture));
+        const metadata = (f.metadata || []).map((m) => parseMetadata(m as MetadataFixture));
 
         return AssetGroup.create(
             assetId,
             controlAsset,
             inputs.length ? inputs : [],
             outputs.length ? outputs : [],
-            metadata.length ? metadata : []
+            metadata.length ? metadata : [],
         );
     }
 
@@ -547,9 +483,7 @@ describe("Packet", () => {
         describe("newPacket", () => {
             packetFixtures.valid.newPacket.forEach((v) => {
                 it(v.name, () => {
-                    const assets = v.assets.map((a) =>
-                        parsePacketAsset(a as PacketAssetFixture)
-                    );
+                    const assets = v.assets.map((a) => parsePacketAsset(a as PacketAssetFixture));
                     const packet = Packet.create(assets);
 
                     expect(packet).toBeDefined();
@@ -589,9 +523,7 @@ describe("Packet", () => {
 
                     const leafTxPacket = packet.leafTxPacket(intentTxid);
                     expect(leafTxPacket).toBeDefined();
-                    expect(leafTxPacket.toString()).toBe(
-                        v.expectedLeafTxPacket
-                    );
+                    expect(leafTxPacket.toString()).toBe(v.expectedLeafTxPacket);
                 });
             });
         });
@@ -602,16 +534,12 @@ describe("Packet", () => {
             packetFixtures.invalid.newPacket.forEach((v) => {
                 it(v.name, () => {
                     if (v.assets.length === 0) {
-                        expect(() => Packet.create([])).toThrow(
-                            v.expectedError
-                        );
+                        expect(() => Packet.create([])).toThrow(v.expectedError);
                     } else {
                         const assets = v.assets.map((a) =>
-                            parsePacketAsset(a as PacketAssetFixture)
+                            parsePacketAsset(a as PacketAssetFixture),
                         );
-                        expect(() => Packet.create(assets)).toThrow(
-                            v.expectedError
-                        );
+                        expect(() => Packet.create(assets)).toThrow(v.expectedError);
                     }
                 });
             });
@@ -620,9 +548,7 @@ describe("Packet", () => {
         describe("newPacketFromString", () => {
             packetFixtures.invalid.newPacketFromString.forEach((v) => {
                 it(v.name, () => {
-                    expect(() => Packet.fromString(v.script)).toThrow(
-                        v.expectedError
-                    );
+                    expect(() => Packet.fromString(v.script)).toThrow(v.expectedError);
                 });
             });
         });

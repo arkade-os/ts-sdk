@@ -17,9 +17,7 @@ function createMockSQLExecutor(): SQLExecutor {
     const tables = new Map<string, TableDef>();
 
     function parseCreateTable(sql: string): { name: string; pk: string[] } {
-        const nameMatch = sql.match(
-            /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+(\w+)/i
-        );
+        const nameMatch = sql.match(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+(\w+)/i);
         if (!nameMatch) throw new Error(`Cannot parse CREATE TABLE: ${sql}`);
         const name = nameMatch[1];
         const pkMatch = sql.match(/PRIMARY\s+KEY\s*\(([^)]+)\)/i);
@@ -37,9 +35,7 @@ function createMockSQLExecutor(): SQLExecutor {
         table: string;
         columns: string[];
     } {
-        const match = sql.match(
-            /INSERT\s+OR\s+REPLACE\s+INTO\s+(\w+)\s*\(([^)]+)\)/i
-        );
+        const match = sql.match(/INSERT\s+OR\s+REPLACE\s+INTO\s+(\w+)\s*\(([^)]+)\)/i);
         if (!match) throw new Error(`Cannot parse INSERT OR REPLACE: ${sql}`);
         const table = match[1];
         const columns = match[2].split(",").map((s) => s.trim());
@@ -76,9 +72,7 @@ function createMockSQLExecutor(): SQLExecutor {
                 const inMatch = part.match(/(\w+)\s+IN\s*\(([^)]+)\)/i);
                 if (inMatch) {
                     const column = inMatch[1];
-                    const placeholders = inMatch[2]
-                        .split(",")
-                        .map((s) => s.trim());
+                    const placeholders = inMatch[2].split(",").map((s) => s.trim());
                     conditions.push({
                         column,
                         op: "in",
@@ -150,7 +144,7 @@ function createMockSQLExecutor(): SQLExecutor {
             op: "eq" | "in";
             paramCount: number;
         }>,
-        params: unknown[]
+        params: unknown[],
     ): boolean {
         let paramIdx = 0;
         for (const cond of conditions) {
@@ -159,10 +153,7 @@ function createMockSQLExecutor(): SQLExecutor {
                 paramIdx += 1;
             } else {
                 // in
-                const values = params.slice(
-                    paramIdx,
-                    paramIdx + cond.paramCount
-                );
+                const values = params.slice(paramIdx, paramIdx + cond.paramCount);
                 if (!values.includes(row[cond.column])) return false;
                 paramIdx += cond.paramCount;
             }
@@ -219,7 +210,7 @@ function createMockSQLExecutor(): SQLExecutor {
 
         async get<T = Record<string, unknown>>(
             sql: string,
-            params?: unknown[]
+            params?: unknown[],
         ): Promise<T | undefined> {
             const trimmed = sql.trim();
             const { table, conditions } = parseSelect(trimmed);
@@ -238,10 +229,7 @@ function createMockSQLExecutor(): SQLExecutor {
             return undefined;
         },
 
-        async all<T = Record<string, unknown>>(
-            sql: string,
-            params?: unknown[]
-        ): Promise<T[]> {
+        async all<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
             const trimmed = sql.trim();
             const { table, conditions } = parseSelect(trimmed);
             const t = getTable(table);
@@ -380,19 +368,19 @@ describe("SQLiteContractRepository", () => {
                 createMockContract({
                     script: "s1",
                     state: "active",
-                })
+                }),
             );
             await repository.saveContract(
                 createMockContract({
                     script: "s2",
                     state: "inactive",
-                })
+                }),
             );
             await repository.saveContract(
                 createMockContract({
                     script: "s3",
                     state: "active",
-                })
+                }),
             );
 
             const active = await repository.getContracts({ state: "active" });
@@ -407,12 +395,8 @@ describe("SQLiteContractRepository", () => {
         });
 
         it("should filter by state array", async () => {
-            await repository.saveContract(
-                createMockContract({ script: "s1", state: "active" })
-            );
-            await repository.saveContract(
-                createMockContract({ script: "s2", state: "inactive" })
-            );
+            await repository.saveContract(createMockContract({ script: "s1", state: "active" }));
+            await repository.saveContract(createMockContract({ script: "s2", state: "inactive" }));
 
             const both = await repository.getContracts({
                 state: ["active", "inactive"],
@@ -425,15 +409,9 @@ describe("SQLiteContractRepository", () => {
 
     describe("filter by type", () => {
         it("should filter by single type", async () => {
-            await repository.saveContract(
-                createMockContract({ script: "s1", type: "default" })
-            );
-            await repository.saveContract(
-                createMockContract({ script: "s2", type: "vhtlc" })
-            );
-            await repository.saveContract(
-                createMockContract({ script: "s3", type: "vhtlc" })
-            );
+            await repository.saveContract(createMockContract({ script: "s1", type: "default" }));
+            await repository.saveContract(createMockContract({ script: "s2", type: "vhtlc" }));
+            await repository.saveContract(createMockContract({ script: "s3", type: "vhtlc" }));
 
             const vhtlc = await repository.getContracts({ type: "vhtlc" });
             expect(vhtlc).toHaveLength(2);
@@ -441,24 +419,15 @@ describe("SQLiteContractRepository", () => {
         });
 
         it("should filter by type array", async () => {
-            await repository.saveContract(
-                createMockContract({ script: "s1", type: "default" })
-            );
-            await repository.saveContract(
-                createMockContract({ script: "s2", type: "vhtlc" })
-            );
-            await repository.saveContract(
-                createMockContract({ script: "s3", type: "custom" })
-            );
+            await repository.saveContract(createMockContract({ script: "s1", type: "default" }));
+            await repository.saveContract(createMockContract({ script: "s2", type: "vhtlc" }));
+            await repository.saveContract(createMockContract({ script: "s3", type: "custom" }));
 
             const filtered = await repository.getContracts({
                 type: ["default", "vhtlc"],
             });
             expect(filtered).toHaveLength(2);
-            expect(filtered.map((c) => c.type).sort()).toEqual([
-                "default",
-                "vhtlc",
-            ]);
+            expect(filtered.map((c) => c.type).sort()).toEqual(["default", "vhtlc"]);
         });
     });
 
@@ -505,21 +474,21 @@ describe("SQLiteContractRepository", () => {
                     script: "s1",
                     state: "active",
                     type: "default",
-                })
+                }),
             );
             await repository.saveContract(
                 createMockContract({
                     script: "s2",
                     state: "active",
                     type: "vhtlc",
-                })
+                }),
             );
             await repository.saveContract(
                 createMockContract({
                     script: "s3",
                     state: "inactive",
                     type: "vhtlc",
-                })
+                }),
             );
 
             const result = await repository.getContracts({
@@ -536,28 +505,28 @@ describe("SQLiteContractRepository", () => {
                     script: "s1",
                     state: "active",
                     type: "default",
-                })
+                }),
             );
             await repository.saveContract(
                 createMockContract({
                     script: "s2",
                     state: "active",
                     type: "vhtlc",
-                })
+                }),
             );
             await repository.saveContract(
                 createMockContract({
                     script: "s3",
                     state: "inactive",
                     type: "vhtlc",
-                })
+                }),
             );
             await repository.saveContract(
                 createMockContract({
                     script: "s4",
                     state: "inactive",
                     type: "custom",
-                })
+                }),
             );
 
             const result = await repository.getContracts({
@@ -584,9 +553,7 @@ describe("SQLiteContractRepository", () => {
         });
 
         it("should not throw when deleting non-existent script", async () => {
-            await expect(
-                repository.deleteContract("nonexistent")
-            ).resolves.toBeUndefined();
+            await expect(repository.deleteContract("nonexistent")).resolves.toBeUndefined();
         });
     });
 
@@ -637,9 +604,7 @@ describe("SQLiteContractRepository", () => {
             const customRepo = new SQLiteContractRepository(db, {
                 prefix: "myapp_",
             });
-            await customRepo.saveContract(
-                createMockContract({ script: "s-custom" })
-            );
+            await customRepo.saveContract(createMockContract({ script: "s-custom" }));
 
             const retrieved = await customRepo.getContracts();
             expect(retrieved).toHaveLength(1);
@@ -650,12 +615,8 @@ describe("SQLiteContractRepository", () => {
             const repoA = new SQLiteContractRepository(db, { prefix: "a_" });
             const repoB = new SQLiteContractRepository(db, { prefix: "b_" });
 
-            await repoA.saveContract(
-                createMockContract({ script: "s-a", address: "addr-a" })
-            );
-            await repoB.saveContract(
-                createMockContract({ script: "s-b", address: "addr-b" })
-            );
+            await repoA.saveContract(createMockContract({ script: "s-a", address: "addr-a" }));
+            await repoB.saveContract(createMockContract({ script: "s-b", address: "addr-b" }));
 
             const fromA = await repoA.getContracts();
             const fromB = await repoB.getContracts();
@@ -671,9 +632,7 @@ describe("SQLiteContractRepository", () => {
 
     describe("[Symbol.asyncDispose]", () => {
         it("should be a no-op and not throw", async () => {
-            await expect(
-                repository[Symbol.asyncDispose]()
-            ).resolves.toBeUndefined();
+            await expect(repository[Symbol.asyncDispose]()).resolves.toBeUndefined();
         });
     });
 });

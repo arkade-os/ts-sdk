@@ -34,9 +34,7 @@ describe("contractPollProcessor", () => {
             vout: i,
             script: "script-a",
         }));
-        const secondPageVtxos = [
-            { txid: "tx-100", vout: 100, script: "script-a" },
-        ];
+        const secondPageVtxos = [{ txid: "tx-100", vout: 100, script: "script-a" }];
 
         const contractRepository = {
             getContracts: vi.fn().mockResolvedValue([contractA, contractB]),
@@ -78,7 +76,7 @@ describe("contractPollProcessor", () => {
                 indexerProvider,
                 extendVtxo,
                 arkProvider: {} as any,
-            } as any
+            } as any,
         );
 
         expect(indexerProvider.getVtxos).toHaveBeenCalledTimes(3);
@@ -105,13 +103,9 @@ describe("contractPollProcessor", () => {
             expect.arrayContaining([
                 expect.objectContaining({ txid: "tx-0", extended: true }),
                 expect.objectContaining({ txid: "tx-100", extended: true }),
-            ])
+            ]),
         );
-        expect(walletRepository.saveVtxos).toHaveBeenNthCalledWith(
-            2,
-            "addr-b",
-            []
-        );
+        expect(walletRepository.saveVtxos).toHaveBeenNthCalledWith(2, "addr-b", []);
 
         expect(extendVtxo).toHaveBeenCalledTimes(101);
         // Verify each call passes the owning contract as the second argument

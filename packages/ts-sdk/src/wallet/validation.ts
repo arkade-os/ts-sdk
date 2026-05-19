@@ -9,20 +9,12 @@ import type { Network } from "../networks";
 
 export const ErrOffchainOutputNotFound = (address: string) =>
     new Error(`offchain send output not found: ${address}`);
-export const ErrInvalidAssetOutputAmount = (
-    got: bigint,
-    want: bigint,
-    assetId: string
-) =>
-    new Error(
-        `invalid asset output amount for ${assetId}: got ${got}, want ${want}`
-    );
+export const ErrInvalidAssetOutputAmount = (got: bigint, want: bigint, assetId: string) =>
+    new Error(`invalid asset output amount for ${assetId}: got ${got}, want ${want}`);
 export const ErrAssetGroupNotFound = (assetId: string) =>
     new Error(`asset group not found in batch leaf: ${assetId}`);
 export const ErrAssetOutputNotFound = (assetId: string, outputIndex: number) =>
-    new Error(
-        `asset output not found in asset group ${assetId} at index ${outputIndex}`
-    );
+    new Error(`asset output not found in asset group ${assetId} at index ${outputIndex}`);
 export const ErrInvalidOnchainOutputAmount = (address: string) =>
     new Error(`invalid onchain output amount: ${address}`);
 export const ErrInvalidOnchainOutputAssets = (address: string) =>
@@ -48,7 +40,7 @@ export function validateBatchRecipients(
     commitmentTx: Transaction,
     vtxoTreeLeaves: Transaction[],
     recipients: Recipient[],
-    network: Network
+    network: Network,
 ): void {
     // usedOutputs is used to track which outputs are validated to handle
     // duplicate recipients in the list
@@ -59,21 +51,11 @@ export function validateBatchRecipients(
         try {
             arkAddress = ArkAddress.decode(recipient.address);
         } catch {
-            validateOnchainRecipient(
-                commitmentTx,
-                recipient,
-                network,
-                usedOnchainOutputs
-            );
+            validateOnchainRecipient(commitmentTx, recipient, network, usedOnchainOutputs);
             continue;
         }
 
-        validateOffchainRecipient(
-            vtxoTreeLeaves,
-            arkAddress,
-            recipient,
-            usedOutputs
-        );
+        validateOffchainRecipient(vtxoTreeLeaves, arkAddress, recipient, usedOutputs);
     }
 }
 
@@ -82,7 +64,7 @@ function validateOnchainRecipient(
     commitmentTx: Transaction,
     recipient: Recipient,
     network: Network,
-    usedOutputs: Set<number>
+    usedOutputs: Set<number>,
 ): void {
     const addr = Address(network).decode(recipient.address);
     const expectedPkScript = OutScript.encode(addr);
@@ -125,7 +107,7 @@ function validateOffchainRecipient(
     leaves: Transaction[],
     arkAddress: ArkAddress,
     recipient: Recipient,
-    usedOutputs: Set<string> // leafIndex:outputIndex
+    usedOutputs: Set<string>, // leafIndex:outputIndex
 ): void {
     const expectedPkScript = arkAddress.pkScript;
     if (!recipient.amount) {
@@ -137,11 +119,7 @@ function validateOffchainRecipient(
 
     for (let leafIdx = 0; leafIdx < leaves.length; leafIdx++) {
         const leaf = leaves[leafIdx];
-        for (
-            let outputIndex = 0;
-            outputIndex < leaf.outputsLength;
-            outputIndex++
-        ) {
+        for (let outputIndex = 0; outputIndex < leaf.outputsLength; outputIndex++) {
             const output = leaf.getOutput(outputIndex);
             if (!output?.script || output.script.length === 0) {
                 continue;
@@ -183,7 +161,7 @@ function validateOffchainRecipient(
 function validateAssetOutputs(
     leafTx: Transaction,
     outputIndex: number,
-    expectedAssets: Asset[]
+    expectedAssets: Asset[],
 ): void {
     const ext = Extension.fromTx(leafTx);
     const assetPacket = ext.getAssetPacket();
@@ -200,7 +178,7 @@ function validateAssetGroupOutput(
     packet: Packet,
     outputIndex: number,
     assetId: string,
-    expectedAmount: bigint
+    expectedAmount: bigint,
 ): void {
     const assetGroup = packet.groups.find((group) => {
         if (group.isIssuance()) return false;
@@ -212,19 +190,13 @@ function validateAssetGroupOutput(
     }
 
     // find the output at the expected index
-    const assetOutput = assetGroup.outputs.find(
-        (output) => output.vout === outputIndex
-    );
+    const assetOutput = assetGroup.outputs.find((output) => output.vout === outputIndex);
 
     if (!assetOutput) {
         throw ErrAssetOutputNotFound(assetId, outputIndex);
     }
 
     if (assetOutput.amount !== expectedAmount) {
-        throw ErrInvalidAssetOutputAmount(
-            assetOutput.amount,
-            expectedAmount,
-            assetId
-        );
+        throw ErrInvalidAssetOutputAmount(assetOutput.amount, expectedAmount, assetId);
     }
 }

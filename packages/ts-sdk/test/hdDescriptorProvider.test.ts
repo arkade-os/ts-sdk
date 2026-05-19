@@ -20,7 +20,7 @@ function makeIdentity(opts: { mnemonic?: string; isMainnet?: boolean } = {}) {
 
 async function makeProvider(
     repo?: WalletRepository,
-    opts: { mnemonic?: string; isMainnet?: boolean } = {}
+    opts: { mnemonic?: string; isMainnet?: boolean } = {},
 ) {
     const walletRepo = repo ?? new InMemoryWalletRepository();
     const identity = makeIdentity(opts);
@@ -65,9 +65,7 @@ describe("HDDescriptorProvider", () => {
             const { provider: second } = await makeProvider(repo, {
                 mnemonic: OTHER_MNEMONIC,
             });
-            await expect(second.getNextSigningDescriptor()).rejects.toThrow(
-                /descriptor mismatch/i
-            );
+            await expect(second.getNextSigningDescriptor()).rejects.toThrow(/descriptor mismatch/i);
         });
     });
 
@@ -95,9 +93,7 @@ describe("HDDescriptorProvider", () => {
             expect(descriptor).toMatch(/^tr\(/);
             expect(descriptor).not.toContain("*");
             // Round-trip parse without an `index` arg — already concrete.
-            expect(() =>
-                expand({ descriptor, network: networks.bitcoin })
-            ).not.toThrow();
+            expect(() => expand({ descriptor, network: networks.bitcoin })).not.toThrow();
         });
 
         it("persists each bump so a restart continues the sequence", async () => {
@@ -114,9 +110,7 @@ describe("HDDescriptorProvider", () => {
         it("serialises concurrent callers so indexes never collide", async () => {
             const { provider } = await makeProvider();
             const results = await Promise.all(
-                Array.from({ length: 10 }, () =>
-                    provider.getNextSigningDescriptor()
-                )
+                Array.from({ length: 10 }, () => provider.getNextSigningDescriptor()),
             );
             // All 10 are unique and contiguous 0..9 when sorted.
             expect(new Set(results).size).toBe(results.length);
@@ -168,10 +162,7 @@ describe("HDDescriptorProvider", () => {
             const descriptor = await provider.getNextSigningDescriptor();
             const message = new Uint8Array(32).fill(7);
 
-            const sig = await provider.signMessageWithDescriptor(
-                descriptor,
-                message
-            );
+            const sig = await provider.signMessageWithDescriptor(descriptor, message);
 
             // Derive the expected x-only pubkey at the same index directly
             // from the seed and verify the signature against it.
@@ -202,7 +193,7 @@ describe("HDDescriptorProvider", () => {
                         descriptor: otherDescriptor,
                         tx: {} as never,
                     },
-                ])
+                ]),
             ).rejects.toThrow(/does not belong/);
         });
     });
@@ -221,7 +212,7 @@ describe("HDDescriptorProvider", () => {
             });
             const provider = await HDDescriptorProvider.create(identity, repo);
             await expect(provider.getNextSigningDescriptor()).rejects.toThrow(
-                /corrupt hd settings.*lastindexused/i
+                /corrupt hd settings.*lastindexused/i,
             );
         });
     });
@@ -231,9 +222,7 @@ describe("HDDescriptorProvider", () => {
         // (e.g. VTXO sync cursor advance) so that interleaved read-modify-write
         // cycles never silently drop either side's changes.
         it("does not lose an HD index bump when a sync cursor advance races it", async () => {
-            const { advanceSyncCursor } = await import(
-                "../src/utils/syncCursors"
-            );
+            const { advanceSyncCursor } = await import("../src/utils/syncCursors");
             const repo = new InMemoryWalletRepository();
             const { provider } = await makeProvider(repo);
 
@@ -257,9 +246,7 @@ describe("HDDescriptorProvider", () => {
         });
 
         it("does not clobber HD settings when a concurrent clearSyncCursor runs", async () => {
-            const { advanceSyncCursor, clearSyncCursor } = await import(
-                "../src/utils/syncCursors"
-            );
+            const { advanceSyncCursor, clearSyncCursor } = await import("../src/utils/syncCursors");
             const repo = new InMemoryWalletRepository();
             const { provider } = await makeProvider(repo);
             await advanceSyncCursor(repo, 500_000);

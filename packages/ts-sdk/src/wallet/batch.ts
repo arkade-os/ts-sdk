@@ -56,7 +56,7 @@ export namespace Batch {
          */
         onTreeSigningStarted(
             event: TreeSigningStartedEvent,
-            vtxoTree: TxTree
+            vtxoTree: TxTree,
         ): Promise<{ skip: boolean }>;
         /**
          * Called when tree nonces are received.
@@ -73,7 +73,7 @@ export namespace Batch {
         onBatchFinalization(
             event: BatchFinalizationEvent,
             vtxoTree?: TxTree,
-            connectorTree?: TxTree
+            connectorTree?: TxTree,
         ): Promise<void>;
 
         /**
@@ -136,13 +136,9 @@ export namespace Batch {
     export async function join(
         eventIterator: AsyncIterableIterator<SettlementEvent>,
         handler: Handler,
-        options: JoinOptions = {}
+        options: JoinOptions = {},
     ): Promise<string> {
-        const {
-            abortController,
-            skipVtxoTreeSigning = false,
-            eventCallback,
-        } = options;
+        const { abortController, skipVtxoTreeSigning = false, eventCallback } = options;
 
         let step = Step.Start;
 
@@ -200,10 +196,7 @@ export namespace Batch {
                 }
 
                 case SettlementEventType.TreeTx: {
-                    if (
-                        step !== Step.BatchStarted &&
-                        step !== Step.TreeNoncesAggregated
-                    ) {
+                    if (step !== Step.BatchStarted && step !== Step.TreeNoncesAggregated) {
                         continue;
                     }
 
@@ -251,10 +244,7 @@ export namespace Batch {
                     // create virtual output tree from collected chunks
                     vtxoTree = TxTree.create(flatVtxoTree);
 
-                    const { skip } = await handler.onTreeSigningStarted(
-                        event,
-                        vtxoTree
-                    );
+                    const { skip } = await handler.onTreeSigningStarted(event, vtxoTree);
 
                     if (!skip) {
                         step = Step.TreeSigningStarted;
@@ -293,11 +283,7 @@ export namespace Batch {
                         connectorTree = TxTree.create(flatConnectorTree);
                     }
 
-                    await handler.onBatchFinalization(
-                        event,
-                        vtxoTree,
-                        connectorTree
-                    );
+                    await handler.onBatchFinalization(event, vtxoTree, connectorTree);
 
                     step = Step.BatchFinalization;
                     continue;

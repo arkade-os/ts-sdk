@@ -21,9 +21,7 @@ export class LocalStorageAdapter implements StorageAdapter {
     async getItem(key: string): Promise<string | null> {
         const localStorage = this.getSafeLocalStorage();
         if (!localStorage) {
-            throw new Error(
-                "localStorage is not available in this environment"
-            );
+            throw new Error("localStorage is not available in this environment");
         }
         return localStorage.getItem(key);
     }
@@ -31,9 +29,7 @@ export class LocalStorageAdapter implements StorageAdapter {
     async setItem(key: string, value: string): Promise<void> {
         const localStorage = this.getSafeLocalStorage();
         if (!localStorage) {
-            throw new Error(
-                "localStorage is not available in this environment"
-            );
+            throw new Error("localStorage is not available in this environment");
         }
         localStorage.setItem(key, value);
     }
@@ -41,9 +37,7 @@ export class LocalStorageAdapter implements StorageAdapter {
     async removeItem(key: string): Promise<void> {
         const localStorage = this.getSafeLocalStorage();
         if (!localStorage) {
-            throw new Error(
-                "localStorage is not available in this environment"
-            );
+            throw new Error("localStorage is not available in this environment");
         }
         localStorage.removeItem(key);
     }
@@ -51,9 +45,7 @@ export class LocalStorageAdapter implements StorageAdapter {
     async clear(): Promise<void> {
         const localStorage = this.getSafeLocalStorage();
         if (!localStorage) {
-            throw new Error(
-                "localStorage is not available in this environment"
-            );
+            throw new Error("localStorage is not available in this environment");
         }
         localStorage.clear();
     }

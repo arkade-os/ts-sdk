@@ -8,13 +8,10 @@ async function waitForArkServer(maxRetries = 30, retryDelay = 2000) {
     console.log("Waiting for ark server to be ready...");
     for (let i = 0; i < maxRetries; i++) {
         try {
-            const response = execSync(
-                "curl -sf http://localhost:7070/v1/info",
-                {
-                    stdio: "pipe",
-                    encoding: "utf8",
-                }
-            );
+            const response = execSync("curl -sf http://localhost:7070/v1/info", {
+                stdio: "pipe",
+                encoding: "utf8",
+            });
             const info = JSON.parse(response);
 
             // We check the signer pubkey because the service status is empty
@@ -38,10 +35,10 @@ async function waitForBoltzPairs(maxRetries = 30, retryDelay = 2000) {
     console.log("Waiting for Boltz ARK/BTC pairs...");
     for (let i = 0; i < maxRetries; i++) {
         try {
-            const response = execSync(
-                "curl -s http://localhost:9069/v2/swap/submarine",
-                { encoding: "utf8", stdio: "pipe" }
-            );
+            const response = execSync("curl -s http://localhost:9069/v2/swap/submarine", {
+                encoding: "utf8",
+                stdio: "pipe",
+            });
             if (response.includes('"ARK"')) {
                 console.log("  ✔ Boltz pairs ready");
                 return true;
@@ -62,7 +59,7 @@ function initArkCli() {
     try {
         execSync(
             "docker exec arkd ark init --password secret --server-url localhost:7070 --explorer http://chopsticks:3000",
-            { stdio: "pipe", encoding: "utf8" }
+            { stdio: "pipe", encoding: "utf8" },
         );
         console.log("  ✔ ark CLI initialized");
     } catch (e) {
@@ -70,9 +67,7 @@ function initArkCli() {
         if (e.stderr && e.stderr.includes("already initialized")) {
             console.log("  ✔ ark CLI already initialized");
         } else {
-            console.log(
-                "  ✔ ark CLI initialized (may have been already set up)"
-            );
+            console.log("  ✔ ark CLI initialized (may have been already set up)");
         }
     }
 }

@@ -27,7 +27,7 @@ import { Transaction } from "@scure/btc-signer/transaction.js";
 import { execSync } from "child_process";
 
 const SERVER_PUBLIC_KEY = hex.decode(
-    "e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdb"
+    "e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdb",
 );
 
 const arkdExec = process.argv[2] || "docker exec -t arkd";
@@ -62,9 +62,9 @@ async function main() {
     });
 
     console.log("Fetching current chain tip...");
-    const chainTip = await fetch(
-        "http://localhost:3000/blocks/tip/height"
-    ).then((res) => res.json());
+    const chainTip = await fetch("http://localhost:3000/blocks/tip/height").then((res) =>
+        res.json(),
+    );
     console.log("Chain tip:", chainTip);
 
     // offchain paths:
@@ -79,11 +79,7 @@ async function main() {
     //   this ensures that a unilateralUpdate is always possible before a unilateralRefund.
     //
     const updateScript = MultisigTapscript.encode({
-        pubkeys: [
-            await alice.xOnlyPublicKey(),
-            await bob.xOnlyPublicKey(),
-            SERVER_PUBLIC_KEY,
-        ],
+        pubkeys: [await alice.xOnlyPublicKey(), await bob.xOnlyPublicKey(), SERVER_PUBLIC_KEY],
     }).script;
 
     const refundScript = CLTVMultisigTapscript.encode({
@@ -108,9 +104,7 @@ async function main() {
         unilateralRefundScript,
     ]);
 
-    const address = virtualSpilmanChannel
-        .address(networks.regtest.hrp, SERVER_PUBLIC_KEY)
-        .encode();
+    const address = virtualSpilmanChannel.address(networks.regtest.hrp, SERVER_PUBLIC_KEY).encode();
     console.log("\nSpilman Channel Address:", address);
 
     // Use faucet to fund the Spilman Channel address
@@ -155,9 +149,7 @@ async function main() {
 
     const infos = await arkProvider.getInfo();
 
-    const serverUnrollScript = CSVMultisigTapscript.decode(
-        hex.decode(infos.checkpointTapscript)
-    );
+    const serverUnrollScript = CSVMultisigTapscript.decode(hex.decode(infos.checkpointTapscript));
 
     console.log("\nStarting channel updates...");
     // Alice sends 1000 to bob
@@ -174,13 +166,13 @@ async function main() {
                 script: virtualSpilmanChannel.pkScript,
             },
         ],
-        serverUnrollScript
+        serverUnrollScript,
     );
     const signedTx1 = await alice.sign(tx1);
     const signedCheckpointsByAlice = await Promise.all(
         checkpoints.map(async (c) => {
             return alice.sign(c, [0]);
-        })
+        }),
     );
     console.log("Alice signed transaction 1");
     bobChannelStates.push(await bob.sign(signedTx1));
@@ -200,7 +192,7 @@ async function main() {
                 script: virtualSpilmanChannel.pkScript,
             },
         ],
-        serverUnrollScript
+        serverUnrollScript,
     );
     const signedTx2 = await alice.sign(tx2);
     console.log("Alice signed transaction 2");
@@ -215,13 +207,10 @@ async function main() {
         const lastState = bobChannelStates[bobChannelStates.length - 1];
         const { arkTxid, signedCheckpointTxs } = await arkProvider.submitTx(
             base64.encode(lastState.toPSBT()),
-            checkpoints.map((c) => base64.encode(c.toPSBT()))
+            checkpoints.map((c) => base64.encode(c.toPSBT())),
         );
 
-        console.log(
-            "Successfully submitted channel close! Transaction ID:",
-            arkTxid
-        );
+        console.log("Successfully submitted channel close! Transaction ID:", arkTxid);
 
         const finalCheckpoints = await Promise.all(
             signedCheckpointTxs.map(async (c) => {
@@ -230,8 +219,7 @@ async function main() {
                 });
                 const signedCheckpoint = await bob.sign(tx, [0]);
                 // add alice's signature
-                const aliceCheckpoint =
-                    signedCheckpointsByAlice[signedCheckpointTxs.indexOf(c)];
+                const aliceCheckpoint = signedCheckpointsByAlice[signedCheckpointTxs.indexOf(c)];
                 signedCheckpoint.updateInput(0, {
                     tapScriptSig: [
                         ...aliceCheckpoint.getInput(0).tapScriptSig,
@@ -239,7 +227,7 @@ async function main() {
                     ],
                 });
                 return base64.encode(signedCheckpoint.toPSBT());
-            })
+            }),
         );
 
         await arkProvider.finalizeTx(arkTxid, finalCheckpoints);
@@ -262,9 +250,7 @@ async function main() {
             [
                 {
                     ...input,
-                    tapLeafScript: virtualSpillmanChannel.findLeaf(
-                        hex.encode(refundScript)
-                    ),
+                    tapLeafScript: virtualSpillmanChannel.findLeaf(hex.encode(refundScript)),
                 },
             ],
             [
@@ -273,20 +259,17 @@ async function main() {
                     script: virtualSpilmanChannel.pkScript,
                 },
             ],
-            serverUnrollScript
+            serverUnrollScript,
         );
         const signedTx = await alice.sign(arkTx);
         console.log("Alice signed the refund transaction");
 
         const { arkTxid, signedCheckpointTxs } = await arkProvider.submitTx(
             base64.encode(signedTx.toPSBT()),
-            checkpoints.map((c) => base64.encode(c.toPSBT()))
+            checkpoints.map((c) => base64.encode(c.toPSBT())),
         );
 
-        console.log(
-            "Successfully submitted channel refund! Transaction ID:",
-            arkTxid
-        );
+        console.log("Successfully submitted channel refund! Transaction ID:", arkTxid);
 
         const finalCheckpoints = await Promise.all(
             signedCheckpointTxs.map(async (c) => {
@@ -295,7 +278,7 @@ async function main() {
                 });
                 const signedCheckpoint = await alice.sign(tx, [0]);
                 return base64.encode(signedCheckpoint.toPSBT());
-            })
+            }),
         );
 
         await arkProvider.finalizeTx(arkTxid, finalCheckpoints);
@@ -309,9 +292,7 @@ async function main() {
 
 async function fundAddress(address, amount) {
     console.log(`\nFunding address with ${amount} sats...`);
-    execSync(
-        `${arkdExec} ark send --to ${address} --amount ${amount} --password secret`
-    );
+    execSync(`${arkdExec} ark send --to ${address} --amount ${amount} --password secret`);
     await new Promise((resolve) => setTimeout(resolve, 2000));
 }
 

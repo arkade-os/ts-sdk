@@ -54,10 +54,7 @@ vi.mock("@arkade-os/sdk", async () => {
 
 // Mock vhtlc utils — passthrough except refundVHTLCwithOffchainTx
 vi.mock("../src/utils/vhtlc", async () => {
-    const actual =
-        await vi.importActual<typeof import("../src/utils/vhtlc")>(
-            "../src/utils/vhtlc"
-        );
+    const actual = await vi.importActual<typeof import("../src/utils/vhtlc")>("../src/utils/vhtlc");
     return {
         ...actual,
         refundVHTLCwithOffchainTx: vi.fn().mockResolvedValue(undefined),
@@ -188,8 +185,7 @@ describe("ArkadeSwaps", () => {
         invoice: {
             amount: 3000000, // amount in satoshis
             description: "Payment request with multipart support",
-            paymentHash:
-                "850aeaf5f69670e8889936fc2e0cff3ceb0c3b5eab8f04ae57767118db673a91",
+            paymentHash: "850aeaf5f69670e8889936fc2e0cff3ceb0c3b5eab8f04ae57767118db673a91",
             expiry: 28800, // 8 hours in seconds
             address:
                 "lntb30m1pw2f2yspp5s59w4a0kjecw3zyexm7zur8l8n4scw674w" +
@@ -521,7 +517,7 @@ describe("ArkadeSwaps", () => {
                     new ArkadeSwaps({
                         ...params,
                         swapProvider: null as any,
-                    })
+                    }),
             ).toThrow("Swap provider is required.");
         });
 
@@ -533,15 +529,13 @@ describe("ArkadeSwaps", () => {
                 indexerProvider,
             };
             expect(() => new ArkadeSwaps({ ...params })).not.toThrow();
-            expect(
-                () => new ArkadeSwaps({ ...params, arkProvider: null as any })
-            ).not.toThrow();
+            expect(() => new ArkadeSwaps({ ...params, arkProvider: null as any })).not.toThrow();
             expect(
                 () =>
                     new ArkadeSwaps({
                         ...params,
                         indexerProvider: null as any,
-                    })
+                    }),
             ).not.toThrow();
         });
 
@@ -577,12 +571,12 @@ describe("ArkadeSwaps", () => {
         describe("Create Lightning Invoice", () => {
             it("should throw if amount is not > 0", async () => {
                 // act & assert
-                await expect(
-                    swaps.createLightningInvoice({ amount: 0 })
-                ).rejects.toThrow("Amount must be greater than 0");
-                await expect(
-                    swaps.createLightningInvoice({ amount: -1 })
-                ).rejects.toThrow("Amount must be greater than 0");
+                await expect(swaps.createLightningInvoice({ amount: 0 })).rejects.toThrow(
+                    "Amount must be greater than 0",
+                );
+                await expect(swaps.createLightningInvoice({ amount: -1 })).rejects.toThrow(
+                    "Amount must be greater than 0",
+                );
             });
 
             it("should create a Lightning invoice", async () => {
@@ -591,9 +585,7 @@ describe("ArkadeSwaps", () => {
                     ...mockReverseSwap,
                     preimage: mock.preimage,
                 };
-                vi.spyOn(swaps, "createReverseSwap").mockResolvedValueOnce(
-                    pendingSwap
-                );
+                vi.spyOn(swaps, "createReverseSwap").mockResolvedValueOnce(pendingSwap);
 
                 // act
                 const result = await swaps.createLightningInvoice({
@@ -605,9 +597,7 @@ describe("ArkadeSwaps", () => {
                 expect(result.invoice).toBe(mock.invoice.address);
                 expect(result.paymentHash).toBe(mock.invoice.paymentHash);
                 expect(result.preimage).toBe(mock.preimage);
-                expect(result.pendingSwap.request.claimPublicKey).toBe(
-                    compressedPubkeys.alice
-                );
+                expect(result.pendingSwap.request.claimPublicKey).toBe(compressedPubkeys.alice);
             });
 
             it("should pass description to reverse swap when creating Lightning invoice", async () => {
@@ -641,10 +631,9 @@ describe("ArkadeSwaps", () => {
         describe("Reverse Swaps", () => {
             it("should create a reverse swap", async () => {
                 // arrange
-                vi.spyOn(
-                    swapProvider,
-                    "createReverseSwap"
-                ).mockResolvedValueOnce(createReverseSwapResponse);
+                vi.spyOn(swapProvider, "createReverseSwap").mockResolvedValueOnce(
+                    createReverseSwapResponse,
+                );
 
                 // act
                 const pendingSwap = await swaps.createReverseSwap({
@@ -652,29 +641,20 @@ describe("ArkadeSwaps", () => {
                 });
 
                 // assert
-                expect(pendingSwap.request.invoiceAmount).toBe(
-                    mock.invoice.amount
-                );
+                expect(pendingSwap.request.invoiceAmount).toBe(mock.invoice.amount);
                 expect(pendingSwap.request.preimageHash).toHaveLength(64);
                 expect(pendingSwap.response.invoice).toBe(mock.invoice.address);
-                expect(pendingSwap.response.lockupAddress).toBe(
-                    mock.lockupAddress
-                );
-                expect(pendingSwap.response.onchainAmount).toBe(
-                    mock.invoice.amount
-                );
-                expect(pendingSwap.response.refundPublicKey).toBe(
-                    compressedPubkeys.boltz
-                );
+                expect(pendingSwap.response.lockupAddress).toBe(mock.lockupAddress);
+                expect(pendingSwap.response.onchainAmount).toBe(mock.invoice.amount);
+                expect(pendingSwap.response.refundPublicKey).toBe(compressedPubkeys.boltz);
                 expect(pendingSwap.status).toEqual("swap.created");
             });
 
             it("should get correct swap status", async () => {
                 // arrange
-                vi.spyOn(
-                    swapProvider,
-                    "createReverseSwap"
-                ).mockResolvedValueOnce(createReverseSwapResponse);
+                vi.spyOn(swapProvider, "createReverseSwap").mockResolvedValueOnce(
+                    createReverseSwapResponse,
+                );
                 vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValueOnce({
                     status: "swap.created",
                 });
@@ -748,12 +728,8 @@ describe("ArkadeSwaps", () => {
                     response: createReverseSwapResponse,
                     status: "swap.created",
                 };
-                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(
-                    mockArkInfo
-                );
-                vi.spyOn(swaps, "createVHTLCScript").mockReturnValueOnce(
-                    mockVHTLC
-                );
+                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(mockArkInfo);
+                vi.spyOn(swaps, "createVHTLCScript").mockReturnValueOnce(mockVHTLC);
                 vi.spyOn(indexerProvider, "getVtxos").mockResolvedValueOnce({
                     vtxos: [],
                 });
@@ -764,7 +740,7 @@ describe("ArkadeSwaps", () => {
                 });
                 vi.spyOn(arkProvider, "finalizeTx").mockResolvedValueOnce();
                 await expect(swaps.claimVHTLC(pendingSwap)).rejects.toThrow(
-                    /VHTLC address mismatch. Expected/
+                    /VHTLC address mismatch. Expected/,
                 );
             });
 
@@ -784,12 +760,8 @@ describe("ArkadeSwaps", () => {
                         },
                         status: "swap.created",
                     };
-                    vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(
-                        mockArkInfo
-                    );
-                    vi.spyOn(swaps, "createVHTLCScript").mockReturnValueOnce(
-                        mockVHTLC
-                    );
+                    vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(mockArkInfo);
+                    vi.spyOn(swaps, "createVHTLCScript").mockReturnValueOnce(mockVHTLC);
                     vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
                         vtxos: [],
                     });
@@ -803,7 +775,7 @@ describe("ArkadeSwaps", () => {
 
                     // act & assert
                     await expect(promise).rejects.toThrow(
-                        `Swap ${mock.id}: no spendable virtual coins found`
+                        `Swap ${mock.id}: no spendable virtual coins found`,
                     );
                 } finally {
                     vi.useRealTimers();
@@ -826,15 +798,9 @@ describe("ArkadeSwaps", () => {
                         },
                         status: "swap.created",
                     };
-                    vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(
-                        mockArkInfo
-                    );
-                    vi.spyOn(swaps, "createVHTLCScript").mockReturnValueOnce(
-                        mockVHTLC
-                    );
-                    vi.mocked(wallet.getAddress).mockResolvedValue(
-                        mock.address.ark
-                    );
+                    vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(mockArkInfo);
+                    vi.spyOn(swaps, "createVHTLCScript").mockReturnValueOnce(mockVHTLC);
+                    vi.mocked(wallet.getAddress).mockResolvedValue(mock.address.ark);
 
                     // recoverable VTXO — takes the joinBatch path
                     const vtxo = {
@@ -874,7 +840,7 @@ describe("ArkadeSwaps", () => {
                         expect.objectContaining({
                             id: mock.id,
                             status: "transaction.claimed",
-                        })
+                        }),
                     );
                 } finally {
                     vi.useRealTimers();
@@ -899,11 +865,9 @@ describe("ArkadeSwaps", () => {
                 });
 
                 // Mock monitorSwap to directly trigger the invoice.settled case
-                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
-                    async (swapId, update) => {
-                        setTimeout(() => update("invoice.settled"), 10);
-                    }
-                );
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(async (swapId, update) => {
+                    setTimeout(() => update("invoice.settled"), 10);
+                });
 
                 // act
                 const result = await swaps.waitAndClaim(pendingSwap);
@@ -933,15 +897,13 @@ describe("ArkadeSwaps", () => {
                 });
 
                 // Mock monitorSwap to directly trigger the invoice.settled case
-                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
-                    async (swapId, update) => {
-                        setTimeout(() => update("invoice.settled"), 10);
-                    }
-                );
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(async (swapId, update) => {
+                    setTimeout(() => update("invoice.settled"), 10);
+                });
 
                 // act & assert
                 await expect(swaps.waitAndClaim(pendingSwap)).rejects.toThrow(
-                    "Transaction ID not available for settled swap"
+                    "Transaction ID not available for settled swap",
                 );
             });
         });
@@ -951,10 +913,9 @@ describe("ArkadeSwaps", () => {
         describe("Submarine Swaps", () => {
             it("should create a submarine swap", async () => {
                 // arrange
-                vi.spyOn(
-                    swapProvider,
-                    "createSubmarineSwap"
-                ).mockResolvedValueOnce(createSubmarineSwapResponse);
+                vi.spyOn(swapProvider, "createSubmarineSwap").mockResolvedValueOnce(
+                    createSubmarineSwapResponse,
+                );
 
                 // act
                 const pendingSwap = await swaps.createSubmarineSwap({
@@ -964,17 +925,14 @@ describe("ArkadeSwaps", () => {
                 // assert
                 expect(pendingSwap.status).toEqual("invoice.set");
                 expect(pendingSwap.request).toEqual(createSubmarineSwapRequest);
-                expect(pendingSwap.response).toEqual(
-                    createSubmarineSwapResponse
-                );
+                expect(pendingSwap.response).toEqual(createSubmarineSwapResponse);
             });
 
             it("should get correct swap status", async () => {
                 // arrange
-                vi.spyOn(
-                    swapProvider,
-                    "createSubmarineSwap"
-                ).mockResolvedValueOnce(createSubmarineSwapResponse);
+                vi.spyOn(swapProvider, "createSubmarineSwap").mockResolvedValueOnce(
+                    createSubmarineSwapResponse,
+                );
                 vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValueOnce({
                     status: "swap.created",
                 });
@@ -996,9 +954,7 @@ describe("ArkadeSwaps", () => {
                 // arrange
                 const pendingSwap = mockSubmarineSwap;
                 vi.spyOn(wallet, "send").mockResolvedValueOnce(mock.txid);
-                vi.spyOn(swaps, "createSubmarineSwap").mockResolvedValueOnce(
-                    pendingSwap
-                );
+                vi.spyOn(swaps, "createSubmarineSwap").mockResolvedValueOnce(pendingSwap);
                 vi.spyOn(swaps, "waitForSwapSettlement").mockResolvedValueOnce({
                     preimage: mock.preimage,
                 });
@@ -1045,13 +1001,13 @@ describe("ArkadeSwaps", () => {
                     swaps.arkToBtc({
                         btcAddress: mock.address.btc,
                         senderLockAmount: 0,
-                    })
+                    }),
                 ).rejects.toThrow("Invalid lock amount");
                 await expect(
                     swaps.arkToBtc({
                         btcAddress: mock.address.btc,
                         senderLockAmount: -1,
-                    })
+                    }),
                 ).rejects.toThrow("Invalid lock amount");
             });
 
@@ -1061,7 +1017,7 @@ describe("ArkadeSwaps", () => {
                     swaps.arkToBtc({
                         btcAddress: "",
                         senderLockAmount: mock.amount,
-                    })
+                    }),
                 ).rejects.toThrow("Destination address is required");
             });
         });
@@ -1074,13 +1030,11 @@ describe("ArkadeSwaps", () => {
                     toAddress: undefined,
                 };
 
-                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(
-                    mockArkInfo
-                );
+                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(mockArkInfo);
 
                 // act & assert
                 await expect(swaps.claimBtc(pendingSwap)).rejects.toThrow(
-                    `Swap ${mockArkBtcChainSwap.id}: destination address is required`
+                    `Swap ${mockArkBtcChainSwap.id}: destination address is required`,
                 );
             });
 
@@ -1097,13 +1051,11 @@ describe("ArkadeSwaps", () => {
                     },
                 };
 
-                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(
-                    mockArkInfo
-                );
+                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(mockArkInfo);
 
                 // act & assert
                 await expect(swaps.claimBtc(pendingSwap)).rejects.toThrow(
-                    `Swap ${mockArkBtcChainSwap.id}: missing swap tree in claim details`
+                    `Swap ${mockArkBtcChainSwap.id}: missing swap tree in claim details`,
                 );
             });
 
@@ -1120,13 +1072,11 @@ describe("ArkadeSwaps", () => {
                     },
                 };
 
-                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(
-                    mockArkInfo
-                );
+                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(mockArkInfo);
 
                 // act & assert
                 await expect(swaps.claimBtc(pendingSwap)).rejects.toThrow(
-                    `Swap ${mockArkBtcChainSwap.id}: missing server public key in claim details`
+                    `Swap ${mockArkBtcChainSwap.id}: missing server public key in claim details`,
                 );
             });
         });
@@ -1135,7 +1085,7 @@ describe("ArkadeSwaps", () => {
             it("should create a chain swap from Ark to Btc", async () => {
                 // arrange
                 vi.spyOn(swapProvider, "createChainSwap").mockResolvedValueOnce(
-                    createArkBtcChainSwapResponse
+                    createArkBtcChainSwapResponse,
                 );
 
                 // act
@@ -1153,9 +1103,7 @@ describe("ArkadeSwaps", () => {
                 expect(pendingSwap.request.userLockAmount).toBe(mock.amount);
                 expect(pendingSwap.request.preimageHash).toHaveLength(64);
                 expect(pendingSwap.response.id).toBe(mock.id);
-                expect(pendingSwap.response.lockupDetails.lockupAddress).toBe(
-                    mock.address.ark
-                );
+                expect(pendingSwap.response.lockupDetails.lockupAddress).toBe(mock.address.ark);
                 expect(pendingSwap.status).toEqual("swap.created");
                 expect(pendingSwap.toAddress).toBe(mock.address.btc);
             });
@@ -1199,19 +1147,14 @@ describe("ArkadeSwaps", () => {
                     },
                     percentage: 0.5,
                 };
-                vi.spyOn(swapProvider, "getChainFees").mockResolvedValueOnce(
-                    mockFees
-                );
+                vi.spyOn(swapProvider, "getChainFees").mockResolvedValueOnce(mockFees);
 
                 // act
                 const fees = await swaps.getFees("ARK", "BTC");
 
                 // assert
                 expect(fees).toEqual(mockFees);
-                expect(swapProvider.getChainFees).toHaveBeenCalledWith(
-                    "ARK",
-                    "BTC"
-                );
+                expect(swapProvider.getChainFees).toHaveBeenCalledWith("ARK", "BTC");
             });
         });
 
@@ -1222,19 +1165,14 @@ describe("ArkadeSwaps", () => {
                     min: 10000,
                     max: 1000000,
                 };
-                vi.spyOn(swapProvider, "getChainLimits").mockResolvedValueOnce(
-                    mockLimits
-                );
+                vi.spyOn(swapProvider, "getChainLimits").mockResolvedValueOnce(mockLimits);
 
                 // act
                 const limits = await swaps.getLimits("ARK", "BTC");
 
                 // assert
                 expect(limits).toEqual(mockLimits);
-                expect(swapProvider.getChainLimits).toHaveBeenCalledWith(
-                    "ARK",
-                    "BTC"
-                );
+                expect(swapProvider.getChainLimits).toHaveBeenCalledWith("ARK", "BTC");
             });
         });
 
@@ -1259,9 +1197,7 @@ describe("ArkadeSwaps", () => {
                 vi.spyOn(swapProvider, "getChainQuote").mockResolvedValueOnce({
                     amount: mock.amount,
                 });
-                vi.spyOn(swapProvider, "postChainQuote").mockResolvedValueOnce(
-                    {}
-                );
+                vi.spyOn(swapProvider, "postChainQuote").mockResolvedValueOnce({});
 
                 // act
                 const amount = await swaps.quoteSwap(mock.id);
@@ -1274,9 +1210,7 @@ describe("ArkadeSwaps", () => {
         describe("verifyChainSwap", () => {
             it("should verify a chain swap successfully", async () => {
                 // arrange
-                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(
-                    mockArkInfo
-                );
+                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(mockArkInfo);
                 vi.spyOn(swaps, "createVHTLCScript").mockReturnValueOnce({
                     vhtlcScript: {} as any,
                     vhtlcAddress: mock.address.ark,
@@ -1294,15 +1228,13 @@ describe("ArkadeSwaps", () => {
                         from: "ARK",
                         swap: pendingSwap,
                         arkInfo: mockArkInfo,
-                    })
+                    }),
                 ).resolves.toBe(true);
             });
 
             it("should throw error if lockup address doesn't match", async () => {
                 // arrange
-                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(
-                    mockArkInfo
-                );
+                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(mockArkInfo);
                 vi.spyOn(swaps, "createVHTLCScript").mockReturnValueOnce({
                     vhtlcScript: {} as any,
                     vhtlcAddress: "different-address",
@@ -1320,10 +1252,8 @@ describe("ArkadeSwaps", () => {
                         from: "ARK",
                         swap: pendingSwap,
                         arkInfo: mockArkInfo,
-                    })
-                ).rejects.toThrow(
-                    "Boltz is trying to scam us (invalid address)"
-                );
+                    }),
+                ).rejects.toThrow("Boltz is trying to scam us (invalid address)");
             });
         });
 
@@ -1338,19 +1268,11 @@ describe("ArkadeSwaps", () => {
                     status: "transaction.claimed",
                     transaction: { id: mock.id, hex: mock.hex },
                 });
-                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
-                    async (_id, callback) => {
-                        // Simulate status updates
-                        setTimeout(
-                            () => callback("transaction.server.mempool", {}),
-                            10
-                        );
-                        setTimeout(
-                            () => callback("transaction.claimed", {}),
-                            20
-                        );
-                    }
-                );
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(async (_id, callback) => {
+                    // Simulate status updates
+                    setTimeout(() => callback("transaction.server.mempool", {}), 10);
+                    setTimeout(() => callback("transaction.claimed", {}), 20);
+                });
 
                 // act
                 const resultPromise = swaps.waitAndClaimBtc(pendingSwap);
@@ -1364,20 +1286,16 @@ describe("ArkadeSwaps", () => {
                 const pendingSwap: BoltzChainSwap = {
                     ...mockArkBtcChainSwap,
                 };
-                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
-                    async (_id, callback) => {
-                        // Simulate swap expiration
-                        setTimeout(() => callback("swap.expired", {}), 10);
-                    }
-                );
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(async (_id, callback) => {
+                    // Simulate swap expiration
+                    setTimeout(() => callback("swap.expired", {}), 10);
+                });
 
                 // act
                 const resultPromise = swaps.waitAndClaimBtc(pendingSwap);
 
                 // assert
-                await expect(resultPromise).rejects.toThrow(
-                    "The swap has expired"
-                );
+                await expect(resultPromise).rejects.toThrow("The swap has expired");
             });
 
             it("should reject with TransactionFailedError when transaction fails", async () => {
@@ -1385,23 +1303,16 @@ describe("ArkadeSwaps", () => {
                 const pendingSwap: BoltzChainSwap = {
                     ...mockArkBtcChainSwap,
                 };
-                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
-                    async (_id, callback) => {
-                        // Simulate transaction failure
-                        setTimeout(
-                            () => callback("transaction.failed", {}),
-                            10
-                        );
-                    }
-                );
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(async (_id, callback) => {
+                    // Simulate transaction failure
+                    setTimeout(() => callback("transaction.failed", {}), 10);
+                });
 
                 // act
                 const resultPromise = swaps.waitAndClaimBtc(pendingSwap);
 
                 // assert
-                await expect(resultPromise).rejects.toThrow(
-                    "Error during swap."
-                );
+                await expect(resultPromise).rejects.toThrow("Error during swap.");
             });
 
             it("should reject with TransactionRefundedError when transaction is refunded", async () => {
@@ -1409,23 +1320,16 @@ describe("ArkadeSwaps", () => {
                 const pendingSwap: BoltzChainSwap = {
                     ...mockArkBtcChainSwap,
                 };
-                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
-                    async (_id, callback) => {
-                        // Simulate transaction refund
-                        setTimeout(
-                            () => callback("transaction.refunded", {}),
-                            10
-                        );
-                    }
-                );
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(async (_id, callback) => {
+                    // Simulate transaction refund
+                    setTimeout(() => callback("transaction.refunded", {}), 10);
+                });
 
                 // act
                 const resultPromise = swaps.waitAndClaimBtc(pendingSwap);
 
                 // assert
-                await expect(resultPromise).rejects.toThrow(
-                    "The transaction has been refunded."
-                );
+                await expect(resultPromise).rejects.toThrow("The transaction has been refunded.");
             });
         });
     });
@@ -1437,7 +1341,7 @@ describe("ArkadeSwaps", () => {
                 await expect(
                     swaps.btcToArk({
                         senderLockAmount: 0,
-                    })
+                    }),
                 ).rejects.toThrow("Invalid lock amount");
             });
 
@@ -1446,17 +1350,15 @@ describe("ArkadeSwaps", () => {
                 await expect(
                     swaps.btcToArk({
                         senderLockAmount: -1,
-                    })
+                    }),
                 ).rejects.toThrow("Invalid lock amount");
             });
 
             it("should return address and amount", async () => {
                 // arrange
-                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(
-                    mockArkInfo
-                );
+                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(mockArkInfo);
                 vi.spyOn(swapProvider, "createChainSwap").mockResolvedValueOnce(
-                    createBtcArkChainSwapResponse
+                    createBtcArkChainSwapResponse,
                 );
                 vi.spyOn(swaps, "verifyChainSwap").mockResolvedValueOnce(true);
                 vi.spyOn(swaps, "waitAndClaimArk").mockResolvedValueOnce({
@@ -1484,13 +1386,11 @@ describe("ArkadeSwaps", () => {
                     toAddress: undefined,
                 };
 
-                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(
-                    mockArkInfo
-                );
+                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(mockArkInfo);
 
                 // act & assert
                 await expect(swaps.claimArk(pendingSwap)).rejects.toThrow(
-                    `Swap ${mockBtcArkChainSwap.id}: destination address is required`
+                    `Swap ${mockBtcArkChainSwap.id}: destination address is required`,
                 );
             });
 
@@ -1507,13 +1407,11 @@ describe("ArkadeSwaps", () => {
                     },
                 };
 
-                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(
-                    mockArkInfo
-                );
+                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(mockArkInfo);
 
                 // act & assert
                 await expect(swaps.claimArk(pendingSwap)).rejects.toThrow(
-                    `Swap ${mockBtcArkChainSwap.id}: missing timeouts in claim details`
+                    `Swap ${mockBtcArkChainSwap.id}: missing timeouts in claim details`,
                 );
             });
 
@@ -1530,13 +1428,11 @@ describe("ArkadeSwaps", () => {
                     },
                 };
 
-                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(
-                    mockArkInfo
-                );
+                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(mockArkInfo);
 
                 // act & assert
                 await expect(swaps.claimArk(pendingSwap)).rejects.toThrow(
-                    `Swap ${mockBtcArkChainSwap.id}: missing server public key in claim details`
+                    `Swap ${mockBtcArkChainSwap.id}: missing server public key in claim details`,
                 );
             });
 
@@ -1548,12 +1444,8 @@ describe("ArkadeSwaps", () => {
                         ...mockBtcArkChainSwap,
                         preimage: hex.encode(mockPreimage),
                     };
-                    vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(
-                        mockArkInfo
-                    );
-                    vi.spyOn(swaps, "createVHTLCScript").mockReturnValueOnce(
-                        mockBtcArkVHTLC
-                    );
+                    vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(mockArkInfo);
+                    vi.spyOn(swaps, "createVHTLCScript").mockReturnValueOnce(mockBtcArkVHTLC);
                     vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
                         vtxos: [],
                     });
@@ -1567,7 +1459,7 @@ describe("ArkadeSwaps", () => {
 
                     // act & assert
                     await expect(promise).rejects.toThrow(
-                        `Swap ${mockBtcArkChainSwap.id}: no spendable virtual coins found`
+                        `Swap ${mockBtcArkChainSwap.id}: no spendable virtual coins found`,
                     );
                 } finally {
                     vi.useRealTimers();
@@ -1582,15 +1474,9 @@ describe("ArkadeSwaps", () => {
                         ...mockBtcArkChainSwap,
                         preimage: hex.encode(mockPreimage),
                     };
-                    vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(
-                        mockArkInfo
-                    );
-                    vi.spyOn(swaps, "createVHTLCScript").mockReturnValueOnce(
-                        mockBtcArkVHTLC
-                    );
-                    vi.mocked(wallet.getAddress).mockResolvedValue(
-                        mock.address.ark
-                    );
+                    vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(mockArkInfo);
+                    vi.spyOn(swaps, "createVHTLCScript").mockReturnValueOnce(mockBtcArkVHTLC);
+                    vi.mocked(wallet.getAddress).mockResolvedValue(mock.address.ark);
 
                     // recoverable VTXO — takes the joinBatch path
                     const vtxo = {
@@ -1614,10 +1500,7 @@ describe("ArkadeSwaps", () => {
                     const joinBatchSpy = vi
                         .spyOn(swaps as any, "joinBatch")
                         .mockResolvedValue(undefined);
-                    vi.spyOn(
-                        swapProvider,
-                        "getSwapStatus"
-                    ).mockResolvedValueOnce({
+                    vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValueOnce({
                         status: "transaction.claimed",
                     });
 
@@ -1636,7 +1519,7 @@ describe("ArkadeSwaps", () => {
                         expect.objectContaining({
                             id: mockBtcArkChainSwap.id,
                             status: "transaction.claimed",
-                        })
+                        }),
                     );
                 } finally {
                     vi.useRealTimers();
@@ -1654,9 +1537,7 @@ describe("ArkadeSwaps", () => {
                         lockupAddress: "bc1q-mock-btc-address",
                     },
                 };
-                vi.spyOn(swapProvider, "createChainSwap").mockResolvedValueOnce(
-                    btcToArkResponse
-                );
+                vi.spyOn(swapProvider, "createChainSwap").mockResolvedValueOnce(btcToArkResponse);
 
                 // act
                 const pendingSwap = await swaps.createChainSwap({
@@ -1672,7 +1553,7 @@ describe("ArkadeSwaps", () => {
                 expect(pendingSwap.request.from).toBe("BTC");
                 expect(pendingSwap.request.userLockAmount).toBe(mock.amount);
                 expect(pendingSwap.response.lockupDetails.lockupAddress).toBe(
-                    "bc1q-mock-btc-address"
+                    "bc1q-mock-btc-address",
                 );
             });
         });
@@ -1715,19 +1596,14 @@ describe("ArkadeSwaps", () => {
                     },
                     percentage: 0.5,
                 };
-                vi.spyOn(swapProvider, "getChainFees").mockResolvedValueOnce(
-                    mockFees
-                );
+                vi.spyOn(swapProvider, "getChainFees").mockResolvedValueOnce(mockFees);
 
                 // act
                 const fees = await swaps.getFees("BTC", "ARK");
 
                 // assert
                 expect(fees).toEqual(mockFees);
-                expect(swapProvider.getChainFees).toHaveBeenCalledWith(
-                    "BTC",
-                    "ARK"
-                );
+                expect(swapProvider.getChainFees).toHaveBeenCalledWith("BTC", "ARK");
             });
         });
 
@@ -1738,19 +1614,14 @@ describe("ArkadeSwaps", () => {
                     min: 10000,
                     max: 1000000,
                 };
-                vi.spyOn(swapProvider, "getChainLimits").mockResolvedValueOnce(
-                    mockLimits
-                );
+                vi.spyOn(swapProvider, "getChainLimits").mockResolvedValueOnce(mockLimits);
 
                 // act
                 const limits = await swaps.getLimits("BTC", "ARK");
 
                 // assert
                 expect(limits).toEqual(mockLimits);
-                expect(swapProvider.getChainLimits).toHaveBeenCalledWith(
-                    "BTC",
-                    "ARK"
-                );
+                expect(swapProvider.getChainLimits).toHaveBeenCalledWith("BTC", "ARK");
             });
         });
 
@@ -1760,9 +1631,7 @@ describe("ArkadeSwaps", () => {
                 vi.spyOn(swapProvider, "getChainQuote").mockResolvedValueOnce({
                     amount: mock.amount,
                 });
-                vi.spyOn(swapProvider, "postChainQuote").mockResolvedValueOnce(
-                    {}
-                );
+                vi.spyOn(swapProvider, "postChainQuote").mockResolvedValueOnce({});
 
                 // act
                 const amount = await swaps.quoteSwap(mock.id);
@@ -1775,9 +1644,7 @@ describe("ArkadeSwaps", () => {
         describe("verifyChainSwap", () => {
             it("should verify a chain swap successfully", async () => {
                 // arrange
-                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(
-                    mockArkInfo
-                );
+                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(mockArkInfo);
                 vi.spyOn(swaps, "createVHTLCScript").mockReturnValueOnce({
                     vhtlcScript: {} as any,
                     vhtlcAddress: mock.address.ark,
@@ -1795,15 +1662,13 @@ describe("ArkadeSwaps", () => {
                         from: "BTC",
                         swap: pendingSwap,
                         arkInfo: mockArkInfo,
-                    })
+                    }),
                 ).resolves.toBe(true);
             });
 
             it("should throw error if claim address doesn't match", async () => {
                 // arrange
-                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(
-                    mockArkInfo
-                );
+                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(mockArkInfo);
                 vi.spyOn(swaps, "createVHTLCScript").mockReturnValueOnce({
                     vhtlcScript: {} as any,
                     vhtlcAddress: mock.address.ark + "...",
@@ -1821,10 +1686,8 @@ describe("ArkadeSwaps", () => {
                         from: "BTC",
                         swap: pendingSwap,
                         arkInfo: mockArkInfo,
-                    })
-                ).rejects.toThrow(
-                    "Boltz is trying to scam us (invalid address)"
-                );
+                    }),
+                ).rejects.toThrow("Boltz is trying to scam us (invalid address)");
             });
         });
 
@@ -1839,19 +1702,11 @@ describe("ArkadeSwaps", () => {
                     status: "transaction.claimed",
                     transaction: { id: mock.id, hex: mock.hex },
                 });
-                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
-                    async (_id, callback) => {
-                        // Simulate status updates
-                        setTimeout(
-                            () => callback("transaction.server.mempool", {}),
-                            10
-                        );
-                        setTimeout(
-                            () => callback("transaction.claimed", {}),
-                            20
-                        );
-                    }
-                );
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(async (_id, callback) => {
+                    // Simulate status updates
+                    setTimeout(() => callback("transaction.server.mempool", {}), 10);
+                    setTimeout(() => callback("transaction.claimed", {}), 20);
+                });
 
                 // act
                 const resultPromise = swaps.waitAndClaimArk(pendingSwap);
@@ -1865,20 +1720,16 @@ describe("ArkadeSwaps", () => {
                 const pendingSwap: BoltzChainSwap = {
                     ...mockBtcArkChainSwap,
                 };
-                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
-                    async (_id, callback) => {
-                        // Simulate swap expiration
-                        setTimeout(() => callback("swap.expired", {}), 10);
-                    }
-                );
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(async (_id, callback) => {
+                    // Simulate swap expiration
+                    setTimeout(() => callback("swap.expired", {}), 10);
+                });
 
                 // act
                 const resultPromise = swaps.waitAndClaimArk(pendingSwap);
 
                 // assert
-                await expect(resultPromise).rejects.toThrow(
-                    "The swap has expired"
-                );
+                await expect(resultPromise).rejects.toThrow("The swap has expired");
             });
 
             it("should reject with TransactionFailedError when transaction fails", async () => {
@@ -1886,23 +1737,16 @@ describe("ArkadeSwaps", () => {
                 const pendingSwap: BoltzChainSwap = {
                     ...mockBtcArkChainSwap,
                 };
-                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
-                    async (_id, callback) => {
-                        // Simulate transaction failure
-                        setTimeout(
-                            () => callback("transaction.failed", {}),
-                            10
-                        );
-                    }
-                );
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(async (_id, callback) => {
+                    // Simulate transaction failure
+                    setTimeout(() => callback("transaction.failed", {}), 10);
+                });
 
                 // act
                 const resultPromise = swaps.waitAndClaimArk(pendingSwap);
 
                 // assert
-                await expect(resultPromise).rejects.toThrow(
-                    "Error during swap."
-                );
+                await expect(resultPromise).rejects.toThrow("Error during swap.");
             });
 
             it("should reject with TransactionRefundedError when transaction is refunded", async () => {
@@ -1910,23 +1754,16 @@ describe("ArkadeSwaps", () => {
                 const pendingSwap: BoltzChainSwap = {
                     ...mockBtcArkChainSwap,
                 };
-                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
-                    async (_id, callback) => {
-                        // Simulate transaction refund
-                        setTimeout(
-                            () => callback("transaction.refunded", {}),
-                            10
-                        );
-                    }
-                );
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(async (_id, callback) => {
+                    // Simulate transaction refund
+                    setTimeout(() => callback("transaction.refunded", {}), 10);
+                });
 
                 // act
                 const resultPromise = swaps.waitAndClaimArk(pendingSwap);
 
                 // assert
-                await expect(resultPromise).rejects.toThrow(
-                    "The transaction has been refunded."
-                );
+                await expect(resultPromise).rejects.toThrow("The transaction has been refunded.");
             });
         });
     });
@@ -1935,20 +1772,18 @@ describe("ArkadeSwaps", () => {
         beforeEach(() => {
             // Mock the swap repository methods
             mockSwapRepository.saveSwap.mockResolvedValue();
-            mockSwapRepository.getAllSwaps.mockImplementation(
-                async (filter: any) => {
-                    if (filter?.type === "reverse") {
-                        return [];
-                    }
-                    if (filter?.type === "submarine") {
-                        return [];
-                    }
-                    if (filter?.type === "chain") {
-                        return [];
-                    }
+            mockSwapRepository.getAllSwaps.mockImplementation(async (filter: any) => {
+                if (filter?.type === "reverse") {
                     return [];
                 }
-            );
+                if (filter?.type === "submarine") {
+                    return [];
+                }
+                if (filter?.type === "chain") {
+                    return [];
+                }
+                return [];
+            });
         });
 
         describe("getPendingReverseSwaps", () => {
@@ -1983,14 +1818,12 @@ describe("ArkadeSwaps", () => {
                     },
                 ];
 
-                mockSwapRepository.getAllSwaps.mockImplementation(
-                    async (filter: any) => {
-                        if (filter?.type === "reverse") {
-                            return mockReverseSwaps;
-                        }
-                        return [];
+                mockSwapRepository.getAllSwaps.mockImplementation(async (filter: any) => {
+                    if (filter?.type === "reverse") {
+                        return mockReverseSwaps;
                     }
-                );
+                    return [];
+                });
 
                 // act
                 const result = await swaps.getPendingReverseSwaps();
@@ -1999,9 +1832,7 @@ describe("ArkadeSwaps", () => {
                 expect(result).toHaveLength(2);
                 expect(result[0].id).toBe("swap1");
                 expect(result[1].id).toBe("swap3");
-                expect(
-                    result.every((swap) => swap.status === "swap.created")
-                ).toBe(true);
+                expect(result.every((swap) => swap.status === "swap.created")).toBe(true);
             });
         });
 
@@ -2036,14 +1867,12 @@ describe("ArkadeSwaps", () => {
                     },
                 ];
 
-                mockSwapRepository.getAllSwaps.mockImplementation(
-                    async (filter: any) => {
-                        if (filter?.type === "submarine") {
-                            return mockSubmarineSwaps;
-                        }
-                        return [];
+                mockSwapRepository.getAllSwaps.mockImplementation(async (filter: any) => {
+                    if (filter?.type === "submarine") {
+                        return mockSubmarineSwaps;
                     }
-                );
+                    return [];
+                });
 
                 // act
                 const result = await swaps.getPendingSubmarineSwaps();
@@ -2052,9 +1881,7 @@ describe("ArkadeSwaps", () => {
                 expect(result).toHaveLength(2);
                 expect(result[0].id).toBe("swap1");
                 expect(result[1].id).toBe("swap3");
-                expect(
-                    result.every((swap) => swap.status === "invoice.set")
-                ).toBe(true);
+                expect(result.every((swap) => swap.status === "invoice.set")).toBe(true);
             });
         });
 
@@ -2090,14 +1917,12 @@ describe("ArkadeSwaps", () => {
                     },
                 ];
 
-                mockSwapRepository.getAllSwaps.mockImplementation(
-                    async (filter: any) => {
-                        if (filter?.type === "chain") {
-                            return mockChainSwaps;
-                        }
-                        return [];
+                mockSwapRepository.getAllSwaps.mockImplementation(async (filter: any) => {
+                    if (filter?.type === "chain") {
+                        return mockChainSwaps;
                     }
-                );
+                    return [];
+                });
 
                 // act
                 const result = await swaps.getPendingChainSwaps();
@@ -2106,9 +1931,7 @@ describe("ArkadeSwaps", () => {
                 expect(result).toHaveLength(2);
                 expect(result[0].id).toBe("swap1");
                 expect(result[1].id).toBe("swap3");
-                expect(
-                    result.every((swap) => swap.status === "swap.created")
-                ).toBe(true);
+                expect(result.every((swap) => swap.status === "swap.created")).toBe(true);
             });
         });
 
@@ -2170,20 +1993,18 @@ describe("ArkadeSwaps", () => {
                     },
                 ];
 
-                mockSwapRepository.getAllSwaps.mockImplementation(
-                    async (filter: any) => {
-                        if (filter?.type === "reverse") {
-                            return mockReverseSwaps;
-                        }
-                        if (filter?.type === "submarine") {
-                            return mockSubmarineSwaps;
-                        }
-                        if (filter?.type === "chain") {
-                            return mockChainSwaps;
-                        }
-                        return [];
+                mockSwapRepository.getAllSwaps.mockImplementation(async (filter: any) => {
+                    if (filter?.type === "reverse") {
+                        return mockReverseSwaps;
                     }
-                );
+                    if (filter?.type === "submarine") {
+                        return mockSubmarineSwaps;
+                    }
+                    if (filter?.type === "chain") {
+                        return mockChainSwaps;
+                    }
+                    return [];
+                });
 
                 // act
                 const result = await swaps.getSwapHistory();
@@ -2199,9 +2020,7 @@ describe("ArkadeSwaps", () => {
 
                 // Verify the sort order
                 for (let i = 0; i < result.length - 1; i++) {
-                    expect(result[i].createdAt).toBeGreaterThanOrEqual(
-                        result[i + 1].createdAt
-                    );
+                    expect(result[i].createdAt).toBeGreaterThanOrEqual(result[i + 1].createdAt);
                 }
             });
 
@@ -2233,17 +2052,15 @@ describe("ArkadeSwaps", () => {
                     },
                 ];
 
-                mockSwapRepository.getAllSwaps.mockImplementation(
-                    async (filter: any) => {
-                        if (filter?.type === "reverse") {
-                            return mockReverseSwaps;
-                        }
-                        if (filter?.type === "submarine") {
-                            return mockSubmarineSwaps;
-                        }
-                        return [];
+                mockSwapRepository.getAllSwaps.mockImplementation(async (filter: any) => {
+                    if (filter?.type === "reverse") {
+                        return mockReverseSwaps;
                     }
-                );
+                    if (filter?.type === "submarine") {
+                        return mockSubmarineSwaps;
+                    }
+                    return [];
+                });
 
                 // act
                 const result = await swaps.getSwapHistory();
@@ -2258,9 +2075,7 @@ describe("ArkadeSwaps", () => {
         describe("swap persistence during operations", () => {
             it("should save reverse swap when creating lightning invoice", async () => {
                 // arrange
-                vi.spyOn(swaps, "createReverseSwap").mockResolvedValueOnce(
-                    mockReverseSwap
-                );
+                vi.spyOn(swaps, "createReverseSwap").mockResolvedValueOnce(mockReverseSwap);
 
                 // act
                 await swaps.createLightningInvoice({ amount: mock.amount });
@@ -2273,10 +2088,9 @@ describe("ArkadeSwaps", () => {
 
             it("should save submarine swap when creating swap", async () => {
                 // arrange
-                vi.spyOn(
-                    swapProvider,
-                    "createSubmarineSwap"
-                ).mockResolvedValueOnce(createSubmarineSwapResponse);
+                vi.spyOn(swapProvider, "createSubmarineSwap").mockResolvedValueOnce(
+                    createSubmarineSwapResponse,
+                );
 
                 // act
                 const result = await swaps.createSubmarineSwap({
@@ -2292,7 +2106,7 @@ describe("ArkadeSwaps", () => {
                             invoice: mock.invoice.address,
                         }),
                         response: createSubmarineSwapResponse,
-                    })
+                    }),
                 );
                 expect(result.type).toBe("submarine");
                 expect(result.status).toBe("invoice.set");
@@ -2300,10 +2114,9 @@ describe("ArkadeSwaps", () => {
 
             it("should save reverse swap when creating reverse swap", async () => {
                 // arrange
-                vi.spyOn(
-                    swapProvider,
-                    "createReverseSwap"
-                ).mockResolvedValueOnce(createReverseSwapResponse);
+                vi.spyOn(swapProvider, "createReverseSwap").mockResolvedValueOnce(
+                    createReverseSwapResponse,
+                );
 
                 // act
                 const result = await swaps.createReverseSwap({
@@ -2319,7 +2132,7 @@ describe("ArkadeSwaps", () => {
                             invoiceAmount: mock.invoice.amount,
                         }),
                         response: createReverseSwapResponse,
-                    })
+                    }),
                 );
                 expect(result.type).toBe("reverse");
                 expect(result.status).toBe("swap.created");
@@ -2347,14 +2160,12 @@ describe("ArkadeSwaps", () => {
                     },
                 ];
 
-                mockSwapRepository.getAllSwaps.mockImplementation(
-                    async (filter: any) => {
-                        if (filter?.type === "chain") {
-                            return mockChainSwaps;
-                        }
-                        return [];
+                mockSwapRepository.getAllSwaps.mockImplementation(async (filter: any) => {
+                    if (filter?.type === "chain") {
+                        return mockChainSwaps;
                     }
-                );
+                    return [];
+                });
 
                 vi.spyOn(swapProvider, "getSwapStatus")
                     .mockResolvedValueOnce({
@@ -2372,12 +2183,8 @@ describe("ArkadeSwaps", () => {
                 // assert
                 expect(swapProvider.getSwapStatus).toHaveBeenCalledTimes(2);
                 // swap2 should not be refreshed as it's already in final status
-                expect(swapProvider.getSwapStatus).toHaveBeenCalledWith(
-                    "swap1"
-                );
-                expect(swapProvider.getSwapStatus).toHaveBeenCalledWith(
-                    "swap3"
-                );
+                expect(swapProvider.getSwapStatus).toHaveBeenCalledWith("swap1");
+                expect(swapProvider.getSwapStatus).toHaveBeenCalledWith("swap3");
             });
         });
     });
@@ -2417,9 +2224,9 @@ describe("ArkadeSwaps", () => {
 
                 const wrongPreimage = "b".repeat(64); // Won't match
 
-                expect(() =>
-                    swaps.enrichReverseSwapPreimage(swap, wrongPreimage)
-                ).toThrow("Preimage does not match swap");
+                expect(() => swaps.enrichReverseSwapPreimage(swap, wrongPreimage)).toThrow(
+                    "Preimage does not match swap",
+                );
             });
         });
 
@@ -2450,9 +2257,9 @@ describe("ArkadeSwaps", () => {
                     },
                 };
 
-                expect(() =>
-                    swaps.enrichSubmarineSwapInvoice(swap, "invalid-invoice")
-                ).toThrow("Invalid Lightning invoice");
+                expect(() => swaps.enrichSubmarineSwapInvoice(swap, "invalid-invoice")).toThrow(
+                    "Invalid Lightning invoice",
+                );
             });
         });
     });
@@ -2541,15 +2348,9 @@ describe("ArkadeSwaps", () => {
         it("should include terminal swaps in results without extra API fetches", async () => {
             const restoreSpy = vi
                 .spyOn(swapProvider, "restoreSwaps")
-                .mockResolvedValueOnce([
-                    finalReverse,
-                    finalSubmarine,
-                    finalChain,
-                ]);
+                .mockResolvedValueOnce([finalReverse, finalSubmarine, finalChain]);
             const getPreimageSpy = vi.spyOn(swapProvider, "getSwapPreimage");
-            vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(
-                mockFees as any
-            );
+            vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
 
             const result = await swaps.restoreSwaps();
 
@@ -2571,9 +2372,7 @@ describe("ArkadeSwaps", () => {
             vi.spyOn(swapProvider, "getSwapPreimage").mockResolvedValueOnce({
                 preimage: hex.encode(randomBytes(32)),
             });
-            vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(
-                mockFees as any
-            );
+            vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
 
             const result = await swaps.restoreSwaps();
 
@@ -2598,36 +2397,24 @@ describe("ArkadeSwaps", () => {
             vi.spyOn(swapProvider, "getSwapPreimage").mockResolvedValueOnce({
                 preimage: hex.encode(randomBytes(32)),
             });
-            vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(
-                mockFees as any
-            );
+            vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
 
             const result = await swaps.restoreSwaps();
 
             expect(result.reverseSwaps).toHaveLength(2);
             expect(result.reverseSwaps.map((s) => s.id)).toContain("rev-final");
-            expect(result.reverseSwaps.map((s) => s.id)).toContain(
-                "rev-pending"
-            );
+            expect(result.reverseSwaps.map((s) => s.id)).toContain("rev-pending");
             expect(result.submarineSwaps).toHaveLength(2);
-            expect(result.submarineSwaps.map((s) => s.id)).toContain(
-                "sub-final"
-            );
-            expect(result.submarineSwaps.map((s) => s.id)).toContain(
-                "sub-pending"
-            );
+            expect(result.submarineSwaps.map((s) => s.id)).toContain("sub-final");
+            expect(result.submarineSwaps.map((s) => s.id)).toContain("sub-pending");
             expect(result.chainSwaps).toHaveLength(2);
             expect(result.chainSwaps.map((s) => s.id)).toContain("chain-final");
-            expect(result.chainSwaps.map((s) => s.id)).toContain(
-                "chain-pending"
-            );
+            expect(result.chainSwaps.map((s) => s.id)).toContain("chain-pending");
         });
 
         it("should not call getSwapPreimage for final submarine swaps", async () => {
             const getPreimageSpy = vi.spyOn(swapProvider, "getSwapPreimage");
-            vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([
-                finalSubmarine,
-            ]);
+            vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([finalSubmarine]);
             vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce({} as any);
 
             await swaps.restoreSwaps();
@@ -2668,18 +2455,15 @@ describe("ArkadeSwaps", () => {
                     [...spendable, ...recoverable].map((vtxo) => [
                         `${vtxo.txid}:${vtxo.vout}`,
                         vtxo,
-                    ])
+                    ]),
                 ).values(),
             ];
 
-            vi.mocked(indexerProvider.getVtxos).mockImplementation(
-                async (opts: any) => {
-                    if (opts?.spendableOnly) return { vtxos: spendable } as any;
-                    if (opts?.recoverableOnly)
-                        return { vtxos: recoverable } as any;
-                    return { vtxos: all } as any;
-                }
-            );
+            vi.mocked(indexerProvider.getVtxos).mockImplementation(async (opts: any) => {
+                if (opts?.spendableOnly) return { vtxos: spendable } as any;
+                if (opts?.recoverableOnly) return { vtxos: recoverable } as any;
+                return { vtxos: all } as any;
+            });
         };
 
         beforeEach(() => {
@@ -2692,12 +2476,10 @@ describe("ArkadeSwaps", () => {
                     claimScript: new Uint8Array([1]),
                     pkScript: new Uint8Array([2]),
                     refund: () => [{}, new Uint8Array([3]), 0xc0] as any,
-                    refundWithoutReceiver: () =>
-                        [{}, new Uint8Array([4]), 0xc0] as any,
+                    refundWithoutReceiver: () => [{}, new Uint8Array([4]), 0xc0] as any,
                     encode: () => [] as any,
                     options: {
-                        refundLocktime:
-                            refundableSwap.response.timeoutBlockHeights.refund,
+                        refundLocktime: refundableSwap.response.timeoutBlockHeights.refund,
                     },
                 },
                 vhtlcAddress: refundableSwap.response.address,
@@ -2723,7 +2505,7 @@ describe("ArkadeSwaps", () => {
             expect(joinBatch).toHaveBeenCalledOnce();
             expect(joinBatch.mock.calls[0][1].txid).toBe(lockupTxid);
             expect(indexerProvider.getVtxos).toHaveBeenCalledWith(
-                expect.objectContaining({ recoverableOnly: true })
+                expect.objectContaining({ recoverableOnly: true }),
             );
         });
 
@@ -2771,16 +2553,14 @@ describe("ArkadeSwaps", () => {
             });
 
             await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
-                /VHTLC is already spent/
+                /VHTLC is already spent/,
             );
         });
 
         it("should throw when no VTXOs exist at the address", async () => {
             mockRefundSelection({});
 
-            await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
-                /VHTLC not found/
-            );
+            await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(/VHTLC not found/);
         });
 
         it("should not misclassify non-spent non-refundable VTXOs as spent", async () => {
@@ -2794,7 +2574,7 @@ describe("ArkadeSwaps", () => {
             });
 
             await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
-                /no refundable VTXOs yet/
+                /no refundable VTXOs yet/,
             );
         });
 
@@ -2853,12 +2633,8 @@ describe("ArkadeSwaps", () => {
 
                 const mockRefund = vi.mocked(refundVHTLCwithOffchainTx);
                 expect(mockRefund).toHaveBeenCalledTimes(2);
-                expect((mockRefund.mock.calls[0][6] as any).txid).toBe(
-                    lockupTxid
-                );
-                expect((mockRefund.mock.calls[1][6] as any).txid).toBe(
-                    otherTxid
-                );
+                expect((mockRefund.mock.calls[0][6] as any).txid).toBe(lockupTxid);
+                expect((mockRefund.mock.calls[1][6] as any).txid).toBe(otherTxid);
             });
 
             it("should refund single non-recoverable VTXO via Boltz co-signing", async () => {
@@ -2872,12 +2648,8 @@ describe("ArkadeSwaps", () => {
 
                 const mockRefund = vi.mocked(refundVHTLCwithOffchainTx);
                 expect(mockRefund).toHaveBeenCalledOnce();
-                expect(mockRefund.mock.calls[0][0]).toBe(
-                    refundableSwapPreCltv.id
-                );
-                expect((mockRefund.mock.calls[0][6] as any).txid).toBe(
-                    lockupTxid
-                );
+                expect(mockRefund.mock.calls[0][0]).toBe(refundableSwapPreCltv.id);
+                expect((mockRefund.mock.calls[0][6] as any).txid).toBe(lockupTxid);
             });
 
             it("should skip Boltz and use joinBatch when CLTV has passed", async () => {
@@ -2907,18 +2679,14 @@ describe("ArkadeSwaps", () => {
 
                 // Boltz rejects the refund
                 vi.mocked(refundVHTLCwithOffchainTx).mockRejectedValueOnce(
-                    new BoltzRefundError("outpoint mismatch")
+                    new BoltzRefundError("outpoint mismatch"),
                 );
 
                 // Re-check uses wall-clock time; advance Date.now() between
                 // the initial check (pre-CLTV) and the re-check (post-CLTV).
                 const dateSpy = vi.spyOn(Date, "now");
-                dateSpy.mockReturnValueOnce(
-                    (futureRefundTimestamp - 60) * 1000
-                );
-                dateSpy.mockReturnValueOnce(
-                    (futureRefundTimestamp + 60) * 1000
-                );
+                dateSpy.mockReturnValueOnce((futureRefundTimestamp - 60) * 1000);
+                dateSpy.mockReturnValueOnce((futureRefundTimestamp + 60) * 1000);
 
                 await swaps.refundVHTLC(refundableSwapPreCltv);
 
@@ -2935,7 +2703,7 @@ describe("ArkadeSwaps", () => {
                 });
 
                 vi.mocked(refundVHTLCwithOffchainTx).mockRejectedValueOnce(
-                    new BoltzRefundError("outpoint mismatch")
+                    new BoltzRefundError("outpoint mismatch"),
                 );
 
                 // Pre-CLTV the whole way through (future refund timestamp,
@@ -2946,7 +2714,7 @@ describe("ArkadeSwaps", () => {
                 const joinBatch = vi.mocked((swaps as any).joinBatch);
                 expect(joinBatch).not.toHaveBeenCalled();
                 expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
-                    expect.objectContaining({ refunded: false })
+                    expect.objectContaining({ refunded: false }),
                 );
             });
 
@@ -2958,12 +2726,12 @@ describe("ArkadeSwaps", () => {
                 });
 
                 vi.mocked(refundVHTLCwithOffchainTx).mockRejectedValueOnce(
-                    new Error("local signing failure")
+                    new Error("local signing failure"),
                 );
 
-                await expect(
-                    swaps.refundVHTLC(refundableSwapPreCltv)
-                ).rejects.toThrow(/local signing failure/);
+                await expect(swaps.refundVHTLC(refundableSwapPreCltv)).rejects.toThrow(
+                    /local signing failure/,
+                );
             });
         });
 
@@ -2990,7 +2758,7 @@ describe("ArkadeSwaps", () => {
             const joinBatch = vi.mocked((swaps as any).joinBatch);
             expect(joinBatch).not.toHaveBeenCalled();
             expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
-                expect.objectContaining({ refunded: false })
+                expect.objectContaining({ refunded: false }),
             );
         });
 
@@ -3002,7 +2770,7 @@ describe("ArkadeSwaps", () => {
             });
 
             await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
-                /VHTLC address mismatch/
+                /VHTLC address mismatch/,
             );
 
             // should not reach indexer or any refund call
@@ -3018,7 +2786,7 @@ describe("ArkadeSwaps", () => {
             vout: number,
             value = 50000,
             isSpent = false,
-            virtualState: "swept" | "settled" | "preconfirmed" = "swept"
+            virtualState: "swept" | "settled" | "preconfirmed" = "swept",
         ) => ({
             txid,
             vout,
@@ -3042,11 +2810,7 @@ describe("ArkadeSwaps", () => {
             status: "invoice.failedToPay",
         };
 
-        const mockSelection = (args: {
-            spendable?: any[];
-            recoverable?: any[];
-            all?: any[];
-        }) => {
+        const mockSelection = (args: { spendable?: any[]; recoverable?: any[]; all?: any[] }) => {
             const spendable = args.spendable ?? [];
             const recoverable = args.recoverable ?? [];
             const all = args.all ?? [
@@ -3054,17 +2818,14 @@ describe("ArkadeSwaps", () => {
                     [...spendable, ...recoverable].map((vtxo) => [
                         `${vtxo.txid}:${vtxo.vout}`,
                         vtxo,
-                    ])
+                    ]),
                 ).values(),
             ];
-            vi.mocked(indexerProvider.getVtxos).mockImplementation(
-                async (opts: any) => {
-                    if (opts?.spendableOnly) return { vtxos: spendable } as any;
-                    if (opts?.recoverableOnly)
-                        return { vtxos: recoverable } as any;
-                    return { vtxos: all } as any;
-                }
-            );
+            vi.mocked(indexerProvider.getVtxos).mockImplementation(async (opts: any) => {
+                if (opts?.spendableOnly) return { vtxos: spendable } as any;
+                if (opts?.recoverableOnly) return { vtxos: recoverable } as any;
+                return { vtxos: all } as any;
+            });
         };
 
         beforeEach(() => {
@@ -3076,12 +2837,10 @@ describe("ArkadeSwaps", () => {
                     claimScript: new Uint8Array([1]),
                     pkScript: new Uint8Array([2]),
                     refund: () => [{}, new Uint8Array([3]), 0xc0] as any,
-                    refundWithoutReceiver: () =>
-                        [{}, new Uint8Array([4]), 0xc0] as any,
+                    refundWithoutReceiver: () => [{}, new Uint8Array([4]), 0xc0] as any,
                     encode: () => [] as any,
                     options: {
-                        refundLocktime:
-                            claimedSwap.response.timeoutBlockHeights.refund,
+                        refundLocktime: claimedSwap.response.timeoutBlockHeights.refund,
                     },
                 },
                 vhtlcAddress: claimedSwap.response.address,
@@ -3092,10 +2851,7 @@ describe("ArkadeSwaps", () => {
         const pastRefund = () => Math.floor(Date.now() / 1000) - 1;
         const futureRefund = () => Math.floor(Date.now() / 1000) + 86400;
 
-        const swapWithRefund = (
-            base: BoltzSubmarineSwap,
-            refund: number
-        ): BoltzSubmarineSwap => ({
+        const swapWithRefund = (base: BoltzSubmarineSwap, refund: number): BoltzSubmarineSwap => ({
             ...base,
             response: {
                 ...base.response,
@@ -3133,10 +2889,7 @@ describe("ArkadeSwaps", () => {
 
         it("sums amount across multiple unspent VTXOs", async () => {
             mockSelection({
-                recoverable: [
-                    makeVtxo(lockupTxid, 0, 30000),
-                    makeVtxo(lockupTxid, 1, 20000),
-                ],
+                recoverable: [makeVtxo(lockupTxid, 0, 30000), makeVtxo(lockupTxid, 1, 20000)],
             });
             const swap = swapWithRefund(claimedSwap, pastRefund());
 
@@ -3244,12 +2997,7 @@ describe("ArkadeSwaps", () => {
 
     describe("scanRecoverableSubmarineSwaps", () => {
         const lockupTxid = hex.encode(randomBytes(32));
-        const makeVtxo = (
-            txid: string,
-            vout: number,
-            script: string,
-            value = 50000
-        ) => ({
+        const makeVtxo = (txid: string, vout: number, script: string, value = 50000) => ({
             txid,
             vout,
             value,
@@ -3281,48 +3029,38 @@ describe("ArkadeSwaps", () => {
             // Repo is asked only for type:"submarine"; non-submarine swaps
             // never reach scan, so test harness only needs to return
             // submarine candidates plus a pending one to exercise filtering.
-            vi.mocked(mockSwapRepository.getAllSwaps).mockImplementation(
-                async (filter: any) => {
-                    expect(filter).toEqual({ type: "submarine" });
-                    return [claimedSwap, failedSwap, pendingSwap];
-                }
-            );
+            vi.mocked(mockSwapRepository.getAllSwaps).mockImplementation(async (filter: any) => {
+                expect(filter).toEqual({ type: "submarine" });
+                return [claimedSwap, failedSwap, pendingSwap];
+            });
 
             vi.mocked(arkProvider.getInfo).mockResolvedValue(mockArkInfo);
 
             // The two valid candidates reconstruct to distinct scripts so the
             // batched indexer response can be mapped back per swap.
             let scriptByte = 1;
-            vi.spyOn(swaps as any, "createVHTLCScript").mockImplementation(
-                () => {
-                    const pkScript = new Uint8Array([scriptByte++]);
-                    return {
-                        vhtlcScript: {
-                            claimScript: new Uint8Array([1]),
-                            pkScript,
-                            refund: () =>
-                                [{}, new Uint8Array([3]), 0xc0] as any,
-                            refundWithoutReceiver: () =>
-                                [{}, new Uint8Array([4]), 0xc0] as any,
-                            encode: () => [] as any,
-                            options: {
-                                refundLocktime:
-                                    claimedSwap.response.timeoutBlockHeights
-                                        .refund,
-                            },
+            vi.spyOn(swaps as any, "createVHTLCScript").mockImplementation(() => {
+                const pkScript = new Uint8Array([scriptByte++]);
+                return {
+                    vhtlcScript: {
+                        claimScript: new Uint8Array([1]),
+                        pkScript,
+                        refund: () => [{}, new Uint8Array([3]), 0xc0] as any,
+                        refundWithoutReceiver: () => [{}, new Uint8Array([4]), 0xc0] as any,
+                        encode: () => [] as any,
+                        options: {
+                            refundLocktime: claimedSwap.response.timeoutBlockHeights.refund,
                         },
-                        vhtlcAddress: claimedSwap.response.address,
-                    };
-                }
-            );
+                    },
+                    vhtlcAddress: claimedSwap.response.address,
+                };
+            });
 
-            vi.mocked(indexerProvider.getVtxos).mockImplementation(
-                async (opts: any) => {
-                    if (opts?.spendableOnly) return { vtxos: [] } as any;
-                    if (opts?.recoverableOnly) return { vtxos: [] } as any;
-                    throw new Error("scan should not issue diagnostic queries");
-                }
-            );
+            vi.mocked(indexerProvider.getVtxos).mockImplementation(async (opts: any) => {
+                if (opts?.spendableOnly) return { vtxos: [] } as any;
+                if (opts?.recoverableOnly) return { vtxos: [] } as any;
+                throw new Error("scan should not issue diagnostic queries");
+            });
         });
 
         it("includes transaction.claimed and refundable failure statuses", async () => {
@@ -3356,22 +3094,18 @@ describe("ArkadeSwaps", () => {
         });
 
         it("maps batched VTXOs back to the owning swap by script", async () => {
-            vi.mocked(indexerProvider.getVtxos).mockImplementation(
-                async (opts: any) => {
-                    if (opts?.spendableOnly) return { vtxos: [] } as any;
-                    if (opts?.recoverableOnly) {
-                        return {
-                            vtxos: [makeVtxo(lockupTxid, 0, "01", 25000)],
-                        } as any;
-                    }
-                    throw new Error("scan should not issue diagnostic queries");
+            vi.mocked(indexerProvider.getVtxos).mockImplementation(async (opts: any) => {
+                if (opts?.spendableOnly) return { vtxos: [] } as any;
+                if (opts?.recoverableOnly) {
+                    return {
+                        vtxos: [makeVtxo(lockupTxid, 0, "01", 25000)],
+                    } as any;
                 }
-            );
+                throw new Error("scan should not issue diagnostic queries");
+            });
 
             const results = await swaps.scanRecoverableSubmarineSwaps();
-            const claimed = results.find(
-                (r) => r.swap.id === "claimed-swap-id"
-            );
+            const claimed = results.find((r) => r.swap.id === "claimed-swap-id");
             const failed = results.find((r) => r.swap.id === "failed-swap-id");
 
             expect(claimed).toMatchObject({
@@ -3437,12 +3171,10 @@ describe("ArkadeSwaps", () => {
                     claimScript: new Uint8Array([1]),
                     pkScript: new Uint8Array([2]),
                     refund: () => [{}, new Uint8Array([3]), 0xc0] as any,
-                    refundWithoutReceiver: () =>
-                        [{}, new Uint8Array([4]), 0xc0] as any,
+                    refundWithoutReceiver: () => [{}, new Uint8Array([4]), 0xc0] as any,
                     encode: () => [] as any,
                     options: {
-                        refundLocktime:
-                            claimedSwap.response.timeoutBlockHeights.refund,
+                        refundLocktime: claimedSwap.response.timeoutBlockHeights.refund,
                     },
                 },
                 vhtlcAddress: claimedSwap.response.address,
@@ -3452,14 +3184,11 @@ describe("ArkadeSwaps", () => {
             // CLTV satisfied via wall-clock check, joinBatch path.
             vi.spyOn(swaps as any, "joinBatch").mockResolvedValue(undefined);
 
-            vi.mocked(indexerProvider.getVtxos).mockImplementation(
-                async (opts: any) => {
-                    if (opts?.spendableOnly) return { vtxos: [] } as any;
-                    if (opts?.recoverableOnly)
-                        return { vtxos: [makeVtxo(lockupTxid, 0)] } as any;
-                    return { vtxos: [makeVtxo(lockupTxid, 0)] } as any;
-                }
-            );
+            vi.mocked(indexerProvider.getVtxos).mockImplementation(async (opts: any) => {
+                if (opts?.spendableOnly) return { vtxos: [] } as any;
+                if (opts?.recoverableOnly) return { vtxos: [makeVtxo(lockupTxid, 0)] } as any;
+                return { vtxos: [makeVtxo(lockupTxid, 0)] } as any;
+            });
         });
 
         describe("recoverSubmarineFunds", () => {
@@ -3487,17 +3216,14 @@ describe("ArkadeSwaps", () => {
                     expect.objectContaining({
                         refundable: true,
                         refunded: true,
-                    })
+                    }),
                 );
             });
         });
 
         describe("recoverAllSubmarineFunds", () => {
             it("returns one result per swap, marking successful recoveries", async () => {
-                const results = await swaps.recoverAllSubmarineFunds([
-                    claimedSwap,
-                    failedSwap,
-                ]);
+                const results = await swaps.recoverAllSubmarineFunds([claimedSwap, failedSwap]);
 
                 expect(results).toEqual([
                     {
@@ -3518,19 +3244,13 @@ describe("ArkadeSwaps", () => {
                 // Fail the first swap deterministically: address mismatch
                 // occurs only for `claimedSwap` because we override
                 // createVHTLCScript per-call.
-                const createVHTLCScriptSpy = vi.spyOn(
-                    swaps as any,
-                    "createVHTLCScript"
-                );
+                const createVHTLCScriptSpy = vi.spyOn(swaps as any, "createVHTLCScript");
                 createVHTLCScriptSpy.mockImplementationOnce(() => ({
                     vhtlcScript: { claimScript: new Uint8Array([1]) },
                     vhtlcAddress: "ark1-wrong-address",
                 }));
 
-                const results = await swaps.recoverAllSubmarineFunds([
-                    claimedSwap,
-                    failedSwap,
-                ]);
+                const results = await swaps.recoverAllSubmarineFunds([claimedSwap, failedSwap]);
 
                 expect(results).toHaveLength(2);
                 expect(results[0]).toMatchObject({
@@ -3567,9 +3287,7 @@ describe("ArkadeSwaps", () => {
                     },
                 };
 
-                const results = await swaps.recoverAllSubmarineFunds([
-                    preCltvFailed,
-                ]);
+                const results = await swaps.recoverAllSubmarineFunds([preCltvFailed]);
 
                 expect(results).toEqual([
                     {
@@ -3628,25 +3346,20 @@ describe("ArkadeSwaps", () => {
                     claimScript: new Uint8Array([1]),
                     pkScript: new Uint8Array([2]),
                     refund: () => [{}, new Uint8Array([3]), 0xc0] as any,
-                    refundWithoutReceiver: () =>
-                        [{}, new Uint8Array([4]), 0xc0] as any,
+                    refundWithoutReceiver: () => [{}, new Uint8Array([4]), 0xc0] as any,
                     encode: () => [] as any,
                     options: {
-                        refundLocktime:
-                            failedSwap.response.timeoutBlockHeights.refund,
+                        refundLocktime: failedSwap.response.timeoutBlockHeights.refund,
                     },
                 },
                 vhtlcAddress: failedSwap.response.address,
             });
             vi.spyOn(swaps as any, "joinBatch").mockResolvedValue(undefined);
-            vi.mocked(indexerProvider.getVtxos).mockImplementation(
-                async (opts: any) => {
-                    if (opts?.spendableOnly) return { vtxos: [] } as any;
-                    if (opts?.recoverableOnly)
-                        return { vtxos: [makeVtxo(lockupTxid, 0)] } as any;
-                    return { vtxos: [makeVtxo(lockupTxid, 0)] } as any;
-                }
-            );
+            vi.mocked(indexerProvider.getVtxos).mockImplementation(async (opts: any) => {
+                if (opts?.spendableOnly) return { vtxos: [] } as any;
+                if (opts?.recoverableOnly) return { vtxos: [makeVtxo(lockupTxid, 0)] } as any;
+                return { vtxos: [makeVtxo(lockupTxid, 0)] } as any;
+            });
         });
 
         it("refundVHTLC evaluates CLTV against Date.now(), not chain height", async () => {
@@ -3675,23 +3388,21 @@ describe("ArkadeSwaps", () => {
             // Use a recoverable VTXO so the Boltz 3-of-3 path is blocked
             // (canRecoverViaBoltz3of3 returns false) — the only outcome is
             // a deferred skip when CLTV hasn't been reached.
-            vi.mocked(indexerProvider.getVtxos).mockImplementation(
-                async (opts: any) => {
-                    if (opts?.recoverableOnly) {
-                        return {
-                            vtxos: [
-                                {
-                                    ...makeVtxo(lockupTxid, 0),
-                                    virtualStatus: {
-                                        state: "swept" as const,
-                                    },
+            vi.mocked(indexerProvider.getVtxos).mockImplementation(async (opts: any) => {
+                if (opts?.recoverableOnly) {
+                    return {
+                        vtxos: [
+                            {
+                                ...makeVtxo(lockupTxid, 0),
+                                virtualStatus: {
+                                    state: "swept" as const,
                                 },
-                            ],
-                        } as any;
-                    }
-                    return { vtxos: [] } as any;
+                            },
+                        ],
+                    } as any;
                 }
-            );
+                return { vtxos: [] } as any;
+            });
 
             const swap = swapWithRefund(refundTs);
             const outcome = await swaps.refundVHTLC(swap);
@@ -3705,13 +3416,11 @@ describe("ArkadeSwaps", () => {
             vi.mocked(mockSwapRepository.getAllSwaps).mockResolvedValue([
                 swapWithRefund(1_800_000_000),
             ]);
-            vi.mocked(indexerProvider.getVtxos).mockImplementation(
-                async (opts: any) => {
-                    if (opts?.spendableOnly) return { vtxos: [] } as any;
-                    if (opts?.recoverableOnly) return { vtxos: [] } as any;
-                    throw new Error("scan should not issue diagnostic queries");
-                }
-            );
+            vi.mocked(indexerProvider.getVtxos).mockImplementation(async (opts: any) => {
+                if (opts?.spendableOnly) return { vtxos: [] } as any;
+                if (opts?.recoverableOnly) return { vtxos: [] } as any;
+                throw new Error("scan should not issue diagnostic queries");
+            });
             const chainHeightSpy = vi.spyOn(swapProvider, "getChainHeight");
 
             await swaps.scanRecoverableSubmarineSwaps();
@@ -3725,9 +3434,7 @@ describe("ArkadeSwaps", () => {
             dateSpy.mockReturnValue((refundTs + 1) * 1000);
             const chainHeightSpy = vi.spyOn(swapProvider, "getChainHeight");
 
-            const results = await swaps.recoverAllSubmarineFunds([
-                swapWithRefund(refundTs),
-            ]);
+            const results = await swaps.recoverAllSubmarineFunds([swapWithRefund(refundTs)]);
 
             expect(results[0]).toMatchObject({ recovered: true });
             expect(chainHeightSpy).not.toHaveBeenCalled();
@@ -3745,9 +3452,7 @@ describe("ArkadeSwaps", () => {
             // Sanity-check: BIP68 type-flag boundary is 512.
             expect(prodTimeouts.unilateralClaim).toBeGreaterThanOrEqual(512);
             expect(prodTimeouts.unilateralRefund).toBeGreaterThanOrEqual(512);
-            expect(
-                prodTimeouts.unilateralRefundWithoutReceiver
-            ).toBeGreaterThanOrEqual(512);
+            expect(prodTimeouts.unilateralRefundWithoutReceiver).toBeGreaterThanOrEqual(512);
             expect(prodTimeouts.unilateralClaim % 512).toBe(0);
             expect(prodTimeouts.unilateralRefund % 512).toBe(0);
             expect(prodTimeouts.unilateralRefundWithoutReceiver % 512).toBe(0);
@@ -3762,7 +3467,7 @@ describe("ArkadeSwaps", () => {
                     senderPubkey: compressedPubkeys.alice,
                     serverPubkey: hex.encode(mock.pubkeys.server),
                     timeoutBlockHeights: prodTimeouts,
-                })
+                }),
             ).not.toThrow();
         });
     });

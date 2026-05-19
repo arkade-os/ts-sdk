@@ -95,7 +95,7 @@ export class SwapNotFoundError extends NetworkError {
         super(
             `Boltz returned 404 for swap '${swapId}': swap unknown to this Boltz instance`,
             404,
-            errorData
+            errorData,
         );
         this.name = "SwapNotFoundError";
         this.swapId = swapId;
@@ -163,7 +163,7 @@ export class TransactionRefundedError extends SwapError {
 export class BoltzRefundError extends Error {
     constructor(
         message: string,
-        public override readonly cause?: unknown
+        public override readonly cause?: unknown,
     ) {
         super(message);
         this.name = "BoltzRefundError";

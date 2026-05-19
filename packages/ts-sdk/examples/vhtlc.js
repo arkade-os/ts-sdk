@@ -28,7 +28,7 @@ import { Transaction } from "@scure/btc-signer/transaction.js";
 import { execSync } from "child_process";
 
 const SERVER_PUBLIC_KEY = hex.decode(
-    "e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdb"
+    "e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdb",
 );
 
 const action = process.argv[2];
@@ -51,9 +51,9 @@ const secret = Uint8Array.from("I'm bob secret");
 const preimageHash = hash160(secret);
 
 async function main() {
-    const chainTip = await fetch(
-        "http://localhost:3000/blocks/tip/height"
-    ).then((res) => res.json());
+    const chainTip = await fetch("http://localhost:3000/blocks/tip/height").then((res) =>
+        res.json(),
+    );
 
     // VHTLC is a Virtual Hash Time Lock Contract, containing 3 spending conditions:
     // 1. Bob can spend the coin alone, if he reveals the preimage
@@ -104,9 +104,7 @@ async function main() {
         },
     });
 
-    const address = vhtlcScript
-        .address(networks.regtest.hrp, SERVER_PUBLIC_KEY)
-        .encode();
+    const address = vhtlcScript.address(networks.regtest.hrp, SERVER_PUBLIC_KEY).encode();
     console.log("VHTLC Address:", address);
 
     // Use faucet to fund the VHTLC address using arkdExec
@@ -130,9 +128,7 @@ async function main() {
 
     const infos = await arkProvider.getInfo();
 
-    const serverUnrollScript = CSVMultisigTapscript.decode(
-        hex.decode(infos.checkpointTapscript)
-    );
+    const serverUnrollScript = CSVMultisigTapscript.decode(hex.decode(infos.checkpointTapscript));
 
     switch (action) {
         case "claim": {
@@ -163,30 +159,25 @@ async function main() {
                         script: vhtlcScript.pkScript,
                     },
                 ],
-                serverUnrollScript
+                serverUnrollScript,
             );
 
             const signedArkTx = await bobVHTLCIdentity.sign(arkTx);
             const { arkTxid, signedCheckpointTxs } = await arkProvider.submitTx(
                 base64.encode(signedArkTx.toPSBT()),
-                checkpoints.map((c) => base64.encode(c.toPSBT()))
+                checkpoints.map((c) => base64.encode(c.toPSBT())),
             );
 
-            console.log(
-                "Successfully submitted VHTLC claim! Transaction ID:",
-                arkTxid
-            );
+            console.log("Successfully submitted VHTLC claim! Transaction ID:", arkTxid);
 
             const finalCheckpoints = await Promise.all(
                 signedCheckpointTxs.map(async (c) => {
                     const tx = Transaction.fromPSBT(base64.decode(c), {
                         allowUnknown: true,
                     });
-                    const signedCheckpoint = await bobVHTLCIdentity.sign(tx, [
-                        0,
-                    ]);
+                    const signedCheckpoint = await bobVHTLCIdentity.sign(tx, [0]);
                     return base64.encode(signedCheckpoint.toPSBT());
-                })
+                }),
             );
 
             await arkProvider.finalizeTx(arkTxid, finalCheckpoints);
@@ -209,7 +200,7 @@ async function main() {
                         script: vhtlcScript.pkScript,
                     },
                 ],
-                serverUnrollScript
+                serverUnrollScript,
             );
 
             // Alice signs the transaction
@@ -219,13 +210,10 @@ async function main() {
 
             const { arkTxid, signedCheckpointTxs } = await arkProvider.submitTx(
                 base64.encode(signedArkTx.toPSBT()),
-                checkpoints.map((c) => base64.encode(c.toPSBT()))
+                checkpoints.map((c) => base64.encode(c.toPSBT())),
             );
 
-            console.log(
-                "Successfully submitted VHTLC refund! Transaction ID:",
-                arkTxid
-            );
+            console.log("Successfully submitted VHTLC refund! Transaction ID:", arkTxid);
 
             const finalCheckpoints = await Promise.all(
                 signedCheckpointTxs.map(async (c) => {
@@ -235,7 +223,7 @@ async function main() {
                     let signedCheckpoint = await alice.sign(tx, [0]);
                     signedCheckpoint = await bob.sign(signedCheckpoint, [0]);
                     return base64.encode(signedCheckpoint.toPSBT());
-                })
+                }),
             );
 
             await arkProvider.finalizeTx(arkTxid, finalCheckpoints);
@@ -261,7 +249,7 @@ async function main() {
                         script: vhtlcScript.pkScript,
                     },
                 ],
-                serverUnrollScript
+                serverUnrollScript,
             );
 
             // Alice signs the transaction alone
@@ -269,13 +257,10 @@ async function main() {
 
             const { arkTxid, signedCheckpointTxs } = await arkProvider.submitTx(
                 base64.encode(signedArkTx.toPSBT()),
-                checkpoints.map((c) => base64.encode(c.toPSBT()))
+                checkpoints.map((c) => base64.encode(c.toPSBT())),
             );
 
-            console.log(
-                "Successfully submitted VHTLC unilateral refund! Transaction ID:",
-                arkTxid
-            );
+            console.log("Successfully submitted VHTLC unilateral refund! Transaction ID:", arkTxid);
 
             const finalCheckpoints = await Promise.all(
                 signedCheckpointTxs.map(async (c) => {
@@ -284,7 +269,7 @@ async function main() {
                     });
                     const signedCheckpoint = await alice.sign(tx, [0]);
                     return base64.encode(signedCheckpoint.toPSBT());
-                })
+                }),
             );
 
             await arkProvider.finalizeTx(arkTxid, finalCheckpoints);
@@ -298,9 +283,7 @@ async function main() {
 
 async function fundAddress(address, amount) {
     console.log(`\nFunding address with ${amount} sats...`);
-    execSync(
-        `${arkdExec} ark send --to ${address} --amount ${amount} --password secret`
-    );
+    execSync(`${arkdExec} ark send --to ${address} --amount ${amount} --password secret`);
     await new Promise((resolve) => setTimeout(resolve, 2000));
 }
 

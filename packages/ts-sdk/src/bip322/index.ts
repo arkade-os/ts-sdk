@@ -1,17 +1,5 @@
-import {
-    p2tr,
-    p2wpkh,
-    Address,
-    OutScript,
-    RawWitness,
-    SigHash,
-} from "@scure/btc-signer";
-import {
-    type BTC_NETWORK,
-    concatBytes,
-    hash160,
-    sha256x2,
-} from "@scure/btc-signer/utils.js";
+import { p2tr, p2wpkh, Address, OutScript, RawWitness, SigHash } from "@scure/btc-signer";
+import { type BTC_NETWORK, concatBytes, hash160, sha256x2 } from "@scure/btc-signer/utils.js";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
 import { equalBytes } from "@noble/curves/utils.js";
 import { base64 } from "@scure/base";
@@ -59,7 +47,7 @@ export namespace BIP322 {
     export async function sign(
         message: string,
         identity: Identity,
-        network?: BTC_NETWORK
+        network?: BTC_NETWORK,
     ): Promise<string> {
         const xOnlyPubKey = await identity.xOnlyPublicKey();
         const payment = p2tr(xOnlyPubKey, undefined, network);
@@ -68,11 +56,7 @@ export namespace BIP322 {
         const toSpend = craftToSpendTx(message, payment.script, TAG_BIP322);
 
         // Build BIP-322 toSign: version 0, single input spending toSpend, OP_RETURN output
-        const toSign = craftBIP322ToSignP2TR(
-            toSpend,
-            payment.script,
-            xOnlyPubKey
-        );
+        const toSign = craftBIP322ToSignP2TR(toSpend, payment.script, xOnlyPubKey);
 
         // Sign with identity (handles P2TR key-spend internally)
         const signed = await identity.sign(toSign, [0]);
@@ -106,7 +90,7 @@ export namespace BIP322 {
         message: string,
         signature: string,
         address: string,
-        network?: BTC_NETWORK
+        network?: BTC_NETWORK,
     ): boolean {
         let decoded;
 
@@ -119,11 +103,7 @@ export namespace BIP322 {
         // Legacy P2PKH: signature is base64 of 65 raw bytes, not a witness
         if (decoded.type === "pkh") {
             try {
-                return verifyLegacy(
-                    message,
-                    base64.decode(signature),
-                    decoded.hash
-                );
+                return verifyLegacy(message, base64.decode(signature), decoded.hash);
             } catch {
                 return false;
             }
@@ -151,9 +131,7 @@ export namespace BIP322 {
             return verifyP2WPKH(message, witnessItems, pkScript, decoded.hash);
         }
 
-        throw new Error(
-            `BIP-322 verify: unsupported address type '${decoded.type}'`
-        );
+        throw new Error(`BIP-322 verify: unsupported address type '${decoded.type}'`);
     }
 }
 
@@ -161,7 +139,7 @@ function verifyP2TR(
     message: string,
     witnessItems: Uint8Array[],
     pkScript: Uint8Array,
-    pubkey: Uint8Array
+    pubkey: Uint8Array,
 ): boolean {
     // P2TR key-spend witness is exactly [schnorr_signature].
     // Multiple items indicates a script-path spend, which BIP-322 simple doesn't cover.
@@ -192,7 +170,7 @@ function verifyP2WPKH(
     message: string,
     witnessItems: Uint8Array[],
     pkScript: Uint8Array,
-    addressHash: Uint8Array
+    addressHash: Uint8Array,
 ): boolean {
     // P2WPKH witness: [der_signature || sighash_byte, compressed_pubkey]
     if (witnessItems.length !== 2) {
@@ -237,11 +215,7 @@ function verifyP2WPKH(
  * The recovery flag encodes both the recovery ID and whether the key is
  * compressed: flag = 27 + recovery_id (+ 4 if compressed).
  */
-function verifyLegacy(
-    message: string,
-    sigBytes: Uint8Array,
-    addressHash: Uint8Array
-): boolean {
+function verifyLegacy(message: string, sigBytes: Uint8Array, addressHash: Uint8Array): boolean {
     if (sigBytes.length !== 65) {
         return false;
     }
@@ -258,10 +232,7 @@ function verifyLegacy(
     const msgHash = bitcoinMessageHash(message);
 
     try {
-        const sig = secp256k1.Signature.fromBytes(
-            compactSig,
-            "compact"
-        ).addRecoveryBit(recoveryId);
+        const sig = secp256k1.Signature.fromBytes(compactSig, "compact").addRecoveryBit(recoveryId);
         const point = sig.recoverPublicKey(msgHash);
         const pubkeyBytes = point.toBytes(compressed);
 
@@ -277,9 +248,7 @@ function verifyLegacy(
 function bitcoinMessageHash(message: string): Uint8Array {
     const MAGIC = new TextEncoder().encode("\x18Bitcoin Signed Message:\n");
     const msgBytes = new TextEncoder().encode(message);
-    return sha256x2(
-        concatBytes(MAGIC, encodeCompactSize(msgBytes.length), msgBytes)
-    );
+    return sha256x2(concatBytes(MAGIC, encodeCompactSize(msgBytes.length), msgBytes));
 }
 
 function encodeCompactSize(n: number): Uint8Array {
@@ -306,7 +275,7 @@ function encodeCompactSize(n: number): Uint8Array {
 function craftBIP322ToSignP2TR(
     toSpend: Transaction,
     pkScript: Uint8Array,
-    tapInternalKey: Uint8Array
+    tapInternalKey: Uint8Array,
 ): Transaction {
     const tx = new Transaction({ version: 0 });
 
@@ -336,10 +305,7 @@ function craftBIP322ToSignP2TR(
  * Used for P2WPKH verification where the toSign only needs
  * the witnessUtxo, not tapInternalKey.
  */
-function craftBIP322ToSignSimple(
-    toSpend: Transaction,
-    pkScript: Uint8Array
-): Transaction {
+function craftBIP322ToSignSimple(toSpend: Transaction, pkScript: Uint8Array): Transaction {
     const tx = new Transaction({ version: 0 });
 
     tx.addInput({

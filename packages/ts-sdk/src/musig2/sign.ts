@@ -21,7 +21,7 @@ interface SignOptions {
 export class PartialSig {
     constructor(
         public s: Uint8Array,
-        public R: Uint8Array
+        public R: Uint8Array,
     ) {
         if (s.length !== 32) {
             throw new PartialSignatureError("Invalid s length");
@@ -71,20 +71,20 @@ export function sign(
     combinedNonce: Uint8Array,
     publicKeys: Uint8Array[],
     message: Uint8Array,
-    options?: SignOptions
+    options?: SignOptions,
 ): PartialSig {
     let tweakBytes: Uint8Array | undefined;
 
     if (options?.taprootTweak !== undefined) {
         const { preTweakedKey } = aggregateKeys(
             options?.sortKeys ? musig.sortKeys(publicKeys) : publicKeys,
-            true
+            true,
         );
 
         tweakBytes = schnorr.utils.taggedHash(
             "TapTweak",
             preTweakedKey.subarray(1),
-            options.taprootTweak
+            options.taprootTweak,
         );
     }
 
@@ -93,7 +93,7 @@ export function sign(
         options?.sortKeys ? musig.sortKeys(publicKeys) : publicKeys,
         message,
         tweakBytes ? [tweakBytes] : undefined,
-        tweakBytes ? [true] : undefined
+        tweakBytes ? [true] : undefined,
     );
     const partialSig = session.sign(secNonce, privateKey);
     return PartialSig.decode(partialSig);

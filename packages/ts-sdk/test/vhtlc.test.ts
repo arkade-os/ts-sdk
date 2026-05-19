@@ -19,9 +19,7 @@ describe("VHTLC address", () => {
                 value: BigInt(f.unilateralRefundDelay.value),
             };
             const unilateralRefundWithoutReceiverDelay: RelativeTimelock = {
-                type: f.unilateralRefundWithoutReceiverDelay.type as
-                    | "blocks"
-                    | "seconds",
+                type: f.unilateralRefundWithoutReceiverDelay.type as "blocks" | "seconds",
                 value: BigInt(f.unilateralRefundWithoutReceiverDelay.value),
             };
 
@@ -37,9 +35,7 @@ describe("VHTLC address", () => {
                     unilateralRefundWithoutReceiverDelay,
                 });
 
-                const vhtlcAddress = vhtlcScript
-                    .address("tark", hex.decode(serverXOnly))
-                    .encode();
+                const vhtlcAddress = vhtlcScript.address("tark", hex.decode(serverXOnly)).encode();
 
                 expect(vhtlcAddress).toBe(f.expected);
 
@@ -50,29 +46,23 @@ describe("VHTLC address", () => {
                 // instead of silently shipping stale documentation.
                 if (f.scripts) {
                     expect(vhtlcScript.claimScript).toBe(f.scripts.claimScript);
-                    expect(vhtlcScript.refundScript).toBe(
-                        f.scripts.refundScript
-                    );
+                    expect(vhtlcScript.refundScript).toBe(f.scripts.refundScript);
                     expect(vhtlcScript.refundWithoutReceiverScript).toBe(
-                        f.scripts.refundWithoutReceiverScript
+                        f.scripts.refundWithoutReceiverScript,
                     );
-                    expect(vhtlcScript.unilateralClaimScript).toBe(
-                        f.scripts.unilateralClaimScript
-                    );
+                    expect(vhtlcScript.unilateralClaimScript).toBe(f.scripts.unilateralClaimScript);
                     expect(vhtlcScript.unilateralRefundScript).toBe(
-                        f.scripts.unilateralRefundScript
+                        f.scripts.unilateralRefundScript,
                     );
-                    expect(
-                        vhtlcScript.unilateralRefundWithoutReceiverScript
-                    ).toBe(f.scripts.unilateralRefundWithoutReceiverScript);
+                    expect(vhtlcScript.unilateralRefundWithoutReceiverScript).toBe(
+                        f.scripts.unilateralRefundWithoutReceiverScript,
+                    );
                 }
                 if (f.taproot) {
                     expect(hex.encode(vhtlcScript.tweakedPublicKey)).toBe(
-                        f.taproot.tweakedPublicKey
+                        f.taproot.tweakedPublicKey,
                     );
-                    expect(hex.encode(vhtlcScript.encode())).toBe(
-                        f.taproot.tapTree
-                    );
+                    expect(hex.encode(vhtlcScript.encode())).toBe(f.taproot.tapTree);
                 }
             });
         });
@@ -98,33 +88,26 @@ describe("VHTLC address", () => {
                         options.server = hex.decode(f.server.slice(2));
                     }
                     if (f.refundLocktime !== undefined) {
-                        options.refundLocktime = BigInt(
-                            f.refundLocktime as number
-                        );
+                        options.refundLocktime = BigInt(f.refundLocktime as number);
                     }
                     if (f.unilateralClaimDelay) {
                         options.unilateralClaimDelay = {
-                            type: f.unilateralClaimDelay.type as
-                                | "blocks"
-                                | "seconds",
+                            type: f.unilateralClaimDelay.type as "blocks" | "seconds",
                             value: BigInt(f.unilateralClaimDelay.value),
                         };
                     }
                     if (f.unilateralRefundDelay) {
                         options.unilateralRefundDelay = {
-                            type: f.unilateralRefundDelay.type as
-                                | "blocks"
-                                | "seconds",
+                            type: f.unilateralRefundDelay.type as "blocks" | "seconds",
                             value: BigInt(f.unilateralRefundDelay.value),
                         };
                     }
                     if (f.unilateralRefundWithoutReceiverDelay) {
                         options.unilateralRefundWithoutReceiverDelay = {
-                            type: f.unilateralRefundWithoutReceiverDelay
-                                .type as "blocks" | "seconds",
-                            value: BigInt(
-                                f.unilateralRefundWithoutReceiverDelay.value
-                            ),
+                            type: f.unilateralRefundWithoutReceiverDelay.type as
+                                | "blocks"
+                                | "seconds",
+                            value: BigInt(f.unilateralRefundWithoutReceiverDelay.value),
                         };
                     }
 

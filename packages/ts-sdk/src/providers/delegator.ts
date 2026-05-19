@@ -44,7 +44,7 @@ export interface DelegatorProvider {
     delegate(
         intent: SignedIntent<Intent.RegisterMessage>,
         forfeitTxs: string[],
-        options?: DelegateOptions
+        options?: DelegateOptions,
     ): Promise<void>;
 
     /**
@@ -83,7 +83,7 @@ export class RestDelegatorProvider implements DelegatorProvider {
     async delegate(
         intent: SignedIntent<Intent.RegisterMessage>,
         forfeitTxs: string[],
-        options?: DelegateOptions
+        options?: DelegateOptions,
     ): Promise<void> {
         const url = `${this.url}/v1/delegate`;
         const response = await fetch(url, {

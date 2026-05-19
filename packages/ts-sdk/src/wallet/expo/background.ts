@@ -26,10 +26,7 @@ import type { AsyncStorageTaskQueue } from "../../worker/expo/asyncStorageTaskQu
 import type { TaskProcessor } from "../../worker/expo/taskRunner";
 import type { TaskItem } from "../../worker/expo/taskQueue";
 import { runTasks, createTaskDependencies } from "../../worker/expo/taskRunner";
-import {
-    contractPollProcessor,
-    CONTRACT_POLL_TASK_TYPE,
-} from "../../worker/expo/processors";
+import { contractPollProcessor, CONTRACT_POLL_TASK_TYPE } from "../../worker/expo/processors";
 import { ExpoArkProvider } from "../../providers/expoArk";
 import { ExpoIndexerProvider } from "../../providers/expoIndexer";
 import { getRandomId } from "../utils";
@@ -92,7 +89,7 @@ export interface DefineBackgroundTaskOptions {
  */
 export function defineExpoBackgroundTask(
     taskName: string,
-    options: DefineBackgroundTaskOptions
+    options: DefineBackgroundTaskOptions,
 ): void {
     const {
         taskQueue,
@@ -103,17 +100,14 @@ export function defineExpoBackgroundTask(
 
     TaskManager.defineTask(taskName, async () => {
         try {
-            const config =
-                await taskQueue.loadConfig<PersistedBackgroundConfig>();
+            const config = await taskQueue.loadConfig<PersistedBackgroundConfig>();
             if (!config) {
                 // No config persisted yet — ExpoWallet.setup() hasn't run.
                 // Nothing to do.
                 return BackgroundTask.BackgroundTaskResult.Success;
             }
 
-            const indexerProvider = new ExpoIndexerProvider(
-                config.arkServerUrl
-            );
+            const indexerProvider = new ExpoIndexerProvider(config.arkServerUrl);
             const arkProvider = new ExpoArkProvider(config.arkServerUrl);
 
             const deps = createTaskDependencies({
@@ -147,7 +141,7 @@ export function defineExpoBackgroundTask(
         } catch (error) {
             console.error(
                 "[ark-sdk] Background task failed:",
-                error instanceof Error ? error.message : error
+                error instanceof Error ? error.message : error,
             );
             return BackgroundTask.BackgroundTaskResult.Failed;
         }
@@ -168,7 +162,7 @@ export function defineExpoBackgroundTask(
  */
 export async function registerExpoBackgroundTask(
     taskName: string,
-    options?: { minimumInterval?: number }
+    options?: { minimumInterval?: number },
 ): Promise<void> {
     await BackgroundTask.registerTaskAsync(taskName, {
         minimumInterval: (options?.minimumInterval ?? 15) * 60,
@@ -182,8 +176,6 @@ export async function registerExpoBackgroundTask(
  * lifecycle is the consumer's responsibility, matching the explicit
  * `register` step.
  */
-export async function unregisterExpoBackgroundTask(
-    taskName: string
-): Promise<void> {
+export async function unregisterExpoBackgroundTask(taskName: string): Promise<void> {
     await BackgroundTask.unregisterTaskAsync(taskName);
 }

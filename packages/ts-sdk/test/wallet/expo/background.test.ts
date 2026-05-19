@@ -28,9 +28,7 @@ vi.mock("expo-background-task", () => ({
 }));
 
 vi.mock("../../../src/worker/expo/taskRunner", async () => {
-    const actual = await vi.importActual<any>(
-        "../../../src/worker/expo/taskRunner"
-    );
+    const actual = await vi.importActual<any>("../../../src/worker/expo/taskRunner");
     return {
         ...actual,
         runTasks: runTasksMock,
@@ -51,8 +49,7 @@ vi.mock("../../../src/providers/expoArk", () => ({
     },
 }));
 
-const loadBackground = async () =>
-    import("../../../src/wallet/expo/background");
+const loadBackground = async () => import("../../../src/wallet/expo/background");
 
 describe("expo background task helpers", () => {
     beforeEach(() => {
@@ -87,20 +84,13 @@ describe("expo background task helpers", () => {
         });
 
         expect(defineTaskMock).toHaveBeenCalledTimes(1);
-        expect(defineTaskMock).toHaveBeenCalledWith(
-            "ark-background-task",
-            expect.any(Function)
-        );
+        expect(defineTaskMock).toHaveBeenCalledWith("ark-background-task", expect.any(Function));
 
         const executor = defineTaskMock.mock.calls[0][1];
         const result = await executor();
 
-        expect(expoIndexerProviderCtorMock).toHaveBeenCalledWith(
-            "https://ark.example"
-        );
-        expect(expoArkProviderCtorMock).toHaveBeenCalledWith(
-            "https://ark.example"
-        );
+        expect(expoIndexerProviderCtorMock).toHaveBeenCalledWith("https://ark.example");
+        expect(expoArkProviderCtorMock).toHaveBeenCalledWith("https://ark.example");
         expect(runTasksMock).toHaveBeenCalledTimes(1);
         expect(runTasksMock).toHaveBeenCalledWith(
             taskQueue,
@@ -111,20 +101,18 @@ describe("expo background task helpers", () => {
                 indexerProvider: expect.any(Object),
                 arkProvider: expect.any(Object),
                 extendVtxo: expect.any(Function),
-            })
+            }),
         );
 
         expect(taskQueue.acknowledgeResults).toHaveBeenCalledWith(["result-1"]);
-        expect(taskQueue.getTasks).toHaveBeenCalledWith(
-            CONTRACT_POLL_TASK_TYPE
-        );
+        expect(taskQueue.getTasks).toHaveBeenCalledWith(CONTRACT_POLL_TASK_TYPE);
         expect(taskQueue.addTask).toHaveBeenCalledTimes(1);
         expect(taskQueue.addTask).toHaveBeenCalledWith(
             expect.objectContaining({
                 type: CONTRACT_POLL_TASK_TYPE,
                 data: {},
                 createdAt: expect.any(Number),
-            })
+            }),
         );
 
         expect(result).toBe(1);
@@ -166,9 +154,7 @@ describe("expo background task helpers", () => {
         const contractRepository = { id: "contract-repository" };
         runTasksMock.mockRejectedValue(new Error("network down"));
 
-        const consoleSpy = vi
-            .spyOn(console, "error")
-            .mockImplementation(() => {});
+        const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
         const { defineExpoBackgroundTask } = await loadBackground();
 
@@ -184,29 +170,23 @@ describe("expo background task helpers", () => {
         expect(result).toBe(2); // BackgroundTaskResult.Failed
         expect(consoleSpy).toHaveBeenCalledWith(
             "[ark-sdk] Background task failed:",
-            "network down"
+            "network down",
         );
 
         consoleSpy.mockRestore();
     });
 
     it("registers and unregisters Expo background tasks", async () => {
-        const { registerExpoBackgroundTask, unregisterExpoBackgroundTask } =
-            await loadBackground();
+        const { registerExpoBackgroundTask, unregisterExpoBackgroundTask } = await loadBackground();
 
         await registerExpoBackgroundTask("ark-background-task", {
             minimumInterval: 17,
         });
         await unregisterExpoBackgroundTask("ark-background-task");
 
-        expect(registerTaskAsyncMock).toHaveBeenCalledWith(
-            "ark-background-task",
-            {
-                minimumInterval: 17 * 60,
-            }
-        );
-        expect(unregisterTaskAsyncMock).toHaveBeenCalledWith(
-            "ark-background-task"
-        );
+        expect(registerTaskAsyncMock).toHaveBeenCalledWith("ark-background-task", {
+            minimumInterval: 17 * 60,
+        });
+        expect(unregisterTaskAsyncMock).toHaveBeenCalledWith("ark-background-task");
     });
 });

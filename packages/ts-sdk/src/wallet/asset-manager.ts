@@ -32,10 +32,7 @@ export class ReadonlyAssetManager implements IReadonlyAssetManager {
     }
 }
 
-export class AssetManager
-    extends ReadonlyAssetManager
-    implements IAssetManager
-{
+export class AssetManager extends ReadonlyAssetManager implements IAssetManager {
     constructor(readonly wallet: Wallet) {
         super(wallet.indexerProvider);
     }
@@ -64,9 +61,7 @@ export class AssetManager
      */
     async issue(params: IssuanceParams): Promise<IssuanceResult> {
         if (params.amount <= 0n) {
-            throw new Error(
-                `Issue amount must be greater than 0, got ${params.amount}`
-            );
+            throw new Error(`Issue amount must be greater than 0, got ${params.amount}`);
         }
 
         const metadata = castMetadata(params.metadata);
@@ -79,10 +74,7 @@ export class AssetManager
             ? AssetRef.fromId(AssetId.fromString(params.controlAssetId))
             : null;
 
-        const coinSelection = selectVirtualCoins(
-            virtualCoins,
-            Number(this.wallet.dustAmount)
-        );
+        const coinSelection = selectVirtualCoins(virtualCoins, Number(this.wallet.dustAmount));
         let totalBtcSelected = 0n;
 
         // keep track of asset changes
@@ -106,15 +98,13 @@ export class AssetManager
             controlAssetRef,
             [],
             [issuedAssetOutput],
-            metadata
+            metadata,
         );
         groups.push(issuedAssetGroup);
 
         // add asset groups for each asset change
         if (assetChanges.size > 0) {
-            const assetInputs = selectedCoinsToAssetInputs(
-                coinSelection.inputs
-            );
+            const assetInputs = selectedCoinsToAssetInputs(coinSelection.inputs);
 
             for (const [assetId, amount] of assetChanges) {
                 const changeInputs: AssetInput[] = [];
@@ -123,9 +113,7 @@ export class AssetManager
                 for (const [inputIndex, assets] of assetInputs) {
                     for (const asset of assets) {
                         if (asset.assetId !== assetId) continue;
-                        changeInputs.push(
-                            AssetInput.create(inputIndex, asset.amount)
-                        );
+                        changeInputs.push(AssetInput.create(inputIndex, asset.amount));
                     }
                 }
 
@@ -136,8 +124,8 @@ export class AssetManager
                         null,
                         changeInputs,
                         [AssetOutput.create(0, amount)],
-                        []
-                    )
+                        [],
+                    ),
                 );
             }
         }
@@ -155,7 +143,7 @@ export class AssetManager
 
         const { arkTxid } = await this.wallet.buildAndSubmitOffchainTx(
             coinSelection.inputs,
-            outputs
+            outputs,
         );
         return {
             arkTxId: arkTxid,
@@ -182,9 +170,7 @@ export class AssetManager
      */
     async reissue(params: ReissuanceParams): Promise<string> {
         if (params.amount <= 0n) {
-            throw new Error(
-                `Reissuance amount must be greater than 0, got ${params.amount}`
-            );
+            throw new Error(`Reissuance amount must be greater than 0, got ${params.amount}`);
         }
 
         const { controlAssetId } = await this.getAssetDetails(params.assetId);
@@ -199,11 +185,7 @@ export class AssetManager
         const assetChanges = new Map<string, bigint>();
 
         // select control asset inputs
-        const { selected: controlCoins } = selectCoinsWithAsset(
-            virtualCoins,
-            controlAssetId,
-            1n
-        );
+        const { selected: controlCoins } = selectCoinsWithAsset(virtualCoins, controlAssetId, 1n);
 
         let selectedCoins = [...controlCoins];
         let assetToReissueAmount = 0n;
@@ -223,22 +205,13 @@ export class AssetManager
 
         // select at least dust amount
         const minBtcNeeded = Number(this.wallet.dustAmount);
-        let totalBtcSelected = selectedCoins.reduce(
-            (sum, c) => sum + c.value,
-            0
-        );
+        let totalBtcSelected = selectedCoins.reduce((sum, c) => sum + c.value, 0);
 
         if (totalBtcSelected < minBtcNeeded) {
             const remainingCoins = virtualCoins.filter(
-                (c) =>
-                    !selectedCoins.find(
-                        (sc) => sc.txid === c.txid && sc.vout === c.vout
-                    )
+                (c) => !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
             );
-            const additional = selectVirtualCoins(
-                remainingCoins,
-                minBtcNeeded - totalBtcSelected
-            );
+            const additional = selectVirtualCoins(remainingCoins, minBtcNeeded - totalBtcSelected);
             for (const coin of additional.inputs) {
                 // additional inputs assets go to asset changes
                 if (!coin.assets) continue;
@@ -252,10 +225,7 @@ export class AssetManager
                 }
             }
             selectedCoins = [...selectedCoins, ...additional.inputs];
-            totalBtcSelected += additional.inputs.reduce(
-                (sum, c) => sum + c.value,
-                0
-            );
+            totalBtcSelected += additional.inputs.reduce((sum, c) => sum + c.value, 0);
         }
 
         const assetInputs = selectedCoinsToAssetInputs(selectedCoins);
@@ -279,7 +249,7 @@ export class AssetManager
             null,
             reissueInputs,
             [AssetOutput.create(0, totalAssetAmount)],
-            []
+            [],
         );
 
         const groups = [reissueAssetGroup];
@@ -290,9 +260,7 @@ export class AssetManager
             for (const [inputIndex, assets] of assetInputs) {
                 for (const asset of assets) {
                     if (asset.assetId !== assetId) continue;
-                    changeInputs.push(
-                        AssetInput.create(inputIndex, asset.amount)
-                    );
+                    changeInputs.push(AssetInput.create(inputIndex, asset.amount));
                 }
             }
             groups.push(
@@ -301,8 +269,8 @@ export class AssetManager
                     null,
                     changeInputs,
                     [AssetOutput.create(0, amount)],
-                    []
-                )
+                    [],
+                ),
             );
         }
 
@@ -317,10 +285,7 @@ export class AssetManager
             Extension.create([Packet.create(groups)]).txOut(),
         ];
 
-        const { arkTxid } = await this.wallet.buildAndSubmitOffchainTx(
-            selectedCoins,
-            outputs
-        );
+        const { arkTxid } = await this.wallet.buildAndSubmitOffchainTx(selectedCoins, outputs);
         return arkTxid;
     }
 
@@ -341,9 +306,7 @@ export class AssetManager
      */
     async burn(params: BurnParams): Promise<string> {
         if (params.amount <= 0n) {
-            throw new Error(
-                `Burn amount must be greater than 0, got ${params.amount}`
-            );
+            throw new Error(`Burn amount must be greater than 0, got ${params.amount}`);
         }
 
         const virtualCoins = await this.wallet.getVtxos({
@@ -356,7 +319,7 @@ export class AssetManager
         const { selected: assetCoins } = selectCoinsWithAsset(
             virtualCoins,
             params.assetId,
-            params.amount
+            params.amount,
         );
 
         const selectedCoins = [...assetCoins];
@@ -372,10 +335,7 @@ export class AssetManager
             }
         }
         // subtract the amount to burn from the asset change
-        assetChanges.set(
-            params.assetId,
-            (assetChanges.get(params.assetId) ?? 0n) - params.amount
-        );
+        assetChanges.set(params.assetId, (assetChanges.get(params.assetId) ?? 0n) - params.amount);
 
         const minBtcNeeded = Number(this.wallet.dustAmount);
 
@@ -383,15 +343,9 @@ export class AssetManager
         // if not, select additional coins
         if (totalBtcSelected < minBtcNeeded) {
             const remainingCoins = virtualCoins.filter(
-                (c) =>
-                    !selectedCoins.find(
-                        (sc) => sc.txid === c.txid && sc.vout === c.vout
-                    )
+                (c) => !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
             );
-            const additional = selectVirtualCoins(
-                remainingCoins,
-                minBtcNeeded - totalBtcSelected
-            );
+            const additional = selectVirtualCoins(remainingCoins, minBtcNeeded - totalBtcSelected);
 
             // additional inputs assets go to asset changes
             for (const coin of additional.inputs) {
@@ -415,9 +369,7 @@ export class AssetManager
             for (const [inputIndex, assets] of assetInputs) {
                 for (const asset of assets) {
                     if (asset.assetId !== assetId) continue;
-                    changeInputs.push(
-                        AssetInput.create(inputIndex, asset.amount)
-                    );
+                    changeInputs.push(AssetInput.create(inputIndex, asset.amount));
                 }
             }
             groups.push(
@@ -426,8 +378,8 @@ export class AssetManager
                     null,
                     changeInputs,
                     amount > 0n ? [AssetOutput.create(0, amount)] : [],
-                    []
-                )
+                    [],
+                ),
             );
         }
 
@@ -442,10 +394,7 @@ export class AssetManager
             Extension.create([Packet.create(groups)]).txOut(),
         ];
 
-        const { arkTxid } = await this.wallet.buildAndSubmitOffchainTx(
-            selectedCoins,
-            outputs
-        );
+        const { arkTxid } = await this.wallet.buildAndSubmitOffchainTx(selectedCoins, outputs);
         return arkTxid;
     }
 }

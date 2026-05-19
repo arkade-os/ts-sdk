@@ -93,24 +93,18 @@ describe("Estimator", () => {
                                 errorMsg.includes("syntax") ||
                                     errorMsg.includes("unexpected") ||
                                     errorMsg.includes("unterminated") ||
-                                    errorMsg.includes("token")
+                                    errorMsg.includes("token"),
                             ).toBe(true);
-                        } else if (
-                            expectedErr.includes("undeclared reference")
-                        ) {
+                        } else if (expectedErr.includes("undeclared reference")) {
                             expect(
                                 errorMsg.includes("unknown variable") ||
                                     errorMsg.includes("undeclared") ||
-                                    errorMsg.includes(
-                                        "found no matching overload"
-                                    )
+                                    errorMsg.includes("found no matching overload"),
                             ).toBe(true);
-                        } else if (
-                            expectedErr.includes("found no matching overload")
-                        ) {
+                        } else if (expectedErr.includes("found no matching overload")) {
                             expect(
                                 errorMsg.includes("no such overload") ||
-                                    errorMsg.includes("matching overload")
+                                    errorMsg.includes("matching overload"),
                             ).toBe(true);
                         } else {
                             expect(errorMsg).toContain(expectedErr);
@@ -239,24 +233,24 @@ describe("Estimator", () => {
 
                         const estimator = new Estimator(config);
 
-                        const offchainInputs = (
-                            testCase.offchainInputs ?? []
-                        ).map(convertJsonInput);
-                        const onchainInputs = (
-                            testCase.onchainInputs ?? []
-                        ).map(convertJsonOnchainInput);
-                        const offchainOutputs = (
-                            testCase.offchainOutputs ?? []
-                        ).map(convertJsonOutput);
-                        const onchainOutputs = (
-                            testCase.onchainOutputs ?? []
-                        ).map(convertJsonOutput);
+                        const offchainInputs = (testCase.offchainInputs ?? []).map(
+                            convertJsonInput,
+                        );
+                        const onchainInputs = (testCase.onchainInputs ?? []).map(
+                            convertJsonOnchainInput,
+                        );
+                        const offchainOutputs = (testCase.offchainOutputs ?? []).map(
+                            convertJsonOutput,
+                        );
+                        const onchainOutputs = (testCase.onchainOutputs ?? []).map(
+                            convertJsonOutput,
+                        );
 
                         const result = estimator.eval(
                             offchainInputs,
                             onchainInputs,
                             offchainOutputs,
-                            onchainOutputs
+                            onchainOutputs,
                         );
                         expect(result.value).toBe(testCase.expected);
                     });

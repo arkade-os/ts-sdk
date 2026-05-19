@@ -24,7 +24,7 @@ export class SQLiteContractRepository implements ContractRepository {
 
     constructor(
         private readonly db: SQLExecutor,
-        options?: SQLiteContractRepositoryOptions
+        options?: SQLiteContractRepositoryOptions,
     ) {
         this.prefix = sanitizePrefix(options?.prefix ?? "ark_");
         this.table = `${this.prefix}contracts`;
@@ -55,10 +55,10 @@ export class SQLiteContractRepository implements ContractRepository {
         `);
 
         await this.db.run(
-            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}contracts_type ON ${this.table} (type)`
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}contracts_type ON ${this.table} (type)`,
         );
         await this.db.run(
-            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}contracts_state ON ${this.table} (state)`
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}contracts_state ON ${this.table} (state)`,
         );
     }
 
@@ -82,12 +82,7 @@ export class SQLiteContractRepository implements ContractRepository {
         const params: unknown[] = [];
 
         if (filter) {
-            this.addFilterCondition(
-                conditions,
-                params,
-                "script",
-                filter.script
-            );
+            this.addFilterCondition(conditions, params, "script", filter.script);
             this.addFilterCondition(conditions, params, "state", filter.state);
             this.addFilterCondition(conditions, params, "type", filter.type);
         }
@@ -118,15 +113,13 @@ export class SQLiteContractRepository implements ContractRepository {
                 contract.createdAt,
                 contract.label ?? null,
                 contract.metadata ? JSON.stringify(contract.metadata) : null,
-            ]
+            ],
         );
     }
 
     async deleteContract(script: string): Promise<void> {
         await this.ensureInit();
-        await this.db.run(`DELETE FROM ${this.table} WHERE script = ?`, [
-            script,
-        ]);
+        await this.db.run(`DELETE FROM ${this.table} WHERE script = ?`, [script]);
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────
@@ -135,7 +128,7 @@ export class SQLiteContractRepository implements ContractRepository {
         conditions: string[],
         params: unknown[],
         column: string,
-        value?: string | string[]
+        value?: string | string[],
     ): void {
         if (value === undefined) return;
 
@@ -171,7 +164,7 @@ const SAFE_PREFIX = /^[a-zA-Z0-9_]+$/;
 function sanitizePrefix(prefix: string): string {
     if (!SAFE_PREFIX.test(prefix)) {
         throw new Error(
-            `Invalid table prefix "${prefix}": only letters, digits, and underscores are allowed`
+            `Invalid table prefix "${prefix}": only letters, digits, and underscores are allowed`,
         );
     }
     return prefix;

@@ -2,8 +2,7 @@ import { StorageAdapter } from "../../storage";
 import { ContractFilter, ContractRepository } from "../contractRepository";
 import { Contract } from "../../contracts/types";
 
-export const getContractStorageKey = (id: string, key: string) =>
-    `contract:${id}:${key}`;
+export const getContractStorageKey = (id: string, key: string) => `contract:${id}:${key}`;
 export const getCollectionStorageKey = (type: string) => `collection:${type}`;
 
 /**
@@ -17,76 +16,49 @@ export class ContractRepositoryImpl implements ContractRepository {
         this.storage = storage;
     }
 
-    async getContractData<T>(
-        contractId: string,
-        key: string
-    ): Promise<T | null> {
-        const stored = await this.storage.getItem(
-            getContractStorageKey(contractId, key)
-        );
+    async getContractData<T>(contractId: string, key: string): Promise<T | null> {
+        const stored = await this.storage.getItem(getContractStorageKey(contractId, key));
         if (!stored) return null;
 
         try {
             const data = JSON.parse(stored) as T;
             return data;
         } catch (error) {
-            console.error(
-                `Failed to parse contract data for ${contractId}:${key}:`,
-                error
-            );
+            console.error(`Failed to parse contract data for ${contractId}:${key}:`, error);
             return null;
         }
     }
 
-    async setContractData<T>(
-        contractId: string,
-        key: string,
-        data: T
-    ): Promise<void> {
+    async setContractData<T>(contractId: string, key: string, data: T): Promise<void> {
         try {
             await this.storage.setItem(
                 getContractStorageKey(contractId, key),
-                JSON.stringify(data)
+                JSON.stringify(data),
             );
         } catch (error) {
-            console.error(
-                `Failed to persist contract data for ${contractId}:${key}:`,
-                error
-            );
+            console.error(`Failed to persist contract data for ${contractId}:${key}:`, error);
             throw error; // Rethrow to notify caller of failure
         }
     }
 
     async deleteContractData(contractId: string, key: string): Promise<void> {
         try {
-            await this.storage.removeItem(
-                getContractStorageKey(contractId, key)
-            );
+            await this.storage.removeItem(getContractStorageKey(contractId, key));
         } catch (error) {
-            console.error(
-                `Failed to remove contract data for ${contractId}:${key}:`,
-                error
-            );
+            console.error(`Failed to remove contract data for ${contractId}:${key}:`, error);
             throw error; // Rethrow to notify caller of failure
         }
     }
 
-    async getContractCollection<T>(
-        contractType: string
-    ): Promise<ReadonlyArray<T>> {
-        const stored = await this.storage.getItem(
-            getCollectionStorageKey(contractType)
-        );
+    async getContractCollection<T>(contractType: string): Promise<ReadonlyArray<T>> {
+        const stored = await this.storage.getItem(getCollectionStorageKey(contractType));
         if (!stored) return [];
 
         try {
             const collection = JSON.parse(stored) as T[];
             return collection;
         } catch (error) {
-            console.error(
-                `Failed to parse contract collection ${contractType}:`,
-                error
-            );
+            console.error(`Failed to parse contract collection ${contractType}:`, error);
             return [];
         }
     }
@@ -94,22 +66,18 @@ export class ContractRepositoryImpl implements ContractRepository {
     async saveToContractCollection<T, K extends keyof T>(
         contractType: string,
         item: T,
-        idField: K
+        idField: K,
     ): Promise<void> {
         const collection = await this.getContractCollection<T>(contractType);
 
         // Validate that the item has the required id field
         const itemId = item[idField];
         if (itemId === undefined || itemId === null) {
-            throw new Error(
-                `Item is missing required field '${String(idField)}'`
-            );
+            throw new Error(`Item is missing required field '${String(idField)}'`);
         }
 
         // Find existing item index without mutating the original collection
-        const existingIndex = collection.findIndex(
-            (i) => i[idField] === itemId
-        );
+        const existingIndex = collection.findIndex((i) => i[idField] === itemId);
 
         // Build new collection without mutating the cached one
         let newCollection: T[];
@@ -128,13 +96,10 @@ export class ContractRepositoryImpl implements ContractRepository {
         try {
             await this.storage.setItem(
                 getCollectionStorageKey(contractType),
-                JSON.stringify(newCollection)
+                JSON.stringify(newCollection),
             );
         } catch (error) {
-            console.error(
-                `Failed to persist contract collection ${contractType}:`,
-                error
-            );
+            console.error(`Failed to persist contract collection ${contractType}:`, error);
             throw error; // Rethrow to notify caller of failure
         }
     }
@@ -142,7 +107,7 @@ export class ContractRepositoryImpl implements ContractRepository {
     async removeFromContractCollection<T, K extends keyof T>(
         contractType: string,
         id: T[K],
-        idField: K
+        idField: K,
     ): Promise<void> {
         // Validate input parameters
         if (id === undefined || id === null) {
@@ -157,12 +122,12 @@ export class ContractRepositoryImpl implements ContractRepository {
         try {
             await this.storage.setItem(
                 getCollectionStorageKey(contractType),
-                JSON.stringify(filtered)
+                JSON.stringify(filtered),
             );
         } catch (error) {
             console.error(
                 `Failed to persist contract collection removal for ${contractType}:`,
-                error
+                error,
             );
             throw error; // Rethrow to notify caller of failure
         }
@@ -172,19 +137,19 @@ export class ContractRepositoryImpl implements ContractRepository {
     // but aren't used.
     async getContracts(_?: ContractFilter): Promise<Contract[]> {
         throw new TypeError(
-            "Method not implemented, this is a legacy class and should only be used for migrating data."
+            "Method not implemented, this is a legacy class and should only be used for migrating data.",
         );
     }
 
     async saveContract(_: Contract): Promise<void> {
         throw new TypeError(
-            "Method not implemented, this is a legacy class and should only be used for migrating data."
+            "Method not implemented, this is a legacy class and should only be used for migrating data.",
         );
     }
 
     async deleteContract(_: string): Promise<void> {
         throw new TypeError(
-            "Method not implemented, this is a legacy class and should only be used for migrating data."
+            "Method not implemented, this is a legacy class and should only be used for migrating data.",
         );
     }
 

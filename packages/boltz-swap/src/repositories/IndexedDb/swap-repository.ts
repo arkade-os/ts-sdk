@@ -31,10 +31,7 @@ export class IndexedDbSwapRepository implements SwapRepository {
     async saveSwap<T extends BoltzSwap>(swap: T): Promise<void> {
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
-            const transaction = db.transaction(
-                [STORE_SWAPS_STATE],
-                "readwrite"
-            );
+            const transaction = db.transaction([STORE_SWAPS_STATE], "readwrite");
             const store = transaction.objectStore(STORE_SWAPS_STATE);
             const request = store.put(swap);
             request.onsuccess = () => resolve();
@@ -45,10 +42,7 @@ export class IndexedDbSwapRepository implements SwapRepository {
     async deleteSwap(id: string): Promise<void> {
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
-            const transaction = db.transaction(
-                [STORE_SWAPS_STATE],
-                "readwrite"
-            );
+            const transaction = db.transaction([STORE_SWAPS_STATE], "readwrite");
             const store = transaction.objectStore(STORE_SWAPS_STATE);
             const request = store.delete(id);
             request.onsuccess = () => resolve();
@@ -56,19 +50,14 @@ export class IndexedDbSwapRepository implements SwapRepository {
         });
     }
 
-    async getAllSwaps<T extends BoltzSwap>(
-        filter?: GetSwapsFilter
-    ): Promise<T[]> {
+    async getAllSwaps<T extends BoltzSwap>(filter?: GetSwapsFilter): Promise<T[]> {
         return this.getAllSwapsFromStore<T>(filter);
     }
 
     async clear(): Promise<void> {
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
-            const transaction = db.transaction(
-                [STORE_SWAPS_STATE],
-                "readwrite"
-            );
+            const transaction = db.transaction([STORE_SWAPS_STATE], "readwrite");
             const store = transaction.objectStore(STORE_SWAPS_STATE);
             const request = store.clear();
             request.onsuccess = () => resolve();
@@ -79,7 +68,7 @@ export class IndexedDbSwapRepository implements SwapRepository {
     private getSwapsByIndexValues<T>(
         store: IDBObjectStore,
         indexName: string,
-        values: string[]
+        values: string[],
     ): Promise<T[]> {
         if (values.length === 0) return Promise.resolve([]);
         const index = store.index(indexName);
@@ -89,11 +78,9 @@ export class IndexedDbSwapRepository implements SwapRepository {
                     const request = index.getAll(value);
                     request.onerror = () => reject(request.error);
                     request.onsuccess = () => resolve(request.result ?? []);
-                })
+                }),
         );
-        return Promise.all(requests).then((results) =>
-            results.flatMap((result) => result)
-        );
+        return Promise.all(requests).then((results) => results.flatMap((result) => result));
     }
 
     private async getAllSwapsFromStore<
@@ -112,8 +99,7 @@ export class IndexedDbSwapRepository implements SwapRepository {
         if (!filter || Object.keys(filter).length === 0) {
             return new Promise((resolve, reject) => {
                 const request = store.getAll();
-                request.onsuccess = () =>
-                    resolve((request.result ?? []) as T[]);
+                request.onsuccess = () => resolve((request.result ?? []) as T[]);
                 request.onerror = () => reject(request.error);
             });
         }
@@ -127,42 +113,24 @@ export class IndexedDbSwapRepository implements SwapRepository {
                     (id) =>
                         new Promise<T | undefined>((resolve, reject) => {
                             const request = store.get(id);
-                            request.onsuccess = () =>
-                                resolve(request.result as T | undefined);
+                            request.onsuccess = () => resolve(request.result as T | undefined);
                             request.onerror = () => reject(request.error);
-                        })
-                )
+                        }),
+                ),
             );
-            return this.sortIfNeeded(
-                this.applySwapsFilter(swaps, normalizedFilter),
-                filter
-            );
+            return this.sortIfNeeded(this.applySwapsFilter(swaps, normalizedFilter), filter);
         }
 
         if (normalizedFilter.has("type")) {
             const types = normalizedFilter.get("type")!;
-            const swaps = await this.getSwapsByIndexValues<T>(
-                store,
-                "type",
-                types
-            );
-            return this.sortIfNeeded(
-                this.applySwapsFilter(swaps, normalizedFilter),
-                filter
-            );
+            const swaps = await this.getSwapsByIndexValues<T>(store, "type", types);
+            return this.sortIfNeeded(this.applySwapsFilter(swaps, normalizedFilter), filter);
         }
 
         if (normalizedFilter.has("status")) {
             const ids = normalizedFilter.get("status")!;
-            const swaps = await this.getSwapsByIndexValues<T>(
-                store,
-                "status",
-                ids
-            );
-            return this.sortIfNeeded(
-                this.applySwapsFilter(swaps, normalizedFilter),
-                filter
-            );
+            const swaps = await this.getSwapsByIndexValues<T>(store, "status", ids);
+            return this.sortIfNeeded(this.applySwapsFilter(swaps, normalizedFilter), filter);
         }
 
         if (filter.orderBy === "createdAt") {
@@ -175,36 +143,25 @@ export class IndexedDbSwapRepository implements SwapRepository {
             request.onerror = () => reject(request.error);
         });
 
-        return this.sortIfNeeded(
-            this.applySwapsFilter(allSwaps, normalizedFilter),
-            filter
-        );
+        return this.sortIfNeeded(this.applySwapsFilter(allSwaps, normalizedFilter), filter);
     }
 
-    private applySwapsFilter<
-        T extends { id: string; status: string; type: string },
-    >(
+    private applySwapsFilter<T extends { id: string; status: string; type: string }>(
         swaps: (T | undefined)[],
-        filter: ReturnType<typeof normalizeFilter>
+        filter: ReturnType<typeof normalizeFilter>,
     ): T[] {
         return swaps.filter((swap): swap is T => {
             if (swap === undefined) return false;
-            if (filter.has("id") && !filter.get("id")?.includes(swap.id))
-                return false;
-            if (
-                filter.has("status") &&
-                !filter.get("status")?.includes(swap.status)
-            )
-                return false;
-            if (filter.has("type") && !filter.get("type")?.includes(swap.type))
-                return false;
+            if (filter.has("id") && !filter.get("id")?.includes(swap.id)) return false;
+            if (filter.has("status") && !filter.get("status")?.includes(swap.status)) return false;
+            if (filter.has("type") && !filter.get("type")?.includes(swap.type)) return false;
             return true;
         });
     }
 
     private async getAllSwapsByCreatedAt<T>(
         store: IDBObjectStore,
-        orderDirection?: GetSwapsFilter["orderDirection"]
+        orderDirection?: GetSwapsFilter["orderDirection"],
     ): Promise<T[]> {
         const index = store.index("createdAt");
         const direction = orderDirection === "desc" ? "prev" : "next";
@@ -226,13 +183,11 @@ export class IndexedDbSwapRepository implements SwapRepository {
 
     private sortIfNeeded<T extends { createdAt: number }>(
         swaps: T[],
-        filter?: GetSwapsFilter
+        filter?: GetSwapsFilter,
     ): T[] {
         if (filter?.orderBy !== "createdAt") return swaps;
         const direction = filter.orderDirection === "asc" ? 1 : -1;
-        return swaps
-            .slice()
-            .sort((a, b) => (a.createdAt - b.createdAt) * direction);
+        return swaps.slice().sort((a, b) => (a.createdAt - b.createdAt) * direction);
     }
 
     async [Symbol.asyncDispose](): Promise<void> {

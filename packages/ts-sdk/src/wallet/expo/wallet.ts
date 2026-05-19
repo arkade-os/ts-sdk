@@ -20,15 +20,9 @@ import type { Identity } from "../../identity";
 import type { IContractManager } from "../../contracts/contractManager";
 import type { IDelegatorManager } from "../delegator";
 import type { TaskQueue, TaskItem } from "../../worker/expo/taskQueue";
-import type {
-    TaskProcessor,
-    TaskDependencies,
-} from "../../worker/expo/taskRunner";
+import type { TaskProcessor, TaskDependencies } from "../../worker/expo/taskRunner";
 import { runTasks } from "../../worker/expo/taskRunner";
-import {
-    contractPollProcessor,
-    CONTRACT_POLL_TASK_TYPE,
-} from "../../worker/expo/processors";
+import { contractPollProcessor, CONTRACT_POLL_TASK_TYPE } from "../../worker/expo/processors";
 import { extendVirtualCoinForContract, getRandomId } from "../utils";
 import { DefaultVtxo } from "../../script/default";
 import type { PersistedBackgroundConfig } from "./background";
@@ -79,7 +73,7 @@ export function warnOnRemovedBackgroundFields(bg: unknown): void {
     console.warn(
         `[ark-sdk] ExpoWallet.setup: ignoring removed background field(s): ${removed.join(", ")}. ` +
             'OS-task registration moved to "@arkade-os/sdk/wallet/expo/background". ' +
-            "See https://github.com/arkade-os/ts-sdk/issues/486"
+            "See https://github.com/arkade-os/ts-sdk/issues/486",
     );
 }
 
@@ -132,7 +126,7 @@ export class ExpoWallet implements IWallet {
         private readonly taskQueue: TaskQueue,
         private readonly processors: TaskProcessor[],
         private readonly deps: TaskDependencies,
-        foregroundIntervalMs?: number
+        foregroundIntervalMs?: number,
     ) {
         this.identity = wallet.identity;
         this.arkProvider = wallet.arkProvider;
@@ -161,17 +155,14 @@ export class ExpoWallet implements IWallet {
 
         const wallet = await Wallet.create(config);
 
-        const processors = config.background.processors ?? [
-            contractPollProcessor,
-        ];
+        const processors = config.background.processors ?? [contractPollProcessor];
 
         const deps: TaskDependencies = {
             walletRepository: wallet.walletRepository,
             contractRepository: wallet.contractRepository,
             indexerProvider: wallet.indexerProvider,
             arkProvider: wallet.arkProvider,
-            extendVtxo: (vtxo, contract) =>
-                extendVirtualCoinForContract(vtxo, contract),
+            extendVtxo: (vtxo, contract) => extendVirtualCoinForContract(vtxo, contract),
         };
 
         const { taskQueue } = config.background;
@@ -192,19 +183,13 @@ export class ExpoWallet implements IWallet {
 
                 const bgConfig: PersistedBackgroundConfig = {
                     arkServerUrl,
-                    pubkeyHex: hex.encode(
-                        wallet.offchainTapscript.options.pubKey
-                    ),
-                    serverPubKeyHex: hex.encode(
-                        wallet.offchainTapscript.options.serverPubKey
-                    ),
+                    pubkeyHex: hex.encode(wallet.offchainTapscript.options.pubKey),
+                    serverPubKeyHex: hex.encode(wallet.offchainTapscript.options.serverPubKey),
                     exitTimelockValue: timelock.value.toString(),
                     exitTimelockType: timelock.type,
                 };
 
-                await (taskQueue as AsyncStorageTaskQueue).persistConfig(
-                    bgConfig
-                );
+                await (taskQueue as AsyncStorageTaskQueue).persistConfig(bgConfig);
             }
         }
 
@@ -213,7 +198,7 @@ export class ExpoWallet implements IWallet {
             taskQueue,
             processors,
             deps,
-            config.background.foregroundIntervalMs
+            config.background.foregroundIntervalMs,
         );
 
         // Seed the queue so the first tick (or background wake) has work to do
@@ -315,7 +300,7 @@ export class ExpoWallet implements IWallet {
 
     settle(
         params?: SettleParams,
-        eventCallback?: (event: SettlementEvent) => void
+        eventCallback?: (event: SettlementEvent) => void,
     ): Promise<string> {
         return this.wallet.settle(params, eventCallback);
     }

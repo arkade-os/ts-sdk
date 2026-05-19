@@ -22,10 +22,7 @@ import type {
     SubmarineRefundOutcome,
 } from "../types";
 import type { GetSwapStatusResponse } from "../boltz-swap-provider";
-import type {
-    ExpoArkadeSwapsConfig,
-    PersistedSwapBackgroundConfig,
-} from "./types";
+import type { ExpoArkadeSwapsConfig, PersistedSwapBackgroundConfig } from "./types";
 import { SWAP_POLL_TASK_TYPE } from "./swapsPollProcessor";
 import type { ArkInfo, ArkTxInput, Identity, VHTLC } from "@arkade-os/sdk";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
@@ -53,7 +50,7 @@ export function warnOnRemovedBackgroundFields(bg: unknown): void {
     console.warn(
         `[boltz-swap] ExpoArkadeSwaps.setup: ignoring removed background field(s): ${removed.join(", ")}. ` +
             'OS-task registration moved to "@arkade-os/boltz-swap/expo/background". ' +
-            "See https://github.com/arkade-os/boltz-swap/issues/136"
+            "See https://github.com/arkade-os/boltz-swap/issues/136",
     );
 }
 
@@ -107,7 +104,7 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
 
     private constructor(
         private readonly inner: ArkadeSwaps,
-        private readonly config: ExpoArkadeSwapsConfig
+        private readonly config: ExpoArkadeSwapsConfig,
     ) {
         this.swapRepository = inner.swapRepository;
     }
@@ -124,9 +121,7 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
      * `@arkade-os/boltz-swap/expo/background` and is invoked separately
      * by the consumer.
      */
-    static async setup(
-        config: ExpoArkadeSwapsConfig
-    ): Promise<ExpoArkadeSwaps> {
+    static async setup(config: ExpoArkadeSwapsConfig): Promise<ExpoArkadeSwaps> {
         warnOnRemovedBackgroundFields(config.background);
 
         // Create inner ArkadeSwaps with swapManager enabled for foreground
@@ -137,14 +132,13 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
 
         const { taskQueue } = config.background;
 
-        const derivedArkServerUrl = (
-            inner.arkProvider as unknown as { serverUrl?: string }
-        ).serverUrl;
+        const derivedArkServerUrl = (inner.arkProvider as unknown as { serverUrl?: string })
+            .serverUrl;
         const arkServerUrl = config.arkServerUrl ?? derivedArkServerUrl;
         if (!arkServerUrl) {
             throw new Error(
                 "Ark server URL is required for Expo background rehydration. " +
-                    "Pass `arkServerUrl` to ExpoArkadeSwaps.setup()."
+                    "Pass `arkServerUrl` to ExpoArkadeSwaps.setup().",
             );
         }
 
@@ -162,13 +156,8 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         await instance.seedSwapPollTask();
 
         // Start foreground interval
-        if (
-            config.background.foregroundIntervalMs &&
-            config.background.foregroundIntervalMs > 0
-        ) {
-            instance.startForegroundPolling(
-                config.background.foregroundIntervalMs
-            );
+        if (config.background.foregroundIntervalMs && config.background.foregroundIntervalMs > 0) {
+            instance.startForegroundPolling(config.background.foregroundIntervalMs);
         }
 
         return instance;
@@ -188,9 +177,7 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         // Acknowledge background outbox results
         const results = await taskQueue.getResults();
         if (results.length > 0) {
-            await taskQueue.acknowledgeResults(
-                results.map((r: { id: string }) => r.id)
-            );
+            await taskQueue.acknowledgeResults(results.map((r: { id: string }) => r.id));
         }
 
         // Re-seed for the next background wake
@@ -252,26 +239,20 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
     }
 
     createLightningInvoice(
-        args: CreateLightningInvoiceRequest
+        args: CreateLightningInvoiceRequest,
     ): Promise<CreateLightningInvoiceResponse> {
         return this.inner.createLightningInvoice(args);
     }
 
-    sendLightningPayment(
-        args: SendLightningPaymentRequest
-    ): Promise<SendLightningPaymentResponse> {
+    sendLightningPayment(args: SendLightningPaymentRequest): Promise<SendLightningPaymentResponse> {
         return this.inner.sendLightningPayment(args);
     }
 
-    createSubmarineSwap(
-        args: SendLightningPaymentRequest
-    ): Promise<BoltzSubmarineSwap> {
+    createSubmarineSwap(args: SendLightningPaymentRequest): Promise<BoltzSubmarineSwap> {
         return this.inner.createSubmarineSwap(args);
     }
 
-    createReverseSwap(
-        args: CreateLightningInvoiceRequest
-    ): Promise<BoltzReverseSwap> {
+    createReverseSwap(args: CreateLightningInvoiceRequest): Promise<BoltzReverseSwap> {
         return this.inner.createReverseSwap(args);
     }
 
@@ -279,15 +260,11 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         return this.inner.claimVHTLC(pendingSwap);
     }
 
-    refundVHTLC(
-        pendingSwap: BoltzSubmarineSwap
-    ): Promise<SubmarineRefundOutcome> {
+    refundVHTLC(pendingSwap: BoltzSubmarineSwap): Promise<SubmarineRefundOutcome> {
         return this.inner.refundVHTLC(pendingSwap);
     }
 
-    inspectSubmarineRecovery(
-        swap: BoltzSubmarineSwap
-    ): Promise<SubmarineRecoveryInfo> {
+    inspectSubmarineRecovery(swap: BoltzSubmarineSwap): Promise<SubmarineRecoveryInfo> {
         return this.inner.inspectSubmarineRecovery(swap);
     }
 
@@ -295,15 +272,11 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         return this.inner.scanRecoverableSubmarineSwaps();
     }
 
-    recoverSubmarineFunds(
-        swap: BoltzSubmarineSwap
-    ): Promise<SubmarineRefundOutcome> {
+    recoverSubmarineFunds(swap: BoltzSubmarineSwap): Promise<SubmarineRefundOutcome> {
         return this.inner.recoverSubmarineFunds(swap);
     }
 
-    recoverAllSubmarineFunds(
-        swaps: BoltzSubmarineSwap[]
-    ): Promise<SubmarineRecoveryResult[]> {
+    recoverAllSubmarineFunds(swaps: BoltzSubmarineSwap[]): Promise<SubmarineRecoveryResult[]> {
         return this.inner.recoverAllSubmarineFunds(swaps);
     }
 
@@ -311,9 +284,7 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         return this.inner.waitAndClaim(pendingSwap);
     }
 
-    waitForSwapSettlement(
-        pendingSwap: BoltzSubmarineSwap
-    ): Promise<{ preimage: string }> {
+    waitForSwapSettlement(pendingSwap: BoltzSubmarineSwap): Promise<{ preimage: string }> {
         return this.inner.waitForSwapSettlement(pendingSwap);
     }
 
@@ -325,17 +296,11 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         return this.inner.restoreSwaps(boltzFees);
     }
 
-    enrichReverseSwapPreimage(
-        swap: BoltzReverseSwap,
-        preimage: string
-    ): BoltzReverseSwap {
+    enrichReverseSwapPreimage(swap: BoltzReverseSwap, preimage: string): BoltzReverseSwap {
         return this.inner.enrichReverseSwapPreimage(swap, preimage);
     }
 
-    enrichSubmarineSwapInvoice(
-        swap: BoltzSubmarineSwap,
-        invoice: string
-    ): BoltzSubmarineSwap {
+    enrichSubmarineSwapInvoice(swap: BoltzSubmarineSwap, invoice: string): BoltzSubmarineSwap {
         return this.inner.enrichSubmarineSwapInvoice(swap, invoice);
     }
 
@@ -415,15 +380,9 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         input: ArkTxInput,
         output: TransactionOutput,
         arkInfo: ArkInfo,
-        isRecoverable?: boolean
+        isRecoverable?: boolean,
     ): Promise<string> {
-        return this.inner.joinBatch(
-            identity,
-            input,
-            output,
-            arkInfo,
-            isRecoverable
-        );
+        return this.inner.joinBatch(identity, input, output, arkInfo, isRecoverable);
     }
 
     createVHTLCScript(params: {
@@ -439,10 +398,7 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
 
     getFees(): Promise<FeesResponse>;
     getFees(from: Chain, to: Chain): Promise<ChainFeesResponse>;
-    getFees(
-        from?: Chain,
-        to?: Chain
-    ): Promise<FeesResponse | ChainFeesResponse> {
+    getFees(from?: Chain, to?: Chain): Promise<FeesResponse | ChainFeesResponse> {
         if (from !== undefined && to !== undefined) {
             return this.inner.getFees(from, to);
         }

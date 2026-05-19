@@ -23,14 +23,11 @@ describe("SingleKey", () => {
     });
 
     it("should create keys from hex", async () => {
-        const privateKeyHex =
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const privateKeyHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         const key = SingleKey.fromHex(privateKeyHex);
 
         await expect(key.xOnlyPublicKey()).resolves.toBeInstanceOf(Uint8Array);
-        await expect(key.compressedPublicKey()).resolves.toBeInstanceOf(
-            Uint8Array
-        );
+        await expect(key.compressedPublicKey()).resolves.toBeInstanceOf(Uint8Array);
     });
 
     it("should create keys from private key bytes", async () => {
@@ -38,14 +35,11 @@ describe("SingleKey", () => {
         const key = SingleKey.fromPrivateKey(privateKeyBytes);
 
         await expect(key.xOnlyPublicKey()).resolves.toBeInstanceOf(Uint8Array);
-        await expect(key.compressedPublicKey()).resolves.toBeInstanceOf(
-            Uint8Array
-        );
+        await expect(key.compressedPublicKey()).resolves.toBeInstanceOf(Uint8Array);
     });
 
     it("should export private key as hex with toHex()", () => {
-        const privateKeyHex =
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const privateKeyHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         const key = SingleKey.fromHex(privateKeyHex);
 
         // Should be able to export the same hex
@@ -54,8 +48,7 @@ describe("SingleKey", () => {
     });
 
     it("should round-trip from hex to storage and back", async () => {
-        const originalHex =
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const originalHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         const storage = new InMemoryStorageAdapter();
 
         // Create key from hex
@@ -84,8 +77,7 @@ describe("SingleKey", () => {
     });
 
     it("should sign message with schnorr signature", async () => {
-        const privateKeyHex =
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const privateKeyHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         const key = SingleKey.fromHex(privateKeyHex);
         const message = new Uint8Array(32).fill(42); // 32-byte message
 
@@ -97,17 +89,12 @@ describe("SingleKey", () => {
 
         // Verify that the signature is correct
         const publicKey = await key.xOnlyPublicKey();
-        const isValid = await schnorr.verifyAsync(
-            signature,
-            message,
-            publicKey
-        );
+        const isValid = await schnorr.verifyAsync(signature, message, publicKey);
         expect(isValid).toBe(true);
     });
 
     it("should default to schnorr signature when type not specified", async () => {
-        const privateKeyHex =
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const privateKeyHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         const key = SingleKey.fromHex(privateKeyHex);
         const message = new Uint8Array(32).fill(42); // 32-byte message
 
@@ -119,17 +106,12 @@ describe("SingleKey", () => {
 
         // Verify that the signature is correct
         const publicKey = await key.xOnlyPublicKey();
-        const isValid = await schnorr.verifyAsync(
-            signature,
-            message,
-            publicKey
-        );
+        const isValid = await schnorr.verifyAsync(signature, message, publicKey);
         expect(isValid).toBe(true);
     });
 
     it("should sign message with ecdsa signature", async () => {
-        const privateKeyHex =
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const privateKeyHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         const key = SingleKey.fromHex(privateKeyHex);
         const message = new Uint8Array(32).fill(42); // 32-byte message
 
@@ -162,16 +144,11 @@ describe("SingleKey", () => {
             // Should have the same public keys
             const xOnlyPubKey = await key.xOnlyPublicKey();
             const readonlyXOnlyPubKey = await readonlyKey.xOnlyPublicKey();
-            expect(Array.from(xOnlyPubKey)).toEqual(
-                Array.from(readonlyXOnlyPubKey)
-            );
+            expect(Array.from(xOnlyPubKey)).toEqual(Array.from(readonlyXOnlyPubKey));
 
             const compressedPubKey = await key.compressedPublicKey();
-            const readonlyCompressedPubKey =
-                await readonlyKey.compressedPublicKey();
-            expect(Array.from(compressedPubKey)).toEqual(
-                Array.from(readonlyCompressedPubKey)
-            );
+            const readonlyCompressedPubKey = await readonlyKey.compressedPublicKey();
+            expect(Array.from(compressedPubKey)).toEqual(Array.from(readonlyCompressedPubKey));
         });
     });
 });
@@ -179,8 +156,7 @@ describe("SingleKey", () => {
 describe("ReadonlySingleKey", () => {
     it("should create from compressed public key", async () => {
         // First create a regular key to get its public key
-        const privateKeyHex =
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const privateKeyHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         const key = SingleKey.fromHex(privateKeyHex);
         const compressedPubKey = await key.compressedPublicKey();
 
@@ -193,29 +169,23 @@ describe("ReadonlySingleKey", () => {
         // Should have the same public keys
         const xOnlyPubKey = await key.xOnlyPublicKey();
         const readonlyXOnlyPubKey = await readonlyKey.xOnlyPublicKey();
-        expect(Array.from(xOnlyPubKey)).toEqual(
-            Array.from(readonlyXOnlyPubKey)
-        );
+        expect(Array.from(xOnlyPubKey)).toEqual(Array.from(readonlyXOnlyPubKey));
 
-        const readonlyCompressedPubKey =
-            await readonlyKey.compressedPublicKey();
-        expect(Array.from(compressedPubKey)).toEqual(
-            Array.from(readonlyCompressedPubKey)
-        );
+        const readonlyCompressedPubKey = await readonlyKey.compressedPublicKey();
+        expect(Array.from(compressedPubKey)).toEqual(Array.from(readonlyCompressedPubKey));
     });
 
     it("should throw error for invalid public key length", () => {
         const invalidPubKey = new Uint8Array(32); // 32 bytes instead of 33
 
         expect(() => ReadonlySingleKey.fromPublicKey(invalidPubKey)).toThrow(
-            "Invalid public key length"
+            "Invalid public key length",
         );
     });
 
     it("should return correct x-only public key (without prefix)", async () => {
         // Create a key with known public key
-        const privateKeyHex =
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const privateKeyHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         const key = SingleKey.fromHex(privateKeyHex);
         const compressedPubKey = await key.compressedPublicKey();
 
@@ -226,9 +196,7 @@ describe("ReadonlySingleKey", () => {
         expect(xOnlyPubKey).toHaveLength(32);
 
         // x-only should be the compressed key without the first byte
-        expect(Array.from(xOnlyPubKey)).toEqual(
-            Array.from(compressedPubKey.slice(1))
-        );
+        expect(Array.from(xOnlyPubKey)).toEqual(Array.from(compressedPubKey.slice(1)));
     });
 
     it("should not have signing methods", () => {
@@ -243,8 +211,7 @@ describe("ReadonlySingleKey", () => {
     });
 
     it("should work with different public key prefixes", async () => {
-        const privateKeyHex =
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const privateKeyHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         const key = SingleKey.fromHex(privateKeyHex);
         const compressedPubKey = await key.compressedPublicKey();
 

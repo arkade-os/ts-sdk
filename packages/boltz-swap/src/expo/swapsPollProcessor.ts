@@ -36,24 +36,16 @@ export const swapsPollProcessor: TaskProcessor<SwapTaskDependencies> = {
 
     async execute(
         item: TaskItem,
-        deps: SwapTaskDependencies
+        deps: SwapTaskDependencies,
     ): Promise<Omit<TaskResult, "id" | "executedAt">> {
-        const {
-            swapRepository,
-            swapProvider,
-            wallet,
-            arkProvider,
-            indexerProvider,
-        } = deps;
+        const { swapRepository, swapProvider, wallet, arkProvider, indexerProvider } = deps;
 
         const allSwaps = await swapRepository.getAllSwaps();
 
         // Filter to non-final swaps
         const pendingSwaps = allSwaps.filter((swap) => {
-            if (isPendingReverseSwap(swap))
-                return !isReverseFinalStatus(swap.status);
-            if (isPendingSubmarineSwap(swap))
-                return !isSubmarineFinalStatus(swap.status);
+            if (isPendingReverseSwap(swap)) return !isReverseFinalStatus(swap.status);
+            if (isPendingSubmarineSwap(swap)) return !isSubmarineFinalStatus(swap.status);
             return false;
         });
 
@@ -76,8 +68,7 @@ export const swapsPollProcessor: TaskProcessor<SwapTaskDependencies> = {
         try {
             for (const swap of pendingSwaps) {
                 try {
-                    const { status: currentStatus } =
-                        await swapProvider.getSwapStatus(swap.id);
+                    const { status: currentStatus } = await swapProvider.getSwapStatus(swap.id);
                     polled++;
 
                     // Persist status change if different
@@ -90,15 +81,10 @@ export const swapsPollProcessor: TaskProcessor<SwapTaskDependencies> = {
                     }
 
                     // Attempt claim for reverse swaps with claimable status
-                    if (
-                        isPendingReverseSwap(swap) &&
-                        isReverseClaimableStatus(currentStatus)
-                    ) {
+                    if (isPendingReverseSwap(swap) && isReverseClaimableStatus(currentStatus)) {
                         // Skip restored swaps without preimage
                         if (!swap.preimage) {
-                            logger.warn(
-                                `[swap-poll] Skipping claim for ${swap.id}: no preimage`
-                            );
+                            logger.warn(`[swap-poll] Skipping claim for ${swap.id}: no preimage`);
                             continue;
                         }
 
@@ -106,10 +92,7 @@ export const swapsPollProcessor: TaskProcessor<SwapTaskDependencies> = {
                             await tempSwaps.claimVHTLC(swap);
                             claimed++;
                         } catch (claimError) {
-                            logger.error(
-                                `[swap-poll] Claim failed for ${swap.id}:`,
-                                claimError
-                            );
+                            logger.error(`[swap-poll] Claim failed for ${swap.id}:`, claimError);
                             errors++;
                         }
                     }
@@ -125,7 +108,7 @@ export const swapsPollProcessor: TaskProcessor<SwapTaskDependencies> = {
                         // Skip restored swaps without invoice or preimageHash
                         if (!swap.request.invoice && !swap.preimageHash) {
                             logger.warn(
-                                `[swap-poll] Skipping refund for ${swap.id}: no invoice or preimageHash`
+                                `[swap-poll] Skipping refund for ${swap.id}: no invoice or preimageHash`,
                             );
                             continue;
                         }
@@ -134,18 +117,12 @@ export const swapsPollProcessor: TaskProcessor<SwapTaskDependencies> = {
                             await tempSwaps.refundVHTLC(swapWithStatus!);
                             refunded++;
                         } catch (refundError) {
-                            logger.error(
-                                `[swap-poll] Refund failed for ${swap.id}:`,
-                                refundError
-                            );
+                            logger.error(`[swap-poll] Refund failed for ${swap.id}:`, refundError);
                             errors++;
                         }
                     }
                 } catch (swapError) {
-                    logger.error(
-                        `[swap-poll] Error processing swap ${swap.id}:`,
-                        swapError
-                    );
+                    logger.error(`[swap-poll] Error processing swap ${swap.id}:`, swapError);
                     errors++;
                 }
             }

@@ -98,16 +98,14 @@ describe("Delegator Lifecycle", () => {
             txid: "aa".repeat(32),
             value: 30_000,
         });
-        (mockIndexer.getVtxos as any).mockImplementation(
-            ({ scripts }: { scripts: string[] }) => {
-                const vtxos = scripts.flatMap((s: string) => {
-                    if (s === TEST_DEFAULT_SCRIPT) return [defaultVtxo];
-                    if (s === TEST_DELEGATE_SCRIPT) return [delegateVtxo];
-                    return [];
-                });
-                return Promise.resolve({ vtxos });
-            }
-        );
+        (mockIndexer.getVtxos as any).mockImplementation(({ scripts }: { scripts: string[] }) => {
+            const vtxos = scripts.flatMap((s: string) => {
+                if (s === TEST_DEFAULT_SCRIPT) return [defaultVtxo];
+                if (s === TEST_DELEGATE_SCRIPT) return [delegateVtxo];
+                return [];
+            });
+            return Promise.resolve({ vtxos });
+        });
 
         const contractsWithVtxos2 = await manager2.getContractsWithVtxos();
         expect(contractsWithVtxos2).toHaveLength(2);
@@ -193,16 +191,14 @@ describe("Delegator Lifecycle", () => {
             txid: "bb".repeat(32),
             value: 25_000,
         });
-        (mockIndexer.getVtxos as any).mockImplementation(
-            ({ scripts }: { scripts: string[] }) => {
-                const vtxos = scripts.flatMap((s: string) => {
-                    if (s === TEST_DEFAULT_SCRIPT) return [defaultVtxo];
-                    if (s === TEST_DELEGATE_SCRIPT) return [delegateVtxo];
-                    return [];
-                });
-                return Promise.resolve({ vtxos });
-            }
-        );
+        (mockIndexer.getVtxos as any).mockImplementation(({ scripts }: { scripts: string[] }) => {
+            const vtxos = scripts.flatMap((s: string) => {
+                if (s === TEST_DEFAULT_SCRIPT) return [defaultVtxo];
+                if (s === TEST_DELEGATE_SCRIPT) return [delegateVtxo];
+                return [];
+            });
+            return Promise.resolve({ vtxos });
+        });
 
         const contractsWithVtxos = await manager3.getContractsWithVtxos();
         expect(contractsWithVtxos).toHaveLength(2);

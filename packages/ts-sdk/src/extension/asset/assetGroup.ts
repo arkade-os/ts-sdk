@@ -1,10 +1,5 @@
 import { hex } from "@scure/base";
-import {
-    AssetInputType,
-    MASK_ASSET_ID,
-    MASK_CONTROL_ASSET,
-    MASK_METADATA,
-} from "./types";
+import { AssetInputType, MASK_ASSET_ID, MASK_CONTROL_ASSET, MASK_METADATA } from "./types";
 import { AssetId } from "./assetId";
 import { AssetRef } from "./assetRef";
 import { AssetInput, AssetInputs } from "./assetInput";
@@ -39,7 +34,7 @@ export class AssetGroup {
         readonly controlAsset: AssetRef | null,
         readonly inputs: AssetInput[],
         readonly outputs: AssetOutput[],
-        metadata: Metadata[]
+        metadata: Metadata[],
     ) {
         this.metadataList = new MetadataList(metadata);
     }
@@ -61,15 +56,9 @@ export class AssetGroup {
         controlAsset: AssetRef | null,
         inputs: AssetInput[],
         outputs: AssetOutput[],
-        metadata: Metadata[]
+        metadata: Metadata[],
     ): AssetGroup {
-        const ag = new AssetGroup(
-            assetId,
-            controlAsset,
-            inputs,
-            outputs,
-            metadata
-        );
+        const ag = new AssetGroup(assetId, controlAsset, inputs, outputs, metadata);
         ag.validate();
         return ag;
     }
@@ -124,13 +113,11 @@ export class AssetGroup {
      * Only local inputs contribute to the comparison; intent-backed inputs contribute `0` here.
      */
     isReissuance(): boolean {
-        const sumReducer = (s: bigint, { amount }: { amount: bigint }) =>
-            s + amount;
+        const sumReducer = (s: bigint, { amount }: { amount: bigint }) => s + amount;
         const sumOutputs = this.outputs.reduce(sumReducer, 0n);
         const sumInputs = this.inputs
             .map((i) => ({
-                amount:
-                    i.input.type === AssetInputType.Local ? i.input.amount : 0n,
+                amount: i.input.type === AssetInputType.Local ? i.input.amount : 0n,
             }))
             .reduce(sumReducer, 0n);
         return !this.isIssuance() && sumInputs < sumOutputs;
@@ -183,7 +170,7 @@ export class AssetGroup {
             this.controlAsset,
             [leafInput],
             this.outputs,
-            this.metadataList.items
+            this.metadataList.items,
         );
     }
 
@@ -226,13 +213,7 @@ export class AssetGroup {
         const inputs = AssetInputs.fromReader(reader);
         const outputs = AssetOutputs.fromReader(reader);
 
-        const ag = new AssetGroup(
-            assetId,
-            controlAsset,
-            inputs.inputs,
-            outputs.outputs,
-            metadata
-        );
+        const ag = new AssetGroup(assetId, controlAsset, inputs.inputs, outputs.outputs, metadata);
         ag.validate();
         return ag;
     }

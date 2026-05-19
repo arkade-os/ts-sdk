@@ -1,8 +1,4 @@
-import {
-    pubECDSA,
-    pubSchnorr,
-    randomPrivateKeyBytes,
-} from "@scure/btc-signer/utils.js";
+import { pubECDSA, pubSchnorr, randomPrivateKeyBytes } from "@scure/btc-signer/utils.js";
 import { SigHash } from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import { Identity, ReadonlyIdentity } from ".";
@@ -70,10 +66,7 @@ export class SingleKey implements Identity {
                     throw new Error("Failed to sign transaction");
                 }
             } catch (e) {
-                if (
-                    e instanceof Error &&
-                    e.message.includes("No inputs signed")
-                ) {
+                if (e instanceof Error && e.message.includes("No inputs signed")) {
                     // ignore
                 } else {
                     throw e;
@@ -105,10 +98,9 @@ export class SingleKey implements Identity {
 
     async signMessage(
         message: Uint8Array,
-        signatureType: "schnorr" | "ecdsa" = "schnorr"
+        signatureType: "schnorr" | "ecdsa" = "schnorr",
     ): Promise<Uint8Array> {
-        if (signatureType === "ecdsa")
-            return signAsync(message, this.key, { prehash: false });
+        if (signatureType === "ecdsa") return signAsync(message, this.key, { prehash: false });
         return schnorr.signAsync(message, this.key);
     }
 

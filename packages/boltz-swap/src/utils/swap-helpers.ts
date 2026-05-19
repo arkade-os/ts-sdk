@@ -5,12 +5,7 @@ import {
     isPendingReverseSwap,
     isPendingSubmarineSwap,
 } from "../boltz-swap-provider";
-import {
-    BoltzChainSwap,
-    BoltzReverseSwap,
-    BoltzSubmarineSwap,
-    BoltzSwap,
-} from "../types";
+import { BoltzChainSwap, BoltzReverseSwap, BoltzSubmarineSwap, BoltzSwap } from "../types";
 import { decodeInvoice } from "./decoding";
 
 /**
@@ -26,10 +21,7 @@ export type SwapSaver = {
  * Save a swap of any type using the appropriate saver function
  * This eliminates the need for type checking in multiple places
  */
-export async function saveSwap(
-    swap: BoltzSwap,
-    saver: SwapSaver
-): Promise<void> {
+export async function saveSwap(swap: BoltzSwap, saver: SwapSaver): Promise<void> {
     if (isPendingReverseSwap(swap)) {
         if (saver.saveReverseSwap) {
             await saver.saveReverseSwap(swap);
@@ -40,9 +32,7 @@ export async function saveSwap(
         if (saver.saveSubmarineSwap) {
             await saver.saveSubmarineSwap(swap);
         } else {
-            console.warn(
-                "No saveSubmarineSwap handler provided, swap not saved"
-            );
+            console.warn("No saveSubmarineSwap handler provided, swap not saved");
         }
     } else if (isPendingChainSwap(swap)) {
         if (saver.saveChainSwap) {
@@ -60,7 +50,7 @@ export async function updateReverseSwapStatus(
     swap: BoltzReverseSwap,
     status: BoltzReverseSwap["status"],
     saveFunc: (swap: BoltzReverseSwap) => Promise<void>,
-    additionalFields?: Partial<BoltzReverseSwap>
+    additionalFields?: Partial<BoltzReverseSwap>,
 ): Promise<void> {
     await saveFunc({
         ...swap,
@@ -76,7 +66,7 @@ export async function updateSubmarineSwapStatus(
     swap: BoltzSubmarineSwap,
     status: BoltzSubmarineSwap["status"],
     saveFunc: (swap: BoltzSubmarineSwap) => Promise<void>,
-    additionalFields?: Partial<BoltzSubmarineSwap>
+    additionalFields?: Partial<BoltzSubmarineSwap>,
 ): Promise<void> {
     await saveFunc({
         ...swap,
@@ -92,7 +82,7 @@ export async function updateChainSwapStatus(
     swap: BoltzChainSwap,
     status: BoltzChainSwap["status"],
     saveFunc: (swap: BoltzChainSwap) => Promise<void>,
-    additionalFields?: Partial<BoltzChainSwap>
+    additionalFields?: Partial<BoltzChainSwap>,
 ): Promise<void> {
     await saveFunc({
         ...swap,
@@ -106,12 +96,12 @@ export async function updateChainSwapStatus(
  */
 export function enrichReverseSwapPreimage(
     swap: BoltzReverseSwap,
-    preimage: string
+    preimage: string,
 ): BoltzReverseSwap {
     const computedHash = hex.encode(sha256(hex.decode(preimage)));
     if (computedHash !== swap.request.preimageHash) {
         throw new Error(
-            `Preimage does not match swap: expected hash ${swap.request.preimageHash}, got ${computedHash}`
+            `Preimage does not match swap: expected hash ${swap.request.preimageHash}, got ${computedHash}`,
         );
     }
     swap.preimage = preimage;
@@ -123,7 +113,7 @@ export function enrichReverseSwapPreimage(
  */
 export function enrichSubmarineSwapInvoice(
     swap: BoltzSubmarineSwap,
-    invoice: string
+    invoice: string,
 ): BoltzSubmarineSwap {
     let paymentHash: string;
     try {
@@ -141,7 +131,7 @@ export function enrichSubmarineSwapInvoice(
 
     if (swap.preimageHash && paymentHash !== swap.preimageHash) {
         throw new Error(
-            `Invoice payment hash does not match swap: expected ${swap.preimageHash}, got ${paymentHash}`
+            `Invoice payment hash does not match swap: expected ${swap.preimageHash}, got ${paymentHash}`,
         );
     }
 

@@ -218,9 +218,7 @@ describe("WalletMessageHandler handleMessage", () => {
 
     it("handles GET_BOARDING_UTXOS messages", async () => {
         (updater as any).readonlyWallet = {};
-        const utxos = [
-            { txid: "tx", vout: 0, value: 1, status: { confirmed: true } },
-        ];
+        const utxos = [{ txid: "tx", vout: 0, value: 1, status: { confirmed: true } }];
         (updater as any).getAllBoardingUtxos = vi.fn().mockResolvedValue(utxos);
 
         const response = await updater.handleMessage({
@@ -238,9 +236,7 @@ describe("WalletMessageHandler handleMessage", () => {
     it("handles GET_TRANSACTION_HISTORY messages", async () => {
         const transactions = [{ txid: "tx" }];
         (updater as any).readonlyWallet = {};
-        (updater as any).buildTransactionHistoryFromCache = vi
-            .fn()
-            .mockResolvedValue(transactions);
+        (updater as any).buildTransactionHistoryFromCache = vi.fn().mockResolvedValue(transactions);
         (updater as any).getVtxosFromRepo = vi.fn().mockResolvedValue([]);
 
         const response = await updater.handleMessage({
@@ -322,9 +318,7 @@ describe("WalletMessageHandler handleMessage", () => {
         const manager = {
             createContract: vi.fn().mockResolvedValue(contract),
             getContracts: vi.fn().mockResolvedValue(contracts),
-            getContractsWithVtxos: vi
-                .fn()
-                .mockResolvedValue(contractsWithVtxos),
+            getContractsWithVtxos: vi.fn().mockResolvedValue(contractsWithVtxos),
             updateContract: vi.fn().mockResolvedValue(contract),
             deleteContract: vi.fn().mockResolvedValue(undefined),
             getSpendablePaths: vi.fn().mockResolvedValue(paths),
@@ -598,11 +592,7 @@ describe("WalletMessageHandler handleMessage", () => {
             },
         } as any);
 
-        expect(delegateSpy).toHaveBeenCalledWith(
-            vtxos,
-            "dest-addr",
-            new Date(delegateAt)
-        );
+        expect(delegateSpy).toHaveBeenCalledWith(vtxos, "dest-addr", new Date(delegateAt));
     });
 
     it("DELEGATE filters vtxos by requested outpoints", async () => {
@@ -617,9 +607,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue(allVtxos),
-            getDelegatorManager: vi
-                .fn()
-                .mockResolvedValue({ delegate: delegateSpy }),
+            getDelegatorManager: vi.fn().mockResolvedValue({ delegate: delegateSpy }),
         };
 
         await updater.handleMessage({
@@ -632,11 +620,7 @@ describe("WalletMessageHandler handleMessage", () => {
         } as any);
 
         // only the matching vtxo should be passed
-        expect(delegateSpy).toHaveBeenCalledWith(
-            [allVtxos[0]],
-            "dest-addr",
-            undefined
-        );
+        expect(delegateSpy).toHaveBeenCalledWith([allVtxos[0]], "dest-addr", undefined);
     });
 
     it("DELEGATE fails when delegatorManager is not configured", async () => {
@@ -673,9 +657,7 @@ describe("WalletMessageHandler handleMessage", () => {
         } as any);
 
         expect(response.error).toBeInstanceOf(Error);
-        expect(response.error?.message).toBe(
-            "Read-only wallet: operation requires signing"
-        );
+        expect(response.error?.message).toBe("Read-only wallet: operation requires signing");
     });
 
     it("GET_DELEGATE_INFO returns delegate info", async () => {
@@ -732,9 +714,7 @@ describe("WalletMessageHandler handleMessage", () => {
             type: "RECOVER_VTXOS",
         } as any);
 
-        expect(vtxoManager.recoverVtxos).toHaveBeenCalledWith(
-            expect.any(Function)
-        );
+        expect(vtxoManager.recoverVtxos).toHaveBeenCalledWith(expect.any(Function));
         expect(response).toMatchObject({
             tag: updater.messageTag,
             type: "RECOVER_VTXOS_SUCCESS",
@@ -865,9 +845,7 @@ describe("WalletMessageHandler handleMessage", () => {
             type: "RENEW_VTXOS",
         } as any);
 
-        expect(vtxoManager.renewVtxos).toHaveBeenCalledWith(
-            expect.any(Function)
-        );
+        expect(vtxoManager.renewVtxos).toHaveBeenCalledWith(expect.any(Function));
         expect(response).toMatchObject({
             tag: updater.messageTag,
             type: "RENEW_VTXOS_SUCCESS",
@@ -905,9 +883,7 @@ describe("WalletMessageHandler handleMessage", () => {
     });
 
     it("handles GET_EXPIRED_BOARDING_UTXOS messages", async () => {
-        const utxos = [
-            { txid: "tx1", vout: 0, value: 5000, status: { confirmed: true } },
-        ];
+        const utxos = [{ txid: "tx1", vout: 0, value: 5000, status: { confirmed: true } }];
         const vtxoManager = {
             getExpiredBoardingUtxos: vi.fn().mockResolvedValue(utxos),
         };
@@ -971,9 +947,7 @@ describe("WalletMessageHandler handleMessage", () => {
         };
         (updater as any).wallet = {
             getVtxoManager: getVtxoManagerSpy,
-            finalizePendingTxs: vi
-                .fn()
-                .mockResolvedValue({ pending: [], finalized: [] }),
+            finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
         };
         (updater as any).arkProvider = {};
         (updater as any).indexerProvider = {};
@@ -1031,27 +1005,21 @@ describe("WalletMessageHandler handleMessage", () => {
             type: "RECOVER_VTXOS",
         } as any);
         expect(recoverRes.error).toBeInstanceOf(Error);
-        expect(recoverRes.error?.message).toBe(
-            "Read-only wallet: operation requires signing"
-        );
+        expect(recoverRes.error?.message).toBe("Read-only wallet: operation requires signing");
 
         const renewRes = await updater.handleMessage({
             ...baseMessage(),
             type: "RENEW_VTXOS",
         } as any);
         expect(renewRes.error).toBeInstanceOf(Error);
-        expect(renewRes.error?.message).toBe(
-            "Read-only wallet: operation requires signing"
-        );
+        expect(renewRes.error?.message).toBe("Read-only wallet: operation requires signing");
 
         const sweepRes = await updater.handleMessage({
             ...baseMessage(),
             type: "SWEEP_EXPIRED_BOARDING_UTXOS",
         } as any);
         expect(sweepRes.error).toBeInstanceOf(Error);
-        expect(sweepRes.error?.message).toBe(
-            "Read-only wallet: operation requires signing"
-        );
+        expect(sweepRes.error?.message).toBe("Read-only wallet: operation requires signing");
     });
 
     it("signing operations fail with readonly wallet only", async () => {
@@ -1064,9 +1032,7 @@ describe("WalletMessageHandler handleMessage", () => {
             payload: {},
         } as any);
         expect(settleRes.error).toBeInstanceOf(Error);
-        expect(settleRes.error?.message).toBe(
-            "Read-only wallet: operation requires signing"
-        );
+        expect(settleRes.error?.message).toBe("Read-only wallet: operation requires signing");
 
         const sendRes = await updater.handleMessage({
             ...baseMessage(),
@@ -1074,9 +1040,7 @@ describe("WalletMessageHandler handleMessage", () => {
             payload: { address: "addr", amount: 1 },
         } as any);
         expect(sendRes.error).toBeInstanceOf(Error);
-        expect(sendRes.error?.message).toBe(
-            "Read-only wallet: operation requires signing"
-        );
+        expect(sendRes.error?.message).toBe("Read-only wallet: operation requires signing");
 
         const signRes = await updater.handleMessage({
             ...baseMessage(),
@@ -1084,9 +1048,7 @@ describe("WalletMessageHandler handleMessage", () => {
             payload: { tx: {} },
         } as any);
         expect(signRes.error).toBeInstanceOf(Error);
-        expect(signRes.error?.message).toBe(
-            "Read-only wallet: operation requires signing"
-        );
+        expect(signRes.error?.message).toBe("Read-only wallet: operation requires signing");
     });
 
     it("stop() disposes the wallet and clears references", async () => {
@@ -1209,10 +1171,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             value: 50000,
             virtualStatus: { state: "swept" },
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [
-            settled,
-            recoverable,
-        ]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, recoverable]);
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -1237,10 +1196,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             value: 50000,
             virtualStatus: { state: "preconfirmed" },
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [
-            settled,
-            preconfirmed,
-        ]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, preconfirmed]);
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -1351,9 +1307,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
     });
 
     it("GET_VTXOS deduplicates across wallet and contract addresses", async () => {
-        const contracts = [
-            { address: TEST_DEFAULT_ARK_ADDRESS, script: TEST_DEFAULT_SCRIPT },
-        ];
+        const contracts = [{ address: TEST_DEFAULT_ARK_ADDRESS, script: TEST_DEFAULT_SCRIPT }];
         setupHandler(contracts);
 
         const vtxo = createMockExtendedVtxo({
@@ -1392,15 +1346,9 @@ describe("WalletMessageHandler repo-backed reads", () => {
             value: 20000,
             virtualStatus: { state: "swept" },
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [
-            preconfirmed,
-            settled,
-            swept,
-        ]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [preconfirmed, settled, swept]);
 
-        const finalizeSpy = vi
-            .fn()
-            .mockResolvedValue({ pending: [], finalized: [] });
+        const finalizeSpy = vi.fn().mockResolvedValue({ pending: [], finalized: [] });
         (updater as any).wallet = {
             getVtxoManager: vi.fn().mockResolvedValue({}),
             finalizePendingTxs: finalizeSpy,
@@ -1417,13 +1365,10 @@ describe("WalletMessageHandler repo-backed reads", () => {
 
     it("boarding UTXO fetch via onchainProvider is unaffected", async () => {
         setupHandler();
-        const getCoinsSpy = (updater as any).readonlyWallet.onchainProvider
-            .getCoins;
+        const getCoinsSpy = (updater as any).readonlyWallet.onchainProvider.getCoins;
         (updater as any).wallet = {
             getVtxoManager: vi.fn().mockResolvedValue({}),
-            finalizePendingTxs: vi
-                .fn()
-                .mockResolvedValue({ pending: [], finalized: [] }),
+            finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
         };
 
         await (updater as any).onWalletInitialized();
@@ -1434,18 +1379,14 @@ describe("WalletMessageHandler repo-backed reads", () => {
     it("RELOAD_WALLET forces refreshVtxos before reading from repo", async () => {
         setupHandler();
         const refreshSpy = vi.fn().mockResolvedValue(undefined);
-        (updater as any).readonlyWallet.getContractManager = vi
-            .fn()
-            .mockResolvedValue({
-                getContracts: vi.fn().mockResolvedValue([]),
-                onContractEvent: vi.fn().mockReturnValue(vi.fn()),
-                refreshVtxos: refreshSpy,
-            });
+        (updater as any).readonlyWallet.getContractManager = vi.fn().mockResolvedValue({
+            getContracts: vi.fn().mockResolvedValue([]),
+            onContractEvent: vi.fn().mockReturnValue(vi.fn()),
+            refreshVtxos: refreshSpy,
+        });
         (updater as any).wallet = {
             getVtxoManager: vi.fn().mockResolvedValue({}),
-            finalizePendingTxs: vi
-                .fn()
-                .mockResolvedValue({ pending: [], finalized: [] }),
+            finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
         };
 
         await updater.handleMessage({
@@ -1458,22 +1399,17 @@ describe("WalletMessageHandler repo-backed reads", () => {
 
     it("RELOAD_WALLET does not re-subscribe or restart VtxoManager", async () => {
         setupHandler();
-        const notifyFundsSpy = (updater as any).readonlyWallet
-            .notifyIncomingFunds;
+        const notifyFundsSpy = (updater as any).readonlyWallet.notifyIncomingFunds;
         const getVtxoManagerSpy = vi.fn().mockResolvedValue({});
         const refreshSpy = vi.fn().mockResolvedValue(undefined);
-        (updater as any).readonlyWallet.getContractManager = vi
-            .fn()
-            .mockResolvedValue({
-                getContracts: vi.fn().mockResolvedValue([]),
-                onContractEvent: vi.fn().mockReturnValue(vi.fn()),
-                refreshVtxos: refreshSpy,
-            });
+        (updater as any).readonlyWallet.getContractManager = vi.fn().mockResolvedValue({
+            getContracts: vi.fn().mockResolvedValue([]),
+            onContractEvent: vi.fn().mockReturnValue(vi.fn()),
+            refreshVtxos: refreshSpy,
+        });
         (updater as any).wallet = {
             getVtxoManager: getVtxoManagerSpy,
-            finalizePendingTxs: vi
-                .fn()
-                .mockResolvedValue({ pending: [], finalized: [] }),
+            finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
         };
 
         // First: full init (sets up subscriptions + VtxoManager)
@@ -1498,17 +1434,13 @@ describe("WalletMessageHandler repo-backed reads", () => {
 
     it("RELOAD_WALLET does not call finalizePendingTxs", async () => {
         setupHandler();
-        const finalizeSpy = vi
-            .fn()
-            .mockResolvedValue({ pending: [], finalized: [] });
+        const finalizeSpy = vi.fn().mockResolvedValue({ pending: [], finalized: [] });
         const refreshSpy = vi.fn().mockResolvedValue(undefined);
-        (updater as any).readonlyWallet.getContractManager = vi
-            .fn()
-            .mockResolvedValue({
-                getContracts: vi.fn().mockResolvedValue([]),
-                onContractEvent: vi.fn().mockReturnValue(vi.fn()),
-                refreshVtxos: refreshSpy,
-            });
+        (updater as any).readonlyWallet.getContractManager = vi.fn().mockResolvedValue({
+            getContracts: vi.fn().mockResolvedValue([]),
+            onContractEvent: vi.fn().mockReturnValue(vi.fn()),
+            refreshVtxos: refreshSpy,
+        });
         (updater as any).wallet = {
             getVtxoManager: vi.fn().mockResolvedValue({}),
             finalizePendingTxs: finalizeSpy,
@@ -1527,9 +1459,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         setupHandler();
         (updater as any).wallet = {
             getVtxoManager: vi.fn().mockResolvedValue({}),
-            finalizePendingTxs: vi
-                .fn()
-                .mockResolvedValue({ pending: [], finalized: [] }),
+            finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
         };
 
         await (updater as any).onWalletInitialized();
@@ -1616,9 +1546,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         await walletRepo.saveVtxos("contract-B-addr", [correct]);
 
         const all = await (updater as any).getVtxosFromRepo();
-        const matched = all.filter(
-            (v: any) => v.txid === "ee".repeat(32) && v.vout === 0
-        );
+        const matched = all.filter((v: any) => v.txid === "ee".repeat(32) && v.vout === 0);
         expect(matched).toHaveLength(1);
         expect(matched[0].script).toBe("scriptB");
         expect(matched[0].isSpent).toBe(true);
@@ -1634,7 +1562,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             .mockResolvedValue("not-a-valid-ark-address");
 
         await expect((updater as any).getVtxosFromRepo()).rejects.toThrow(
-            /failed to derive script from wallet address/
+            /failed to derive script from wallet address/,
         );
     });
 });

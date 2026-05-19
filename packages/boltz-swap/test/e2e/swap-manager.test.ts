@@ -186,9 +186,7 @@ describe("SwapManager", () => {
 
         it("should throw when starting swap manager without config", async () => {
             // assert
-            await expect(swaps.startSwapManager()).rejects.toThrow(
-                "SwapManager is not enabled"
-            );
+            await expect(swaps.startSwapManager()).rejects.toThrow("SwapManager is not enabled");
         });
 
         it("should not throw when stopping disabled swap manager", async () => {

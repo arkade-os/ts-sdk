@@ -1,18 +1,10 @@
 import { hex } from "@scure/base";
 import { DefaultVtxo } from "../../script/default";
 import { RelativeTimelock } from "../../script/tapscript";
-import {
-    Contract,
-    ContractHandler,
-    PathContext,
-    PathSelection,
-} from "../types";
+import { Contract, ContractHandler, PathContext, PathSelection } from "../types";
 import { isCsvSpendable } from "./helpers";
 import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
-import {
-    normalizeToDescriptor,
-    extractPubKey,
-} from "../../identity/descriptor";
+import { normalizeToDescriptor, extractPubKey } from "../../identity/descriptor";
 
 /**
  * Typed parameters for DefaultVtxo contracts.
@@ -37,10 +29,7 @@ function extractPubKeyBytes(value: string): Uint8Array {
  * - forfeit: (Alice + Server) multisig for collaborative spending
  * - exit: (Alice) + CSV timelock for unilateral exit
  */
-export const DefaultContractHandler: ContractHandler<
-    DefaultContractParams,
-    DefaultVtxo.Script
-> = {
+export const DefaultContractHandler: ContractHandler<DefaultContractParams, DefaultVtxo.Script> = {
     type: "default",
 
     createScript(params: Record<string, string>): DefaultVtxo.Script {
@@ -70,7 +59,7 @@ export const DefaultContractHandler: ContractHandler<
     selectPath(
         script: DefaultVtxo.Script,
         contract: Contract,
-        context: PathContext
+        context: PathContext,
     ): PathSelection | null {
         if (context.collaborative) {
             // Use forfeit path for collaborative spending
@@ -93,7 +82,7 @@ export const DefaultContractHandler: ContractHandler<
     getAllSpendingPaths(
         script: DefaultVtxo.Script,
         contract: Contract,
-        context: PathContext
+        context: PathContext,
     ): PathSelection[] {
         const paths: PathSelection[] = [];
 
@@ -115,7 +104,7 @@ export const DefaultContractHandler: ContractHandler<
     getSpendablePaths(
         script: DefaultVtxo.Script,
         contract: Contract,
-        context: PathContext
+        context: PathContext,
     ): PathSelection[] {
         const paths: PathSelection[] = [];
 

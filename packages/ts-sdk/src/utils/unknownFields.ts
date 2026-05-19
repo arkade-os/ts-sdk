@@ -25,12 +25,8 @@ export const ArkPsbtFieldKeyType = 222;
  */
 export interface ArkPsbtFieldCoder<T> {
     key: ArkPsbtFieldKey;
-    encode: (
-        value: T
-    ) => NonNullable<TransactionInputUpdate["unknown"]>[number];
-    decode: (
-        value: NonNullable<TransactionInputUpdate["unknown"]>[number]
-    ) => T | null;
+    encode: (value: T) => NonNullable<TransactionInputUpdate["unknown"]>[number];
+    decode: (value: NonNullable<TransactionInputUpdate["unknown"]>[number]) => T | null;
 }
 
 /**
@@ -46,13 +42,10 @@ export function setArkPsbtField<T>(
     tx: Transaction,
     inputIndex: number,
     coder: ArkPsbtFieldCoder<T>,
-    value: T
+    value: T,
 ): void {
     tx.updateInput(inputIndex, {
-        unknown: [
-            ...(tx.getInput(inputIndex)?.unknown ?? []),
-            coder.encode(value),
-        ],
+        unknown: [...(tx.getInput(inputIndex)?.unknown ?? []), coder.encode(value)],
     });
 }
 
@@ -68,7 +61,7 @@ export function setArkPsbtField<T>(
 export function getArkPsbtFields<T>(
     tx: Transaction,
     inputIndex: number,
-    coder: ArkPsbtFieldCoder<T>
+    coder: ArkPsbtFieldCoder<T>,
 ): T[] {
     const unknown = tx.getInput(inputIndex)?.unknown ?? [];
 
@@ -98,8 +91,7 @@ export const VtxoTaprootTree: ArkPsbtFieldCoder<Uint8Array> = {
     ],
     decode: (value) =>
         nullIfCatch(() => {
-            if (!checkKeyIncludes(value[0], ArkPsbtFieldKey.VtxoTaprootTree))
-                return null;
+            if (!checkKeyIncludes(value[0], ArkPsbtFieldKey.VtxoTaprootTree)) return null;
             return value[1];
         }),
 };
@@ -122,8 +114,7 @@ export const ConditionWitness: ArkPsbtFieldCoder<Uint8Array[]> = {
     ],
     decode: (value) =>
         nullIfCatch(() => {
-            if (!checkKeyIncludes(value[0], ArkPsbtFieldKey.ConditionWitness))
-                return null;
+            if (!checkKeyIncludes(value[0], ArkPsbtFieldKey.ConditionWitness)) return null;
             return RawWitness.decode(value[1]);
         }),
 };
@@ -143,17 +134,13 @@ export const CosignerPublicKey: ArkPsbtFieldCoder<{
     encode: (value) => [
         {
             type: ArkPsbtFieldKeyType,
-            key: new Uint8Array([
-                ...encodedPsbtFieldKey[ArkPsbtFieldKey.Cosigner],
-                value.index,
-            ]),
+            key: new Uint8Array([...encodedPsbtFieldKey[ArkPsbtFieldKey.Cosigner], value.index]),
         },
         value.key,
     ],
     decode: (unknown) =>
         nullIfCatch(() => {
-            if (!checkKeyIncludes(unknown[0], ArkPsbtFieldKey.Cosigner))
-                return null;
+            if (!checkKeyIncludes(unknown[0], ArkPsbtFieldKey.Cosigner)) return null;
             return {
                 index: unknown[0].key[unknown[0].key.length - 1],
                 key: unknown[1],
@@ -182,8 +169,7 @@ export const VtxoTreeExpiry: ArkPsbtFieldCoder<{
     ],
     decode: (unknown) =>
         nullIfCatch(() => {
-            if (!checkKeyIncludes(unknown[0], ArkPsbtFieldKey.VtxoTreeExpiry))
-                return null;
+            if (!checkKeyIncludes(unknown[0], ArkPsbtFieldKey.VtxoTreeExpiry)) return null;
             const v = ScriptNum(6, true).decode(unknown[1]);
             if (!v) return null;
             return sequenceToTimelock(Number(v));
@@ -191,10 +177,7 @@ export const VtxoTreeExpiry: ArkPsbtFieldCoder<{
 };
 
 const encodedPsbtFieldKey: Record<string, Uint8Array> = Object.fromEntries(
-    Object.values(ArkPsbtFieldKey).map((key) => [
-        key,
-        new TextEncoder().encode(key),
-    ])
+    Object.values(ArkPsbtFieldKey).map((key) => [key, new TextEncoder().encode(key)]),
 );
 
 const nullIfCatch = <T>(fn: () => T): T | null => {
@@ -207,10 +190,8 @@ const nullIfCatch = <T>(fn: () => T): T | null => {
 
 function checkKeyIncludes(
     key: { type: number; key: Uint8Array },
-    arkPsbtFieldKey: ArkPsbtFieldKey
+    arkPsbtFieldKey: ArkPsbtFieldKey,
 ): boolean {
     const expected = hex.encode(encodedPsbtFieldKey[arkPsbtFieldKey]);
-    return hex
-        .encode(new Uint8Array([key.type, ...key.key]))
-        .includes(expected);
+    return hex.encode(new Uint8Array([key.type, ...key.key])).includes(expected);
 }

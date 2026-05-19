@@ -52,14 +52,13 @@ export namespace Intent {
     export function create(
         message: string | Message,
         ins: (TransactionInput | ExtendedCoin)[],
-        outputs: TransactionOutput[] = []
+        outputs: TransactionOutput[] = [],
     ): Proof {
         if (typeof message !== "string") {
             message = encodeMessage(message);
         }
 
-        if (ins.length == 0)
-            throw new Error("intent proof requires at least one input");
+        if (ins.length == 0) throw new Error("intent proof requires at least one input");
         const inputs = ins.map(prepareCoinAsIntentProofInput);
         if (!validateInputs(inputs)) throw new Error("invalid inputs");
         if (!validateOutputs(outputs)) throw new Error("invalid outputs");
@@ -89,14 +88,13 @@ export namespace Intent {
         let sumOfOutputs = 0n;
         for (let i = 0; i < proof.outputsLength; i++) {
             const output = proof.getOutput(i);
-            if (output.amount === undefined)
-                throw new Error("intent proof output requires amount");
+            if (output.amount === undefined) throw new Error("intent proof output requires amount");
             sumOfOutputs += output.amount;
         }
 
         if (sumOfOutputs > sumOfInputs) {
             throw new Error(
-                `intent proof output amount is greater than input amount: ${sumOfOutputs} > ${sumOfInputs}`
+                `intent proof output amount is greater than input amount: ${sumOfOutputs} > ${sumOfInputs}`,
             );
         }
 
@@ -169,35 +167,25 @@ type ValidatedTxOutput = TransactionOutput & {
 };
 
 function validateInput(input: TransactionInput): input is ValidatedTxInput {
-    if (input.index === undefined)
-        throw new Error("intent proof input requires index");
-    if (input.txid === undefined)
-        throw new Error("intent proof input requires txid");
+    if (input.index === undefined) throw new Error("intent proof input requires index");
+    if (input.txid === undefined) throw new Error("intent proof input requires txid");
     if (input.witnessUtxo === undefined)
         throw new Error("intent proof input requires witness utxo");
     return true;
 }
 
-function validateInputs(
-    inputs: TransactionInput[]
-): inputs is ValidatedTxInput[] {
+function validateInputs(inputs: TransactionInput[]): inputs is ValidatedTxInput[] {
     inputs.forEach(validateInput);
     return true;
 }
 
-function validateOutput(
-    output: TransactionOutput
-): output is ValidatedTxOutput {
-    if (output.amount === undefined)
-        throw new Error("intent proof output requires amount");
-    if (output.script === undefined)
-        throw new Error("intent proof output requires script");
+function validateOutput(output: TransactionOutput): output is ValidatedTxOutput {
+    if (output.amount === undefined) throw new Error("intent proof output requires amount");
+    if (output.script === undefined) throw new Error("intent proof output requires script");
     return true;
 }
 
-function validateOutputs(
-    outputs: TransactionOutput[]
-): outputs is ValidatedTxOutput[] {
+function validateOutputs(outputs: TransactionOutput[]): outputs is ValidatedTxOutput[] {
     outputs.forEach(validateOutput);
     return true;
 }
@@ -215,7 +203,7 @@ function validateOutputs(
 export function craftToSpendTx(
     message: string,
     pkScript: Uint8Array,
-    tag: string = TAG_INTENT_PROOF
+    tag: string = TAG_INTENT_PROOF,
 ): Transaction {
     const messageHash = hashMessage(message, tag);
     const tx = new Transaction({
@@ -246,7 +234,7 @@ export function craftToSpendTx(
 function craftToSignTx(
     toSpend: Transaction,
     inputs: ValidatedTxInput[],
-    outputs: ValidatedTxOutput[]
+    outputs: ValidatedTxOutput[],
 ): Transaction {
     const firstInput = inputs[0];
 
@@ -307,16 +295,11 @@ function craftToSignTx(
     return tx;
 }
 
-function hashMessage(
-    message: string,
-    tag: string = TAG_INTENT_PROOF
-): Uint8Array {
+function hashMessage(message: string, tag: string = TAG_INTENT_PROOF): Uint8Array {
     return schnorr.utils.taggedHash(tag, new TextEncoder().encode(message));
 }
 
-function prepareCoinAsIntentProofInput(
-    coin: ExtendedCoin | TransactionInput
-): TransactionInput {
+function prepareCoinAsIntentProofInput(coin: ExtendedCoin | TransactionInput): TransactionInput {
     if (!("tapTree" in coin)) {
         return coin;
     }

@@ -639,9 +639,7 @@ export type TapLeaves = {
  * @see Coin
  * @see TapLeaves
  */
-export type ExtendedCoin = TapLeaves &
-    EncodedVtxoScript &
-    Coin & { extraWitness?: Bytes[] };
+export type ExtendedCoin = TapLeaves & EncodedVtxoScript & Coin & { extraWitness?: Bytes[] };
 
 /**
  * Virtual output data enriched with tapscript and witness data.
@@ -819,7 +817,7 @@ export interface IWallet extends IReadonlyWallet {
      */
     settle(
         params?: SettleParams,
-        eventCallback?: (event: SettlementEvent) => void
+        eventCallback?: (event: SettlementEvent) => void,
     ): Promise<string>;
 
     /**

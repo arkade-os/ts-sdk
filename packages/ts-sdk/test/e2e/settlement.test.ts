@@ -13,54 +13,48 @@ import { arkdExec, beforeEachFaucet, execCommand, waitFor } from "./utils";
 describe("Settlement - Auto-settle boarding UTXOs", () => {
     beforeEach(beforeEachFaucet, 20000);
 
-    it(
-        "should auto-settle new boarding UTXOs into Ark",
-        { timeout: 120000 },
-        async () => {
-            const identity = SingleKey.fromRandomBytes();
+    it("should auto-settle new boarding UTXOs into Ark", { timeout: 120000 }, async () => {
+        const identity = SingleKey.fromRandomBytes();
 
-            // Settlement enabled with fast polling so the auto-settle triggers quickly
-            const wallet = await Wallet.create({
-                identity,
-                arkServerUrl: "http://localhost:7070",
-                onchainProvider: new EsploraProvider("http://localhost:3000", {
-                    forcePolling: true,
-                    pollingInterval: 2000,
-                }),
-                storage: {
-                    walletRepository: new InMemoryWalletRepository(),
-                    contractRepository: new InMemoryContractRepository(),
-                },
-                settlementConfig: {
-                    pollIntervalMs: 5000,
-                },
-            });
+        // Settlement enabled with fast polling so the auto-settle triggers quickly
+        const wallet = await Wallet.create({
+            identity,
+            arkServerUrl: "http://localhost:7070",
+            onchainProvider: new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+                pollingInterval: 2000,
+            }),
+            storage: {
+                walletRepository: new InMemoryWalletRepository(),
+                contractRepository: new InMemoryContractRepository(),
+            },
+            settlementConfig: {
+                pollIntervalMs: 5000,
+            },
+        });
 
-            const boardingAddress = await wallet.getBoardingAddress();
-            execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+        const boardingAddress = await wallet.getBoardingAddress();
+        execCommand(`nigiri faucet ${boardingAddress} 0.001`);
 
-            // Wait for boarding UTXOs to appear
-            await waitFor(
-                async () => (await wallet.getBoardingUtxos()).length > 0
-            );
+        // Wait for boarding UTXOs to appear
+        await waitFor(async () => (await wallet.getBoardingUtxos()).length > 0);
 
-            // The poll loop should auto-settle the boarding UTXO into Ark.
-            // Wait for a VTXO to appear (meaning settle succeeded).
-            await waitFor(
-                async () => {
-                    const vtxos = await wallet.getVtxos();
-                    return vtxos.length > 0;
-                },
-                { timeout: 60000, interval: 2000 }
-            );
+        // The poll loop should auto-settle the boarding UTXO into Ark.
+        // Wait for a VTXO to appear (meaning settle succeeded).
+        await waitFor(
+            async () => {
+                const vtxos = await wallet.getVtxos();
+                return vtxos.length > 0;
+            },
+            { timeout: 60000, interval: 2000 },
+        );
 
-            const vtxos = await wallet.getVtxos();
-            expect(vtxos.length).toBeGreaterThan(0);
-            expect(vtxos[0].virtualStatus.state).toBe("settled");
+        const vtxos = await wallet.getVtxos();
+        expect(vtxos.length).toBeGreaterThan(0);
+        expect(vtxos[0].virtualStatus.state).toBe("settled");
 
-            await wallet.dispose();
-        }
-    );
+        await wallet.dispose();
+    });
 });
 
 describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
@@ -89,9 +83,7 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
             const boardingAddress = await setupWallet.getBoardingAddress();
             execCommand(`nigiri faucet ${boardingAddress} 0.001`);
 
-            await waitFor(
-                async () => (await setupWallet.getBoardingUtxos()).length > 0
-            );
+            await waitFor(async () => (await setupWallet.getBoardingUtxos()).length > 0);
 
             const initialUtxos = await setupWallet.getBoardingUtxos();
             expect(initialUtxos).toHaveLength(1);
@@ -112,7 +104,7 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
                     const tip = await esplora.getChainTip();
                     return tip.height >= expectedHeight;
                 },
-                { timeout: 30000, interval: 1000 }
+                { timeout: 30000, interval: 1000 },
             );
 
             await setupWallet.dispose();
@@ -142,12 +134,10 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
                     execCommand("nigiri rpc --generate 1");
                     const utxos = await wallet.getBoardingUtxos();
                     const hasUtxos = utxos.length > 0;
-                    const hasDifferentUtxos = utxos.every(
-                        (u) => u.txid !== initialTxid
-                    );
+                    const hasDifferentUtxos = utxos.every((u) => u.txid !== initialTxid);
                     return hasUtxos && hasDifferentUtxos;
                 },
-                { timeout: 60000, interval: 5000 }
+                { timeout: 60000, interval: 5000 },
             );
 
             const sweptUtxos = await wallet.getBoardingUtxos();
@@ -156,169 +146,153 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
             expect(sweptUtxos.every((u) => u.txid !== initialTxid)).toBe(true);
 
             await wallet.dispose();
-        }
+        },
     );
 });
 
 describe("Settlement - VtxoManager Recovery", () => {
     beforeEach(beforeEachFaucet, 20000);
 
-    it(
-        "should recover swept VTXOs via recoverVtxos",
-        { timeout: 120000 },
-        async () => {
-            const identity = SingleKey.fromRandomBytes();
+    it("should recover swept VTXOs via recoverVtxos", { timeout: 120000 }, async () => {
+        const identity = SingleKey.fromRandomBytes();
 
-            // Settlement disabled to prevent auto-renewal from interfering
-            // with the manual recover/renew calls in these tests
-            const wallet = await Wallet.create({
-                identity,
-                arkServerUrl: "http://localhost:7070",
-                onchainProvider: new EsploraProvider("http://localhost:3000", {
-                    forcePolling: true,
-                    pollingInterval: 2000,
-                }),
-                storage: {
-                    walletRepository: new InMemoryWalletRepository(),
-                    contractRepository: new InMemoryContractRepository(),
+        // Settlement disabled to prevent auto-renewal from interfering
+        // with the manual recover/renew calls in these tests
+        const wallet = await Wallet.create({
+            identity,
+            arkServerUrl: "http://localhost:7070",
+            onchainProvider: new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+                pollingInterval: 2000,
+            }),
+            storage: {
+                walletRepository: new InMemoryWalletRepository(),
+                contractRepository: new InMemoryContractRepository(),
+            },
+            settlementConfig: false,
+        });
+
+        const address = await wallet.getAddress();
+        const boardingAddress = await wallet.getBoardingAddress();
+
+        // Onboard via boarding to create a settled VTXO
+        execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+
+        const boardingInputs = await wallet.getBoardingUtxos();
+        expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
+
+        await wallet.settle({
+            inputs: boardingInputs,
+            outputs: [
+                {
+                    address: address!,
+                    amount: BigInt(100_000),
                 },
-                settlementConfig: false,
-            });
+            ],
+        });
 
-            const address = await wallet.getAddress();
-            const boardingAddress = await wallet.getBoardingAddress();
+        // Wait for settle to finalize
+        await new Promise((resolve) => setTimeout(resolve, 10000));
 
-            // Onboard via boarding to create a settled VTXO
-            execCommand(`nigiri faucet ${boardingAddress} 0.001`);
-            await new Promise((resolve) => setTimeout(resolve, 5000));
+        const vtxos = await wallet.getVtxos({ withRecoverable: false });
+        expect(vtxos).toHaveLength(1);
+        const originalTxid = vtxos[0].txid;
+        expect(vtxos[0].virtualStatus.state).toBe("settled");
 
-            const boardingInputs = await wallet.getBoardingUtxos();
-            expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
+        // Mine 25 blocks to trigger server sweep (VTXO_TREE_EXPIRY=20)
+        execCommand("nigiri rpc --generate 25");
 
-            await wallet.settle({
-                inputs: boardingInputs,
-                outputs: [
-                    {
-                        address: address!,
-                        amount: BigInt(100_000),
-                    },
-                ],
-            });
+        // Wait for VTXO to become swept
+        await waitFor(async () => {
+            const v = await wallet.getVtxos({ withRecoverable: true });
+            return v.some((c) => c.txid === originalTxid && c.virtualStatus.state === "swept");
+        });
 
-            // Wait for settle to finalize
-            await new Promise((resolve) => setTimeout(resolve, 10000));
+        // Use the wallet's VtxoManager
+        const manager = await wallet.getVtxoManager();
 
-            const vtxos = await wallet.getVtxos({ withRecoverable: false });
-            expect(vtxos).toHaveLength(1);
-            const originalTxid = vtxos[0].txid;
-            expect(vtxos[0].virtualStatus.state).toBe("settled");
+        const balance = await manager.getRecoverableBalance();
+        expect(balance.recoverable).toBeGreaterThan(0n);
+        expect(balance.vtxoCount).toBeGreaterThan(0);
 
-            // Mine 25 blocks to trigger server sweep (VTXO_TREE_EXPIRY=20)
-            execCommand("nigiri rpc --generate 25");
+        // Recover the swept VTXO
+        const recoverTxid = await manager.recoverVtxos();
+        expect(recoverTxid).toHaveLength(64);
 
-            // Wait for VTXO to become swept
-            await waitFor(async () => {
-                const v = await wallet.getVtxos({ withRecoverable: true });
-                return v.some(
-                    (c) =>
-                        c.txid === originalTxid &&
-                        c.virtualStatus.state === "swept"
-                );
-            });
+        // After recovery, wallet should have a fresh VTXO
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const vtxosAfter = await wallet.getVtxos();
+        expect(vtxosAfter.length).toBeGreaterThan(0);
+        expect(vtxosAfter[0].txid).not.toBe(originalTxid);
 
-            // Use the wallet's VtxoManager
-            const manager = await wallet.getVtxoManager();
+        await wallet.dispose();
+    });
 
-            const balance = await manager.getRecoverableBalance();
-            expect(balance.recoverable).toBeGreaterThan(0n);
-            expect(balance.vtxoCount).toBeGreaterThan(0);
+    it("should renew swept VTXOs via renewVtxos", { timeout: 120000 }, async () => {
+        const identity = SingleKey.fromRandomBytes();
 
-            // Recover the swept VTXO
-            const recoverTxid = await manager.recoverVtxos();
-            expect(recoverTxid).toHaveLength(64);
+        const wallet = await Wallet.create({
+            identity,
+            arkServerUrl: "http://localhost:7070",
+            onchainProvider: new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+                pollingInterval: 2000,
+            }),
+            storage: {
+                walletRepository: new InMemoryWalletRepository(),
+                contractRepository: new InMemoryContractRepository(),
+            },
+            settlementConfig: false,
+        });
 
-            // After recovery, wallet should have a fresh VTXO
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-            const vtxosAfter = await wallet.getVtxos();
-            expect(vtxosAfter.length).toBeGreaterThan(0);
-            expect(vtxosAfter[0].txid).not.toBe(originalTxid);
+        const address = await wallet.getAddress();
+        const boardingAddress = await wallet.getBoardingAddress();
 
-            await wallet.dispose();
-        }
-    );
+        // Create a settled VTXO
+        execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+        await new Promise((resolve) => setTimeout(resolve, 5000));
 
-    it(
-        "should renew swept VTXOs via renewVtxos",
-        { timeout: 120000 },
-        async () => {
-            const identity = SingleKey.fromRandomBytes();
+        const boardingInputs = await wallet.getBoardingUtxos();
+        expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
 
-            const wallet = await Wallet.create({
-                identity,
-                arkServerUrl: "http://localhost:7070",
-                onchainProvider: new EsploraProvider("http://localhost:3000", {
-                    forcePolling: true,
-                    pollingInterval: 2000,
-                }),
-                storage: {
-                    walletRepository: new InMemoryWalletRepository(),
-                    contractRepository: new InMemoryContractRepository(),
+        await wallet.settle({
+            inputs: boardingInputs,
+            outputs: [
+                {
+                    address: address!,
+                    amount: BigInt(100_000),
                 },
-                settlementConfig: false,
-            });
+            ],
+        });
 
-            const address = await wallet.getAddress();
-            const boardingAddress = await wallet.getBoardingAddress();
+        await new Promise((resolve) => setTimeout(resolve, 10000));
 
-            // Create a settled VTXO
-            execCommand(`nigiri faucet ${boardingAddress} 0.001`);
-            await new Promise((resolve) => setTimeout(resolve, 5000));
+        const vtxos = await wallet.getVtxos({ withRecoverable: false });
+        expect(vtxos).toHaveLength(1);
+        const originalTxid = vtxos[0].txid;
 
-            const boardingInputs = await wallet.getBoardingUtxos();
-            expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
+        // Mine 25 blocks to make VTXO swept (recoverable/expired)
+        execCommand("nigiri rpc --generate 25");
 
-            await wallet.settle({
-                inputs: boardingInputs,
-                outputs: [
-                    {
-                        address: address!,
-                        amount: BigInt(100_000),
-                    },
-                ],
-            });
+        await waitFor(async () => {
+            const v = await wallet.getVtxos({ withRecoverable: true });
+            return v.some((c) => c.txid === originalTxid && c.virtualStatus.state === "swept");
+        });
 
-            await new Promise((resolve) => setTimeout(resolve, 10000));
+        // Use the wallet's VtxoManager
+        const manager = await wallet.getVtxoManager();
 
-            const vtxos = await wallet.getVtxos({ withRecoverable: false });
-            expect(vtxos).toHaveLength(1);
-            const originalTxid = vtxos[0].txid;
+        const renewTxid = await manager.renewVtxos();
+        expect(renewTxid).toHaveLength(64);
 
-            // Mine 25 blocks to make VTXO swept (recoverable/expired)
-            execCommand("nigiri rpc --generate 25");
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const vtxosAfter = await wallet.getVtxos();
+        expect(vtxosAfter.length).toBeGreaterThan(0);
+        expect(vtxosAfter[0].txid).not.toBe(originalTxid);
 
-            await waitFor(async () => {
-                const v = await wallet.getVtxos({ withRecoverable: true });
-                return v.some(
-                    (c) =>
-                        c.txid === originalTxid &&
-                        c.virtualStatus.state === "swept"
-                );
-            });
-
-            // Use the wallet's VtxoManager
-            const manager = await wallet.getVtxoManager();
-
-            const renewTxid = await manager.renewVtxos();
-            expect(renewTxid).toHaveLength(64);
-
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-            const vtxosAfter = await wallet.getVtxos();
-            expect(vtxosAfter.length).toBeGreaterThan(0);
-            expect(vtxosAfter[0].txid).not.toBe(originalTxid);
-
-            await wallet.dispose();
-        }
-    );
+        await wallet.dispose();
+    });
 });
 
 describe("Settlement - Auto-delegation on vtxo_received", () => {
@@ -344,9 +318,7 @@ describe("Settlement - Auto-delegation on vtxo_received", () => {
                     walletRepository: new InMemoryWalletRepository(),
                     contractRepository: new InMemoryContractRepository(),
                 },
-                delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7012"
-                ),
+                delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
                 settlementConfig: {
                     pollIntervalMs: 5000,
                 },
@@ -363,7 +335,7 @@ describe("Settlement - Auto-delegation on vtxo_received", () => {
                     const v = await wallet.getVtxos();
                     return v.length > 0;
                 },
-                { timeout: 60000, interval: 2000 }
+                { timeout: 60000, interval: 2000 },
             );
 
             const vtxosBefore = await wallet.getVtxos();
@@ -376,7 +348,7 @@ describe("Settlement - Auto-delegation on vtxo_received", () => {
                     const v = await wallet.getVtxos();
                     return v.length > 0 && v.some((c) => c.txid !== firstTxid);
                 },
-                { timeout: 60000, interval: 2000 }
+                { timeout: 60000, interval: 2000 },
             );
 
             const vtxosAfter = await wallet.getVtxos();
@@ -386,7 +358,7 @@ describe("Settlement - Auto-delegation on vtxo_received", () => {
             expect(delegatedVtxo!.value).toBe(originalValue);
 
             await wallet.dispose();
-        }
+        },
     );
 });
 
@@ -419,12 +391,12 @@ describe("Settlement - VtxoManager Lifecycle", () => {
                 expect.objectContaining({
                     vtxoThreshold: expect.any(Number),
                     boardingUtxoSweep: true,
-                })
+                }),
             );
 
             // Dispose without errors
             await wallet.dispose();
-        }
+        },
     );
 
     it(
@@ -456,11 +428,11 @@ describe("Settlement - VtxoManager Lifecycle", () => {
 
             // sweepExpiredBoardingUtxos should throw when sweep is disabled
             await expect(manager.sweepExpiredBoardingUtxos()).rejects.toThrow(
-                "Boarding UTXO sweep is not enabled in settlementConfig"
+                "Boarding UTXO sweep is not enabled in settlementConfig",
             );
 
             await wallet.dispose();
-        }
+        },
     );
 });
 
@@ -515,20 +487,14 @@ describe("Settlement - VtxoManager concurrent operations", () => {
             await waitFor(
                 async () => {
                     const vtxos = await walletA.getVtxos();
-                    return (
-                        vtxos.length > 0 &&
-                        vtxos[0].virtualStatus.state === "settled"
-                    );
+                    return vtxos.length > 0 && vtxos[0].virtualStatus.state === "settled";
                 },
-                { timeout: 60000, interval: 2000 }
+                { timeout: 60000, interval: 2000 },
             );
 
             const vtxosBefore = await walletA.getVtxos();
             expect(vtxosBefore.length).toBeGreaterThan(0);
-            const balanceBefore = vtxosBefore.reduce(
-                (sum, v) => sum + v.value,
-                0
-            );
+            const balanceBefore = vtxosBefore.reduce((sum, v) => sum + v.value, 0);
 
             // Now send from A to B while VtxoManager's SSE + poll loop are active.
             // This is the race-prone scenario: VtxoManager may try to renewVtxos()
@@ -546,7 +512,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
                     const vtxos = await walletB.getVtxos();
                     return vtxos.length > 0;
                 },
-                { timeout: 15000, interval: 1000 }
+                { timeout: 15000, interval: 1000 },
             );
 
             const balanceB = await walletB.getBalance();
@@ -559,7 +525,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
 
             await walletA.dispose();
             await walletB.dispose();
-        }
+        },
     );
 
     it(
@@ -609,7 +575,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
             // Fund wallet A via arkd faucet (creates a preconfirmed VTXO directly)
             const fundAmount = 21_000;
             execCommand(
-                `${arkdExec} ark send --to ${addressA} --amount ${fundAmount} --password secret`
+                `${arkdExec} ark send --to ${addressA} --amount ${fundAmount} --password secret`,
             );
 
             // Wait for VTXO to appear — VtxoManager's SSE subscription should
@@ -619,7 +585,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
                     const vtxos = await walletA.getVtxos();
                     return vtxos.length > 0;
                 },
-                { timeout: 15000, interval: 500 }
+                { timeout: 15000, interval: 500 },
             );
 
             // Settle the preconfirmed VTXO so it becomes spendable for send()
@@ -630,9 +596,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
                     outputs: [
                         {
                             address: addressA,
-                            amount: BigInt(
-                                vtxos.reduce((sum, v) => sum + v.value, 0)
-                            ),
+                            amount: BigInt(vtxos.reduce((sum, v) => sum + v.value, 0)),
                         },
                     ],
                 });
@@ -656,7 +620,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
                     const balance = await walletA.getBalance();
                     return balance.settled >= sendAmount;
                 },
-                { timeout: 15000, interval: 500 }
+                { timeout: 15000, interval: 500 },
             );
 
             // Now send while VtxoManager is actively running in the background.
@@ -674,7 +638,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
                     const v = await walletB.getVtxos();
                     return v.length > 0;
                 },
-                { timeout: 15000, interval: 1000 }
+                { timeout: 15000, interval: 1000 },
             );
 
             const balanceB = await walletB.getBalance();
@@ -682,7 +646,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
 
             await walletA.dispose();
             await walletB.dispose();
-        }
+        },
     );
 
     it(
@@ -734,12 +698,9 @@ describe("Settlement - VtxoManager concurrent operations", () => {
             await waitFor(
                 async () => {
                     const vtxos = await walletA.getVtxos();
-                    return (
-                        vtxos.length > 0 &&
-                        vtxos[0].virtualStatus.state === "settled"
-                    );
+                    return vtxos.length > 0 && vtxos[0].virtualStatus.state === "settled";
                 },
-                { timeout: 60000, interval: 2000 }
+                { timeout: 60000, interval: 2000 },
             );
 
             // Rapid sequential sends while VtxoManager is active
@@ -761,7 +722,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
                     const balance = await walletB.getBalance();
                     return balance.total >= sendAmount * 3;
                 },
-                { timeout: 30000, interval: 2000 }
+                { timeout: 30000, interval: 2000 },
             );
 
             const balanceB = await walletB.getBalance();
@@ -769,6 +730,6 @@ describe("Settlement - VtxoManager concurrent operations", () => {
 
             await walletA.dispose();
             await walletB.dispose();
-        }
+        },
     );
 });
