@@ -70,6 +70,12 @@
             "import": "./dist/esm/wallet/expo/index.js",
             "require": "./dist/cjs/wallet/expo/index.js",
             "default": "./dist/esm/wallet/expo/index.js"
+        },
+        "./wallet/expo/background": {
+            "types": "./dist/types/wallet/expo/background.d.ts",
+            "import": "./dist/esm/wallet/expo/background.js",
+            "require": "./dist/cjs/wallet/expo/background.js",
+            "default": "./dist/esm/wallet/expo/background.js"
         }
     },
     "files": [
