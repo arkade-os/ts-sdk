@@ -106,19 +106,11 @@
         }
     },
     "devDependencies": {
-        "@eslint/js": "^9.35.0",
-        "@types/node": "^24.3.1",
         "@types/ws": "^8.18.1",
-        "@typescript-eslint/eslint-plugin": "^8.43.0",
-        "@typescript-eslint/parser": "^8.43.0",
-        "eslint": "^9.35.0",
         "eventsource": "^4.1.0",
         "fake-indexeddb": "^6.0.0",
-        "prettier": "3.6.2",
         "tsup": "^8.5.0",
-        "typescript": "^5.9.2",
-        "vite": "7.1.11",
-        "vitest": "^3.2.4"
+        "vite": "7.1.11"
     },
     "engines": {
         "node": ">=24.15.0 <25",
@@ -127,15 +119,5 @@
     "publishConfig": {
         "access": "public"
     },
-    "packageManager": "pnpm@10.25.0",
-    "pnpm": {
-        "onlyBuiltDependencies": [
-            "sqlite3",
-            "@arkade-os/sdk"
-        ],
-        "ignoredBuiltDependencies": [
-            "canvas",
-            "esbuild"
-        ]
-    }
+    "packageManager": "pnpm@10.25.0"
 }

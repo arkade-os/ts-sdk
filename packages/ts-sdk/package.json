@@ -114,7 +114,6 @@
         "lint": "prettier --check src test examples",
         "audit": "pnpm audit",
         "prepack": "pnpm run build",
-        "prepare": "husky",
         "prepublishOnly": "pnpm run build"
     },
     "dependencies": {
@@ -130,19 +129,14 @@
     },
     "devDependencies": {
         "@types/better-sqlite3": "7.6.13",
-        "@types/node": "24.3.1",
         "@vitest/coverage-v8": "3.2.4",
         "better-sqlite3": "12.6.2",
         "esbuild": "^0.27.3",
         "eventsource": "4.0.0",
         "glob": "11.1.0",
-        "husky": "9.1.7",
         "indexeddbshim": "16.1.0",
-        "prettier": "3.6.2",
         "rimraf": "^6.1.2",
-        "typedoc": "^0.28.16",
-        "typescript": "5.9.2",
-        "vitest": "3.2.4"
+        "typedoc": "^0.28.16"
     },
     "peerDependencies": {
         "@react-native-async-storage/async-storage": ">=1.0.0",
@@ -190,17 +184,5 @@
     "engines": {
         "node": ">=24.15.0 <25",
         "pnpm": ">=10.25.0 <11"
-    },
-    "pnpm": {
-        "overrides": {
-            "esbuild": ">=0.25.0",
-            "brace-expansion": "^2.0.2",
-            "minimatch": "9.0.3"
-        },
-        "onlyBuiltDependencies": [
-            "canvas",
-            "sqlite3",
-            "better-sqlite3"
-        ]
     }
 }
