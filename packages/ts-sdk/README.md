@@ -1300,15 +1300,10 @@ pnpm docs:open
 
 ### Releasing
 
+Package-local releases are disabled. Maintainers release this package from the repository root together with the rest of the monorepo.
+
 ```bash
-# Release new version (will prompt for version patch, minor, major)
-pnpm release
-
-# You can test release process without making changes
-pnpm release:dry-run
-
-# Cleanup: checkout version commit and remove release branch
-pnpm release:cleanup
+pnpm run release
 ```
 
 ## License

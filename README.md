@@ -63,27 +63,17 @@ pnpm -C packages/ts-sdk run docs:open    # Open in browser
 
 ## Releasing
 
-Releases are run interactively from a clean working tree. Each package has its own version and npm dist-tag. Tags are namespaced to avoid collisions: `sdk-v*` for the SDK, `boltz-swap-v*` for boltz-swap.
+Releases are run from the repository root and publish both packages in lockstep. The release command sets `@arkade-os/sdk` and `@arkade-os/boltz-swap` to one shared version, builds, commits and tags `v<version>`, publishes SDK first, publishes boltz-swap, then pushes the commit and tag.
 
 ```bash
-pnpm run release              # Release all (ts-sdk first, then boltz-swap)
-pnpm run release:ts-sdk       # Release SDK only
-pnpm run release:boltz-swap   # Release boltz-swap only
+pnpm run release                    # Prompt for a bump or literal version
+pnpm run release -- <version>       # First lockstep release while versions differ
+pnpm run release -- patch           # Normal flow after versions are aligned
+pnpm run release:dry-run -- <version>
+pnpm run release:cleanup
 ```
 
-The script will prompt for the version bump type (patch, minor, major, or pre-release). It then:
-
-1. Bumps the version in `package.json`
-2. Commits and creates a git tag (`sdk-v0.3.14` or `boltz-swap-v0.3.1`)
-3. Pushes the tag (triggers a GitHub Release for stable versions)
-4. Publishes to npm
-
-To preview without making changes:
-
-```bash
-pnpm -C packages/ts-sdk run release:dry-run
-pnpm -C packages/boltz-swap run release:dry-run
-```
+While package versions are not aligned, use a literal target version. Package-local release scripts are disabled.
 
 ## License
 

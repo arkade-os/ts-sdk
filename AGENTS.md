@@ -38,9 +38,9 @@ pnpm run regtest:down         # Stop Docker services
 pnpm run regtest:reset        # Reset Docker volumes
 
 # Release
-pnpm run release              # Release all (ts-sdk first, then boltz-swap)
-pnpm run release:ts-sdk       # Release SDK only
-pnpm run release:boltz-swap   # Release boltz-swap only
+pnpm run release              # Release both packages at the same version
+pnpm run release -- <version>     # First lockstep release while versions differ
+pnpm run release:dry-run -- <version>  # Preview a lockstep release
 ```
 
 ## Code Style
@@ -60,7 +60,7 @@ packages/
   boltz-swap/        # @arkade-os/boltz-swap — Boltz submarine swaps (depends on ts-sdk)
 regtest/             # Git submodule (arkade-regtest) — shared regtest environment
 scripts/
-  release.sh         # Root release orchestrator (enforces ts-sdk → boltz-swap order)
+  release.sh         # Root lockstep release orchestrator (SDK first, then boltz-swap)
 ```
 
 ### `@arkade-os/sdk` (packages/ts-sdk)

@@ -115,10 +115,7 @@
         "audit": "pnpm audit",
         "prepack": "pnpm run build",
         "prepare": "husky",
-        "prepublishOnly": "pnpm run build",
-        "release": "bash scripts/release.sh",
-        "release:dry-run": "bash scripts/release.sh --dry-run",
-        "release:cleanup": "bash scripts/release.sh --cleanup"
+        "prepublishOnly": "pnpm run build"
     },
     "dependencies": {
         "@bitcoinerlab/descriptors-scure": "3.1.7",
