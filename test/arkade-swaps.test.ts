@@ -1452,6 +1452,43 @@ describe("ArkadeSwaps", () => {
                     expect(getQuoteSpy).not.toHaveBeenCalled();
                 }
             );
+
+            it.each([
+                ["NaN", NaN],
+                ["non-integer", 1000.5],
+                ["negative", -1],
+                ["Infinity", Infinity],
+            ])(
+                "acceptSwapQuote rejects invalid minAcceptableAmount (%s)",
+                async (_label, value) => {
+                    const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+                    await expect(
+                        swaps.acceptSwapQuote(mock.id, 1234, {
+                            minAcceptableAmount: value as number,
+                        })
+                    ).rejects.toThrow(TypeError);
+                    expect(postSpy).not.toHaveBeenCalled();
+                }
+            );
+
+            it.each([
+                ["NaN", NaN],
+                ["above 10000", 10001],
+                ["negative", -1],
+                ["non-integer", 50.5],
+            ])(
+                "acceptSwapQuote rejects invalid maxSlippageBps (%s)",
+                async (_label, value) => {
+                    const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+                    await expect(
+                        swaps.acceptSwapQuote(mock.id, 1234, {
+                            minAcceptableAmount: 1000,
+                            maxSlippageBps: value as number,
+                        })
+                    ).rejects.toThrow(TypeError);
+                    expect(postSpy).not.toHaveBeenCalled();
+                }
+            );
         });
 
         describe("verifyChainSwap", () => {

@@ -181,6 +181,19 @@ const isSubmarineRefundLocktimeReached = (refundTimestamp: number): boolean =>
 const CLAIM_VTXO_RETRY_ATTEMPTS = 3;
 const CLAIM_VTXO_RETRY_DELAY_MS = 500;
 
+// Build the QuoteSwapOptions for an autopilot renegotiation. The type marks
+// `claimDetails.amount` as required, but a swap restored from older persisted
+// formats may lack it — in that case, fall through without a floor (the
+// repository lookup will then resolve no_baseline and abort the renegotiation).
+const quoteOptionsForSwap = (
+    swap: BoltzChainSwap
+): QuoteSwapOptions | undefined => {
+    const amount = swap.response?.claimDetails?.amount;
+    return typeof amount === "number"
+        ? { minAcceptableAmount: amount }
+        : undefined;
+};
+
 /**
  * Unified entry point for Lightning and chain swaps between Arkade, Lightning Network, and Bitcoin.
  *
@@ -1664,10 +1677,10 @@ export class ArkadeSwaps {
                         break;
                     case "transaction.lockupFailed":
                         await updateSwapStatus();
-                        await this.quoteSwap(swap.response.id, {
-                            minAcceptableAmount:
-                                swap.response.claimDetails.amount,
-                        }).catch((err) => {
+                        await this.quoteSwap(
+                            swap.response.id,
+                            quoteOptionsForSwap(swap)
+                        ).catch((err) => {
                             reject(
                                 new SwapError({
                                     message: `Failed to renegotiate quote: ${err.message}`,
@@ -2062,10 +2075,10 @@ export class ArkadeSwaps {
                         break;
                     case "transaction.lockupFailed":
                         await updateSwapStatus();
-                        await this.quoteSwap(swap.response.id, {
-                            minAcceptableAmount:
-                                swap.response.claimDetails.amount,
-                        }).catch((err) => {
+                        await this.quoteSwap(
+                            swap.response.id,
+                            quoteOptionsForSwap(swap)
+                        ).catch((err) => {
                             reject(
                                 new SwapError({
                                     message: `Failed to renegotiate quote: ${err.message}`,
@@ -2587,10 +2600,13 @@ export class ArkadeSwaps {
             type: "chain",
         });
         const stored = swaps[0];
-        if (!stored) {
+        // Defensive: persisted swaps from older formats may not have a
+        // populated claimDetails.amount even though the type marks it required.
+        const amount = stored?.response?.claimDetails?.amount;
+        if (typeof amount !== "number") {
             throw new QuoteRejectedError({ reason: "no_baseline" });
         }
-        return stored.response.claimDetails.amount;
+        return amount;
     }
 
     private validateQuoteOptions(options?: QuoteSwapOptions): void {

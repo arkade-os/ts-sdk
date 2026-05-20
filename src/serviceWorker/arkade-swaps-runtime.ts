@@ -107,6 +107,10 @@ function isHandlerNotInitializedError(error: unknown): boolean {
 // back into a real typed error so SW callers can `instanceof`-check and
 // branch on `.reason` exactly like in-process callers.
 function rethrowIfQuoteRejected(error: unknown): void {
+    // If a real QuoteRejectedError reached us without going through the SW
+    // transport (e.g. in-process testing or a direct throw), preserve it
+    // verbatim instead of going through the encode/decode round trip.
+    if (error instanceof QuoteRejectedError) throw error;
     const rebuilt = QuoteRejectedError.fromTransportError(error);
     if (rebuilt) throw rebuilt;
 }

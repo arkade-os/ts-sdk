@@ -162,11 +162,15 @@ export type QuoteRejectionReason =
     | "non_positive"
     | "no_baseline";
 
-interface QuoteRejectedOptions extends ErrorOptions {
-    reason: QuoteRejectionReason;
-    quotedAmount?: number;
-    floor?: number;
-}
+// Discriminated by `reason` so each rejection mode statically requires its own
+// metadata: below_floor demands both `quotedAmount` and `floor`, non_positive
+// demands `quotedAmount`, no_baseline carries neither.
+type QuoteRejectedOptions = ErrorOptions &
+    (
+        | { reason: "below_floor"; quotedAmount: number; floor: number }
+        | { reason: "non_positive"; quotedAmount: number }
+        | { reason: "no_baseline" }
+    );
 
 /**
  * Thrown when a Boltz-returned chain-swap quote fails local validation
@@ -187,8 +191,9 @@ export class QuoteRejectedError extends SwapError {
         });
         this.name = "QuoteRejectedError";
         this.reason = options.reason;
-        this.quotedAmount = options.quotedAmount;
-        this.floor = options.floor;
+        this.quotedAmount =
+            "quotedAmount" in options ? options.quotedAmount : undefined;
+        this.floor = "floor" in options ? options.floor : undefined;
     }
 
     private static defaultMessage(options: QuoteRejectedOptions): string {
@@ -252,15 +257,31 @@ export class QuoteRejectedError extends SwapError {
         ) {
             return null;
         }
-        return new QuoteRejectedError({
-            reason: data.reason as QuoteRejectionReason,
-            message: typeof data.message === "string" ? data.message : undefined,
-            quotedAmount:
-                typeof data.quotedAmount === "number"
-                    ? data.quotedAmount
-                    : undefined,
-            floor: typeof data.floor === "number" ? data.floor : undefined,
-        });
+        const message =
+            typeof data.message === "string" ? data.message : undefined;
+        const reason = data.reason as QuoteRejectionReason;
+        const quotedAmount =
+            typeof data.quotedAmount === "number" ? data.quotedAmount : null;
+        const floor = typeof data.floor === "number" ? data.floor : null;
+        switch (reason) {
+            case "below_floor":
+                if (quotedAmount === null || floor === null) return null;
+                return new QuoteRejectedError({
+                    reason,
+                    quotedAmount,
+                    floor,
+                    message,
+                });
+            case "non_positive":
+                if (quotedAmount === null) return null;
+                return new QuoteRejectedError({
+                    reason,
+                    quotedAmount,
+                    message,
+                });
+            case "no_baseline":
+                return new QuoteRejectedError({ reason, message });
+        }
     }
 }
 

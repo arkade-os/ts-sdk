@@ -1095,6 +1095,25 @@ describe("quote rejection error reconstruction", () => {
         );
     });
 
+    it("getSwapQuote reconstructs a typed QuoteRejectedError when the SW raises one", async () => {
+        const original = new QuoteRejectedError({ reason: "no_baseline" });
+        const { navigatorServiceWorker, serviceWorker } = respondWithError(
+            "GET_SWAP_QUOTE",
+            original
+        );
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        await expect(runtime.getSwapQuote("swap-5")).rejects.toBeInstanceOf(
+            QuoteRejectedError
+        );
+        await expect(runtime.getSwapQuote("swap-5")).rejects.toMatchObject({
+            reason: "no_baseline",
+        });
+    });
+
     it("survives the realistic structured clone (Error.name lost, props dropped)", async () => {
         // Sanity check that our reconstruction does NOT depend on the
         // properties the structured clone actually strips. We replicate the
