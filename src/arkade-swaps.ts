@@ -7,6 +7,7 @@ import {
     TransactionLockupFailedError,
     TransactionRefundedError,
     BoltzRefundError,
+    QuoteRejectedError,
 } from "./errors";
 import {
     ArkAddress,
@@ -1663,7 +1664,10 @@ export class ArkadeSwaps {
                         break;
                     case "transaction.lockupFailed":
                         await updateSwapStatus();
-                        await this.quoteSwap(swap.response.id).catch((err) => {
+                        await this.quoteSwap(swap.response.id, {
+                            minAcceptableAmount:
+                                swap.response.claimDetails.amount,
+                        }).catch((err) => {
                             reject(
                                 new SwapError({
                                     message: `Failed to renegotiate quote: ${err.message}`,
@@ -2058,7 +2062,10 @@ export class ArkadeSwaps {
                         break;
                     case "transaction.lockupFailed":
                         await updateSwapStatus();
-                        await this.quoteSwap(swap.response.id).catch((err) => {
+                        await this.quoteSwap(swap.response.id, {
+                            minAcceptableAmount:
+                                swap.response.claimDetails.amount,
+                        }).catch((err) => {
                             reject(
                                 new SwapError({
                                     message: `Failed to renegotiate quote: ${err.message}`,
@@ -2492,14 +2499,133 @@ export class ArkadeSwaps {
     }
 
     /**
-     * Renegotiates the quote for an existing swap.
+     * Renegotiates the quote for an existing chain swap. Convenience wrapper
+     * over `getSwapQuote` + `acceptSwapQuote` with a safety floor.
+     *
+     * The floor is resolved in order:
+     *   1. `options.minAcceptableAmount` if provided.
+     *   2. The original `response.claimDetails.amount` of the stored
+     *      pending swap (Boltz-confirmed server-lock amount at creation).
+     *   3. Otherwise throws `QuoteRejectedError({ reason: "no_baseline" })`.
+     *
+     * `options.maxSlippageBps` (default 0) relaxes the floor by basis points.
+     * Quotes ≤ 0 are always rejected. On rejection the acceptance is NOT
+     * posted to Boltz.
+     *
+     * Prefer `getSwapQuote` / `acceptSwapQuote` for callers that want to
+     * inspect the quote before committing.
+     *
      * @param swapId - The ID of the swap.
+     * @param options - Optional floor and slippage configuration.
      * @returns The accepted quote amount.
+     * @throws QuoteRejectedError if the quote is non-positive, below the
+     *     effective floor, or no baseline is available.
      */
-    async quoteSwap(swapId: string): Promise<number> {
-        const { amount } = await this.swapProvider.getChainQuote(swapId);
+    async quoteSwap(
+        swapId: string,
+        options?: QuoteSwapOptions
+    ): Promise<number> {
+        const effectiveFloor = await this.resolveEffectiveFloor(
+            swapId,
+            options
+        );
+        const amount = await this.getSwapQuote(swapId);
+        this.validateQuote(amount, effectiveFloor);
         await this.swapProvider.postChainQuote(swapId, { amount });
         return amount;
+    }
+
+    /**
+     * Fetches a renegotiated quote from Boltz without accepting it.
+     * Pair with `acceptSwapQuote` to commit a specific value.
+     */
+    async getSwapQuote(swapId: string): Promise<number> {
+        const { amount } = await this.swapProvider.getChainQuote(swapId);
+        return amount;
+    }
+
+    /**
+     * Accepts a quote amount for an existing chain swap, after validating it
+     * against the configured floor. See `quoteSwap` for floor-resolution rules.
+     *
+     * @throws QuoteRejectedError if `amount` ≤ 0, below the effective floor,
+     *     or no baseline is available.
+     */
+    async acceptSwapQuote(
+        swapId: string,
+        amount: number,
+        options?: QuoteSwapOptions
+    ): Promise<number> {
+        const effectiveFloor = await this.resolveEffectiveFloor(
+            swapId,
+            options
+        );
+        this.validateQuote(amount, effectiveFloor);
+        await this.swapProvider.postChainQuote(swapId, { amount });
+        return amount;
+    }
+
+    private async resolveEffectiveFloor(
+        swapId: string,
+        options?: QuoteSwapOptions
+    ): Promise<number> {
+        this.validateQuoteOptions(options);
+        const floor = await this.resolveQuoteFloor(swapId, options);
+        const slippageBps = options?.maxSlippageBps ?? 0;
+        return Math.floor((floor * (10000 - slippageBps)) / 10000);
+    }
+
+    private async resolveQuoteFloor(
+        swapId: string,
+        options?: QuoteSwapOptions
+    ): Promise<number> {
+        if (options?.minAcceptableAmount !== undefined) {
+            return options.minAcceptableAmount;
+        }
+        const swaps = await this.swapRepository.getAllSwaps<BoltzChainSwap>({
+            id: swapId,
+            type: "chain",
+        });
+        const stored = swaps[0];
+        if (!stored) {
+            throw new QuoteRejectedError({ reason: "no_baseline" });
+        }
+        return stored.response.claimDetails.amount;
+    }
+
+    private validateQuoteOptions(options?: QuoteSwapOptions): void {
+        if (options?.minAcceptableAmount !== undefined) {
+            const v = options.minAcceptableAmount;
+            if (!Number.isInteger(v) || v < 0) {
+                throw new TypeError(
+                    `Invalid minAcceptableAmount: ${v} — must be a non-negative integer`
+                );
+            }
+        }
+        if (options?.maxSlippageBps !== undefined) {
+            const v = options.maxSlippageBps;
+            if (!Number.isInteger(v) || v < 0 || v > 10000) {
+                throw new TypeError(
+                    `Invalid maxSlippageBps: ${v} — must be an integer in [0, 10000]`
+                );
+            }
+        }
+    }
+
+    private validateQuote(amount: number, effectiveFloor: number): void {
+        if (!(amount > 0)) {
+            throw new QuoteRejectedError({
+                reason: "non_positive",
+                quotedAmount: amount,
+            });
+        }
+        if (amount < effectiveFloor) {
+            throw new QuoteRejectedError({
+                reason: "below_floor",
+                quotedAmount: amount,
+                floor: effectiveFloor,
+            });
+        }
     }
 
     // =========================================================================
@@ -2908,6 +3034,22 @@ export class ArkadeSwaps {
     }
 }
 
+/** Options controlling acceptance of a renegotiated chain-swap quote. */
+export type QuoteSwapOptions = {
+    /**
+     * Hard floor on the accepted quote (in sats). When provided, skips the
+     * repository lookup. Pass the original `response.claimDetails.amount`
+     * to require the renegotiated amount to be no worse than what Boltz
+     * confirmed at swap creation.
+     */
+    minAcceptableAmount?: number;
+    /**
+     * Slippage tolerance in basis points, applied to the floor. Default 0
+     * (strict). E.g. 100 allows accepting quotes within 1% below the floor.
+     */
+    maxSlippageBps?: number;
+};
+
 /** @deprecated Use ArkadeSwapsConfig instead */
 export type ArkadeLightningConfig = ArkadeSwapsConfig;
 
@@ -2986,7 +3128,13 @@ export interface IArkadeSwaps extends AsyncDisposable {
         swap: BoltzChainSwap;
         arkInfo: ArkInfo;
     }): Promise<boolean>;
-    quoteSwap(swapId: string): Promise<number>;
+    quoteSwap(swapId: string, options?: QuoteSwapOptions): Promise<number>;
+    getSwapQuote(swapId: string): Promise<number>;
+    acceptSwapQuote(
+        swapId: string,
+        amount: number,
+        options?: QuoteSwapOptions
+    ): Promise<number>;
     joinBatch(
         identity: Identity,
         input: ArkTxInput,
