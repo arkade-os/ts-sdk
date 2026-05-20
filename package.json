@@ -38,22 +38,5 @@
         "tsup": "^8.5.0",
         "typescript": "5.9.2",
         "vitest": "3.2.4"
-    },
-    "pnpm": {
-        "overrides": {
-            "esbuild": ">=0.25.0",
-            "brace-expansion": "^2.0.2",
-            "minimatch": "9.0.3"
-        },
-        "onlyBuiltDependencies": [
-            "better-sqlite3",
-            "canvas",
-            "sqlite3",
-            "@arkade-os/sdk"
-        ],
-        "ignoredBuiltDependencies": [
-            "canvas",
-            "esbuild"
-        ]
     }
 }

@@ -1,2 +1,17 @@
 packages:
   - packages/*
+
+overrides:
+  esbuild: ">=0.25.0"
+  brace-expansion: ^2.0.2
+  minimatch: 9.0.3
+
+onlyBuiltDependencies:
+  - better-sqlite3
+  - canvas
+  - sqlite3
+  - "@arkade-os/sdk"
+
+ignoredBuiltDependencies:
+  - canvas
+  - esbuild
