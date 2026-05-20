@@ -211,41 +211,57 @@ import {
     validateConnectorsTxGraph,
 } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
+import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
+import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
+import { InMemoryWalletRepository } from "./repositories/inMemory/walletRepository";
+import { InMemoryContractRepository } from "./repositories/inMemory/contractRepository";
 import {
-    IndexedDBWalletRepository,
-    IndexedDBContractRepository,
-    InMemoryWalletRepository,
-    InMemoryContractRepository,
     MIGRATION_KEY,
     migrateWalletRepository,
     requiresMigration,
     getMigrationStatus,
     rollbackMigration,
-    WalletRepositoryImpl,
-    ContractRepositoryImpl,
-    WalletRepository,
-    ContractRepository,
-} from "./repositories";
-import type { MigrationStatus } from "./repositories";
+} from "./repositories/migrations/fromStorageAdapter";
+import type { MigrationStatus } from "./repositories/migrations/fromStorageAdapter";
+import { WalletRepositoryImpl } from "./repositories/migrations/walletRepositoryImpl";
+import { ContractRepositoryImpl } from "./repositories/migrations/contractRepositoryImpl";
+import type { WalletRepository } from "./repositories/walletRepository";
+import type { ContractRepository } from "./repositories/contractRepository";
 import { DelegatorManagerImpl, IDelegatorManager } from "./wallet/delegator";
 
 export * from "./arkfee";
 export * as asset from "./extension/asset";
 
 // Contracts
+// Side-effect import: registers the built-in handlers with `contractHandlers`.
+// Kept as a bare import so the registration runs even though the named
+// re-export path through `./contracts/index.ts` is intentionally avoided
+// (the barrel re-exports caused Rollup chunk-circularity warnings in the
+// dts emit when combined with tsup's splitting).
+import "./contracts/handlers";
+import { ContractManager } from "./contracts/contractManager";
+import type {
+    IContractManager,
+    ContractManagerConfig,
+    CreateContractParams,
+} from "./contracts/contractManager";
+import { ContractWatcher } from "./contracts/contractWatcher";
+import type { ContractWatcherConfig } from "./contracts/contractWatcher";
+import { contractHandlers } from "./contracts/handlers/registry";
+import { DefaultContractHandler } from "./contracts/handlers/default";
+import type { DefaultContractParams } from "./contracts/handlers/default";
+import { DelegateContractHandler } from "./contracts/handlers/delegate";
+import type { DelegateContractParams } from "./contracts/handlers/delegate";
+import { VHTLCContractHandler } from "./contracts/handlers/vhtlc";
+import type { VHTLCContractParams } from "./contracts/handlers/vhtlc";
 import {
-    ContractManager,
-    ContractWatcher,
-    contractHandlers,
-    DefaultContractHandler,
-    DelegateContractHandler,
-    VHTLCContractHandler,
     encodeArkContract,
     decodeArkContract,
     contractFromArkContract,
     contractFromArkContractWithAddress,
     isArkContract,
-} from "./contracts";
+} from "./contracts/arkcontract";
+import type { ParsedArkContract } from "./contracts/arkcontract";
 import type {
     Contract,
     ContractVtxo,
@@ -258,15 +274,7 @@ import type {
     PathSelection,
     PathContext,
     ExtendedContractVtxo,
-    ContractManagerConfig,
-    CreateContractParams,
-    ContractWatcherConfig,
-    ParsedArkContract,
-    DefaultContractParams,
-    DelegateContractParams,
-    VHTLCContractParams,
-} from "./contracts";
-import { IContractManager } from "./contracts/contractManager";
+} from "./contracts/types";
 import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
 import { closeDatabase, openDatabase } from "./repositories/indexedDB/manager";
 import {

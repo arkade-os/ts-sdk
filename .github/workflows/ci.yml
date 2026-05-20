@@ -98,4 +98,10 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Type-check
+        run: pnpm run typecheck
       - run: pnpm build
+      - name: Smoke-test dist
+        run: pnpm run smoke:dist
+      - name: Verify publish shape
+        run: npm pack --dry-run --ignore-scripts

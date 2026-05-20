@@ -1,15 +1,17 @@
 /**
- * Ambient declarations for `expo-task-manager` and `expo-background-task`.
+ * Ambient declarations for soft-optional Expo peer dependencies.
  *
- * Why this file exists: these modules are required at runtime by
- * `src/wallet/expo/background.ts` but are intentionally declared as
- * **optional** peer dependencies — they have no web platform and are
- * only needed by Expo Android/iOS consumers. This file lets `tsc`
- * type-check the subset of their APIs we actually use, without
- * pulling the packages into the build.
+ * These modules are declared as optional peers and are not installed at
+ * build time. This file lets `tsc` type-check the subset of their APIs
+ * the SDK actually imports, without pulling the packages into devDeps.
  *
- * Consumers install them in their own Expo app:
- *   npx expo install expo-task-manager expo-background-task
+ * Covers:
+ *   - expo-task-manager      (src/wallet/expo/background.ts)
+ *   - expo-background-task   (src/wallet/expo/background.ts)
+ *   - expo-sqlite            (src/repositories/indexedDB/websqlAdapter.ts)
+ *
+ * Consumers install these in their own Expo app:
+ *   npx expo install expo-task-manager expo-background-task expo-sqlite
  */
 
 declare module "expo-task-manager" {
@@ -30,4 +32,17 @@ declare module "expo-background-task" {
         options?: { minimumInterval?: number }
     ): Promise<void>;
     export function unregisterTaskAsync(taskName: string): Promise<void>;
+}
+
+declare module "expo-sqlite" {
+    export function openDatabaseSync(name: string): SQLiteDatabase;
+
+    export interface SQLiteDatabase {
+        getAllSync<T = unknown>(sql: string, params?: unknown[]): T[];
+        runSync(
+            sql: string,
+            params?: unknown[]
+        ): { lastInsertRowId: number; changes: number };
+        withTransactionSync(task: () => void): void;
+    }
 }
