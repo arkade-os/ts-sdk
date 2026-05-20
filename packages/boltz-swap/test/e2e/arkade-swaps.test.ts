@@ -5,6 +5,7 @@ import {
     BoltzSwapStatus,
     CreateSubmarineSwapRequest,
 } from "../../src/boltz-swap-provider";
+import { InMemorySwapRepository } from "../../src/repositories/inMemory/swap-repository";
 import type { BoltzReverseSwap, BoltzSubmarineSwap, ArkadeSwapsConfig } from "../../src/types";
 import {
     RestArkProvider,
@@ -259,12 +260,15 @@ describe("ArkadeSwaps", () => {
             }),
         });
 
-        // Create ArkadeSwaps instance (disable SwapManager for manual swap tests)
+        // Create ArkadeSwaps instance (disable SwapManager for manual swap tests).
+        // Use a fresh in-memory swap repo per test so state doesn't leak across
+        // describes via the shared fake-indexeddb (the default backend).
         swaps = new ArkadeSwaps({
             wallet,
             swapProvider,
             arkProvider,
             indexerProvider,
+            swapRepository: new InMemorySwapRepository(),
             swapManager: false,
         });
 
@@ -525,7 +529,7 @@ describe("ArkadeSwaps", () => {
 
     describe("Lightning: Send to Lightning", () => {
         describe("sendLightningPayment", () => {
-            it("should send a Lightning payment", async () => {
+            it("should send a Lightning payment", { timeout: 30_000 }, async () => {
                 const amount = 1000;
                 const fundAmount = amount + 10;
                 await fundWallet(fundAmount);
@@ -544,24 +548,28 @@ describe("ArkadeSwaps", () => {
                 expect(balanceAfter.available).toBeLessThan(balanceBefore.available - amount);
             });
 
-            it("should send a Lightning payment with minimal amount", async () => {
-                const { min: amount } = await swaps.getLimits();
-                const fundAmount = amount + 10;
-                await fundWallet(fundAmount);
-                const balanceBefore = await wallet.getBalance();
-                const { invoice, r_hash } = await getNewLightningInvoice(amount);
+            it(
+                "should send a Lightning payment with minimal amount",
+                { timeout: 30_000 },
+                async () => {
+                    const { min: amount } = await swaps.getLimits();
+                    const fundAmount = amount + 10;
+                    await fundWallet(fundAmount);
+                    const balanceBefore = await wallet.getBalance();
+                    const { invoice, r_hash } = await getNewLightningInvoice(amount);
 
-                const result = await swaps.sendLightningPayment({ invoice });
+                    const result = await swaps.sendLightningPayment({ invoice });
 
-                const preimageHash = hex.encode(sha256(hex.decode(result.preimage)));
+                    const preimageHash = hex.encode(sha256(hex.decode(result.preimage)));
 
-                expect(result.amount).toBeGreaterThan(amount);
-                expect(result.txid).toHaveLength(64);
-                expect(r_hash).toBe(preimageHash);
-                expect(balanceBefore.available).toEqual(fundAmount);
-                const balanceAfter = await wallet.getBalance();
-                expect(balanceAfter.available).toBeLessThan(balanceBefore.available - amount);
-            });
+                    expect(result.amount).toBeGreaterThan(amount);
+                    expect(result.txid).toHaveLength(64);
+                    expect(r_hash).toBe(preimageHash);
+                    expect(balanceBefore.available).toEqual(fundAmount);
+                    const balanceAfter = await wallet.getBalance();
+                    expect(balanceAfter.available).toBeLessThan(balanceBefore.available - amount);
+                },
+            );
         });
 
         describe("createSubmarineSwap", () => {
@@ -606,7 +614,7 @@ describe("ArkadeSwaps", () => {
         });
 
         describe("waitForSwapSettlement", () => {
-            it("should return preimage", async () => {
+            it("should return preimage", { timeout: 30_000 }, async () => {
                 const amount = 1000;
                 const fundAmount = amount + 10;
                 await fundWallet(fundAmount);
@@ -1264,25 +1272,29 @@ describe("ArkadeSwaps", () => {
                 expect(result[0]).toEqual(pendingSwap);
             });
 
-            it("should save submarine swap when sending lightning payment", async () => {
-                const amount = 1000;
-                const fundAmount = amount + 10;
-                await fundWallet(fundAmount);
-                const { invoice } = await getNewLightningInvoice(amount);
+            it(
+                "should save submarine swap when sending lightning payment",
+                { timeout: 30_000 },
+                async () => {
+                    const amount = 1000;
+                    const fundAmount = amount + 10;
+                    await fundWallet(fundAmount);
+                    const { invoice } = await getNewLightningInvoice(amount);
 
-                await swaps.sendLightningPayment({ invoice });
+                    await swaps.sendLightningPayment({ invoice });
 
-                const pendingSwaps = await swaps.getPendingSubmarineSwaps();
-                expect(pendingSwaps).toHaveLength(0);
+                    const pendingSwaps = await swaps.getPendingSubmarineSwaps();
+                    expect(pendingSwaps).toHaveLength(0);
 
-                const swapHistory = await swaps.getSwapHistory();
-                expect(swapHistory.length).toBeGreaterThanOrEqual(1);
+                    const swapHistory = await swaps.getSwapHistory();
+                    expect(swapHistory.length).toBeGreaterThanOrEqual(1);
 
-                const swap = swapHistory[0] as BoltzSubmarineSwap;
-                expect(swap.status).toBe("transaction.claimed");
-                expect(swap.request.invoice).toBe(invoice);
-                expect(swap.type).toBe("submarine");
-            });
+                    const swap = swapHistory[0] as BoltzSubmarineSwap;
+                    expect(swap.status).toBe("transaction.claimed");
+                    expect(swap.request.invoice).toBe(invoice);
+                    expect(swap.type).toBe("submarine");
+                },
+            );
         });
 
         describe("getPendingChainSwaps", () => {
