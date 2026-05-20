@@ -917,10 +917,15 @@ describe("BoltzSwapProvider", () => {
             });
         });
 
-        it("should reject on WebSocket error", async () => {
+        it("should fall back to polling when WebSocket errors", async () => {
             // arrange
             const swapId = "mock-swap-id";
             const updateCallback = vi.fn();
+
+            // Polling target: REST returns a terminal status so the monitor
+            // can complete via the fallback path.
+            const mockFetch = vi.fn(() => createFetchResponse({ status: "transaction.claimed" }));
+            vi.stubGlobal("fetch", mockFetch);
 
             setTimeout(() => {
                 if (mockWebSocket.onerror) {
@@ -928,9 +933,17 @@ describe("BoltzSwapProvider", () => {
                 }
             }, 0);
 
-            // act & assert
-            await expect(provider.monitorSwap(swapId, updateCallback)).rejects.toThrow(
-                NetworkError,
+            // act
+            await provider.monitorSwap(swapId, updateCallback);
+
+            // assert: polled getSwapStatus and propagated the terminal status
+            expect(mockFetch).toHaveBeenCalledWith(
+                "http://localhost:9090/v2/swap/mock-swap-id",
+                expect.objectContaining({ method: "GET" }),
+            );
+            expect(updateCallback).toHaveBeenCalledWith(
+                "transaction.claimed",
+                expect.objectContaining({ id: swapId, status: "transaction.claimed" }),
             );
         });
 

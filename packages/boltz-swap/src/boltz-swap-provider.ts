@@ -1257,58 +1257,65 @@ export class BoltzSwapProvider {
         };
     }
 
-    /** Monitors swap status updates via WebSocket. Calls update callback on each status change. Resolves when terminal. */
+    /**
+     * Monitors swap status updates and forwards them to the update callback.
+     * Prefers a WebSocket subscription; on connection error or premature close
+     * it falls back to REST polling so callers don't fail when the WS endpoint
+     * is flaky (observed in CI). Resolves when the swap reaches a terminal
+     * status.
+     */
     async monitorSwap(
         swapId: string,
         update: (type: BoltzSwapStatus, data?: any) => void,
     ): Promise<void> {
         return new Promise((resolve, reject) => {
-            const webSocket = new globalThis.WebSocket(this.wsUrl);
+            let settled = false;
+            let lastStatus: BoltzSwapStatus | null = null;
+            let pollTimer: ReturnType<typeof setInterval> | null = null;
+            let webSocket: WebSocket | null = null;
+            let connectionTimeout: ReturnType<typeof setTimeout> | null = null;
 
-            const connectionTimeout = setTimeout(() => {
-                webSocket.close();
-                reject(new NetworkError("WebSocket connection timeout"));
-            }, 30000); // 30 second timeout
-
-            webSocket.onerror = (error) => {
-                clearTimeout(connectionTimeout);
-                reject(new NetworkError(`WebSocket error: ${(error as any).message}`));
-            };
-
-            webSocket.onopen = () => {
-                clearTimeout(connectionTimeout);
-                webSocket.send(
-                    JSON.stringify({
-                        op: "subscribe",
-                        channel: "swap.update",
-                        args: [swapId],
-                    }),
-                );
-            };
-
-            webSocket.onclose = () => {
-                clearTimeout(connectionTimeout);
-                resolve();
-            };
-
-            webSocket.onmessage = async (rawMsg) => {
-                const msg = JSON.parse(rawMsg.data as string);
-
-                // we are only interested in updates for the specific swap
-                if (msg.event !== "update" || msg.args[0].id !== swapId) return;
-
-                if (msg.args[0].error) {
-                    webSocket.close();
-                    reject(new SwapError({ message: msg.args[0].error }));
+            const cleanup = () => {
+                if (connectionTimeout) {
+                    clearTimeout(connectionTimeout);
+                    connectionTimeout = null;
                 }
+                if (pollTimer) {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                }
+                if (webSocket) {
+                    try {
+                        webSocket.close();
+                    } catch {
+                        // ignore
+                    }
+                    webSocket = null;
+                }
+            };
 
-                const status = msg.args[0].status as BoltzSwapStatus;
+            const finish = (err?: Error) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                if (err) reject(err);
+                else resolve();
+            };
 
-                // chain swaps lockupFailed can be negotiable
+            const handleStatus = (status: BoltzSwapStatus, data: any) => {
+                if (settled) return;
+                // Dedupe: polling can report the same status across ticks;
+                // callers expect one event per real transition.
+                if (status === lastStatus) return;
+                lastStatus = status;
+
+                // Chain swap lockupFailed is negotiable when failureDetails
+                // contains actual+expected — keep the channel open so the
+                // caller can re-quote.
                 const negotiable =
                     status === "transaction.lockupFailed" &&
-                    msg.args[0].failureDetails?.actual !== undefined &&
-                    msg.args[0].failureDetails?.expected !== undefined;
+                    data?.failureDetails?.actual !== undefined &&
+                    data?.failureDetails?.expected !== undefined;
 
                 switch (status) {
                     case "invoice.settled":
@@ -1318,13 +1325,13 @@ export class BoltzSwapProvider {
                     case "invoice.failedToPay":
                     case "transaction.failed":
                     case "swap.expired":
-                        webSocket.close();
-                        update(status, msg.args[0]);
-                        break;
+                        update(status, data);
+                        finish();
+                        return;
                     case "transaction.lockupFailed":
-                        if (!negotiable) webSocket.close();
-                        update(status, msg.args[0]);
-                        break;
+                        update(status, data);
+                        if (!negotiable) finish();
+                        return;
                     case "invoice.paid":
                     case "invoice.pending":
                     case "invoice.set":
@@ -1334,9 +1341,94 @@ export class BoltzSwapProvider {
                     case "transaction.claim.pending":
                     case "transaction.server.mempool":
                     case "transaction.server.confirmed":
-                        update(status, msg.args[0]);
+                        update(status, data);
+                        return;
                 }
             };
+
+            const startPolling = () => {
+                if (settled || pollTimer) return;
+                const poll = async () => {
+                    if (settled) return;
+                    try {
+                        const result = await this.getSwapStatus(swapId);
+                        handleStatus(result.status, { ...result, id: swapId });
+                    } catch {
+                        // Transient errors (e.g. 404 during creation race) —
+                        // keep polling until terminal status or caller times
+                        // out at a higher layer.
+                    }
+                };
+                pollTimer = setInterval(poll, 1000);
+                poll();
+            };
+
+            try {
+                webSocket = new globalThis.WebSocket(this.wsUrl);
+
+                connectionTimeout = setTimeout(() => {
+                    // WS didn't open in time — drop it and start polling.
+                    try {
+                        webSocket?.close();
+                    } catch {
+                        // ignore
+                    }
+                    webSocket = null;
+                    startPolling();
+                }, 5000);
+
+                webSocket.onerror = () => {
+                    if (connectionTimeout) {
+                        clearTimeout(connectionTimeout);
+                        connectionTimeout = null;
+                    }
+                    // Abnormal WS error — switch to polling instead of
+                    // failing the whole monitor.
+                    webSocket = null;
+                    startPolling();
+                };
+
+                webSocket.onopen = () => {
+                    if (connectionTimeout) {
+                        clearTimeout(connectionTimeout);
+                        connectionTimeout = null;
+                    }
+                    webSocket?.send(
+                        JSON.stringify({
+                            op: "subscribe",
+                            channel: "swap.update",
+                            args: [swapId],
+                        }),
+                    );
+                };
+
+                webSocket.onclose = () => {
+                    if (connectionTimeout) {
+                        clearTimeout(connectionTimeout);
+                        connectionTimeout = null;
+                    }
+                    // If the WS closed before any terminal status arrived,
+                    // continue via polling so the caller still completes.
+                    if (!settled && !pollTimer) startPolling();
+                };
+
+                webSocket.onmessage = (rawMsg) => {
+                    try {
+                        const msg = JSON.parse(rawMsg.data as string);
+                        if (msg.event !== "update" || msg.args?.[0]?.id !== swapId) return;
+                        if (msg.args[0].error) {
+                            finish(new SwapError({ message: msg.args[0].error }));
+                            return;
+                        }
+                        handleStatus(msg.args[0].status as BoltzSwapStatus, msg.args[0]);
+                    } catch {
+                        // Ignore unparseable frames (e.g. keepalives).
+                    }
+                };
+            } catch {
+                webSocket = null;
+                startPolling();
+            }
         });
     }
 
