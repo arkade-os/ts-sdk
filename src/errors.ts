@@ -10,6 +10,12 @@ interface ErrorOptions {
     isRefundable?: boolean;
     /** The associated pending swap, if available. */
     pendingSwap?: BoltzSwap;
+    /**
+     * Underlying cause. Preserved on the resulting `Error.cause`, so callers
+     * that wrap a typed error (e.g. autopilot wrapping `QuoteRejectedError`)
+     * can still recover the inner instance for programmatic branching.
+     */
+    cause?: unknown;
 }
 
 /**
@@ -25,7 +31,10 @@ export class SwapError extends Error {
     public pendingSwap?: BoltzSwap;
 
     constructor(options: ErrorOptions = {}) {
-        super(options.message ?? "Error during swap.");
+        super(
+            options.message ?? "Error during swap.",
+            options.cause !== undefined ? { cause: options.cause } : undefined
+        );
         this.name = "SwapError";
         this.isClaimable = options.isClaimable ?? false;
         this.isRefundable = options.isRefundable ?? false;
@@ -185,8 +194,7 @@ export class QuoteRejectedError extends SwapError {
     constructor(options: QuoteRejectedOptions) {
         super({
             message:
-                options.message ??
-                QuoteRejectedError.defaultMessage(options),
+                options.message ?? QuoteRejectedError.defaultMessage(options),
             ...options,
         });
         this.name = "QuoteRejectedError";

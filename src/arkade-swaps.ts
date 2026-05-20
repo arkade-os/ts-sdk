@@ -1686,6 +1686,7 @@ export class ArkadeSwaps {
                                     message: `Failed to renegotiate quote: ${err.message}`,
                                     isRefundable: true,
                                     pendingSwap: swap,
+                                    cause: err,
                                 })
                             );
                         });
@@ -2084,6 +2085,7 @@ export class ArkadeSwaps {
                                     message: `Failed to renegotiate quote: ${err.message}`,
                                     isRefundable: false, // TODO btc refund not implemented yet
                                     pendingSwap: swap,
+                                    cause: err,
                                 })
                             );
                         });
@@ -2585,7 +2587,10 @@ export class ArkadeSwaps {
         this.validateQuoteOptions(options);
         const floor = await this.resolveQuoteFloor(swapId, options);
         const slippageBps = options?.maxSlippageBps ?? 0;
-        return Math.floor((floor * (10000 - slippageBps)) / 10000);
+        // Subtract-then-floor instead of multiply-then-divide: the original
+        // `floor * 10000` form loses precision once `floor` exceeds
+        // ~9e11 sats (above MAX_SAFE_INTEGER after multiply by 10000).
+        return Math.floor(floor - (floor * slippageBps) / 10000);
     }
 
     private async resolveQuoteFloor(
@@ -2612,9 +2617,12 @@ export class ArkadeSwaps {
     private validateQuoteOptions(options?: QuoteSwapOptions): void {
         if (options?.minAcceptableAmount !== undefined) {
             const v = options.minAcceptableAmount;
-            if (!Number.isInteger(v) || v < 0) {
+            // Reject 0: it would short-circuit the floor to 0 and let any
+            // positive Boltz quote through, silently restoring the old
+            // blind-accept behaviour the guard is meant to prevent.
+            if (!Number.isInteger(v) || v <= 0) {
                 throw new TypeError(
-                    `Invalid minAcceptableAmount: ${v} — must be a non-negative integer`
+                    `Invalid minAcceptableAmount: ${v} — must be a positive integer`
                 );
             }
         }

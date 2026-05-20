@@ -37,7 +37,7 @@ import {
     createVHTLCScript as createVHTLCScriptReal,
     refundVHTLCwithOffchainTx,
 } from "../src/utils/vhtlc";
-import { BoltzRefundError } from "../src/errors";
+import { BoltzRefundError, SwapError } from "../src/errors";
 
 // Mock the @arkade-os/sdk modules
 vi.mock("@arkade-os/sdk", async () => {
@@ -1420,6 +1420,7 @@ describe("ArkadeSwaps", () => {
                 ["NaN", NaN],
                 ["non-integer", 1000.5],
                 ["negative", -1],
+                ["zero", 0],
                 ["Infinity", Infinity],
             ])(
                 "rejects invalid minAcceptableAmount (%s)",
@@ -1439,24 +1440,22 @@ describe("ArkadeSwaps", () => {
                 ["above 10000", 10001],
                 ["negative", -1],
                 ["non-integer", 50.5],
-            ])(
-                "rejects invalid maxSlippageBps (%s)",
-                async (_label, value) => {
-                    const getQuoteSpy = vi.spyOn(swapProvider, "getChainQuote");
-                    await expect(
-                        swaps.quoteSwap(mock.id, {
-                            minAcceptableAmount: 1000,
-                            maxSlippageBps: value as number,
-                        })
-                    ).rejects.toThrow(TypeError);
-                    expect(getQuoteSpy).not.toHaveBeenCalled();
-                }
-            );
+            ])("rejects invalid maxSlippageBps (%s)", async (_label, value) => {
+                const getQuoteSpy = vi.spyOn(swapProvider, "getChainQuote");
+                await expect(
+                    swaps.quoteSwap(mock.id, {
+                        minAcceptableAmount: 1000,
+                        maxSlippageBps: value as number,
+                    })
+                ).rejects.toThrow(TypeError);
+                expect(getQuoteSpy).not.toHaveBeenCalled();
+            });
 
             it.each([
                 ["NaN", NaN],
                 ["non-integer", 1000.5],
                 ["negative", -1],
+                ["zero", 0],
                 ["Infinity", Infinity],
             ])(
                 "acceptSwapQuote rejects invalid minAcceptableAmount (%s)",
@@ -1470,6 +1469,62 @@ describe("ArkadeSwaps", () => {
                     expect(postSpy).not.toHaveBeenCalled();
                 }
             );
+
+            it("acceptSwapQuote rejects a non-positive amount and does not post", async () => {
+                const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+                await expect(
+                    swaps.acceptSwapQuote(mock.id, 0, {
+                        minAcceptableAmount: 1000,
+                    })
+                ).rejects.toMatchObject({
+                    name: "QuoteRejectedError",
+                    reason: "non_positive",
+                });
+                expect(postSpy).not.toHaveBeenCalled();
+            });
+
+            it("acceptSwapQuote rejects an amount below the floor and does not post", async () => {
+                const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+                await expect(
+                    swaps.acceptSwapQuote(mock.id, 999, {
+                        minAcceptableAmount: 1000,
+                    })
+                ).rejects.toMatchObject({
+                    name: "QuoteRejectedError",
+                    reason: "below_floor",
+                });
+                expect(postSpy).not.toHaveBeenCalled();
+            });
+
+            it("autopilot SwapError wrap preserves the underlying QuoteRejectedError as cause", async () => {
+                mockSwapRepository.getAllSwaps.mockResolvedValueOnce([
+                    mockArkBtcChainSwap,
+                ]);
+                vi.spyOn(swapProvider, "getChainQuote").mockResolvedValueOnce({
+                    amount: 1,
+                });
+                const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+
+                let caught: unknown;
+                try {
+                    await swaps.quoteSwap(mock.id);
+                } catch (e) {
+                    caught = e;
+                }
+                expect(caught).toMatchObject({
+                    name: "QuoteRejectedError",
+                    reason: "below_floor",
+                });
+                // Wrap the QuoteRejectedError the same shape the autopilot does;
+                // assert cause survives so callers can branch on the inner type.
+                const wrapped = new SwapError({
+                    message: `Failed: ${(caught as Error).message}`,
+                    isRefundable: true,
+                    cause: caught,
+                });
+                expect(wrapped.cause).toBe(caught);
+                expect(postSpy).not.toHaveBeenCalled();
+            });
 
             it.each([
                 ["NaN", NaN],
