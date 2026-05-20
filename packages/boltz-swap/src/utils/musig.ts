@@ -108,7 +108,6 @@ export class MusigWithMessage {
             this.myPublicKey,
             this.publicKeys,
             this.myIndex,
-            this.aggPubkey,
             this.tweak,
             this.msg,
             nonce,
@@ -122,7 +121,6 @@ export class MusigWithNonce {
         private readonly myPublicKey: PublicKey,
         private readonly publicKeys: readonly PublicKey[],
         private readonly myIndex: number,
-        private readonly aggPubkey: PublicKey,
         private readonly tweak: Uint8Array | undefined,
         private readonly msg: Uint8Array,
         private readonly nonce: Nonces,
@@ -163,10 +161,8 @@ export class MusigWithNonce {
         const aggregatedNonce = nonceAggregate([...ordered]);
         return new MusigNoncesAggregated(
             this.privateKey,
-            this.myPublicKey,
             this.publicKeys,
             this.myIndex,
-            this.aggPubkey,
             this.tweak,
             this.msg,
             this.nonce,
@@ -179,10 +175,8 @@ export class MusigWithNonce {
 export class MusigNoncesAggregated {
     constructor(
         private readonly privateKey: PrivateKey,
-        private readonly myPublicKey: PublicKey,
         private readonly publicKeys: readonly PublicKey[],
         private readonly myIndex: number,
-        private readonly aggPubkey: PublicKey,
         private readonly tweak: Uint8Array | undefined,
         private readonly msg: Uint8Array,
         private readonly nonce: Nonces,

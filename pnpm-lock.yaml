@@ -28,6 +28,9 @@ importers:
       prettier:
         specifier: 3.6.2
         version: 3.6.2
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(postcss@8.5.6)(typescript@5.9.2)(yaml@2.8.2)
       typescript:
         specifier: 5.9.2
         version: 5.9.2
@@ -68,9 +71,6 @@ importers:
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(postcss@8.5.6)(typescript@5.9.2)(yaml@2.8.2)
       vite:
         specifier: 7.1.11
         version: 7.1.11(@types/node@24.3.1)(lightningcss@1.31.1)(terser@5.46.0)(yaml@2.8.2)
@@ -129,9 +129,6 @@ importers:
       better-sqlite3:
         specifier: 12.6.2
         version: 12.6.2
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(postcss@8.5.6)(typescript@5.9.2)(yaml@2.8.2)
       typedoc:
         specifier: ^0.28.16
         version: 0.28.17(typescript@5.9.2)
