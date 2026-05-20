@@ -1,10 +1,11 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
-    branches: [master]
+    branches: [master, next]
   pull_request:
-    branches: [master]
+    branches: [master, next]
 
 jobs:
   check:
@@ -46,6 +47,12 @@ jobs:
       - name: Verify ts-sdk publish shape
         run: cd packages/ts-sdk && npm pack --dry-run --ignore-scripts
 
+      - name: Smoke-test boltz-swap dist
+        run: pnpm -C packages/boltz-swap run smoke:dist
+
+      - name: Verify boltz-swap publish shape
+        run: cd packages/boltz-swap && npm pack --dry-run --ignore-scripts
+
       - name: Unit tests
         run: pnpm run test:unit
 
@@ -70,7 +77,7 @@ jobs:
       - uses: actions/cache@v4
         with:
             path: regtest/_build
-            key: nigiri-${{ hashFiles('regtest/.env.defaults') }}
+            key: nigiri-${{ hashFiles('regtest/.env.defaults', '.env.regtest') }}
 
       - uses: pnpm/action-setup@v4
         with:
