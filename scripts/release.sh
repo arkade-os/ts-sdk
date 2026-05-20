@@ -282,6 +282,7 @@ if [[ "$SDK_VERSION" != "$BOLTZ_VERSION" ]]; then
 fi
 
 if [[ "$DRY_RUN" == true ]]; then
+    echo "Would run: pnpm run test:unit"
     echo "Would set both package versions to $NEW_VERSION"
     echo "Would run: pnpm -r build"
     echo "Would commit package version changes and create tag v$NEW_VERSION"
@@ -293,6 +294,8 @@ fi
 if [[ -n $(git status --porcelain) ]]; then
     die "Working directory is not clean. Commit or stash changes first."
 fi
+
+pnpm run test:unit
 
 node - "$NEW_VERSION" "$TS_SDK_DIR/package.json" "$BOLTZ_DIR/package.json" <<'NODE'
 const fs = require("fs");
