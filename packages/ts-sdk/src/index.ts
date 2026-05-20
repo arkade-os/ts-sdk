@@ -155,6 +155,7 @@ import {
     combineTapscriptSigs,
     isValidArkAddress,
 } from "./utils/arkTransaction";
+import { getRandomId } from "./wallet/utils";
 import {
     VtxoTaprootTree,
     ConditionWitness,
@@ -347,6 +348,7 @@ export {
     combineTapscriptSigs,
     isVtxoExpiringSoon,
     isValidArkAddress,
+    getRandomId,
 
     // Arknote
     ArkNote,

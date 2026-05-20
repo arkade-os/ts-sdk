@@ -1,5 +1,10 @@
 import type { SQLExecutor } from "@arkade-os/sdk/repositories/sqlite";
-import type { GetSwapsFilter, BoltzSwap, SwapRepository } from "../swap-repository";
+import {
+    BoltzSwap,
+    GetSwapsFilter,
+    hasImpossibleSwapsFilter,
+    SwapRepository,
+} from "../swap-repository";
 
 interface SwapRow {
     id: string;
@@ -77,14 +82,7 @@ export class SQLiteSwapRepository implements SwapRepository {
     async getAllSwaps<T extends BoltzSwap>(filter?: GetSwapsFilter): Promise<T[]> {
         await this.ensureInit();
 
-        // Early return for empty array filters (no possible matches)
-        if (
-            (Array.isArray(filter?.id) && filter.id.length === 0) ||
-            (Array.isArray(filter?.status) && filter.status.length === 0) ||
-            (Array.isArray(filter?.type) && filter.type.length === 0)
-        ) {
-            return [];
-        }
+        if (hasImpossibleSwapsFilter(filter)) return [];
 
         const conditions: string[] = [];
         const params: unknown[] = [];

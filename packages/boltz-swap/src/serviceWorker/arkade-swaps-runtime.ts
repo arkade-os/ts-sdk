@@ -58,6 +58,7 @@ import type {
     ResponseRecoverSubmarineFunds,
 } from "./arkade-swaps-message-handler";
 import {
+    getRandomId,
     MESSAGE_BUS_NOT_INITIALIZED,
     ServiceWorkerTimeoutError,
     type ArkInfo,
@@ -1144,8 +1145,4 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
                 break;
         }
     };
-}
-
-function getRandomId(): string {
-    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }

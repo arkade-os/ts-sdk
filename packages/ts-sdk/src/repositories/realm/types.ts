@@ -7,6 +7,8 @@
 /** Result set returned by `realm.objects()`. */
 export interface RealmResults<T = Record<string, unknown>> extends Iterable<T> {
     filtered(query: string, ...args: unknown[]): RealmResults<T>;
+    sorted(keypaths: string, reverse?: boolean): RealmResults<T>;
+    readonly length: number;
 }
 
 /** The Realm API surface used by Arkade repositories. */

@@ -1,4 +1,11 @@
-import { GetSwapsFilter, BoltzSwap, SwapRepository } from "../swap-repository";
+import {
+    applyCreatedAtOrder,
+    applySwapsFilter,
+    BoltzSwap,
+    GetSwapsFilter,
+    SwapRepository,
+} from "../swap-repository";
+
 export class InMemorySwapRepository implements SwapRepository {
     readonly version = 1 as const;
     private readonly swaps: Map<string, BoltzSwap> = new Map();
@@ -14,35 +21,12 @@ export class InMemorySwapRepository implements SwapRepository {
     async getAllSwaps<T extends BoltzSwap>(filter?: GetSwapsFilter): Promise<T[]> {
         const swaps = [...this.swaps.values()];
         if (!filter || Object.keys(filter).length === 0) return swaps as T[];
-        const filtered = this.applySwapsFilter(swaps, filter);
-        if (filter.orderBy === "createdAt") {
-            const direction = filter.orderDirection === "asc" ? 1 : -1;
-            return filtered.slice().sort((a, b) => (a.createdAt - b.createdAt) * direction) as T[];
-        }
-        return filtered as T[];
+        const filtered = applySwapsFilter(swaps, filter) as T[];
+        return applyCreatedAtOrder(filtered, filter);
     }
 
     async clear(): Promise<void> {
         this.swaps.clear();
-    }
-
-    private applySwapsFilter<T extends { id: string; status: string; type: string }>(
-        swaps: (T | undefined)[],
-        filter: GetSwapsFilter,
-    ): T[] {
-        const matches = <T>(value: T, criterion?: T | T[]) => {
-            if (criterion === undefined) {
-                return true;
-            }
-            return Array.isArray(criterion) ? criterion.includes(value) : value === criterion;
-        };
-        return swaps.filter(
-            (swap): swap is T =>
-                !!swap &&
-                matches(swap.id, filter.id) &&
-                matches(swap.status, filter.status) &&
-                matches(swap.type, filter.type),
-        );
     }
 
     async [Symbol.asyncDispose](): Promise<void> {

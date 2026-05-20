@@ -1,11 +1,26 @@
-import type { GetSwapsFilter, BoltzSwap, SwapRepository } from "../swap-repository";
+import type { RealmLike, RealmResults } from "@arkade-os/sdk/repositories/realm";
+import {
+    BoltzSwap,
+    GetSwapsFilter,
+    hasImpossibleSwapsFilter,
+    SwapRepository,
+} from "../swap-repository";
+
+interface BoltzSwapRecord {
+    id: string;
+    type: string;
+    status: string;
+    createdAt: number;
+    data: string;
+}
 
 /**
  * Realm-based implementation of SwapRepository.
  *
- * Since `realm` is a peer dependency and not installed in this package,
- * the Realm instance is typed as `any`. Consumers must open Realm with
- * the schemas from `./schemas.ts` and pass the instance to the constructor.
+ * `realm` is a peer dependency and not installed in this package; consumers
+ * open Realm with the schemas from `./schemas.ts` and pass the instance to
+ * the constructor, where it is validated against the shared `RealmLike`
+ * shape exported by `@arkade-os/sdk`.
  *
  * Realm handles schema creation on open, so `ensureInit()` is a no-op.
  * The consumer owns the Realm lifecycle — `[Symbol.asyncDispose]` is a no-op.
@@ -13,8 +28,7 @@ import type { GetSwapsFilter, BoltzSwap, SwapRepository } from "../swap-reposito
 export class RealmSwapRepository implements SwapRepository {
     readonly version = 1 as const;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    constructor(private readonly realm: any) {}
+    constructor(private readonly realm: RealmLike) {}
 
     // ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -58,22 +72,14 @@ export class RealmSwapRepository implements SwapRepository {
     async getAllSwaps<T extends BoltzSwap>(filter?: GetSwapsFilter): Promise<T[]> {
         await this.ensureInit();
 
-        // Early return for empty array filters (no possible matches)
-        if (
-            (Array.isArray(filter?.id) && filter!.id.length === 0) ||
-            (Array.isArray(filter?.status) && filter!.status.length === 0) ||
-            (Array.isArray(filter?.type) && filter!.type.length === 0)
-        ) {
-            return [];
-        }
+        if (hasImpossibleSwapsFilter(filter)) return [];
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let results: any = this.realm.objects("BoltzSwap");
+        let results: RealmResults<BoltzSwapRecord> =
+            this.realm.objects<BoltzSwapRecord>("BoltzSwap");
 
         if (filter) {
             const filterParts: string[] = [];
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const filterArgs: any[] = [];
+            const filterArgs: unknown[] = [];
             let argIndex = 0;
 
             argIndex = this.addFilterCondition(filterParts, filterArgs, "id", filter.id, argIndex);
@@ -97,10 +103,7 @@ export class RealmSwapRepository implements SwapRepository {
             results = results.sorted("createdAt", reverse);
         }
 
-        return [...results].map(
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (obj: any) => JSON.parse(obj.data) as T,
-        );
+        return [...results].map((obj) => JSON.parse(obj.data) as T);
     }
 
     async clear(): Promise<void> {
@@ -114,8 +117,7 @@ export class RealmSwapRepository implements SwapRepository {
 
     private addFilterCondition(
         parts: string[],
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        args: any[],
+        args: unknown[],
         column: string,
         value: string | string[] | undefined,
         argIndex: number,

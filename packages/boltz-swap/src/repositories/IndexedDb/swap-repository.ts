@@ -1,4 +1,11 @@
-import { GetSwapsFilter, BoltzSwap, SwapRepository } from "../swap-repository";
+import {
+    applyCreatedAtOrder,
+    applySwapsFilter,
+    BoltzSwap,
+    GetSwapsFilter,
+    hasImpossibleSwapsFilter,
+    SwapRepository,
+} from "../swap-repository";
 import { closeDatabase, openDatabase } from "@arkade-os/sdk";
 
 const DEFAULT_DB_NAME = "arkade-boltz-swap";
@@ -14,6 +21,11 @@ function initDatabase(db: IDBDatabase) {
         swapStore.createIndex("type", "type", { unique: false });
         swapStore.createIndex("createdAt", "createdAt", { unique: false });
     }
+}
+
+function asArray<T>(v: T | T[] | undefined): T[] | undefined {
+    if (v === undefined) return undefined;
+    return Array.isArray(v) ? v : [v];
 }
 
 export class IndexedDbSwapRepository implements SwapRepository {
@@ -91,6 +103,8 @@ export class IndexedDbSwapRepository implements SwapRepository {
             createdAt: number;
         },
     >(filter?: GetSwapsFilter): Promise<T[]> {
+        if (hasImpossibleSwapsFilter(filter)) return [];
+
         const db = await this.getDB();
         const store = db
             .transaction([STORE_SWAPS_STATE], "readonly")
@@ -104,10 +118,8 @@ export class IndexedDbSwapRepository implements SwapRepository {
             });
         }
 
-        const normalizedFilter = normalizeFilter(filter);
-
-        if (normalizedFilter.has("id")) {
-            const ids = normalizedFilter.get("id")!;
+        const ids = asArray(filter.id);
+        if (ids) {
             const swaps = await Promise.all(
                 ids.map(
                     (id) =>
@@ -118,19 +130,19 @@ export class IndexedDbSwapRepository implements SwapRepository {
                         }),
                 ),
             );
-            return this.sortIfNeeded(this.applySwapsFilter(swaps, normalizedFilter), filter);
+            return applyCreatedAtOrder(applySwapsFilter(swaps, filter) as T[], filter);
         }
 
-        if (normalizedFilter.has("type")) {
-            const types = normalizedFilter.get("type")!;
+        const types = asArray(filter.type);
+        if (types) {
             const swaps = await this.getSwapsByIndexValues<T>(store, "type", types);
-            return this.sortIfNeeded(this.applySwapsFilter(swaps, normalizedFilter), filter);
+            return applyCreatedAtOrder(applySwapsFilter(swaps, filter) as T[], filter);
         }
 
-        if (normalizedFilter.has("status")) {
-            const ids = normalizedFilter.get("status")!;
-            const swaps = await this.getSwapsByIndexValues<T>(store, "status", ids);
-            return this.sortIfNeeded(this.applySwapsFilter(swaps, normalizedFilter), filter);
+        const statuses = asArray(filter.status);
+        if (statuses) {
+            const swaps = await this.getSwapsByIndexValues<T>(store, "status", statuses);
+            return applyCreatedAtOrder(applySwapsFilter(swaps, filter) as T[], filter);
         }
 
         if (filter.orderBy === "createdAt") {
@@ -143,20 +155,7 @@ export class IndexedDbSwapRepository implements SwapRepository {
             request.onerror = () => reject(request.error);
         });
 
-        return this.sortIfNeeded(this.applySwapsFilter(allSwaps, normalizedFilter), filter);
-    }
-
-    private applySwapsFilter<T extends { id: string; status: string; type: string }>(
-        swaps: (T | undefined)[],
-        filter: ReturnType<typeof normalizeFilter>,
-    ): T[] {
-        return swaps.filter((swap): swap is T => {
-            if (swap === undefined) return false;
-            if (filter.has("id") && !filter.get("id")?.includes(swap.id)) return false;
-            if (filter.has("status") && !filter.get("status")?.includes(swap.status)) return false;
-            if (filter.has("type") && !filter.get("type")?.includes(swap.type)) return false;
-            return true;
-        });
+        return applyCreatedAtOrder(applySwapsFilter(allSwaps, filter) as T[], filter);
     }
 
     private async getAllSwapsByCreatedAt<T>(
@@ -181,34 +180,9 @@ export class IndexedDbSwapRepository implements SwapRepository {
         });
     }
 
-    private sortIfNeeded<T extends { createdAt: number }>(
-        swaps: T[],
-        filter?: GetSwapsFilter,
-    ): T[] {
-        if (filter?.orderBy !== "createdAt") return swaps;
-        const direction = filter.orderDirection === "asc" ? 1 : -1;
-        return swaps.slice().sort((a, b) => (a.createdAt - b.createdAt) * direction);
-    }
-
     async [Symbol.asyncDispose](): Promise<void> {
         if (!this.db) return;
         await closeDatabase(this.dbName);
         this.db = null;
     }
-}
-
-const FILTER_FIELDS = ["id", "status", "type"] as (keyof GetSwapsFilter)[];
-
-// Transform all filter fields into an array of values
-function normalizeFilter(filter: GetSwapsFilter) {
-    const res = new Map<keyof GetSwapsFilter, string[]>();
-    FILTER_FIELDS.forEach((current) => {
-        if (!filter?.[current]) return;
-        if (Array.isArray(filter[current])) {
-            res.set(current, filter[current]);
-        } else {
-            res.set(current, [filter[current]]);
-        }
-    });
-    return res;
 }

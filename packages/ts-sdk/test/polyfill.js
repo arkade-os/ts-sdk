@@ -1,9 +1,10 @@
+import { indexedDB, IDBKeyRange } from "fake-indexeddb";
+import { EventSource } from "eventsource";
+
 if (typeof self === "undefined") {
     globalThis.self = globalThis;
 }
-
-import setGlobalVars from "indexeddbshim/src/node.js";
 globalThis.window = globalThis;
-setGlobalVars(null, { checkOrigin: false, memoryDatabase: "" });
-import { EventSource } from "eventsource";
+globalThis.indexedDB = indexedDB;
+globalThis.IDBKeyRange = IDBKeyRange;
 globalThis.EventSource = EventSource;

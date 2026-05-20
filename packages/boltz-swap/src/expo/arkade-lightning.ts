@@ -24,13 +24,15 @@ import type {
 import type { GetSwapStatusResponse } from "../boltz-swap-provider";
 import type { ExpoArkadeSwapsConfig, PersistedSwapBackgroundConfig } from "./types";
 import { SWAP_POLL_TASK_TYPE } from "./swapsPollProcessor";
-import type { ArkInfo, ArkTxInput, Identity, VHTLC } from "@arkade-os/sdk";
+import {
+    getRandomId,
+    type ArkInfo,
+    type ArkTxInput,
+    type Identity,
+    type VHTLC,
+} from "@arkade-os/sdk";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import type { VhtlcTimeouts } from "../utils/vhtlc";
-
-function getRandomId(): string {
-    return Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
 
 /**
  * Catches JS callers still passing the pre-fix-#136 fields: TypeScript
