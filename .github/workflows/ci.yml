@@ -34,11 +34,11 @@ jobs:
       - name: Type-check ts-sdk
         run: pnpm -C packages/ts-sdk run typecheck
 
-      - name: Type-check boltz-swap
-        run: pnpm -C packages/boltz-swap run typecheck
-
       - name: Build
         run: pnpm run build
+
+      - name: Type-check boltz-swap
+        run: pnpm -C packages/boltz-swap run typecheck
 
       - name: Smoke-test ts-sdk dist
         run: pnpm -C packages/ts-sdk run smoke:dist
