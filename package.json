@@ -30,11 +30,7 @@
         "prepare": "husky"
     },
     "devDependencies": {
-        "@eslint/js": "^9.35.0",
         "@types/node": "24.3.1",
-        "@typescript-eslint/eslint-plugin": "^8.43.0",
-        "@typescript-eslint/parser": "^8.43.0",
-        "eslint": "^9.35.0",
         "eventsource": "4.1.0",
         "fake-indexeddb": "6.2.5",
         "husky": "9.1.7",

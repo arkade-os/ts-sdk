@@ -1,7 +1,7 @@
 export { ArkadeSwaps } from "./arkade-swaps";
+export type { BoltzSwapStatus } from "./boltz-swap-provider";
 export {
     BoltzSwapProvider,
-    BoltzSwapStatus,
     isChainClaimableStatus,
     isChainFailedStatus,
     isChainFinalStatus,
@@ -103,4 +103,4 @@ export type {
 export { logger, setLogger } from "./logger";
 export type { Logger } from "./logger";
 export { IndexedDbSwapRepository } from "./repositories/IndexedDb/swap-repository";
-export { SwapRepository } from "./repositories/swap-repository";
+export type { SwapRepository } from "./repositories/swap-repository";
