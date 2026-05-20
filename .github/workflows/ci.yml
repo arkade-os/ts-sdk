@@ -29,8 +29,17 @@ jobs:
       - name: Lint
         run: pnpm run lint
 
+      - name: Type-check ts-sdk
+        run: pnpm -C packages/ts-sdk run typecheck
+
       - name: Build
         run: pnpm run build
+
+      - name: Smoke-test ts-sdk dist
+        run: pnpm -C packages/ts-sdk run smoke:dist
+
+      - name: Verify ts-sdk publish shape
+        run: cd packages/ts-sdk && npm pack --dry-run --ignore-scripts
 
       - name: Unit tests
         run: pnpm run test:unit
