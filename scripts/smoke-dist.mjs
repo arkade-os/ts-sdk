@@ -11,7 +11,8 @@
 //   1. Walk package.json `exports` (+ legacy main/module/types); every
 //      referenced file must exist.
 //   2. Walk dist/**/*.d.{ts,cts}; every relative `from "..."` import
-//      must resolve to a sibling .d.ts/.d.cts (and matching .js/.cjs).
+//      must resolve to a sibling .d.ts/.d.cts. Runtime resolution is
+//      covered by sections 3–5 (Node require/import probes).
 //   3. CJS singleton: spawn `node -e ...` from the repo root, require
 //      ./dist/index.cjs and ./dist/contracts/handlers/index.cjs by
 //      relative path, assert object identity for `contractHandlers`
@@ -114,22 +115,24 @@ for (const file of walkDistFiles(distRoot)) {
         dtsImports++;
         const spec = m[1];
         const dtsExt = isCts ? ".d.cts" : ".d.ts";
-        const jsExt = isCts ? ".cjs" : ".js";
         // Strip .js/.cjs if present in the specifier; tsup writes the JS
         // path in declarations and TypeScript matches the sibling .d.ts.
+        // Runtime siblings are deliberately not checked: tsup gives
+        // declaration chunks (e.g. ark-Da7zYanl.d.ts) different hashed
+        // names than the runtime chunks (chunk-XYZ.js), so the .js path
+        // in a .d.ts only exists for TS extension-swap resolution.
+        // Runtime resolution is covered by the Node probes below.
         const stem = resolve(
             dirname(file),
             spec.replace(/\.c?js$/, "")
         );
         const candidates = [
             stem + dtsExt,
-            stem + jsExt,
             join(stem, "index" + dtsExt),
-            join(stem, "index" + jsExt),
         ];
         if (!candidates.some(existsSync)) {
             fail(
-                `${relative(repoRoot, file)} → "${spec}" resolves to none of: ${candidates
+                `${relative(repoRoot, file)} → "${spec}" resolves to no declaration: ${candidates
                     .map((c) => relative(repoRoot, c))
                     .join(", ")}`
             );
