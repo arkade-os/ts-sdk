@@ -4,6 +4,6 @@
         "lib": ["es2022", "dom", "dom.iterable"],
         "noEmit": true
     },
-    "include": ["src", "tsup.config.ts"],
+    "include": ["src", "tsup.config.ts", "../../config/types/**/*.d.ts"],
     "exclude": ["node_modules", "dist", "**/*.test.ts", "examples"]
 }

@@ -11,6 +11,6 @@
         "noImplicitReturns": true,
         "noFallthroughCasesInSwitch": true
     },
-    "include": ["src/**/*.ts"],
+    "include": ["src/**/*.ts", "../../config/types/**/*.d.ts"],
     "exclude": ["node_modules", "dist", "test", "src/repositories/realm"]
 }
