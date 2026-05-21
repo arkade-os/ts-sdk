@@ -1115,13 +1115,19 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * ignored — the first caller's value governs the running scan.
      */
     async restore(opts?: { gapLimit?: number }): Promise<void> {
+        // Coalesce concurrent calls FIRST: the documented contract says a
+        // second caller's `gapLimit` is ignored while a restore is running,
+        // so validating it ahead of the coalesce check would surface a
+        // misleading "invalid gapLimit" error to a caller whose value was
+        // never going to be used. Only the caller that actually starts the
+        // run gets its gapLimit validated.
+        if (this._restoreInFlight) return this._restoreInFlight;
         const gapLimit = opts?.gapLimit ?? 20;
         if (!Number.isInteger(gapLimit) || gapLimit <= 0) {
             throw new Error(
                 `restore: gapLimit must be a positive integer (got ${String(opts?.gapLimit)})`,
             );
         }
-        if (this._restoreInFlight) return this._restoreInFlight;
         this._restoreInFlight = this._runRestore(gapLimit).finally(() => {
             this._restoreInFlight = undefined;
         });
