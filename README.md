@@ -43,23 +43,41 @@ pnpm -C packages/ts-sdk vitest run -t "test name pattern"
 
 ### Integration tests
 
-Integration tests use the shared [arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest) environment (git submodule):
+Integration tests use the shared [arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest) environment (git submodule). Each package runs against its own regtest stack via a per-package override file:
+
+- `packages/ts-sdk/.env.regtest`
+- `packages/boltz-swap/.env.regtest`
+
+#### All packages
 
 ```bash
-pnpm run regtest:up      # Start nigiri + arkd, boltz, LND, fulmine, etc.
-pnpm run regtest:setup   # Initialize wallets and shared test fixtures
-pnpm run test:integration # Run e2e tests for all packages against regtest
-pnpm run regtest:test    # Run setup + e2e tests
-pnpm run regtest:down    # Stop the stack
-pnpm run regtest:reset   # Stop and remove volumes
+pnpm run test:integration   # Runs test:integration:ts-sdk, then test:integration:boltz-swap
+```
+
+Each script invokes `scripts/regtest.sh <pkg> cycle`, where `cycle` means `reset + up + setup + test` against that package's stack.
+
+#### Single package
+
+Per-package commands let you control the stack directly. Replace `:ts-sdk` with `:boltz-swap` for the other package.
+
+```bash
+pnpm run regtest:up:ts-sdk      # Start the package's regtest stack
+pnpm run regtest:setup:ts-sdk   # Initialize wallets and fixtures
+pnpm run regtest:test:ts-sdk    # Run the package's e2e suite (assumes stack is up)
+pnpm run regtest:down:ts-sdk    # Stop the stack (preserves data)
+pnpm run regtest:reset:ts-sdk   # Remove containers and volumes
 ```
 
 ### Documentation
 
+TypeDoc-generated API docs for `@arkade-os/sdk` are written to the repo-root `docs/` directory (the source for [arkade-os.github.io/ts-sdk](https://arkade-os.github.io/ts-sdk/)).
+
 ```bash
-pnpm -C packages/ts-sdk run docs:build   # Build TypeScript API docs
-pnpm -C packages/ts-sdk run docs:open    # Open in browser
+pnpm -C packages/ts-sdk run docs:build   # Build into ./docs at the repo root
+pnpm -C packages/ts-sdk run docs:open    # Open ./docs/index.html in the browser
 ```
+
+After regenerating, sanity-check that source links in the generated HTML point to monorepo-style paths (e.g. `packages/ts-sdk/src/...`) before publishing.
 
 ## Releasing
 

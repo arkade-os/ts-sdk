@@ -141,7 +141,7 @@
         "smoke:dist": "node scripts/smoke-dist.mjs",
         "typecheck": "tsc --noEmit",
         "docs:build": "pnpm run typecheck && pnpm typedoc",
-        "docs:open": "open ./docs/index.html",
+        "docs:open": "open ../../docs/index.html",
         "test": "vitest run",
         "test:master": "ARK_ENV=master vitest run",
         "test:unit": "vitest run --exclude test/e2e",
