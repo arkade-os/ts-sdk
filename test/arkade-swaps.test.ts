@@ -37,7 +37,7 @@ import {
     createVHTLCScript as createVHTLCScriptReal,
     refundVHTLCwithOffchainTx,
 } from "../src/utils/vhtlc";
-import { BoltzRefundError } from "../src/errors";
+import { BoltzRefundError, SwapError } from "../src/errors";
 
 // Mock the @arkade-os/sdk modules
 vi.mock("@arkade-os/sdk", async () => {
@@ -1254,21 +1254,296 @@ describe("ArkadeSwaps", () => {
         });
 
         describe("quoteSwap", () => {
-            it("should quote a chain swap", async () => {
+            it("accepts a quote at or above the stored claimDetails.amount", async () => {
                 // arrange
+                mockSwapRepository.getAllSwaps.mockResolvedValueOnce([
+                    mockArkBtcChainSwap,
+                ]);
                 vi.spyOn(swapProvider, "getChainQuote").mockResolvedValueOnce({
                     amount: mock.amount,
                 });
-                vi.spyOn(swapProvider, "postChainQuote").mockResolvedValueOnce(
-                    {}
-                );
+                const postSpy = vi
+                    .spyOn(swapProvider, "postChainQuote")
+                    .mockResolvedValueOnce({});
 
                 // act
                 const amount = await swaps.quoteSwap(mock.id);
 
                 // assert
                 expect(amount).toEqual(mock.amount);
+                expect(postSpy).toHaveBeenCalledWith(mock.id, {
+                    amount: mock.amount,
+                });
             });
+
+            it("accepts when explicit minAcceptableAmount matches the quote", async () => {
+                // arrange
+                vi.spyOn(swapProvider, "getChainQuote").mockResolvedValueOnce({
+                    amount: 1000,
+                });
+                const postSpy = vi
+                    .spyOn(swapProvider, "postChainQuote")
+                    .mockResolvedValueOnce({});
+
+                // act
+                const amount = await swaps.quoteSwap(mock.id, {
+                    minAcceptableAmount: 1000,
+                });
+
+                // assert
+                expect(amount).toEqual(1000);
+                expect(postSpy).toHaveBeenCalledOnce();
+            });
+
+            it("rejects a quote below the explicit floor and does not post", async () => {
+                // arrange
+                vi.spyOn(swapProvider, "getChainQuote").mockResolvedValueOnce({
+                    amount: 999,
+                });
+                const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+
+                // act & assert
+                await expect(
+                    swaps.quoteSwap(mock.id, { minAcceptableAmount: 1000 })
+                ).rejects.toMatchObject({
+                    name: "QuoteRejectedError",
+                    reason: "below_floor",
+                });
+                expect(postSpy).not.toHaveBeenCalled();
+            });
+
+            it("rejects a non-positive quote and does not post", async () => {
+                // arrange
+                vi.spyOn(swapProvider, "getChainQuote").mockResolvedValueOnce({
+                    amount: 0,
+                });
+                const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+
+                // act & assert
+                await expect(
+                    swaps.quoteSwap(mock.id, { minAcceptableAmount: 1000 })
+                ).rejects.toMatchObject({
+                    name: "QuoteRejectedError",
+                    reason: "non_positive",
+                });
+                expect(postSpy).not.toHaveBeenCalled();
+            });
+
+            it("applies maxSlippageBps to the floor", async () => {
+                // arrange — 100 bps = 1%, floor 1000 → effective 990
+                vi.spyOn(swapProvider, "getChainQuote").mockResolvedValueOnce({
+                    amount: 991,
+                });
+                vi.spyOn(swapProvider, "postChainQuote").mockResolvedValueOnce(
+                    {}
+                );
+
+                // act
+                const amount = await swaps.quoteSwap(mock.id, {
+                    minAcceptableAmount: 1000,
+                    maxSlippageBps: 100,
+                });
+
+                // assert
+                expect(amount).toEqual(991);
+            });
+
+            it("rejects when below floor even with slippage applied", async () => {
+                // arrange
+                vi.spyOn(swapProvider, "getChainQuote").mockResolvedValueOnce({
+                    amount: 989,
+                });
+                const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+
+                // act & assert
+                await expect(
+                    swaps.quoteSwap(mock.id, {
+                        minAcceptableAmount: 1000,
+                        maxSlippageBps: 100,
+                    })
+                ).rejects.toMatchObject({
+                    name: "QuoteRejectedError",
+                    reason: "below_floor",
+                });
+                expect(postSpy).not.toHaveBeenCalled();
+            });
+
+            it("throws no_baseline without hitting Boltz when no options and no stored swap", async () => {
+                // arrange
+                mockSwapRepository.getAllSwaps.mockResolvedValueOnce([]);
+                const getQuoteSpy = vi.spyOn(swapProvider, "getChainQuote");
+                const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+
+                // act & assert
+                await expect(swaps.quoteSwap(mock.id)).rejects.toMatchObject({
+                    name: "QuoteRejectedError",
+                    reason: "no_baseline",
+                });
+                expect(getQuoteSpy).not.toHaveBeenCalled();
+                expect(postSpy).not.toHaveBeenCalled();
+            });
+
+            it("getSwapQuote returns the quote without posting", async () => {
+                // arrange
+                vi.spyOn(swapProvider, "getChainQuote").mockResolvedValueOnce({
+                    amount: mock.amount,
+                });
+                const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+
+                // act
+                const amount = await swaps.getSwapQuote(mock.id);
+
+                // assert
+                expect(amount).toEqual(mock.amount);
+                expect(postSpy).not.toHaveBeenCalled();
+            });
+
+            it("acceptSwapQuote posts the user-supplied amount", async () => {
+                // arrange
+                const postSpy = vi
+                    .spyOn(swapProvider, "postChainQuote")
+                    .mockResolvedValueOnce({});
+
+                // act
+                const amount = await swaps.acceptSwapQuote(mock.id, 1234, {
+                    minAcceptableAmount: 1000,
+                });
+
+                // assert
+                expect(amount).toEqual(1234);
+                expect(postSpy).toHaveBeenCalledWith(mock.id, {
+                    amount: 1234,
+                });
+            });
+
+            it.each([
+                ["NaN", NaN],
+                ["non-integer", 1000.5],
+                ["negative", -1],
+                ["zero", 0],
+                ["Infinity", Infinity],
+            ])(
+                "rejects invalid minAcceptableAmount (%s)",
+                async (_label, value) => {
+                    const getQuoteSpy = vi.spyOn(swapProvider, "getChainQuote");
+                    await expect(
+                        swaps.quoteSwap(mock.id, {
+                            minAcceptableAmount: value as number,
+                        })
+                    ).rejects.toThrow(TypeError);
+                    expect(getQuoteSpy).not.toHaveBeenCalled();
+                }
+            );
+
+            it.each([
+                ["NaN", NaN],
+                ["above 10000", 10001],
+                ["negative", -1],
+                ["non-integer", 50.5],
+            ])("rejects invalid maxSlippageBps (%s)", async (_label, value) => {
+                const getQuoteSpy = vi.spyOn(swapProvider, "getChainQuote");
+                await expect(
+                    swaps.quoteSwap(mock.id, {
+                        minAcceptableAmount: 1000,
+                        maxSlippageBps: value as number,
+                    })
+                ).rejects.toThrow(TypeError);
+                expect(getQuoteSpy).not.toHaveBeenCalled();
+            });
+
+            it.each([
+                ["NaN", NaN],
+                ["non-integer", 1000.5],
+                ["negative", -1],
+                ["zero", 0],
+                ["Infinity", Infinity],
+            ])(
+                "acceptSwapQuote rejects invalid minAcceptableAmount (%s)",
+                async (_label, value) => {
+                    const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+                    await expect(
+                        swaps.acceptSwapQuote(mock.id, 1234, {
+                            minAcceptableAmount: value as number,
+                        })
+                    ).rejects.toThrow(TypeError);
+                    expect(postSpy).not.toHaveBeenCalled();
+                }
+            );
+
+            it("acceptSwapQuote rejects a non-positive amount and does not post", async () => {
+                const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+                await expect(
+                    swaps.acceptSwapQuote(mock.id, 0, {
+                        minAcceptableAmount: 1000,
+                    })
+                ).rejects.toMatchObject({
+                    name: "QuoteRejectedError",
+                    reason: "non_positive",
+                });
+                expect(postSpy).not.toHaveBeenCalled();
+            });
+
+            it("acceptSwapQuote rejects an amount below the floor and does not post", async () => {
+                const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+                await expect(
+                    swaps.acceptSwapQuote(mock.id, 999, {
+                        minAcceptableAmount: 1000,
+                    })
+                ).rejects.toMatchObject({
+                    name: "QuoteRejectedError",
+                    reason: "below_floor",
+                });
+                expect(postSpy).not.toHaveBeenCalled();
+            });
+
+            it("autopilot SwapError wrap preserves the underlying QuoteRejectedError as cause", async () => {
+                mockSwapRepository.getAllSwaps.mockResolvedValueOnce([
+                    mockArkBtcChainSwap,
+                ]);
+                vi.spyOn(swapProvider, "getChainQuote").mockResolvedValueOnce({
+                    amount: 1,
+                });
+                const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+
+                let caught: unknown;
+                try {
+                    await swaps.quoteSwap(mock.id);
+                } catch (e) {
+                    caught = e;
+                }
+                expect(caught).toMatchObject({
+                    name: "QuoteRejectedError",
+                    reason: "below_floor",
+                });
+                // Wrap the QuoteRejectedError the same shape the autopilot does;
+                // assert cause survives so callers can branch on the inner type.
+                const wrapped = new SwapError({
+                    message: `Failed: ${(caught as Error).message}`,
+                    isRefundable: true,
+                    cause: caught,
+                });
+                expect(wrapped.cause).toBe(caught);
+                expect(postSpy).not.toHaveBeenCalled();
+            });
+
+            it.each([
+                ["NaN", NaN],
+                ["above 10000", 10001],
+                ["negative", -1],
+                ["non-integer", 50.5],
+            ])(
+                "acceptSwapQuote rejects invalid maxSlippageBps (%s)",
+                async (_label, value) => {
+                    const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+                    await expect(
+                        swaps.acceptSwapQuote(mock.id, 1234, {
+                            minAcceptableAmount: 1000,
+                            maxSlippageBps: value as number,
+                        })
+                    ).rejects.toThrow(TypeError);
+                    expect(postSpy).not.toHaveBeenCalled();
+                }
+            );
         });
 
         describe("verifyChainSwap", () => {
@@ -1755,20 +2030,43 @@ describe("ArkadeSwaps", () => {
         });
 
         describe("quoteSwap", () => {
-            it("should quote a chain swap", async () => {
-                // arrange
+            it("anchors the floor on response.claimDetails.amount, not top-level amount (BTC→ARK sender-path)", async () => {
+                // arrange — sender-path swap: top-level amount = senderLockAmount (user lock,
+                // larger than the receive-side after Boltz fees) but the Boltz-confirmed
+                // server-lock amount on the receive side lives in claimDetails.amount.
+                // The quote returned by Boltz is on the receive side; anchoring on the
+                // top-level field would reject every honest renegotiation here.
+                const RECEIVE_AMOUNT = 50_000;
+                const SENDER_LOCK_AMOUNT = 55_000;
+                const senderPathSwap: BoltzChainSwap = {
+                    ...mockBtcArkChainSwap,
+                    amount: SENDER_LOCK_AMOUNT,
+                    response: {
+                        ...createBtcArkChainSwapResponse,
+                        claimDetails: {
+                            ...createBtcArkChainSwapResponse.claimDetails,
+                            amount: RECEIVE_AMOUNT,
+                        },
+                    },
+                };
+                mockSwapRepository.getAllSwaps.mockResolvedValueOnce([
+                    senderPathSwap,
+                ]);
                 vi.spyOn(swapProvider, "getChainQuote").mockResolvedValueOnce({
-                    amount: mock.amount,
+                    amount: RECEIVE_AMOUNT,
                 });
-                vi.spyOn(swapProvider, "postChainQuote").mockResolvedValueOnce(
-                    {}
-                );
+                const postSpy = vi
+                    .spyOn(swapProvider, "postChainQuote")
+                    .mockResolvedValueOnce({});
 
-                // act
+                // act — would throw below_floor if code read top-level amount
                 const amount = await swaps.quoteSwap(mock.id);
 
                 // assert
-                expect(amount).toEqual(mock.amount);
+                expect(amount).toEqual(RECEIVE_AMOUNT);
+                expect(postSpy).toHaveBeenCalledWith(mock.id, {
+                    amount: RECEIVE_AMOUNT,
+                });
             });
         });
 

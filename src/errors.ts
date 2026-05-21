@@ -10,6 +10,12 @@ interface ErrorOptions {
     isRefundable?: boolean;
     /** The associated pending swap, if available. */
     pendingSwap?: BoltzSwap;
+    /**
+     * Underlying cause. Preserved on the resulting `Error.cause`, so callers
+     * that wrap a typed error (e.g. autopilot wrapping `QuoteRejectedError`)
+     * can still recover the inner instance for programmatic branching.
+     */
+    cause?: unknown;
 }
 
 /**
@@ -25,7 +31,10 @@ export class SwapError extends Error {
     public pendingSwap?: BoltzSwap;
 
     constructor(options: ErrorOptions = {}) {
-        super(options.message ?? "Error during swap.");
+        super(
+            options.message ?? "Error during swap.",
+            options.cause !== undefined ? { cause: options.cause } : undefined
+        );
         this.name = "SwapError";
         this.isClaimable = options.isClaimable ?? false;
         this.isRefundable = options.isRefundable ?? false;
@@ -155,6 +164,142 @@ export class TransactionRefundedError extends SwapError {
         this.name = "TransactionRefundedError";
     }
 }
+
+/** Reason a `quoteSwap` was rejected before being posted to Boltz. */
+export type QuoteRejectionReason =
+    | "below_floor"
+    | "non_positive"
+    | "no_baseline";
+
+// Discriminated by `reason` so each rejection mode statically requires its own
+// metadata: below_floor demands both `quotedAmount` and `floor`, non_positive
+// demands `quotedAmount`, no_baseline carries neither.
+type QuoteRejectedOptions = ErrorOptions &
+    (
+        | { reason: "below_floor"; quotedAmount: number; floor: number }
+        | { reason: "non_positive"; quotedAmount: number }
+        | { reason: "no_baseline" }
+    );
+
+/**
+ * Thrown when a Boltz-returned chain-swap quote fails local validation
+ * (below the acceptable floor, non-positive, or missing a baseline to
+ * compare against). The acceptance is never posted on failure.
+ */
+export class QuoteRejectedError extends SwapError {
+    public readonly reason: QuoteRejectionReason;
+    public readonly quotedAmount?: number;
+    public readonly floor?: number;
+
+    constructor(options: QuoteRejectedOptions) {
+        super({
+            message:
+                options.message ?? QuoteRejectedError.defaultMessage(options),
+            ...options,
+        });
+        this.name = "QuoteRejectedError";
+        this.reason = options.reason;
+        this.quotedAmount =
+            "quotedAmount" in options ? options.quotedAmount : undefined;
+        this.floor = "floor" in options ? options.floor : undefined;
+    }
+
+    private static defaultMessage(options: QuoteRejectedOptions): string {
+        switch (options.reason) {
+            case "below_floor":
+                return `Boltz quote ${options.quotedAmount} is below acceptable floor ${options.floor}`;
+            case "non_positive":
+                return `Boltz quote ${options.quotedAmount} is not positive`;
+            case "no_baseline":
+                return "Cannot accept quote: no minAcceptableAmount and no stored pending swap";
+        }
+    }
+
+    /**
+     * Serialize into a plain `Error` whose `.message` carries the full
+     * rejection payload as JSON behind a marker prefix. Structured clone
+     * (used by `postMessage` between page and service worker) preserves
+     * `Error.message` reliably but strips custom `.name` and own properties,
+     * so we move the typed data into the message field for transport.
+     */
+    toTransportError(): Error {
+        return new Error(
+            QUOTE_REJECTION_TRANSPORT_PREFIX +
+                JSON.stringify({
+                    reason: this.reason,
+                    message: this.message,
+                    quotedAmount: this.quotedAmount,
+                    floor: this.floor,
+                })
+        );
+    }
+
+    /**
+     * Inverse of `toTransportError`. Returns a real `QuoteRejectedError` if
+     * `error` carries the transport prefix, else `null`.
+     */
+    static fromTransportError(error: unknown): QuoteRejectedError | null {
+        if (
+            !(error instanceof Error) ||
+            !error.message.startsWith(QUOTE_REJECTION_TRANSPORT_PREFIX)
+        ) {
+            return null;
+        }
+        const payload = error.message.slice(
+            QUOTE_REJECTION_TRANSPORT_PREFIX.length
+        );
+        let data: {
+            reason?: unknown;
+            message?: unknown;
+            quotedAmount?: unknown;
+            floor?: unknown;
+        };
+        try {
+            data = JSON.parse(payload);
+        } catch {
+            return null;
+        }
+        if (
+            typeof data.reason !== "string" ||
+            !QUOTE_REJECTION_REASONS.has(data.reason as QuoteRejectionReason)
+        ) {
+            return null;
+        }
+        const message =
+            typeof data.message === "string" ? data.message : undefined;
+        const reason = data.reason as QuoteRejectionReason;
+        const quotedAmount =
+            typeof data.quotedAmount === "number" ? data.quotedAmount : null;
+        const floor = typeof data.floor === "number" ? data.floor : null;
+        switch (reason) {
+            case "below_floor":
+                if (quotedAmount === null || floor === null) return null;
+                return new QuoteRejectedError({
+                    reason,
+                    quotedAmount,
+                    floor,
+                    message,
+                });
+            case "non_positive":
+                if (quotedAmount === null) return null;
+                return new QuoteRejectedError({
+                    reason,
+                    quotedAmount,
+                    message,
+                });
+            case "no_baseline":
+                return new QuoteRejectedError({ reason, message });
+        }
+    }
+}
+
+const QUOTE_REJECTION_TRANSPORT_PREFIX = "QUOTE_REJECTED::";
+
+const QUOTE_REJECTION_REASONS: ReadonlySet<QuoteRejectionReason> = new Set([
+    "below_floor",
+    "non_positive",
+    "no_baseline",
+]);
 
 /**
  * Thrown when the Boltz API rejects a refund request

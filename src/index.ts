@@ -1,4 +1,5 @@
 export { ArkadeSwaps } from "./arkade-swaps";
+export type { QuoteSwapOptions } from "./arkade-swaps";
 export {
     BoltzSwapProvider,
     BoltzSwapStatus,
@@ -39,7 +40,9 @@ export {
     SwapNotFoundError,
     TransactionFailedError,
     BoltzRefundError,
+    QuoteRejectedError,
 } from "./errors";
+export type { QuoteRejectionReason } from "./errors";
 export {
     decodeInvoice,
     getInvoicePaymentHash,

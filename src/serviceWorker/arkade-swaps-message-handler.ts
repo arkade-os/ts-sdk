@@ -38,7 +38,20 @@ import {
     IndexerProvider,
     RestIndexerProvider,
 } from "@arkade-os/sdk";
-import { ArkadeSwaps } from "../arkade-swaps";
+import { ArkadeSwaps, type QuoteSwapOptions } from "../arkade-swaps";
+import { QuoteRejectedError } from "../errors";
+
+// Wrap thrown errors at the SW boundary: structured clone (used by postMessage)
+// strips custom Error subclass identity — `name` becomes "Error" and own
+// properties like `reason`/`quotedAmount`/`floor` are dropped. Serialize the
+// rejection payload into the Error.message field, which IS preserved across
+// the clone, then the runtime reconstructs the typed error on the other side.
+function toQuoteTransportError(error: unknown): unknown {
+    if (error instanceof QuoteRejectedError) {
+        return error.toTransportError();
+    }
+    return error;
+}
 import type { SwapManagerClient } from "../swap-manager";
 
 export const DEFAULT_MESSAGE_TAG = "ARKADE_SWAPS_UPDATER";
@@ -395,10 +408,28 @@ export type ResponseVerifyChainSwap = ResponseEnvelope & {
 
 export type RequestQuoteSwap = RequestEnvelope & {
     type: "QUOTE_SWAP";
-    payload: { swapId: string };
+    payload: { swapId: string; options?: QuoteSwapOptions };
 };
 export type ResponseQuoteSwap = ResponseEnvelope & {
     type: "SWAP_QUOTED";
+    payload: { amount: number };
+};
+
+export type RequestGetSwapQuote = RequestEnvelope & {
+    type: "GET_SWAP_QUOTE";
+    payload: { swapId: string };
+};
+export type ResponseGetSwapQuote = ResponseEnvelope & {
+    type: "SWAP_QUOTE_RETRIEVED";
+    payload: { amount: number };
+};
+
+export type RequestAcceptSwapQuote = RequestEnvelope & {
+    type: "ACCEPT_SWAP_QUOTE";
+    payload: { swapId: string; amount: number; options?: QuoteSwapOptions };
+};
+export type ResponseAcceptSwapQuote = ResponseEnvelope & {
+    type: "SWAP_QUOTE_ACCEPTED";
     payload: { amount: number };
 };
 
@@ -521,6 +552,8 @@ export type ArkadeSwapsUpdaterRequest =
     | RequestSignServerClaim
     | RequestVerifyChainSwap
     | RequestQuoteSwap
+    | RequestGetSwapQuote
+    | RequestAcceptSwapQuote
     | RequestSwapManagerStart
     | RequestSwapManagerStop
     | RequestSwapManagerAddSwap
@@ -568,6 +601,8 @@ export type ArkadeSwapsUpdaterResponse =
     | ResponseSignServerClaim
     | ResponseVerifyChainSwap
     | ResponseQuoteSwap
+    | ResponseGetSwapQuote
+    | ResponseAcceptSwapQuote
     | ResponseSwapManagerStart
     | ResponseSwapManagerStop
     | ResponseSwapManagerAddSwap
@@ -1079,14 +1114,51 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "QUOTE_SWAP": {
-                    const amount = await this.handler.quoteSwap(
-                        message.payload.swapId
-                    );
-                    return this.tagged({
-                        id,
-                        type: "SWAP_QUOTED",
-                        payload: { amount },
-                    });
+                    try {
+                        const amount = await this.handler.quoteSwap(
+                            message.payload.swapId,
+                            message.payload.options
+                        );
+                        return this.tagged({
+                            id,
+                            type: "SWAP_QUOTED",
+                            payload: { amount },
+                        });
+                    } catch (e) {
+                        throw toQuoteTransportError(e);
+                    }
+                }
+
+                case "GET_SWAP_QUOTE": {
+                    try {
+                        const amount = await this.handler.getSwapQuote(
+                            message.payload.swapId
+                        );
+                        return this.tagged({
+                            id,
+                            type: "SWAP_QUOTE_RETRIEVED",
+                            payload: { amount },
+                        });
+                    } catch (e) {
+                        throw toQuoteTransportError(e);
+                    }
+                }
+
+                case "ACCEPT_SWAP_QUOTE": {
+                    try {
+                        const amount = await this.handler.acceptSwapQuote(
+                            message.payload.swapId,
+                            message.payload.amount,
+                            message.payload.options
+                        );
+                        return this.tagged({
+                            id,
+                            type: "SWAP_QUOTE_ACCEPTED",
+                            payload: { amount },
+                        });
+                    } catch (e) {
+                        throw toQuoteTransportError(e);
+                    }
                 }
 
                 /* --- SwapManager methods --- */
