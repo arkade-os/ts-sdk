@@ -36,6 +36,16 @@ import {
 
 const DEFAULT_PAGE_SIZE = 500;
 
+/**
+ * Hard upper bound on the HD index range probed by {@link scanContracts}.
+ * Safety valve: a buggy or malicious `Discoverable` handler that returns a
+ * hit at every index would otherwise keep the gap window open forever and
+ * hang the wallet. 10k is far past any plausible real-world receive
+ * history; reaching it without the gap closing is treated as a structural
+ * failure rather than a normal scan completion.
+ */
+const SCAN_MAX_INDEX = 10_000;
+
 export type RefreshVtxosOptions = {
     scripts?: string[];
     after?: number;
@@ -505,7 +515,7 @@ export class ContractManager implements IContractManager {
             .map((t) => contractHandlers.get(t))
             .filter(isDiscoverable);
 
-        const maxIdx = opts.hd ? Number.POSITIVE_INFINITY : 0;
+        const maxIdx = opts.hd ? SCAN_MAX_INDEX : 0;
         const handlerErrors: HandlerError[] = [];
         let lastIndexUsed = -1;
         let unused = 0;
@@ -535,6 +545,19 @@ export class ContractManager implements IContractManager {
                 unused += 1;
             }
             i += 1;
+        }
+
+        // Hit the safety ceiling without the gap window closing — the
+        // scan was truncated. Surface loudly (matching the materialize-
+        // fatal contract) rather than silently returning a partial
+        // result, since the caller cannot otherwise distinguish "no
+        // more funds past lastIndexUsed" from "we stopped scanning".
+        if (opts.hd && i > maxIdx && unused < gapLimit) {
+            throw new Error(
+                `scanContracts: reached SCAN_MAX_INDEX (${SCAN_MAX_INDEX}) without closing the ` +
+                    `${gapLimit}-index gap window; a Discoverable handler may be returning ` +
+                    `unconditional hits`,
+            );
         }
 
         return { lastIndexUsed, handlerErrors };

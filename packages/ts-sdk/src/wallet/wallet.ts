@@ -1131,25 +1131,21 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     private async _runRestore(gapLimit: number): Promise<void> {
         const manager = await this.getContractManager();
         const provider = this._descriptorProvider;
-        // The HD path calls BOTH materializeDescriptorAt (gap scan) and
-        // advanceLastIndexUsed (watermark advance). A custom
-        // DescriptorProvider implementing only one of them must NOT take
-        // the HD path — it would TypeError on the missing method. Require
-        // both; otherwise fall back to the static path (which calls
-        // neither).
-        const partial = provider as Partial<HDDescriptorProvider>;
-        const hd =
-            !!provider &&
-            typeof partial.materializeDescriptorAt === "function" &&
-            typeof partial.advanceLastIndexUsed === "function";
+        // Use `instanceof` rather than duck-typing the
+        // materializeDescriptorAt / advanceLastIndexUsed surface: a
+        // non-HD provider that happens to expose either method name
+        // would otherwise be mis-classified as HD and TypeError mid-
+        // scan. There is no production extension point for custom HD
+        // providers today — if one is added, lift this into an
+        // `isHDCapableDescriptorProvider` type guard alongside
+        // `isHDCapableIdentity`.
+        const hd = provider instanceof HDDescriptorProvider;
 
         const staticDescriptor = hd
             ? undefined
             : `tr(${hex.encode(await this.identity.xOnlyPublicKey())})`;
         const materialize = (index: number): string =>
-            hd
-                ? (provider as HDDescriptorProvider).materializeDescriptorAt(index)
-                : staticDescriptor!;
+            hd ? provider.materializeDescriptorAt(index) : staticDescriptor!;
 
         const delegatePubKey =
             this.offchainTapscript instanceof DelegateVtxo.Script
@@ -1173,7 +1169,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         });
 
         if (hd && result.lastIndexUsed >= 0) {
-            await (provider as HDDescriptorProvider).advanceLastIndexUsed(result.lastIndexUsed);
+            await provider.advanceLastIndexUsed(result.lastIndexUsed);
         }
 
         // Inline pull BEFORE surfacing any handler errors so safely
