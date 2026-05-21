@@ -927,6 +927,110 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
+    it("handles RESTORE_WALLET messages and forwards gapLimit", async () => {
+        const restoreSpy = vi.fn().mockResolvedValue(undefined);
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = { restore: restoreSpy };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "RESTORE_WALLET",
+            payload: { gapLimit: 50 },
+        } as any);
+
+        expect(restoreSpy).toHaveBeenCalledWith({ gapLimit: 50 });
+        expect(response).toMatchObject({
+            tag: updater.messageTag,
+            id: "1",
+            type: "RESTORE_WALLET_SUCCESS",
+        });
+    });
+
+    it("handles RESTORE_WALLET messages without gapLimit", async () => {
+        const restoreSpy = vi.fn().mockResolvedValue(undefined);
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = { restore: restoreSpy };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "RESTORE_WALLET",
+            payload: {},
+        } as any);
+
+        expect(restoreSpy).toHaveBeenCalledWith({});
+        expect(response).toMatchObject({
+            tag: updater.messageTag,
+            type: "RESTORE_WALLET_SUCCESS",
+        });
+    });
+
+    it("RESTORE_WALLET serializes AggregateError into a structured envelope", async () => {
+        const child1 = new Error("handler-a-failed");
+        child1.name = "HandlerAError";
+        const child2 = new Error("handler-b-failed");
+        const aggregate = new AggregateError([child1, child2], "restore failed");
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            restore: vi.fn().mockRejectedValue(aggregate),
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "RESTORE_WALLET",
+            payload: { gapLimit: 20 },
+        } as any);
+
+        expect(response.error).toMatchObject({
+            name: "AggregateError",
+            message: "restore failed",
+            errors: [
+                { name: "HandlerAError", message: "handler-a-failed" },
+                { name: "Error", message: "handler-b-failed" },
+            ],
+        });
+    });
+
+    it("RESTORE_WALLET propagates non-AggregateError failures through the standard error path", async () => {
+        const err = new Error("oh no");
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            restore: vi.fn().mockRejectedValue(err),
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "RESTORE_WALLET",
+            payload: {},
+        } as any);
+
+        expect(response.error).toBeInstanceOf(Error);
+        expect(response.error?.message).toBe("oh no");
+    });
+
+    it("RESTORE_WALLET rejects on readonly wallet", async () => {
+        (updater as any).readonlyWallet = {};
+        // wallet is NOT set — readonly only
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "RESTORE_WALLET",
+            payload: {},
+        } as any);
+
+        expect(response.error).toBeInstanceOf(Error);
+        expect(response.error?.message).toBe("Read-only wallet: operation requires signing");
+    });
+
+    it("isLongRunning returns true for RESTORE_WALLET", () => {
+        expect(
+            updater.isLongRunning({
+                ...baseMessage(),
+                type: "RESTORE_WALLET",
+                payload: {},
+            } as any),
+        ).toBe(true);
+    });
+
     it("eagerly starts VtxoManager on wallet initialization", async () => {
         const getVtxoManagerSpy = vi.fn().mockResolvedValue({});
         (updater as any).readonlyWallet = {

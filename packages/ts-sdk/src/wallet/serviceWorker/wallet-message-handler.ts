@@ -55,6 +55,49 @@ export class WalletNotInitializedError extends Error {
     }
 }
 
+/**
+ * Type-guard for a {@link SerializedAggregateError} object that has survived
+ * the postMessage boundary. Used on the page side of the RESTORE_WALLET path
+ * to detect a worker-side AggregateError and reconstruct it.
+ */
+export function isSerializedAggregateError(value: unknown): value is SerializedAggregateError {
+    if (!value || typeof value !== "object") return false;
+    const v = value as Partial<SerializedAggregateError>;
+    return (
+        v.name === "AggregateError" &&
+        typeof v.message === "string" &&
+        Array.isArray(v.errors) &&
+        v.errors.every((e) => e && typeof e.name === "string" && typeof e.message === "string")
+    );
+}
+
+/** Worker-side serializer for a real {@link AggregateError}. */
+export function serializeAggregateError(error: AggregateError): SerializedAggregateError {
+    const errors: { name: string; message: string }[] = [];
+    for (const child of error.errors ?? []) {
+        if (child instanceof Error) {
+            errors.push({ name: child.name, message: child.message });
+        } else {
+            errors.push({ name: "Error", message: String(child) });
+        }
+    }
+    return {
+        name: "AggregateError",
+        message: error.message,
+        errors,
+    };
+}
+
+/** Page-side reconstructor: rebuild an {@link AggregateError} from the wire form. */
+export function deserializeAggregateError(payload: SerializedAggregateError): AggregateError {
+    const errs = payload.errors.map((e) => {
+        const err = new Error(e.message);
+        err.name = e.name;
+        return err;
+    });
+    return new AggregateError(errs, payload.message);
+}
+
 export class ReadonlyWalletError extends Error {
     constructor() {
         super("Read-only wallet: operation requires signing");
@@ -448,6 +491,27 @@ export type ResponseSweepExpiredBoardingUtxos = ResponseEnvelope & {
     payload: { txid: string };
 };
 
+export type RequestRestoreWallet = RequestEnvelope & {
+    type: "RESTORE_WALLET";
+    payload: { gapLimit?: number };
+};
+export type ResponseRestoreWallet = ResponseEnvelope & {
+    type: "RESTORE_WALLET_SUCCESS";
+};
+
+/**
+ * Wire envelope used to transmit an AggregateError across the postMessage
+ * boundary. `AggregateError` and its `.errors` array are not portable enough
+ * to rely on raw structured-clone behaviour across target browsers, so the
+ * RESTORE_WALLET path serializes/reconstructs explicitly. Non-Error entries
+ * are converted to Error on the worker side.
+ */
+export type SerializedAggregateError = {
+    name: "AggregateError";
+    message: string;
+    errors: { name: string; message: string }[];
+};
+
 // WalletUpdater
 export type WalletUpdaterRequest =
     | RequestInitWallet
@@ -486,7 +550,8 @@ export type WalletUpdaterRequest =
     | RequestGetExpiringVtxos
     | RequestRenewVtxos
     | RequestGetExpiredBoardingUtxos
-    | RequestSweepExpiredBoardingUtxos;
+    | RequestSweepExpiredBoardingUtxos
+    | RequestRestoreWallet;
 
 export type WalletUpdaterResponse = ResponseEnvelope &
     (
@@ -533,6 +598,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseRenewVtxosEvent
         | ResponseGetExpiredBoardingUtxos
         | ResponseSweepExpiredBoardingUtxos
+        | ResponseRestoreWallet
     );
 
 export class WalletMessageHandler
@@ -640,7 +706,11 @@ export class WalletMessageHandler
         return (
             message.type === "SETTLE" ||
             message.type === "RECOVER_VTXOS" ||
-            message.type === "RENEW_VTXOS"
+            message.type === "RENEW_VTXOS" ||
+            // HD restore walks the index range with one indexer round-trip per
+            // step until it hits gapLimit consecutive unused indices. The bus
+            // deadline must not race the scan; liveness stays covered by PING.
+            message.type === "RESTORE_WALLET"
         );
     }
 
@@ -1006,6 +1076,28 @@ export class WalletMessageHandler
                         id,
                         type: "SWEEP_EXPIRED_BOARDING_UTXOS_SUCCESS",
                         payload: { txid },
+                    });
+                }
+                case "RESTORE_WALLET": {
+                    const wallet = this.requireWallet();
+                    try {
+                        await wallet.restore(message.payload);
+                    } catch (error: unknown) {
+                        // AggregateError loses its prototype across postMessage
+                        // and `.errors` is not portable enough to round-trip
+                        // raw — serialize explicitly so the page can rebuild
+                        // it. Other errors fall through to the generic catch.
+                        if (error instanceof AggregateError) {
+                            return this.tagged({
+                                id,
+                                error: serializeAggregateError(error) as unknown as Error,
+                            });
+                        }
+                        throw error;
+                    }
+                    return this.tagged({
+                        id,
+                        type: "RESTORE_WALLET_SUCCESS",
                     });
                 }
                 default:

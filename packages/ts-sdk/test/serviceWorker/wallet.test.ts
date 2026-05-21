@@ -28,11 +28,20 @@ type MessageHandler = (event: { data: any }) => void;
 
 // Simulate the structured clone algorithm that postMessage uses: Error
 // subclasses lose their prototype chain and arrive as plain Error objects,
-// but name and message are preserved as own properties.
-function structuredCloneError(error: Error): Error {
-    const cloned = new Error(error.message);
-    cloned.name = error.name;
-    return cloned;
+// but name and message are preserved as own properties. Plain objects in
+// the error envelope (e.g., the RESTORE_WALLET path's serialized
+// AggregateError) survive structured clone with all enumerable own
+// properties intact, so we deep-clone them via JSON to preserve fidelity.
+function structuredCloneError(error: any): any {
+    if (error instanceof Error) {
+        const cloned = new Error(error.message);
+        cloned.name = error.name;
+        return cloned;
+    }
+    if (error && typeof error === "object") {
+        return JSON.parse(JSON.stringify(error));
+    }
+    return error;
 }
 
 function structuredCloneResponse(response: any): any {
@@ -400,6 +409,111 @@ describe("ServiceWorkerWallet", () => {
                 type: "DELEGATE",
             }),
         );
+    });
+
+    it("restore() forwards gapLimit and resolves on RESTORE_WALLET_SUCCESS", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type === "RESTORE_WALLET") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "RESTORE_WALLET_SUCCESS",
+                };
+            }
+            return null;
+        });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        await expect(wallet.restore({ gapLimit: 30 })).resolves.toBeUndefined();
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tag: messageTag,
+                type: "RESTORE_WALLET",
+                payload: { gapLimit: 30 },
+            }),
+        );
+    });
+
+    it("restore() defaults to an empty payload when called without options", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
+            id: message.id,
+            tag: messageTag,
+            type: "RESTORE_WALLET_SUCCESS",
+        }));
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        await expect(wallet.restore()).resolves.toBeUndefined();
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "RESTORE_WALLET",
+                payload: {},
+            }),
+        );
+    });
+
+    it("restore() reconstructs a worker-side AggregateError on the page", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "RESTORE_WALLET") return null;
+            return {
+                id: message.id,
+                tag: messageTag,
+                error: {
+                    name: "AggregateError",
+                    message: "restore failed",
+                    errors: [
+                        { name: "HandlerAError", message: "handler-a-failed" },
+                        { name: "Error", message: "handler-b-failed" },
+                    ],
+                },
+            };
+        });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        let caught: unknown;
+        try {
+            await wallet.restore({ gapLimit: 20 });
+        } catch (err) {
+            caught = err;
+        }
+
+        expect(caught).toBeInstanceOf(AggregateError);
+        const agg = caught as AggregateError;
+        expect(agg.message).toBe("restore failed");
+        expect(agg.errors).toHaveLength(2);
+        expect(agg.errors[0]).toBeInstanceOf(Error);
+        expect((agg.errors[0] as Error).name).toBe("HandlerAError");
+        expect((agg.errors[0] as Error).message).toBe("handler-a-failed");
+        expect((agg.errors[1] as Error).message).toBe("handler-b-failed");
+    });
+
+    it("restore() propagates non-AggregateError failures as-is", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "RESTORE_WALLET") return null;
+            return {
+                id: message.id,
+                tag: messageTag,
+                error: new Error("boom"),
+            };
+        });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        await expect(wallet.restore()).rejects.toThrow("boom");
     });
 });
 
