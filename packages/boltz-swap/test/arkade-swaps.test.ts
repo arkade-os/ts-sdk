@@ -3969,6 +3969,54 @@ describe("ArkadeSwaps", () => {
             );
         });
 
+        it("attempts every VTXO and aggregates failures into a single throw", async () => {
+            const vtxos = [
+                recoverableVtxo(txidA, 0),
+                recoverableVtxo(txidB, 1),
+            ];
+            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                vtxos: vtxos as any,
+            });
+            const joinBatchSpy = vi
+                .spyOn(swaps as any, "joinBatch")
+                .mockResolvedValueOnce(undefined)
+                .mockRejectedValueOnce(new Error("join failed"));
+
+            await expect(swaps.claimVHTLC(buildPendingSwap())).rejects.toThrow(
+                /failed to claim 1\/2 VTXOs/
+            );
+
+            // Both VTXOs were attempted — the failure on the second VTXO
+            // didn't short-circuit the loop.
+            expect(joinBatchSpy).toHaveBeenCalledTimes(2);
+            expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
+            expect(joinBatchSpy.mock.calls[1][1].txid).toBe(txidB);
+            // Status is not saved on partial success (all-or-throw).
+            expect(mockSwapRepository.saveSwap).not.toHaveBeenCalled();
+        });
+
+        it("still attempts later VTXOs when the first fails", async () => {
+            const vtxos = [
+                recoverableVtxo(txidA, 0),
+                recoverableVtxo(txidB, 1),
+            ];
+            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                vtxos: vtxos as any,
+            });
+            const joinBatchSpy = vi
+                .spyOn(swaps as any, "joinBatch")
+                .mockRejectedValueOnce(new Error("first failed"))
+                .mockResolvedValueOnce(undefined);
+
+            await expect(swaps.claimVHTLC(buildPendingSwap())).rejects.toThrow(
+                /failed to claim 1\/2 VTXOs/
+            );
+
+            expect(joinBatchSpy).toHaveBeenCalledTimes(2);
+            expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
+            expect(joinBatchSpy.mock.calls[1][1].txid).toBe(txidB);
+        });
+
         it("retries the indexer and claims every VTXO returned on the second attempt", async () => {
             vi.useFakeTimers();
             try {

@@ -584,6 +584,19 @@ export class ArkadeSwaps {
         );
         const outputScript = ArkAddress.decode(address).pkScript;
 
+        // Asymmetry with `refundArk` is deliberate: this path is all-or-
+        // throw. Each VTXO is still attempted independently (so an early
+        // failure doesn't strand later VTXOs at the lockup), and any
+        // failures are surfaced as a single aggregate error after the
+        // loop. The swap status is saved only on full success — a
+        // partial claim leaves the swap in its current Boltz-driven
+        // status (e.g. `transaction.confirmed`) so the caller / Boltz
+        // status flow can retry the whole call. We don't track a
+        // {swept, skipped} outcome here because — unlike the
+        // `swap.expired` terminal status that triggers `refundArk` —
+        // the reverse-claim path is still receiving live Boltz status
+        // transitions, and the SwapManager owns retry via those.
+        const claimErrors: { vtxo: VirtualCoin; error: Error }[] = [];
         let usedOffchainClaim = false;
         for (const vtxo of unspentVtxos) {
             const input = {
@@ -596,20 +609,36 @@ export class ArkadeSwaps {
                 script: outputScript,
             };
 
-            if (isRecoverable(vtxo)) {
-                await this.joinBatch(vhtlcIdentity, input, output, arkInfo);
-            } else {
-                await claimVHTLCwithOffchainTx(
-                    vhtlcIdentity,
-                    vhtlcScript,
-                    serverXOnly,
-                    input,
-                    output,
-                    arkInfo,
-                    this.arkProvider
-                );
-                usedOffchainClaim = true;
+            try {
+                if (isRecoverable(vtxo)) {
+                    await this.joinBatch(vhtlcIdentity, input, output, arkInfo);
+                } else {
+                    await claimVHTLCwithOffchainTx(
+                        vhtlcIdentity,
+                        vhtlcScript,
+                        serverXOnly,
+                        input,
+                        output,
+                        arkInfo,
+                        this.arkProvider
+                    );
+                    usedOffchainClaim = true;
+                }
+            } catch (error) {
+                claimErrors.push({ vtxo, error: error as Error });
             }
+        }
+
+        if (claimErrors.length > 0) {
+            const details = claimErrors
+                .map(
+                    ({ vtxo, error }) =>
+                        `${vtxo.txid}:${vtxo.vout} (${error.message})`
+                )
+                .join("; ");
+            throw new Error(
+                `Swap ${pendingSwap.id}: failed to claim ${claimErrors.length}/${unspentVtxos.length} VTXOs: ${details}`
+            );
         }
 
         const finalStatus: BoltzSwapStatus = usedOffchainClaim
