@@ -436,6 +436,43 @@ export class ContractManager implements IContractManager {
      * @returns The created contract
      */
     async createContract(params: CreateContractParams): Promise<Contract> {
+        const { contract, persisted } = await this.upsertContract(params);
+        if (persisted) {
+            // fetch all virtual outputs (including spent/swept) for this contract
+            await this.fetchContractVxosFromIndexer([contract]);
+            await this.watcher.addContract(contract);
+        }
+        return contract;
+    }
+
+    /**
+     * Lightweight variant of {@link createContract} for batch discovery
+     * paths (currently: {@link scanContracts}). Validates, dedupes, persists,
+     * and registers the watcher — but skips the per-contract
+     * `fetchContractVxosFromIndexer` round-trip. The caller is responsible
+     * for hydrating VTXOs afterwards via a bulk `refreshVtxos(...)` so a
+     * scan that finds N contracts costs one batched indexer call instead
+     * of N + 1. Error semantics are identical to `createContract`:
+     * validation / type-mismatch / persistence failures propagate.
+     */
+    private async persistAndWatchContract(params: CreateContractParams): Promise<Contract> {
+        const { contract, persisted } = await this.upsertContract(params);
+        if (persisted) {
+            await this.watcher.addContract(contract);
+        }
+        return contract;
+    }
+
+    /**
+     * Shared validate + check-existing + persist core for
+     * {@link createContract} and {@link persistAndWatchContract}. Returns
+     * the resolved contract and whether *this* call wrote it — callers
+     * that need to attach hydration / watcher work do so only when
+     * `persisted` is `true`.
+     */
+    private async upsertContract(
+        params: CreateContractParams,
+    ): Promise<{ contract: Contract; persisted: boolean }> {
         // Validate that a handler exists for this contract type
         const handler = contractHandlers.get(params.type);
         if (!handler) {
@@ -467,7 +504,7 @@ export class ContractManager implements IContractManager {
         // Check if contract already exists and verify it's the same type to avoid silent mismatches
         const [existing] = await this.getContracts({ script: params.script });
         if (existing) {
-            if (existing.type === params.type) return existing;
+            if (existing.type === params.type) return { contract: existing, persisted: false };
             throw new Error(
                 `Contract with script ${params.script} already exists with with type ${existing.type}.`,
             );
@@ -479,20 +516,19 @@ export class ContractManager implements IContractManager {
             state: params.state || "active",
         };
 
-        // Persist
         await this.config.contractRepository.saveContract(contract);
-
-        // fetch all virtual outputs (including spent/swept) for this contract
-        await this.fetchContractVxosFromIndexer([contract]);
-
-        // Add to watcher
-        await this.watcher.addContract(contract);
-
-        return contract;
+        return { contract, persisted: true };
     }
 
     /**
      * Explicit, gap-limit contract discovery (see {@link IContractManager.scanContracts}).
+     *
+     * Each hit is routed through {@link persistAndWatchContract} — the same
+     * dedupe + watcher-register path as {@link createContract} minus the
+     * per-contract indexer round-trip. The caller (`Wallet.restore`) follows
+     * up with a single bulk `refreshVtxos({ includeInactive: true })`, so a
+     * scan that finds N contracts costs one batched indexer call instead of
+     * N + 1.
      *
      * Safety-critical invariants (spec §2.C / §4):
      * - `opts.materialize(i)` throwing is structural/fatal: it is NOT
@@ -500,8 +536,8 @@ export class ContractManager implements IContractManager {
      * - A `discoverAt` rejection is collected into `handlerErrors` and the
      *   loop continues (the gap counter still advances for that index if no
      *   other handler hit it).
-     * - `createContract` rejecting is operational/fatal and propagates
-     *   (only `discoverAt` is guarded).
+     * - `persistAndWatchContract` rejecting is operational/fatal and
+     *   propagates (only `discoverAt` is guarded).
      */
     async scanContracts(opts: ScanContractsOptions): Promise<ScanResult> {
         const gapLimit = opts.gapLimit ?? 20;
@@ -534,7 +570,7 @@ export class ContractManager implements IContractManager {
                     continue;
                 }
                 for (const c of found) {
-                    await this.createContract(c); // idempotent (script-keyed)
+                    await this.persistAndWatchContract(c); // idempotent (script-keyed)
                     hitAtThisIndex = true;
                 }
             }
