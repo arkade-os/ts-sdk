@@ -242,18 +242,18 @@ Custom implementations must set `readonly version = 1` — TypeScript will error
 
 > [!WARNING]
 > If you previously used the v1 `StorageAdapter`-based repositories, migrate
-> data before use:
+> data before use. `migrateToSwapRepository` copies legacy `reverseSwaps` and
+> `submarineSwaps` collections from the old `ContractRepository` into the new
+> `SwapRepository`. It writes its own swap-specific migration flag, so it is
+> idempotent and safe to call on every startup — do not gate it on the
+> wallet-side `getMigrationStatus`.
 >
 > ```typescript
 > import { IndexedDbSwapRepository, migrateToSwapRepository } from '@arkade-os/boltz-swap'
-> import { getMigrationStatus } from '@arkade-os/sdk'
 > import { IndexedDBStorageAdapter } from '@arkade-os/sdk/adapters/indexedDB'
 >
 > const oldStorage = new IndexedDBStorageAdapter('arkade-service-worker', 1)
-> const status = await getMigrationStatus('wallet', oldStorage)
-> if (status !== 'not-needed') {
->   await migrateToSwapRepository(oldStorage, new IndexedDbSwapRepository())
-> }
+> await migrateToSwapRepository(oldStorage, new IndexedDbSwapRepository())
 > ```
 
 ## Expo / React Native
@@ -283,16 +283,14 @@ Expo/React Native cannot run a long-lived Service Worker, and background work is
 npx expo install expo-task-manager expo-background-task
 npx expo install @react-native-async-storage/async-storage expo-secure-store
 npx expo install expo-crypto
-npx expo install expo-sqlite && npm install indexeddbshim
+npx expo install expo-sqlite
 ```
 
-- If you rely on the default IndexedDB-backed repositories in Expo, call `setupExpoDb()` **before any SDK/boltz-swap import**:
-
-```ts
-import { setupExpoDb } from "@arkade-os/sdk/adapters/expo-db";
-
-setupExpoDb();
-```
+- For persistence on Expo, prefer the SQLite-backed repositories
+  (`@arkade-os/boltz-swap/repositories/sqlite` and
+  `@arkade-os/sdk/repositories/sqlite`) on top of `expo-sqlite`, or the Realm
+  repositories on top of `realm`. There is no SDK-shipped IndexedDB helper
+  for Expo.
 
 - Expo requires a `crypto.getRandomValues()` polyfill for cryptographic operations:
 
@@ -310,13 +308,20 @@ global.crypto.getRandomValues = Crypto.getRandomValues;
 // App entry point (e.g., _layout.tsx) — GLOBAL SCOPE
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
+import * as SQLite from "expo-sqlite";
 import { SingleKey } from "@arkade-os/sdk";
 import { AsyncStorageTaskQueue } from "@arkade-os/sdk/worker/expo";
-import { IndexedDbSwapRepository } from "@arkade-os/boltz-swap";
+import { SQLiteSwapRepository } from "@arkade-os/boltz-swap/repositories/sqlite";
 import { defineExpoSwapBackgroundTask } from "@arkade-os/boltz-swap/expo/background";
 
 const swapTaskQueue = new AsyncStorageTaskQueue(AsyncStorage, "ark:swap-queue");
-const swapRepository = new IndexedDbSwapRepository();
+
+const swapDb = SQLite.openDatabaseSync("ark-swaps.db");
+const swapRepository = new SQLiteSwapRepository({
+  run: (sql, params) => swapDb.runAsync(sql, params ?? []),
+  get: (sql, params) => swapDb.getFirstAsync(sql, params ?? []),
+  all: (sql, params) => swapDb.getAllAsync(sql, params ?? []),
+});
 
 defineExpoSwapBackgroundTask("ark-swap-poll", {
   taskQueue: swapTaskQueue,
