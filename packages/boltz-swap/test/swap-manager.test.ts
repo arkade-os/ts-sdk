@@ -1544,6 +1544,37 @@ describe("SwapManager", () => {
             }
         });
 
+        it("clears the pending retry on removeSwap()", async () => {
+            vi.useFakeTimers();
+            try {
+                const refundArk = vi
+                    .fn()
+                    .mockResolvedValueOnce({ swept: 0, skipped: 1 });
+                swapManager = new SwapManager(swapProvider, swapManagerConfig);
+                swapManager.setCallbacks(
+                    makeCallbacks({
+                        refundArk,
+                        saveSwap: vi.fn(),
+                    })
+                );
+
+                await swapManager.start([
+                    { ...refundableChainSwap, status: "swap.created" },
+                ]);
+                mockWebSocket.onopen();
+                await triggerSwapExpired();
+
+                expect(refundArk).toHaveBeenCalledTimes(1);
+                await swapManager.removeSwap(refundableChainSwap.id);
+
+                await vi.advanceTimersByTimeAsync(120_000);
+                // Timer was cancelled — no second call.
+                expect(refundArk).toHaveBeenCalledTimes(1);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
         it("keeps the swap monitored and schedules a retry when refundArk throws", async () => {
             vi.useFakeTimers();
             try {

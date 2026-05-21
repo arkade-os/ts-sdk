@@ -941,6 +941,10 @@ export class SwapManager implements SwapManagerClient {
                 if (!this.isRunning) return;
                 if (!this.monitoredSwaps.has(swap.id)) return;
                 try {
+                    // `swap` is captured at scheduling time; its fields
+                    // are stable for chain refunds because swap.expired
+                    // is terminal and Boltz won't transition it again,
+                    // so the snapshot remains accurate across retries.
                     await this.executeAutonomousAction(swap);
                 } finally {
                     // The retry callback either re-scheduled itself (still

@@ -1802,9 +1802,8 @@ export class ArkadeSwaps {
 
         const outputScript = ArkAddress.decode(address).pkScript;
         const refundWithoutReceiverLeaf = vhtlcScript.refundWithoutReceiver();
-        const cltvSatisfied = isSubmarineRefundLocktimeReached(
-            pendingSwap.response.lockupDetails.timeouts!.refund
-        );
+        const refundLocktime =
+            pendingSwap.response.lockupDetails.timeouts!.refund;
 
         let boltzCallCount = 0;
         let sweptCount = 0;
@@ -1817,7 +1816,12 @@ export class ArkadeSwaps {
                 script: outputScript,
             };
 
-            if (cltvSatisfied) {
+            // Re-evaluate per iteration so a CLTV that elapses mid-loop
+            // is observed by every branch (recoverable + non-recoverable).
+            // `Date.now()` is cheap; the snapshot saved nothing material
+            // and could needlessly defer a recoverable VTXO whose
+            // locktime had just passed.
+            if (isSubmarineRefundLocktimeReached(refundLocktime)) {
                 const input = {
                     ...vtxo,
                     tapLeafScript: refundWithoutReceiverLeaf,
@@ -1838,7 +1842,7 @@ export class ArkadeSwaps {
                 logger.error(
                     `Swap ${pendingSwap.id}: recoverable VTXO ${vtxo.txid}:${vtxo.vout} ` +
                         `cannot be refunded yet — refundWithoutReceiver locktime has not passed ` +
-                        `(refundLocktime=${pendingSwap.response.lockupDetails.timeouts!.refund}, ` +
+                        `(refundLocktime=${refundLocktime}, ` +
                         `currentTimestamp=${Math.floor(Date.now() / 1000)}). ` +
                         `Refund will be retried after locktime.`
                 );
@@ -1878,16 +1882,12 @@ export class ArkadeSwaps {
                     throw error;
                 }
 
-                if (
-                    !isSubmarineRefundLocktimeReached(
-                        pendingSwap.response.lockupDetails.timeouts!.refund
-                    )
-                ) {
+                if (!isSubmarineRefundLocktimeReached(refundLocktime)) {
                     logger.error(
                         `Swap ${pendingSwap.id}: Boltz rejected VTXO outpoint and ` +
                             `refundWithoutReceiver locktime has not passed yet ` +
                             `(currentTimestamp=${Math.floor(Date.now() / 1000)}, ` +
-                            `locktime=${pendingSwap.response.lockupDetails.timeouts!.refund}). ` +
+                            `locktime=${refundLocktime}). ` +
                             `Refund will be retried after locktime.`
                     );
                     skippedCount++;
