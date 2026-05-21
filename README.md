@@ -81,17 +81,25 @@ After regenerating, sanity-check that source links in the generated HTML point t
 
 ## Releasing
 
-Releases are run from the repository root and publish both packages in lockstep. The release command sets `@arkade-os/sdk` and `@arkade-os/boltz-swap` to one shared version, builds, commits and tags `v<version>`, publishes SDK first, publishes boltz-swap, then pushes the commit and tag.
+Releases run from the repository root and are package-scoped. Each package is released independently with its own version and its own `<package-name>/<version>` tag (e.g. `@arkade-os/sdk/0.4.28`). Releasing `@arkade-os/sdk` also releases `@arkade-os/boltz-swap` by default because boltz-swap depends on SDK via `workspace:*`, which pnpm rewrites to an exact version at publish time.
 
 ```bash
-pnpm run release                    # Prompt for a bump or literal version
-pnpm run release -- <version>       # First lockstep release while versions differ
-pnpm run release -- patch           # Normal flow after versions are aligned
-pnpm run release:dry-run -- <version>
-pnpm run release:cleanup
+pnpm run release -- boltz-swap patch          # Boltz bugfix only
+pnpm run release -- sdk patch                 # SDK + dependent boltz-swap patch
+pnpm run release -- sdk minor --boltz-bump patch
+pnpm run release -- all patch                 # Bump both
+pnpm run release -- sdk prepatch --preid beta # Mirrors prerelease into boltz-swap
+
+pnpm run release:dry-run -- sdk patch
+pnpm run release:cleanup                      # Auto-detect dirty artifacts
+pnpm run release:cleanup -- sdk               # Clean only sdk artifacts
 ```
 
-While package versions are not aligned, use a literal target version. Package-local release scripts are disabled.
+Targets are `sdk`, `boltz-swap`, or `all`. Bumps accept `patch | minor | major | prepatch | preminor | premajor | prerelease` or a literal semver. Prerelease bumps require `--preid alpha|beta|rc|next`.
+
+When SDK is released, the dependent boltz-swap bump defaults to `patch`; prerelease SDK bumps mirror the prerelease shape and `--preid` into boltz-swap unless overridden with `--boltz-bump`. Before publishing boltz-swap, the release script packs it to a temp dir and verifies that the packed manifest pins the intended `@arkade-os/sdk` version.
+
+Cleanup restores selected package manifests and removes selected local `<package>/<version>` tags. It never deletes remote tags and never resets commits; if a release commit was already created, run `git reset --hard HEAD~1` manually after inspecting `git log`. Package-local release scripts are disabled.
 
 ## License
 

@@ -429,7 +429,7 @@ import {
 
 ### Releasing
 
-Package-local releases are disabled. Releases happen from the repository root in lockstep with the rest of the monorepo; see the [root README](../../README.md#releasing).
+Package-local releases are disabled. Releases run from the monorepo root and are package-scoped: `pnpm run release -- boltz-swap patch` bumps and publishes just `@arkade-os/boltz-swap` with a `@arkade-os/boltz-swap/<version>` tag, against the currently published `@arkade-os/sdk` version. See the [root README](../../README.md#releasing) for full flags and `pnpm run release -- --help`.
 
 ## License
 

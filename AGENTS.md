@@ -43,11 +43,16 @@ pnpm run regtest:test:ts-sdk
 pnpm run regtest:down:ts-sdk
 pnpm run regtest:reset:ts-sdk
 
-# Release
-pnpm run release              # Release both packages at the same version
-pnpm run release -- <version>     # First lockstep release while versions differ
-pnpm run release:dry-run -- <version>  # Preview a lockstep release
+# Release (package-scoped; target = sdk | boltz-swap | all)
+pnpm run release -- boltz-swap patch          # Boltz bugfix only
+pnpm run release -- sdk patch                 # SDK + dependent boltz-swap patch
+pnpm run release -- sdk prepatch --preid beta # Mirrors prerelease into boltz-swap
+pnpm run release -- all patch                 # Bump both
+pnpm run release:dry-run -- sdk patch         # Preview without changes
+pnpm run release:cleanup                      # Auto-detect dirty release artifacts
 ```
+
+Tags are `@arkade-os/sdk/<version>` and `@arkade-os/boltz-swap/<version>` (no `v<version>`). Releasing SDK implies a dependent boltz-swap release because boltz-swap depends on SDK via `workspace:*`; override with `--boltz-bump <bump-or-version>`. npm publishing is local-only.
 
 ## Code Style
 
@@ -66,7 +71,8 @@ packages/
   boltz-swap/        # @arkade-os/boltz-swap — Boltz submarine swaps (depends on ts-sdk)
 regtest/             # Git submodule (arkade-regtest) — shared regtest environment
 scripts/
-  release.sh         # Root lockstep release orchestrator (SDK first, then boltz-swap)
+  release.mjs        # Root package-scoped release orchestrator (SDK first, then boltz-swap)
+  release.sh         # Thin wrapper that execs release.mjs
 ```
 
 ### `@arkade-os/sdk` (packages/ts-sdk)
