@@ -43,6 +43,7 @@ const VALID_PREIDS = new Set(["alpha", "beta", "rc", "next"]);
 const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z][0-9A-Za-z.-]*))?$/;
 
 const STATE_FILE = path.join(ROOT_DIR, ".git", "arkade-release-state.json");
+const RELEASE_BRANCH = "master";
 
 function die(message) {
     console.error(`Error: ${message}`);
@@ -253,6 +254,8 @@ function parseArgs(argv) {
                 args.boltzBump = argv[++i];
                 break;
             case "--":
+                positional.push(...argv.slice(i + 1));
+                i = argv.length;
                 break;
             default:
                 if (arg.startsWith("--")) die(`Unknown option: ${arg}`);
@@ -346,8 +349,8 @@ function computeTargetVersions({ target, bump, preid, boltzBump }) {
             die(`Unhandled selection for ${pkg.key} with target ${target}`);
         }
 
-        if (compareVersions(parseVersion(next), parseVersion(current)) < 0) {
-            die(`Target version ${next} is lower than current ${pkg.name}@${current}`);
+        if (compareVersions(parseVersion(next), parseVersion(current)) <= 0) {
+            die(`Target version ${next} must be greater than current ${pkg.name}@${current}`);
         }
         plan.set(pkg.key, { current, next });
     }
@@ -389,6 +392,22 @@ function summarizePlan({ target, bump, preid, boltzBump, plan }) {
             `  boltz-swap pinned @arkade-os/sdk: ${sdkVersion} (changes: ${
                 sdkChanges ? "yes" : "no"
             })`,
+        );
+    }
+}
+
+function gitCurrentBranch() {
+    return execFileSync("git", ["branch", "--show-current"], {
+        cwd: ROOT_DIR,
+        encoding: "utf8",
+    }).trim();
+}
+
+function assertReleaseBranch() {
+    const branch = gitCurrentBranch();
+    if (branch !== RELEASE_BRANCH) {
+        die(
+            `Releases must be run from ${RELEASE_BRANCH}; current branch is ${branch || "detached HEAD"}`,
         );
     }
 }
@@ -569,6 +588,7 @@ function dryRun(args) {
 
 function release(args) {
     const plan = computeTargetVersions(args);
+    assertReleaseBranch();
     summarizePlan({ ...args, plan });
 
     if (!gitClean()) {

@@ -3,7 +3,8 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - "@arkade-os/sdk/**"
+      - "@arkade-os/boltz-swap/**"
 
 permissions:
   contents: write
