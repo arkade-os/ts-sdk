@@ -1238,73 +1238,24 @@ _For complete API documentation, visit our [TypeDoc documentation](https://arkad
 
 ## Development
 
-### Requirements
+This package is developed inside the [arkade-os/ts-sdk](../..) monorepo. See the [root README](../../README.md) for repo-wide setup (`pnpm install`, submodule init, lint) and the integration test workflow against the shared regtest stack.
 
-- [pnpm](https://pnpm.io/) - Package manager
-- [nigiri](https://github.com/vulpemventures/nigiri) - For running integration tests with a local Bitcoin regtest network
-
-### Setup
-
-1. Install dependencies:
-
-   ```bash
-   pnpm install
-   pnpm format
-   pnpm lint
-   ```
-
-1. Install nigiri for integration tests:
-
-   ```bash
-   curl https://getnigiri.vulpem.com | bash
-   ```
-
-### Running Tests
+Common package-local commands (run from the repo root):
 
 ```bash
-# Run all tests
-pnpm test
-
-# Run unit tests only
-pnpm test:unit
-
-# Run integration tests with ark provided by nigiri
-nigiri start --ark
-pnpm test:setup # Run setup script for integration tests
-pnpm test:integration
-nigiri stop --delete
-
-# Run integration tests with ark provided by docker (requires nigiri)
-nigiri start
-pnpm test:up-docker
-pnpm test:setup-docker # Run setup script for integration tests
-pnpm test:integration-docker
-pnpm test:down-docker
-nigiri stop --delete
-
-# Watch mode for development
-pnpm test:watch
-
-# Run tests with coverage
-pnpm test:coverage
+pnpm -C packages/ts-sdk run typecheck    # Type-check the SDK
+pnpm -C packages/ts-sdk test:unit        # Unit tests, excluding e2e
+pnpm -C packages/ts-sdk test:watch       # Vitest watch mode
+pnpm -C packages/ts-sdk test:coverage    # Coverage report
+pnpm -C packages/ts-sdk docs:build       # Build TypeDoc API docs
+pnpm -C packages/ts-sdk docs:open        # Open API docs in the browser
 ```
 
-### Building the documentation
-
-```bash
-# Build the TypeScript documentation
-pnpm docs:build
-# Open the docs in the browser
-pnpm docs:open
-```
+For integration tests, use the root commands (`pnpm run test:integration:ts-sdk` and the `regtest:*:ts-sdk` family) — see the root README.
 
 ### Releasing
 
-Package-local releases are disabled. Maintainers release this package from the repository root together with the rest of the monorepo.
-
-```bash
-pnpm run release
-```
+Package-local releases are disabled. Releases happen from the repository root in lockstep with the rest of the monorepo; see the [root README](../../README.md#releasing).
 
 ## License
 

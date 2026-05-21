@@ -424,11 +424,7 @@ import {
 
 ### Releasing
 
-Package-local releases are disabled. Maintainers release this package from the repository root together with the rest of the monorepo.
-
-```bash
-pnpm run release
-```
+Package-local releases are disabled. Releases happen from the repository root in lockstep with the rest of the monorepo; see the [root README](../../README.md#releasing).
 
 ## License
 
