@@ -1240,7 +1240,7 @@ For integration tests, use the root commands (`pnpm run test:integration:ts-sdk`
 
 ### Releasing
 
-Package-local releases are disabled. Releases happen from the repository root in lockstep with the rest of the monorepo; see the [root README](../../README.md#releasing).
+Package-local releases are disabled. Releases run from the monorepo root and are package-scoped: `pnpm run release -- sdk patch` bumps `@arkade-os/sdk`, creates a `@arkade-os/sdk/<version>` tag, and also bumps `@arkade-os/boltz-swap` (which depends on SDK via `workspace:*`). See the [root README](../../README.md#releasing) for full flags and `pnpm run release -- --help`.
 
 ## License
 
