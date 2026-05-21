@@ -108,3 +108,7 @@ Packages extend shared base configs from `config/`:
 - ts-sdk uses `test/polyfill.js` (IndexedDB shim + EventSource polyfill for Node)
 - boltz-swap uses `test/setup.ts`
 - Integration tests live in `test/e2e/` within each package and require the Docker regtest stack
+
+## Local Scratch Files
+
+`.gitignore` excludes `*.agents.md`, `TASKS.md`, `CLAUDE.md`, `REVIEW.md`, and `.claude/`. These are local scratch notes — drafts, review snapshots, AI session state — and are **not** authoritative project guidance. Authoritative guidance lives in this `AGENTS.md` (and the package READMEs); treat anything in an ignored file as transient context that may be stale or contradict the codebase.
