@@ -369,7 +369,7 @@ The wallet's `assetManager` lets you create and manage assets on Arkade. The `se
 ```typescript
 // Issue a new asset (non-reissuable by default)
 const { assetId: controlAssetId } = await wallet.assetManager.issue({
-  amount: 1,
+  amount: 1n,
   metadata: {
     ticker: 'ctrl-MTK'
   }
@@ -377,7 +377,7 @@ const { assetId: controlAssetId } = await wallet.assetManager.issue({
 
 // Issue a new asset referencing the control asset
 const { assetId } = await wallet.assetManager.issue({
-  amount: 500,
+  amount: 500n,
   controlAssetId,
   metadata: {
     ticker: 'MTK'
@@ -387,19 +387,19 @@ const { assetId } = await wallet.assetManager.issue({
 // Reissue more supply of the asset (requires ownership of the control asset)
 const reissuanceTxId = await wallet.assetManager.reissue({
   assetId,
-  amount: 500,
+  amount: 500n,
 })
 
 // Burn some of the asset
 const burnTxId = await wallet.assetManager.burn({
   assetId,
-  amount: 200,
+  amount: 200n,
 })
 
 // Send asset to another Arkade address
 const sendTxId = await wallet.send({
   address: 'ark1q...',
-  assets: [{ assetId, amount: 100 }],
+  assets: [{ assetId, amount: 100n }],
 })
 
 // Check remaining balance
@@ -653,12 +653,12 @@ const history = await wallet.getTransactionHistory()
         arkTxid: string;
     };
     type: "SENT" | "RECEIVED";
-    amount: number;
+    amount: number;       // BTC amount in satoshis
     settled: boolean;
     createdAt: number;
     assets?: Array<{
         assetId: string,
-        amount: number
+        amount: bigint    // asset amount in base units
     }>
 }
 */
@@ -896,20 +896,11 @@ The `StorageAdapter` API is deprecated. Use repositories instead. If you omit `s
 > next call to `getMigrationStatus` can detect the partial migration. Old data
 > is never deleted — re-running migration after a rollback is safe.
 >
-> Anything related to contract repository migration must be handled by the package which created them. The SDK doesn't manage contracts in V1. Data remains untouched and persisted in the same old location.
->
-> If you persisted custom data in the ContractRepository via its `setContractData` method,
-> or a custom collection via `saveToContractCollection`, you'll need to migrate it manually:
->
-> ```typescript
-> // Custom data stored in the ContractRepository
-> const oldStorage = new IndexedDBStorageAdapter('legacy-wallet', 1)
-> const oldRepo = new ContractRepositoryImpl(storageAdapter)
-> const customContract = await oldRepo.getContractData('my-contract', 'status')
-> await contractRepository.setContractData('my-contract', 'status', customData)
-> const customCollection = await oldRepo.getContractCollection('swaps')
-> await contractRepository.saveToContractCollection('swaps', customCollection)
-> ```
+> Anything related to contract repository migration must be handled by the
+> package that created the contracts. The SDK doesn't manage external contracts
+> in V1; data persisted by other packages remains untouched in its original
+> location. For example, see `@arkade-os/boltz-swap`'s `migrateToSwapRepository`
+> for migrating legacy `reverseSwaps` / `submarineSwaps` collections.
 
 #### Repository Versioning
 
@@ -1213,25 +1204,19 @@ The watcher features:
 
 ### Repository Pattern
 
-Access low-level data management through repositories:
+Most users don't need to touch repositories directly — `Wallet` and `ContractManager` already read and write through them. They are documented here for advanced integrations (custom storage backends, offline-first apps, repository inspection).
 
 ```typescript
-// Virtual output management (automatically cached for performance)
+// Wallet repository — VTXOs, UTXOs, transaction history, settings
 const addr = await wallet.getAddress()
 const vtxos = await wallet.walletRepository.getVtxos(addr)
-await wallet.walletRepository.saveVtxos(addr, vtxos)
+const utxos = await wallet.walletRepository.getUtxos(addr)
+const history = await wallet.walletRepository.getTransactionHistory(addr)
 
-// Contract data for SDK integrations
-await wallet.contractRepository.setContractData('my-contract', 'status', 'active')
-const status = await wallet.contractRepository.getContractData('my-contract', 'status')
-
-// Collection management for related data
-await wallet.contractRepository.saveToContractCollection(
-  'swaps',
-  { id: 'swap-1', amount: 50000, type: 'reverse' },
-  'id' // key field
-)
-const swaps = await wallet.contractRepository.getContractCollection('swaps')
+// Contract repository — script-keyed contracts (default address, VHTLCs, etc.)
+const contracts = await wallet.contractRepository.getContracts({ type: 'vhtlc' })
+await wallet.contractRepository.saveContract(myContract)
+await wallet.contractRepository.deleteContract(myContract.script)
 ```
 
 _For complete API documentation, visit our [TypeDoc documentation](https://arkade-os.github.io/ts-sdk/)._
