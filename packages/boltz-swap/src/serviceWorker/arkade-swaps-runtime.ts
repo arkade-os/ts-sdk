@@ -4,6 +4,7 @@ import {
     ArkadeSwapsConfig,
     BtcToArkResponse,
     Chain,
+    ChainArkRefundOutcome,
     ChainFeesResponse,
     CreateLightningInvoiceRequest,
     CreateLightningInvoiceResponse,
@@ -56,6 +57,7 @@ import type {
     ResponseInspectSubmarineRecovery,
     ResponseScanRecoverableSubmarineSwaps,
     ResponseRecoverAllSubmarineFunds,
+    ResponseRefundArk,
     ResponseRefundVhtlc,
     ResponseRecoverSubmarineFunds,
 } from "./arkade-swaps-message-handler";
@@ -737,13 +739,16 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         });
     }
 
-    async refundArk(pendingSwap: BoltzChainSwap): Promise<void> {
-        await this.sendMessage({
+    async refundArk(
+        pendingSwap: BoltzChainSwap
+    ): Promise<ChainArkRefundOutcome> {
+        const res = await this.sendMessage({
             id: getRandomId(),
             tag: this.messageTag,
             type: "REFUND_ARK",
             payload: pendingSwap,
         });
+        return (res as ResponseRefundArk).payload;
     }
 
     async signCooperativeClaimForServer(pendingSwap: BoltzChainSwap): Promise<void> {

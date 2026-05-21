@@ -1391,4 +1391,249 @@ describe("SwapManager", () => {
             expect(onSwapFailed).not.toHaveBeenCalled();
         });
     });
+
+    describe("Chain refund partial-outcome retry", () => {
+        const refundableChainSwap: BoltzChainSwap = {
+            ...mockChainSwap,
+            status: "swap.expired",
+        };
+
+        const triggerSwapExpired = async () => {
+            const message = {
+                event: "update",
+                args: [
+                    {
+                        id: refundableChainSwap.id,
+                        status: "swap.expired",
+                    },
+                ],
+            };
+            await mockWebSocket.onmessage({
+                data: JSON.stringify(message),
+            });
+        };
+
+        it("keeps the swap monitored and schedules a retry when refundArk reports skipped > 0", async () => {
+            vi.useFakeTimers();
+            try {
+                const refundArk = vi
+                    .fn()
+                    .mockResolvedValueOnce({ swept: 0, skipped: 2 });
+                const onSwapCompleted = vi.fn();
+                swapManager = new SwapManager(swapProvider, {
+                    ...swapManagerConfig,
+                    events: { onSwapCompleted },
+                });
+                swapManager.setCallbacks(
+                    makeCallbacks({
+                        refundArk,
+                        saveSwap: vi.fn(),
+                    })
+                );
+
+                await swapManager.start([
+                    { ...refundableChainSwap, status: "swap.created" },
+                ]);
+                mockWebSocket.onopen();
+                await triggerSwapExpired();
+
+                expect(refundArk).toHaveBeenCalledTimes(1);
+                const stats = await swapManager.getStats();
+                expect(stats.monitoredSwaps).toBe(1);
+                expect(onSwapCompleted).not.toHaveBeenCalled();
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("re-invokes refundArk after the retry delay until it sweeps the remaining VTXOs", async () => {
+            vi.useFakeTimers();
+            try {
+                const refundArk = vi
+                    .fn()
+                    .mockResolvedValueOnce({ swept: 0, skipped: 1 })
+                    .mockResolvedValueOnce({ swept: 1, skipped: 0 });
+                const onSwapCompleted = vi.fn();
+                swapManager = new SwapManager(swapProvider, {
+                    ...swapManagerConfig,
+                    events: { onSwapCompleted },
+                });
+                swapManager.setCallbacks(
+                    makeCallbacks({
+                        refundArk,
+                        saveSwap: vi.fn(),
+                    })
+                );
+
+                await swapManager.start([
+                    { ...refundableChainSwap, status: "swap.created" },
+                ]);
+                mockWebSocket.onopen();
+                await triggerSwapExpired();
+
+                // Advance just past the retry delay (60s). The retry callback
+                // then awaits refundArk and finalizes monitoring cleanup.
+                await vi.advanceTimersByTimeAsync(60_001);
+
+                expect(refundArk).toHaveBeenCalledTimes(2);
+                const stats = await swapManager.getStats();
+                expect(stats.monitoredSwaps).toBe(0);
+                expect(onSwapCompleted).toHaveBeenCalledTimes(1);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("removes the swap immediately and emits completed when refundArk reports no skipped VTXOs", async () => {
+            const refundArk = vi.fn().mockResolvedValue({
+                swept: 1,
+                skipped: 0,
+            });
+            const onSwapCompleted = vi.fn();
+            swapManager = new SwapManager(swapProvider, {
+                ...swapManagerConfig,
+                events: { onSwapCompleted },
+            });
+            swapManager.setCallbacks(
+                makeCallbacks({
+                    refundArk,
+                    saveSwap: vi.fn(),
+                })
+            );
+
+            await swapManager.start([
+                { ...refundableChainSwap, status: "swap.created" },
+            ]);
+            mockWebSocket.onopen();
+            await triggerSwapExpired();
+
+            expect(refundArk).toHaveBeenCalledTimes(1);
+            const stats = await swapManager.getStats();
+            expect(stats.monitoredSwaps).toBe(0);
+            expect(onSwapCompleted).toHaveBeenCalledTimes(1);
+        });
+
+        it("clears the pending retry on stop()", async () => {
+            vi.useFakeTimers();
+            try {
+                const refundArk = vi
+                    .fn()
+                    .mockResolvedValueOnce({ swept: 0, skipped: 1 });
+                swapManager = new SwapManager(swapProvider, swapManagerConfig);
+                swapManager.setCallbacks(
+                    makeCallbacks({
+                        refundArk,
+                        saveSwap: vi.fn(),
+                    })
+                );
+
+                await swapManager.start([
+                    { ...refundableChainSwap, status: "swap.created" },
+                ]);
+                mockWebSocket.onopen();
+                await triggerSwapExpired();
+
+                expect(refundArk).toHaveBeenCalledTimes(1);
+
+                await swapManager.stop();
+                // Past the retry deadline, no further refundArk calls land.
+                await vi.advanceTimersByTimeAsync(120_000);
+                expect(refundArk).toHaveBeenCalledTimes(1);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("keeps the swap monitored and schedules a retry when refundArk throws", async () => {
+            vi.useFakeTimers();
+            try {
+                const refundArk = vi
+                    .fn()
+                    .mockRejectedValueOnce(new Error("transient refund error"))
+                    .mockResolvedValueOnce({ swept: 1, skipped: 0 });
+                const onSwapCompleted = vi.fn();
+                const onSwapFailed = vi.fn();
+                swapManager = new SwapManager(swapProvider, {
+                    ...swapManagerConfig,
+                    events: { onSwapCompleted, onSwapFailed },
+                });
+                swapManager.setCallbacks(
+                    makeCallbacks({
+                        refundArk,
+                        saveSwap: vi.fn(),
+                    })
+                );
+
+                await swapManager.start([
+                    { ...refundableChainSwap, status: "swap.created" },
+                ]);
+                mockWebSocket.onopen();
+                await triggerSwapExpired();
+
+                // Throw on the initial attempt: emit swapFailed but keep
+                // the swap monitored — a transient refund failure must
+                // not drop funds.
+                expect(refundArk).toHaveBeenCalledTimes(1);
+                expect(onSwapFailed).toHaveBeenCalledTimes(1);
+                const statsAfterThrow = await swapManager.getStats();
+                expect(statsAfterThrow.monitoredSwaps).toBe(1);
+                expect(onSwapCompleted).not.toHaveBeenCalled();
+
+                await vi.advanceTimersByTimeAsync(60_001);
+
+                expect(refundArk).toHaveBeenCalledTimes(2);
+                const stats = await swapManager.getStats();
+                expect(stats.monitoredSwaps).toBe(0);
+                expect(onSwapCompleted).toHaveBeenCalledTimes(1);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("re-schedules indefinitely while refundArk keeps throwing", async () => {
+            vi.useFakeTimers();
+            try {
+                const refundArk = vi
+                    .fn()
+                    .mockRejectedValueOnce(new Error("transient 1"))
+                    .mockRejectedValueOnce(new Error("transient 2"))
+                    .mockResolvedValueOnce({ swept: 1, skipped: 0 });
+                const onSwapCompleted = vi.fn();
+                swapManager = new SwapManager(swapProvider, {
+                    ...swapManagerConfig,
+                    events: { onSwapCompleted },
+                });
+                swapManager.setCallbacks(
+                    makeCallbacks({
+                        refundArk,
+                        saveSwap: vi.fn(),
+                    })
+                );
+
+                await swapManager.start([
+                    { ...refundableChainSwap, status: "swap.created" },
+                ]);
+                mockWebSocket.onopen();
+                await triggerSwapExpired();
+
+                // First throw → swap monitored, retry scheduled.
+                expect(refundArk).toHaveBeenCalledTimes(1);
+
+                // Second throw after the first retry delay → still monitored.
+                await vi.advanceTimersByTimeAsync(60_001);
+                expect(refundArk).toHaveBeenCalledTimes(2);
+                const statsAfterSecond = await swapManager.getStats();
+                expect(statsAfterSecond.monitoredSwaps).toBe(1);
+
+                // Third call succeeds → swap dropped + completion emitted.
+                await vi.advanceTimersByTimeAsync(60_001);
+                expect(refundArk).toHaveBeenCalledTimes(3);
+                const stats = await swapManager.getStats();
+                expect(stats.monitoredSwaps).toBe(0);
+                expect(onSwapCompleted).toHaveBeenCalledTimes(1);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+    });
 });
