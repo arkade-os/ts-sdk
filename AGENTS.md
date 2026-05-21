@@ -30,12 +30,18 @@ pnpm -C packages/boltz-swap vitest run test/swap-manager.test.ts
 pnpm -C packages/ts-sdk vitest run -t "test name pattern"
 
 # Integration tests (require Docker regtest stack)
-pnpm run regtest:up           # Start nigiri + Docker services
-pnpm run regtest:setup        # Initialize wallets and shared test fixtures
-pnpm run test:integration     # Run integration tests for both packages
-pnpm run regtest:test         # Run setup + integration tests for both packages
-pnpm run regtest:down         # Stop Docker services
-pnpm run regtest:reset        # Reset Docker volumes
+# `test:integration` runs each package's full cycle (reset + up + setup + test)
+# via `scripts/regtest.sh <pkg> cycle`, using packages/<pkg>/.env.regtest.
+pnpm run test:integration              # Both packages, end-to-end
+pnpm run test:integration:ts-sdk       # ts-sdk only
+pnpm run test:integration:boltz-swap   # boltz-swap only
+
+# Per-package stack control (replace :ts-sdk with :boltz-swap for the other)
+pnpm run regtest:up:ts-sdk
+pnpm run regtest:setup:ts-sdk
+pnpm run regtest:test:ts-sdk
+pnpm run regtest:down:ts-sdk
+pnpm run regtest:reset:ts-sdk
 
 # Release
 pnpm run release              # Release both packages at the same version
@@ -54,7 +60,7 @@ pnpm run release:dry-run -- <version>  # Preview a lockstep release
 ### Workspace Structure
 
 ```
-config/              # Shared configs (tsconfig.base.json, vitest.base.ts, eslint.base.cjs)
+config/              # Shared configs (tsconfig.base.json, vitest.base.ts)
 packages/
   ts-sdk/            # @arkade-os/sdk — core Bitcoin wallet SDK
   boltz-swap/        # @arkade-os/boltz-swap — Boltz submarine swaps (depends on ts-sdk)
@@ -65,7 +71,7 @@ scripts/
 
 ### `@arkade-os/sdk` (packages/ts-sdk)
 
-Dual ESM/CJS build via `tsc` (separate tsconfig per format) with post-processing (`add-extensions.js` for ESM imports, `generate-package-files.js` for subpath exports).
+Multi-entry dual ESM/CJS build via `tsup` (see `tsup.config.ts`). Subpath exports cover adapters, repositories (sqlite/realm), the Expo worker, and the Expo wallet (including its background-task entry).
 
 Key layers:
 - **Wallet** (`src/wallet/`) — `Wallet` (signing), `ReadonlyWallet` (watch-only), `OnchainWallet` (on-chain UTXOs). Service worker variants communicate via `MessageBus`.
@@ -95,7 +101,6 @@ Git submodule pointing to [arkade-regtest](https://github.com/ArkLabsHQ/arkade-r
 Packages extend shared base configs from `config/`:
 - `tsconfig.json` extends `../../config/tsconfig.base.json`
 - `vitest.config.ts` merges with `../../config/vitest.base.ts`
-- ESLint configs extend `../../config/eslint.base.cjs`
 
 ### Testing
 
