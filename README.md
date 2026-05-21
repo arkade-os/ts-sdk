@@ -70,10 +70,14 @@ pnpm run regtest:reset:ts-sdk   # Remove containers and volumes
 
 ### Documentation
 
+TypeDoc-generated API docs for `@arkade-os/sdk` are written to the repo-root `docs/` directory (the source for [arkade-os.github.io/ts-sdk](https://arkade-os.github.io/ts-sdk/)).
+
 ```bash
-pnpm -C packages/ts-sdk run docs:build   # Build TypeScript API docs
-pnpm -C packages/ts-sdk run docs:open    # Open in browser
+pnpm -C packages/ts-sdk run docs:build   # Build into ./docs at the repo root
+pnpm -C packages/ts-sdk run docs:open    # Open ./docs/index.html in the browser
 ```
+
+After regenerating, sanity-check that source links in the generated HTML point to monorepo-style paths (e.g. `packages/ts-sdk/src/...`) before publishing.
 
 ## Releasing
 
