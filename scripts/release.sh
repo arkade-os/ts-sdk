@@ -1,230 +1,346 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-cleanup() {
-    echo "🧹 Cleaning up release artifacts..."
-    # Get current version from package.json
-    CURRENT_VERSION=$(node -p "require('./package.json').version")
-    
-    # Reset any changes to package.json
-    git checkout package.json
-    
-    # Remove local tag if it exists
-    if git tag | grep -q "v$CURRENT_VERSION"; then
-        git tag -d "v$CURRENT_VERSION"
-        echo "✓ Removed local git tag v$CURRENT_VERSION"
-    fi
-    
-    echo "✨ Cleanup complete"
-    exit 0
-}
+ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+TS_SDK_DIR="$ROOT_DIR/packages/ts-sdk"
+BOLTZ_DIR="$ROOT_DIR/packages/boltz-swap"
+
+DRY_RUN=false
+VERSION_BUMP=""
+PRERELEASE_ID=""
 
 show_help() {
-    echo "Usage: $0 [options]"
-    echo ""
-    echo "Options:"
-    echo "  --dry-run     Run without making any changes"
-    echo "  --cleanup     Clean up release artifacts"
-    echo "  --help        Show this help message"
-    echo ""
-    echo "Release types:"
-    echo "  Standard releases: patch, minor, major"
-    echo "  Pre-releases: prepatch, preminor, premajor, prerelease"
-    echo "  Pre-release identifiers: alpha, beta, rc (release candidate)"
-    echo ""
-    echo "Examples:"
-    echo "  Standard release:    $0"
-    echo "  Alpha pre-release:   $0 --dry-run (then select prepatch/preminor/premajor with alpha)"
-    echo "  Beta pre-release:    $0 (then select prerelease with beta)"
-    echo "  Release candidate:   $0 (then select prerelease with rc)"
+    cat <<'HELP'
+Usage: scripts/release.sh [options] [bump-or-version]
+
+Release both @arkade-os/sdk and @arkade-os/boltz-swap at the same version.
+
+Arguments:
+  bump-or-version   patch | minor | major | prepatch | preminor | premajor |
+                    prerelease | literal version such as 0.4.30
+
+Options:
+  --dry-run         Print the release steps without changing files
+  --preid <id>      Pre-release identifier: alpha, beta, rc, or next
+  --cleanup         Reset package version edits and remove the matching local tag
+  --help            Show this message
+
+When package versions are not already aligned, pass a literal target version for
+that first lockstep release. After they are aligned, patch/minor/major bumps are
+computed from the shared current version.
+HELP
 }
 
-# Handle flags
-DRY_RUN=false
+die() {
+    echo "Error: $*" >&2
+    exit 1
+}
+
+package_version() {
+    node -e "const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(pkg.version);" "$1/package.json"
+}
+
+head_package_version() {
+    git show "HEAD:$1" | node -e "let input=''; process.stdin.on('data', (chunk) => input += chunk); process.stdin.on('end', () => console.log(JSON.parse(input).version));"
+}
+
+cleanup() {
+    echo "Cleaning up release artifacts..."
+
+    local sdk_version boltz_version sdk_head_version boltz_head_version
+    sdk_version=$(package_version "$TS_SDK_DIR")
+    boltz_version=$(package_version "$BOLTZ_DIR")
+    sdk_head_version=$(head_package_version "packages/ts-sdk/package.json")
+    boltz_head_version=$(head_package_version "packages/boltz-swap/package.json")
+
+    if [[ "$sdk_version" == "$sdk_head_version" && "$boltz_version" == "$boltz_head_version" ]]; then
+        echo "No uncommitted package version edits to clean up."
+        exit 0
+    fi
+
+    git checkout -- "$TS_SDK_DIR/package.json" "$BOLTZ_DIR/package.json" 2>/dev/null || true
+
+    for version in "$sdk_version" "$boltz_version"; do
+        if git tag --list "v$version" | grep -q .; then
+            git tag -d "v$version"
+            echo "Removed local tag v$version"
+        fi
+    done
+
+    echo "Cleanup complete"
+    exit 0
+}
 while [[ $# -gt 0 ]]; do
-    case $1 in
+    case "$1" in
         --cleanup)
             cleanup
             ;;
         --dry-run)
             DRY_RUN=true
-            echo "🏃 Dry run mode - no changes will be committed"
             shift
+            ;;
+        --preid)
+            [[ $# -ge 2 ]] || die "--preid requires a value"
+            PRERELEASE_ID="$2"
+            shift 2
             ;;
         --help)
             show_help
             exit 0
             ;;
+        --)
+            shift
+            ;;
+        --*)
+            die "Unknown option: $1"
+            ;;
         *)
-            echo "Unknown option: $1"
-            show_help
-            exit 1
+            [[ -z "$VERSION_BUMP" ]] || die "Only one bump or version argument is allowed"
+            VERSION_BUMP="$1"
+            shift
             ;;
     esac
 done
 
-if [ "$DRY_RUN" = false ]; then
-    # Ensure we're in a clean state
-    if [[ -n $(git status --porcelain) ]]; then
-        echo "Error: Working directory is not clean. Please commit or stash changes first."
-        exit 1
-    fi
+SDK_VERSION=$(package_version "$TS_SDK_DIR")
+BOLTZ_VERSION=$(package_version "$BOLTZ_DIR")
+
+if [[ -z "$VERSION_BUMP" ]]; then
+    echo "Current versions: sdk=$SDK_VERSION, boltz-swap=$BOLTZ_VERSION"
+    echo "What version should be released? (patch|minor|major|pre*|literal version like 0.4.30)"
+    read -r VERSION_BUMP
 fi
 
-# Get the version bump type
-echo "What kind of version bump?"
-echo "Standard releases: patch, minor, major"
-echo "Pre-releases: prepatch, preminor, premajor, prerelease"
-read VERSION_BUMP
-
-# Handle pre-release identifiers
-PRERELEASE_ID=""
-if [[ "$VERSION_BUMP" == pre* ]]; then
-    echo "What pre-release identifier? (alpha|beta|rc|next)"
-    read PRERELEASE_ID
-    
-    # Validate pre-release identifier
-    if [[ "$PRERELEASE_ID" != "alpha" && "$PRERELEASE_ID" != "beta" && "$PRERELEASE_ID" != "rc" && "$PRERELEASE_ID" != "next" ]]; then
-        echo "Error: Invalid pre-release identifier. Use alpha, beta, rc, or next."
-        exit 1
-    fi
+if [[ "$VERSION_BUMP" == pre* && -z "$PRERELEASE_ID" ]]; then
+    echo "Pre-release identifier? (alpha|beta|rc|next)"
+    read -r PRERELEASE_ID
 fi
 
-if [ "$DRY_RUN" = true ]; then
-    # Simulate version bump without making changes
-    CURRENT_VERSION=$(node -p "require('./package.json').version")
-    echo "Current version: $CURRENT_VERSION"
+if [[ -n "$PRERELEASE_ID" ]]; then
+    case "$PRERELEASE_ID" in
+        alpha|beta|rc|next) ;;
+        *) die "Invalid pre-release identifier: $PRERELEASE_ID" ;;
+    esac
+fi
 
-    if [[ "$PRERELEASE_ID" == "next" ]]; then
-        # For next pre-releases, don't bump the base version
-        NEW_VERSION=$(node -e "
-            const v = '$CURRENT_VERSION';
-            const match = v.match(/^(.+)-next\.(\d+)$/);
-            if (match) {
-                console.log(match[1] + '-next.' + (parseInt(match[2]) + 1));
-            } else {
-                console.log(v.replace(/-.*$/, '') + '-next.0');
-            }
-        ")
-        echo "Would create pre-release version: $NEW_VERSION ($PRERELEASE_ID)"
-    elif [[ "$VERSION_BUMP" == pre* && -n "$PRERELEASE_ID" ]]; then
-        # For pre-releases with identifier
-        NEW_VERSION=$(npm version $VERSION_BUMP --preid=$PRERELEASE_ID --no-git-tag-version --dry-run 2>&1 | sed 's/v//')
-        echo "Would create pre-release version: $NEW_VERSION ($PRERELEASE_ID)"
-    else
-        # For regular releases
-        NEW_VERSION=$(npm version $VERSION_BUMP --no-git-tag-version --dry-run 2>&1 | sed 's/v//')
-        echo "Would create new version: $NEW_VERSION"
-    fi
-    
-    echo "Would create git tag: v$NEW_VERSION"
-    
-    # Show npm publish command that would be used
-    if [[ "$NEW_VERSION" == *-* ]]; then
-        # Pre-release version contains a hyphen
-        if [[ "$NEW_VERSION" == *alpha* ]]; then
-            echo "Would publish to npm with alpha tag: pnpm publish --tag alpha --dry-run"
-        elif [[ "$NEW_VERSION" == *beta* ]]; then
-            echo "Would publish to npm with beta tag: pnpm publish --tag beta --dry-run"
-        elif [[ "$NEW_VERSION" == *rc* ]]; then
-            echo "Would publish to npm with rc tag: pnpm publish --tag rc --dry-run"
-        elif [[ "$NEW_VERSION" == *next* ]]; then
-            echo "Would publish to npm with next tag: pnpm publish --tag next --dry-run"
-        else
-            echo "Would publish to npm with next tag: pnpm publish --tag next --dry-run"
-        fi
-    else
-        echo "Would publish to npm with latest tag: pnpm publish --dry-run"
-    fi
+NEW_VERSION=$(node - "$SDK_VERSION" "$BOLTZ_VERSION" "$VERSION_BUMP" "$PRERELEASE_ID" <<'NODE'
+const [sdkVersion, boltzVersion, bump, preid] = process.argv.slice(2);
+const versionPattern = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z][0-9A-Za-z.-]*))?$/;
+const bumpTypes = new Set([
+    "patch",
+    "minor",
+    "major",
+    "prepatch",
+    "preminor",
+    "premajor",
+    "prerelease",
+]);
+
+function fail(message) {
+    console.error(message);
+    process.exit(1);
+}
+
+function parse(version) {
+    const match = version.match(versionPattern);
+    if (!match) fail(`Unsupported semver version: ${version}`);
+    return {
+        major: Number(match[1]),
+        minor: Number(match[2]),
+        patch: Number(match[3]),
+        pre: match[4] || "",
+    };
+}
+
+function format(version) {
+    return `${version.major}.${version.minor}.${version.patch}${version.pre ? `-${version.pre}` : ""}`;
+}
+
+function compareIdentifiers(left, right) {
+    const leftNumeric = /^\d+$/.test(left);
+    const rightNumeric = /^\d+$/.test(right);
+    if (leftNumeric && rightNumeric) return Number(left) - Number(right);
+    if (leftNumeric) return -1;
+    if (rightNumeric) return 1;
+    return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function compare(left, right) {
+    for (const key of ["major", "minor", "patch"]) {
+        if (left[key] !== right[key]) return left[key] - right[key];
+    }
+    if (left.pre === right.pre) return 0;
+    if (!left.pre) return 1;
+    if (!right.pre) return -1;
+
+    const leftParts = left.pre.split(".");
+    const rightParts = right.pre.split(".");
+    const length = Math.max(leftParts.length, rightParts.length);
+    for (let index = 0; index < length; index += 1) {
+        if (leftParts[index] === undefined) return -1;
+        if (rightParts[index] === undefined) return 1;
+        const partCompare = compareIdentifiers(leftParts[index], rightParts[index]);
+        if (partCompare !== 0) return partCompare;
+    }
+    return 0;
+}
+
+function withPrerelease(version, identifier) {
+    const parts = version.pre ? version.pre.split(".") : [];
+    const last = parts[parts.length - 1];
+    if (parts[0] === identifier && /^\d+$/.test(last)) {
+        parts[parts.length - 1] = String(Number(last) + 1);
+        return { ...version, pre: parts.join(".") };
+    }
+    return { ...version, pre: `${identifier}.0` };
+}
+
+function increment(current, type, identifier) {
+    const next = { ...parse(current) };
+
+    switch (type) {
+        case "patch":
+            if (next.pre) next.pre = "";
+            else next.patch += 1;
+            return format(next);
+        case "minor":
+            next.minor += 1;
+            next.patch = 0;
+            next.pre = "";
+            return format(next);
+        case "major":
+            next.major += 1;
+            next.minor = 0;
+            next.patch = 0;
+            next.pre = "";
+            return format(next);
+        case "prepatch":
+            next.patch += 1;
+            next.pre = "";
+            return format(withPrerelease(next, identifier));
+        case "preminor":
+            next.minor += 1;
+            next.patch = 0;
+            next.pre = "";
+            return format(withPrerelease(next, identifier));
+        case "premajor":
+            next.major += 1;
+            next.minor = 0;
+            next.patch = 0;
+            next.pre = "";
+            return format(withPrerelease(next, identifier));
+        case "prerelease":
+            if (!next.pre) next.patch += 1;
+            return format(withPrerelease(next, identifier));
+        default:
+            fail(`Unsupported version bump: ${type}`);
+    }
+}
+
+const literal = versionPattern.test(bump);
+if (!literal && !bumpTypes.has(bump)) {
+    fail(`Unsupported version bump or target version: ${bump}`);
+}
+
+if (!literal && sdkVersion !== boltzVersion) {
+    fail(
+        `Package versions are not aligned (sdk=${sdkVersion}, boltz-swap=${boltzVersion}). ` +
+            "Pass a literal target version for the first lockstep release.",
+    );
+}
+
+if (bump.startsWith("pre") && !preid) {
+    fail(`A pre-release bump requires --preid alpha|beta|rc|next`);
+}
+
+const target = literal ? bump : increment(sdkVersion, bump, preid);
+const parsedTarget = parse(target);
+for (const [name, version] of [
+    ["@arkade-os/sdk", sdkVersion],
+    ["@arkade-os/boltz-swap", boltzVersion],
+]) {
+    if (compare(parsedTarget, parse(version)) < 0) {
+        fail(`Target version ${target} is lower than current ${name}@${version}`);
+    }
+}
+
+console.log(target);
+NODE
+)
+
+NPM_TAG="latest"
+case "$NEW_VERSION" in
+    *-alpha*) NPM_TAG="alpha" ;;
+    *-beta*) NPM_TAG="beta" ;;
+    *-rc*) NPM_TAG="rc" ;;
+    *-next*) NPM_TAG="next" ;;
+esac
+
+if [[ "$SDK_VERSION" != "$BOLTZ_VERSION" ]]; then
+    echo "Current versions are not aligned: sdk=$SDK_VERSION, boltz-swap=$BOLTZ_VERSION"
+    echo "The release will set both package versions to $NEW_VERSION."
+fi
+
+if [[ "$DRY_RUN" == true ]]; then
+    echo "Would run: pnpm run test:unit"
+    echo "Would set both package versions to $NEW_VERSION"
+    echo "Would run: pnpm -r build"
+    echo "Would commit package version changes and create tag v$NEW_VERSION"
+    echo "Would publish both packages with npm dist-tag '$NPM_TAG'"
+    echo "Would push the release commit and v$NEW_VERSION tag"
+    exit 0
+fi
+
+if [[ -n $(git status --porcelain) ]]; then
+    die "Working directory is not clean. Commit or stash changes first."
+fi
+
+pnpm run test:unit
+
+node - "$NEW_VERSION" "$TS_SDK_DIR/package.json" "$BOLTZ_DIR/package.json" <<'NODE'
+const fs = require("fs");
+const [version, ...paths] = process.argv.slice(2);
+for (const path of paths) {
+    const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+    pkg.version = version;
+    fs.writeFileSync(path, `${JSON.stringify(pkg, null, 4)}\n`);
+}
+NODE
+
+pnpm -r build
+
+git add "$TS_SDK_DIR/package.json" "$BOLTZ_DIR/package.json"
+if git diff --cached --quiet; then
+    echo "Package versions are already set to $NEW_VERSION; reusing current HEAD."
 else
-    # Real version bump and publish
-    if [[ "$PRERELEASE_ID" == "next" ]]; then
-        # For next pre-releases, don't bump the base version
-        CURRENT_VERSION=$(node -p "require('./package.json').version")
-        NEXT_VERSION=$(node -e "
-            const v = '$CURRENT_VERSION';
-            const match = v.match(/^(.+)-next\.(\d+)$/);
-            if (match) {
-                console.log(match[1] + '-next.' + (parseInt(match[2]) + 1));
-            } else {
-                console.log(v.replace(/-.*$/, '') + '-next.0');
-            }
-        ")
-        pnpm version $NEXT_VERSION --no-git-tag-version
-    elif [[ "$VERSION_BUMP" == pre* && -n "$PRERELEASE_ID" ]]; then
-        # For pre-releases with identifier
-        pnpm version $VERSION_BUMP --preid=$PRERELEASE_ID --no-git-tag-version
-    else
-        # For regular releases
-        pnpm version $VERSION_BUMP --no-git-tag-version
-    fi
+    git commit -m "chore: release v$NEW_VERSION"
+fi
 
-    # Get the new version number directly from package.json
-    NEW_VERSION=$(node -p "require('./package.json').version")
-
-    # Create git tag manually
+if git rev-parse "v$NEW_VERSION" >/dev/null 2>&1; then
+    TAG_SHA=$(git rev-list -n 1 "v$NEW_VERSION")
+    HEAD_SHA=$(git rev-parse HEAD)
+    [[ "$TAG_SHA" == "$HEAD_SHA" ]] || die "Local tag v$NEW_VERSION exists but does not point at HEAD"
+else
     git tag "v$NEW_VERSION"
-
-    # Commit the package.json changes
-    git add package.json pnpm-lock.yaml
-    
-    # Use appropriate commit message
-    if [[ "$NEW_VERSION" == *-* ]]; then
-        git commit -m "chore: release $NEW_VERSION"
-    else
-        git commit -m "chore: release $NEW_VERSION"
-    fi
-
-    # Push the tag to trigger GitHub release
-    git push origin "v$NEW_VERSION"
-
-    # Publish to npm with appropriate tag
-    echo "Publishing to npm..."
-    if [[ "$NEW_VERSION" == *-* ]]; then
-        # Pre-release version contains a hyphen
-        if [[ "$NEW_VERSION" == *alpha* ]]; then
-            echo "📦 Publishing alpha release..."
-            pnpm publish --tag alpha
-        elif [[ "$NEW_VERSION" == *beta* ]]; then
-            echo "📦 Publishing beta release..."
-            pnpm publish --tag beta
-        elif [[ "$NEW_VERSION" == *rc* ]]; then
-            echo "📦 Publishing release candidate..."
-            pnpm publish --tag rc
-        elif [[ "$NEW_VERSION" == *next* ]]; then
-            echo "📦 Publishing next/nightly release..."
-            pnpm publish --tag next
-        fi
-    else
-        echo "📦 Publishing stable release..."
-        pnpm publish
-    fi
 fi
 
-# Show installation instructions
-if [[ "$NEW_VERSION" == *-* ]]; then
-    echo ""
-    echo "📋 Installation instructions:"
-    if [[ "$NEW_VERSION" == *alpha* ]]; then
-        echo "   npm install @arkade-os/ts-sdk@alpha"
-        echo "   npm install @arkade-os/ts-sdk@$NEW_VERSION"
-    elif [[ "$NEW_VERSION" == *beta* ]]; then
-        echo "   npm install @arkade-os/ts-sdk@beta"
-        echo "   npm install @arkade-os/ts-sdk@$NEW_VERSION"
-    elif [[ "$NEW_VERSION" == *rc* ]]; then
-        echo "   npm install @arkade-os/ts-sdk@rc"
-        echo "   npm install @arkade-os/ts-sdk@$NEW_VERSION"
-    elif [[ "$NEW_VERSION" == *next* ]]; then
-        echo "   npm install @arkade-os/ts-sdk@next"
-        echo "   npm install @arkade-os/ts-sdk@$NEW_VERSION"
-    else
-        echo "   npm install @arkade-os/ts-sdk@next"
-        echo "   npm install @arkade-os/ts-sdk@$NEW_VERSION"
-    fi
-else
-    echo ""
-    echo "📋 Installation instructions:"
-    echo "   npm install @arkade-os/ts-sdk@latest"
-    echo "   npm install @arkade-os/ts-sdk@$NEW_VERSION"
-fi
+publish_package() {
+    local package_name="$1"
+    local package_dir="$2"
 
-echo "✨ ${DRY_RUN:+[DRY RUN] }Version $NEW_VERSION processed" 
+    if npm view "$package_name@$NEW_VERSION" version >/dev/null 2>&1; then
+        echo "$package_name@$NEW_VERSION is already published; skipping."
+        return
+    fi
+
+    echo "Publishing $package_name@$NEW_VERSION with npm dist-tag '$NPM_TAG'..."
+    (cd "$package_dir" && pnpm publish --tag "$NPM_TAG" --no-git-checks)
+}
+
+publish_package "@arkade-os/sdk" "$TS_SDK_DIR"
+publish_package "@arkade-os/boltz-swap" "$BOLTZ_DIR"
+
+git push origin HEAD
+git push origin "v$NEW_VERSION"
+
+echo "Released v$NEW_VERSION (@arkade-os/sdk and @arkade-os/boltz-swap)"

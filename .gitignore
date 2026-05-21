@@ -1,16 +1,25 @@
-node_modules/
-dist/
-docs/
-.mintlify-last
+node_modules
+*.log
+.DS_Store
+dist
+coverage
+.env
+!.env.regtest
 .idea
+.vscode
+.tmp
+.swp
+.nyc_output
 .claude/
 *.sqlite
 
-# Debug 
+# Debug
 *.har
 *.idb
 
 # AI
 TASKS.md
+CLAUDE.md
+.claude
 *.agents.md
 REVIEW.md

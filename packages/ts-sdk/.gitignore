@@ -1,0 +1,13 @@
+node_modules/
+dist/
+docs/
+.mintlify-last
+.idea
+.claude/
+*.sqlite
+*.har
+
+# AI
+CLAUDE.md
+TASKS.md
+*.agents.md
