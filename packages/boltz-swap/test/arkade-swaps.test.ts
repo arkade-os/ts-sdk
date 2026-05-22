@@ -1440,30 +1440,39 @@ describe("ArkadeSwaps", () => {
             });
 
             it("autopilot SwapError wrap preserves the underlying QuoteRejectedError as cause", async () => {
-                mockSwapRepository.getAllSwaps.mockResolvedValueOnce([mockArkBtcChainSwap]);
+                // Drive the real `transaction.lockupFailed` handler in
+                // `waitAndClaimBtc` so the SwapError wrap that lives there
+                // actually executes. Manually constructing SwapError in the
+                // test would still pass even if the production code dropped
+                // `cause`, so it has to come from the production path.
                 vi.spyOn(swapProvider, "getChainQuote").mockResolvedValueOnce({
                     amount: 1,
                 });
                 const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(async (_id, callback) => {
+                    setTimeout(() => callback("transaction.lockupFailed", {}), 10);
+                });
 
                 let caught: unknown;
                 try {
-                    await swaps.quoteSwap(mock.id);
+                    await swaps.waitAndClaimBtc(mockArkBtcChainSwap);
                 } catch (e) {
                     caught = e;
                 }
+                // Production wrap shape.
+                expect(caught).toBeInstanceOf(SwapError);
                 expect(caught).toMatchObject({
+                    name: "SwapError",
+                    isRefundable: true,
+                });
+                expect((caught as SwapError).message).toMatch(/Failed to renegotiate quote/);
+                // Inner QuoteRejectedError must survive the wrap so callers
+                // can branch on the rejection reason.
+                const cause = (caught as SwapError).cause;
+                expect(cause).toMatchObject({
                     name: "QuoteRejectedError",
                     reason: "below_floor",
                 });
-                // Wrap the QuoteRejectedError the same shape the autopilot does;
-                // assert cause survives so callers can branch on the inner type.
-                const wrapped = new SwapError({
-                    message: `Failed: ${(caught as Error).message}`,
-                    isRefundable: true,
-                    cause: caught,
-                });
-                expect(wrapped.cause).toBe(caught);
                 expect(postSpy).not.toHaveBeenCalled();
             });
 
