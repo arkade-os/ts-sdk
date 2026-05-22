@@ -1464,6 +1464,19 @@ describe("ArkadeSwaps", () => {
                 ).rejects.toThrow(TypeError);
                 expect(postSpy).not.toHaveBeenCalled();
             });
+
+            it("acceptSwapQuote rejects when slippage drives the effective floor below 1 sat", async () => {
+                // 100% slippage would collapse the floor to 0 and let any
+                // positive Boltz quote through — must be rejected up front.
+                const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+                await expect(
+                    swaps.acceptSwapQuote(mock.id, 1, {
+                        minAcceptableAmount: 1000,
+                        maxSlippageBps: 10000,
+                    }),
+                ).rejects.toThrow(TypeError);
+                expect(postSpy).not.toHaveBeenCalled();
+            });
         });
 
         describe("verifyChainSwap", () => {
