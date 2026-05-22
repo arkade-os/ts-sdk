@@ -1,5 +1,5 @@
 import type { TaskItem } from "@arkade-os/sdk/worker/expo";
-import type { IArkadeSwaps } from "../arkade-swaps";
+import type { IArkadeSwaps, QuoteSwapOptions } from "../arkade-swaps";
 import { ArkadeSwaps } from "../arkade-swaps";
 import type { SwapManagerClient } from "../swap-manager";
 import type {
@@ -373,8 +373,16 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         return this.inner.verifyChainSwap(args);
     }
 
-    quoteSwap(swapId: string): Promise<number> {
-        return this.inner.quoteSwap(swapId);
+    quoteSwap(swapId: string, options?: QuoteSwapOptions): Promise<number> {
+        return this.inner.quoteSwap(swapId, options);
+    }
+
+    getSwapQuote(swapId: string): Promise<number> {
+        return this.inner.getSwapQuote(swapId);
+    }
+
+    acceptSwapQuote(swapId: string, amount: number, options?: QuoteSwapOptions): Promise<number> {
+        return this.inner.acceptSwapQuote(swapId, amount, options);
     }
 
     joinBatch(
