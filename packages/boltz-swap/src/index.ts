@@ -106,4 +106,5 @@ export type {
 export { logger, setLogger } from "./logger";
 export type { Logger } from "./logger";
 export { IndexedDbSwapRepository } from "./repositories/IndexedDb/swap-repository";
+export { InMemorySwapRepository } from "./repositories/inMemory/swap-repository";
 export type { SwapRepository } from "./repositories/swap-repository";
