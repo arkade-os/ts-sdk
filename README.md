@@ -99,6 +99,8 @@ Targets are `sdk`, `boltz-swap`, or `all`. Bumps accept `patch | minor | major |
 
 When SDK is released, the dependent boltz-swap bump defaults to `patch`; prerelease SDK bumps mirror the prerelease shape and `--preid` into boltz-swap unless overridden with `--boltz-bump`. Before publishing boltz-swap, the release script packs it to a temp dir and verifies that the packed manifest pins the intended `@arkade-os/sdk` version.
 
+The release script runs unit tests, builds all packages, creates a release commit, tags it, publishes to npm (requires local npm credentials), then pushes the commit and tags to `origin`.
+
 Cleanup restores selected package manifests and removes selected local `<package>/<version>` tags. It never deletes remote tags and never resets commits; if a release commit was already created, run `git reset --hard HEAD~1` manually after inspecting `git log`. Package-local release scripts are disabled.
 
 ## License
