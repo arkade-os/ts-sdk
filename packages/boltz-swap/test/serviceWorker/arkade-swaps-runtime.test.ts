@@ -11,6 +11,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { hex } from "@scure/base";
 import { decodeInvoice } from "../../src/utils/decoding";
 import { MESSAGE_BUS_NOT_INITIALIZED, ServiceWorkerTimeoutError } from "@arkade-os/sdk";
+import { QuoteRejectedError } from "../../src/errors";
 
 class FakeServiceWorker {
     listeners: ((e: MessageEvent) => void)[] = [];
@@ -279,9 +280,11 @@ describe("SwArkadeSwapsRuntime enrich methods", () => {
 type MessageHandler = (event: { data: any }) => void;
 
 function structuredCloneError(error: Error): Error {
-    const cloned = new Error(error.message);
-    cloned.name = error.name;
-    return cloned;
+    // Match real structuredClone semantics: Error subclasses lose their
+    // identity (name → "Error") and own enumerable properties are dropped.
+    // Only `message` (and `stack`) survive the round trip. The runtime must
+    // therefore reconstruct any typed errors from the message field alone.
+    return new Error(error.message);
 }
 
 function structuredCloneResponse(response: any): any {
@@ -950,5 +953,124 @@ describe("preflight ping", () => {
         const assertion = expect(pingPromise).rejects.toBeInstanceOf(ServiceWorkerTimeoutError);
         await vi.advanceTimersByTimeAsync(2_000);
         await assertion;
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Quote rejection error reconstruction across the SW boundary
+// ---------------------------------------------------------------------------
+
+describe("quote rejection error reconstruction", () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    // The SW message handler calls `QuoteRejectedError.toTransportError()`
+    // before throwing, encoding the typed payload into the Error.message
+    // field. The test harness mimics that here so the round trip is realistic.
+    const respondWithError = (type: string, error: Error) =>
+        createServiceWorkerHarness((message) => {
+            if (message.type !== type) return null;
+            const transport =
+                error instanceof QuoteRejectedError ? error.toTransportError() : error;
+            return { id: message.id, tag: TAG, error: transport };
+        });
+
+    it("quoteSwap reconstructs a typed QuoteRejectedError with reason and metadata", async () => {
+        const original = new QuoteRejectedError({
+            reason: "below_floor",
+            quotedAmount: 999,
+            floor: 1000,
+        });
+        const { navigatorServiceWorker, serviceWorker } = respondWithError("QUOTE_SWAP", original);
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        await expect(runtime.quoteSwap("swap-1")).rejects.toMatchObject({
+            name: "QuoteRejectedError",
+            reason: "below_floor",
+            quotedAmount: 999,
+            floor: 1000,
+        });
+        await expect(runtime.quoteSwap("swap-1")).rejects.toBeInstanceOf(QuoteRejectedError);
+    });
+
+    it("acceptSwapQuote reconstructs no_baseline QuoteRejectedError", async () => {
+        const original = new QuoteRejectedError({ reason: "no_baseline" });
+        const { navigatorServiceWorker, serviceWorker } = respondWithError(
+            "ACCEPT_SWAP_QUOTE",
+            original,
+        );
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        await expect(runtime.acceptSwapQuote("swap-2", 1000)).rejects.toBeInstanceOf(
+            QuoteRejectedError,
+        );
+        await expect(runtime.acceptSwapQuote("swap-2", 1000)).rejects.toMatchObject({
+            reason: "no_baseline",
+        });
+    });
+
+    it("getSwapQuote wraps generic errors in 'Cannot get swap quote'", async () => {
+        const { navigatorServiceWorker, serviceWorker } = respondWithError(
+            "GET_SWAP_QUOTE",
+            new Error("network down"),
+        );
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        await expect(runtime.getSwapQuote("swap-3")).rejects.toThrow(/Cannot get swap quote/);
+    });
+
+    it("getSwapQuote reconstructs a typed QuoteRejectedError when the SW raises one", async () => {
+        const original = new QuoteRejectedError({ reason: "no_baseline" });
+        const { navigatorServiceWorker, serviceWorker } = respondWithError(
+            "GET_SWAP_QUOTE",
+            original,
+        );
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        await expect(runtime.getSwapQuote("swap-5")).rejects.toBeInstanceOf(QuoteRejectedError);
+        await expect(runtime.getSwapQuote("swap-5")).rejects.toMatchObject({
+            reason: "no_baseline",
+        });
+    });
+
+    it("survives the realistic structured clone (Error.name lost, props dropped)", async () => {
+        // Sanity check that our reconstruction does NOT depend on the
+        // properties the structured clone actually strips. We replicate the
+        // browser-faithful clone (name → "Error", own props gone) by piping
+        // the transport-error through the test harness's structuredCloneError.
+        const original = new QuoteRejectedError({
+            reason: "below_floor",
+            quotedAmount: 500,
+            floor: 1000,
+        });
+        const transport = original.toTransportError();
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "QUOTE_SWAP") return null;
+            return { id: message.id, tag: TAG, error: transport };
+        });
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        await expect(runtime.quoteSwap("swap-4")).rejects.toMatchObject({
+            name: "QuoteRejectedError",
+            reason: "below_floor",
+            quotedAmount: 500,
+            floor: 1000,
+        });
     });
 });

@@ -41,6 +41,8 @@ import type {
     ResponseGetPendingReverseSwaps,
     ResponseGetPendingSubmarineSwaps,
     ResponseQuoteSwap,
+    ResponseGetSwapQuote,
+    ResponseAcceptSwapQuote,
     ResponseGetSwapHistory,
     ResponseGetSwapStatus,
     ResponseRestoreSwaps,
@@ -67,7 +69,8 @@ import {
     type VHTLC,
 } from "@arkade-os/sdk";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
-import { IArkadeSwaps } from "../arkade-swaps";
+import { IArkadeSwaps, type QuoteSwapOptions } from "../arkade-swaps";
+import { QuoteRejectedError } from "../errors";
 import type { VhtlcTimeouts } from "../utils/vhtlc";
 import { IndexedDbSwapRepository } from "../repositories/IndexedDb/swap-repository";
 import {
@@ -89,6 +92,22 @@ function isMessageBusNotInitializedError(error: unknown): boolean {
 // leaving `handler.handler` undefined. Reinitialize from cached initPayload.
 function isHandlerNotInitializedError(error: unknown): boolean {
     return error instanceof Error && error.message.includes(HANDLER_NOT_INITIALIZED);
+}
+
+// postMessage structured clone normalises `Error.name` to "Error" and drops
+// custom own properties on Error subclasses, so we cannot recover a
+// QuoteRejectedError by inspecting `name` or `reason` after the round trip.
+// The SW handler instead encodes rejections into the Error.message field via
+// `QuoteRejectedError.toTransportError()`; this helper decodes the message
+// back into a real typed error so SW callers can `instanceof`-check and
+// branch on `.reason` exactly like in-process callers.
+function rethrowIfQuoteRejected(error: unknown): void {
+    // If a real QuoteRejectedError reached us without going through the SW
+    // transport (e.g. in-process testing or a direct throw), preserve it
+    // verbatim instead of going through the encode/decode round trip.
+    if (error instanceof QuoteRejectedError) throw error;
+    const rebuilt = QuoteRejectedError.fromTransportError(error);
+    if (rebuilt) throw rebuilt;
 }
 
 const DEFAULT_MESSAGE_TIMEOUT_MS = 30_000;
@@ -760,17 +779,52 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         }
     }
 
-    async quoteSwap(swapId: string): Promise<number> {
+    async quoteSwap(swapId: string, options?: QuoteSwapOptions): Promise<number> {
         try {
             const res = await this.sendMessage({
                 id: getRandomId(),
                 tag: this.messageTag,
                 type: "QUOTE_SWAP",
-                payload: { swapId },
+                payload: { swapId, options },
             });
             return (res as ResponseQuoteSwap).payload.amount;
         } catch (e) {
+            rethrowIfQuoteRejected(e);
             throw new Error("Cannot quote swap", { cause: e });
+        }
+    }
+
+    async getSwapQuote(swapId: string): Promise<number> {
+        try {
+            const res = await this.sendMessage({
+                id: getRandomId(),
+                tag: this.messageTag,
+                type: "GET_SWAP_QUOTE",
+                payload: { swapId },
+            });
+            return (res as ResponseGetSwapQuote).payload.amount;
+        } catch (e) {
+            rethrowIfQuoteRejected(e);
+            throw new Error("Cannot get swap quote", { cause: e });
+        }
+    }
+
+    async acceptSwapQuote(
+        swapId: string,
+        amount: number,
+        options?: QuoteSwapOptions,
+    ): Promise<number> {
+        try {
+            const res = await this.sendMessage({
+                id: getRandomId(),
+                tag: this.messageTag,
+                type: "ACCEPT_SWAP_QUOTE",
+                payload: { swapId, amount, options },
+            });
+            return (res as ResponseAcceptSwapQuote).payload.amount;
+        } catch (e) {
+            rethrowIfQuoteRejected(e);
+            throw new Error("Cannot accept swap quote", { cause: e });
         }
     }
 
