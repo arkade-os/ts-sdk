@@ -17,6 +17,7 @@ import {
     ConditionCSVMultisigTapscript,
     CSVMultisigTapscript,
 } from "./tapscript";
+import { DEFAULT_NETWORK } from "../networks";
 
 export type TapLeafScript = [
     {
@@ -118,7 +119,7 @@ export class VtxoScript {
      * @returns Arkade address for this script
      * @see ArkAddress
      */
-    address(prefix: string, serverPubKey: Bytes): ArkAddress {
+    address(prefix: string = DEFAULT_NETWORK.hrp, serverPubKey: Bytes): ArkAddress {
         return new ArkAddress(serverPubKey, this.tweakedPublicKey, prefix);
     }
 
@@ -133,7 +134,7 @@ export class VtxoScript {
      * @returns Taproot onchain address
      * @see address
      */
-    onchainAddress(network: typeof NETWORK): string {
+    onchainAddress(network: typeof NETWORK = DEFAULT_NETWORK): string {
         return Address(network).encode({
             type: "tr",
             pubkey: this.tweakedPublicKey,
