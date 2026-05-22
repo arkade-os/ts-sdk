@@ -1,13 +1,13 @@
-import { expand, networks } from "@bitcoinerlab/descriptors-scure";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
 
-import { isMainnetDescriptor } from "../identity/descriptor";
+import { deriveDescriptorLeafPubKey } from "../identity/descriptor";
 import { DescriptorProvider } from "../identity/descriptorProvider";
 import { isHDCapableIdentity } from "../identity/hdCapableIdentity";
 import { ContractRepository } from "../repositories/contractRepository";
 import { WalletRepository } from "../repositories/walletRepository";
 import { IContractManager } from "../contracts/contractManager";
+import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
 import { DefaultVtxo } from "../script/default";
 import { DelegateVtxo } from "../script/delegate";
 import { timelockToSequence } from "../utils/timelock";
@@ -112,20 +112,28 @@ function hasPeekableDescriptor(
     );
 }
 
+// Re-exported from the contracts layer (src/contracts/metadata.ts) for
+// backward compatibility of any existing import paths that reference this
+// module. The source-of-truth declaration now lives in `contracts/metadata`
+// so contract handlers can import it without creating a contracts→wallet
+// dependency cycle.
+export { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
+
 /**
- * Sentinel value stored in `contract.metadata.source` to identify the
- * wallet's current display contract. Borrowed from btcpay-arkade's
- * source-tagging pattern: every contract records "where and why it was
- * generated", and the wallet only cares about the ones it generated for
- * its own receive address.
- *
- * Tagging makes the boot lookup unambiguous — the rotator filters on
- * `metadata.source === WALLET_RECEIVE_SOURCE` rather than on "any active
- * default contract", so a contract repo that also holds default contracts
- * created for other reasons (legacy timelock variants, external
- * integrations) doesn't confuse the wallet's display state.
+ * Parse the trailing HD child index from a materialized signing
+ * descriptor (`tr(...xpub.../0/<index>)`). Returns 0 when the
+ * descriptor is absent or carries no parseable child index — restore
+ * registers the index-0 baseline untagged, so a missing descriptor
+ * legitimately maps to 0.
  */
-export const WALLET_RECEIVE_SOURCE = "wallet-receive";
+export function signingDescriptorIndex(descriptor: unknown): number {
+    if (typeof descriptor !== "string") return 0;
+    // captures the trailing child index N from "...xpub.../0/N)"
+    const m = descriptor.match(/\/(\d+)\)\s*$/);
+    if (!m) return 0;
+    const n = Number(m[1]);
+    return Number.isInteger(n) && n >= 0 ? n : 0;
+}
 
 /**
  * Thrown when a descriptor expected to be rangeable (have a wildcard
@@ -569,44 +577,20 @@ export class WalletReceiveRotator {
 }
 
 /**
- * Extract the x-only (32-byte) pubkey from a materialized HD descriptor.
- *
- * `expand()` populates `@0.pubkey` for non-ranged descriptors (including
- * HD ones where a concrete child index has been substituted for the
- * wildcard). This sidesteps `extractPubKey`, which intentionally rejects
- * any descriptor carrying a `bip32` key because it was designed for
- * static `tr(pubkey)` inputs.
+ * Wrapper around {@link deriveDescriptorLeafPubKey} that re-throws as a
+ * typed {@link NonRangeableDescriptorError} so callers (most importantly
+ * `resolveBoot`'s silent-fallback path) can branch on the typed error
+ * class instead of grepping `err.message`.
  */
 function deriveLeafPubkey(descriptor: string): Uint8Array {
-    const network = isMainnetDescriptor(descriptor) ? networks.bitcoin : networks.testnet;
-    // `expand` raises when the descriptor still carries a wildcard or
-    // is otherwise non-rangeable. Wrap so callers (most importantly
-    // `resolveBoot`'s silent-fallback path) can branch on a typed
-    // error class instead of grepping `err.message`.
-    let expansion;
     try {
-        expansion = expand({ descriptor, network });
+        return deriveDescriptorLeafPubKey(descriptor);
     } catch (e) {
         throw new NonRangeableDescriptorError(
-            `Cannot derive leaf pubkey from descriptor (length=${descriptor.length}): ` +
-                `ensure the descriptor is materialized (no wildcard) and parsable.`,
+            "Cannot derive leaf pubkey: descriptor is not a materialized, parsable tr(...) shape.",
             { cause: e },
         );
     }
-    const key = expansion.expansionMap?.["@0"];
-    if (!key?.pubkey) {
-        // Avoid interpolating the descriptor itself: it normally
-        // contains an xpub, but a misconfigured caller could pass an
-        // xprv, and error messages surface in logs / crash reporters /
-        // Sentry. The length is enough context for debugging.
-        throw new NonRangeableDescriptorError(
-            `Cannot derive leaf pubkey from descriptor (length=${descriptor.length}): ` +
-                `descriptor parsed but no '@0' pubkey was found in the expansion map. ` +
-                `The rotator expects a materialized tr(xpub/.../*) shape; ensure the ` +
-                `descriptor has no wildcard and that its key resolves into the '@0' slot.`,
-        );
-    }
-    return key.pubkey;
 }
 
 /**
@@ -666,7 +650,13 @@ async function pickActiveReceive(
                 c.params.serverPubKey === serverPubKeyHex &&
                 c.metadata?.source === WALLET_RECEIVE_SOURCE,
         )
-        .sort((a, b) => b.createdAt - a.createdAt);
+        .sort((a, b) => {
+            if (b.createdAt !== a.createdAt) return b.createdAt - a.createdAt;
+            return (
+                signingDescriptorIndex(b.metadata?.signingDescriptor) -
+                signingDescriptorIndex(a.metadata?.signingDescriptor)
+            );
+        });
     const newest = matching[0];
     if (!newest?.params.pubKey) return undefined;
     try {

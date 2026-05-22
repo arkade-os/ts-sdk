@@ -2,9 +2,12 @@ import { hex } from "@scure/base";
 import { DelegateVtxo } from "../../script/delegate";
 import { DefaultVtxo } from "../../script/default";
 import { RelativeTimelock } from "../../script/tapscript";
-import { Contract, ContractHandler, PathContext, PathSelection } from "../types";
+import { Contract, ContractHandler, Discoverable, PathContext, PathSelection } from "../types";
+import type { DiscoveredContract, DiscoveryDeps } from "../types";
 import { isCsvSpendable } from "./helpers";
 import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
+import { deriveDescriptorLeafPubKey } from "../../identity/descriptor";
+import { WALLET_RECEIVE_SOURCE } from "../metadata";
 
 /**
  * Typed parameters for DelegateVtxo contracts.
@@ -24,105 +27,148 @@ export interface DelegateContractParams {
  * - exit: (Alice) + CSV timelock for unilateral exit
  * - delegate: (Alice + Delegate + Server) multisig for delegated renewal
  */
-export const DelegateContractHandler: ContractHandler<DelegateContractParams, DelegateVtxo.Script> =
-    {
-        type: "delegate",
+export const DelegateContractHandler: ContractHandler<DelegateContractParams, DelegateVtxo.Script> &
+    Discoverable = {
+    type: "delegate",
 
-        createScript(params: Record<string, string>): DelegateVtxo.Script {
-            const typed = this.deserializeParams(params);
-            return new DelegateVtxo.Script(typed);
-        },
+    createScript(params: Record<string, string>): DelegateVtxo.Script {
+        const typed = this.deserializeParams(params);
+        return new DelegateVtxo.Script(typed);
+    },
 
-        serializeParams(params: DelegateContractParams): Record<string, string> {
-            return {
-                pubKey: hex.encode(params.pubKey),
-                serverPubKey: hex.encode(params.serverPubKey),
-                delegatePubKey: hex.encode(params.delegatePubKey),
-                csvTimelock: timelockToSequence(params.csvTimelock).toString(),
-            };
-        },
+    serializeParams(params: DelegateContractParams): Record<string, string> {
+        return {
+            pubKey: hex.encode(params.pubKey),
+            serverPubKey: hex.encode(params.serverPubKey),
+            delegatePubKey: hex.encode(params.delegatePubKey),
+            csvTimelock: timelockToSequence(params.csvTimelock).toString(),
+        };
+    },
 
-        deserializeParams(params: Record<string, string>): DelegateContractParams {
-            const csvTimelock = params.csvTimelock
-                ? sequenceToTimelock(Number(params.csvTimelock))
-                : DefaultVtxo.Script.DEFAULT_TIMELOCK;
-            return {
-                pubKey: hex.decode(params.pubKey),
-                serverPubKey: hex.decode(params.serverPubKey),
-                delegatePubKey: hex.decode(params.delegatePubKey),
-                csvTimelock,
-            };
-        },
+    deserializeParams(params: Record<string, string>): DelegateContractParams {
+        const csvTimelock = params.csvTimelock
+            ? sequenceToTimelock(Number(params.csvTimelock))
+            : DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        return {
+            pubKey: hex.decode(params.pubKey),
+            serverPubKey: hex.decode(params.serverPubKey),
+            delegatePubKey: hex.decode(params.delegatePubKey),
+            csvTimelock,
+        };
+    },
 
-        selectPath(
-            script: DelegateVtxo.Script,
-            contract: Contract,
-            context: PathContext,
-        ): PathSelection | null {
-            if (context.collaborative) {
-                return { leaf: script.forfeit() };
-            }
+    selectPath(
+        script: DelegateVtxo.Script,
+        contract: Contract,
+        context: PathContext,
+    ): PathSelection | null {
+        if (context.collaborative) {
+            return { leaf: script.forfeit() };
+        }
 
-            const sequence = contract.params.csvTimelock
-                ? Number(contract.params.csvTimelock)
-                : undefined;
-            if (!isCsvSpendable(context, sequence)) {
-                return null;
-            }
-            return {
-                leaf: script.exit(),
-                sequence,
-            };
-        },
+        const sequence = contract.params.csvTimelock
+            ? Number(contract.params.csvTimelock)
+            : undefined;
+        if (!isCsvSpendable(context, sequence)) {
+            return null;
+        }
+        return {
+            leaf: script.exit(),
+            sequence,
+        };
+    },
 
-        getAllSpendingPaths(
-            script: DelegateVtxo.Script,
-            contract: Contract,
-            context: PathContext,
-        ): PathSelection[] {
-            const paths: PathSelection[] = [];
+    getAllSpendingPaths(
+        script: DelegateVtxo.Script,
+        contract: Contract,
+        context: PathContext,
+    ): PathSelection[] {
+        const paths: PathSelection[] = [];
 
-            if (context.collaborative) {
-                paths.push({ leaf: script.forfeit() });
-            }
+        if (context.collaborative) {
+            paths.push({ leaf: script.forfeit() });
+        }
 
+        const exitPath: PathSelection = { leaf: script.exit() };
+        if (contract.params.csvTimelock) {
+            exitPath.sequence = Number(contract.params.csvTimelock);
+        }
+        paths.push(exitPath);
+
+        // Delegate path (Alice + Delegate + Server) — collaborative only
+        if (context.collaborative) {
+            paths.push({ leaf: script.delegate() });
+        }
+
+        return paths;
+    },
+
+    getSpendablePaths(
+        script: DelegateVtxo.Script,
+        contract: Contract,
+        context: PathContext,
+    ): PathSelection[] {
+        const paths: PathSelection[] = [];
+
+        if (context.collaborative) {
+            paths.push({ leaf: script.forfeit() });
+        }
+
+        const exitSequence = contract.params.csvTimelock
+            ? Number(contract.params.csvTimelock)
+            : undefined;
+
+        if (isCsvSpendable(context, exitSequence)) {
             const exitPath: PathSelection = { leaf: script.exit() };
-            if (contract.params.csvTimelock) {
-                exitPath.sequence = Number(contract.params.csvTimelock);
+            if (exitSequence !== undefined) {
+                exitPath.sequence = exitSequence;
             }
             paths.push(exitPath);
+        }
 
-            // Delegate path (Alice + Delegate + Server) — collaborative only
-            if (context.collaborative) {
-                paths.push({ leaf: script.delegate() });
-            }
+        return paths;
+    },
 
-            return paths;
-        },
-
-        getSpendablePaths(
-            script: DelegateVtxo.Script,
-            contract: Contract,
-            context: PathContext,
-        ): PathSelection[] {
-            const paths: PathSelection[] = [];
-
-            if (context.collaborative) {
-                paths.push({ leaf: script.forfeit() });
-            }
-
-            const exitSequence = contract.params.csvTimelock
-                ? Number(contract.params.csvTimelock)
-                : undefined;
-
-            if (isCsvSpendable(context, exitSequence)) {
-                const exitPath: PathSelection = { leaf: script.exit() };
-                if (exitSequence !== undefined) {
-                    exitPath.sequence = exitSequence;
-                }
-                paths.push(exitPath);
-            }
-
-            return paths;
-        },
-    };
+    async discoverAt(
+        index: number,
+        descriptor: string,
+        deps: DiscoveryDeps,
+    ): Promise<DiscoveredContract[]> {
+        if (!deps.delegatePubKey) return [];
+        const pubKey = deriveDescriptorLeafPubKey(descriptor);
+        const out: DiscoveredContract[] = [];
+        for (const csvTimelock of deps.csvTimelocks) {
+            const script = new DelegateVtxo.Script({
+                pubKey,
+                serverPubKey: deps.serverPubKey,
+                delegatePubKey: deps.delegatePubKey,
+                csvTimelock,
+            });
+            const scriptHex = hex.encode(script.pkScript);
+            const { vtxos } = await deps.indexerProvider.getVtxos({
+                scripts: [scriptHex],
+            });
+            if (vtxos.length === 0) continue;
+            out.push({
+                type: "delegate",
+                params: {
+                    pubKey: hex.encode(pubKey),
+                    serverPubKey: hex.encode(deps.serverPubKey),
+                    delegatePubKey: hex.encode(deps.delegatePubKey),
+                    csvTimelock: timelockToSequence(csvTimelock).toString(),
+                },
+                script: scriptHex,
+                address: script.address(deps.network.hrp, deps.serverPubKey).encode(),
+                ...(index > 0
+                    ? {
+                          metadata: {
+                              source: WALLET_RECEIVE_SOURCE,
+                              signingDescriptor: descriptor,
+                          },
+                      }
+                    : {}),
+            });
+        }
+        return out;
+    },
+};

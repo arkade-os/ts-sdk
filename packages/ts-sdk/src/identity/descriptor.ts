@@ -133,6 +133,35 @@ export function extractPubKey(descriptor: string): string {
     return hex.encode(key.pubkey);
 }
 
+/**
+ * Extract the x-only (32-byte) pubkey from a materialized descriptor.
+ * Handles both static `tr(pubkey)` and materialized HD
+ * `tr([fp/..]xpub/0/<i>)` shapes via the descriptors-scure expansion map.
+ * Throws a plain Error when the descriptor is non-rangeable / unparseable;
+ * callers that need a typed error wrap this.
+ */
+export function deriveDescriptorLeafPubKey(descriptor: string): Uint8Array {
+    const network = isMainnetDescriptor(descriptor) ? networks.bitcoin : networks.testnet;
+    let expansion;
+    try {
+        expansion = expand({ descriptor, network });
+    } catch (e) {
+        throw new Error(
+            `Cannot derive leaf pubkey from descriptor (length=${descriptor.length}): ` +
+                `ensure it is materialized (no wildcard) and parsable.`,
+            { cause: e },
+        );
+    }
+    const key = expansion.expansionMap?.["@0"];
+    if (!key?.pubkey) {
+        throw new Error(
+            `Cannot derive leaf pubkey from descriptor (length=${descriptor.length}): ` +
+                `parsed but no '@0' pubkey in the expansion map.`,
+        );
+    }
+    return key.pubkey;
+}
+
 /** Parsed HD descriptor components. */
 export interface ParsedHDDescriptor {
     fingerprint: string;

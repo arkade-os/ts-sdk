@@ -122,6 +122,7 @@ import type {
     GetSpendablePathsOptions,
     IContractManager,
     RefreshVtxosOptions,
+    ScanResult,
 } from "../../contracts/contractManager";
 import type { ContractState } from "../../contracts/types";
 import type { IDelegatorManager } from "../delegator";
@@ -1208,6 +1209,22 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     payload: { outpoints },
                 };
                 await sendContractMessage(message);
+            },
+
+            scanContracts(): Promise<ScanResult> {
+                // `scanContracts` takes a `materialize(index)` callback,
+                // which cannot cross the service-worker postMessage boundary
+                // (functions are not structured-cloneable). Service-worker
+                // wallets must drive recovery through the worker's own
+                // restore message protocol, not this proxy method.
+                return Promise.reject(
+                    new Error(
+                        "scanContracts is not available on the service-worker " +
+                            "contract-manager proxy: its materialize() callback " +
+                            "cannot be sent across the worker message boundary. " +
+                            "Use the wallet's restore entrypoint instead.",
+                    ),
+                );
             },
 
             async isWatching(): Promise<boolean> {

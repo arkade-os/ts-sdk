@@ -2,6 +2,9 @@ import { Bytes } from "@scure/btc-signer/utils.js";
 import { EncodedVtxoScript, TapLeafScript, VtxoScript } from "../script/base";
 import { ExtendedVirtualCoin, VirtualCoin, TapLeaves } from "../wallet";
 import { ContractFilter } from "../repositories";
+import type { RelativeTimelock } from "../script/tapscript";
+import type { IndexerProvider } from "../providers/indexer";
+import type { OnchainProvider } from "../providers/onchain";
 
 /**
  * Contract state indicating whether it should be actively monitored.
@@ -230,6 +233,59 @@ export interface ContractHandler<P = Record<string, unknown>, S extends VtxoScri
      * Returns empty array if no paths are available.
      */
     getSpendablePaths(script: S, contract: Contract, context: PathContext): PathSelection[];
+}
+
+/**
+ * What a {@link Discoverable.discoverAt} call returns — exactly the
+ * shape `ContractManager.createContract` accepts (script-keyed,
+ * idempotent on re-register).
+ */
+export interface DiscoveredContract {
+    type: string;
+    params: Record<string, string>;
+    script: string;
+    address: string;
+    metadata?: Record<string, unknown>;
+    label?: string;
+}
+
+/**
+ * Read-only context the scanner injects into every `discoverAt` call.
+ * The boltz/swap handler does NOT receive its Boltz client here — it
+ * closes over its own client at registration time.
+ */
+export interface DiscoveryDeps {
+    indexerProvider: IndexerProvider;
+    onchainProvider: OnchainProvider;
+    network: { hrp: string };
+    serverPubKey: Uint8Array;
+    /** Relative timelocks the wallet treats as its baseline matrix. */
+    csvTimelocks: RelativeTimelock[];
+    /** Present only for delegate wallets. */
+    delegatePubKey?: Uint8Array;
+}
+
+/**
+ * Optional capability a {@link ContractHandler} implements to participate
+ * in `wallet.restore()`'s gap-limit scan. The scanner owns the index
+ * loop and the gap counter; the handler answers "do I own a contract
+ * anchored to the pubkey/descriptor at this index?" — checked against
+ * the indexer / explorer / (for swaps) the handler's own source. The
+ * handler MAY batch/cache internally across calls.
+ */
+export interface Discoverable {
+    discoverAt(
+        index: number,
+        descriptor: string,
+        deps: DiscoveryDeps,
+    ): Promise<DiscoveredContract[]>;
+}
+
+/** Duck-typed guard (mirrors `hasReceiveRotatorFactory`). */
+export function isDiscoverable(
+    handler: ContractHandler<unknown> | undefined,
+): handler is ContractHandler<unknown> & Discoverable {
+    return !!handler && typeof (handler as Partial<Discoverable>).discoverAt === "function";
 }
 
 /**
