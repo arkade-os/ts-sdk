@@ -7,6 +7,33 @@ import { networks, NetworkName } from "../networks";
 import { ArkAddress } from "../script/address";
 
 /**
+ * Thrown when a collaborative-exit / offboard would leave a change VTXO below
+ * the dust threshold. Lets callers (e.g. wallet UI) react with appropriate UX
+ * — for instance, offering to exit the full balance — instead of forwarding a
+ * server-side dust rejection to the user.
+ */
+export class DustChangeError extends Error {
+    readonly change: bigint;
+    readonly dustAmount: bigint;
+    constructor(change: bigint, dustAmount: bigint) {
+        super(
+            `change ${change} sats is below dust threshold ${dustAmount}; ` +
+                `consider exiting the full balance`,
+        );
+        this.name = "DustChangeError";
+        this.change = change;
+        this.dustAmount = dustAmount;
+    }
+}
+
+/** Fallback dust threshold used when the wallet doesn't expose `dustAmount`. */
+const FALLBACK_DUST_AMOUNT = 330n;
+
+function getDustAmount(wallet: IWallet): bigint {
+    return "dustAmount" in wallet ? (wallet.dustAmount as bigint) : FALLBACK_DUST_AMOUNT;
+}
+
+/**
  * Ramps is a class wrapping `settle` method to provide a more convenient interface for onboarding and offboarding operations.
  *
  * @see IWallet.settle
@@ -191,6 +218,15 @@ export class Ramps {
                 throw new Error("Amount is greater than total amount of vtxos after fees");
             }
             change = totalAmount - amount;
+        }
+
+        // Reject partial exits that would leave a sub-dust change VTXO: arkd
+        // would otherwise reject the intent and surface a raw dust error to
+        // the caller. The wallet layer can catch DustChangeError and offer to
+        // exit the full balance instead.
+        const dustAmount = getDustAmount(this.wallet);
+        if (change > 0n && change < dustAmount) {
+            throw new DustChangeError(change, dustAmount);
         }
 
         amount = amount ?? totalAmount;
