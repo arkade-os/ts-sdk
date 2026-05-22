@@ -2391,7 +2391,17 @@ export class ArkadeSwaps {
     }
 
     private validateQuote(amount: number, effectiveFloor: number): void {
-        if (!(amount > 0)) {
+        // Guard against non-finite / fractional / above-MAX_SAFE_INTEGER values
+        // before the `> 0` and `< floor` comparisons: Infinity passes `> 0` and
+        // fails `< floor`, so without this check it would slip through to
+        // postChainQuote. Satoshi amounts must be safe positive integers.
+        if (!Number.isSafeInteger(amount)) {
+            throw new QuoteRejectedError({
+                reason: "non_safe_integer",
+                quotedAmount: amount,
+            });
+        }
+        if (amount <= 0) {
             throw new QuoteRejectedError({
                 reason: "non_positive",
                 quotedAmount: amount,

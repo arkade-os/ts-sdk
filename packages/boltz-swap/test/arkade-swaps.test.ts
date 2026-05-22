@@ -1408,6 +1408,24 @@ describe("ArkadeSwaps", () => {
                 expect(postSpy).not.toHaveBeenCalled();
             });
 
+            it.each([
+                ["Infinity", Infinity],
+                ["NaN", NaN],
+                ["fractional", 1500.5],
+                ["above MAX_SAFE_INTEGER", Number.MAX_SAFE_INTEGER + 2],
+            ])("acceptSwapQuote rejects amount %s as non-safe-integer", async (_label, value) => {
+                const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+                await expect(
+                    swaps.acceptSwapQuote(mock.id, value, {
+                        minAcceptableAmount: 1000,
+                    }),
+                ).rejects.toMatchObject({
+                    name: "QuoteRejectedError",
+                    reason: "non_safe_integer",
+                });
+                expect(postSpy).not.toHaveBeenCalled();
+            });
+
             it("acceptSwapQuote rejects an amount below the floor and does not post", async () => {
                 const postSpy = vi.spyOn(swapProvider, "postChainQuote");
                 await expect(
