@@ -153,13 +153,13 @@ export interface RenewalConfig {
  * // Default behavior: virtual output renewal at 3 days, boarding sweep enabled, polling every minute
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkServerUrl: 'https://arkade.computer',
+ *   arkProvider: new RestArkProvider('https://arkade.computer'),
  * });
  *
  * // Custom expiry threshold of 24 hours
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkServerUrl: 'https://arkade.computer',
+ *   arkProvider: new RestArkProvider('https://arkade.computer'),
  *   settlementConfig: {
  *     vtxoThreshold: 60 * 60 * 24, // 24 hours in seconds
  *   },
@@ -168,7 +168,7 @@ export interface RenewalConfig {
  * // Explicitly disable
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkServerUrl: 'https://arkade.computer',
+ *   arkProvider: new RestArkProvider('https://arkade.computer'),
  *   settlementConfig: false,
  * });
  * ```
@@ -225,7 +225,7 @@ export const DEFAULT_RENEWAL_CONFIG: Required<Omit<RenewalConfig, "enabled">> = 
  * ```typescript
  * const wallet = await Wallet.create({
  *   identity,
- *   arkServerUrl: 'https://arkade.computer',
+ *   arkProvider: new RestArkProvider('https://arkade.computer'),
  *   settlementConfig: DEFAULT_SETTLEMENT_CONFIG,
  * })
  * ```
@@ -392,7 +392,7 @@ export function getExpiringAndRecoverableVtxos(
  * ```typescript
  * const wallet = await Wallet.create({
  *   identity,
- *   arkServerUrl: 'https://arkade.computer',
+ *   arkProvider: new RestArkProvider('https://arkade.computer'),
  *   settlementConfig: {
  *      // Seconds before virtual output expiry to trigger renewal
  *      vtxoThreshold: 259_200, // 3 days
@@ -640,7 +640,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * ```typescript
      * const wallet = await Wallet.create({
      *  identity,
-     *  arkServerUrl: 'https://arkade.computer',
+     *  arkProvider: new RestArkProvider('https://arkade.computer'),
      *  settlementConfig: {
      *      vtxoThreshold: 86_400 // 24 hours
      *  },
@@ -829,7 +829,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * ```typescript
      * const wallet = await Wallet.create({
      *   identity,
-     *   arkServerUrl: 'https://arkade.computer',
+     *   arkProvider: new RestArkProvider('https://arkade.computer'),
      *   settlementConfig: {
      *     boardingUtxoSweep: true,
      *   },

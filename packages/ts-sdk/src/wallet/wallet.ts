@@ -254,7 +254,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const arkadeServerUrl = getArkadeServerUrl(config);
 
         // Use provided arkProvider instance or create a new one from arkServerUrl
-        const arkProvider = config.arkProvider ?? new RestArkProvider(arkadeServerUrl);
+        const arkProvider = config.arkProvider || new RestArkProvider(arkadeServerUrl);
 
         // Resolve the indexer provider. If a full instance is supplied, use it
         // directly. Otherwise pick a URL with priority:
@@ -979,19 +979,18 @@ export class ReadonlyWallet implements IReadonlyWallet {
  *
  * @example
  * ```typescript
- * // Create a wallet with URL configuration
+ * // Create a wallet with providers
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkServerUrl: 'https://arkade.computer',
- *   esploraUrl: 'https://mempool.space/api'
+ *   arkProvider: new RestArkProvider('https://arkade.computer'),
+ *   onchainProvider: new EsploraProvider('https://mempool.space/api')
  * });
  *
- * // Or with custom provider instances (e.g., for Expo/React Native)
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
  *   arkProvider: new ExpoArkProvider('https://arkade.computer'),
  *   indexerProvider: new ExpoIndexerProvider('https://arkade.computer'),
- *   esploraUrl: 'https://mempool.space/api'
+ *   onchainProvider: new EsploraProvider('https://mempool.space/api')
  * });
  *
  * // Get addresses
@@ -1379,7 +1378,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * ```typescript
      * const wallet = await Wallet.create({
      *   identity,
-     *   arkServerUrl: 'https://arkade.computer',
+     *   arkProvider: new RestArkProvider('https://arkade.computer'),
      * });
      * ```
      */

@@ -31,8 +31,6 @@ const identity = MnemonicIdentity.fromMnemonic(mnemonic)
 const wallet = await Wallet.create({ identity })  // defaults to mainnet
 ```
 
-To use a different network, pass `arkServerUrl` option.
-
 ### Read-Only Wallets (Watch-Only)
 
 The SDK supports read-only wallets that allow you to query wallet state without exposing private keys. This is useful for:
