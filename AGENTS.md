@@ -52,7 +52,7 @@ pnpm run release:dry-run -- sdk patch         # Preview without changes
 pnpm run release:cleanup                      # Auto-detect dirty release artifacts
 ```
 
-Tags are `@arkade-os/sdk/<version>` and `@arkade-os/boltz-swap/<version>` (no `v<version>`). Releasing SDK implies a dependent boltz-swap release because boltz-swap depends on SDK via `workspace:*`; override with `--boltz-bump <bump-or-version>`. npm publishing is local-only.
+Tags are `@arkade-os/sdk/<version>` and `@arkade-os/boltz-swap/<version>` (no `v<version>`). Releasing SDK implies a dependent boltz-swap release because boltz-swap depends on SDK via `workspace:*`; override with `--boltz-bump <bump-or-version>`. The script runs tests, builds, commits, tags, publishes to npm (requires local npm credentials), and pushes commit + tags to `origin`.
 
 ## Code Style
 
