@@ -55,8 +55,8 @@ import { SingleKey } from "@arkade-os/sdk";
 
 const wallet = await ExpoWallet.setup({
     identity: SingleKey.fromHex(privateKey),
-    arkProvider: new RestArkProvider('https://arkade.computer'),
-    onchainProvider: new EsploraProvider('https://mempool.space/api'),
+    arkProvider: new RestArkProvider(),
+    onchainProvider: new EsploraProvider(),
     storage: { walletRepository, contractRepository },
     background: {
         taskQueue, // same instance from step 1

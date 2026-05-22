@@ -119,19 +119,12 @@ export interface BaseWalletConfig {
  *
  * @example
  * ```typescript
- * // URL-based configuration
- * const wallet = await ReadonlyWallet.create({
- *   identity: ReadonlySingleKey.fromPublicKey(pubkey),
- *   arkProvider: new RestArkProvider('https://arkade.computer')
- *   onchainProvider: new EsploraProvider('https://mempool.space/api')
- * });
- *
  * // Provider-based configuration (e.g., for Expo/React Native)
  * const wallet = await ReadonlyWallet.create({
  *   identity: ReadonlySingleKey.fromPublicKey(pubkey),
- *   arkProvider: new ExpoArkProvider('https://arkade.computer'),
- *   indexerProvider: new ExpoIndexerProvider('https://arkade.computer'),
- *   onchainProvider: new EsploraProvider('https://mempool.space/api')
+ *   arkProvider: new ExpoArkProvider(),
+ *   indexerProvider: new ExpoIndexerProvider(),
+ *   onchainProvider: new EsploraProvider()
  * });
  * ```
  */
@@ -158,18 +151,18 @@ export interface ReadonlyWalletConfig extends BaseWalletConfig {
  *
  * @example
  * ```typescript
- * // Provider-based configuration (e.g., for Expo/React Native)
+ * // Provider-based configuration
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new ExpoArkProvider('https://arkade.computer'),
- *   indexerProvider: new ExpoIndexerProvider('https://arkade.computer'),
- *   onchainProvider: new EsploraProvider('https://mempool.space/api')
+ *   arkProvider: new ExpoArkProvider(),
+ *   indexerProvider: new ExpoIndexerProvider(),
+ *   onchainProvider: new EsploraProvider()
  * });
  *
  * // With settlement configuration
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider('https://arkade.computer'),
+ *   arkProvider: new RestArkProvider(),
  *   settlementConfig: {
  *     vtxoThreshold: 60 * 60 * 24, // 24 hours in seconds
  *     boardingUtxoSweep: true,
