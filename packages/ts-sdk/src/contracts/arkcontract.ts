@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
 import { Contract } from "./types";
 import { contractHandlers } from "./handlers";
-import { DEFAULT_ARKADE_HRP } from "../wallet";
+import { DEFAULT_NETWORK } from "../networks";
 
 /**
  * Prefix for arkcontract strings.
@@ -159,7 +159,7 @@ export function contractFromArkContract(
 export function contractFromArkContractWithAddress(
     encoded: string,
     serverPubKey: Uint8Array,
-    addressPrefix: string = DEFAULT_ARKADE_HRP,
+    addressPrefix: string = DEFAULT_NETWORK.hrp,
     options: {
         label?: string;
         state?: "active" | "inactive";

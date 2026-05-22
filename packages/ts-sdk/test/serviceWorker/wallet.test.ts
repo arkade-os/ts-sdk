@@ -10,7 +10,6 @@ import {
     SeedIdentity,
     ReadonlyDescriptorIdentity,
 } from "../../src";
-import { DEFAULT_ARKADE_SERVER_URL } from "../../src/wallet";
 import { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import { hex } from "@scure/base";
@@ -18,11 +17,8 @@ import {
     WalletMessageHandler,
     DEFAULT_MESSAGE_TAG,
 } from "../../src/wallet/serviceWorker/wallet-message-handler";
-import {
-    MESSAGE_BUS_NOT_INITIALIZED,
-    MessageBusNotInitializedError,
-    ServiceWorkerTimeoutError,
-} from "../../src/worker/errors";
+import { MESSAGE_BUS_NOT_INITIALIZED, ServiceWorkerTimeoutError } from "../../src/worker/errors";
+import { DEFAULT_ARKADE_SERVER_URL } from "../../src/networks";
 
 type MessageHandler = (event: { data: any }) => void;
 

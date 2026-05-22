@@ -17,7 +17,6 @@ import {
     ReissuanceParams,
     BurnParams,
     Recipient,
-    DEFAULT_ARKADE_SERVER_URL,
 } from "..";
 import { SettlementEvent } from "../../providers/ark";
 import { hex } from "@scure/base";

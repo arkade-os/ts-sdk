@@ -2,10 +2,10 @@ import { base64, hex } from "@scure/base";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { Address, OutScript, SigHash, Transaction } from "@scure/btc-signer";
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
-import { Bytes, equalBytes, sha256 } from "@scure/btc-signer/utils.js";
+import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
-import { getNetwork, Network, NetworkName } from "../networks";
+import { DEFAULT_ARKADE_SERVER_URL, getNetwork, Network, NetworkName } from "../networks";
 import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
 import {
     ArkProvider,
@@ -26,7 +26,6 @@ import {
     ArkTransaction,
     Asset,
     Coin,
-    DEFAULT_ARKADE_SERVER_URL,
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,

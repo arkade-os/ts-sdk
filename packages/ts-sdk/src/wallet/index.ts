@@ -13,11 +13,6 @@ import { IContractManager } from "../contracts/contractManager";
 import { IDelegatorManager } from "./delegator";
 import { DelegatorProvider } from "../providers/delegator";
 
-/** Defaults */
-export const DEFAULT_ARKADE_SERVER_URL = "https://arkade.computer" as const;
-export const DEFAULT_ARKADE_HRP = "ark" as const;
-export const DEFAULT_NETWORK_NAME = "bitcoin" as const;
-
 /**
  * Wallet receive-address strategy.
  *

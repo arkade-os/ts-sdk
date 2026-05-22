@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { ArkAddress } from "../src";
-import { DEFAULT_ARKADE_HRP } from "../src/wallet";
 import fixtures from "./fixtures/encoding.json";
 import { hex } from "@scure/base";
+import { DEFAULT_NETWORK } from "../src/networks";
 
 describe("ArkAddress", () => {
     it("defaults to the mainnet Arkade HRP", () => {
@@ -12,10 +12,10 @@ describe("ArkAddress", () => {
         const address = new ArkAddress(serverPubKey, vtxoTaprootKey);
         const encoded = address.encode();
 
-        expect(address.hrp).toBe(DEFAULT_ARKADE_HRP);
-        expect(encoded.startsWith(`${DEFAULT_ARKADE_HRP}1`)).toBe(true);
+        expect(address.hrp).toBe(DEFAULT_NETWORK.hrp);
+        expect(encoded.startsWith(`${DEFAULT_NETWORK.hrp}1`)).toBe(true);
         const decoded = ArkAddress.decode(encoded);
-        expect(decoded.hrp).toBe(DEFAULT_ARKADE_HRP);
+        expect(decoded.hrp).toBe(DEFAULT_NETWORK.hrp);
     });
 
     describe("valid addresses", () => {

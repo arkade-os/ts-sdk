@@ -1,8 +1,8 @@
 import { p2tr } from "@scure/btc-signer";
 import { P2TR } from "@scure/btc-signer/payment.js";
-import { Coin, DEFAULT_NETWORK_NAME, SendBitcoinParams } from ".";
+import { Coin, SendBitcoinParams } from ".";
 import { Identity } from "../identity";
-import { getNetwork, Network, NetworkName } from "../networks";
+import { DEFAULT_NETWORK_NAME, getNetwork, Network, NetworkName } from "../networks";
 import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
 import { AnchorBumper, findP2AOutput, P2A } from "../utils/anchor";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
