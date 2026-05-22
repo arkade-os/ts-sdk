@@ -846,7 +846,7 @@ describe("WalletMessageHandler handleMessage", () => {
             type: "RENEW_VTXOS",
         } as any);
 
-        expect(vtxoManager.renewVtxos).toHaveBeenCalledWith(expect.any(Function));
+        expect(vtxoManager.renewVtxos).toHaveBeenCalledWith(expect.any(Function), undefined);
         expect(response).toMatchObject({
             tag: updater.messageTag,
             type: "RENEW_VTXOS_SUCCESS",

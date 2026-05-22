@@ -85,7 +85,7 @@ import { SignerSession, TreeNonces, TreePartialSigs } from "./tree/signingSessio
 import { DustChangeError, Ramps } from "./wallet/ramps";
 import { HDDescriptorProvider } from "./wallet/hdDescriptorProvider";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
-import type { IVtxoManager, SettlementConfig } from "./wallet/vtxo-manager";
+import type { IVtxoManager, RenewVtxosOptions, SettlementConfig } from "./wallet/vtxo-manager";
 import {
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
@@ -547,6 +547,7 @@ export type {
     GetVtxosFilter,
     SettlementConfig,
     IVtxoManager,
+    RenewVtxosOptions,
 
     // Asset types
     IReadonlyAssetManager,
