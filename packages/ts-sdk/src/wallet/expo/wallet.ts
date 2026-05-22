@@ -17,7 +17,7 @@ import type {
 import type { SettlementEvent } from "../../providers/ark";
 import type { Identity } from "../../identity";
 import type { IContractManager } from "../../contracts/contractManager";
-import type { IDelegatorManager } from "../delegator";
+import type { IDelegateManager } from "../delegate";
 import type { TaskQueue, TaskItem } from "../../worker/expo/taskQueue";
 import type { TaskProcessor, TaskDependencies } from "../../worker/expo/taskRunner";
 import { runTasks } from "../../worker/expo/taskRunner";
@@ -286,8 +286,13 @@ export class ExpoWallet implements IWallet {
         return this.wallet.getContractManager();
     }
 
-    getDelegatorManager(): Promise<IDelegatorManager | undefined> {
-        return this.wallet.getDelegatorManager();
+    getDelegateManager(): Promise<IDelegateManager | undefined> {
+        return this.wallet.getDelegateManager();
+    }
+
+    /** @deprecated alias for @see ExpoWallet.getDelegateManager */
+    getDelegatorManager(): Promise<IDelegateManager | undefined> {
+        return this.wallet.getDelegateManager();
     }
 
     sendBitcoin(params: SendBitcoinParams): Promise<string> {

@@ -6,8 +6,8 @@ import {
     InMemoryWalletRepository,
     InMemoryContractRepository,
     ArkError,
+    RestDelegateProvider,
 } from "../../src";
-import { RestDelegatorProvider } from "../../src/providers/delegator";
 import { arkdExec, beforeEachFaucet, execCommand, waitFor } from "./utils";
 
 describe("Settlement - Auto-settle boarding UTXOs", () => {
@@ -299,12 +299,12 @@ describe("Settlement - Auto-delegation on vtxo_received", () => {
     beforeEach(beforeEachFaucet, 20000);
 
     it(
-        "should auto-delegate incoming VTXOs when settlement is enabled with delegator",
+        "should auto-delegate incoming VTXOs when settlement is enabled with delegate",
         { timeout: 120000 },
         async () => {
             const identity = SingleKey.fromRandomBytes();
 
-            // Create wallet with settlement enabled + delegator configured.
+            // Create wallet with settlement enabled + delegate configured.
             // The poll loop will auto-settle the boarding UTXO, which triggers
             // vtxo_received → auto-delegate via initializeSubscription.
             const wallet = await Wallet.create({
@@ -318,7 +318,7 @@ describe("Settlement - Auto-delegation on vtxo_received", () => {
                     walletRepository: new InMemoryWalletRepository(),
                     contractRepository: new InMemoryContractRepository(),
                 },
-                delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
+                delegateProvider: new RestDelegateProvider("http://localhost:7012"),
                 settlementConfig: {
                     pollIntervalMs: 5000,
                 },
@@ -354,7 +354,7 @@ describe("Settlement - Auto-delegation on vtxo_received", () => {
             const vtxosAfter = await wallet.getVtxos();
             const delegatedVtxo = vtxosAfter.find((v) => v.txid !== firstTxid);
             expect(delegatedVtxo).toBeDefined();
-            // With zero delegator fee, value should be preserved
+            // With zero delegate fee, value should be preserved
             expect(delegatedVtxo!.value).toBe(originalValue);
 
             await wallet.dispose();

@@ -130,11 +130,13 @@ import {
     FeeInfo,
 } from "./providers/ark";
 import {
+    DelegateProvider,
     DelegatorProvider,
     DelegateInfo,
     DelegateOptions,
+    RestDelegateProvider,
     RestDelegatorProvider,
-} from "./providers/delegator";
+} from "./providers/delegate";
 import {
     CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,
@@ -213,7 +215,12 @@ import { WalletRepositoryImpl } from "./repositories/migrations/walletRepository
 import { ContractRepositoryImpl } from "./repositories/migrations/contractRepositoryImpl";
 import type { WalletRepository } from "./repositories/walletRepository";
 import type { ContractRepository } from "./repositories/contractRepository";
-import { DelegatorManagerImpl, IDelegatorManager } from "./wallet/delegator";
+import {
+    DelegateManagerImpl,
+    DelegatorManagerImpl,
+    IDelegateManager,
+    IDelegatorManager,
+} from "./wallet/delegate";
 
 export * from "./arkfee";
 export * as asset from "./extension/asset";
@@ -272,6 +279,7 @@ import {
     WalletMessageHandler,
     WalletNotInitializedError,
     ReadonlyWalletError,
+    DelegateNotConfiguredError,
     DelegatorNotConfiguredError,
 } from "./wallet/serviceWorker/wallet-message-handler";
 import {
@@ -295,7 +303,9 @@ export {
     DustChangeError,
     VtxoManager,
     HDDescriptorProvider,
+    DelegateManagerImpl,
     DelegatorManagerImpl,
+    RestDelegateProvider,
     RestDelegatorProvider,
 
     // Providers
@@ -327,6 +337,7 @@ export {
     WalletMessageHandler,
     WalletNotInitializedError,
     ReadonlyWalletError,
+    DelegateNotConfiguredError,
     DelegatorNotConfiguredError,
     MESSAGE_BUS_NOT_INITIALIZED,
     MessageBusNotInitializedError,
@@ -593,7 +604,9 @@ export type {
     ServiceWorkerWalletMode,
 
     // Delegator types
+    IDelegateManager,
     IDelegatorManager,
+    DelegateProvider,
     DelegatorProvider,
     DelegateInfo,
     DelegateOptions,

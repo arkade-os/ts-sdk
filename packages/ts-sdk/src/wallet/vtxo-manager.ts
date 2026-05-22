@@ -995,8 +995,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         }, 1000);
 
         try {
-            const [delegatorManager, contractManager, destination] = await Promise.all([
-                this.wallet.getDelegatorManager(),
+            const [delegateManager, contractManager, destination] = await Promise.all([
+                this.wallet.getDelegateManager(),
                 this.wallet.getContractManager(),
                 this.wallet.getAddress(),
             ]);
@@ -1048,8 +1048,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                     });
                 }
 
-                if (delegatorManager) {
-                    delegatorManager.delegate(event.vtxos, destination).catch((e) => {
+                if (delegateManager) {
+                    delegateManager.delegate(event.vtxos, destination).catch((e) => {
                         console.error("Error delegating VTXOs:", e);
                     });
                 }

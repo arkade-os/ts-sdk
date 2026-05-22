@@ -41,7 +41,7 @@ const createWalletStub = () => ({
     getBoardingUtxos: vi.fn().mockResolvedValue([{ txid: "u1" }]),
     getTransactionHistory: vi.fn().mockResolvedValue([{ txid: "h1" }]),
     getContractManager: vi.fn().mockResolvedValue({ id: "manager" }),
-    getDelegatorManager: vi.fn().mockResolvedValue({ id: "delegator" }),
+    getDelegateManager: vi.fn().mockResolvedValue({ id: "delegate" }),
     sendBitcoin: vi.fn().mockResolvedValue("send-txid"),
     settle: vi.fn().mockResolvedValue("settle-txid"),
     dispose: vi.fn().mockResolvedValue(undefined),
@@ -171,8 +171,8 @@ describe("ExpoWallet", () => {
         await expect(wallet.getContractManager()).resolves.toEqual({
             id: "manager",
         });
-        await expect(wallet.getDelegatorManager()).resolves.toEqual({
-            id: "delegator",
+        await expect(wallet.getDelegateManager()).resolves.toEqual({
+            id: "delegate",
         });
         await expect(wallet.sendBitcoin({ amount: 1 } as any)).resolves.toBe("send-txid");
         await expect(wallet.settle()).resolves.toBe("settle-txid");
@@ -184,7 +184,7 @@ describe("ExpoWallet", () => {
         expect(walletStub.getBoardingUtxos).toHaveBeenCalledTimes(1);
         expect(walletStub.getTransactionHistory).toHaveBeenCalledTimes(1);
         expect(walletStub.getContractManager).toHaveBeenCalledTimes(1);
-        expect(walletStub.getDelegatorManager).toHaveBeenCalledTimes(1);
+        expect(walletStub.getDelegateManager).toHaveBeenCalledTimes(1);
         expect(walletStub.sendBitcoin).toHaveBeenCalledWith({ amount: 1 });
         expect(walletStub.settle).toHaveBeenCalledTimes(1);
 

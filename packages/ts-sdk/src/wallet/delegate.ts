@@ -22,7 +22,7 @@ import {
     VtxoScript,
 } from "..";
 import { ContractVtxo } from "../contracts/types";
-import { DelegatorProvider } from "../providers/delegator";
+import { DelegateProvider } from "../providers/delegate";
 import { base64, hex } from "@scure/base";
 import { scriptFromTapLeafScript } from "../script/base";
 import { buildForfeitTxWithOutput } from "../forfeit";
@@ -33,13 +33,13 @@ import { getNetwork, NetworkName } from "../networks";
 import { createAssetPacket } from "./asset";
 import { Extension } from "../extension";
 
-export interface IDelegatorManager {
+export interface IDelegateManager {
     /**
      * Delegate virtual outputs to the remote delegation service.
      *
      * Vtxos that are not locked to a delegate-type contract (no tap leaf
-     * matches the delegator's pubkey) are filtered out silently, since they
-     * cannot be co-signed by the delegator.
+     * matches the delegate's pubkey) are filtered out silently, since they
+     * cannot be co-signed by the delegate.
      *
      * @param vtxos - Virtual outputs to delegate
      * @param destination - Arkade address that should receive renewed funds
@@ -59,16 +59,19 @@ export interface IDelegatorManager {
     getDelegateInfo(): Promise<DelegateInfo>;
 }
 
-export class DelegatorManagerImpl implements IDelegatorManager {
-    /** Create a delegator manager from the configured provider, Arkade info source, and wallet identity. */
+/** @deprecated alias for @see IDelegateManager */
+export type IDelegatorManager = IDelegateManager;
+
+export class DelegateManagerImpl implements IDelegateManager {
+    /** Create a delegate manager from the configured provider, Arkade info source, and wallet identity. */
     constructor(
-        readonly delegatorProvider: DelegatorProvider,
+        readonly delegateProvider: DelegateProvider,
         readonly arkInfoProvider: Pick<ArkProvider, "getInfo">,
         readonly identity: Identity,
     ) {}
 
     async getDelegateInfo(): Promise<DelegateInfo> {
-        return this.delegatorProvider.getDelegateInfo();
+        return this.delegateProvider.getDelegateInfo();
     }
 
     async delegate(
@@ -85,9 +88,9 @@ export class DelegatorManagerImpl implements IDelegatorManager {
 
         const destinationScript = ArkAddress.decode(destination).pkScript;
 
-        // fetch server and delegator info once, shared across all groups
+        // fetch server and delegate info once, shared across all groups
         const arkInfo = await this.arkInfoProvider.getInfo();
-        const delegateInfo = await this.delegatorProvider.getDelegateInfo();
+        const delegateInfo = await this.delegateProvider.getDelegateInfo();
 
         // keep only vtxos that can be signed by the delegate. The guard
         // narrows ContractVtxo (with optional taproot fields) to the
@@ -105,7 +108,7 @@ export class DelegatorManagerImpl implements IDelegatorManager {
             try {
                 await delegate(
                     this.identity,
-                    this.delegatorProvider,
+                    this.delegateProvider,
                     arkInfo,
                     delegateInfo,
                     eligible,
@@ -143,7 +146,7 @@ export class DelegatorManagerImpl implements IDelegatorManager {
             try {
                 await delegate(
                     this.identity,
-                    this.delegatorProvider,
+                    this.delegateProvider,
                     arkInfo,
                     delegateInfo,
                     recoverableVtxos,
@@ -173,7 +176,7 @@ export class DelegatorManagerImpl implements IDelegatorManager {
             groupsList.map(async ([, vtxosGroup]) =>
                 delegate(
                     this.identity,
-                    this.delegatorProvider,
+                    this.delegateProvider,
                     arkInfo,
                     delegateInfo,
                     vtxosGroup,
@@ -199,6 +202,10 @@ export class DelegatorManagerImpl implements IDelegatorManager {
     }
 }
 
+/** @deprecated alias for @see DelegateManagerImpl */
+export const DelegatorManagerImpl = DelegateManagerImpl;
+export type DelegatorManagerImpl = DelegateManagerImpl;
+
 /**
  * Delegates virtual outputs to a delegation service, allowing them to manage their renewal
  * on behalf of the wallet owner.
@@ -209,7 +216,7 @@ export class DelegatorManagerImpl implements IDelegatorManager {
  */
 async function delegate(
     identity: Identity,
-    delegatorProvider: DelegatorProvider,
+    delegateProvider: DelegateProvider,
     arkInfo: ArkInfo,
     delegateInfo: DelegateInfo,
     vtxos: ExtendedVirtualCoin[],
@@ -220,8 +227,8 @@ async function delegate(
         throw new Error("unable to delegate: no vtxos provided");
     }
 
-    if (!delegatorProvider) {
-        throw new Error("unable to delegate: delegator provider not configured");
+    if (!delegateProvider) {
+        throw new Error("unable to delegate: delegate provider not configured");
     }
 
     if (!delegateAt) {
@@ -276,15 +283,15 @@ async function delegate(
         }
         amount += BigInt(coin.value) - BigInt(inputFee.value);
     }
-    const { delegatorAddress, pubkey, fee } = delegateInfo;
+    const { delegateAddress, pubkey, fee } = delegateInfo;
 
     const outputs = [];
-    const delegatorFee = BigInt(Number(fee));
+    const delegateFee = BigInt(Number(fee));
 
-    if (delegatorFee > 0n) {
+    if (delegateFee > 0n) {
         outputs.push({
-            script: ArkAddress.decode(delegatorAddress).pkScript,
-            amount: delegatorFee,
+            script: ArkAddress.decode(delegateAddress).pkScript,
+            amount: delegateFee,
         });
     }
 
@@ -304,7 +311,7 @@ async function delegate(
     }
     amount -= BigInt(outputFee);
 
-    amount -= delegatorFee;
+    amount -= delegateFee;
     if (amount <= dust) {
         throw new Error("Amount is below dust limit, cannot delegate");
     }
@@ -343,7 +350,7 @@ async function delegate(
             }),
     );
 
-    await delegatorProvider.delegate(registerIntent, forfeits);
+    await delegateProvider.delegate(registerIntent, forfeits);
 }
 
 async function makeDelegateForfeitTx(

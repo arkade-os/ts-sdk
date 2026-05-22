@@ -7,12 +7,11 @@ import { SignedIntent } from "./ark";
 export interface DelegateInfo {
     /** Delegate public key. */
     pubkey: string;
-    /** Delegate fee amount or expression returned by the delegation service. */
+    /** Delegate fee amount or expression returned by the delegate. */
     fee: string;
-    /**
-     * Address controlled by the delegation service.
-     * Naming is confusing: should be thought of as a "delegate address".
-     */
+    /** Address for delegate fee collection. Kept optional as it's not yet  */
+    delegateAddress: string;
+    /** @deprecated alias for @see DelegateInfo.delegateAddress */
     delegatorAddress: string;
 }
 
@@ -31,9 +30,9 @@ export interface DelegateOptions {
 }
 
 /**
- * Provider interface for remote delegation services.
+ * Provider interface for remote delegation service.
  */
-export interface DelegatorProvider {
+export interface DelegateProvider {
     /**
      * Request delegation for a signed register intent and its forfeit transactions.
      *
@@ -55,20 +54,23 @@ export interface DelegatorProvider {
     getDelegateInfo(): Promise<DelegateInfo>;
 }
 
+/** @deprecated alias for @see DelegateProvider */
+export type DelegatorProvider = DelegateProvider;
+
 /**
- * REST-based delegation provider implementation.
+ * REST-based delegate provider implementation.
  * @example
  * ```typescript
- * const provider = new RestDelegatorProvider('https://delegator.example.com');
+ * const provider = new RestDelegateProvider('https://delegate.example.com');
  * const info = await provider.getDelegateInfo();
  * await provider.delegate(intent, forfeitTxs);
  * ```
  */
-export class RestDelegatorProvider implements DelegatorProvider {
+export class RestDelegateProvider implements DelegateProvider {
     /**
-     * Create a REST delegation provider targeting the given base URL.
+     * Create a REST delegate provider targeting the given base URL.
      *
-     * @param url - Base URL of the delegation service
+     * @param url - Base URL of the remote delegation service.
      */
     constructor(public url: string) {}
 
@@ -114,6 +116,7 @@ export class RestDelegatorProvider implements DelegatorProvider {
      * @throws Error if the remote service returns invalid data
      */
     async getDelegateInfo(): Promise<DelegateInfo> {
+        /** TODO: Update later once Fulmine URL changed */
         const url = `${this.url}/v1/delegator/info`;
         const response = await fetch(url);
 
@@ -126,10 +129,18 @@ export class RestDelegatorProvider implements DelegatorProvider {
         if (!isDelegateInfo(data)) {
             throw new Error("Invalid delegate info");
         }
-        return data;
+        return {
+            ...data,
+            delegateAddress: data.delegateAddress,
+        };
     }
 }
 
+/** @deprecated alias for @see RestDelegateProvider */
+export const RestDelegatorProvider = RestDelegateProvider;
+export type RestDelegatorProvider = RestDelegateProvider;
+
+/** Note: doesn't validate `delegateAddress`, as this isn't returned by Fulmine yet. */
 function isDelegateInfo(data: unknown): data is DelegateInfo {
     return (
         !!data &&

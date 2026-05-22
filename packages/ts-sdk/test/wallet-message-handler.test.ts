@@ -534,6 +534,9 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue(vtxos),
+            getDelegateManager: vi.fn().mockResolvedValue({
+                delegate: delegateSpy,
+            }),
             getDelegatorManager: vi.fn().mockResolvedValue({
                 delegate: delegateSpy,
             }),
@@ -577,7 +580,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue(vtxos),
-            getDelegatorManager: vi.fn().mockResolvedValue({
+            getDelegateManager: vi.fn().mockResolvedValue({
                 delegate: delegateSpy,
             }),
         };
@@ -607,6 +610,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue(allVtxos),
+            getDelegateManager: vi.fn().mockResolvedValue({ delegate: delegateSpy }),
             getDelegatorManager: vi.fn().mockResolvedValue({ delegate: delegateSpy }),
         };
 
@@ -623,10 +627,11 @@ describe("WalletMessageHandler handleMessage", () => {
         expect(delegateSpy).toHaveBeenCalledWith([allVtxos[0]], "dest-addr", undefined);
     });
 
-    it("DELEGATE fails when delegatorManager is not configured", async () => {
+    it("DELEGATE fails when delegateManager is not configured", async () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue([]),
+            getDelegateManager: vi.fn().mockResolvedValue(undefined),
             getDelegatorManager: vi.fn().mockResolvedValue(undefined),
         };
 
@@ -640,7 +645,7 @@ describe("WalletMessageHandler handleMessage", () => {
         } as any);
 
         expect(response.error).toBeInstanceOf(Error);
-        expect(response.error?.message).toBe("Delegator not configured");
+        expect(response.error?.message).toBe("Delegate not configured");
     });
 
     it("DELEGATE fails with readonly wallet only", async () => {
@@ -664,10 +669,14 @@ describe("WalletMessageHandler handleMessage", () => {
         const info = {
             pubkey: "02abc",
             fee: "100",
+            delegateAddress: "tark1addr",
             delegatorAddress: "tark1addr",
         };
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
+            getDelegateManager: vi.fn().mockResolvedValue({
+                getDelegateInfo: vi.fn().mockResolvedValue(info),
+            }),
             getDelegatorManager: vi.fn().mockResolvedValue({
                 getDelegateInfo: vi.fn().mockResolvedValue(info),
             }),
@@ -685,9 +694,10 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
-    it("GET_DELEGATE_INFO fails when delegatorManager is not configured", async () => {
+    it("GET_DELEGATE_INFO fails when delegateManager is not configured", async () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
+            getDelegateManager: vi.fn().mockResolvedValue(undefined),
             getDelegatorManager: vi.fn().mockResolvedValue(undefined),
         };
 
@@ -697,7 +707,7 @@ describe("WalletMessageHandler handleMessage", () => {
         } as any);
 
         expect(response.error).toBeInstanceOf(Error);
-        expect(response.error?.message).toBe("Delegator not configured");
+        expect(response.error?.message).toBe("Delegate not configured");
     });
 
     it("handles RECOVER_VTXOS messages", async () => {

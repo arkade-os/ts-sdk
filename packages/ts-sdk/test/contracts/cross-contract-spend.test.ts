@@ -1,8 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { hex } from "@scure/base";
-import { InMemoryContractRepository, InMemoryWalletRepository, SingleKey, Wallet } from "../../src";
+import {
+    DelegateProvider,
+    InMemoryContractRepository,
+    InMemoryWalletRepository,
+    SingleKey,
+    Wallet,
+} from "../../src";
 import { ArkProvider } from "../../src/providers/ark";
-import { DelegatorProvider } from "../../src/providers/delegator";
 import { OnchainProvider } from "../../src/providers/onchain";
 import { IndexerProvider } from "../../src/providers/indexer";
 import { VirtualCoin } from "../../src/wallet";
@@ -26,7 +31,7 @@ function createMockArkProvider(): ArkProvider {
             forfeitAddress: "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080",
             checkpointTapscript: "5ab27520" + serverPubKeyHex + "ac",
             dust: 450n,
-            fees: { delegatorFeeBps: 0 },
+            fees: { delegateFeeBps: 0, delegatorFeeBps: 0 },
             deprecatedSigners: [],
             digest: "",
             scheduledSession: undefined,
@@ -65,12 +70,13 @@ function createMockOnchainProvider(): OnchainProvider {
     };
 }
 
-function createMockDelegatorProvider(): DelegatorProvider {
+function createMockDelegateProvider(): DelegateProvider {
     return {
         delegate: vi.fn(),
         getDelegateInfo: vi.fn().mockResolvedValue({
             pubkey: "02" + delegatePubKeyHex,
             fee: "0",
+            delegateAddress: "delegate-address",
             delegatorAddress: "delegate-address",
         }),
     };
@@ -125,7 +131,7 @@ describe("Cross-contract spending", () => {
         const identity = SingleKey.fromHex(mockPrivKeyHex);
         const arkProvider = createMockArkProvider();
         const onchainProvider = createMockOnchainProvider();
-        const delegatorProvider = createMockDelegatorProvider();
+        const delegateProvider = createMockDelegateProvider();
         const mockIndexer = createMockIndexerProvider();
 
         // Create wallet with delegate enabled.
@@ -136,7 +142,7 @@ describe("Cross-contract spending", () => {
             arkProvider,
             indexerProvider: mockIndexer,
             onchainProvider,
-            delegatorProvider,
+            delegateProvider,
             storage: { walletRepository, contractRepository },
         });
 

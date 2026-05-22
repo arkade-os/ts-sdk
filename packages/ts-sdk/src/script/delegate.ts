@@ -5,7 +5,7 @@ import { TapLeafScript, VtxoScript } from "./base";
 import { hex } from "@scure/base";
 
 /**
- * DelegateVtxo extends DefaultVtxo with an extra delegator path
+ * DelegateVtxo extends DefaultVtxo with an extra delegate path
  */
 export namespace DelegateVtxo {
     /**
