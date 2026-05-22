@@ -321,11 +321,24 @@ class ServiceWorkerAssetManager extends ServiceWorkerReadonlyAssetManager implem
 interface ServiceWorkerWalletOptions {
     /** Optional Arkade server public key used to construct and validate Arkade addresses. */
     arkServerPublicKey?: string;
-    /** Base URL of the Arkade server. */
+    /**
+     * Base URL of the Arkade server.
+     *
+     * @deprecated Provide an explicit provider via the worker config instead.
+     * URL-based configuration will be removed in a future major version.
+     */
     arkServerUrl?: string;
-    /** Optional override for the indexer URL. */
+    /**
+     * Optional override for the indexer URL.
+     *
+     * @deprecated Provide an explicit provider via the worker config instead.
+     */
     indexerUrl?: string;
-    /** Optional override for the Esplora API URL. */
+    /**
+     * Optional override for the Esplora API URL.
+     *
+     * @deprecated Provide an explicit provider via the worker config instead.
+     */
     esploraUrl?: string;
     /**
      * Repository-backed storage configuration overrides.
@@ -334,7 +347,11 @@ interface ServiceWorkerWalletOptions {
     storage?: StorageConfig;
     /** Identity used to derive addresses and optionally sign operations. */
     identity: ReadonlyIdentity | Identity;
-    /** Optional delegation service URL. */
+    /**
+     * Optional delegation service URL.
+     *
+     * @deprecated Provide an explicit `DelegatorProvider` instance instead.
+     */
     delegatorUrl?: string;
     /**
      * Override the default tag used for messages sent to and received from the service worker.
