@@ -99,8 +99,8 @@ export function warnOnRemovedBackgroundFields(bg: unknown): void {
  *
  * const wallet = await ExpoWallet.setup({
  *     identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *     arkServerUrl: 'https://arkade.computer',
- *     esploraUrl: 'https://mempool.space/api',
+ *     arkProvider: new RestArkProvider('https://arkade.computer'),
+ *     onchainProvider: new EsploraProvider('https://mempool.space/api')
  *     storage: { ... },
  *     background: {
  *         taskQueue: new AsyncStorageTaskQueue(AsyncStorage),
@@ -171,7 +171,7 @@ export class ExpoWallet implements IWallet {
         // without a network call. Only works with AsyncStorageTaskQueue.
         if ("persistConfig" in taskQueue) {
             const arkServerUrl =
-                config.arkServerUrl ??
+                config.arkServerUrl ||
                 (wallet.arkProvider instanceof RestArkProvider
                     ? wallet.arkProvider.serverUrl
                     : undefined);
