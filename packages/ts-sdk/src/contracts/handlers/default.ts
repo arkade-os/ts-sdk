@@ -53,9 +53,7 @@ export const DefaultContractHandler: ContractHandler<DefaultContractParams, Defa
     },
 
     deserializeParams(params: Record<string, string>): DefaultContractParams {
-        const csvTimelock = params.csvTimelock
-            ? sequenceToTimelock(Number(params.csvTimelock))
-            : DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        const csvTimelock = sequenceToTimelock(Number(params.csvTimelock));
         return {
             pubKey: extractPubKeyBytes(params.pubKey),
             serverPubKey: extractPubKeyBytes(params.serverPubKey),

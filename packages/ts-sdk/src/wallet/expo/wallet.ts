@@ -14,7 +14,6 @@ import type {
     ExtendedVirtualCoin,
     Recipient,
 } from "..";
-import type { VirtualCoin } from "..";
 import type { SettlementEvent } from "../../providers/ark";
 import type { Identity } from "../../identity";
 import type { IContractManager } from "../../contracts/contractManager";
@@ -24,7 +23,6 @@ import type { TaskProcessor, TaskDependencies } from "../../worker/expo/taskRunn
 import { runTasks } from "../../worker/expo/taskRunner";
 import { contractPollProcessor, CONTRACT_POLL_TASK_TYPE } from "../../worker/expo/processors";
 import { extendVirtualCoinForContract, getRandomId } from "../utils";
-import { DefaultVtxo } from "../../script/default";
 import type { PersistedBackgroundConfig } from "./background";
 import type { AsyncStorageTaskQueue } from "../../worker/expo/asyncStorageTaskQueue";
 
@@ -177,9 +175,7 @@ export class ExpoWallet implements IWallet {
                     : undefined);
 
             if (arkServerUrl) {
-                const timelock =
-                    wallet.offchainTapscript.options.csvTimelock ??
-                    DefaultVtxo.Script.DEFAULT_TIMELOCK;
+                const timelock = wallet.offchainTapscript.options.csvTimelock;
 
                 const bgConfig: PersistedBackgroundConfig = {
                     arkServerUrl,

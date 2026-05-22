@@ -1,6 +1,5 @@
 import { equalBytes } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
-
 import { deriveDescriptorLeafPubKey } from "../identity/descriptor";
 import { DescriptorProvider } from "../identity/descriptorProvider";
 import { isHDCapableIdentity } from "../identity/hdCapableIdentity";
@@ -512,7 +511,7 @@ export class WalletReceiveRotator {
             .encode();
 
         const manager = await wallet.getContractManager();
-        const csvTimelock = newTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        const csvTimelock = newTapscript.options.csvTimelock;
         const csvTimelockStr = timelockToSequence(csvTimelock).toString();
         const serverPubKeyHex = hex.encode(newTapscript.options.serverPubKey);
 

@@ -2037,10 +2037,12 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         const tapscriptOld = new DefaultVtxo.Script({
             pubKey: TEST_PUB_KEY,
             serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
         });
         const tapscriptNew = new DefaultVtxo.Script({
             pubKey: TEST_DELEGATE_PUB_KEY,
             serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
         });
         // Sanity: the two tapscripts produce distinguishable outputs.
         // Without this, any assertion below would be vacuously true.
