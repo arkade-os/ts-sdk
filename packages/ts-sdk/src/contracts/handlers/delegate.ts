@@ -1,6 +1,5 @@
 import { hex } from "@scure/base";
 import { DelegateVtxo } from "../../script/delegate";
-import { DefaultVtxo } from "../../script/default";
 import { RelativeTimelock } from "../../script/tapscript";
 import { Contract, ContractHandler, Discoverable, PathContext, PathSelection } from "../types";
 import type { DiscoveredContract, DiscoveryDeps } from "../types";
@@ -46,9 +45,7 @@ export const DelegateContractHandler: ContractHandler<DelegateContractParams, De
     },
 
     deserializeParams(params: Record<string, string>): DelegateContractParams {
-        const csvTimelock = params.csvTimelock
-            ? sequenceToTimelock(Number(params.csvTimelock))
-            : DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        const csvTimelock = sequenceToTimelock(Number(params.csvTimelock));
         return {
             pubKey: hex.decode(params.pubKey),
             serverPubKey: hex.decode(params.serverPubKey),
