@@ -10,8 +10,8 @@ import { OnchainProvider } from "../providers/onchain";
 import { ContractWatcherConfig } from "../contracts/contractWatcher";
 import { ContractRepository, WalletRepository } from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
-import { IDelegatorManager } from "./delegator";
-import { DelegatorProvider } from "../providers/delegator";
+import { IDelegateManager } from "./delegate";
+import { DelegateProvider } from "../providers/delegate";
 
 /** Defaults */
 export const DEFAULT_ARKADE_SERVER_URL = "https://arkade.computer" as const;
@@ -52,7 +52,7 @@ export type WalletMode = "auto" | "static" | "hd" | DescriptorProvider;
  * derived service URLs such as `indexerUrl` and `esploraUrl`.
  *
  * Provider-based configuration supplies concrete provider instances directly,
- * including the ArkProvider, IndexerProvider, OnchainProvider, and DelegatorProvider.
+ * including the ArkProvider, IndexerProvider, OnchainProvider, and DelegateProvider.
  *
  * The wallet will use provided URLs to create default providers if custom provider
  * instances are not supplied. If optional parameters are not provided, the wallet
@@ -105,7 +105,9 @@ export interface BaseWalletConfig {
     /** Optional onchain provider instance. */
     onchainProvider?: OnchainProvider;
     /** Optional delegation service instance. */
-    delegatorProvider?: DelegatorProvider;
+    delegateProvider?: DelegateProvider;
+    /** @deprecated alias for @see BaseWalletConfig.delegateProvider */
+    delegatorProvider?: DelegateProvider;
 }
 
 /**
@@ -850,7 +852,10 @@ export interface IWallet extends IReadonlyWallet {
     assetManager: IAssetManager;
 
     /** @returns Delegation manager, when configured. */
-    getDelegatorManager(): Promise<IDelegatorManager | undefined>;
+    getDelegateManager(): Promise<IDelegateManager | undefined>;
+
+    /** @deprecated alias for @see IWallet.getDelegateManager */
+    getDelegatorManager(): Promise<IDelegateManager | undefined>;
 }
 
 /**

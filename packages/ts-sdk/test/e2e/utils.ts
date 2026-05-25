@@ -14,9 +14,9 @@ import {
     WalletRepository,
     ContractRepository,
     WalletMode,
+    RestDelegateProvider,
 } from "../../src";
 import { execSync } from "child_process";
-import { RestDelegatorProvider } from "../../src/providers/delegator";
 import { generateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 
@@ -110,7 +110,7 @@ export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> 
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
         },
-        delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
+        delegateProvider: new RestDelegateProvider("http://localhost:7012"),
         settlementConfig: false,
     });
 
@@ -304,7 +304,7 @@ export function createSharedRepos(): SharedRepos {
 }
 
 /**
- * Create a delegator-enabled wallet using a provided identity and repositories,
+ * Create a delegate-enabled wallet using a provided identity and repositories,
  * with an `ArkProvider` whose `getInfo()` overrides `unilateralExitDelay` to
  * simulate a server-side config change without restarting arkd.
  */
@@ -331,7 +331,7 @@ export async function createTestArkWalletWithDelegateAndOverride(opts: {
             walletRepository: opts.repos.walletRepository,
             contractRepository: opts.repos.contractRepository,
         },
-        delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
+        delegateProvider: new RestDelegateProvider("http://localhost:7012"),
         settlementConfig: false,
     });
 

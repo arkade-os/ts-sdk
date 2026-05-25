@@ -321,7 +321,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
 const createSWWallet = (
     serviceWorker: ServiceWorker,
     messageTag: string = DEFAULT_MESSAGE_TAG,
-    hasDelegator: boolean = false,
+    hasDelegate: boolean = false,
 ) =>
     new (ServiceWorkerWallet as any)(
         serviceWorker,
@@ -329,7 +329,7 @@ const createSWWallet = (
         new InMemoryWalletRepository(),
         new InMemoryContractRepository(),
         messageTag,
-        hasDelegator,
+        hasDelegate,
     ) as ServiceWorkerWallet;
 
 describe("ServiceWorkerWallet", () => {
@@ -340,7 +340,7 @@ describe("ServiceWorkerWallet", () => {
         vi.unstubAllGlobals();
     });
 
-    it("getDelegatorManager returns undefined when no delegator configured", async () => {
+    it("getDelegateManager returns undefined when no delegate configured", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness();
 
         vi.stubGlobal("navigator", {
@@ -348,13 +348,14 @@ describe("ServiceWorkerWallet", () => {
         } as any);
 
         const wallet = createSWWallet(serviceWorker as any, messageTag, false);
-        await expect(wallet.getDelegatorManager()).resolves.toBeUndefined();
+        await expect(wallet.getDelegateManager()).resolves.toBeUndefined();
     });
 
-    it("getDelegatorManager returns a manager that proxies messages", async () => {
+    it("getDelegateManager returns a manager that proxies messages", async () => {
         const delegateInfo = {
             pubkey: "02abc",
             fee: "100",
+            delegateAddress: "tark1addr",
             delegatorAddress: "tark1addr",
         };
 
@@ -387,7 +388,7 @@ describe("ServiceWorkerWallet", () => {
         } as any);
 
         const wallet = createSWWallet(serviceWorker as any, messageTag, true);
-        const manager = await wallet.getDelegatorManager();
+        const manager = await wallet.getDelegateManager();
         expect(manager).toBeDefined();
 
         await expect(manager!.getDelegateInfo()).resolves.toEqual(delegateInfo);

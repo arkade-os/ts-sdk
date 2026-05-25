@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { findDestinationOutputIndex } from "../../src/wallet/delegator";
+import { findDestinationOutputIndex } from "../../src/wallet/delegate";
 
 describe("findDestinationOutputIndex", () => {
     const scriptA = new Uint8Array([0x00, 0x14, 0xaa, 0xbb]);

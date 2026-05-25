@@ -19,6 +19,7 @@ import {
     EsploraProvider,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    RestDelegateProvider,
 } from "../../src";
 import {
     arkdExec,
@@ -26,7 +27,6 @@ import {
     clearFees,
     createTestArkWallet,
     createTestArkWalletWithDelegate,
-    createTestArkWalletWithMnemonic,
     createTestIdentity,
     createTestOnchainWallet,
     execCommand,
@@ -35,7 +35,6 @@ import {
     setFees,
     waitFor,
 } from "./utils";
-import { RestDelegatorProvider } from "../../src/providers/delegator";
 import { hex, base64 } from "@scure/base";
 
 describe("Common", () => {
@@ -1181,8 +1180,8 @@ describe("Delegate", () => {
         const vtxoBeforeDelegate = vtxos[0];
         expect(vtxoBeforeDelegate.txid).toBeDefined();
 
-        const delegatorManager = await alice.wallet.getDelegatorManager();
-        await delegatorManager?.delegate(
+        const delegateManager = await alice.wallet.getDelegateManager();
+        await delegateManager?.delegate(
             [vtxoBeforeDelegate],
             await alice.wallet.getAddress(),
             new Date(Date.now() + 1000),
@@ -1200,11 +1199,11 @@ describe("Delegate", () => {
     });
 });
 
-describe("Delegator Lifecycle", () => {
+describe("Delegate Lifecycle", () => {
     beforeEach(beforeEachFaucet, 20000);
 
     it(
-        "should track and spend VTXOs across delegator add/remove",
+        "should track and spend VTXOs across delegate add/remove ",
         { timeout: 120000 },
         async () => {
             const walletRepository = new InMemoryWalletRepository();
@@ -1216,7 +1215,7 @@ describe("Delegator Lifecycle", () => {
                 pollingInterval: 2000,
             });
 
-            // Phase 1 — No delegator
+            // Phase 1 — No delegate
             const wallet1 = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
@@ -1234,13 +1233,13 @@ describe("Delegator Lifecycle", () => {
             const balance1 = await wallet1.getBalance();
             expect(balance1.total).toBeGreaterThanOrEqual(10_000);
 
-            // Phase 2 — Add delegator
+            // Phase 2 — Add delegate
             const wallet2 = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
-                delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
+                delegateProvider: new RestDelegateProvider("http://localhost:7012"),
                 settlementConfig: false,
             });
 
@@ -1299,7 +1298,7 @@ describe("Delegator Lifecycle", () => {
             );
             expect(spentDelegateOutpoints.length).toBeGreaterThan(0);
 
-            // Phase 3 — Remove delegator
+            // Phase 3 — Remove delegate
             const wallet3 = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
@@ -1373,7 +1372,7 @@ describe("Cross-contract spending", () => {
                 pollingInterval: 2000,
             });
 
-            // Step 1 — No delegator: receive 1000 to default address
+            // Step 1 — No delegate: receive 1000 to default address
             const wallet1 = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
@@ -1391,13 +1390,13 @@ describe("Cross-contract spending", () => {
             const balance1 = await wallet1.getBalance();
             expect(balance1.total).toBeGreaterThanOrEqual(1_000);
 
-            // Step 2 — Enable delegator: receive 1000 to delegate address
+            // Step 2 — Enable delegate: receive 1000 to delegate address
             const wallet2 = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
-                delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
+                delegateProvider: new RestDelegateProvider("http://localhost:7012"),
                 settlementConfig: false,
             });
 
@@ -1491,7 +1490,7 @@ describe("Cross-contract spending", () => {
                 pollingInterval: 2000,
             });
 
-            // Step 1 — No delegator: receive 1000 to default address
+            // Step 1 — No delegate: receive 1000 to default address
             const wallet1 = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
@@ -1503,13 +1502,13 @@ describe("Cross-contract spending", () => {
             const defaultAddress = await wallet1.getAddress();
             await wallet1.getContractManager();
 
-            // Step 2 — Enable delegator: receive 1000 to delegate address
+            // Step 2 — Enable delegate: receive 1000 to delegate address
             const wallet2 = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
-                delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
+                delegateProvider: new RestDelegateProvider("http://localhost:7012"),
                 settlementConfig: false,
             });
 
@@ -2017,7 +2016,7 @@ describe("Asset integration tests", () => {
     });
 
     it(
-        "should track and spend VTXOs with assets across delegator add/remove",
+        "should track and spend VTXOs with assets across delegate add/remove",
         { timeout: 120000 },
         async () => {
             const walletRepository = new InMemoryWalletRepository();
@@ -2029,7 +2028,7 @@ describe("Asset integration tests", () => {
                 pollingInterval: 2000,
             });
 
-            // Phase 1 — No delegator: fund and issue asset on default address
+            // Phase 1 — No delegate: fund and issue asset on default address
             const wallet1 = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
@@ -2050,13 +2049,13 @@ describe("Asset integration tests", () => {
             expect(issueResult1.assetId).toBeDefined();
             await new Promise((resolve) => setTimeout(resolve, 1000));
 
-            // Phase 2 — Add delegator: fund and issue asset on delegate address
+            // Phase 2 — Add delegate: fund and issue asset on delegate address
             const wallet2 = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
-                delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
+                delegateProvider: new RestDelegateProvider("http://localhost:7012"),
                 settlementConfig: false,
             });
 
@@ -2120,7 +2119,7 @@ describe("Asset integration tests", () => {
                 .reduce((s, a) => s + a.amount, 0n);
             expect(aliceRemaining2).toBe(100n);
 
-            // Phase 3 — Remove delegator: spend via forfeit path with assets
+            // Phase 3 — Remove delegate: spend via forfeit path with assets
             const wallet3 = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
@@ -2179,7 +2178,7 @@ describe("Asset integration tests", () => {
                 pollingInterval: 2000,
             });
 
-            // Step 1 — No delegator: fund default address and issue asset
+            // Step 1 — No delegate: fund default address and issue asset
             const wallet1 = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
@@ -2200,13 +2199,13 @@ describe("Asset integration tests", () => {
             expect(issueResult.assetId).toBeDefined();
             await new Promise((resolve) => setTimeout(resolve, 1000));
 
-            // Step 2 — Enable delegator: fund delegate address
+            // Step 2 — Enable delegate: fund delegate address
             const wallet2 = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
-                delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
+                delegateProvider: new RestDelegateProvider("http://localhost:7012"),
                 settlementConfig: false,
             });
 
@@ -2281,7 +2280,7 @@ describe("Asset integration tests", () => {
                 pollingInterval: 2000,
             });
 
-            // Step 1 — Create wallet without delegator
+            // Step 1 — Create wallet without delegate
             const wallet1 = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
@@ -2293,13 +2292,13 @@ describe("Asset integration tests", () => {
             const defaultAddress = await wallet1.getAddress();
             await wallet1.getContractManager();
 
-            // Step 2 — Enable delegator before funding
+            // Step 2 — Enable delegate before funding
             const wallet2 = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
-                delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
+                delegateProvider: new RestDelegateProvider("http://localhost:7012"),
                 settlementConfig: false,
             });
 

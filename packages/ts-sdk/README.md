@@ -541,30 +541,30 @@ const balance = await manager.getRecoverableBalance()
 
 Delegation allows users to outsource virtual output renewal to a third-party delegation service.
 
-Instead of the delegating user renewing virtual outputs by themself, their delegate will automatically settle them before they expire, sending the funds back to the delegator's wallet address (minus a service fee).
+Instead of the delegating user renewing virtual outputs by themselves, their delegate will automatically settle them before they expire, sending the funds back to the user's wallet address (minus a service fee).
 
 This is useful for wallets that cannot be online 24/7.
 
-When a `delegatorProvider` is configured, the wallet address includes an extra tapscript path that authorizes the delegate to co-sign renewals alongside the Arkade server.
+When a `delegateProvider` is configured, the wallet address includes an extra tapscript path that authorizes the delegate to co-sign renewals alongside the Arkade server.
 
 To run a delegation service, you'll need to set up a [Fulmine server](https://github.com/ArkLabsHQ/fulmine) with the [Delegation API](https://github.com/ArkLabsHQ/fulmine?tab=readme-ov-file#-delegate-api) enabled.
 
 #### Setting Up a Wallet with Delegation
 
 ```typescript
-import { Wallet, MnemonicIdentity, RestDelegatorProvider } from '@arkade-os/sdk'
+import { Wallet, MnemonicIdentity, RestDelegateProvider } from '@arkade-os/sdk'
 
 const wallet = await Wallet.create({
   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
-  delegatorProvider: new RestDelegatorProvider('http://localhost:7001'),
+  delegateProvider: new RestDelegateProvider('http://localhost:7001'),
 })
 ```
 
-> **Note:** Adding a `delegatorProvider` changes your wallet address because the offchain tapscript includes an additional delegation path. Funds sent to an address without delegation cannot be delegated, and vice versa.
+> **Note:** Adding a `delegateProvider` changes your wallet address because the offchain tapscript includes an additional delegation path. Funds sent to an address without delegation cannot be delegated, and vice versa.
 
 #### Delegating Virtual Outputs
 
-Once the wallet is configured with a delegate, use `wallet.delegatorManager` to delegate your virtual outputs:
+Once the wallet is configured with a delegate, use `wallet.getDelegateManager()` to delegate your virtual outputs:
 
 ```typescript
 // Get spendable virtual outputs (including recoverable)
@@ -572,8 +572,8 @@ const vtxos = await wallet.getVtxos({ withRecoverable: true })
 
 // Delegate all virtual outputs — the delegate will renew them before expiry
 const arkadeAddress = await wallet.getAddress()
-const delegatorManager = await wallet.getDelegatorManager();
-const delegationResult = await delegatorManager.delegate(vtxos, arkadeAddress)
+const delegateManager = await wallet.getDelegateManager();
+const delegationResult = await delegateManager.delegate(vtxos, arkadeAddress)
 
 console.log('Delegated:', delegationResult.delegated.length)
 console.log('Failed:', delegationResult.failed.length)
@@ -588,12 +588,12 @@ You can override this with an explicit date:
 ```typescript
 // Delegate with a specific renewal time
 const delegateAt = new Date(Date.now() + 12 * 60 * 60 * 1000) // 12 hours from now
-await delegatorManager.delegate(vtxos, arkadeAddress, delegateAt)
+await delegateManager.delegate(vtxos, arkadeAddress, delegateAt)
 ```
 
 #### Service Worker Integration
 
-When using a service worker wallet, pass the `delegatorUrl` option. The service worker will automatically delegate virtual outputs after each update:
+When using a service worker wallet, pass the `delegateUrl` option. The service worker will automatically delegate virtual outputs after each update:
 
 ```typescript
 import { ServiceWorkerWallet, MnemonicIdentity } from '@arkade-os/sdk'
@@ -601,7 +601,7 @@ import { ServiceWorkerWallet, MnemonicIdentity } from '@arkade-os/sdk'
 const wallet = await ServiceWorkerWallet.setup({
   serviceWorkerPath: '/service-worker.js',
   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
-  delegatorUrl: 'http://localhost:7001',
+  delegateUrl: 'http://localhost:7001',
 })
 ```
 
@@ -610,14 +610,14 @@ const wallet = await ServiceWorkerWallet.setup({
 You can query the delegation service directly to inspect its public key, fee, and payment address:
 
 ```typescript
-import { RestDelegatorProvider } from '@arkade-os/sdk'
+import { RestDelegateProvider } from '@arkade-os/sdk'
 
-const provider = new RestDelegatorProvider('https://delegator.example.com')
+const provider = new RestDelegateProvider('https://delegate.example.com')
 const info = await provider.getDelegateInfo()
 
 console.log('Delegate public key:', info.pubkey)
 console.log('Service fee (sats):', info.fee)
-console.log('Fee address:', info.delegatorAddress)
+console.log('Fee address:', info.delegateAddress)
 ```
 
 ### BIP-322 Message Signing

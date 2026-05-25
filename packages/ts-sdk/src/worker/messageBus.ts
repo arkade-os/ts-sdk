@@ -2,7 +2,7 @@
 
 import { getActiveServiceWorker, setupServiceWorkerOnce } from "./browser/service-worker-manager";
 import { ArkProvider, RestArkProvider } from "../providers/ark";
-import { RestDelegatorProvider } from "../providers/delegator";
+import { RestDelegateProvider } from "../providers/delegate";
 import {
     type Identity,
     type ReadonlyIdentity,
@@ -16,7 +16,6 @@ import { ReadonlyWallet, Wallet } from "../wallet/wallet";
 import type { SettlementConfig } from "../wallet/vtxo-manager";
 import type { ContractWatcherConfig } from "../contracts/contractWatcher";
 import { ContractRepository, WalletRepository } from "../repositories";
-import { getRandomId } from "../wallet/utils";
 import { MessageBusNotInitializedError, ServiceWorkerTimeoutError } from "./errors";
 
 declare const self: ServiceWorkerGlobalScope;
@@ -136,6 +135,8 @@ type Initialize = {
             url: string;
             publicKey?: string;
         };
+        delegateUrl?: string;
+        /** @deprecated alias for @see Initialize.config.delegateUrl */
         delegatorUrl?: string;
         indexerUrl?: string;
         esploraUrl?: string;
@@ -338,9 +339,11 @@ export class MessageBus {
             walletRepository: this.walletRepository,
             contractRepository: this.contractRepository,
         };
-        const delegatorProvider = config.delegatorUrl
-            ? new RestDelegatorProvider(config.delegatorUrl)
-            : undefined;
+        const delegateProvider = config.delegateUrl
+            ? new RestDelegateProvider(config.delegateUrl)
+            : config.delegatorUrl
+              ? new RestDelegateProvider(config.delegatorUrl)
+              : undefined;
 
         const serialized = normalizeSerializedIdentity(config.wallet);
 
@@ -353,7 +356,7 @@ export class MessageBus {
                 indexerUrl: config.indexerUrl,
                 esploraUrl: config.esploraUrl,
                 storage,
-                delegatorProvider,
+                delegateProvider,
                 settlementConfig: config.settlementConfig,
                 walletMode: config.walletMode,
                 watcherConfig: config.watcherConfig,
@@ -369,7 +372,7 @@ export class MessageBus {
             indexerUrl: config.indexerUrl,
             esploraUrl: config.esploraUrl,
             storage,
-            delegatorProvider,
+            delegateProvider,
             watcherConfig: config.watcherConfig,
         });
         return { readonlyWallet, arkProvider };

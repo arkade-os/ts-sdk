@@ -67,12 +67,12 @@ import { extendCoin, validateRecipients } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
-import { DelegatorProvider } from "../providers/delegator";
+import { DelegateProvider } from "../providers/delegate";
 import { buildTransactionHistory } from "../utils/transactionHistory";
 import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
 import { Extension } from "../extension";
 import { DelegateVtxo } from "../script/delegate";
-import { DelegatorManagerImpl, findDestinationOutputIndex, IDelegatorManager } from "./delegator";
+import { DelegateManagerImpl, findDestinationOutputIndex, IDelegateManager } from "./delegate";
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
@@ -208,7 +208,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly dustAmount: bigint,
         public readonly walletRepository: WalletRepository,
         public readonly contractRepository: ContractRepository,
-        readonly delegatorProvider?: DelegatorProvider,
+        readonly delegateProvider?: DelegateProvider,
         watcherConfig?: ReadonlyWalletConfig["watcherConfig"],
         walletContractTimelocks?: RelativeTimelock[],
     ) {
@@ -357,11 +357,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // Generate tapscripts for offchain and boarding address
         const serverPubKey = hex.decode(info.signerPubkey).slice(1);
 
-        const delegatePubKey = config.delegatorProvider
-            ? await config.delegatorProvider
+        const delegatePubKey = config.delegateProvider
+            ? await config.delegateProvider
                   .getDelegateInfo()
                   .then((info) => hex.decode(info.pubkey).slice(1))
-            : undefined;
+            : config.delegatorProvider
+              ? await config.delegatorProvider
+                    .getDelegateInfo()
+                    .then((info) => hex.decode(info.pubkey).slice(1))
+              : undefined;
 
         const offchainOptions = {
             pubKey,
@@ -395,7 +399,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
             walletRepository,
             contractRepository,
             info,
-            delegatorProvider: config.delegatorProvider,
+            delegateProvider: config.delegateProvider || config.delegatorProvider,
+            /** @deprecated alias for `delegateProvider` */
+            delegatorProvider: config.delegateProvider || config.delegatorProvider,
             walletContractTimelocks,
         };
     }
@@ -425,7 +431,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             setup.dustAmount,
             setup.walletRepository,
             setup.contractRepository,
-            setup.delegatorProvider,
+            setup.delegateProvider || setup.delegatorProvider,
             config.watcherConfig,
             setup.walletContractTimelocks,
         );
@@ -1007,7 +1013,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     static MIN_FEE_RATE = 1; // sats/vbyte
 
     override readonly identity: Identity;
-    private readonly _delegatorManager?: IDelegatorManager;
+    private readonly _delegateManager?: IDelegateManager;
     private _vtxoManager?: VtxoManager;
     private _vtxoManagerInitializing?: Promise<VtxoManager>;
 
@@ -1218,7 +1224,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         contractRepository: ContractRepository,
         /** @deprecated Use settlementConfig */
         renewalConfig?: WalletConfig["renewalConfig"],
-        delegatorProvider?: DelegatorProvider,
+        delegateProvider?: DelegateProvider,
         watcherConfig?: WalletConfig["watcherConfig"],
         settlementConfig?: WalletConfig["settlementConfig"],
         walletContractTimelocks?: RelativeTimelock[],
@@ -1236,7 +1242,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             dustAmount,
             walletRepository,
             contractRepository,
-            delegatorProvider,
+            delegateProvider,
             watcherConfig,
             walletContractTimelocks,
         );
@@ -1265,8 +1271,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             // No config at all → enabled by default
             this.settlementConfig = { ...DEFAULT_SETTLEMENT_CONFIG };
         }
-        this._delegatorManager = delegatorProvider
-            ? new DelegatorManagerImpl(delegatorProvider, arkProvider, identity)
+        this._delegateManager = delegateProvider
+            ? new DelegateManagerImpl(delegateProvider, arkProvider, identity)
             : undefined;
         this._receiveRotator = receiveRotator;
         this._descriptorProvider = descriptorProvider;
@@ -1429,7 +1435,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             setup.walletRepository,
             setup.contractRepository,
             config.renewalConfig,
-            config.delegatorProvider,
+            config.delegateProvider || config.delegatorProvider,
             config.watcherConfig,
             config.settlementConfig,
             setup.walletContractTimelocks,
@@ -1475,15 +1481,20 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.dustAmount,
             this.walletRepository,
             this.contractRepository,
-            this.delegatorProvider,
+            this.delegateProvider,
             this.watcherConfig,
             this.walletContractTimelocks,
         );
     }
 
-    /** Returns the delegator manager when delegation support is configured. */
-    async getDelegatorManager(): Promise<IDelegatorManager | undefined> {
-        return this._delegatorManager;
+    /** Returns the delegate manager when delegation support is configured. */
+    async getDelegateManager(): Promise<IDelegateManager | undefined> {
+        return this._delegateManager;
+    }
+
+    /** @deprecated alias for @see Wallet.getDelegateManager */
+    async getDelegatorManager(): Promise<IDelegateManager | undefined> {
+        return this.getDelegateManager();
     }
 
     /**

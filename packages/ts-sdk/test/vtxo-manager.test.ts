@@ -19,7 +19,7 @@ type MockWalletOptions = {
         onContractEvent: ReturnType<typeof vi.fn>;
         refreshOutpoints?: ReturnType<typeof vi.fn>;
     };
-    delegatorManager?: {
+    delegateManager?: {
         delegate: ReturnType<typeof vi.fn>;
     };
 };
@@ -46,7 +46,7 @@ const createMockWallet = (
     return {
         getVtxos: vi.fn().mockResolvedValue(vtxos),
         getAddress: vi.fn().mockResolvedValue(arkAddress),
-        getDelegatorManager: vi.fn().mockResolvedValue(options.delegatorManager),
+        getDelegateManager: vi.fn().mockResolvedValue(options.delegateManager),
         getContractManager: vi.fn().mockResolvedValue(contractManager),
         settle: vi.fn().mockResolvedValue("mock-txid"),
         dustAmount: 1000n,
@@ -1223,6 +1223,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                 .mockResolvedValue(
                     "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
                 ),
+            getDelegateManager: vi.fn().mockResolvedValue(undefined),
             getDelegatorManager: vi.fn().mockResolvedValue(undefined),
             getContractManager: vi.fn().mockResolvedValue(contractManager),
             settle: vi.fn().mockResolvedValue("mock-txid"),
@@ -1401,6 +1402,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                     .mockResolvedValue(
                         "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
                     ),
+                getDelegateManager: vi.fn().mockResolvedValue(undefined),
                 getDelegatorManager: vi.fn().mockResolvedValue(undefined),
                 getContractManager: vi.fn().mockResolvedValue({
                     onContractEvent: vi.fn().mockReturnValue(() => {}),
@@ -1448,6 +1450,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                     .mockResolvedValue(
                         "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
                     ),
+                getDelegateManager: vi.fn().mockResolvedValue(undefined),
                 getDelegatorManager: vi.fn().mockResolvedValue(undefined),
                 getContractManager: vi.fn().mockResolvedValue(contractManager),
                 settle: vi.fn().mockResolvedValue("mock-txid"),
@@ -1761,6 +1764,7 @@ describe("VtxoManager - Periodic settle cooldown", () => {
                 .mockResolvedValue(
                     "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
                 ),
+            getDelegateManager: vi.fn().mockResolvedValue(undefined),
             getDelegatorManager: vi.fn().mockResolvedValue(undefined),
             getContractManager: vi.fn().mockResolvedValue(contractManager),
             settle: vi.fn().mockResolvedValue("mock-txid"),
@@ -2038,6 +2042,7 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
                 .mockResolvedValue(
                     "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
                 ),
+            getDelegateManager: vi.fn().mockResolvedValue(undefined),
             getDelegatorManager: vi.fn().mockResolvedValue(undefined),
             getContractManager: vi.fn().mockResolvedValue(contractManager),
             settle: vi.fn().mockResolvedValue("mock-txid"),
@@ -2298,7 +2303,7 @@ describe("VtxoManager - Cross-instance poll guard", () => {
                 .mockResolvedValue(
                     "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
                 ),
-            getDelegatorManager: vi.fn().mockResolvedValue(undefined),
+            getDelegateManager: vi.fn().mockResolvedValue(undefined),
             getContractManager: vi.fn().mockResolvedValue(contractManager),
             settle: vi.fn().mockResolvedValue("mock-txid"),
             dustAmount: 330n,
@@ -2432,6 +2437,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
                     .mockResolvedValue(
                         "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
                     ),
+                getDelegateManager: vi.fn().mockResolvedValue(undefined),
                 getDelegatorManager: vi.fn().mockResolvedValue(undefined),
                 getContractManager: vi.fn().mockResolvedValue(contractManager),
                 settle: vi.fn().mockResolvedValue("mock-txid"),

@@ -128,10 +128,10 @@ import type {
     ScanResult,
 } from "../../contracts/contractManager";
 import type { ContractState } from "../../contracts/types";
-import type { IDelegatorManager } from "../delegator";
+import type { IDelegateManager } from "../delegate";
 import type { IVtxoManager, SettlementConfig } from "../vtxo-manager";
 import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
-import type { DelegateInfo } from "../../providers/delegator";
+import type { DelegateInfo } from "../../providers/delegate";
 import { getRandomId } from "../utils";
 import type { VirtualCoin } from "..";
 import { MESSAGE_BUS_NOT_INITIALIZED, ServiceWorkerTimeoutError } from "../../worker/errors";
@@ -354,11 +354,9 @@ interface ServiceWorkerWalletOptions {
     storage?: StorageConfig;
     /** Identity used to derive addresses and optionally sign operations. */
     identity: ReadonlyIdentity | Identity;
-    /**
-     * Optional delegation service URL.
-     *
-     * @deprecated Provide an explicit `DelegatorProvider` instance instead.
-     */
+    /** Optional delegation service URL. */
+    delegateUrl?: string;
+    /** @deprecated alias for @see ServiceWorkerWalletOptions.delegateUrl */
     delegatorUrl?: string;
     /**
      * Override the default tag used for messages sent to and received from the service worker.
@@ -416,6 +414,8 @@ type MessageBusInitConfig = {
         url: string;
         publicKey?: string;
     };
+    delegateUrl?: string;
+    /** @deprecated alias for @see MessageBusInitConfig.delegateUrl */
     delegatorUrl?: string;
     indexerUrl?: string;
     esploraUrl?: string;
@@ -481,6 +481,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     // these immediately after construction.
     protected arkServerUrl?: string;
     protected arkServerPublicKey?: string;
+    protected delegateUrl?: string;
+    /** @deprecated alias for @see ServiceWorkerReadonlyWallet.delegateUrl */
     protected delegatorUrl?: string;
     protected indexerUrl?: string;
     protected esploraUrl?: string;
@@ -550,7 +552,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             key: { publicKey },
             arkServerUrl: getArkadeServerUrl(options),
             arkServerPublicKey: options.arkServerPublicKey,
-            delegatorUrl: options.delegatorUrl,
+            delegateUrl: options.delegateUrl || options.delegatorUrl,
+            delegatorUrl: options.delegateUrl || options.delegatorUrl,
         };
 
         // Precompute the merged timeout map so page-side waiting and
@@ -568,7 +571,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 url: getArkadeServerUrl(options),
                 publicKey: options.arkServerPublicKey,
             },
-            delegatorUrl: options.delegatorUrl,
+            delegateUrl: options.delegateUrl || options.delegatorUrl,
+            delegatorUrl: options.delegateUrl || options.delegatorUrl,
             indexerUrl: options.indexerUrl,
             esploraUrl: options.esploraUrl,
             watcherConfig: options.watcherConfig,
@@ -848,7 +852,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 url: this.arkServerUrl,
                 publicKey: this.arkServerPublicKey,
             },
-            delegatorUrl: this.delegatorUrl,
+            delegateUrl: this.delegateUrl || this.delegatorUrl,
+            delegatorUrl: this.delegateUrl || this.delegatorUrl,
             indexerUrl: this.indexerUrl,
             esploraUrl: this.esploraUrl,
             watcherConfig: this.watcherConfig,
@@ -1284,7 +1289,7 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
     public readonly contractRepository: ContractRepository;
     public readonly identity: Identity;
     private readonly _assetManager: IAssetManager;
-    private readonly hasDelegator: boolean;
+    private readonly hasDelegate: boolean;
 
     protected constructor(
         public readonly serviceWorker: ServiceWorker,
@@ -1292,7 +1297,7 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
         walletRepository: WalletRepository,
         contractRepository: ContractRepository,
         messageTag: string,
-        hasDelegator: boolean,
+        hasDelegate: boolean,
     ) {
         super(serviceWorker, identity, walletRepository, contractRepository, messageTag);
         this.identity = identity;
@@ -1302,7 +1307,7 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
             (msg) => this.sendMessage(msg),
             messageTag,
         );
-        this.hasDelegator = hasDelegator;
+        this.hasDelegate = hasDelegate;
     }
 
     get assetManager(): IAssetManager {
@@ -1337,7 +1342,7 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
             walletRepository,
             contractRepository,
             messageTag,
-            !!options.delegatorUrl,
+            !!(options.delegateUrl || options.delegatorUrl),
         );
 
         // INIT_WALLET retains the legacy `key` payload for wire compatibility
@@ -1350,7 +1355,8 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
             key: legacyPrivateKey ? { privateKey: legacyPrivateKey } : {},
             arkServerUrl: getArkadeServerUrl(options),
             arkServerPublicKey: options.arkServerPublicKey,
-            delegatorUrl: options.delegatorUrl,
+            delegateUrl: options.delegateUrl || options.delegatorUrl,
+            delegatorUrl: options.delegateUrl || options.delegatorUrl,
         };
 
         // Precompute the merged timeout map so page-side waiting and
@@ -1368,7 +1374,8 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
                 url: getArkadeServerUrl(options),
                 publicKey: options.arkServerPublicKey,
             },
-            delegatorUrl: options.delegatorUrl,
+            delegateUrl: options.delegateUrl || options.delegatorUrl,
+            delegatorUrl: options.delegateUrl || options.delegatorUrl,
             indexerUrl: options.indexerUrl,
             esploraUrl: options.esploraUrl,
             settlementConfig: options.settlementConfig,
@@ -1518,15 +1525,15 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
         }
     }
 
-    async getDelegatorManager(): Promise<IDelegatorManager | undefined> {
-        if (!this.hasDelegator) {
+    async getDelegateManager(): Promise<IDelegateManager | undefined> {
+        if (!this.hasDelegate) {
             return undefined;
         }
 
         const wallet = this;
         const messageTag = this.messageTag;
 
-        const manager: IDelegatorManager = {
+        const manager: IDelegateManager = {
             async delegate(vtxos, destination, delegateAt?) {
                 const message: RequestDelegate = {
                     tag: messageTag,
@@ -1573,6 +1580,11 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
         };
 
         return manager;
+    }
+
+    /** @deprecated alias for @see ServiceWorkerWallet.getDelegateManager */
+    async getDelegatorManager() {
+        return await this.getDelegateManager();
     }
 
     async getVtxoManager(): Promise<IVtxoManager> {
