@@ -3935,17 +3935,27 @@ describe("ArkadeSwaps", () => {
         });
 
         it("throws 'VHTLC is already spent' when every returned VTXO is spent", async () => {
-            const vtxos = [
-                { ...recoverableVtxo(txidA, 0), isSpent: true },
-                { ...recoverableVtxo(txidB, 1), isSpent: true },
-            ];
-            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
-                vtxos: vtxos as any,
-            });
+            vi.useFakeTimers();
+            try {
+                const vtxos = [
+                    { ...recoverableVtxo(txidA, 0), isSpent: true },
+                    { ...recoverableVtxo(txidB, 1), isSpent: true },
+                ];
+                vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                    vtxos: vtxos as any,
+                });
 
-            await expect(swaps.claimVHTLC(buildPendingSwap())).rejects.toThrow(
-                /VHTLC is already spent/,
-            );
+                // an all-spent VHTLC has no actionable VTXO, so the claim
+                // retries (CLAIM_VTXO_RETRY_ATTEMPTS) before diagnosing it as
+                // already spent — advance past the retry delays
+                const promise = swaps.claimVHTLC(buildPendingSwap());
+                promise.catch(() => {});
+                await vi.advanceTimersByTimeAsync(1000);
+
+                await expect(promise).rejects.toThrow(/VHTLC is already spent/);
+            } finally {
+                vi.useRealTimers();
+            }
         });
 
         it("attempts every VTXO and aggregates failures into a single throw", async () => {

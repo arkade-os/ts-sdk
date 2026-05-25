@@ -553,13 +553,20 @@ export class ArkadeSwaps {
                 `Swap ${pendingSwap.id}: VHTLC address mismatch. Expected ${lockupAddress}, got ${vhtlcAddress}`,
             );
 
-        let vtxos: VirtualCoin[] = [];
+        // Retry while waiting for an *actionable* (unspent) VTXO to appear at
+        // the VHTLC script. A spent VTXO showing up early must not abort the
+        // wait, so we break only once the unspent subset is non-empty. The
+        // last raw response is kept so the post-retry branch can distinguish
+        // "not found" from "already spent" for diagnostics.
+        let unspentVtxos: VirtualCoin[] = [];
+        let rawVtxos: VirtualCoin[] = [];
         for (let attempt = 1; attempt <= CLAIM_VTXO_RETRY_ATTEMPTS; attempt++) {
             const result = await this.indexerProvider.getVtxos({
                 scripts: [hex.encode(vhtlcScript.pkScript)],
             });
-            if (result.vtxos.length > 0) {
-                vtxos = result.vtxos;
+            rawVtxos = result.vtxos;
+            unspentVtxos = result.vtxos.filter((vtxo) => !vtxo.isSpent);
+            if (unspentVtxos.length > 0) {
                 break;
             }
             if (attempt < CLAIM_VTXO_RETRY_ATTEMPTS) {
@@ -567,12 +574,10 @@ export class ArkadeSwaps {
             }
         }
 
-        if (vtxos.length === 0) {
-            throw new Error(`Swap ${pendingSwap.id}: no spendable virtual coins found`);
-        }
-
-        const unspentVtxos = vtxos.filter((vtxo) => !vtxo.isSpent);
         if (unspentVtxos.length === 0) {
+            if (rawVtxos.length === 0) {
+                throw new Error(`Swap ${pendingSwap.id}: no spendable virtual coins found`);
+            }
             throw new Error(`Swap ${pendingSwap.id}: VHTLC is already spent`);
         }
 

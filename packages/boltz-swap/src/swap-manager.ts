@@ -1271,9 +1271,13 @@ export class SwapManager implements SwapManagerClient {
     private async pollAllSwaps(): Promise<void> {
         if (this.monitoredSwaps.size === 0) return;
 
-        const pollPromises = Array.from(this.monitoredSwaps.values()).map((swap) =>
-            this.pollSingleSwap(swap),
-        );
+        const pollPromises = Array.from(this.monitoredSwaps.values())
+            // Swaps with a pending refund retry are driven entirely by the
+            // refund-retry loop, not by Boltz polling. Skip them so a 404 on
+            // an already-expired swap can't trip handleSwapNotFound and tear
+            // down the in-flight retry.
+            .filter((swap) => !this.refundRetryTimers.has(swap.id))
+            .map((swap) => this.pollSingleSwap(swap));
 
         await Promise.allSettled(pollPromises);
     }
@@ -1334,6 +1338,9 @@ export class SwapManager implements SwapManagerClient {
      * Boltz endpoint).
      */
     private async handleSwapNotFound(swap: BoltzSwap): Promise<void> {
+        // A pending refund retry owns this swap's lifecycle; a transient 404
+        // must not increment the not-found counter or abort the retry.
+        if (this.refundRetryTimers.has(swap.id)) return;
         const count = (this.notFoundCounts.get(swap.id) ?? 0) + 1;
         this.notFoundCounts.set(swap.id, count);
         logger.warn(
@@ -1355,6 +1362,10 @@ export class SwapManager implements SwapManagerClient {
      * 404s without recovering anything.
      */
     private async markSwapAsUnknownToProvider(swap: BoltzSwap): Promise<void> {
+        // Never tear down a swap with a pending refund retry: clearing
+        // refundRetryTimers here would strand the deferred refund work. The
+        // retry loop owns finalization once that work completes.
+        if (this.refundRetryTimers.has(swap.id)) return;
         // Idempotency: bail if a concurrent path already removed the swap.
         if (!this.monitoredSwaps.has(swap.id)) {
             this.notFoundCounts.delete(swap.id);
