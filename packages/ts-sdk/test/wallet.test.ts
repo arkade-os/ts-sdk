@@ -17,13 +17,13 @@ import {
     type DelegatorProvider,
 } from "../src";
 import { TEST_PUB_KEY, TEST_DELEGATE_PUB_KEY, TEST_SERVER_PUB_KEY } from "./contracts/helpers";
-import { DEFAULT_ARKADE_SERVER_URL } from "../src/wallet";
 import type { ExtendedCoin } from "../src/wallet";
 import { ReadonlySingleKey } from "../src/identity/singleKey";
 import { IndexedDBWalletRepository, IndexedDBContractRepository } from "../src/repositories";
 import type { Coin, VirtualCoin } from "../src/wallet";
 import { MockEventSource } from "./mocks/eventSource";
 import { timelockToSequence } from "../src/utils/timelock";
+import { DEFAULT_ARKADE_SERVER_URL } from "../src/networks";
 
 // Mock fetch
 const mockFetch = vi.fn();

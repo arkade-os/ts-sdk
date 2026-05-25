@@ -1,7 +1,7 @@
 import { bech32m } from "@scure/base";
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { Script } from "@scure/btc-signer/script.js";
-import { DEFAULT_ARKADE_HRP } from "../wallet";
+import { DEFAULT_NETWORK } from "../networks";
 
 /**
  * ArkAddress allows creating and decoding bech32m-encoded Arkade addresses.
@@ -46,7 +46,7 @@ export class ArkAddress {
     constructor(
         readonly serverPubKey: Bytes,
         readonly vtxoTaprootKey: Bytes,
-        readonly hrp: string = DEFAULT_ARKADE_HRP,
+        readonly hrp: string = DEFAULT_NETWORK.hrp,
         readonly version: number = 0,
     ) {
         if (serverPubKey.length !== 32) {

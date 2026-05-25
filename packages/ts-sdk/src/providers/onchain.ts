@@ -1,4 +1,4 @@
-import type { NetworkName } from "../networks";
+import { DEFAULT_NETWORK_NAME, type NetworkName } from "../networks";
 import { Coin } from "../wallet";
 
 /**
@@ -129,7 +129,7 @@ export class EsploraProvider implements OnchainProvider {
     readonly forcePolling: boolean;
 
     constructor(
-        private baseUrl: string,
+        private baseUrl: string = ESPLORA_URL[DEFAULT_NETWORK_NAME],
         opts?: {
             /** Polling interval in milliseconds. */
             pollingInterval?: number;

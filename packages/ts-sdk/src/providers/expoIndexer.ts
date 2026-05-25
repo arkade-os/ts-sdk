@@ -2,6 +2,7 @@ import { RestIndexerProvider, SubscriptionResponse, Vtxo } from "./indexer";
 import { isFetchTimeoutError } from "./ark";
 import { VirtualCoin } from "../wallet";
 import { getExpoFetch, sseStreamIterator } from "./expoUtils";
+import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 
 // Helper function to convert Vtxo to VirtualCoin (same as in indexer.ts)
 function convertVtxo(vtxo: Vtxo): VirtualCoin {
@@ -46,7 +47,7 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
  * ```
  */
 export class ExpoIndexerProvider extends RestIndexerProvider {
-    constructor(serverUrl: string) {
+    constructor(serverUrl: string = DEFAULT_ARKADE_SERVER_URL) {
         super(serverUrl);
     }
 

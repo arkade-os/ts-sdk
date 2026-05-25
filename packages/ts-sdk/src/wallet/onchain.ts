@@ -1,8 +1,8 @@
 import { p2tr } from "@scure/btc-signer";
 import { P2TR } from "@scure/btc-signer/payment.js";
-import { Coin, DEFAULT_NETWORK_NAME, SendBitcoinParams } from ".";
+import { Coin, SendBitcoinParams } from ".";
 import { Identity } from "../identity";
-import { getNetwork, Network, NetworkName } from "../networks";
+import { DEFAULT_NETWORK_NAME, getNetwork, Network, NetworkName } from "../networks";
 import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
 import { AnchorBumper, findP2AOutput, P2A } from "../utils/anchor";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
@@ -51,7 +51,6 @@ export class OnchainWallet implements AnchorBumper {
      * @param networkName - Bitcoin network name, @see NetworkName
      * @param provider - Optional onchain provider override, @see OnchainProvider
      * @returns Configured onchain wallet
-     * @defaultValue `provider = new EsploraProvider('https://mempool.space/api')`
      * @throws Error if the configured identity cannot produce a valid x-only public key
      */
     static async create(

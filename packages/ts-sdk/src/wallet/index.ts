@@ -13,11 +13,6 @@ import { IContractManager } from "../contracts/contractManager";
 import { IDelegatorManager } from "./delegator";
 import { DelegatorProvider } from "../providers/delegator";
 
-/** Defaults */
-export const DEFAULT_ARKADE_SERVER_URL = "https://arkade.computer" as const;
-export const DEFAULT_ARKADE_HRP = "ark" as const;
-export const DEFAULT_NETWORK_NAME = "bitcoin" as const;
-
 /**
  * Wallet receive-address strategy.
  *
@@ -48,7 +43,7 @@ export type WalletMode = "auto" | "static" | "hd" | DescriptorProvider;
  *
  * Supports URL-based and provider-based configuration.
  *
- * URL-based configuration starts from `arkServerUrl` and can optionally override
+ * @deprecated URL-based configuration starts from `arkServerUrl` and can optionally override
  * derived service URLs such as `indexerUrl` and `esploraUrl`.
  *
  * Provider-based configuration supplies concrete provider instances directly,
@@ -122,19 +117,12 @@ export interface BaseWalletConfig {
  *
  * @example
  * ```typescript
- * // URL-based configuration
- * const wallet = await ReadonlyWallet.create({
- *   identity: ReadonlySingleKey.fromPublicKey(pubkey),
- *   arkServerUrl: 'https://arkade.computer',
- *   esploraUrl: 'https://mempool.space/api'
- * });
- *
  * // Provider-based configuration (e.g., for Expo/React Native)
  * const wallet = await ReadonlyWallet.create({
  *   identity: ReadonlySingleKey.fromPublicKey(pubkey),
- *   arkProvider: new ExpoArkProvider('https://arkade.computer'),
- *   indexerProvider: new ExpoIndexerProvider('https://arkade.computer'),
- *   onchainProvider: new EsploraProvider('https://mempool.space/api')
+ *   arkProvider: new ExpoArkProvider(),
+ *   indexerProvider: new ExpoIndexerProvider(),
+ *   onchainProvider: new EsploraProvider()
  * });
  * ```
  */
@@ -161,25 +149,18 @@ export interface ReadonlyWalletConfig extends BaseWalletConfig {
  *
  * @example
  * ```typescript
- * // URL-based configuration
+ * // Provider-based configuration
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkServerUrl: 'https://arkade.computer',
- *   esploraUrl: 'https://mempool.space/api'
- * });
- *
- * // Provider-based configuration (e.g., for Expo/React Native)
- * const wallet = await Wallet.create({
- *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new ExpoArkProvider('https://arkade.computer'),
- *   indexerProvider: new ExpoIndexerProvider('https://arkade.computer'),
- *   onchainProvider: new EsploraProvider('https://mempool.space/api')
+ *   arkProvider: new ExpoArkProvider(),
+ *   indexerProvider: new ExpoIndexerProvider(),
+ *   onchainProvider: new EsploraProvider()
  * });
  *
  * // With settlement configuration
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkServerUrl: 'https://arkade.computer',
+ *   arkProvider: new RestArkProvider(),
  *   settlementConfig: {
  *     vtxoThreshold: 60 * 60 * 24, // 24 hours in seconds
  *     boardingUtxoSweep: true,

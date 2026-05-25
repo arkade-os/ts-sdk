@@ -1,3 +1,4 @@
+import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 import { RestArkProvider, SettlementEvent, TxNotification, isFetchTimeoutError } from "./ark";
 import { getExpoFetch, sseStreamIterator } from "./expoUtils";
 
@@ -15,7 +16,7 @@ import { getExpoFetch, sseStreamIterator } from "./expoUtils";
  * ```
  */
 export class ExpoArkProvider extends RestArkProvider {
-    constructor(serverUrl: string) {
+    constructor(serverUrl: string = DEFAULT_ARKADE_SERVER_URL) {
         super(serverUrl);
     }
 

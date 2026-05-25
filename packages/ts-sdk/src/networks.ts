@@ -35,3 +35,7 @@ function withArkPrefix(network: Omit<Network, "hrp">, prefix: string): Network {
         hrp: prefix,
     };
 }
+
+export const DEFAULT_ARKADE_SERVER_URL = "https://arkade.computer" as const;
+export const DEFAULT_NETWORK = networks.bitcoin;
+export const DEFAULT_NETWORK_NAME = "bitcoin" as const satisfies NetworkName;

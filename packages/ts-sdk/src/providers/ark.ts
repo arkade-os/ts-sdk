@@ -6,6 +6,7 @@ import { eventSourceIterator, isEventSourceError } from "./utils";
 import { maybeArkError } from "./errors";
 import type { IntentFeeConfig } from "../arkfee";
 import { Intent } from "../intent";
+import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 
 /** Output requested during settlement or transaction submission. */
 export type Output = {
@@ -252,7 +253,7 @@ export interface ArkProvider {
  * ```
  */
 export class RestArkProvider implements ArkProvider {
-    constructor(public serverUrl: string) {}
+    constructor(public serverUrl: string = DEFAULT_ARKADE_SERVER_URL) {}
 
     async getInfo(): Promise<ArkInfo> {
         const url = `${this.serverUrl}/v1/info`;

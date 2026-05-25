@@ -2,10 +2,10 @@ import { base64, hex } from "@scure/base";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { Address, OutScript, SigHash, Transaction } from "@scure/btc-signer";
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
-import { Bytes, equalBytes, sha256 } from "@scure/btc-signer/utils.js";
+import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
-import { getNetwork, Network, NetworkName } from "../networks";
+import { DEFAULT_ARKADE_SERVER_URL, getNetwork, Network, NetworkName } from "../networks";
 import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
 import {
     ArkProvider,
@@ -26,7 +26,6 @@ import {
     ArkTransaction,
     Asset,
     Coin,
-    DEFAULT_ARKADE_SERVER_URL,
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
@@ -258,7 +257,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const arkadeServerUrl = getArkadeServerUrl(config);
 
         // Use provided arkProvider instance or create a new one from arkServerUrl
-        const arkProvider = config.arkProvider ?? new RestArkProvider(arkadeServerUrl);
+        const arkProvider = config.arkProvider || new RestArkProvider(arkadeServerUrl);
 
         // Resolve the indexer provider. If a full instance is supplied, use it
         // directly. Otherwise pick a URL with priority:
@@ -977,19 +976,19 @@ export class ReadonlyWallet implements IReadonlyWallet {
  *
  * @example
  * ```typescript
- * // Create a wallet with URL configuration
+ * // Create a wallet with providers
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkServerUrl: 'https://arkade.computer',
- *   esploraUrl: 'https://mempool.space/api'
+ *   arkProvider: new RestArkProvider(),
+ *   onchainProvider: new EsploraProvider()
  * });
  *
- * // Or with custom provider instances (e.g., for Expo/React Native)
+ * // Use custom providers and/or URLs (e.g., for Expo/React Native)
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
  *   arkProvider: new ExpoArkProvider('https://arkade.computer'),
  *   indexerProvider: new ExpoIndexerProvider('https://arkade.computer'),
- *   esploraUrl: 'https://mempool.space/api'
+ *   onchainProvider: new EsploraProvider('https://mempool.space/api')
  * });
  *
  * // Get addresses
@@ -1377,7 +1376,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * ```typescript
      * const wallet = await Wallet.create({
      *   identity,
-     *   arkServerUrl: 'https://arkade.computer',
+     *   arkProvider: new RestArkProvider(),
      * });
      * ```
      */

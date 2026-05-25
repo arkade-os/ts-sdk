@@ -51,12 +51,12 @@ The wallet surface matches the browser version. `ExpoWallet.setup()` persists co
 ```ts
 import { ExpoWallet } from "@arkade-os/sdk/wallet/expo";
 import { registerExpoBackgroundTask } from "@arkade-os/sdk/wallet/expo/background";
-import { SingleKey } from "@arkade-os/sdk";
+import { MnemonicIdentity, EsploraProvider, RestArkProvider } from "@arkade-os/sdk";
 
 const wallet = await ExpoWallet.setup({
-    identity: SingleKey.fromHex(privateKey),
-    arkServerUrl,
-    esploraUrl,
+    identity: MnemonicIdentity.fromMnemonic("abandon abandon..."),
+    arkProvider: new RestArkProvider(),
+    onchainProvider: new EsploraProvider(),
     storage: { walletRepository, contractRepository },
     background: {
         taskQueue, // same instance from step 1

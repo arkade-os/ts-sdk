@@ -7,7 +7,6 @@ import {
     contractFromArkContractWithAddress,
     isArkContract,
 } from "../src/contracts";
-import { DEFAULT_ARKADE_HRP } from "../src/wallet";
 import type { Contract } from "../src/contracts";
 import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
 import type { IndexerProvider } from "../src/providers/indexer";
@@ -18,6 +17,7 @@ import {
     TEST_DEFAULT_SCRIPT,
     TEST_SERVER_PUB_KEY,
 } from "./contracts/helpers";
+import { DEFAULT_NETWORK } from "../src/networks";
 
 describe("Contracts", () => {
     describe("ArkContract encoding/decoding", () => {
@@ -83,7 +83,7 @@ describe("Contracts", () => {
 
             const contract = contractFromArkContractWithAddress(encoded, TEST_SERVER_PUB_KEY);
 
-            expect(contract.address.startsWith(`${DEFAULT_ARKADE_HRP}1`)).toBe(true);
+            expect(contract.address.startsWith(`${DEFAULT_NETWORK.hrp}1`)).toBe(true);
         });
 
         it("should throw for unknown contract type", () => {
