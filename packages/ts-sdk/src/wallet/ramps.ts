@@ -5,6 +5,7 @@ import { Address, OutScript } from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import { networks, NetworkName } from "../networks";
 import { ArkAddress } from "../script/address";
+import { getDustAmount } from "./utils";
 
 /**
  * Thrown when a collaborative-exit / offboard would leave a change VTXO below
@@ -24,13 +25,6 @@ export class DustChangeError extends Error {
         this.change = change;
         this.dustAmount = dustAmount;
     }
-}
-
-/** Fallback dust threshold used when the wallet doesn't expose `dustAmount`. */
-const FALLBACK_DUST_AMOUNT = 330n;
-
-function getDustAmount(wallet: IWallet): bigint {
-    return "dustAmount" in wallet ? (wallet.dustAmount as bigint) : FALLBACK_DUST_AMOUNT;
 }
 
 /**

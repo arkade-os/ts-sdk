@@ -1,4 +1,4 @@
-import { Recipient } from ".";
+import type { IWallet, Recipient } from ".";
 import {
     ArkAddress,
     type Coin,
@@ -10,11 +10,19 @@ import type { Contract } from "../contracts/types";
 import { contractHandlers } from "../contracts/handlers";
 import { DefaultVtxo } from "../script/default";
 import { DelegateVtxo } from "../script/delegate";
-import { ReadonlyWallet } from "./wallet";
+import type { ReadonlyWallet } from "./wallet";
 import { hex } from "@scure/base";
 import { Bytes } from "@scure/btc-signer/utils.js";
 
 export const DUST_AMOUNT = 546; // sats
+
+/** Fallback dust threshold used when the wallet doesn't expose `dustAmount`. */
+export const FALLBACK_WALLET_DUST_AMOUNT = 330n;
+
+/** Extracts the dust amount from the wallet, defaulting to the fallback dust threshold. */
+export function getDustAmount(wallet: IWallet): bigint {
+    return "dustAmount" in wallet ? (wallet.dustAmount as bigint) : FALLBACK_WALLET_DUST_AMOUNT;
+}
 
 export function extendCoin(
     wallet: { boardingTapscript: ReadonlyWallet["boardingTapscript"] },
