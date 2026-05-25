@@ -107,7 +107,10 @@ import {
     ResponseGetExpiredBoardingUtxos,
     RequestSweepExpiredBoardingUtxos,
     ResponseSweepExpiredBoardingUtxos,
+    RequestRestoreWallet,
     DEFAULT_MESSAGE_TAG,
+    deserializeAggregateError,
+    isSerializedAggregateError,
 } from "./wallet-message-handler";
 import type {
     Contract,
@@ -185,6 +188,10 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     RECOVER_VTXOS: 50_000,
     RENEW_VTXOS: 50_000,
     SWEEP_EXPIRED_BOARDING_UTXOS: 50_000,
+    // RESTORE_WALLET is a streaming/long-running path (sendMessageWithEvents)
+    // like SETTLE; the value here is kept for type completeness and is never
+    // enforced as an inactivity deadline.
+    RESTORE_WALLET: 50_000,
 
     // Misc writes
     INIT_WALLET: 30_000,
@@ -1442,6 +1449,39 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
             return (response as ResponseSettle).payload.txid;
         } catch (error) {
             throw new Error(`Settlement failed: ${error}`);
+        }
+    }
+
+    /**
+     * Explicitly recover this wallet's contracts and balance on a fresh repo.
+     * Mirrors {@link Wallet.restore} but drives the scan inside the service
+     * worker — the materialize() callback used by `scanContracts` cannot
+     * cross the postMessage boundary, so the entire flow runs worker-side
+     * and only the gapLimit / outcome cross the wire.
+     *
+     * Uses the streaming send path so the bus deadline does not race a
+     * long indexer-bound scan. AggregateError thrown by the worker is
+     * reconstructed here so callers can inspect `.errors`.
+     */
+    async restore(opts?: { gapLimit?: number }): Promise<void> {
+        const message: RequestRestoreWallet = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "RESTORE_WALLET",
+            payload: opts ?? {},
+        };
+
+        try {
+            await this.sendMessageWithEvents(
+                message,
+                () => {},
+                (resp) => resp.type === "RESTORE_WALLET_SUCCESS",
+            );
+        } catch (error: unknown) {
+            if (isSerializedAggregateError(error)) {
+                throw deserializeAggregateError(error);
+            }
+            throw error;
         }
     }
 
