@@ -199,10 +199,7 @@ export class SwapManager implements SwapManagerClient {
     // (refundArk returned `skipped > 0`). The swap is held in
     // `monitoredSwaps` past its terminal Boltz status until the local
     // refund completes or the manager stops.
-    private refundRetryTimers = new Map<
-        string,
-        ReturnType<typeof setTimeout>
-    >();
+    private refundRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
     // Per-swap counter of consecutive `SwapNotFoundError` responses from
     // `getSwapStatus`. Reset on any successful poll. Once a swap reaches
     // `NOT_FOUND_THRESHOLD` consecutive 404s the safety net trips and the
@@ -224,23 +221,14 @@ export class SwapManager implements SwapManagerClient {
     private swapSubscriptions = new Map<string, Set<SwapUpdateCallback>>();
 
     // Action callbacks (injected via setCallbacks)
-    private claimCallback: ((swap: BoltzReverseSwap) => Promise<void>) | null =
+    private claimCallback: ((swap: BoltzReverseSwap) => Promise<void>) | null = null;
+    private refundCallback: ((swap: BoltzSubmarineSwap) => Promise<void>) | null = null;
+    private claimArkCallback: ((swap: BoltzChainSwap) => Promise<void>) | null = null;
+    private claimBtcCallback: ((swap: BoltzChainSwap) => Promise<void>) | null = null;
+    private refundArkCallback: ((swap: BoltzChainSwap) => Promise<ChainArkRefundOutcome>) | null =
         null;
-    private refundCallback:
-        | ((swap: BoltzSubmarineSwap) => Promise<void>)
-        | null = null;
-    private claimArkCallback: ((swap: BoltzChainSwap) => Promise<void>) | null =
-        null;
-    private claimBtcCallback: ((swap: BoltzChainSwap) => Promise<void>) | null =
-        null;
-    private refundArkCallback:
-        | ((swap: BoltzChainSwap) => Promise<ChainArkRefundOutcome>)
-        | null = null;
-    private signServerClaimCallback:
-        | ((swap: BoltzChainSwap) => Promise<void>)
-        | null = null;
-    private saveSwapCallback: ((swap: BoltzSwap) => Promise<void>) | null =
-        null;
+    private signServerClaimCallback: ((swap: BoltzChainSwap) => Promise<void>) | null = null;
+    private saveSwapCallback: ((swap: BoltzSwap) => Promise<void>) | null = null;
 
     constructor(swapProvider: BoltzSwapProvider, config: SwapManagerConfig = {}) {
         this.swapProvider = swapProvider;
@@ -951,14 +939,11 @@ export class SwapManager implements SwapManagerClient {
                     // deferred) or finished the work; in the latter case
                     // we owe the terminal-status finalization that
                     // handleSwapStatusUpdate skipped.
-                    if (
-                        !this.refundRetryTimers.has(swap.id) &&
-                        this.isFinalStatus(swap)
-                    ) {
+                    if (!this.refundRetryTimers.has(swap.id) && this.isFinalStatus(swap)) {
                         this.finalizeMonitoredSwap(swap);
                     }
                 }
-            }, delayMs)
+            }, delayMs),
         );
     }
 
@@ -1039,32 +1024,25 @@ export class SwapManager implements SwapManagerClient {
                         // logs and emits but cannot reach the chain-
                         // specific retry path.
                         try {
-                            const outcome =
-                                await this.executeRefundArkAction(swap);
+                            const outcome = await this.executeRefundArkAction(swap);
                             if (outcome && outcome.skipped > 0) {
                                 logger.log(
-                                    `Chain swap ${swap.id}: ${outcome.skipped} VTXO(s) deferred — scheduling refund retry`
+                                    `Chain swap ${swap.id}: ${outcome.skipped} VTXO(s) deferred — scheduling refund retry`,
                                 );
-                                this.scheduleRefundRetry(
-                                    swap,
-                                    SwapManager.REFUND_RETRY_DELAY_MS
-                                );
+                                this.scheduleRefundRetry(swap, SwapManager.REFUND_RETRY_DELAY_MS);
                             }
                             this.actionExecutedListeners.forEach((listener) =>
-                                listener(swap, "refundArk")
+                                listener(swap, "refundArk"),
                             );
                         } catch (error) {
                             logger.error(
                                 `Auto-refunding ARK chain swap ${swap.id} failed; scheduling retry`,
-                                error
+                                error,
                             );
                             this.swapFailedListeners.forEach((listener) =>
-                                listener(swap, error as Error)
+                                listener(swap, error as Error),
                             );
-                            this.scheduleRefundRetry(
-                                swap,
-                                SwapManager.REFUND_RETRY_DELAY_MS
-                            );
+                            this.scheduleRefundRetry(swap, SwapManager.REFUND_RETRY_DELAY_MS);
                         }
                     }
                     if (swap.request.from === "BTC") {
@@ -1157,7 +1135,7 @@ export class SwapManager implements SwapManagerClient {
      * Execute refund action for chain swap Ark to Btc
      */
     private async executeRefundArkAction(
-        swap: BoltzChainSwap
+        swap: BoltzChainSwap,
     ): Promise<ChainArkRefundOutcome | undefined> {
         if (!this.refundArkCallback) {
             logger.error("refundArk callback not set");

@@ -3848,22 +3848,15 @@ describe("ArkadeSwaps", () => {
         beforeEach(() => {
             vi.mocked(arkProvider.getInfo).mockResolvedValue(mockArkInfo);
             vi.mocked(wallet.getAddress).mockResolvedValue(mock.address.ark);
-            vi.spyOn(swaps, "createVHTLCScript").mockReturnValue(
-                mockVHTLC as any
-            );
+            vi.spyOn(swaps, "createVHTLCScript").mockReturnValue(mockVHTLC as any);
         });
 
         it("claims two unspent recoverable VTXOs via joinBatch", async () => {
-            const vtxos = [
-                recoverableVtxo(txidA, 0),
-                recoverableVtxo(txidB, 1),
-            ];
+            const vtxos = [recoverableVtxo(txidA, 0), recoverableVtxo(txidB, 1)];
             vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
                 vtxos: vtxos as any,
             });
-            const joinBatchSpy = vi
-                .spyOn(swaps as any, "joinBatch")
-                .mockResolvedValue(undefined);
+            const joinBatchSpy = vi.spyOn(swaps as any, "joinBatch").mockResolvedValue(undefined);
 
             await swaps.claimVHTLC(buildPendingSwap());
 
@@ -3876,21 +3869,16 @@ describe("ArkadeSwaps", () => {
                 expect.objectContaining({
                     id: mock.id,
                     status: "transaction.claimed",
-                })
+                }),
             );
         });
 
         it("claims two unspent non-recoverable VTXOs via offchain tx and saves final status once", async () => {
-            const vtxos = [
-                nonRecoverableVtxo(txidA, 0),
-                nonRecoverableVtxo(txidB, 1),
-            ];
+            const vtxos = [nonRecoverableVtxo(txidA, 0), nonRecoverableVtxo(txidB, 1)];
             vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
                 vtxos: vtxos as any,
             });
-            const joinBatchSpy = vi
-                .spyOn(swaps as any, "joinBatch")
-                .mockResolvedValue(undefined);
+            const joinBatchSpy = vi.spyOn(swaps as any, "joinBatch").mockResolvedValue(undefined);
             const swapStatusSpy = vi
                 .spyOn(swapProvider, "getSwapStatus")
                 .mockResolvedValue({ status: "transaction.confirmed" });
@@ -3908,21 +3896,16 @@ describe("ArkadeSwaps", () => {
                 expect.objectContaining({
                     id: mock.id,
                     status: "transaction.confirmed",
-                })
+                }),
             );
         });
 
         it("routes mixed recoverable and non-recoverable VTXOs to the correct branch", async () => {
-            const vtxos = [
-                recoverableVtxo(txidA, 0),
-                nonRecoverableVtxo(txidB, 1),
-            ];
+            const vtxos = [recoverableVtxo(txidA, 0), nonRecoverableVtxo(txidB, 1)];
             vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
                 vtxos: vtxos as any,
             });
-            const joinBatchSpy = vi
-                .spyOn(swaps as any, "joinBatch")
-                .mockResolvedValue(undefined);
+            const joinBatchSpy = vi.spyOn(swaps as any, "joinBatch").mockResolvedValue(undefined);
             vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
                 status: "transaction.confirmed",
             });
@@ -3944,13 +3927,9 @@ describe("ArkadeSwaps", () => {
             vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
                 vtxos: vtxos as any,
             });
-            const joinBatchSpy = vi
-                .spyOn(swaps as any, "joinBatch")
-                .mockResolvedValue(undefined);
+            const joinBatchSpy = vi.spyOn(swaps as any, "joinBatch").mockResolvedValue(undefined);
 
-            await expect(
-                swaps.claimVHTLC(buildPendingSwap())
-            ).resolves.toBeUndefined();
+            await expect(swaps.claimVHTLC(buildPendingSwap())).resolves.toBeUndefined();
             expect(joinBatchSpy).toHaveBeenCalledTimes(1);
             expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidB);
         });
@@ -3965,15 +3944,12 @@ describe("ArkadeSwaps", () => {
             });
 
             await expect(swaps.claimVHTLC(buildPendingSwap())).rejects.toThrow(
-                /VHTLC is already spent/
+                /VHTLC is already spent/,
             );
         });
 
         it("attempts every VTXO and aggregates failures into a single throw", async () => {
-            const vtxos = [
-                recoverableVtxo(txidA, 0),
-                recoverableVtxo(txidB, 1),
-            ];
+            const vtxos = [recoverableVtxo(txidA, 0), recoverableVtxo(txidB, 1)];
             vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
                 vtxos: vtxos as any,
             });
@@ -3983,7 +3959,7 @@ describe("ArkadeSwaps", () => {
                 .mockRejectedValueOnce(new Error("join failed"));
 
             await expect(swaps.claimVHTLC(buildPendingSwap())).rejects.toThrow(
-                /failed to claim 1\/2 VTXOs/
+                /failed to claim 1\/2 VTXOs/,
             );
 
             // Both VTXOs were attempted — the failure on the second VTXO
@@ -3996,10 +3972,7 @@ describe("ArkadeSwaps", () => {
         });
 
         it("still attempts later VTXOs when the first fails", async () => {
-            const vtxos = [
-                recoverableVtxo(txidA, 0),
-                recoverableVtxo(txidB, 1),
-            ];
+            const vtxos = [recoverableVtxo(txidA, 0), recoverableVtxo(txidB, 1)];
             vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
                 vtxos: vtxos as any,
             });
@@ -4009,7 +3982,7 @@ describe("ArkadeSwaps", () => {
                 .mockResolvedValueOnce(undefined);
 
             await expect(swaps.claimVHTLC(buildPendingSwap())).rejects.toThrow(
-                /failed to claim 1\/2 VTXOs/
+                /failed to claim 1\/2 VTXOs/,
             );
 
             expect(joinBatchSpy).toHaveBeenCalledTimes(2);
@@ -4020,10 +3993,7 @@ describe("ArkadeSwaps", () => {
         it("retries the indexer and claims every VTXO returned on the second attempt", async () => {
             vi.useFakeTimers();
             try {
-                const vtxos = [
-                    recoverableVtxo(txidA, 0),
-                    recoverableVtxo(txidB, 1),
-                ];
+                const vtxos = [recoverableVtxo(txidA, 0), recoverableVtxo(txidB, 1)];
                 vi.spyOn(indexerProvider, "getVtxos")
                     .mockResolvedValueOnce({ vtxos: [] })
                     .mockResolvedValueOnce({ vtxos: vtxos as any });
@@ -4099,12 +4069,10 @@ describe("ArkadeSwaps", () => {
                     refundScript: new Uint8Array([1]),
                     pkScript: new Uint8Array([2]),
                     refund: () => [{}, new Uint8Array([3]), 0xc0] as any,
-                    refundWithoutReceiver: () =>
-                        [{}, new Uint8Array([4]), 0xc0] as any,
+                    refundWithoutReceiver: () => [{}, new Uint8Array([4]), 0xc0] as any,
                     encode: () => [] as any,
                 } as any,
-                vhtlcAddress:
-                    mockArkBtcChainSwap.response.lockupDetails.lockupAddress,
+                vhtlcAddress: mockArkBtcChainSwap.response.lockupDetails.lockupAddress,
             });
             vi.spyOn(swaps as any, "joinBatch").mockResolvedValue(undefined);
             vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
@@ -4113,10 +4081,7 @@ describe("ArkadeSwaps", () => {
         });
 
         it("refunds two unspent VTXOs via joinBatch when CLTV is satisfied", async () => {
-            const vtxos = [
-                nonRecoverableVtxo(txidA, 0),
-                nonRecoverableVtxo(txidB, 1),
-            ];
+            const vtxos = [nonRecoverableVtxo(txidA, 0), nonRecoverableVtxo(txidB, 1)];
             vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
                 vtxos: vtxos as any,
             });
@@ -4128,9 +4093,7 @@ describe("ArkadeSwaps", () => {
             expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
             expect(joinBatchSpy.mock.calls[1][1].txid).toBe(txidB);
             // refundWithoutReceiver leaf (script byte 4) was used
-            expect(joinBatchSpy.mock.calls[0][1].tapLeafScript[1]).toEqual(
-                new Uint8Array([4])
-            );
+            expect(joinBatchSpy.mock.calls[0][1].tapLeafScript[1]).toEqual(new Uint8Array([4]));
             expect(refundVHTLCwithOffchainTx).not.toHaveBeenCalled();
             expect(outcome).toEqual({ swept: 2, skipped: 0 });
         });
@@ -4138,10 +4101,7 @@ describe("ArkadeSwaps", () => {
         it("calls Boltz refund for two non-recoverable VTXOs pre-CLTV, with a 2s delay between calls", async () => {
             vi.useFakeTimers();
             try {
-                const vtxos = [
-                    nonRecoverableVtxo(txidA, 0),
-                    nonRecoverableVtxo(txidB, 1),
-                ];
+                const vtxos = [nonRecoverableVtxo(txidA, 0), nonRecoverableVtxo(txidB, 1)];
                 vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
                     vtxos: vtxos as any,
                 });
@@ -4165,10 +4125,7 @@ describe("ArkadeSwaps", () => {
         });
 
         it("skips recoverable VTXOs pre-CLTV without calling Boltz or joinBatch", async () => {
-            const vtxos = [
-                recoverableVtxo(txidA, 0),
-                recoverableVtxo(txidB, 1),
-            ];
+            const vtxos = [recoverableVtxo(txidA, 0), recoverableVtxo(txidB, 1)];
             vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
                 vtxos: vtxos as any,
             });
@@ -4183,10 +4140,7 @@ describe("ArkadeSwaps", () => {
         it("still throttles the next Boltz call by 2s after a BoltzRefundError on the previous VTXO", async () => {
             vi.useFakeTimers();
             try {
-                const vtxos = [
-                    nonRecoverableVtxo(txidA, 0),
-                    nonRecoverableVtxo(txidB, 1),
-                ];
+                const vtxos = [nonRecoverableVtxo(txidA, 0), nonRecoverableVtxo(txidB, 1)];
                 vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
                     vtxos: vtxos as any,
                 });
@@ -4197,9 +4151,7 @@ describe("ArkadeSwaps", () => {
                 // fire back-to-back with the first.
                 const mockRefund = vi.mocked(refundVHTLCwithOffchainTx);
                 mockRefund
-                    .mockRejectedValueOnce(
-                        new BoltzRefundError("outpoint mismatch")
-                    )
+                    .mockRejectedValueOnce(new BoltzRefundError("outpoint mismatch"))
                     .mockResolvedValueOnce(undefined);
 
                 const promise = swaps.refundArk(buildSwap(futureRefund()));
@@ -4231,7 +4183,7 @@ describe("ArkadeSwaps", () => {
             });
 
             vi.mocked(refundVHTLCwithOffchainTx).mockRejectedValueOnce(
-                new BoltzRefundError("outpoint mismatch")
+                new BoltzRefundError("outpoint mismatch"),
             );
             // Pre-CLTV at the initial check, post-CLTV at the re-check.
             const dateSpy = vi.spyOn(Date, "now");
@@ -4243,9 +4195,7 @@ describe("ArkadeSwaps", () => {
             const joinBatchSpy = vi.mocked((swaps as any).joinBatch);
             expect(joinBatchSpy).toHaveBeenCalledTimes(1);
             // fallback uses refundWithoutReceiver leaf (script byte 4)
-            expect(joinBatchSpy.mock.calls[0][1].tapLeafScript[1]).toEqual(
-                new Uint8Array([4])
-            );
+            expect(joinBatchSpy.mock.calls[0][1].tapLeafScript[1]).toEqual(new Uint8Array([4]));
             expect(joinBatchSpy.mock.calls[0][4]).toBe(false);
             expect(outcome).toEqual({ swept: 1, skipped: 0 });
         });
@@ -4256,7 +4206,7 @@ describe("ArkadeSwaps", () => {
             });
 
             vi.mocked(refundVHTLCwithOffchainTx).mockRejectedValueOnce(
-                new BoltzRefundError("outpoint mismatch")
+                new BoltzRefundError("outpoint mismatch"),
             );
 
             const outcome = await swaps.refundArk(buildSwap(futureRefund()));
@@ -4271,12 +4221,12 @@ describe("ArkadeSwaps", () => {
             });
 
             vi.mocked(refundVHTLCwithOffchainTx).mockRejectedValueOnce(
-                new Error("local signing failure")
+                new Error("local signing failure"),
             );
 
-            await expect(
-                swaps.refundArk(buildSwap(futureRefund()))
-            ).rejects.toThrow(/local signing failure/);
+            await expect(swaps.refundArk(buildSwap(futureRefund()))).rejects.toThrow(
+                /local signing failure/,
+            );
         });
 
         it("throws 'VHTLC not found' when no VTXOs exist at the lockup address", async () => {
@@ -4284,9 +4234,9 @@ describe("ArkadeSwaps", () => {
                 vtxos: [],
             });
 
-            await expect(
-                swaps.refundArk(buildSwap(pastRefund()))
-            ).rejects.toThrow(/VHTLC not found/);
+            await expect(swaps.refundArk(buildSwap(pastRefund()))).rejects.toThrow(
+                /VHTLC not found/,
+            );
         });
 
         it("throws 'VHTLC is already spent' when every VTXO at the address is spent", async () => {
@@ -4297,9 +4247,9 @@ describe("ArkadeSwaps", () => {
                 ] as any,
             });
 
-            await expect(
-                swaps.refundArk(buildSwap(pastRefund()))
-            ).rejects.toThrow(/VHTLC is already spent/);
+            await expect(swaps.refundArk(buildSwap(pastRefund()))).rejects.toThrow(
+                /VHTLC is already spent/,
+            );
         });
     });
 });

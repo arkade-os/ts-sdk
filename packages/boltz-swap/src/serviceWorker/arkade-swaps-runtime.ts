@@ -739,9 +739,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         });
     }
 
-    async refundArk(
-        pendingSwap: BoltzChainSwap
-    ): Promise<ChainArkRefundOutcome> {
+    async refundArk(pendingSwap: BoltzChainSwap): Promise<ChainArkRefundOutcome> {
         const res = await this.sendMessage({
             id: getRandomId(),
             tag: this.messageTag,

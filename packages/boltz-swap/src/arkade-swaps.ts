@@ -568,9 +568,7 @@ export class ArkadeSwaps {
         }
 
         if (vtxos.length === 0) {
-            throw new Error(
-                `Swap ${pendingSwap.id}: no spendable virtual coins found`
-            );
+            throw new Error(`Swap ${pendingSwap.id}: no spendable virtual coins found`);
         }
 
         const unspentVtxos = vtxos.filter((vtxo) => !vtxo.isSpent);
@@ -578,10 +576,7 @@ export class ArkadeSwaps {
             throw new Error(`Swap ${pendingSwap.id}: VHTLC is already spent`);
         }
 
-        const vhtlcIdentity = claimVHTLCIdentity(
-            this.wallet.identity,
-            preimage
-        );
+        const vhtlcIdentity = claimVHTLCIdentity(this.wallet.identity, preimage);
         const outputScript = ArkAddress.decode(address).pkScript;
 
         // Asymmetry with `refundArk` is deliberate: this path is all-or-
@@ -620,7 +615,7 @@ export class ArkadeSwaps {
                         input,
                         output,
                         arkInfo,
-                        this.arkProvider
+                        this.arkProvider,
                     );
                     usedOffchainClaim = true;
                 }
@@ -631,13 +626,10 @@ export class ArkadeSwaps {
 
         if (claimErrors.length > 0) {
             const details = claimErrors
-                .map(
-                    ({ vtxo, error }) =>
-                        `${vtxo.txid}:${vtxo.vout} (${error.message})`
-                )
+                .map(({ vtxo, error }) => `${vtxo.txid}:${vtxo.vout} (${error.message})`)
                 .join("; ");
             throw new Error(
-                `Swap ${pendingSwap.id}: failed to claim ${claimErrors.length}/${unspentVtxos.length} VTXOs: ${details}`
+                `Swap ${pendingSwap.id}: failed to claim ${claimErrors.length}/${unspentVtxos.length} VTXOs: ${details}`,
             );
         }
 
@@ -1736,9 +1728,7 @@ export class ArkadeSwaps {
      * @returns Counts of VTXOs swept vs. deferred. A `swept: 0` outcome means
      *          the call was a no-op — callers should retry after CLTV.
      */
-    async refundArk(
-        pendingSwap: BoltzChainSwap
-    ): Promise<ChainArkRefundOutcome> {
+    async refundArk(pendingSwap: BoltzChainSwap): Promise<ChainArkRefundOutcome> {
         if (!pendingSwap.response.lockupDetails.serverPublicKey)
             throw new Error(`Swap ${pendingSwap.id}: missing server public key in lockup details`);
 
@@ -1791,7 +1781,7 @@ export class ArkadeSwaps {
 
         if (vtxos.length === 0) {
             throw new Error(
-                `Swap ${pendingSwap.id}: VHTLC not found for address ${pendingSwap.response.lockupDetails.lockupAddress}`
+                `Swap ${pendingSwap.id}: VHTLC not found for address ${pendingSwap.response.lockupDetails.lockupAddress}`,
             );
         }
 
@@ -1802,8 +1792,7 @@ export class ArkadeSwaps {
 
         const outputScript = ArkAddress.decode(address).pkScript;
         const refundWithoutReceiverLeaf = vhtlcScript.refundWithoutReceiver();
-        const refundLocktime =
-            pendingSwap.response.lockupDetails.timeouts!.refund;
+        const refundLocktime = pendingSwap.response.lockupDetails.timeouts!.refund;
 
         let boltzCallCount = 0;
         let sweptCount = 0;
@@ -1832,7 +1821,7 @@ export class ArkadeSwaps {
                     input,
                     output,
                     arkInfo,
-                    isRecoverableVtxo
+                    isRecoverableVtxo,
                 );
                 sweptCount++;
                 continue;
@@ -1844,7 +1833,7 @@ export class ArkadeSwaps {
                         `cannot be refunded yet — refundWithoutReceiver locktime has not passed ` +
                         `(refundLocktime=${refundLocktime}, ` +
                         `currentTimestamp=${Math.floor(Date.now() / 1000)}). ` +
-                        `Refund will be retried after locktime.`
+                        `Refund will be retried after locktime.`,
                 );
                 skippedCount++;
                 continue;
@@ -1874,7 +1863,7 @@ export class ArkadeSwaps {
                     input,
                     output,
                     arkInfo,
-                    this.swapProvider.refundChainSwap.bind(this.swapProvider)
+                    this.swapProvider.refundChainSwap.bind(this.swapProvider),
                 );
                 sweptCount++;
             } catch (error) {
@@ -1888,7 +1877,7 @@ export class ArkadeSwaps {
                             `refundWithoutReceiver locktime has not passed yet ` +
                             `(currentTimestamp=${Math.floor(Date.now() / 1000)}, ` +
                             `locktime=${refundLocktime}). ` +
-                            `Refund will be retried after locktime.`
+                            `Refund will be retried after locktime.`,
                     );
                     skippedCount++;
                     continue;
@@ -1896,20 +1885,14 @@ export class ArkadeSwaps {
 
                 logger.warn(
                     `Swap ${pendingSwap.id}: Boltz rejected VTXO outpoint, ` +
-                        `falling back to refundWithoutReceiver via joinBatch`
+                        `falling back to refundWithoutReceiver via joinBatch`,
                 );
                 const fallbackInput = {
                     ...vtxo,
                     tapLeafScript: refundWithoutReceiverLeaf,
                     tapTree: vhtlcScript.encode(),
                 };
-                await this.joinBatch(
-                    this.wallet.identity,
-                    fallbackInput,
-                    output,
-                    arkInfo,
-                    false
-                );
+                await this.joinBatch(this.wallet.identity, fallbackInput, output, arkInfo, false);
                 sweptCount++;
             }
         }

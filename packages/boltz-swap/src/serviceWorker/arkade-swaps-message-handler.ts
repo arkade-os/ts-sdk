@@ -1041,9 +1041,7 @@ export class ArkadeSwapsMessageHandler
                     return this.tagged({ id, type: "BTC_CLAIM_EXECUTED" });
 
                 case "REFUND_ARK": {
-                    const outcome = await this.handler.refundArk(
-                        message.payload
-                    );
+                    const outcome = await this.handler.refundArk(message.payload);
                     return this.tagged({
                         id,
                         type: "ARK_REFUND_EXECUTED",

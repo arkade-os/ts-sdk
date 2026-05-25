@@ -1436,9 +1436,7 @@ describe("SwapManager", () => {
         it("keeps the swap monitored and schedules a retry when refundArk reports skipped > 0", async () => {
             vi.useFakeTimers();
             try {
-                const refundArk = vi
-                    .fn()
-                    .mockResolvedValueOnce({ swept: 0, skipped: 2 });
+                const refundArk = vi.fn().mockResolvedValueOnce({ swept: 0, skipped: 2 });
                 const onSwapCompleted = vi.fn();
                 swapManager = new SwapManager(swapProvider, {
                     ...swapManagerConfig,
@@ -1448,12 +1446,10 @@ describe("SwapManager", () => {
                     makeCallbacks({
                         refundArk,
                         saveSwap: vi.fn(),
-                    })
+                    }),
                 );
 
-                await swapManager.start([
-                    { ...refundableChainSwap, status: "swap.created" },
-                ]);
+                await swapManager.start([{ ...refundableChainSwap, status: "swap.created" }]);
                 mockWebSocket.onopen();
                 await triggerSwapExpired();
 
@@ -1482,12 +1478,10 @@ describe("SwapManager", () => {
                     makeCallbacks({
                         refundArk,
                         saveSwap: vi.fn(),
-                    })
+                    }),
                 );
 
-                await swapManager.start([
-                    { ...refundableChainSwap, status: "swap.created" },
-                ]);
+                await swapManager.start([{ ...refundableChainSwap, status: "swap.created" }]);
                 mockWebSocket.onopen();
                 await triggerSwapExpired();
 
@@ -1518,12 +1512,10 @@ describe("SwapManager", () => {
                 makeCallbacks({
                     refundArk,
                     saveSwap: vi.fn(),
-                })
+                }),
             );
 
-            await swapManager.start([
-                { ...refundableChainSwap, status: "swap.created" },
-            ]);
+            await swapManager.start([{ ...refundableChainSwap, status: "swap.created" }]);
             mockWebSocket.onopen();
             await triggerSwapExpired();
 
@@ -1536,20 +1528,16 @@ describe("SwapManager", () => {
         it("clears the pending retry on stop()", async () => {
             vi.useFakeTimers();
             try {
-                const refundArk = vi
-                    .fn()
-                    .mockResolvedValueOnce({ swept: 0, skipped: 1 });
+                const refundArk = vi.fn().mockResolvedValueOnce({ swept: 0, skipped: 1 });
                 swapManager = new SwapManager(swapProvider, swapManagerConfig);
                 swapManager.setCallbacks(
                     makeCallbacks({
                         refundArk,
                         saveSwap: vi.fn(),
-                    })
+                    }),
                 );
 
-                await swapManager.start([
-                    { ...refundableChainSwap, status: "swap.created" },
-                ]);
+                await swapManager.start([{ ...refundableChainSwap, status: "swap.created" }]);
                 mockWebSocket.onopen();
                 await triggerSwapExpired();
 
@@ -1567,20 +1555,16 @@ describe("SwapManager", () => {
         it("clears the pending retry on removeSwap()", async () => {
             vi.useFakeTimers();
             try {
-                const refundArk = vi
-                    .fn()
-                    .mockResolvedValueOnce({ swept: 0, skipped: 1 });
+                const refundArk = vi.fn().mockResolvedValueOnce({ swept: 0, skipped: 1 });
                 swapManager = new SwapManager(swapProvider, swapManagerConfig);
                 swapManager.setCallbacks(
                     makeCallbacks({
                         refundArk,
                         saveSwap: vi.fn(),
-                    })
+                    }),
                 );
 
-                await swapManager.start([
-                    { ...refundableChainSwap, status: "swap.created" },
-                ]);
+                await swapManager.start([{ ...refundableChainSwap, status: "swap.created" }]);
                 mockWebSocket.onopen();
                 await triggerSwapExpired();
 
@@ -1612,12 +1596,10 @@ describe("SwapManager", () => {
                     makeCallbacks({
                         refundArk,
                         saveSwap: vi.fn(),
-                    })
+                    }),
                 );
 
-                await swapManager.start([
-                    { ...refundableChainSwap, status: "swap.created" },
-                ]);
+                await swapManager.start([{ ...refundableChainSwap, status: "swap.created" }]);
                 mockWebSocket.onopen();
                 await triggerSwapExpired();
 
@@ -1658,12 +1640,10 @@ describe("SwapManager", () => {
                     makeCallbacks({
                         refundArk,
                         saveSwap: vi.fn(),
-                    })
+                    }),
                 );
 
-                await swapManager.start([
-                    { ...refundableChainSwap, status: "swap.created" },
-                ]);
+                await swapManager.start([{ ...refundableChainSwap, status: "swap.created" }]);
                 mockWebSocket.onopen();
                 await triggerSwapExpired();
 
