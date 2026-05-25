@@ -3,6 +3,7 @@ import { AssetDetails, AssetMetadata, Outpoint, VirtualCoin } from "../wallet";
 import { isFetchTimeoutError } from "./ark";
 import { eventSourceIterator, isEventSourceError } from "./utils";
 import { MetadataList } from "../extension/asset";
+import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 
 export type PaginationOptions = {
     pageIndex?: number;
@@ -296,7 +297,7 @@ export interface IndexerProvider {
  * ```
  */
 export class RestIndexerProvider implements IndexerProvider {
-    constructor(public serverUrl: string) {}
+    constructor(public serverUrl: string = DEFAULT_ARKADE_SERVER_URL) {}
 
     async getVtxoTree(
         batchOutpoint: Outpoint,

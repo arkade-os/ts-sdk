@@ -51,7 +51,6 @@ export class OnchainWallet implements AnchorBumper {
      * @param networkName - Bitcoin network name, @see NetworkName
      * @param provider - Optional onchain provider override, @see OnchainProvider
      * @returns Configured onchain wallet
-     * @defaultValue `provider = new EsploraProvider('https://mempool.space/api')`
      * @throws Error if the configured identity cannot produce a valid x-only public key
      */
     static async create(

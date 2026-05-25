@@ -979,10 +979,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
  * // Create a wallet with providers
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider('https://arkade.computer'),
- *   onchainProvider: new EsploraProvider('https://mempool.space/api')
+ *   arkProvider: new RestArkProvider(),
+ *   onchainProvider: new EsploraProvider()
  * });
  *
+ * // Use custom providers and/or URLs (e.g., for Expo/React Native)
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
  *   arkProvider: new ExpoArkProvider('https://arkade.computer'),
@@ -1375,7 +1376,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * ```typescript
      * const wallet = await Wallet.create({
      *   identity,
-     *   arkProvider: new RestArkProvider('https://arkade.computer'),
+     *   arkProvider: new RestArkProvider(),
      * });
      * ```
      */

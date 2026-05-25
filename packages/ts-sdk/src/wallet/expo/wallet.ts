@@ -99,8 +99,8 @@ export function warnOnRemovedBackgroundFields(bg: unknown): void {
  *
  * const wallet = await ExpoWallet.setup({
  *     identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *     arkProvider: new RestArkProvider('https://arkade.computer'),
- *     onchainProvider: new EsploraProvider('https://mempool.space/api')
+ *     arkProvider: new RestArkProvider(),
+ *     onchainProvider: new EsploraProvider(),
  *     storage: { ... },
  *     background: {
  *         taskQueue: new AsyncStorageTaskQueue(AsyncStorage),
