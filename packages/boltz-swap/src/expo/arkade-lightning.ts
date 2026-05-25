@@ -6,6 +6,7 @@ import type {
     ArkToBtcResponse,
     BtcToArkResponse,
     Chain,
+    ChainArkRefundOutcome,
     ChainFeesResponse,
     CreateLightningInvoiceRequest,
     CreateLightningInvoiceResponse,
@@ -325,7 +326,7 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         return this.inner.claimBtc(pendingSwap);
     }
 
-    refundArk(pendingSwap: BoltzChainSwap): Promise<void> {
+    refundArk(pendingSwap: BoltzChainSwap): Promise<ChainArkRefundOutcome> {
         return this.inner.refundArk(pendingSwap);
     }
 

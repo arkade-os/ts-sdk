@@ -17,6 +17,7 @@ import {
     ArkToBtcResponse,
     BtcToArkResponse,
     Chain,
+    type ChainArkRefundOutcome,
     ChainFeesResponse,
     type CreateLightningInvoiceRequest,
     type CreateLightningInvoiceResponse,
@@ -377,6 +378,7 @@ export type RequestRefundArk = RequestEnvelope & {
 };
 export type ResponseRefundArk = ResponseEnvelope & {
     type: "ARK_REFUND_EXECUTED";
+    payload: ChainArkRefundOutcome;
 };
 
 export type RequestSignServerClaim = RequestEnvelope & {
@@ -1038,9 +1040,14 @@ export class ArkadeSwapsMessageHandler
                     await this.handler.claimBtc(message.payload);
                     return this.tagged({ id, type: "BTC_CLAIM_EXECUTED" });
 
-                case "REFUND_ARK":
-                    await this.handler.refundArk(message.payload);
-                    return this.tagged({ id, type: "ARK_REFUND_EXECUTED" });
+                case "REFUND_ARK": {
+                    const outcome = await this.handler.refundArk(message.payload);
+                    return this.tagged({
+                        id,
+                        type: "ARK_REFUND_EXECUTED",
+                        payload: outcome,
+                    });
+                }
 
                 case "SIGN_SERVER_CLAIM":
                     await this.handler.signCooperativeClaimForServer(message.payload);

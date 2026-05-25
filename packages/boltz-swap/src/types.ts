@@ -197,6 +197,18 @@ export interface SubmarineRefundOutcome {
     skipped: number;
 }
 
+/** Outcome of a single `refundArk` call: how many VTXOs were swept vs. deferred. */
+export interface ChainArkRefundOutcome {
+    /** Number of VTXOs successfully refunded. */
+    swept: number;
+    /**
+     * Number of VTXOs that could not be refunded yet (e.g. recoverable VTXO
+     * pre-CLTV, or Boltz rejected and CLTV still not satisfied). The caller
+     * is expected to retry these later.
+     */
+    skipped: number;
+}
+
 /** Per-swap outcome of a bulk recovery call. */
 export interface SubmarineRecoveryResult {
     /** ID of the swap whose VHTLC we attempted to refund. */

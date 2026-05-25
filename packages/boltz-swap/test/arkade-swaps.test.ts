@@ -34,6 +34,7 @@ import { ripemd160 } from "@noble/hashes/legacy.js";
 import { decodeInvoice } from "../src/utils/decoding";
 import { pubECDSA } from "@scure/btc-signer/utils.js";
 import {
+    claimVHTLCwithOffchainTx,
     createVHTLCScript as createVHTLCScriptReal,
     refundVHTLCwithOffchainTx,
 } from "../src/utils/vhtlc";
@@ -52,11 +53,13 @@ vi.mock("@arkade-os/sdk", async () => {
     };
 });
 
-// Mock vhtlc utils — passthrough except refundVHTLCwithOffchainTx
+// Mock vhtlc utils — passthrough except the offchain-tx helpers, which
+// touch real Ark protocol APIs we can't reach in unit tests.
 vi.mock("../src/utils/vhtlc", async () => {
     const actual = await vi.importActual<typeof import("../src/utils/vhtlc")>("../src/utils/vhtlc");
     return {
         ...actual,
+        claimVHTLCwithOffchainTx: vi.fn().mockResolvedValue(undefined),
         refundVHTLCwithOffchainTx: vi.fn().mockResolvedValue(undefined),
     };
 });
@@ -3789,6 +3792,474 @@ describe("ArkadeSwaps", () => {
                     timeoutBlockHeights: prodTimeouts,
                 }),
             ).not.toThrow();
+        });
+    });
+
+    describe("claimVHTLC — multi-VTXO iteration", () => {
+        const preimage = randomBytes(20);
+        const txidA = hex.encode(randomBytes(32));
+        const txidB = hex.encode(randomBytes(32));
+
+        const recoverableVtxo = (txid: string, vout: number) => ({
+            txid,
+            vout,
+            value: 50000,
+            status: { confirmed: true, blockHeight: 100, blockHash: "abc" },
+            virtualStatus: { state: "swept" as const },
+            isSpent: false,
+            isUnrolled: false,
+            createdAt: new Date(),
+        });
+
+        const nonRecoverableVtxo = (txid: string, vout: number) => ({
+            txid,
+            vout,
+            value: 50000,
+            status: { confirmed: true, blockHeight: 100, blockHash: "abc" },
+            virtualStatus: { state: "settled" as const },
+            isSpent: false,
+            isUnrolled: false,
+            createdAt: new Date(),
+        });
+
+        const mockVHTLC = {
+            vhtlcAddress: mock.lockupAddress,
+            vhtlcScript: {
+                claimScript: new Uint8Array([1]),
+                pkScript: new Uint8Array([2]),
+                claim: () => [{}, new Uint8Array([3]), 0xc0] as any,
+                encode: () => [] as any,
+            },
+        };
+
+        const buildPendingSwap = (): BoltzReverseSwap => ({
+            id: mock.id,
+            type: "reverse",
+            createdAt: Date.now(),
+            preimage: hex.encode(preimage),
+            request: createReverseSwapRequest,
+            response: {
+                ...createReverseSwapResponse,
+                lockupAddress: mockVHTLC.vhtlcAddress,
+            },
+            status: "swap.created",
+        });
+
+        beforeEach(() => {
+            vi.mocked(arkProvider.getInfo).mockResolvedValue(mockArkInfo);
+            vi.mocked(wallet.getAddress).mockResolvedValue(mock.address.ark);
+            vi.spyOn(swaps, "createVHTLCScript").mockReturnValue(mockVHTLC as any);
+        });
+
+        it("claims two unspent recoverable VTXOs via joinBatch", async () => {
+            const vtxos = [recoverableVtxo(txidA, 0), recoverableVtxo(txidB, 1)];
+            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                vtxos: vtxos as any,
+            });
+            const joinBatchSpy = vi.spyOn(swaps as any, "joinBatch").mockResolvedValue(undefined);
+
+            await swaps.claimVHTLC(buildPendingSwap());
+
+            expect(joinBatchSpy).toHaveBeenCalledTimes(2);
+            expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
+            expect(joinBatchSpy.mock.calls[1][1].txid).toBe(txidB);
+            expect(claimVHTLCwithOffchainTx).not.toHaveBeenCalled();
+            expect(mockSwapRepository.saveSwap).toHaveBeenCalledTimes(1);
+            expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    id: mock.id,
+                    status: "transaction.claimed",
+                }),
+            );
+        });
+
+        it("claims two unspent non-recoverable VTXOs via offchain tx and saves final status once", async () => {
+            const vtxos = [nonRecoverableVtxo(txidA, 0), nonRecoverableVtxo(txidB, 1)];
+            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                vtxos: vtxos as any,
+            });
+            const joinBatchSpy = vi.spyOn(swaps as any, "joinBatch").mockResolvedValue(undefined);
+            const swapStatusSpy = vi
+                .spyOn(swapProvider, "getSwapStatus")
+                .mockResolvedValue({ status: "transaction.confirmed" });
+
+            await swaps.claimVHTLC(buildPendingSwap());
+
+            const offchainSpy = vi.mocked(claimVHTLCwithOffchainTx);
+            expect(offchainSpy).toHaveBeenCalledTimes(2);
+            expect((offchainSpy.mock.calls[0][3] as any).txid).toBe(txidA);
+            expect((offchainSpy.mock.calls[1][3] as any).txid).toBe(txidB);
+            expect(joinBatchSpy).not.toHaveBeenCalled();
+            expect(swapStatusSpy).toHaveBeenCalledTimes(1);
+            expect(mockSwapRepository.saveSwap).toHaveBeenCalledTimes(1);
+            expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    id: mock.id,
+                    status: "transaction.confirmed",
+                }),
+            );
+        });
+
+        it("routes mixed recoverable and non-recoverable VTXOs to the correct branch", async () => {
+            const vtxos = [recoverableVtxo(txidA, 0), nonRecoverableVtxo(txidB, 1)];
+            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                vtxos: vtxos as any,
+            });
+            const joinBatchSpy = vi.spyOn(swaps as any, "joinBatch").mockResolvedValue(undefined);
+            vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                status: "transaction.confirmed",
+            });
+
+            await swaps.claimVHTLC(buildPendingSwap());
+
+            expect(joinBatchSpy).toHaveBeenCalledTimes(1);
+            expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
+            const offchainSpy = vi.mocked(claimVHTLCwithOffchainTx);
+            expect(offchainSpy).toHaveBeenCalledTimes(1);
+            expect((offchainSpy.mock.calls[0][3] as any).txid).toBe(txidB);
+        });
+
+        it("ignores spent VTXOs but still claims the unspent ones", async () => {
+            const vtxos = [
+                { ...recoverableVtxo(txidA, 0), isSpent: true },
+                recoverableVtxo(txidB, 1),
+            ];
+            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                vtxos: vtxos as any,
+            });
+            const joinBatchSpy = vi.spyOn(swaps as any, "joinBatch").mockResolvedValue(undefined);
+
+            await expect(swaps.claimVHTLC(buildPendingSwap())).resolves.toBeUndefined();
+            expect(joinBatchSpy).toHaveBeenCalledTimes(1);
+            expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidB);
+        });
+
+        it("throws 'VHTLC is already spent' when every returned VTXO is spent", async () => {
+            vi.useFakeTimers();
+            try {
+                const vtxos = [
+                    { ...recoverableVtxo(txidA, 0), isSpent: true },
+                    { ...recoverableVtxo(txidB, 1), isSpent: true },
+                ];
+                vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                    vtxos: vtxos as any,
+                });
+
+                // an all-spent VHTLC has no actionable VTXO, so the claim
+                // retries (CLAIM_VTXO_RETRY_ATTEMPTS) before diagnosing it as
+                // already spent — advance past the retry delays
+                const promise = swaps.claimVHTLC(buildPendingSwap());
+                promise.catch(() => {});
+                await vi.advanceTimersByTimeAsync(1000);
+
+                await expect(promise).rejects.toThrow(/VHTLC is already spent/);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("attempts every VTXO and aggregates failures into a single throw", async () => {
+            const vtxos = [recoverableVtxo(txidA, 0), recoverableVtxo(txidB, 1)];
+            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                vtxos: vtxos as any,
+            });
+            const joinBatchSpy = vi
+                .spyOn(swaps as any, "joinBatch")
+                .mockResolvedValueOnce(undefined)
+                .mockRejectedValueOnce(new Error("join failed"));
+
+            await expect(swaps.claimVHTLC(buildPendingSwap())).rejects.toThrow(
+                /failed to claim 1\/2 VTXOs/,
+            );
+
+            // Both VTXOs were attempted — the failure on the second VTXO
+            // didn't short-circuit the loop.
+            expect(joinBatchSpy).toHaveBeenCalledTimes(2);
+            expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
+            expect(joinBatchSpy.mock.calls[1][1].txid).toBe(txidB);
+            // Status is not saved on partial success (all-or-throw).
+            expect(mockSwapRepository.saveSwap).not.toHaveBeenCalled();
+        });
+
+        it("still attempts later VTXOs when the first fails", async () => {
+            const vtxos = [recoverableVtxo(txidA, 0), recoverableVtxo(txidB, 1)];
+            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                vtxos: vtxos as any,
+            });
+            const joinBatchSpy = vi
+                .spyOn(swaps as any, "joinBatch")
+                .mockRejectedValueOnce(new Error("first failed"))
+                .mockResolvedValueOnce(undefined);
+
+            await expect(swaps.claimVHTLC(buildPendingSwap())).rejects.toThrow(
+                /failed to claim 1\/2 VTXOs/,
+            );
+
+            expect(joinBatchSpy).toHaveBeenCalledTimes(2);
+            expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
+            expect(joinBatchSpy.mock.calls[1][1].txid).toBe(txidB);
+        });
+
+        it("retries the indexer and claims every VTXO returned on the second attempt", async () => {
+            vi.useFakeTimers();
+            try {
+                const vtxos = [recoverableVtxo(txidA, 0), recoverableVtxo(txidB, 1)];
+                vi.spyOn(indexerProvider, "getVtxos")
+                    .mockResolvedValueOnce({ vtxos: [] })
+                    .mockResolvedValueOnce({ vtxos: vtxos as any });
+                const joinBatchSpy = vi
+                    .spyOn(swaps as any, "joinBatch")
+                    .mockResolvedValue(undefined);
+
+                const promise = swaps.claimVHTLC(buildPendingSwap());
+                promise.catch(() => {});
+                await vi.advanceTimersByTimeAsync(500);
+
+                await expect(promise).resolves.toBeUndefined();
+                expect(indexerProvider.getVtxos).toHaveBeenCalledTimes(2);
+                expect(joinBatchSpy).toHaveBeenCalledTimes(2);
+                expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
+                expect(joinBatchSpy.mock.calls[1][1].txid).toBe(txidB);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+    });
+
+    describe("refundArk — multi-VTXO iteration", () => {
+        const txidA = hex.encode(randomBytes(32));
+        const txidB = hex.encode(randomBytes(32));
+
+        const recoverableVtxo = (txid: string, vout: number) => ({
+            txid,
+            vout,
+            value: 50000,
+            status: { confirmed: true, blockHeight: 100, blockHash: "abc" },
+            virtualStatus: { state: "swept" as const },
+            isSpent: false,
+            isUnrolled: false,
+            createdAt: new Date(),
+        });
+
+        const nonRecoverableVtxo = (txid: string, vout: number) => ({
+            txid,
+            vout,
+            value: 50000,
+            status: { confirmed: true, blockHeight: 100, blockHash: "abc" },
+            virtualStatus: { state: "settled" as const },
+            isSpent: false,
+            isUnrolled: false,
+            createdAt: new Date(),
+        });
+
+        const pastRefund = () => Math.floor(Date.now() / 1000) - 1;
+        const futureRefund = () => Math.floor(Date.now() / 1000) + 86400;
+
+        const buildSwap = (refund: number): BoltzChainSwap => ({
+            ...mockArkBtcChainSwap,
+            response: {
+                ...mockArkBtcChainSwap.response,
+                lockupDetails: {
+                    ...mockArkBtcChainSwap.response.lockupDetails,
+                    timeouts: {
+                        refund,
+                        unilateralClaim: 21,
+                        unilateralRefund: 42,
+                        unilateralRefundWithoutReceiver: 63,
+                    },
+                },
+            },
+        });
+
+        beforeEach(() => {
+            vi.mocked(arkProvider.getInfo).mockResolvedValue(mockArkInfo);
+            vi.mocked(wallet.getAddress).mockResolvedValue(mock.address.ark);
+            vi.spyOn(swaps, "createVHTLCScript").mockReturnValue({
+                vhtlcScript: {
+                    refundScript: new Uint8Array([1]),
+                    pkScript: new Uint8Array([2]),
+                    refund: () => [{}, new Uint8Array([3]), 0xc0] as any,
+                    refundWithoutReceiver: () => [{}, new Uint8Array([4]), 0xc0] as any,
+                    encode: () => [] as any,
+                } as any,
+                vhtlcAddress: mockArkBtcChainSwap.response.lockupDetails.lockupAddress,
+            });
+            vi.spyOn(swaps as any, "joinBatch").mockResolvedValue(undefined);
+            vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                status: "transaction.refunded",
+            });
+        });
+
+        it("refunds two unspent VTXOs via joinBatch when CLTV is satisfied", async () => {
+            const vtxos = [nonRecoverableVtxo(txidA, 0), nonRecoverableVtxo(txidB, 1)];
+            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                vtxos: vtxos as any,
+            });
+
+            const outcome = await swaps.refundArk(buildSwap(pastRefund()));
+
+            const joinBatchSpy = vi.mocked((swaps as any).joinBatch);
+            expect(joinBatchSpy).toHaveBeenCalledTimes(2);
+            expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
+            expect(joinBatchSpy.mock.calls[1][1].txid).toBe(txidB);
+            // refundWithoutReceiver leaf (script byte 4) was used
+            expect(joinBatchSpy.mock.calls[0][1].tapLeafScript[1]).toEqual(new Uint8Array([4]));
+            expect(refundVHTLCwithOffchainTx).not.toHaveBeenCalled();
+            expect(outcome).toEqual({ swept: 2, skipped: 0 });
+        });
+
+        it("calls Boltz refund for two non-recoverable VTXOs pre-CLTV, with a 2s delay between calls", async () => {
+            vi.useFakeTimers();
+            try {
+                const vtxos = [nonRecoverableVtxo(txidA, 0), nonRecoverableVtxo(txidB, 1)];
+                vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                    vtxos: vtxos as any,
+                });
+
+                const promise = swaps.refundArk(buildSwap(futureRefund()));
+                promise.catch(() => {});
+
+                // Drive the 2s inter-Boltz-call sleep under fake timers.
+                await vi.runAllTimersAsync();
+
+                const outcome = await promise;
+                const mockRefund = vi.mocked(refundVHTLCwithOffchainTx);
+                expect(mockRefund).toHaveBeenCalledTimes(2);
+                expect((mockRefund.mock.calls[0][6] as any).txid).toBe(txidA);
+                expect((mockRefund.mock.calls[1][6] as any).txid).toBe(txidB);
+                expect((swaps as any).joinBatch).not.toHaveBeenCalled();
+                expect(outcome).toEqual({ swept: 2, skipped: 0 });
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("skips recoverable VTXOs pre-CLTV without calling Boltz or joinBatch", async () => {
+            const vtxos = [recoverableVtxo(txidA, 0), recoverableVtxo(txidB, 1)];
+            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                vtxos: vtxos as any,
+            });
+
+            const outcome = await swaps.refundArk(buildSwap(futureRefund()));
+
+            expect(refundVHTLCwithOffchainTx).not.toHaveBeenCalled();
+            expect((swaps as any).joinBatch).not.toHaveBeenCalled();
+            expect(outcome).toEqual({ swept: 0, skipped: 2 });
+        });
+
+        it("still throttles the next Boltz call by 2s after a BoltzRefundError on the previous VTXO", async () => {
+            vi.useFakeTimers();
+            try {
+                const vtxos = [nonRecoverableVtxo(txidA, 0), nonRecoverableVtxo(txidB, 1)];
+                vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                    vtxos: vtxos as any,
+                });
+
+                // First call throws (pre-CLTV skip), second resolves.
+                // Boltz rate-limit slots should be counted by attempt,
+                // not by success — without that, the second call would
+                // fire back-to-back with the first.
+                const mockRefund = vi.mocked(refundVHTLCwithOffchainTx);
+                mockRefund
+                    .mockRejectedValueOnce(new BoltzRefundError("outpoint mismatch"))
+                    .mockResolvedValueOnce(undefined);
+
+                const promise = swaps.refundArk(buildSwap(futureRefund()));
+                promise.catch(() => {});
+
+                // Drain microtasks so the first call lands.
+                await vi.advanceTimersByTimeAsync(0);
+                expect(mockRefund).toHaveBeenCalledTimes(1);
+
+                // Just under the throttle window — second call must wait.
+                await vi.advanceTimersByTimeAsync(1900);
+                expect(mockRefund).toHaveBeenCalledTimes(1);
+
+                // Past the 2s deadline → second call runs.
+                await vi.advanceTimersByTimeAsync(200);
+                expect(mockRefund).toHaveBeenCalledTimes(2);
+
+                const outcome = await promise;
+                expect(outcome).toEqual({ swept: 1, skipped: 1 });
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("falls back to joinBatch when Boltz rejects and CLTV passes during the catch", async () => {
+            const futureTs = Math.floor(Date.now() / 1000) + 86400;
+            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                vtxos: [nonRecoverableVtxo(txidA, 0)] as any,
+            });
+
+            vi.mocked(refundVHTLCwithOffchainTx).mockRejectedValueOnce(
+                new BoltzRefundError("outpoint mismatch"),
+            );
+            // Pre-CLTV at the initial check, post-CLTV at the re-check.
+            const dateSpy = vi.spyOn(Date, "now");
+            dateSpy.mockReturnValueOnce((futureTs - 60) * 1000);
+            dateSpy.mockReturnValueOnce((futureTs + 60) * 1000);
+
+            const outcome = await swaps.refundArk(buildSwap(futureTs));
+
+            const joinBatchSpy = vi.mocked((swaps as any).joinBatch);
+            expect(joinBatchSpy).toHaveBeenCalledTimes(1);
+            // fallback uses refundWithoutReceiver leaf (script byte 4)
+            expect(joinBatchSpy.mock.calls[0][1].tapLeafScript[1]).toEqual(new Uint8Array([4]));
+            expect(joinBatchSpy.mock.calls[0][4]).toBe(false);
+            expect(outcome).toEqual({ swept: 1, skipped: 0 });
+        });
+
+        it("skips when Boltz rejects and CLTV still hasn't passed", async () => {
+            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                vtxos: [nonRecoverableVtxo(txidA, 0)] as any,
+            });
+
+            vi.mocked(refundVHTLCwithOffchainTx).mockRejectedValueOnce(
+                new BoltzRefundError("outpoint mismatch"),
+            );
+
+            const outcome = await swaps.refundArk(buildSwap(futureRefund()));
+
+            expect((swaps as any).joinBatch).not.toHaveBeenCalled();
+            expect(outcome).toEqual({ swept: 0, skipped: 1 });
+        });
+
+        it("re-throws non-Boltz errors from the refund offchain tx", async () => {
+            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                vtxos: [nonRecoverableVtxo(txidA, 0)] as any,
+            });
+
+            vi.mocked(refundVHTLCwithOffchainTx).mockRejectedValueOnce(
+                new Error("local signing failure"),
+            );
+
+            await expect(swaps.refundArk(buildSwap(futureRefund()))).rejects.toThrow(
+                /local signing failure/,
+            );
+        });
+
+        it("throws 'VHTLC not found' when no VTXOs exist at the lockup address", async () => {
+            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                vtxos: [],
+            });
+
+            await expect(swaps.refundArk(buildSwap(pastRefund()))).rejects.toThrow(
+                /VHTLC not found/,
+            );
+        });
+
+        it("throws 'VHTLC is already spent' when every VTXO at the address is spent", async () => {
+            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                vtxos: [
+                    { ...nonRecoverableVtxo(txidA, 0), isSpent: true },
+                    { ...nonRecoverableVtxo(txidB, 1), isSpent: true },
+                ] as any,
+            });
+
+            await expect(swaps.refundArk(buildSwap(pastRefund()))).rejects.toThrow(
+                /VHTLC is already spent/,
+            );
         });
     });
 });

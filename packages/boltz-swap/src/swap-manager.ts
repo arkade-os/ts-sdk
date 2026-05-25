@@ -13,7 +13,13 @@ import {
     isChainSignableStatus,
     isChainFinalStatus,
 } from "./boltz-swap-provider";
-import { BoltzChainSwap, BoltzReverseSwap, BoltzSubmarineSwap, BoltzSwap } from "./types";
+import {
+    BoltzChainSwap,
+    BoltzReverseSwap,
+    BoltzSubmarineSwap,
+    BoltzSwap,
+    ChainArkRefundOutcome,
+} from "./types";
 import { NetworkError, SwapNotFoundError } from "./errors";
 import { logger } from "./logger";
 
@@ -137,7 +143,7 @@ export interface SwapManagerCallbacks {
     refund: (swap: BoltzSubmarineSwap) => Promise<void>;
     claimArk: (swap: BoltzChainSwap) => Promise<void>;
     claimBtc: (swap: BoltzChainSwap) => Promise<void>;
-    refundArk: (swap: BoltzChainSwap) => Promise<void>;
+    refundArk: (swap: BoltzChainSwap) => Promise<ChainArkRefundOutcome>;
     signServerClaim?: (swap: BoltzChainSwap) => Promise<void>;
     saveSwap: (swap: BoltzSwap) => Promise<void>;
 }
@@ -162,6 +168,14 @@ export class SwapManager implements SwapManagerClient {
      */
     private static readonly NOT_FOUND_THRESHOLD = 10;
 
+    /**
+     * Delay between re-attempts of a chain refund that left VTXOs deferred
+     * (e.g. pre-CLTV recoverable VTXO, or Boltz 3-of-3 rejected before CLTV
+     * has elapsed). Boltz won't send another status update once the swap
+     * is `swap.expired`, so the manager owns the local retry cadence.
+     */
+    private static readonly REFUND_RETRY_DELAY_MS = 60_000;
+
     private readonly swapProvider: BoltzSwapProvider;
     private readonly config: SwapManagerConfig;
 
@@ -181,6 +195,11 @@ export class SwapManager implements SwapManagerClient {
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private initialPollTimer: ReturnType<typeof setTimeout> | null = null;
     private pollRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    // Per-swap retry timers for chain refunds that left work undone
+    // (refundArk returned `skipped > 0`). The swap is held in
+    // `monitoredSwaps` past its terminal Boltz status until the local
+    // refund completes or the manager stops.
+    private refundRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
     // Per-swap counter of consecutive `SwapNotFoundError` responses from
     // `getSwapStatus`. Reset on any successful poll. Once a swap reaches
     // `NOT_FOUND_THRESHOLD` consecutive 404s the safety net trips and the
@@ -206,7 +225,8 @@ export class SwapManager implements SwapManagerClient {
     private refundCallback: ((swap: BoltzSubmarineSwap) => Promise<void>) | null = null;
     private claimArkCallback: ((swap: BoltzChainSwap) => Promise<void>) | null = null;
     private claimBtcCallback: ((swap: BoltzChainSwap) => Promise<void>) | null = null;
-    private refundArkCallback: ((swap: BoltzChainSwap) => Promise<void>) | null = null;
+    private refundArkCallback: ((swap: BoltzChainSwap) => Promise<ChainArkRefundOutcome>) | null =
+        null;
     private signServerClaimCallback: ((swap: BoltzChainSwap) => Promise<void>) | null = null;
     private saveSwapCallback: ((swap: BoltzSwap) => Promise<void>) | null = null;
 
@@ -417,6 +437,10 @@ export class SwapManager implements SwapManagerClient {
             clearTimeout(timer);
         }
         this.pollRetryTimers.clear();
+        for (const timer of this.refundRetryTimers.values()) {
+            clearTimeout(timer);
+        }
+        this.refundRetryTimers.clear();
         this.notFoundCounts.clear();
     }
 
@@ -485,6 +509,11 @@ export class SwapManager implements SwapManagerClient {
         if (retryTimer) {
             clearTimeout(retryTimer);
             this.pollRetryTimers.delete(swapId);
+        }
+        const refundRetryTimer = this.refundRetryTimers.get(swapId);
+        if (refundRetryTimer) {
+            clearTimeout(refundRetryTimer);
+            this.refundRetryTimers.delete(swapId);
         }
         this.notFoundCounts.delete(swapId);
         logger.log(`Removed swap ${swapId} from monitoring`);
@@ -851,18 +880,71 @@ export class SwapManager implements SwapManagerClient {
             await this.executeAutonomousAction(swap);
         }
 
-        // Remove from monitoring if final status
+        // Remove from monitoring if final status — unless a refund retry
+        // is pending, in which case the retry callback owns finalization
+        // once the local refund work completes.
         if (this.isFinalStatus(swap)) {
-            this.monitoredSwaps.delete(swap.id);
-            this.swapSubscriptions.delete(swap.id);
-            const retryTimer = this.pollRetryTimers.get(swap.id);
-            if (retryTimer) {
-                clearTimeout(retryTimer);
-                this.pollRetryTimers.delete(swap.id);
+            if (this.refundRetryTimers.has(swap.id)) {
+                return;
             }
-            // Emit completed event to all listeners
-            this.swapCompletedListeners.forEach((listener) => listener(swap));
+            this.finalizeMonitoredSwap(swap);
         }
+    }
+
+    /**
+     * Drop a swap from monitoring and emit the terminal completion event.
+     * Shared between the on-status-update finalization path and the
+     * refund-retry finalization path (used when a previously-deferred
+     * chain refund has finished its remaining work).
+     */
+    private finalizeMonitoredSwap(swap: BoltzSwap): void {
+        if (!this.monitoredSwaps.has(swap.id)) return;
+        this.monitoredSwaps.delete(swap.id);
+        this.swapSubscriptions.delete(swap.id);
+        const retryTimer = this.pollRetryTimers.get(swap.id);
+        if (retryTimer) {
+            clearTimeout(retryTimer);
+            this.pollRetryTimers.delete(swap.id);
+        }
+        const refundRetry = this.refundRetryTimers.get(swap.id);
+        if (refundRetry) {
+            clearTimeout(refundRetry);
+            this.refundRetryTimers.delete(swap.id);
+        }
+        this.swapCompletedListeners.forEach((listener) => listener(swap));
+    }
+
+    /**
+     * Schedule another `executeAutonomousAction` run for a chain swap whose
+     * refund left VTXOs deferred. After the retry completes, if no further
+     * deferral was reported, finalize monitoring cleanup.
+     */
+    private scheduleRefundRetry(swap: BoltzChainSwap, delayMs: number): void {
+        const existing = this.refundRetryTimers.get(swap.id);
+        if (existing) clearTimeout(existing);
+        this.refundRetryTimers.set(
+            swap.id,
+            setTimeout(async () => {
+                this.refundRetryTimers.delete(swap.id);
+                if (!this.isRunning) return;
+                if (!this.monitoredSwaps.has(swap.id)) return;
+                try {
+                    // `swap` is captured at scheduling time; its fields
+                    // are stable for chain refunds because swap.expired
+                    // is terminal and Boltz won't transition it again,
+                    // so the snapshot remains accurate across retries.
+                    await this.executeAutonomousAction(swap);
+                } finally {
+                    // The retry callback either re-scheduled itself (still
+                    // deferred) or finished the work; in the latter case
+                    // we owe the terminal-status finalization that
+                    // handleSwapStatusUpdate skipped.
+                    if (!this.refundRetryTimers.has(swap.id) && this.isFinalStatus(swap)) {
+                        this.finalizeMonitoredSwap(swap);
+                    }
+                }
+            }, delayMs),
+        );
     }
 
     /**
@@ -931,11 +1013,37 @@ export class SwapManager implements SwapManagerClient {
                 } else if (isChainRefundableStatus(swap.status)) {
                     if (swap.request.from === "ARK") {
                         logger.log(`Auto-refunding ARK chain swap ${swap.id}`);
-                        await this.executeRefundArkAction(swap);
-                        // Emit action executed event to all listeners
-                        this.actionExecutedListeners.forEach((listener) =>
-                            listener(swap, "refundArk"),
-                        );
+                        // Boltz won't send another status update for an
+                        // already-`swap.expired` swap, so any failure to
+                        // sweep — partial outcome OR thrown error — must
+                        // schedule a local retry, otherwise the swap
+                        // would be dropped from monitoring with funds
+                        // still stranded. The inner try/catch keeps the
+                        // retry-scheduling logic out of the broader
+                        // `executeAutonomousAction` catch below, which
+                        // logs and emits but cannot reach the chain-
+                        // specific retry path.
+                        try {
+                            const outcome = await this.executeRefundArkAction(swap);
+                            if (outcome && outcome.skipped > 0) {
+                                logger.log(
+                                    `Chain swap ${swap.id}: ${outcome.skipped} VTXO(s) deferred — scheduling refund retry`,
+                                );
+                                this.scheduleRefundRetry(swap, SwapManager.REFUND_RETRY_DELAY_MS);
+                            }
+                            this.actionExecutedListeners.forEach((listener) =>
+                                listener(swap, "refundArk"),
+                            );
+                        } catch (error) {
+                            logger.error(
+                                `Auto-refunding ARK chain swap ${swap.id} failed; scheduling retry`,
+                                error,
+                            );
+                            this.swapFailedListeners.forEach((listener) =>
+                                listener(swap, error as Error),
+                            );
+                            this.scheduleRefundRetry(swap, SwapManager.REFUND_RETRY_DELAY_MS);
+                        }
                     }
                     if (swap.request.from === "BTC") {
                         // BTC-side lockup refunds are handled on-chain by
@@ -1026,13 +1134,15 @@ export class SwapManager implements SwapManagerClient {
     /**
      * Execute refund action for chain swap Ark to Btc
      */
-    private async executeRefundArkAction(swap: BoltzChainSwap): Promise<void> {
+    private async executeRefundArkAction(
+        swap: BoltzChainSwap,
+    ): Promise<ChainArkRefundOutcome | undefined> {
         if (!this.refundArkCallback) {
             logger.error("refundArk callback not set");
             return;
         }
 
-        await this.refundArkCallback(swap);
+        return this.refundArkCallback(swap);
     }
 
     /**
@@ -1161,9 +1271,13 @@ export class SwapManager implements SwapManagerClient {
     private async pollAllSwaps(): Promise<void> {
         if (this.monitoredSwaps.size === 0) return;
 
-        const pollPromises = Array.from(this.monitoredSwaps.values()).map((swap) =>
-            this.pollSingleSwap(swap),
-        );
+        const pollPromises = Array.from(this.monitoredSwaps.values())
+            // Swaps with a pending refund retry are driven entirely by the
+            // refund-retry loop, not by Boltz polling. Skip them so a 404 on
+            // an already-expired swap can't trip handleSwapNotFound and tear
+            // down the in-flight retry.
+            .filter((swap) => !this.refundRetryTimers.has(swap.id))
+            .map((swap) => this.pollSingleSwap(swap));
 
         await Promise.allSettled(pollPromises);
     }
@@ -1224,6 +1338,9 @@ export class SwapManager implements SwapManagerClient {
      * Boltz endpoint).
      */
     private async handleSwapNotFound(swap: BoltzSwap): Promise<void> {
+        // A pending refund retry owns this swap's lifecycle; a transient 404
+        // must not increment the not-found counter or abort the retry.
+        if (this.refundRetryTimers.has(swap.id)) return;
         const count = (this.notFoundCounts.get(swap.id) ?? 0) + 1;
         this.notFoundCounts.set(swap.id, count);
         logger.warn(
@@ -1245,6 +1362,10 @@ export class SwapManager implements SwapManagerClient {
      * 404s without recovering anything.
      */
     private async markSwapAsUnknownToProvider(swap: BoltzSwap): Promise<void> {
+        // Never tear down a swap with a pending refund retry: clearing
+        // refundRetryTimers here would strand the deferred refund work. The
+        // retry loop owns finalization once that work completes.
+        if (this.refundRetryTimers.has(swap.id)) return;
         // Idempotency: bail if a concurrent path already removed the swap.
         if (!this.monitoredSwaps.has(swap.id)) {
             this.notFoundCounts.delete(swap.id);
@@ -1266,6 +1387,11 @@ export class SwapManager implements SwapManagerClient {
         if (retryTimer) {
             clearTimeout(retryTimer);
             this.pollRetryTimers.delete(swap.id);
+        }
+        const refundRetryTimer = this.refundRetryTimers.get(swap.id);
+        if (refundRetryTimer) {
+            clearTimeout(refundRetryTimer);
+            this.refundRetryTimers.delete(swap.id);
         }
         this.notFoundCounts.delete(swap.id);
 
