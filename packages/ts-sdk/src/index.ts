@@ -80,7 +80,7 @@ import {
 } from "./wallet/wallet";
 import { TxTree, TxTreeNode } from "./tree/txTree";
 import { SignerSession, TreeNonces, TreePartialSigs } from "./tree/signingSession";
-import { Ramps } from "./wallet/ramps";
+import { DustChangeError, Ramps } from "./wallet/ramps";
 import { HDDescriptorProvider } from "./wallet/hdDescriptorProvider";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
 import type { IVtxoManager, SettlementConfig } from "./wallet/vtxo-manager";
@@ -292,6 +292,7 @@ export {
     isBatchSignable,
     OnchainWallet,
     Ramps,
+    DustChangeError,
     VtxoManager,
     HDDescriptorProvider,
     DelegatorManagerImpl,

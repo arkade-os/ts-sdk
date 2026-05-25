@@ -22,6 +22,7 @@ import { ArkAddress } from "../script/address";
 import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 import type { DefaultVtxo } from "../script/default";
+import { getDustAmount } from "./utils";
 
 /**
  * Extended wallet interface for boarding input sweep operations.
@@ -234,11 +235,6 @@ export const DEFAULT_SETTLEMENT_CONFIG: Required<SettlementConfig> = {
     boardingUtxoSweep: true,
     pollIntervalMs: 60_000,
 };
-
-/** Extracts the dust amount from the wallet, defaulting to 330 sats. */
-function getDustAmount(wallet: IWallet): bigint {
-    return "dustAmount" in wallet ? (wallet.dustAmount as bigint) : 330n;
-}
 
 /**
  * Filter virtual outputs that are recoverable (swept and still spendable, or preconfirmed subdust)
