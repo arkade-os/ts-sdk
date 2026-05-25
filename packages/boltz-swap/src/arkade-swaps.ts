@@ -2338,7 +2338,16 @@ export class ArkadeSwaps {
         // Subtract-then-floor instead of multiply-then-divide: the original
         // `floor * 10000` form loses precision once `floor` exceeds
         // ~9e11 sats (above MAX_SAFE_INTEGER after multiply by 10000).
-        return Math.floor(floor - (floor * slippageBps) / 10000);
+        const effectiveFloor = Math.floor(floor - (floor * slippageBps) / 10000);
+        // Reject when slippage (or a tiny baseline) drives the floor to 0:
+        // a 0 floor lets any positive Boltz quote through, silently restoring
+        // the blind-accept behaviour this guard exists to prevent.
+        if (effectiveFloor < 1) {
+            throw new TypeError(
+                `Invalid quote configuration: maxSlippageBps=${slippageBps} reduces floor ${floor} below 1 sat`,
+            );
+        }
+        return effectiveFloor;
     }
 
     private async resolveQuoteFloor(swapId: string, options?: QuoteSwapOptions): Promise<number> {
@@ -2382,7 +2391,17 @@ export class ArkadeSwaps {
     }
 
     private validateQuote(amount: number, effectiveFloor: number): void {
-        if (!(amount > 0)) {
+        // Guard against non-finite / fractional / above-MAX_SAFE_INTEGER values
+        // before the `> 0` and `< floor` comparisons: Infinity passes `> 0` and
+        // fails `< floor`, so without this check it would slip through to
+        // postChainQuote. Satoshi amounts must be safe positive integers.
+        if (!Number.isSafeInteger(amount)) {
+            throw new QuoteRejectedError({
+                reason: "non_safe_integer",
+                quotedAmount: amount,
+            });
+        }
+        if (amount <= 0) {
             throw new QuoteRejectedError({
                 reason: "non_positive",
                 quotedAmount: amount,

@@ -1408,6 +1408,24 @@ describe("ArkadeSwaps", () => {
                 expect(postSpy).not.toHaveBeenCalled();
             });
 
+            it.each([
+                ["Infinity", Infinity],
+                ["NaN", NaN],
+                ["fractional", 1500.5],
+                ["above MAX_SAFE_INTEGER", Number.MAX_SAFE_INTEGER + 2],
+            ])("acceptSwapQuote rejects amount %s as non-safe-integer", async (_label, value) => {
+                const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+                await expect(
+                    swaps.acceptSwapQuote(mock.id, value, {
+                        minAcceptableAmount: 1000,
+                    }),
+                ).rejects.toMatchObject({
+                    name: "QuoteRejectedError",
+                    reason: "non_safe_integer",
+                });
+                expect(postSpy).not.toHaveBeenCalled();
+            });
+
             it("acceptSwapQuote rejects an amount below the floor and does not post", async () => {
                 const postSpy = vi.spyOn(swapProvider, "postChainQuote");
                 await expect(
@@ -1422,30 +1440,39 @@ describe("ArkadeSwaps", () => {
             });
 
             it("autopilot SwapError wrap preserves the underlying QuoteRejectedError as cause", async () => {
-                mockSwapRepository.getAllSwaps.mockResolvedValueOnce([mockArkBtcChainSwap]);
+                // Drive the real `transaction.lockupFailed` handler in
+                // `waitAndClaimBtc` so the SwapError wrap that lives there
+                // actually executes. Manually constructing SwapError in the
+                // test would still pass even if the production code dropped
+                // `cause`, so it has to come from the production path.
                 vi.spyOn(swapProvider, "getChainQuote").mockResolvedValueOnce({
                     amount: 1,
                 });
                 const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(async (_id, callback) => {
+                    setTimeout(() => callback("transaction.lockupFailed", {}), 10);
+                });
 
                 let caught: unknown;
                 try {
-                    await swaps.quoteSwap(mock.id);
+                    await swaps.waitAndClaimBtc(mockArkBtcChainSwap);
                 } catch (e) {
                     caught = e;
                 }
+                // Production wrap shape.
+                expect(caught).toBeInstanceOf(SwapError);
                 expect(caught).toMatchObject({
+                    name: "SwapError",
+                    isRefundable: true,
+                });
+                expect((caught as SwapError).message).toMatch(/Failed to renegotiate quote/);
+                // Inner QuoteRejectedError must survive the wrap so callers
+                // can branch on the rejection reason.
+                const cause = (caught as SwapError).cause;
+                expect(cause).toMatchObject({
                     name: "QuoteRejectedError",
                     reason: "below_floor",
                 });
-                // Wrap the QuoteRejectedError the same shape the autopilot does;
-                // assert cause survives so callers can branch on the inner type.
-                const wrapped = new SwapError({
-                    message: `Failed: ${(caught as Error).message}`,
-                    isRefundable: true,
-                    cause: caught,
-                });
-                expect(wrapped.cause).toBe(caught);
                 expect(postSpy).not.toHaveBeenCalled();
             });
 
@@ -1460,6 +1487,19 @@ describe("ArkadeSwaps", () => {
                     swaps.acceptSwapQuote(mock.id, 1234, {
                         minAcceptableAmount: 1000,
                         maxSlippageBps: value as number,
+                    }),
+                ).rejects.toThrow(TypeError);
+                expect(postSpy).not.toHaveBeenCalled();
+            });
+
+            it("acceptSwapQuote rejects when slippage drives the effective floor below 1 sat", async () => {
+                // 100% slippage would collapse the floor to 0 and let any
+                // positive Boltz quote through — must be rejected up front.
+                const postSpy = vi.spyOn(swapProvider, "postChainQuote");
+                await expect(
+                    swaps.acceptSwapQuote(mock.id, 1, {
+                        minAcceptableAmount: 1000,
+                        maxSlippageBps: 10000,
                     }),
                 ).rejects.toThrow(TypeError);
                 expect(postSpy).not.toHaveBeenCalled();

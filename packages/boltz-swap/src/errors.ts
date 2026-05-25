@@ -166,15 +166,20 @@ export class TransactionRefundedError extends SwapError {
 }
 
 /** Reason a `quoteSwap` was rejected before being posted to Boltz. */
-export type QuoteRejectionReason = "below_floor" | "non_positive" | "no_baseline";
+export type QuoteRejectionReason =
+    | "below_floor"
+    | "non_positive"
+    | "non_safe_integer"
+    | "no_baseline";
 
 // Discriminated by `reason` so each rejection mode statically requires its own
 // metadata: below_floor demands both `quotedAmount` and `floor`, non_positive
-// demands `quotedAmount`, no_baseline carries neither.
+// and non_safe_integer demand `quotedAmount`, no_baseline carries neither.
 type QuoteRejectedOptions = ErrorOptions &
     (
         | { reason: "below_floor"; quotedAmount: number; floor: number }
         | { reason: "non_positive"; quotedAmount: number }
+        | { reason: "non_safe_integer"; quotedAmount: number }
         | { reason: "no_baseline" }
     );
 
@@ -205,6 +210,8 @@ export class QuoteRejectedError extends SwapError {
                 return `Boltz quote ${options.quotedAmount} is below acceptable floor ${options.floor}`;
             case "non_positive":
                 return `Boltz quote ${options.quotedAmount} is not positive`;
+            case "non_safe_integer":
+                return `Boltz quote ${options.quotedAmount} is not a safe positive satoshi integer`;
             case "no_baseline":
                 return "Cannot accept quote: no minAcceptableAmount and no stored pending swap";
         }
@@ -272,6 +279,7 @@ export class QuoteRejectedError extends SwapError {
                     message,
                 });
             case "non_positive":
+            case "non_safe_integer":
                 if (quotedAmount === null) return null;
                 return new QuoteRejectedError({
                     reason,
@@ -289,6 +297,7 @@ const QUOTE_REJECTION_TRANSPORT_PREFIX = "QUOTE_REJECTED::";
 const QUOTE_REJECTION_REASONS: ReadonlySet<QuoteRejectionReason> = new Set([
     "below_floor",
     "non_positive",
+    "non_safe_integer",
     "no_baseline",
 ]);
 
