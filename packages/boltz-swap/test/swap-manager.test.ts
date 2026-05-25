@@ -1413,6 +1413,26 @@ describe("SwapManager", () => {
             });
         };
 
+        beforeEach(() => {
+            // The WebSocket `onopen` handler schedules an initial poll that
+            // calls `global.fetch` via `getSwapStatus`. Stub it here so the
+            // suite never depends on a fetch mock leaked from another block
+            // (or hits the real network), keeping these tests order-
+            // independent. The swaps are `swap.expired` once monitored, so
+            // returning that status makes every poll a no-op.
+            global.fetch = vi.fn(() =>
+                Promise.resolve({
+                    ok: true,
+                    json: () => Promise.resolve({ status: "swap.expired" }),
+                    headers: new Headers({ "content-length": "100" }),
+                } as Response),
+            );
+        });
+
+        afterEach(() => {
+            delete (global as { fetch?: unknown }).fetch;
+        });
+
         it("keeps the swap monitored and schedules a retry when refundArk reports skipped > 0", async () => {
             vi.useFakeTimers();
             try {
