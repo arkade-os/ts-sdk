@@ -67,11 +67,24 @@ export type WalletMode = "auto" | "static" | "hd" | DescriptorProvider;
  * @see StorageConfig
  */
 export interface BaseWalletConfig {
-    /** Base URL of the Arkade server. */
+    /**
+     * Base URL of the Arkade server.
+     *
+     * @deprecated Pass an explicit `arkProvider` instance instead. URL-based
+     * configuration will be removed in a future major version.
+     */
     arkServerUrl?: string;
-    /** Optional override for the indexer URL. */
+    /**
+     * Optional override for the indexer URL.
+     *
+     * @deprecated Pass an explicit `indexerProvider` instance instead.
+     */
     indexerUrl?: string;
-    /** Optional override for the Esplora API URL. */
+    /**
+     * Optional override for the Esplora API URL.
+     *
+     * @deprecated Pass an explicit `onchainProvider` instance instead.
+     */
     esploraUrl?: string;
 
     /** Optional Arkade server public key used to construct and validate Arkade addresses. */
