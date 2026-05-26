@@ -68,6 +68,8 @@ import {
     AssetDetails,
     AssetMetadata,
     KnownMetadata,
+    IAssetManager,
+    IReadonlyAssetManager,
 } from "./wallet";
 import { Batch } from "./wallet/batch";
 import {
@@ -279,6 +281,7 @@ import {
     MessageBusNotInitializedError,
     ServiceWorkerTimeoutError,
 } from "./worker/errors";
+import { AssetManager, ReadonlyAssetManager } from "./wallet/asset-manager";
 
 export {
     // Wallets
@@ -434,6 +437,10 @@ export {
     contractFromArkContractWithAddress,
     isArkContract,
     isDiscoverable,
+
+    // Assets
+    ReadonlyAssetManager,
+    AssetManager,
 };
 
 export type {
@@ -531,6 +538,8 @@ export type {
     IVtxoManager,
 
     // Asset types
+    IReadonlyAssetManager,
+    IAssetManager,
     Asset,
     Recipient,
     IssuanceParams,
