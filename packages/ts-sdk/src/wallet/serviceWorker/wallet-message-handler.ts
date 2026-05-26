@@ -34,7 +34,7 @@ import {
     VirtualCoin,
     WalletBalance,
 } from "../index";
-import { DelegateInfo } from "../../providers/delegator";
+import { DelegateInfo } from "../../providers/delegate";
 import { ReadonlyWallet, Wallet } from "../wallet";
 import { extendCoin } from "../utils";
 import { MessageHandler, RequestEnvelope, ResponseEnvelope } from "../../worker/messageBus";
@@ -105,12 +105,16 @@ export class ReadonlyWalletError extends Error {
     }
 }
 
-export class DelegatorNotConfiguredError extends Error {
+export class DelegateNotConfiguredError extends Error {
     constructor() {
-        super("Delegator not configured");
-        this.name = "DelegatorNotConfiguredError";
+        super("Delegate not configured");
+        this.name = "DelegateNotConfiguredError";
     }
 }
+
+/** @deprecated alias for DelegateNotConfiguredError */
+export const DelegatorNotConfiguredError = DelegateNotConfiguredError;
+export type DelegatorNotConfiguredError = DelegateNotConfiguredError;
 
 export const DEFAULT_MESSAGE_TAG = "WALLET_UPDATER";
 
@@ -984,11 +988,11 @@ export class WalletMessageHandler
                 }
                 case "GET_DELEGATE_INFO": {
                     const wallet = this.requireWallet();
-                    const delegatorManager = await wallet.getDelegatorManager();
-                    if (!delegatorManager) {
-                        throw new DelegatorNotConfiguredError();
+                    const delegateManager = await wallet.getDelegateManager();
+                    if (!delegateManager) {
+                        throw new DelegateNotConfiguredError();
                     }
-                    const info = await delegatorManager.getDelegateInfo();
+                    const info = await delegateManager.getDelegateInfo();
                     return this.tagged({
                         id,
                         type: "DELEGATE_INFO",
@@ -1426,9 +1430,9 @@ export class WalletMessageHandler
 
     private async handleDelegate(message: RequestDelegate): Promise<ResponseDelegate> {
         const wallet = this.requireWallet();
-        const delegatorManager = await wallet.getDelegatorManager();
-        if (!delegatorManager) {
-            throw new DelegatorNotConfiguredError();
+        const delegateManager = await wallet.getDelegateManager();
+        if (!delegateManager) {
+            throw new DelegateNotConfiguredError();
         }
 
         const { vtxoOutpoints, destination, delegateAt } = message.payload;
@@ -1438,7 +1442,7 @@ export class WalletMessageHandler
             .filter((v) => outpointSet.has(`${v.txid}:${v.vout}`))
             .map((v) => ({ ...v, contractScript: v.script }));
 
-        const result = await delegatorManager.delegate(
+        const result = await delegateManager.delegate(
             filtered,
             destination,
             delegateAt !== undefined ? new Date(delegateAt) : undefined,

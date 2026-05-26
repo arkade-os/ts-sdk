@@ -14,7 +14,7 @@ import {
     type IndexerProvider,
     type ArkProvider,
     type OnchainProvider,
-    type DelegatorProvider,
+    DelegateProvider,
 } from "../src";
 import { TEST_PUB_KEY, TEST_DELEGATE_PUB_KEY, TEST_SERVER_PUB_KEY } from "./contracts/helpers";
 import type { ExtendedCoin } from "../src/wallet";
@@ -1146,22 +1146,24 @@ describe("Wallet", () => {
             } as Partial<OnchainProvider> as OnchainProvider;
         }
 
-        function createDelegatorProvider() {
+        function createDelegateProvider() {
             return {
                 getDelegateInfo: vi.fn().mockResolvedValue({
                     pubkey: DELEGATE_PUBKEY,
                     fee: "0",
+                    delegateAddress: "",
                     delegatorAddress: "",
                 }),
                 delegate: vi.fn().mockResolvedValue(undefined),
-            } as Partial<DelegatorProvider> as DelegatorProvider;
+            } as Partial<DelegateProvider> as DelegateProvider;
         }
 
         async function createReadonlyTestWallet(config?: {
             network?: "bitcoin" | "mutinynet";
             unilateralExitDelay?: bigint;
             exitTimelock?: { value: bigint; type: "blocks" | "seconds" };
-            delegatorProvider?: DelegatorProvider;
+            delegateProvider?: DelegateProvider;
+            delegatorProvider?: DelegateProvider;
         }) {
             const network = config?.network ?? "bitcoin";
             const compressedPubKey = await mockIdentity.compressedPublicKey();
@@ -1190,13 +1192,16 @@ describe("Wallet", () => {
                     contractRepository,
                 },
                 exitTimelock: config?.exitTimelock,
-                delegatorProvider: config?.delegatorProvider,
+                delegateProvider: config?.delegateProvider || config?.delegatorProvider,
             });
 
             return { wallet };
         }
 
-        async function createFullMainnetWallet(config?: { delegatorProvider?: DelegatorProvider }) {
+        async function createFullMainnetWallet(config?: {
+            delegateProvider?: DelegateProvider;
+            delegatorProvider?: DelegateProvider;
+        }) {
             const walletRepository = new InMemoryWalletRepository();
             const contractRepository = new InMemoryContractRepository();
 
@@ -1212,7 +1217,7 @@ describe("Wallet", () => {
                     walletRepository,
                     contractRepository,
                 },
-                delegatorProvider: config?.delegatorProvider,
+                delegateProvider: config?.delegateProvider || config?.delegatorProvider,
                 settlementConfig: false,
             });
 
@@ -1252,7 +1257,7 @@ describe("Wallet", () => {
 
         it("registers arkd and legacy default and delegate contracts on mainnet", async () => {
             const { wallet } = await createReadonlyTestWallet({
-                delegatorProvider: createDelegatorProvider(),
+                delegateProvider: createDelegateProvider(),
             });
 
             try {
@@ -1274,7 +1279,7 @@ describe("Wallet", () => {
 
         it("passes wallet contract timelocks through Wallet.create for delegate wallets", async () => {
             const { wallet } = await createFullMainnetWallet({
-                delegatorProvider: createDelegatorProvider(),
+                delegateProvider: createDelegateProvider(),
             });
 
             try {

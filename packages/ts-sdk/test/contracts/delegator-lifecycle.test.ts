@@ -14,7 +14,7 @@ import {
     TEST_DELEGATE_SCRIPT,
 } from "./helpers";
 
-describe("Delegator Lifecycle", () => {
+describe("Delegate Lifecycle", () => {
     let contractRepository: InMemoryContractRepository;
     let walletRepository: InMemoryWalletRepository;
     let mockIndexer: IndexerProvider;
@@ -30,8 +30,8 @@ describe("Delegator Lifecycle", () => {
         vi.useRealTimers();
     });
 
-    it("should add delegator - persisted contracts survive re-creation", async () => {
-        // Phase 1 — No delegator: only default contract
+    it("should add delegate - persisted contracts survive re-creation", async () => {
+        // Phase 1 — No delegate: only default contract
         const manager1 = await ContractManager.create({
             indexerProvider: mockIndexer,
             contractRepository,
@@ -72,7 +72,7 @@ describe("Delegator Lifecycle", () => {
 
         manager1.dispose();
 
-        // Phase 2 — Add delegator: re-create manager with same repos, register delegate
+        // Phase 2 — Add delegate: re-create manager with same repos, register delegate
         const manager2 = await ContractManager.create({
             indexerProvider: mockIndexer,
             contractRepository,
@@ -128,7 +128,7 @@ describe("Delegator Lifecycle", () => {
         manager2.dispose();
     });
 
-    it("should remove delegator — persisted delegate contracts remain accessible", async () => {
+    it("should remove delegate — persisted delegate contracts remain accessible", async () => {
         // Setup: create both contracts
         const setupManager = await ContractManager.create({
             indexerProvider: mockIndexer,
@@ -156,7 +156,7 @@ describe("Delegator Lifecycle", () => {
         expect(await setupManager.getContracts()).toHaveLength(2);
         setupManager.dispose();
 
-        // Phase 3 — Remove delegator: re-create manager, only register default
+        // Phase 3 — Remove delegate: re-create manager, only register default
         const manager3 = await ContractManager.create({
             indexerProvider: mockIndexer,
             contractRepository,
@@ -206,7 +206,7 @@ describe("Delegator Lifecycle", () => {
             expect(cwv.vtxos).toHaveLength(1);
         }
 
-        // Both spending paths still work even without delegator service
+        // Both spending paths still work even without delegate service
         const defaultPaths = await manager3.getAllSpendingPaths({
             contractScript: TEST_DEFAULT_SCRIPT,
         });
