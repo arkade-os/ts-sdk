@@ -131,8 +131,8 @@ export class RestDelegateProvider implements DelegateProvider {
         }
         return {
             ...data,
-            // isDelegateInfo guarantees a non-empty delegatorAddress; delegateAddress
-            // is preferred once Fulmine starts returning it.
+            // isDelegateInfo guarantees at least one non-empty address; prefer
+            // delegateAddress, falling back to the deprecated delegatorAddress.
             delegateAddress: data.delegateAddress || data.delegatorAddress || "",
         };
     }
@@ -142,19 +142,24 @@ export class RestDelegateProvider implements DelegateProvider {
 export const RestDelegatorProvider = RestDelegateProvider;
 export type RestDelegatorProvider = RestDelegateProvider;
 
-/** Note: doesn't validate `delegateAddress`, as this isn't returned by Fulmine yet. */
+/**
+ * Validates the raw delegate-info payload. `delegateAddress` is preferred and
+ * `delegatorAddress` is its deprecated alias, so at least one must be a
+ * non-empty string (Fulmine currently returns only `delegatorAddress`).
+ */
 function isDelegateInfo(data: unknown): data is DelegateInfo {
     return (
         !!data &&
         typeof data === "object" &&
         "pubkey" in data &&
         "fee" in data &&
-        "delegatorAddress" in data &&
         typeof (data as DelegateInfo).pubkey === "string" &&
         typeof (data as DelegateInfo).fee === "string" &&
-        typeof (data as DelegateInfo).delegatorAddress === "string" &&
         (data as DelegateInfo).pubkey !== "" &&
         (data as DelegateInfo).fee !== "" &&
-        (data as DelegateInfo).delegatorAddress !== ""
+        ((typeof (data as DelegateInfo).delegateAddress === "string" &&
+            (data as DelegateInfo).delegateAddress !== "") ||
+            (typeof (data as DelegateInfo).delegatorAddress === "string" &&
+                (data as DelegateInfo).delegatorAddress !== ""))
     );
 }
