@@ -12,7 +12,7 @@ export interface DelegateInfo {
     /** Address for delegate fee collection. Sourced from `delegatorAddress` in Fulmine response, for now. */
     delegateAddress: string;
     /** @deprecated alias for @see DelegateInfo.delegateAddress */
-    delegatorAddress: string;
+    delegatorAddress?: string;
 }
 
 /**
@@ -131,7 +131,9 @@ export class RestDelegateProvider implements DelegateProvider {
         }
         return {
             ...data,
-            delegateAddress: data.delegateAddress || data.delegatorAddress,
+            // isDelegateInfo guarantees a non-empty delegatorAddress; delegateAddress
+            // is preferred once Fulmine starts returning it.
+            delegateAddress: data.delegateAddress || data.delegatorAddress || "",
         };
     }
 }

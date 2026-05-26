@@ -552,6 +552,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             arkServerUrl: getArkadeServerUrl(options),
             arkServerPublicKey: options.arkServerPublicKey,
             delegateUrl: options.delegateUrl || options.delegatorUrl,
+            // Keep the deprecated field populated so pre-#519 service workers
+            // (which only read delegatorUrl) keep delegating until they activate
+            // a newer version.
             delegatorUrl: options.delegateUrl || options.delegatorUrl,
         };
 
@@ -571,6 +574,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 publicKey: options.arkServerPublicKey,
             },
             delegateUrl: options.delegateUrl || options.delegatorUrl,
+            // Keep the deprecated field populated so pre-#519 service workers
+            // (which only read delegatorUrl) keep delegating until they activate
+            // a newer version.
             delegatorUrl: options.delegateUrl || options.delegatorUrl,
             indexerUrl: options.indexerUrl,
             esploraUrl: options.esploraUrl,
@@ -852,6 +858,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 publicKey: this.arkServerPublicKey,
             },
             delegateUrl: this.delegateUrl || this.delegatorUrl,
+            // Keep the deprecated field populated so pre-#519 service workers
+            // (which only read delegatorUrl) keep delegating until they activate
+            // a newer version.
             delegatorUrl: this.delegateUrl || this.delegatorUrl,
             indexerUrl: this.indexerUrl,
             esploraUrl: this.esploraUrl,
@@ -1355,6 +1364,9 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
             arkServerUrl: getArkadeServerUrl(options),
             arkServerPublicKey: options.arkServerPublicKey,
             delegateUrl: options.delegateUrl || options.delegatorUrl,
+            // Keep the deprecated field populated so pre-#519 service workers
+            // (which only read delegatorUrl) keep delegating until they activate
+            // a newer version.
             delegatorUrl: options.delegateUrl || options.delegatorUrl,
         };
 
@@ -1374,6 +1386,9 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
                 publicKey: options.arkServerPublicKey,
             },
             delegateUrl: options.delegateUrl || options.delegatorUrl,
+            // Keep the deprecated field populated so pre-#519 service workers
+            // (which only read delegatorUrl) keep delegating until they activate
+            // a newer version.
             delegatorUrl: options.delegateUrl || options.delegatorUrl,
             indexerUrl: options.indexerUrl,
             esploraUrl: options.esploraUrl,

@@ -31,7 +31,7 @@ function createMockArkProvider(): ArkProvider {
             forfeitAddress: "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080",
             checkpointTapscript: "5ab27520" + serverPubKeyHex + "ac",
             dust: 450n,
-            fees: { delegateFeeBps: 0, delegatorFeeBps: 0 },
+            fees: { intentFee: {}, txFeeRate: "" },
             deprecatedSigners: [],
             digest: "",
             scheduledSession: undefined,
