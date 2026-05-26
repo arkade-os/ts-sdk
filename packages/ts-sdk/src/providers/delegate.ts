@@ -129,12 +129,16 @@ export class RestDelegateProvider implements DelegateProvider {
         if (!isDelegateInfo(data)) {
             throw new Error("Invalid delegate info");
         }
-        return {
-            ...data,
-            // isDelegateInfo guarantees at least one non-empty address; prefer
-            // delegateAddress, falling back to the deprecated delegatorAddress.
-            delegateAddress: data.delegateAddress || data.delegatorAddress || "",
-        };
+        // Select by type, not truthiness: isDelegateInfo only guarantees that one
+        // of the two is a non-empty string, so `a || b` could surface a non-string
+        // value when the preferred field is present but not a string.
+        const delegateAddress =
+            typeof data.delegateAddress === "string" && data.delegateAddress !== ""
+                ? data.delegateAddress
+                : typeof data.delegatorAddress === "string" && data.delegatorAddress !== ""
+                  ? data.delegatorAddress
+                  : "";
+        return { ...data, delegateAddress };
     }
 }
 
