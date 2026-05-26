@@ -12,7 +12,7 @@ export interface DelegateInfo {
     /** Address for delegate fee collection. Sourced from `delegatorAddress` in Fulmine response, for now. */
     delegateAddress: string;
     /** @deprecated alias for @see DelegateInfo.delegateAddress */
-    delegatorAddress: string;
+    delegatorAddress?: string;
 }
 
 /**
@@ -129,10 +129,16 @@ export class RestDelegateProvider implements DelegateProvider {
         if (!isDelegateInfo(data)) {
             throw new Error("Invalid delegate info");
         }
-        return {
-            ...data,
-            delegateAddress: data.delegateAddress || data.delegatorAddress,
-        };
+        // Select by type, not truthiness: isDelegateInfo only guarantees that one
+        // of the two is a non-empty string, so `a || b` could surface a non-string
+        // value when the preferred field is present but not a string.
+        const delegateAddress =
+            typeof data.delegateAddress === "string" && data.delegateAddress !== ""
+                ? data.delegateAddress
+                : typeof data.delegatorAddress === "string" && data.delegatorAddress !== ""
+                  ? data.delegatorAddress
+                  : "";
+        return { ...data, delegateAddress };
     }
 }
 
@@ -140,19 +146,24 @@ export class RestDelegateProvider implements DelegateProvider {
 export const RestDelegatorProvider = RestDelegateProvider;
 export type RestDelegatorProvider = RestDelegateProvider;
 
-/** Note: doesn't validate `delegateAddress`, as this isn't returned by Fulmine yet. */
+/**
+ * Validates the raw delegate-info payload. `delegateAddress` is preferred and
+ * `delegatorAddress` is its deprecated alias, so at least one must be a
+ * non-empty string (Fulmine currently returns only `delegatorAddress`).
+ */
 function isDelegateInfo(data: unknown): data is DelegateInfo {
     return (
         !!data &&
         typeof data === "object" &&
         "pubkey" in data &&
         "fee" in data &&
-        "delegatorAddress" in data &&
         typeof (data as DelegateInfo).pubkey === "string" &&
         typeof (data as DelegateInfo).fee === "string" &&
-        typeof (data as DelegateInfo).delegatorAddress === "string" &&
         (data as DelegateInfo).pubkey !== "" &&
         (data as DelegateInfo).fee !== "" &&
-        (data as DelegateInfo).delegatorAddress !== ""
+        ((typeof (data as DelegateInfo).delegateAddress === "string" &&
+            (data as DelegateInfo).delegateAddress !== "") ||
+            (typeof (data as DelegateInfo).delegatorAddress === "string" &&
+                (data as DelegateInfo).delegatorAddress !== ""))
     );
 }
