@@ -1019,6 +1019,44 @@ describe("SwapManager", () => {
             await swapManager.stop();
         });
 
+        it("should prefer the claim txid captured from the chain claim callback", async () => {
+            // For chain swaps the manager performs the claim itself, so the
+            // claim txid is the on-chain completion — it must win over
+            // getSwapStatus, which does not surface it at transaction.claimed.
+            const claimTxId = "claim-tx-id-deadbeef";
+            const getSwapStatus = vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                status: "transaction.claimed",
+                transaction: { id: "status-tx-id-should-not-be-used" },
+            });
+            // mockChainSwap is ARK→BTC, so the BTC claim runs at the
+            // server-confirmed (claimable) status.
+            const claimBtc = vi.fn().mockResolvedValue({ txid: claimTxId });
+            swapManager.setCallbacks(makeCallbacks({ claimBtc }));
+
+            const pendingSwap = { ...mockChainSwap };
+            await swapManager.start([pendingSwap]);
+
+            const waitPromise = swapManager.waitForSwapCompletion("chain-swap-1");
+
+            setTimeout(async () => {
+                // Claimable status → manager claims and captures the txid.
+                await swapManager["handleSwapStatusUpdate"](
+                    pendingSwap,
+                    "transaction.server.confirmed",
+                );
+                // Final status → completion resolves from the captured txid.
+                await swapManager["handleSwapStatusUpdate"](pendingSwap, "transaction.claimed");
+            }, 10);
+
+            const result = await waitPromise;
+            expect(claimBtc).toHaveBeenCalledOnce();
+            expect(result.txid).toBe(claimTxId);
+            // The captured claim txid wins; the provider status id is ignored.
+            expect(getSwapStatus).not.toHaveBeenCalled();
+
+            await swapManager.stop();
+        });
+
         it("should reject if a claimed swap has no transaction id", async () => {
             vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
                 status: "transaction.claimed",

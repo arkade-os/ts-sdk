@@ -141,8 +141,19 @@ export interface SwapManagerClient {
 export interface SwapManagerCallbacks {
     claim: (swap: BoltzReverseSwap) => Promise<void>;
     refund: (swap: BoltzSubmarineSwap) => Promise<void>;
-    claimArk: (swap: BoltzChainSwap) => Promise<void>;
-    claimBtc: (swap: BoltzChainSwap) => Promise<void>;
+    /**
+     * Claim the ARK side of a BTC→ARK chain swap.
+     *
+     * Returns the on-chain claim txid — the manager surfaces it from
+     * {@link SwapManager.waitForSwapCompletion}, since Boltz does not report a
+     * usable transaction id for chain swaps at `transaction.claimed`.
+     */
+    claimArk: (swap: BoltzChainSwap) => Promise<{ txid: string }>;
+    /**
+     * Claim the BTC side of an ARK→BTC chain swap. Returns the on-chain claim
+     * txid; see {@link SwapManagerCallbacks.claimArk}.
+     */
+    claimBtc: (swap: BoltzChainSwap) => Promise<{ txid: string }>;
     refundArk: (swap: BoltzChainSwap) => Promise<ChainArkRefundOutcome>;
     signServerClaim?: (swap: BoltzChainSwap) => Promise<void>;
     saveSwap: (swap: BoltzSwap) => Promise<void>;
@@ -220,11 +231,17 @@ export class SwapManager implements SwapManagerClient {
     // Per-swap subscriptions for UI hooks
     private swapSubscriptions = new Map<string, Set<SwapUpdateCallback>>();
 
+    // On-chain claim txids captured from the claimArk/claimBtc callbacks,
+    // keyed by swap id. For chain swaps the manager performs the claim itself,
+    // so its txid is the swap's on-chain completion; getSwapStatus does not
+    // surface it at transaction.claimed. resolveClaimedTxid prefers these.
+    private chainClaimTxids = new Map<string, string>();
+
     // Action callbacks (injected via setCallbacks)
     private claimCallback: ((swap: BoltzReverseSwap) => Promise<void>) | null = null;
     private refundCallback: ((swap: BoltzSubmarineSwap) => Promise<void>) | null = null;
-    private claimArkCallback: ((swap: BoltzChainSwap) => Promise<void>) | null = null;
-    private claimBtcCallback: ((swap: BoltzChainSwap) => Promise<void>) | null = null;
+    private claimArkCallback: ((swap: BoltzChainSwap) => Promise<{ txid: string }>) | null = null;
+    private claimBtcCallback: ((swap: BoltzChainSwap) => Promise<{ txid: string }>) | null = null;
     private refundArkCallback: ((swap: BoltzChainSwap) => Promise<ChainArkRefundOutcome>) | null =
         null;
     private signServerClaimCallback: ((swap: BoltzChainSwap) => Promise<void>) | null = null;
@@ -384,6 +401,7 @@ export class SwapManager implements SwapManagerClient {
 
         // Store all initial swaps (including completed ones) for waitForSwapCompletion
         this.initialSwaps.clear();
+        this.chainClaimTxids.clear();
         for (const swap of pendingSwaps) {
             this.initialSwaps.set(swap.id, swap);
         }
@@ -505,6 +523,7 @@ export class SwapManager implements SwapManagerClient {
     async removeSwap(swapId: string): Promise<void> {
         this.monitoredSwaps.delete(swapId);
         this.swapSubscriptions.delete(swapId);
+        this.chainClaimTxids.delete(swapId);
         const retryTimer = this.pollRetryTimers.get(swapId);
         if (retryTimer) {
             clearTimeout(retryTimer);
@@ -632,11 +651,21 @@ export class SwapManager implements SwapManagerClient {
     }
 
     /**
-     * Resolve the on-chain txid for a claimed submarine/chain swap by querying
-     * the provider. Rejects when the swap has no transaction id yet, so callers
-     * never receive the Boltz swap id in place of a real txid.
+     * Resolve the on-chain txid for a claimed submarine/chain swap.
+     *
+     * Chain swaps are claimed by the manager itself, so the claim txid captured
+     * from the claimArk/claimBtc callback is the swap's on-chain completion and
+     * is preferred — Boltz does not surface it via getSwapStatus at
+     * transaction.claimed. Submarine swaps (claimed by Boltz) and chain swaps
+     * we never claimed in this session (e.g. restored already-claimed) fall
+     * back to the provider status. Rejects when no transaction id is available,
+     * so callers never receive the Boltz swap id in place of a real txid.
      */
     private async resolveClaimedTxid(swapId: string): Promise<{ txid: string }> {
+        const claimTxid = this.chainClaimTxids.get(swapId);
+        if (claimTxid && claimTxid.trim() !== "") {
+            return { txid: claimTxid };
+        }
         const status = await this.swapProvider.getSwapStatus(swapId);
         const txid = status.transaction?.id;
         if (!txid || txid.trim() === "") {
@@ -1137,7 +1166,8 @@ export class SwapManager implements SwapManagerClient {
             return;
         }
 
-        await this.claimArkCallback(swap);
+        const result = await this.claimArkCallback(swap);
+        this.rememberChainClaimTxid(swap.id, result);
     }
 
     /**
@@ -1149,7 +1179,21 @@ export class SwapManager implements SwapManagerClient {
             return;
         }
 
-        await this.claimBtcCallback(swap);
+        const result = await this.claimBtcCallback(swap);
+        this.rememberChainClaimTxid(swap.id, result);
+    }
+
+    /**
+     * Store the on-chain claim txid returned by a claim callback so
+     * {@link waitForSwapCompletion} can surface it at transaction.claimed.
+     * Defensive against callbacks that don't return a usable txid (older
+     * integrations, test doubles): those simply fall back to getSwapStatus.
+     */
+    private rememberChainClaimTxid(swapId: string, result: { txid?: string } | void): void {
+        const txid = result?.txid;
+        if (txid && txid.trim() !== "") {
+            this.chainClaimTxids.set(swapId, txid);
+        }
     }
 
     /**

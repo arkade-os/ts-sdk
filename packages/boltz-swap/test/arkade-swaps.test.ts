@@ -59,7 +59,9 @@ vi.mock("../src/utils/vhtlc", async () => {
     const actual = await vi.importActual<typeof import("../src/utils/vhtlc")>("../src/utils/vhtlc");
     return {
         ...actual,
-        claimVHTLCwithOffchainTx: vi.fn().mockResolvedValue(undefined),
+        claimVHTLCwithOffchainTx: vi.fn().mockResolvedValue(
+            "a".repeat(64), // claim ark txid returned to claimArk
+        ),
         refundVHTLCwithOffchainTx: vi.fn().mockResolvedValue(undefined),
     };
 });
@@ -1560,13 +1562,15 @@ describe("ArkadeSwaps", () => {
         });
 
         describe("waitAndClaimBtc", () => {
-            it("should resolve with txid when transaction is claimed", async () => {
+            it("should resolve with the BTC claim txid when transaction is claimed", async () => {
                 // arrange
                 const pendingSwap: BoltzChainSwap = {
                     ...mockArkBtcChainSwap,
                 };
-                vi.spyOn(swaps, "claimBtc").mockResolvedValue();
-                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValueOnce({
+                // The on-chain txid comes from the claim we broadcast, not from
+                // getSwapStatus (which does not surface it at transaction.claimed).
+                vi.spyOn(swaps, "claimBtc").mockResolvedValue({ txid: mock.txid });
+                const getSwapStatus = vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
                     status: "transaction.claimed",
                     transaction: { id: mock.id, hex: mock.hex },
                 });
@@ -1579,8 +1583,9 @@ describe("ArkadeSwaps", () => {
                 // act
                 const resultPromise = swaps.waitAndClaimBtc(pendingSwap);
 
-                // assert
-                await expect(resultPromise).resolves.toEqual({ txid: mock.id });
+                // assert — claim txid wins over the Boltz swap id / status
+                await expect(resultPromise).resolves.toEqual({ txid: mock.txid });
+                expect(getSwapStatus).not.toHaveBeenCalled();
             });
 
             it("should reject with SwapExpiredError when swap expires", async () => {
@@ -1801,7 +1806,7 @@ describe("ArkadeSwaps", () => {
 
                     const joinBatchSpy = vi
                         .spyOn(swaps as any, "joinBatch")
-                        .mockResolvedValue(undefined);
+                        .mockResolvedValue(mock.txid);
                     vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValueOnce({
                         status: "transaction.claimed",
                     });
@@ -1814,7 +1819,7 @@ describe("ArkadeSwaps", () => {
                     await vi.advanceTimersByTimeAsync(500);
 
                     // assert
-                    await expect(promise).resolves.toBeUndefined();
+                    await expect(promise).resolves.toEqual({ txid: mock.txid });
                     expect(indexerProvider.getVtxos).toHaveBeenCalledTimes(2);
                     expect(joinBatchSpy).toHaveBeenCalledOnce();
                     expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
@@ -2015,13 +2020,15 @@ describe("ArkadeSwaps", () => {
         });
 
         describe("waitAndClaimArk", () => {
-            it("should resolve with txid when transaction is claimed", async () => {
+            it("should resolve with the ARK claim txid when transaction is claimed", async () => {
                 // arrange
                 const pendingSwap: BoltzChainSwap = {
                     ...mockBtcArkChainSwap,
                 };
-                vi.spyOn(swaps, "claimArk").mockResolvedValue();
-                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValueOnce({
+                // The on-chain txid comes from the claim we submit, not from
+                // getSwapStatus (which does not surface it at transaction.claimed).
+                vi.spyOn(swaps, "claimArk").mockResolvedValue({ txid: mock.txid });
+                const getSwapStatus = vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
                     status: "transaction.claimed",
                     transaction: { id: mock.id, hex: mock.hex },
                 });
@@ -2034,8 +2041,9 @@ describe("ArkadeSwaps", () => {
                 // act
                 const resultPromise = swaps.waitAndClaimArk(pendingSwap);
 
-                // assert
-                await expect(resultPromise).resolves.toEqual({ txid: mock.id });
+                // assert — claim txid wins over the Boltz swap id / status
+                await expect(resultPromise).resolves.toEqual({ txid: mock.txid });
+                expect(getSwapStatus).not.toHaveBeenCalled();
             });
 
             it("should reject with SwapExpiredError when swap expires", async () => {

@@ -282,12 +282,8 @@ export class ArkadeSwaps {
                 refund: async (swap: BoltzSubmarineSwap) => {
                     await this.refundVHTLC(swap);
                 },
-                claimArk: async (swap: BoltzChainSwap) => {
-                    await this.claimArk(swap);
-                },
-                claimBtc: async (swap: BoltzChainSwap) => {
-                    await this.claimBtc(swap);
-                },
+                claimArk: (swap: BoltzChainSwap) => this.claimArk(swap),
+                claimBtc: (swap: BoltzChainSwap) => this.claimBtc(swap),
                 refundArk: async (swap: BoltzChainSwap) => {
                     return this.refundArk(swap);
                 },
@@ -1533,6 +1529,10 @@ export class ArkadeSwaps {
         }
         return new Promise<{ txid: string }>((resolve, reject) => {
             let claimStarted = false;
+            // Holds the BTC claim we broadcast — its txid is the swap's
+            // on-chain completion. getSwapStatus does not surface it at
+            // transaction.claimed, so resolve from the claim instead.
+            let claimPromise: Promise<{ txid: string }> | undefined;
             // Local mutable copy — accumulates fields across status
             // callbacks without mutating the caller's object.
             // Spreading from the original on every callback
@@ -1559,14 +1559,14 @@ export class ArkadeSwaps {
                         const updatedSwap = await updateSwapStatus();
                         if (claimStarted) return;
                         claimStarted = true;
-                        this.claimBtc(updatedSwap).catch(reject);
+                        claimPromise = this.claimBtc(updatedSwap);
+                        claimPromise.catch(reject);
                         break;
                     }
                     case "transaction.claimed": {
                         await updateSwapStatus();
-                        const claimedStatus = await this.getSwapStatus(pendingSwap.id);
-                        const txid = claimedStatus.transaction?.id;
-                        if (!txid || txid.trim() === "") {
+                        const txid = await this.resolveChainClaimTxid(pendingSwap.id, claimPromise);
+                        if (!txid) {
                             reject(
                                 new SwapError({
                                     message: `Transaction ID not available for claimed swap ${pendingSwap.id}.`,
@@ -1627,8 +1627,9 @@ export class ArkadeSwaps {
     /**
      * Claim sats on BTC chain by claiming the HTLC.
      * @param pendingSwap - The pending chain swap with BTC transaction hex.
+     * @returns The BTC transaction ID of the claim.
      */
-    async claimBtc(pendingSwap: BoltzChainSwap): Promise<void> {
+    async claimBtc(pendingSwap: BoltzChainSwap): Promise<{ txid: string }> {
         if (!pendingSwap.toAddress)
             throw new Error(`Swap ${pendingSwap.id}: destination address is required`);
 
@@ -1726,6 +1727,10 @@ export class ArkadeSwaps {
         });
 
         await this.swapProvider.postBtcTransaction(claimTx.hex);
+
+        // The BTC claim transaction we broadcast is the swap's on-chain
+        // completion; its id is the txid callers expect from waitAndClaimBtc.
+        return { txid: claimTx.id };
     }
 
     /**
@@ -1976,6 +1981,10 @@ export class ArkadeSwaps {
         }
         return new Promise<{ txid: string }>((resolve, reject) => {
             let claimStarted = false;
+            // Holds the ARK claim we submit — its txid is the swap's
+            // on-chain completion. getSwapStatus does not surface it at
+            // transaction.claimed, so resolve from the claim instead.
+            let claimPromise: Promise<{ txid: string }> | undefined;
             // Local mutable copy — accumulates fields across status
             // callbacks without mutating the caller's object. Spreading
             // from the original on every callback would silently
@@ -1997,13 +2006,13 @@ export class ArkadeSwaps {
                         await updateSwapStatus();
                         if (claimStarted) return;
                         claimStarted = true;
-                        this.claimArk(swap).catch(reject);
+                        claimPromise = this.claimArk(swap);
+                        claimPromise.catch(reject);
                         break;
                     case "transaction.claimed": {
                         await updateSwapStatus();
-                        const claimedStatus = await this.getSwapStatus(pendingSwap.id);
-                        const txid = claimedStatus.transaction?.id;
-                        if (!txid || txid.trim() === "") {
+                        const txid = await this.resolveChainClaimTxid(pendingSwap.id, claimPromise);
+                        if (!txid) {
                             reject(
                                 new SwapError({
                                     message: `Transaction ID not available for claimed swap ${pendingSwap.id}.`,
@@ -2071,8 +2080,9 @@ export class ArkadeSwaps {
      * Claim sats on ARK chain by claiming the VHTLC.
      * Refactored to use claimVHTLCIdentity + claimVHTLCwithOffchainTx utilities.
      * @param pendingSwap - The pending chain swap.
+     * @returns The Ark transaction ID of the claim.
      */
-    async claimArk(pendingSwap: BoltzChainSwap): Promise<void> {
+    async claimArk(pendingSwap: BoltzChainSwap): Promise<{ txid: string }> {
         if (!pendingSwap.toAddress)
             throw new Error(`Swap ${pendingSwap.id}: destination address is required`);
 
@@ -2150,19 +2160,19 @@ export class ArkadeSwaps {
         // Use shared identity utility for preimage witness
         const vhtlcIdentity = claimVHTLCIdentity(this.wallet.identity, preimage);
 
-        if (isRecoverable(vtxo)) {
-            await this.joinBatch(vhtlcIdentity, input, output, arkInfo);
-        } else {
-            await claimVHTLCwithOffchainTx(
-                vhtlcIdentity,
-                vhtlcScript,
-                serverXOnlyPublicKey,
-                input,
-                output,
-                arkInfo,
-                this.arkProvider,
-            );
-        }
+        // The claim transaction we broadcast is the swap's on-chain completion;
+        // its id is the txid callers expect back from waitAndClaimArk.
+        const txid = isRecoverable(vtxo)
+            ? await this.joinBatch(vhtlcIdentity, input, output, arkInfo)
+            : await claimVHTLCwithOffchainTx(
+                  vhtlcIdentity,
+                  vhtlcScript,
+                  serverXOnlyPublicKey,
+                  input,
+                  output,
+                  arkInfo,
+                  this.arkProvider,
+              );
 
         // update the pending swap on storage
         const finalStatus = await this.getSwapStatus(pendingSwap.id);
@@ -2170,6 +2180,35 @@ export class ArkadeSwaps {
             ...pendingSwap,
             status: finalStatus.status,
         });
+
+        return { txid };
+    }
+
+    /**
+     * Resolve the on-chain txid for a chain swap at completion.
+     *
+     * The claim transaction we broadcast (claimBtc/claimArk) carries the real
+     * on-chain txid; getSwapStatus does not surface it at transaction.claimed.
+     * Prefer the claim's txid and fall back to the provider status only for
+     * resumed swaps where we never ran the claim ourselves (claimPromise is
+     * undefined). Returns undefined when no usable txid is available, so
+     * callers never resolve with the Boltz swap id in place of a real txid.
+     */
+    private async resolveChainClaimTxid(
+        swapId: string,
+        claimPromise?: Promise<{ txid: string }>,
+    ): Promise<string | undefined> {
+        if (claimPromise) {
+            // The claim's own rejection is surfaced separately; swallow it here
+            // and fall through to the provider status as a last resort.
+            const claimTxid = await claimPromise.then(
+                (res) => res.txid,
+                () => undefined,
+            );
+            if (claimTxid && claimTxid.trim() !== "") return claimTxid;
+        }
+        const txid = (await this.getSwapStatus(swapId)).transaction?.id;
+        return txid && txid.trim() !== "" ? txid : undefined;
     }
 
     /**
@@ -2961,7 +3000,7 @@ export interface IArkadeSwaps extends AsyncDisposable {
         feeSatsPerByte?: number;
     }): Promise<ArkToBtcResponse>;
     waitAndClaimBtc(pendingSwap: BoltzChainSwap): Promise<{ txid: string }>;
-    claimBtc(pendingSwap: BoltzChainSwap): Promise<void>;
+    claimBtc(pendingSwap: BoltzChainSwap): Promise<{ txid: string }>;
     refundArk(pendingSwap: BoltzChainSwap): Promise<ChainArkRefundOutcome>;
     btcToArk(args: {
         feeSatsPerByte?: number;
@@ -2969,7 +3008,7 @@ export interface IArkadeSwaps extends AsyncDisposable {
         receiverLockAmount?: number;
     }): Promise<BtcToArkResponse>;
     waitAndClaimArk(pendingSwap: BoltzChainSwap): Promise<{ txid: string }>;
-    claimArk(pendingSwap: BoltzChainSwap): Promise<void>;
+    claimArk(pendingSwap: BoltzChainSwap): Promise<{ txid: string }>;
     signCooperativeClaimForServer(pendingSwap: BoltzChainSwap): Promise<void>;
     waitAndClaimChain(pendingSwap: BoltzChainSwap): Promise<{ txid: string }>;
     createChainSwap(args: {
