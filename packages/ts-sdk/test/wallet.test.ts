@@ -1258,7 +1258,6 @@ describe("Wallet", () => {
         it("registers arkd and legacy default and delegate contracts on mainnet", async () => {
             const { wallet } = await createReadonlyTestWallet({
                 delegateProvider: createDelegateProvider(),
-                delegatorProvider: createDelegateProvider(),
             });
 
             try {
@@ -1281,7 +1280,6 @@ describe("Wallet", () => {
         it("passes wallet contract timelocks through Wallet.create for delegate wallets", async () => {
             const { wallet } = await createFullMainnetWallet({
                 delegateProvider: createDelegateProvider(),
-                delegatorProvider: createDelegateProvider(),
             });
 
             try {

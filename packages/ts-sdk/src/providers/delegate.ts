@@ -9,7 +9,7 @@ export interface DelegateInfo {
     pubkey: string;
     /** Delegate fee amount or expression returned by the delegate. */
     fee: string;
-    /** Address for delegate fee collection. Kept optional as it's not yet  */
+    /** Address for delegate fee collection. Sourced from `delegatorAddress` in Fulmine response, for now. */
     delegateAddress: string;
     /** @deprecated alias for @see DelegateInfo.delegateAddress */
     delegatorAddress: string;

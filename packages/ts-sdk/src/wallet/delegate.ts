@@ -283,7 +283,8 @@ async function delegate(
         }
         amount += BigInt(coin.value) - BigInt(inputFee.value);
     }
-    const { delegateAddress, pubkey, fee } = delegateInfo;
+    const { pubkey, fee } = delegateInfo;
+    const delegateAddress = delegateInfo.delegateAddress || delegateInfo.delegatorAddress;
 
     const outputs = [];
     const delegateFee = BigInt(Number(fee));
