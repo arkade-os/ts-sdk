@@ -1562,13 +1562,21 @@ export class ArkadeSwaps {
                         this.claimBtc(updatedSwap).catch(reject);
                         break;
                     }
-                    case "transaction.claimed":
+                    case "transaction.claimed": {
                         await updateSwapStatus();
                         const claimedStatus = await this.getSwapStatus(pendingSwap.id);
-                        resolve({
-                            txid: claimedStatus.transaction?.id ?? "",
-                        });
+                        const txid = claimedStatus.transaction?.id;
+                        if (!txid || txid.trim() === "") {
+                            reject(
+                                new SwapError({
+                                    message: `Transaction ID not available for claimed swap ${pendingSwap.id}.`,
+                                }),
+                            );
+                            break;
+                        }
+                        resolve({ txid });
                         break;
+                    }
                     case "transaction.lockupFailed":
                         await updateSwapStatus();
                         await this.quoteSwap(swap.response.id, quoteOptionsForSwap(swap)).catch(
@@ -1991,13 +1999,21 @@ export class ArkadeSwaps {
                         claimStarted = true;
                         this.claimArk(swap).catch(reject);
                         break;
-                    case "transaction.claimed":
+                    case "transaction.claimed": {
                         await updateSwapStatus();
                         const claimedStatus = await this.getSwapStatus(pendingSwap.id);
-                        resolve({
-                            txid: claimedStatus.transaction?.id ?? "",
-                        });
+                        const txid = claimedStatus.transaction?.id;
+                        if (!txid || txid.trim() === "") {
+                            reject(
+                                new SwapError({
+                                    message: `Transaction ID not available for claimed swap ${pendingSwap.id}.`,
+                                }),
+                            );
+                            break;
+                        }
+                        resolve({ txid });
                         break;
+                    }
                     case "transaction.claim.pending":
                         await updateSwapStatus();
                         await this.signCooperativeClaimForServer(swap).catch((err) => {

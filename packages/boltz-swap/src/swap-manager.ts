@@ -556,9 +556,14 @@ export class SwapManager implements SwapManagerClient {
      * Blocks until the swap reaches a final status or fails.
      * Useful when you want blocking behavior even with SwapManager enabled.
      *
-     * @throws If the swap is already in a final status (submarine/chain swaps throw immediately;
-     *         reverse swaps return the existing txid).
+     * If the swap is already in a final status, resolves immediately with the
+     * on-chain txid of the successfully claimed swap (reverse: from
+     * getReverseSwapTxId; submarine/chain: from getSwapStatus) and throws for a
+     * failed final status.
+     *
+     * @throws If the swap is already in a failed final status.
      * @throws If the swap is not found in the manager.
+     * @throws If a completed swap has no transaction id available yet.
      */
     async waitForSwapCompletion(swapId: string): Promise<{ txid: string }> {
         // Quick checks without async executor
@@ -578,10 +583,12 @@ export class SwapManager implements SwapManagerClient {
                 const response = await this.swapProvider.getReverseSwapTxId(swap.id);
                 return { txid: response.id };
             }
-            if (isPendingSubmarineSwap(swap)) {
-                throw new Error("Submarine swap already completed");
+            if (isPendingSubmarineSwap(swap) || isPendingChainSwap(swap)) {
+                if (swap.status === "transaction.claimed") {
+                    return this.resolveClaimedTxid(swap.id);
+                }
+                throw new Error(`Swap ${swap.id} already in final status: ${swap.status}`);
             }
-            throw new Error("Chain swap already completed");
         }
 
         return new Promise<{ txid: string }>((resolve, reject) => {
@@ -603,13 +610,13 @@ export class SwapManager implements SwapManagerClient {
                     }
                 } else if (isPendingSubmarineSwap(updatedSwap)) {
                     if (updatedSwap.status === "transaction.claimed") {
-                        resolve({ txid: updatedSwap.id });
+                        this.resolveClaimedTxid(updatedSwap.id).then(resolve).catch(reject);
                     } else {
                         reject(new Error(`Swap failed with status: ${updatedSwap.status}`));
                     }
                 } else if (isPendingChainSwap(updatedSwap)) {
                     if (updatedSwap.status === "transaction.claimed") {
-                        resolve({ txid: updatedSwap.id });
+                        this.resolveClaimedTxid(updatedSwap.id).then(resolve).catch(reject);
                     } else {
                         reject(new Error(`Swap failed with status: ${updatedSwap.status}`));
                     }
@@ -622,6 +629,20 @@ export class SwapManager implements SwapManagerClient {
                 })
                 .catch(reject);
         });
+    }
+
+    /**
+     * Resolve the on-chain txid for a claimed submarine/chain swap by querying
+     * the provider. Rejects when the swap has no transaction id yet, so callers
+     * never receive the Boltz swap id in place of a real txid.
+     */
+    private async resolveClaimedTxid(swapId: string): Promise<{ txid: string }> {
+        const status = await this.swapProvider.getSwapStatus(swapId);
+        const txid = status.transaction?.id;
+        if (!txid || txid.trim() === "") {
+            throw new Error(`Transaction ID not available for completed swap ${swapId}`);
+        }
+        return { txid };
     }
 
     /**
