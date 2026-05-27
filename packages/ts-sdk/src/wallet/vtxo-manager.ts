@@ -731,6 +731,25 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         eventCallback?: (event: SettlementEvent) => void,
         options?: RenewVtxosOptions,
     ): Promise<string> {
+        // Validate the per-call override before touching any state. The payload
+        // can arrive over the worker MessageBus, so `thresholdSeconds` is not
+        // guaranteed to be a number at runtime despite its type. Reject
+        // NaN/Infinity/non-positive values, which would otherwise corrupt the
+        // expiry threshold (and a 0/<=100ms threshold silently reverts to the
+        // 3-day default via the guard in isVtxoExpiringSoon).
+        if (options?.thresholdSeconds !== undefined) {
+            const { thresholdSeconds } = options;
+            if (
+                typeof thresholdSeconds !== "number" ||
+                !Number.isFinite(thresholdSeconds) ||
+                thresholdSeconds <= 0
+            ) {
+                throw new TypeError(
+                    `Invalid thresholdSeconds: expected a positive finite number, got ${String(thresholdSeconds)}`,
+                );
+            }
+        }
+
         if (this.renewalInProgress) {
             throw new Error("Renewal already in progress");
         }

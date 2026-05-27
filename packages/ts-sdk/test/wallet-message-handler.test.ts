@@ -854,6 +854,32 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
+    it("handles RENEW_VTXOS messages with a thresholdSeconds payload", async () => {
+        const thresholdSeconds = 3600;
+        const vtxoManager = {
+            renewVtxos: vi.fn().mockResolvedValue("renew-txid"),
+        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "RENEW_VTXOS",
+            payload: { thresholdSeconds },
+        } as any);
+
+        expect(vtxoManager.renewVtxos).toHaveBeenCalledWith(expect.any(Function), {
+            thresholdSeconds,
+        });
+        expect(response).toMatchObject({
+            tag: updater.messageTag,
+            type: "RENEW_VTXOS_SUCCESS",
+            payload: { txid: "renew-txid" },
+        });
+    });
+
     it("RENEW_VTXOS forwards settlement events via tick", async () => {
         const event = { type: "batch_finalized", id: "b2" };
         const vtxoManager = {
