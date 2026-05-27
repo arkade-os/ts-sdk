@@ -70,17 +70,44 @@ function deriveContractTapscripts(contract: Contract): ContractTapscripts {
     };
 }
 
+function cloneTapLeafScript([
+    controlBlock,
+    script,
+]: ContractTapscripts["forfeitTapLeafScript"]): ContractTapscripts["forfeitTapLeafScript"] {
+    return [
+        {
+            version: controlBlock.version,
+            internalKey: new Uint8Array(controlBlock.internalKey),
+            merklePath: controlBlock.merklePath.map((hash) => new Uint8Array(hash)),
+        },
+        new Uint8Array(script),
+    ];
+}
+
+function cloneContractTapscripts(tapscripts: ContractTapscripts): ContractTapscripts {
+    return {
+        forfeitTapLeafScript: cloneTapLeafScript(tapscripts.forfeitTapLeafScript),
+        intentTapLeafScript: cloneTapLeafScript(tapscripts.intentTapLeafScript),
+        tapTree: new Uint8Array(tapscripts.tapTree),
+    };
+}
+
 function extendVtxoFromContract(
     vtxo: VirtualCoin,
     contract: Contract,
     cache?: ContractTapscriptCache,
 ): ExtendedVirtualCoin {
-    let tapscripts = cache?.get(contract.script);
+    if (!cache) {
+        return { ...vtxo, ...deriveContractTapscripts(contract) };
+    }
+
+    let tapscripts = cache.get(contract.script);
     if (!tapscripts) {
         tapscripts = deriveContractTapscripts(contract);
-        cache?.set(contract.script, tapscripts);
+        cache.set(contract.script, tapscripts);
     }
-    return { ...vtxo, ...tapscripts };
+
+    return { ...vtxo, ...cloneContractTapscripts(tapscripts) };
 }
 
 /**

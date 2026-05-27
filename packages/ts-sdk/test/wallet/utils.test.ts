@@ -194,4 +194,60 @@ describe("extendVirtualCoinForContract tapscript memoization", () => {
         expect(b.tapTree).toEqual(a.tapTree);
         expect(b.vout).toBe(1);
     });
+
+    it("returns independent tapscript copies when a cache is shared", () => {
+        const map = new Map<string, Contract>([[defaultContract.script, defaultContract]]);
+        const cache: ContractTapscriptCache = new Map();
+
+        const a = extendVirtualCoinForContract(
+            createMockVtxo({ script: TEST_DEFAULT_SCRIPT, vout: 0 }),
+            map,
+            cache,
+        );
+        const b = extendVirtualCoinForContract(
+            createMockVtxo({ script: TEST_DEFAULT_SCRIPT, vout: 1 }),
+            map,
+            cache,
+        );
+        const cached = cache.get(defaultContract.script)!;
+
+        expect(a.tapTree).not.toBe(b.tapTree);
+        expect(a.tapTree).not.toBe(cached.tapTree);
+        expect(a.forfeitTapLeafScript).not.toBe(b.forfeitTapLeafScript);
+        expect(a.forfeitTapLeafScript[0]).not.toBe(b.forfeitTapLeafScript[0]);
+        expect(a.forfeitTapLeafScript[0].internalKey).not.toBe(
+            b.forfeitTapLeafScript[0].internalKey,
+        );
+        expect(a.forfeitTapLeafScript[0].merklePath[0]).not.toBe(
+            b.forfeitTapLeafScript[0].merklePath[0],
+        );
+
+        const bTapTreeByte = b.tapTree[0];
+        const bScriptByte = b.forfeitTapLeafScript[1][0];
+        const bInternalKeyByte = b.forfeitTapLeafScript[0].internalKey[0];
+        const bMerklePathByte = b.forfeitTapLeafScript[0].merklePath[0][0];
+        const bVersion = b.forfeitTapLeafScript[0].version;
+        const cachedTapTreeByte = cached.tapTree[0];
+        const cachedScriptByte = cached.forfeitTapLeafScript[1][0];
+        const cachedInternalKeyByte = cached.forfeitTapLeafScript[0].internalKey[0];
+        const cachedMerklePathByte = cached.forfeitTapLeafScript[0].merklePath[0][0];
+        const cachedVersion = cached.forfeitTapLeafScript[0].version;
+
+        a.tapTree[0] ^= 0xff;
+        a.forfeitTapLeafScript[1][0] ^= 0xff;
+        a.forfeitTapLeafScript[0].internalKey[0] ^= 0xff;
+        a.forfeitTapLeafScript[0].merklePath[0][0] ^= 0xff;
+        a.forfeitTapLeafScript[0].version ^= 1;
+
+        expect(b.tapTree[0]).toBe(bTapTreeByte);
+        expect(b.forfeitTapLeafScript[1][0]).toBe(bScriptByte);
+        expect(b.forfeitTapLeafScript[0].internalKey[0]).toBe(bInternalKeyByte);
+        expect(b.forfeitTapLeafScript[0].merklePath[0][0]).toBe(bMerklePathByte);
+        expect(b.forfeitTapLeafScript[0].version).toBe(bVersion);
+        expect(cached.tapTree[0]).toBe(cachedTapTreeByte);
+        expect(cached.forfeitTapLeafScript[1][0]).toBe(cachedScriptByte);
+        expect(cached.forfeitTapLeafScript[0].internalKey[0]).toBe(cachedInternalKeyByte);
+        expect(cached.forfeitTapLeafScript[0].merklePath[0][0]).toBe(cachedMerklePathByte);
+        expect(cached.forfeitTapLeafScript[0].version).toBe(cachedVersion);
+    });
 });
