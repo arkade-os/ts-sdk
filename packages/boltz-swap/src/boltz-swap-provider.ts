@@ -211,7 +211,7 @@ export const isChainSwapClaimable = (swap: BoltzSwap): swap is BoltzChainSwap =>
 
 // API call types and validators
 
-type TimeoutBlockHeights = {
+export type TimeoutBlockHeights = {
     refund: number;
     unilateralClaim: number;
     unilateralRefund: number;
