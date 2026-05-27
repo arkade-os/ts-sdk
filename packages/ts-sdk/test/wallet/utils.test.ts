@@ -1,7 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 
 import type { Contract } from "../../src/contracts/types";
-import { extendVirtualCoinForContract } from "../../src/wallet/utils";
+import { contractHandlers } from "../../src/contracts/handlers";
+import { extendVirtualCoinForContract, type ContractTapscriptCache } from "../../src/wallet/utils";
 import {
     createDefaultContractParams,
     createDelegateContractParams,
@@ -101,5 +102,96 @@ describe("extendVirtualCoinForContract", () => {
         const map = new Map<string, Contract>([[bogus.script, bogus]]);
 
         expect(() => extendVirtualCoinForContract(vtxo, map)).toThrow(/handler/);
+    });
+});
+
+describe("extendVirtualCoinForContract tapscript memoization", () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it("builds the taproot tree once per distinct contract when a cache is shared", () => {
+        const handler = contractHandlers.get(defaultContract.type)!;
+        const spy = vi.spyOn(handler, "createScript");
+        const map = new Map<string, Contract>([[defaultContract.script, defaultContract]]);
+        const cache: ContractTapscriptCache = new Map();
+
+        // Many VTXOs locked to the same contract — the dominant case for a
+        // long spent/swept history (#521).
+        const vtxos = Array.from({ length: 50 }, (_, i) =>
+            createMockVtxo({ script: TEST_DEFAULT_SCRIPT, vout: i }),
+        );
+        for (const vtxo of vtxos) {
+            extendVirtualCoinForContract(vtxo, map, cache);
+        }
+
+        expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it("builds the tree once per distinct contract, not once per VTXO", () => {
+        const defaultHandler = contractHandlers.get(defaultContract.type)!;
+        const delegateHandler = contractHandlers.get(delegateContract.type)!;
+        const defaultSpy = vi.spyOn(defaultHandler, "createScript");
+        const delegateSpy = vi.spyOn(delegateHandler, "createScript");
+        const map = new Map<string, Contract>([
+            [defaultContract.script, defaultContract],
+            [delegateContract.script, delegateContract],
+        ]);
+        const cache: ContractTapscriptCache = new Map();
+
+        for (let i = 0; i < 10; i++) {
+            extendVirtualCoinForContract(
+                createMockVtxo({ script: TEST_DEFAULT_SCRIPT, vout: i }),
+                map,
+                cache,
+            );
+            extendVirtualCoinForContract(
+                createMockVtxo({ script: TEST_DELEGATE_SCRIPT, vout: i }),
+                map,
+                cache,
+            );
+        }
+
+        expect(defaultSpy).toHaveBeenCalledTimes(1);
+        expect(delegateSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("rebuilds the tree per call when no cache is passed", () => {
+        const handler = contractHandlers.get(defaultContract.type)!;
+        const spy = vi.spyOn(handler, "createScript");
+        const map = new Map<string, Contract>([[defaultContract.script, defaultContract]]);
+
+        extendVirtualCoinForContract(createMockVtxo({ script: TEST_DEFAULT_SCRIPT }), map);
+        extendVirtualCoinForContract(createMockVtxo({ script: TEST_DEFAULT_SCRIPT }), map);
+
+        expect(spy).toHaveBeenCalledTimes(2);
+    });
+
+    it("returns identical tapscript data for VTXOs sharing a contract", () => {
+        const map = new Map<string, Contract>([[defaultContract.script, defaultContract]]);
+        const cache: ContractTapscriptCache = new Map();
+
+        const a = extendVirtualCoinForContract(
+            createMockVtxo({ script: TEST_DEFAULT_SCRIPT, vout: 0 }),
+            map,
+            cache,
+        );
+        const b = extendVirtualCoinForContract(
+            createMockVtxo({ script: TEST_DEFAULT_SCRIPT, vout: 1 }),
+            map,
+            cache,
+        );
+
+        // Cached path: the memoized tapscripts must match what the uncached
+        // path produces, so annotation output is unchanged.
+        const uncached = extendVirtualCoinForContract(
+            createMockVtxo({ script: TEST_DEFAULT_SCRIPT, vout: 2 }),
+            map,
+        );
+        expect(a.tapTree).toEqual(uncached.tapTree);
+        expect(a.forfeitTapLeafScript).toEqual(uncached.forfeitTapLeafScript);
+        expect(a.intentTapLeafScript).toEqual(uncached.intentTapLeafScript);
+        expect(b.tapTree).toEqual(a.tapTree);
+        expect(b.vout).toBe(1);
     });
 });

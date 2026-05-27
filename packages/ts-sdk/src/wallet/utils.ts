@@ -36,7 +36,26 @@ export function extendCoin(
     };
 }
 
-function extendVtxoFromContract(vtxo: VirtualCoin, contract: Contract): ExtendedVirtualCoin {
+/**
+ * Tapscript fields derived purely from a contract's params. They are identical
+ * for every VTXO locked to the same contract, so they can be memoized per
+ * contract (see {@link ContractTapscriptCache}).
+ */
+export type ContractTapscripts = Pick<
+    ExtendedVirtualCoin,
+    "forfeitTapLeafScript" | "intentTapLeafScript" | "tapTree"
+>;
+
+/**
+ * Cache of per-contract tapscript data, keyed by `contract.script`. Building
+ * the taproot tree via `handler.createScript(contract.params)` is the dominant
+ * cost when annotating large VTXO sets; passing a shared cache across an
+ * annotation batch rebuilds it once per distinct contract instead of once per
+ * VTXO (see #521).
+ */
+export type ContractTapscriptCache = Map<string, ContractTapscripts>;
+
+function deriveContractTapscripts(contract: Contract): ContractTapscripts {
     const handler = contractHandlers.get(contract.type);
     if (!handler) {
         throw new Error(`No handler for contract type '${contract.type}'`);
@@ -45,11 +64,23 @@ function extendVtxoFromContract(vtxo: VirtualCoin, contract: Contract): Extended
         | DefaultVtxo.Script
         | DelegateVtxo.Script;
     return {
-        ...vtxo,
         forfeitTapLeafScript: script.forfeit(),
         intentTapLeafScript: script.forfeit(),
         tapTree: script.encode(),
     };
+}
+
+function extendVtxoFromContract(
+    vtxo: VirtualCoin,
+    contract: Contract,
+    cache?: ContractTapscriptCache,
+): ExtendedVirtualCoin {
+    let tapscripts = cache?.get(contract.script);
+    if (!tapscripts) {
+        tapscripts = deriveContractTapscripts(contract);
+        cache?.set(contract.script, tapscripts);
+    }
+    return { ...vtxo, ...tapscripts };
 }
 
 /**
@@ -74,6 +105,7 @@ function extendVtxoFromContract(vtxo: VirtualCoin, contract: Contract): Extended
 export function extendVirtualCoinForContract(
     vtxo: VirtualCoin,
     contractOrMap?: Contract | ReadonlyMap<string, Contract>,
+    cache?: ContractTapscriptCache,
 ): ExtendedVirtualCoin {
     const contract = resolveContract(vtxo, contractOrMap);
     if (!contract) {
@@ -81,7 +113,7 @@ export function extendVirtualCoinForContract(
             "extendVirtualCoinForContract: no contract matched vtxo.script — callers must resolve the owning contract before annotating",
         );
     }
-    return extendVtxoFromContract(vtxo, contract);
+    return extendVtxoFromContract(vtxo, contract, cache);
 }
 
 function isContractMap(

@@ -10,6 +10,7 @@ import {
     SubscriptionResponse,
 } from "../../src";
 import { ContractRepository } from "../../src/repositories";
+import { contractHandlers } from "../../src/contracts/handlers";
 import { hex } from "@scure/base";
 import {
     createDefaultContractParams,
@@ -595,6 +596,29 @@ describe("ContractManager", () => {
         it("throws when a vtxo's script has no registered contract", async () => {
             const orphan = createMockVtxo({ script: "ab".repeat(34) });
             await expect(manager.annotateVtxos([orphan])).rejects.toThrow();
+        });
+
+        it("builds the taproot tree once per contract, not once per VTXO (#521)", async () => {
+            await manager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+
+            const handler = contractHandlers.get("default")!;
+            const spy = vi.spyOn(handler, "createScript");
+
+            const vtxos = Array.from({ length: 100 }, (_, i) =>
+                createMockVtxo({ script: TEST_DEFAULT_SCRIPT, vout: i }),
+            );
+            const extended = await manager.annotateVtxos(vtxos);
+
+            expect(extended).toHaveLength(100);
+            // One taproot reconstruction for the whole batch, regardless of
+            // how many VTXOs share the contract.
+            expect(spy).toHaveBeenCalledTimes(1);
+            spy.mockRestore();
         });
     });
 
