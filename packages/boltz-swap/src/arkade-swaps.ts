@@ -79,7 +79,7 @@ import {
 } from "./utils/boltz-swap-tx";
 import { decodeInvoice, getInvoicePaymentHash } from "./utils/decoding";
 import { normalizeToXOnlyKey } from "./utils/signatures";
-import { extractInvoiceAmount, extractTimeLockFromLeafOutput } from "./utils/restoration";
+import { extractInvoiceAmount, resolveVhtlcTimeouts } from "./utils/restoration";
 import { SwapManager, SwapManagerClient } from "./swap-manager";
 import {
     saveSwap,
@@ -2768,20 +2768,7 @@ export class ArkadeSwaps {
                         onchainAmount: amount,
                         lockupAddress,
                         refundPublicKey: serverPublicKey,
-                        timeoutBlockHeights: timeoutBlockHeights ?? {
-                            refund: extractTimeLockFromLeafOutput(
-                                tree.refundWithoutBoltzLeaf?.output ?? "",
-                            ),
-                            unilateralClaim: extractTimeLockFromLeafOutput(
-                                tree.unilateralClaimLeaf?.output ?? "",
-                            ),
-                            unilateralRefund: extractTimeLockFromLeafOutput(
-                                tree.unilateralRefundLeaf?.output ?? "",
-                            ),
-                            unilateralRefundWithoutReceiver: extractTimeLockFromLeafOutput(
-                                tree.unilateralRefundWithoutBoltzLeaf?.output ?? "",
-                            ),
-                        },
+                        timeoutBlockHeights: resolveVhtlcTimeouts(tree, timeoutBlockHeights),
                     },
                     status,
                     type: "reverse",
@@ -2819,28 +2806,21 @@ export class ArkadeSwaps {
                         address: lockupAddress,
                         expectedAmount: amount,
                         claimPublicKey: serverPublicKey,
-                        timeoutBlockHeights: timeoutBlockHeights ?? {
-                            refund: extractTimeLockFromLeafOutput(
-                                tree.refundWithoutBoltzLeaf?.output ?? "",
-                            ),
-                            unilateralClaim: extractTimeLockFromLeafOutput(
-                                tree.unilateralClaimLeaf?.output ?? "",
-                            ),
-                            unilateralRefund: extractTimeLockFromLeafOutput(
-                                tree.unilateralRefundLeaf?.output ?? "",
-                            ),
-                            unilateralRefundWithoutReceiver: extractTimeLockFromLeafOutput(
-                                tree.unilateralRefundWithoutBoltzLeaf?.output ?? "",
-                            ),
-                        },
+                        timeoutBlockHeights: resolveVhtlcTimeouts(tree, timeoutBlockHeights),
                     },
                 } as BoltzSubmarineSwap);
             } else if (isRestoredChainSwap(swap)) {
                 const refundDetails = swap.refundDetails;
                 if (!refundDetails) continue;
 
-                const { amount, lockupAddress, serverPublicKey, timeoutBlockHeight } =
-                    refundDetails;
+                const {
+                    amount,
+                    lockupAddress,
+                    serverPublicKey,
+                    timeoutBlockHeight,
+                    tree,
+                    timeoutBlockHeights,
+                } = refundDetails;
 
                 chainSwaps.push({
                     id,
@@ -2868,6 +2848,7 @@ export class ArkadeSwaps {
                             lockupAddress,
                             serverPublicKey,
                             timeoutBlockHeight,
+                            timeouts: resolveVhtlcTimeouts(tree, timeoutBlockHeights),
                         },
                     },
                 } as BoltzChainSwap);

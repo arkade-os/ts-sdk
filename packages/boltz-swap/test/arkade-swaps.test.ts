@@ -2668,6 +2668,50 @@ describe("ArkadeSwaps", () => {
             },
         };
 
+        // Server-provided timeouts (the common path: Boltz returns these directly).
+        const serverTimeouts = {
+            refund: 1700000000,
+            unilateralClaim: 266752,
+            unilateralRefund: 432128,
+            unilateralRefundWithoutReceiver: 518656,
+        };
+
+        // A real Boltz Ark VHTLC tree (hex reused from boltz-swap-provider.test.ts)
+        // whose leaves decode to the known timeouts below — exercises the
+        // tree-derived fallback when the response omits `timeoutBlockHeights`.
+        const realVhtlcTree = {
+            claimLeaf: {
+                version: 0,
+                output: "a914709b098708fed95c0d8c19fda64f630887f4f4988769200da6a9cbcebd245df8ac2f7e6520f2fd46e2da3990a74f701db1df92ffe3a9daad20e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+            },
+            refundLeaf: {
+                version: 0,
+                output: "20c432d8c2f7191f2ffe380cdcd995d53492aa1af60a92f1be6698971c03ee5d6dad200da6a9cbcebd245df8ac2f7e6520f2fd46e2da3990a74f701db1df92ffe3a9daad20e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+            },
+            refundWithoutBoltzLeaf: {
+                version: 0,
+                output: "044d5a3969b17520c432d8c2f7191f2ffe380cdcd995d53492aa1af60a92f1be6698971c03ee5d6dad20e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+            },
+            unilateralClaimLeaf: {
+                version: 0,
+                output: "a914709b098708fed95c0d8c19fda64f630887f4f498876903130040b275200da6a9cbcebd245df8ac2f7e6520f2fd46e2da3990a74f701db1df92ffe3a9daac",
+            },
+            unilateralRefundLeaf: {
+                version: 0,
+                output: "03260040b27520c432d8c2f7191f2ffe380cdcd995d53492aa1af60a92f1be6698971c03ee5d6dad200da6a9cbcebd245df8ac2f7e6520f2fd46e2da3990a74f701db1df92ffe3a9daac",
+            },
+            unilateralRefundWithoutBoltzLeaf: {
+                version: 0,
+                output: "034b0040b27520c432d8c2f7191f2ffe380cdcd995d53492aa1af60a92f1be6698971c03ee5d6dac",
+            },
+        };
+        const derivedTimeouts = {
+            refund: 1765366349,
+            unilateralClaim: 9728,
+            unilateralRefund: 19456,
+            unilateralRefundWithoutReceiver: 38400,
+        };
+
         it("should include terminal swaps in results without extra API fetches", async () => {
             const restoreSpy = vi
                 .spyOn(swapProvider, "restoreSwaps")
@@ -2743,6 +2787,90 @@ describe("ArkadeSwaps", () => {
             await swaps.restoreSwaps();
 
             expect(getPreimageSpy).not.toHaveBeenCalled();
+        });
+
+        it("populates chain lockupDetails.timeouts from server-provided timeoutBlockHeights", async () => {
+            const chainWithTimeouts = {
+                ...pendingChain,
+                refundDetails: {
+                    ...mockDetails,
+                    tree: mockTree,
+                    timeoutBlockHeights: serverTimeouts,
+                },
+            };
+            vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([chainWithTimeouts]);
+            vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+            const result = await swaps.restoreSwaps();
+
+            // Without this, refundArk() throws "missing timeouts in lockup details".
+            expect(result.chainSwaps[0].response.lockupDetails.timeouts).toEqual(serverTimeouts);
+        });
+
+        it("derives chain lockupDetails.timeouts from the VHTLC tree when timeoutBlockHeights is absent", async () => {
+            const chainDerived = {
+                ...pendingChain,
+                refundDetails: { ...mockDetails, tree: realVhtlcTree },
+            };
+            vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([chainDerived]);
+            vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+            const result = await swaps.restoreSwaps();
+
+            expect(result.chainSwaps[0].response.lockupDetails.timeouts).toEqual(derivedTimeouts);
+        });
+
+        it("leaves chain lockupDetails.timeouts undefined when the tree is incomplete (zero-guard)", async () => {
+            // pendingChain uses the empty mockTree and carries no timeoutBlockHeights,
+            // so every derived locktime is 0 — the guard must skip rather than build a
+            // VHTLC with zeroed timeouts (which would fail refundArk's address check).
+            vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([pendingChain]);
+            vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+            const result = await swaps.restoreSwaps();
+
+            expect(result.chainSwaps[0].response.lockupDetails.timeouts).toBeUndefined();
+        });
+
+        it("applies the same timeouts resolution to restored reverse and submarine swaps", async () => {
+            const reverseDerived = {
+                ...pendingReverse,
+                id: "rev-derived",
+                claimDetails: { ...mockDetails, tree: realVhtlcTree },
+            };
+            const submarineDerived = {
+                ...pendingSubmarine,
+                id: "sub-derived",
+                refundDetails: { ...mockDetails, tree: realVhtlcTree },
+            };
+            vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([
+                reverseDerived,
+                submarineDerived,
+                pendingReverse, // empty tree -> undefined
+                pendingSubmarine, // empty tree -> undefined
+            ]);
+            vi.spyOn(swapProvider, "getSwapPreimage").mockResolvedValue({
+                preimage: hex.encode(randomBytes(32)),
+            });
+            vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+            const result = await swaps.restoreSwaps();
+
+            const byId = <T extends { id: string }>(swaps: T[], id: string) =>
+                swaps.find((s) => s.id === id)!;
+
+            expect(byId(result.reverseSwaps, "rev-derived").response.timeoutBlockHeights).toEqual(
+                derivedTimeouts,
+            );
+            expect(
+                byId(result.reverseSwaps, "rev-pending").response.timeoutBlockHeights,
+            ).toBeUndefined();
+            expect(byId(result.submarineSwaps, "sub-derived").response.timeoutBlockHeights).toEqual(
+                derivedTimeouts,
+            );
+            expect(
+                byId(result.submarineSwaps, "sub-pending").response.timeoutBlockHeights,
+            ).toBeUndefined();
         });
     });
 
