@@ -379,6 +379,20 @@ export function getExpiringAndRecoverableVtxos(
 }
 
 /**
+ * Optional arguments for {@link IVtxoManager.renewVtxos}.
+ */
+export interface RenewVtxosOptions {
+    /**
+     * Override the renewal threshold for this call only, in seconds.
+     *
+     * When provided, takes precedence over `SettlementConfig.vtxoThreshold`
+     * and the default (3 days). Useful for renewing only VTXOs that are
+     * more urgently expiring than the globally configured threshold.
+     */
+    thresholdSeconds?: number;
+}
+
+/**
  * VtxoManager is a unified class for managing virtual output lifecycle operations including
  * recovery of swept/expired virtual outputs and renewal to prevent expiration.
  *
@@ -435,7 +449,10 @@ export interface IVtxoManager {
 
     getExpiringVtxos(thresholdMs?: number): Promise<ExtendedVirtualCoin[]>;
 
-    renewVtxos(eventCallback?: (event: SettlementEvent) => void): Promise<string>;
+    renewVtxos(
+        eventCallback?: (event: SettlementEvent) => void,
+        options?: RenewVtxosOptions,
+    ): Promise<string>;
 
     getExpiredBoardingUtxos(): Promise<ExtendedCoin[]>;
 
@@ -689,6 +706,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * primary way to prevent virtual outputs from expiring.
      *
      * @param eventCallback - Optional callback for settlement events
+     * @param options - Optional per-call overrides; see {@link RenewVtxosOptions}
      * @returns Settlement transaction ID
      * @throws Error if no virtual outputs available to renew
      * @throws Error if total amount is below dust threshold
@@ -704,9 +722,34 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * const txid = await manager.renewVtxos((event) => {
      *   console.log('Settlement event:', event.type);
      * });
+     *
+     * // Renew only VTXOs that expire within 6 hours
+     * const txid = await manager.renewVtxos(undefined, { thresholdSeconds: 6 * 60 * 60 });
      * ```
      */
-    async renewVtxos(eventCallback?: (event: SettlementEvent) => void): Promise<string> {
+    async renewVtxos(
+        eventCallback?: (event: SettlementEvent) => void,
+        options?: RenewVtxosOptions,
+    ): Promise<string> {
+        // Validate the per-call override before touching any state. The payload
+        // can arrive over the worker MessageBus, so `thresholdSeconds` is not
+        // guaranteed to be a number at runtime despite its type. Reject
+        // NaN/Infinity/non-positive values, which would otherwise corrupt the
+        // expiry threshold (and a 0/<=100ms threshold silently reverts to the
+        // 3-day default via the guard in isVtxoExpiringSoon).
+        if (options?.thresholdSeconds !== undefined) {
+            const { thresholdSeconds } = options;
+            if (
+                typeof thresholdSeconds !== "number" ||
+                !Number.isFinite(thresholdSeconds) ||
+                thresholdSeconds <= 0
+            ) {
+                throw new TypeError(
+                    `Invalid thresholdSeconds: expected a positive finite number, got ${String(thresholdSeconds)}`,
+                );
+            }
+        }
+
         if (this.renewalInProgress) {
             throw new Error("Renewal already in progress");
         }
@@ -715,12 +758,19 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         try {
             // Get all virtual outputs (including recoverable ones)
-            // Use default threshold to bypass settlementConfig gate (manual API should always work)
-            const threshold =
+            // Resolution order: explicit options.thresholdSeconds > settlementConfig.vtxoThreshold > default.
+            // Manual API should always work, so we bypass the settlementConfig === false gate.
+            let threshold: number;
+            if (options?.thresholdSeconds !== undefined) {
+                threshold = options.thresholdSeconds * 1000;
+            } else if (
                 this.settlementConfig !== false &&
                 this.settlementConfig?.vtxoThreshold !== undefined
-                    ? this.settlementConfig.vtxoThreshold * 1000
-                    : DEFAULT_RENEWAL_CONFIG.thresholdMs;
+            ) {
+                threshold = this.settlementConfig.vtxoThreshold * 1000;
+            } else {
+                threshold = DEFAULT_RENEWAL_CONFIG.thresholdMs;
+            }
             let vtxos = await this.getExpiringVtxos(threshold);
 
             if (vtxos.length === 0) {

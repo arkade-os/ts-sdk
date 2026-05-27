@@ -128,7 +128,7 @@ import type {
 } from "../../contracts/contractManager";
 import type { ContractState } from "../../contracts/types";
 import type { IDelegateManager } from "../delegate";
-import type { IVtxoManager, SettlementConfig } from "../vtxo-manager";
+import type { IVtxoManager, RenewVtxosOptions, SettlementConfig } from "../vtxo-manager";
 import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegate";
 import { getRandomId } from "../utils";
@@ -1659,11 +1659,15 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
                 }
             },
 
-            async renewVtxos(eventCallback?: (event: SettlementEvent) => void): Promise<string> {
+            async renewVtxos(
+                eventCallback?: (event: SettlementEvent) => void,
+                options?: RenewVtxosOptions,
+            ): Promise<string> {
                 const message: RequestRenewVtxos = {
                     tag: messageTag,
                     type: "RENEW_VTXOS",
                     id: getRandomId(),
+                    payload: options,
                 };
                 try {
                     const response = await wallet.sendMessageWithEvents(
