@@ -1057,6 +1057,65 @@ describe("SwapManager", () => {
             await swapManager.stop();
         });
 
+        it("should resolve the claim txid when transaction.claimed races an in-flight claim", async () => {
+            // Regression: transaction.claimed can arrive while the chain claim
+            // is still in-flight (Boltz learns the preimage at the cooperative
+            // claim step, before our broadcast returns). Completion must await
+            // the claim we started and resolve its txid — not fall back to
+            // getSwapStatus, which does not surface the chain claim txid and
+            // would reject.
+            const claimTxId = "claim-tx-id-racewinner";
+            const getSwapStatus = vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                // No transaction.id: a fallback here would reject.
+                status: "transaction.claimed",
+            });
+
+            let releaseClaim!: () => void;
+            let claimEntered!: () => void;
+            const claimStarted = new Promise<void>((resolve) => {
+                claimEntered = resolve;
+            });
+            // The claim blocks until releaseClaim(), modelling a broadcast that
+            // has not yet returned its txid when transaction.claimed arrives.
+            const claimBtc = vi.fn().mockImplementation(
+                () =>
+                    new Promise<{ txid: string }>((resolve) => {
+                        releaseClaim = () => resolve({ txid: claimTxId });
+                        claimEntered();
+                    }),
+            );
+            swapManager.setCallbacks(makeCallbacks({ claimBtc }));
+
+            const pendingSwap = { ...mockChainSwap };
+            await swapManager.start([pendingSwap]);
+
+            const waitPromise = swapManager.waitForSwapCompletion("chain-swap-1");
+
+            // Claimable status starts the BTC claim; it blocks (still in-flight).
+            const claimableUpdate = swapManager["handleSwapStatusUpdate"](
+                pendingSwap,
+                "transaction.server.confirmed",
+            );
+            await claimStarted; // claim started and its promise was captured
+
+            // transaction.claimed arrives mid-claim and drives completion.
+            const claimedUpdate = swapManager["handleSwapStatusUpdate"](
+                pendingSwap,
+                "transaction.claimed",
+            );
+
+            releaseClaim(); // claim broadcast returns its txid
+            await Promise.all([claimableUpdate, claimedUpdate]);
+
+            const result = await waitPromise;
+            expect(claimBtc).toHaveBeenCalledOnce();
+            expect(result.txid).toBe(claimTxId);
+            // Completion awaited the in-flight claim, not the provider status.
+            expect(getSwapStatus).not.toHaveBeenCalled();
+
+            await swapManager.stop();
+        });
+
         it("should reject if a claimed swap has no transaction id", async () => {
             vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
                 status: "transaction.claimed",
