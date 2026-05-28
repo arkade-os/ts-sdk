@@ -158,7 +158,6 @@
         "format": "prettier --write src test examples",
         "lint": "prettier --check src test examples",
         "audit": "pnpm audit",
-        "prepare": "pnpm install --ignore-scripts --prod=false && pnpm run build",
         "prepack": "pnpm run build",
         "prepublishOnly": "pnpm run build"
     },
