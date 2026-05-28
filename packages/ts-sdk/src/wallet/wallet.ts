@@ -638,7 +638,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             const tx: ArkTransaction = {
                 key: {
                     boardingTxid: utxo.txid,
-                    commitmentTxid: "",
+                    commitmentTxid: utxo.virtualStatus.commitmentTxIds?.[0] ?? "",
                     arkTxid: "",
                 },
                 amount: utxo.value,

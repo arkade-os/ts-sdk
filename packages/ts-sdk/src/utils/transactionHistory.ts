@@ -74,6 +74,7 @@ export async function buildTransactionHistory(
             // it's translated into a received batch transaction
             if (
                 !commitmentsToIgnore.has(vtxo.virtualStatus.commitmentTxIds![0]) &&
+                (!vtxo.settledBy || !commitmentsToIgnore.has(vtxo.settledBy)) &&
                 fromOldestVtxo.filter((v) => v.settledBy === vtxo.virtualStatus.commitmentTxIds![0])
                     .length === 0
             ) {
