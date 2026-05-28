@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { hex } from "@scure/base";
-import { IntrospectorPacket, type IntrospectorEntry } from "../src/extension/introspector";
-import fixtures from "./fixtures/introspector_packet.json";
+import { EmulatorPacket, type EmulatorEntry } from "../src/extension/emulator";
+import fixtures from "./fixtures/emulator_packet.json";
 
 interface RawEntry {
     vin: number;
@@ -9,7 +9,7 @@ interface RawEntry {
     witness: string;
 }
 
-function decodeEntries(raw: RawEntry[]): IntrospectorEntry[] {
+function decodeEntries(raw: RawEntry[]): EmulatorEntry[] {
     return raw.map((e) => ({
         vin: e.vin,
         script: e.script.length > 0 ? hex.decode(e.script) : new Uint8Array(0),
@@ -17,19 +17,19 @@ function decodeEntries(raw: RawEntry[]): IntrospectorEntry[] {
     }));
 }
 
-describe("IntrospectorPacket", () => {
+describe("EmulatorPacket", () => {
     describe("valid", () => {
         for (const f of fixtures.valid) {
             it(f.name, () => {
                 const entries = decodeEntries(f.entries);
-                const packet = IntrospectorPacket.create(entries);
+                const packet = EmulatorPacket.create(entries);
 
                 // serialize and compare to expected encoding
                 const serialized = packet.serialize();
                 expect(hex.encode(serialized)).toBe(f.encoded);
 
                 // deserialize and compare entries field-by-field
-                const deserialized = IntrospectorPacket.fromBytes(hex.decode(f.encoded));
+                const deserialized = EmulatorPacket.fromBytes(hex.decode(f.encoded));
                 expect(deserialized.entries.length).toBe(entries.length);
 
                 for (let i = 0; i < entries.length; i++) {
@@ -50,11 +50,11 @@ describe("IntrospectorPacket", () => {
             it(f.name, () => {
                 if (f.entries) {
                     const entries = decodeEntries(f.entries);
-                    expect(() => IntrospectorPacket.create(entries)).toThrow(f.expectedError);
+                    expect(() => EmulatorPacket.create(entries)).toThrow(f.expectedError);
                 }
                 if (f.encoded) {
                     const encoded = f.encoded;
-                    expect(() => IntrospectorPacket.fromBytes(hex.decode(encoded))).toThrow(
+                    expect(() => EmulatorPacket.fromBytes(hex.decode(encoded))).toThrow(
                         f.expectedError,
                     );
                 }

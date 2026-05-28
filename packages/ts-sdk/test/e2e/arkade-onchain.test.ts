@@ -8,14 +8,14 @@ import {
     networks,
     PrevoutTxField,
     RestArkProvider,
-    RestIntrospectorProvider,
+    RestEmulatorProvider,
     setArkPsbtField,
     SingleKey,
 } from "../../src";
 import { Transaction } from "../../src/utils/transaction";
-import { addIntrospectorPacket, enforcePayTo, execCommand, waitForUtxo } from "./utils";
+import { addEmulatorPacket, enforcePayTo, execCommand, waitForUtxo } from "./utils";
 
-const INTROSPECTOR_URL = "http://localhost:7073";
+const EMULATOR_URL = "http://localhost:7073";
 const ARK_SERVER_URL = "http://localhost:7070";
 const ESPLORA_URL = "http://localhost:3000";
 const FUNDING_BTC = "0.01";
@@ -32,19 +32,19 @@ async function fetchTxHex(txid: string): Promise<string> {
 }
 
 describe("arkade SubmitOnchainTx", () => {
-    const introspector = new RestIntrospectorProvider(INTROSPECTOR_URL);
+    const emulator = new RestEmulatorProvider(EMULATOR_URL);
     const arkProvider = new RestArkProvider(ARK_SERVER_URL);
     const explorer = new EsploraProvider(ESPLORA_URL);
 
-    let introspectorPubkey: Uint8Array;
+    let emulatorPubkey: Uint8Array;
 
     beforeAll(async () => {
-        introspectorPubkey = hex.decode((await introspector.getInfo()).signerPubkey);
+        emulatorPubkey = hex.decode((await emulator.getInfo()).signerPubkey);
     });
 
     /**
      * Builds an unsigned 1-in/1-out spend PSBT with all required arkade fields.
-     * `arkadeScript: null` means "no introspector packet" — tests the rejection path.
+     * `arkadeScript: null` means "no emulator packet" — tests the rejection path.
      */
     function buildOnchainSpendTx(opts: {
         fundingTxid: string;
@@ -78,7 +78,7 @@ describe("arkade SubmitOnchainTx", () => {
         setArkPsbtField(tx, 0, PrevoutTxField, opts.rawFundingTx);
 
         if (opts.arkadeScript) {
-            addIntrospectorPacket(tx, [
+            addEmulatorPacket(tx, [
                 {
                     vin: 0,
                     script: opts.arkadeScript,
@@ -92,7 +92,7 @@ describe("arkade SubmitOnchainTx", () => {
 
     /**
      * Sets up the funded contract address shared by most subtests.
-     * 3-of-3 multisig [bobX, aliceX, introspector_tweaked] with arkade closure.
+     * 3-of-3 multisig [bobX, aliceX, emulator_tweaked] with arkade closure.
      */
     async function setupFundedContract() {
         const bob = SingleKey.fromRandomBytes();
@@ -102,12 +102,12 @@ describe("arkade SubmitOnchainTx", () => {
         const bobP2TR = p2tr(bobX, undefined, networks.regtest).script;
 
         const arkadeScript = enforcePayTo(bobP2TR, SPEND_AMOUNT);
-        const tweakedIntro = arkade.computeArkadeScriptPublicKey(introspectorPubkey, arkadeScript);
+        const tweakedIntro = arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScript);
 
         const vtxoScript = new arkade.ArkadeVtxoScript([
             {
                 arkadeScript,
-                introspectors: [introspectorPubkey],
+                emulators: [emulatorPubkey],
                 tapscript: MultisigTapscript.encode({
                     pubkeys: [bobX, aliceX],
                 }),
@@ -141,7 +141,7 @@ describe("arkade SubmitOnchainTx", () => {
     }
 
     it(
-        "valid: introspector co-signs and the tx broadcasts after the third sig",
+        "valid: emulator co-signs and the tx broadcasts after the third sig",
         { timeout: 120000 },
         async () => {
             const ctx = await setupFundedContract();
@@ -159,7 +159,7 @@ describe("arkade SubmitOnchainTx", () => {
             });
 
             const bobSigned = await ctx.bob.sign(tx, [0]);
-            const result = await introspector.submitOnchainTx(base64.encode(bobSigned.toPSBT()));
+            const result = await emulator.submitOnchainTx(base64.encode(bobSigned.toPSBT()));
 
             const parsed = Transaction.fromPSBT(base64.decode(result.signedTx));
             const input0 = parsed.getInput(0);
@@ -176,7 +176,7 @@ describe("arkade SubmitOnchainTx", () => {
         },
     );
 
-    it("rejects when no introspector packet is present", { timeout: 60000 }, async () => {
+    it("rejects when no emulator packet is present", { timeout: 60000 }, async () => {
         const ctx = await setupFundedContract();
 
         const tx = buildOnchainSpendTx({
@@ -192,9 +192,7 @@ describe("arkade SubmitOnchainTx", () => {
         });
 
         const bobSigned = await ctx.bob.sign(tx, [0]);
-        await expect(
-            introspector.submitOnchainTx(base64.encode(bobSigned.toPSBT())),
-        ).rejects.toThrow();
+        await expect(emulator.submitOnchainTx(base64.encode(bobSigned.toPSBT()))).rejects.toThrow();
     });
 
     it("rejects when PrevoutTxField points at the wrong tx", { timeout: 60000 }, async () => {
@@ -217,9 +215,7 @@ describe("arkade SubmitOnchainTx", () => {
         });
 
         const bobSigned = await ctx.bob.sign(tx, [0]);
-        await expect(
-            introspector.submitOnchainTx(base64.encode(bobSigned.toPSBT())),
-        ).rejects.toThrow();
+        await expect(emulator.submitOnchainTx(base64.encode(bobSigned.toPSBT()))).rejects.toThrow();
     });
 
     it("rejects when the arkade script fails (wrong amount)", { timeout: 60000 }, async () => {
@@ -238,9 +234,7 @@ describe("arkade SubmitOnchainTx", () => {
         });
 
         const bobSigned = await ctx.bob.sign(tx, [0]);
-        await expect(
-            introspector.submitOnchainTx(base64.encode(bobSigned.toPSBT())),
-        ).rejects.toThrow();
+        await expect(emulator.submitOnchainTx(base64.encode(bobSigned.toPSBT()))).rejects.toThrow();
     });
 
     it("rejects a tapscript that includes arkd's signer pubkey", { timeout: 60000 }, async () => {
@@ -257,7 +251,7 @@ describe("arkade SubmitOnchainTx", () => {
         const vtxoScript = new arkade.ArkadeVtxoScript([
             {
                 arkadeScript,
-                introspectors: [introspectorPubkey],
+                emulators: [emulatorPubkey],
                 tapscript: MultisigTapscript.encode({
                     pubkeys: [bobX, arkdX], // arkd as a cosigner — must be rejected
                 }),
@@ -268,12 +262,12 @@ describe("arkade SubmitOnchainTx", () => {
             pubkeys: [
                 bobX,
                 arkdX,
-                arkade.computeArkadeScriptPublicKey(introspectorPubkey, arkadeScript),
+                arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScript),
             ],
         });
         const tapLeafScript = vtxoScript.findLeaf(hex.encode(arkadeLeaf.script));
 
-        // The introspector's rejection check runs before script execution,
+        // The emulator's rejection check runs before script execution,
         // so the funding txid / prevout tx contents don't matter here.
         const tx = buildOnchainSpendTx({
             fundingTxid: "00".repeat(32),
@@ -298,6 +292,6 @@ describe("arkade SubmitOnchainTx", () => {
             arkadeScript,
         });
 
-        await expect(introspector.submitOnchainTx(base64.encode(tx.toPSBT()))).rejects.toThrow();
+        await expect(emulator.submitOnchainTx(base64.encode(tx.toPSBT()))).rejects.toThrow();
     });
 });

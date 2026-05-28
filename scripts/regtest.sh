@@ -17,17 +17,17 @@ set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REGTEST_DIR="$ROOT_DIR/regtest"
-# Introspector co-signing service used by the ts-sdk Arkade e2e suite. It joins
+# Emulator co-signing service used by the ts-sdk Arkade e2e suite. It joins
 # the external "nigiri" network created by start-env.sh, so it must start after
 # the regtest stack is up.
-INTROSPECTOR_COMPOSE="$ROOT_DIR/docker-compose.introspector.yml"
+EMULATOR_COMPOSE="$ROOT_DIR/docker-compose.emulator.yml"
 
-introspector_up() {
-  docker compose -f "$INTROSPECTOR_COMPOSE" up -d
+emulator_up() {
+  docker compose -f "$EMULATOR_COMPOSE" up -d
 }
 
-introspector_down() {
-  docker compose -f "$INTROSPECTOR_COMPOSE" down -v 2>/dev/null || true
+emulator_down() {
+  docker compose -f "$EMULATOR_COMPOSE" down -v 2>/dev/null || true
 }
 
 PKG="${1:-}"
@@ -52,20 +52,20 @@ fi
 cmd_up() {
   bash "$REGTEST_DIR/start-env.sh" --env "$ENV_FILE"
   if [ "$PKG" = "ts-sdk" ]; then
-    introspector_up
+    emulator_up
   fi
 }
 
 cmd_down() {
   if [ "$PKG" = "ts-sdk" ]; then
-    introspector_down
+    emulator_down
   fi
   USER_ENV="$ENV_FILE" bash "$REGTEST_DIR/stop-env.sh"
 }
 
 cmd_reset() {
   if [ "$PKG" = "ts-sdk" ]; then
-    introspector_down
+    emulator_down
   fi
   USER_ENV="$ENV_FILE" bash "$REGTEST_DIR/clean-env.sh"
 }

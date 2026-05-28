@@ -38,15 +38,15 @@ export async function waitForArkServer({
 }
 
 /**
- * Poll the introspector until `signerPubkey` is set, then return the parsed
+ * Poll the emulator until `signerPubkey` is set, then return the parsed
  * `/v1/info` response. Throws after `maxRetries` failed attempts.
  */
-export async function waitForIntrospector({
+export async function waitForEmulator({
     url = "http://localhost:7073/v1/info",
     maxRetries = 30,
     retryDelay = 2000,
 } = {}) {
-    console.log("Waiting for introspector to be ready...");
+    console.log("Waiting for emulator to be ready...");
     for (let i = 0; i < maxRetries; i++) {
         try {
             const response = execSync(`curl -sf ${url}`, {
@@ -55,7 +55,7 @@ export async function waitForIntrospector({
             });
             const info = JSON.parse(response);
             if (info.signerPubkey) {
-                console.log("  ✔ Introspector ready");
+                console.log("  ✔ Emulator ready");
                 return info;
             }
         } catch {
@@ -67,7 +67,7 @@ export async function waitForIntrospector({
             await sleep(retryDelay);
         }
     }
-    throw new Error("introspector failed to be ready after maximum retries");
+    throw new Error("emulator failed to be ready after maximum retries");
 }
 
 /**

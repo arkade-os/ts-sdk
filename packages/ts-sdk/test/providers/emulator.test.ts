@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { RestIntrospectorProvider } from "../../src/providers/introspector";
+import { RestEmulatorProvider } from "../../src/providers/emulator";
 
-describe("RestIntrospectorProvider.submitOnchainTx", () => {
+describe("RestEmulatorProvider.submitOnchainTx", () => {
     beforeEach(() => {
         vi.restoreAllMocks();
     });
@@ -13,12 +13,12 @@ describe("RestIntrospectorProvider.submitOnchainTx", () => {
             }),
         );
 
-        const provider = new RestIntrospectorProvider("http://introspector");
+        const provider = new RestEmulatorProvider("http://emulator");
         const result = await provider.submitOnchainTx("RAW_B64");
 
         expect(result).toEqual({ signedTx: "SIGNED_B64" });
         expect(fetchMock).toHaveBeenCalledWith(
-            "http://introspector/v1/onchain-tx",
+            "http://emulator/v1/onchain-tx",
             expect.objectContaining({
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -32,16 +32,16 @@ describe("RestIntrospectorProvider.submitOnchainTx", () => {
             new Response(JSON.stringify({}), { status: 200 }),
         );
 
-        const provider = new RestIntrospectorProvider("http://introspector");
+        const provider = new RestEmulatorProvider("http://emulator");
         await expect(provider.submitOnchainTx("RAW_B64")).rejects.toThrow(/missing signedTx/);
     });
 
     it("throws on non-2xx", async () => {
         vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("boom", { status: 500 }));
 
-        const provider = new RestIntrospectorProvider("http://introspector");
+        const provider = new RestEmulatorProvider("http://emulator");
         await expect(provider.submitOnchainTx("RAW_B64")).rejects.toThrow(
-            /Failed to submit onchain tx to introspector: boom/,
+            /Failed to submit onchain tx to emulator: boom/,
         );
     });
 });

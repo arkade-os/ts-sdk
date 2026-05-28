@@ -12,13 +12,13 @@ import {
     networks,
     RestArkProvider,
     RestIndexerProvider,
-    RestIntrospectorProvider,
+    RestEmulatorProvider,
     setArkPsbtField,
     ConditionWitness,
     Transaction,
 } from "../../src";
 import {
-    addIntrospectorPacket,
+    addEmulatorPacket,
     beforeEachFaucet,
     createTestArkWallet,
     enforcePayTo,
@@ -26,7 +26,7 @@ import {
     randomP2TR,
 } from "./utils";
 
-const INTROSPECTOR_URL = "http://localhost:7073";
+const EMULATOR_URL = "http://localhost:7073";
 const ARK_SERVER_URL = "http://localhost:7070";
 
 const HTLC_PREIMAGE = new Uint8Array(32).fill(0x42);
@@ -35,12 +35,12 @@ const HTLC_PREIMAGE_HASH = hex.decode("8739f40ec4dbf569dcb38134c6e7310908566981"
 const CONTRACT_AMOUNT = 10_000n;
 
 describe("arkade HTLC (covenant)", () => {
-    const introspector = new RestIntrospectorProvider(INTROSPECTOR_URL);
+    const emulator = new RestEmulatorProvider(EMULATOR_URL);
     const arkProvider = new RestArkProvider(ARK_SERVER_URL);
     const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
 
     let serverXOnlyPubkey: Uint8Array;
-    let introspectorPubkey: Uint8Array;
+    let emulatorPubkey: Uint8Array;
     let checkpointUnrollClosure: CSVMultisigTapscript.Type;
 
     beforeAll(async () => {
@@ -50,8 +50,8 @@ describe("arkade HTLC (covenant)", () => {
             hex.decode(arkInfo.checkpointTapscript),
         );
 
-        const introInfo = await introspector.getInfo();
-        introspectorPubkey = hex.decode(introInfo.signerPubkey);
+        const introInfo = await emulator.getInfo();
+        emulatorPubkey = hex.decode(introInfo.signerPubkey);
     });
 
     beforeEach(beforeEachFaucet, 20000);
@@ -71,7 +71,7 @@ describe("arkade HTLC (covenant)", () => {
     }
 
     it(
-        "claim: introspector signs only when preimage + arkade script pass",
+        "claim: emulator signs only when preimage + arkade script pass",
         { timeout: 60000 },
         async () => {
             await createTestArkWallet();
@@ -84,7 +84,7 @@ describe("arkade HTLC (covenant)", () => {
             const vtxoScript = new arkade.ArkadeVtxoScript([
                 {
                     arkadeScript,
-                    introspectors: [introspectorPubkey],
+                    emulators: [emulatorPubkey],
                     tapscript: ConditionMultisigTapscript.encode({
                         conditionScript: preimageCondition,
                         pubkeys: [serverXOnlyPubkey],
@@ -100,12 +100,12 @@ describe("arkade HTLC (covenant)", () => {
             faucetOffchain(contractAddress, Number(CONTRACT_AMOUNT));
             const [vtxo] = await waitForVtxo(vtxoScript.pkScript);
 
-            // Find the multisig (with arkade-tweaked introspector) leaf.
+            // Find the multisig (with arkade-tweaked emulator) leaf.
             const arkadeLeaf = ConditionMultisigTapscript.encode({
                 conditionScript: preimageCondition,
                 pubkeys: [
                     serverXOnlyPubkey,
-                    arkade.computeArkadeScriptPublicKey(introspectorPubkey, arkadeScript),
+                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScript),
                 ],
             });
             const tapLeafScript = vtxoScript.findLeaf(hex.encode(arkadeLeaf.script));
@@ -131,9 +131,9 @@ describe("arkade HTLC (covenant)", () => {
                 for (const cp of checkpoints) {
                     setArkPsbtField(cp, 0, ConditionWitness, [HTLC_PREIMAGE]);
                 }
-                // Arkade introspector packet: output_index=0 pushed as empty
+                // Arkade emulator packet: output_index=0 pushed as empty
                 // bytes (OP_0) for the DUP in enforcePayTo.
-                addIntrospectorPacket(arkTx, [
+                addEmulatorPacket(arkTx, [
                     {
                         vin: 0,
                         script: arkadeScript,
@@ -148,7 +148,7 @@ describe("arkade HTLC (covenant)", () => {
             ) => {
                 const { arkTx, checkpoints } = buildClaim(outputs);
                 await expect(
-                    introspector.submitTx(
+                    emulator.submitTx(
                         base64.encode(arkTx.toPSBT()),
                         checkpoints.map((c) => base64.encode(c.toPSBT())),
                     ),
@@ -170,12 +170,12 @@ describe("arkade HTLC (covenant)", () => {
             const { arkTx: validTx, checkpoints: validCps } = buildClaim([
                 { script: receiverPkScript, amount: CONTRACT_AMOUNT },
             ]);
-            const introResult = await introspector.submitTx(
+            const introResult = await emulator.submitTx(
                 base64.encode(validTx.toPSBT()),
                 validCps.map((c) => base64.encode(c.toPSBT())),
             );
 
-            // In this HTLC closure the introspector is the last (non-arkd)
+            // In this HTLC closure the emulator is the last (non-arkd)
             // signer, so it acts as finalizer and internally submits + finalizes
             // with arkd before returning. We must NOT call arkProvider.submitTx
             // again — that would produce "duplicated offchain tx".
@@ -188,7 +188,7 @@ describe("arkade HTLC (covenant)", () => {
     );
 
     it(
-        "refund: introspector signs only when CLTV satisfied + arkade script passes",
+        "refund: emulator signs only when CLTV satisfied + arkade script passes",
         { timeout: 60000 },
         async () => {
             const _alice = await createTestArkWallet();
@@ -201,7 +201,7 @@ describe("arkade HTLC (covenant)", () => {
             const vtxoScript = new arkade.ArkadeVtxoScript([
                 {
                     arkadeScript,
-                    introspectors: [introspectorPubkey],
+                    emulators: [emulatorPubkey],
                     tapscript: CLTVMultisigTapscript.encode({
                         absoluteTimelock: REFUND_LOCKTIME,
                         pubkeys: [serverXOnlyPubkey],
@@ -215,12 +215,12 @@ describe("arkade HTLC (covenant)", () => {
             faucetOffchain(contractAddress, Number(CONTRACT_AMOUNT));
             const [vtxo] = await waitForVtxo(vtxoScript.pkScript);
 
-            // Find the leaf with the introspector's tweaked key.
+            // Find the leaf with the emulator's tweaked key.
             const arkadeLeaf = CLTVMultisigTapscript.encode({
                 absoluteTimelock: REFUND_LOCKTIME,
                 pubkeys: [
                     serverXOnlyPubkey,
-                    arkade.computeArkadeScriptPublicKey(introspectorPubkey, arkadeScript),
+                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScript),
                 ],
             });
             const tapLeafScript = vtxoScript.findLeaf(hex.encode(arkadeLeaf.script));
@@ -229,7 +229,7 @@ describe("arkade HTLC (covenant)", () => {
             // Same witness encoding as the claim test: a 1-element witness pushing
             // empty bytes (= 0). enforcePayTo's first opcode DUP requires
             // output_index already on the stack.
-            const introspectorWitness = new Uint8Array([0x01, 0x00]);
+            const emulatorWitness = new Uint8Array([0x01, 0x00]);
 
             const buildRefund = (outputs: { script: Uint8Array; amount: bigint }[]) => {
                 const { arkTx, checkpoints } = buildOffchainTx(
@@ -237,11 +237,11 @@ describe("arkade HTLC (covenant)", () => {
                     outputs,
                     checkpointUnrollClosure,
                 );
-                addIntrospectorPacket(arkTx, [
+                addEmulatorPacket(arkTx, [
                     {
                         vin: 0,
                         script: arkadeScript,
-                        witness: introspectorWitness,
+                        witness: emulatorWitness,
                     },
                 ]);
                 return { arkTx, checkpoints };
@@ -252,7 +252,7 @@ describe("arkade HTLC (covenant)", () => {
             ) => {
                 const { arkTx, checkpoints } = buildRefund(outputs);
                 await expect(
-                    introspector.submitTx(
+                    emulator.submitTx(
                         base64.encode(arkTx.toPSBT()),
                         checkpoints.map((c) => base64.encode(c.toPSBT())),
                     ),
@@ -273,13 +273,13 @@ describe("arkade HTLC (covenant)", () => {
             const { arkTx, checkpoints } = buildRefund([
                 { script: senderPkScript, amount: CONTRACT_AMOUNT },
             ]);
-            const result = await introspector.submitTx(
+            const result = await emulator.submitTx(
                 base64.encode(arkTx.toPSBT()),
                 checkpoints.map((c) => base64.encode(c.toPSBT())),
             );
 
-            // Introspector is the last non-arkd signer (multisig is [server,
-            // introspector_tweaked], no user), so it auto-finalizes via arkd.
+            // Emulator is the last non-arkd signer (multisig is [server,
+            // emulator_tweaked], no user), so it auto-finalizes via arkd.
             // Do NOT call arkProvider.submitTx again — it would error with
             // "duplicated offchain tx".
             expect(result.signedArkTx).toBeTruthy();

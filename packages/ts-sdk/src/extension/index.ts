@@ -6,7 +6,7 @@ import { BufferReader } from "./utils";
 import { ExtensionPacket, UnknownPacket } from "./packet";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import type { Transaction } from "../utils/transaction";
-import { IntrospectorPacket } from "./introspector";
+import { EmulatorPacket } from "./emulator";
 
 export type { ExtensionPacket } from "./packet";
 export { UnknownPacket } from "./packet";
@@ -209,11 +209,11 @@ export class Extension {
     }
 
     /**
-     * getIntrospectorPacket returns the embedded IntrospectorPacket, or null if not present.
+     * getEmulatorPacket returns the embedded EmulatorPacket, or null if not present.
      */
-    getIntrospectorPacket(): IntrospectorPacket | null {
+    getEmulatorPacket(): EmulatorPacket | null {
         for (const p of this.packets) {
-            if (p instanceof IntrospectorPacket) {
+            if (p instanceof EmulatorPacket) {
                 return p;
             }
         }
@@ -248,8 +248,8 @@ function parsePacket(packetType: number, data: Uint8Array): ExtensionPacket {
     switch (packetType) {
         case Packet.PACKET_TYPE:
             return Packet.fromBytes(data);
-        case IntrospectorPacket.PACKET_TYPE:
-            return IntrospectorPacket.fromBytes(data);
+        case EmulatorPacket.PACKET_TYPE:
+            return EmulatorPacket.fromBytes(data);
         default:
             return new UnknownPacket(packetType, data);
     }

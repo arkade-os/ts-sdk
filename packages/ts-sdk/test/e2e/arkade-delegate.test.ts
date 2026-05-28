@@ -13,38 +13,38 @@ import {
     PrevArkTxField,
     RestArkProvider,
     RestIndexerProvider,
-    RestIntrospectorProvider,
+    RestEmulatorProvider,
     setArkPsbtField,
     SingleKey,
     VtxoScript,
 } from "../../src";
 import { Transaction } from "../../src/utils/transaction";
 import { buildForfeitTx } from "../../src/forfeit";
-import type { ConnectorTreeNode } from "../../src/providers/introspector";
+import type { ConnectorTreeNode } from "../../src/providers/emulator";
 import {
-    addIntrospectorPacket,
+    addEmulatorPacket,
     beforeEachFaucet,
     enforceSelfSend,
     faucetOffchain,
     randomP2TR,
 } from "./utils";
 
-const INTROSPECTOR_URL = "http://localhost:7073";
+const EMULATOR_URL = "http://localhost:7073";
 const ARK_SERVER_URL = "http://localhost:7070";
 const DELEGATE_AMOUNT = 10_000;
 const DELEGATE_EXIT_DELAY = 512;
 
 describe("arkade delegate (covenant batch refresh) — intent submission", () => {
-    const introspector = new RestIntrospectorProvider(INTROSPECTOR_URL);
+    const emulator = new RestEmulatorProvider(EMULATOR_URL);
     const arkProvider = new RestArkProvider(ARK_SERVER_URL);
     const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
 
     let serverXOnlyPubkey: Uint8Array;
-    let introspectorPubkey: Uint8Array;
+    let emulatorPubkey: Uint8Array;
 
     beforeAll(async () => {
         serverXOnlyPubkey = hex.decode((await arkProvider.getInfo()).signerPubkey).slice(1);
-        introspectorPubkey = hex.decode((await introspector.getInfo()).signerPubkey);
+        emulatorPubkey = hex.decode((await emulator.getInfo()).signerPubkey);
     });
 
     beforeEach(beforeEachFaucet, 20000);
@@ -64,7 +64,7 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
             const vtxoScript = new arkade.ArkadeVtxoScript([
                 {
                     arkadeScript,
-                    introspectors: [introspectorPubkey],
+                    emulators: [emulatorPubkey],
                     tapscript: MultisigTapscript.encode({
                         pubkeys: [serverXOnlyPubkey],
                     }),
@@ -113,7 +113,7 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
             const delegateClosure = MultisigTapscript.encode({
                 pubkeys: [
                     serverXOnlyPubkey,
-                    arkade.computeArkadeScriptPublicKey(introspectorPubkey, arkadeScript),
+                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScript),
                 ],
             });
             const arkadeLeaf = vtxoScript.findLeaf(hex.encode(delegateClosure.script));
@@ -147,15 +147,15 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
 
             /**
              * Build an intent proof for the given outputs, then attach the
-             * introspector packet and PrevArkTxField required by the covenant.
+             * emulator packet and PrevArkTxField required by the covenant.
              */
             const buildIntent = (
                 outputs: { script: Uint8Array; amount: bigint }[],
             ): Transaction => {
                 const proof = Intent.create(message, [coin], outputs);
                 // Input 1 is the VTXO input. Attach the arkade script so the
-                // introspector knows which covenant to execute.
-                addIntrospectorPacket(proof, [
+                // emulator knows which covenant to execute.
+                addEmulatorPacket(proof, [
                     {
                         vin: 1,
                         script: arkadeScript,
@@ -168,18 +168,18 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
                 return proof;
             };
 
-            // Negative test: wrong destination — introspector must reject.
+            // Negative test: wrong destination — emulator must reject.
             const badDestProof = buildIntent([
                 { script: randomP2TR(), amount: BigInt(DELEGATE_AMOUNT) },
             ]);
             await expect(
-                introspector.submitIntent({
+                emulator.submitIntent({
                     proof: base64.encode(badDestProof.toPSBT()),
                     message,
                 }),
             ).rejects.toThrow();
 
-            // Negative test: wrong amount — introspector must reject.
+            // Negative test: wrong amount — emulator must reject.
             const badAmtProof = buildIntent([
                 {
                     script: delegatePkScript,
@@ -187,7 +187,7 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
                 },
             ]);
             await expect(
-                introspector.submitIntent({
+                emulator.submitIntent({
                     proof: base64.encode(badAmtProof.toPSBT()),
                     message,
                 }),
@@ -200,12 +200,12 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
                     amount: BigInt(DELEGATE_AMOUNT),
                 },
             ]);
-            const signedProof = await introspector.submitIntent({
+            const signedProof = await emulator.submitIntent({
                 proof: base64.encode(validProof.toPSBT()),
                 message,
             });
 
-            // Server accepts the introspector-co-signed proof.
+            // Server accepts the emulator-co-signed proof.
             const intentId = await arkProvider.registerIntent({
                 proof: signedProof,
                 message,
@@ -261,10 +261,10 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
 /**
  * Custom Batch.Handler for the delegate flow.
  *
- * In the delegate flow, the forfeit closure is [server, introspector_tweaked]
+ * In the delegate flow, the forfeit closure is [server, emulator_tweaked]
  * (NO user key). Instead of signing the forfeit with the user identity, we
- * submit it unsigned to the introspector via `submitFinalization`, which adds
- * the server + tweaked-introspector co-signatures.
+ * submit it unsigned to the emulator via `submitFinalization`, which adds
+ * the server + tweaked-emulator co-signatures.
  */
 function buildDelegateHandler(opts: {
     intentId: string;
@@ -279,7 +279,7 @@ function buildDelegateHandler(opts: {
     };
     session: any;
 }): Batch.Handler {
-    const introspector = new RestIntrospectorProvider(INTROSPECTOR_URL);
+    const emulator = new RestEmulatorProvider(EMULATOR_URL);
     const arkProvider = new RestArkProvider(ARK_SERVER_URL);
 
     let batchId: string;
@@ -378,7 +378,7 @@ function buildDelegateHandler(opts: {
                 forfeitOutputScript,
             );
 
-            // Build connector tree nodes for the introspector.
+            // Build connector tree nodes for the emulator.
             const connectorNodes: ConnectorTreeNode[] = [];
             for (const sub of connectorTree.iterator()) {
                 const children: Record<string, string> = {};
@@ -392,7 +392,7 @@ function buildDelegateHandler(opts: {
                 });
             }
 
-            const result = await introspector.submitFinalization(
+            const result = await emulator.submitFinalization(
                 { proof: opts.signedProof, message: opts.message },
                 [base64.encode(forfeitTx.toPSBT())],
                 connectorNodes,

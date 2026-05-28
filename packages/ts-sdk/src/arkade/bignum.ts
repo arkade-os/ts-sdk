@@ -1,6 +1,6 @@
 /**
  * BigNum — arbitrary-precision sign-magnitude little-endian encoding used by
- * the arkade VM in introspector v0.0.1. Up to 520 bytes (= MaxScriptElementSize).
+ * the arkade VM in emulator v0.0.1. Up to 520 bytes (= MaxScriptElementSize).
  *
  * Wire format:
  *   - empty bytes   = 0

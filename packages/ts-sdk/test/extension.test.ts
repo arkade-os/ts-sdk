@@ -162,9 +162,9 @@ describe("Extension", () => {
             expect(ext.getAssetPacket()).not.toBeNull();
         });
 
-        it("introspector", () => {
+        it("emulator", () => {
             const ext = Extension.fromBytes(hex.decode("6a0b41524b0106010000015100"));
-            expect(ext.getIntrospectorPacket()).not.toBeNull();
+            expect(ext.getEmulatorPacket()).not.toBeNull();
         });
 
         it("banco offer (generic packet lookup)", () => {

@@ -198,11 +198,11 @@ import {
     SubscriptionEvent,
 } from "./providers/indexer";
 import {
-    RestIntrospectorProvider,
-    type IntrospectorProvider,
-    type IntrospectorInfo,
+    RestEmulatorProvider,
+    type EmulatorProvider,
+    type EmulatorInfo,
     type ConnectorTreeNode,
-} from "./providers/introspector";
+} from "./providers/emulator";
 import type { ArkadeExtendedCoin } from "./arkade/batch";
 import type { ArkadeLeaf, ArkadeVtxoInput } from "./arkade/vtxoScript";
 import { Nonces } from "./musig2/nonces";
@@ -240,7 +240,7 @@ export * from "./arkfee";
 export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
-export * from "./extension/introspector";
+export * from "./extension/emulator";
 
 // Contracts
 // Side-effect import: registers the built-in handlers with `contractHandlers`.
@@ -335,7 +335,7 @@ export {
     WsElectrumChainSource,
     RestArkProvider,
     RestIndexerProvider,
-    RestIntrospectorProvider,
+    RestEmulatorProvider,
 
     // Script-related
     ArkAddress,
@@ -523,9 +523,9 @@ export type {
     VtxoChain,
     Tx,
 
-    // Introspector types
-    IntrospectorProvider,
-    IntrospectorInfo,
+    // Emulator types
+    EmulatorProvider,
+    EmulatorInfo,
     ConnectorTreeNode,
 
     // Provider types

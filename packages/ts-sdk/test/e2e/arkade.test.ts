@@ -15,37 +15,37 @@ import {
     Transaction,
     Intent,
     Batch,
-    RestIntrospectorProvider,
+    RestEmulatorProvider,
     Extension,
-    IntrospectorPacket,
+    EmulatorPacket,
 } from "../../src";
 import { beforeEachFaucet, createTestArkWallet, createTestIdentity, faucetOffchain } from "./utils";
 
 /**
- * Creates an Extension OP_RETURN output containing an IntrospectorPacket.
+ * Creates an Extension OP_RETURN output containing an EmulatorPacket.
  * Optionally merges with other ExtensionPackets (e.g., asset packets).
  */
-function makeIntrospectorExtensionOutput(
+function makeEmulatorExtensionOutput(
     vin: number,
     scriptBytes: Uint8Array,
     ...extraPackets: import("../../src/extension").ExtensionPacket[]
 ) {
-    const packet = IntrospectorPacket.create([
+    const packet = EmulatorPacket.create([
         { vin, script: scriptBytes, witness: new Uint8Array(0) },
     ]);
     return Extension.create([...extraPackets, packet]).txOut();
 }
 
-const INTROSPECTOR_URL = "http://localhost:7073";
+const EMULATOR_URL = "http://localhost:7073";
 const ARK_SERVER_URL = "http://localhost:7070";
 
 describe("arkade", () => {
-    const introspector = new RestIntrospectorProvider(INTROSPECTOR_URL);
+    const emulator = new RestEmulatorProvider(EMULATOR_URL);
     const arkProvider = new RestArkProvider(ARK_SERVER_URL);
     const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
 
     let serverXOnlyPubkey: Uint8Array;
-    let introspectorPubkey: Uint8Array; // full compressed (33 bytes with 02/03 prefix)
+    let emulatorPubkey: Uint8Array; // full compressed (33 bytes with 02/03 prefix)
     let checkpointUnrollClosure: CSVMultisigTapscript.Type;
 
     beforeAll(async () => {
@@ -55,8 +55,8 @@ describe("arkade", () => {
             hex.decode(arkInfo.checkpointTapscript),
         );
 
-        const introInfo = await introspector.getInfo();
-        introspectorPubkey = hex.decode(introInfo.signerPubkey);
+        const introInfo = await emulator.getInfo();
+        emulatorPubkey = hex.decode(introInfo.signerPubkey);
     });
 
     beforeEach(beforeEachFaucet, 20000);
@@ -114,7 +114,7 @@ describe("arkade", () => {
         const vtxoScript = new arkade.ArkadeVtxoScript([
             {
                 arkadeScript: arkadeScriptBytes,
-                introspectors: [introspectorPubkey],
+                emulators: [emulatorPubkey],
                 tapscript: MultisigTapscript.encode({
                     pubkeys: [bobPubkey, serverXOnlyPubkey],
                 }),
@@ -139,7 +139,7 @@ describe("arkade", () => {
             pubkeys: [
                 bobPubkey,
                 serverXOnlyPubkey,
-                arkade.computeArkadeScriptPublicKey(introspectorPubkey, arkadeScriptBytes),
+                arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScriptBytes),
             ],
         });
         const tapLeafScript = vtxoScript.findLeaf(hex.encode(multisig.script));
@@ -151,22 +151,22 @@ describe("arkade", () => {
             [{ ...vtxo, tapLeafScript, tapTree }],
             [
                 { script: alicePkScript, amount: BigInt(fundAmount) },
-                makeIntrospectorExtensionOutput(0, arkadeScriptBytes),
+                makeEmulatorExtensionOutput(0, arkadeScriptBytes),
             ],
             checkpointUnrollClosure,
         );
 
-        // Bob signs the arkTx and the checkpoints. In v0.0.1 the introspector
+        // Bob signs the arkTx and the checkpoints. In v0.0.1 the emulator
         // becomes the finalizer when it is the last non-arkd signer, and it
         // verifies all non-arkd signatures on checkpoints before forwarding to
         // arkd — so Bob's checkpoint sigs must be present BEFORE submitTx.
         const bobSignedArkTx = await bob.sign(arkTx);
         const bobSignedCheckpoints = await Promise.all(checkpoints.map((c) => bob.sign(c)));
 
-        // Submit to introspector. It signs with the tweaked key, then
+        // Submit to emulator. It signs with the tweaked key, then
         // (because it is the last non-arkd signer) calls arkd internally to
         // submit + finalize. No follow-up arkProvider.submitTx is needed.
-        const introResult = await introspector.submitTx(
+        const introResult = await emulator.submitTx(
             base64.encode(bobSignedArkTx.toPSBT()),
             bobSignedCheckpoints.map((c) => base64.encode(c.toPSBT())),
         );
@@ -190,7 +190,7 @@ describe("arkade", () => {
         const vtxoScript = new arkade.ArkadeVtxoScript([
             {
                 arkadeScript: arkadeScriptBytes,
-                introspectors: [introspectorPubkey],
+                emulators: [emulatorPubkey],
                 tapscript: MultisigTapscript.encode({
                     pubkeys: [bobPubkey, serverXOnlyPubkey],
                 }),
@@ -219,7 +219,7 @@ describe("arkade", () => {
             pubkeys: [
                 bobPubkey,
                 serverXOnlyPubkey,
-                arkade.computeArkadeScriptPublicKey(introspectorPubkey, arkadeScriptBytes),
+                arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScriptBytes),
             ],
         });
         const arkadeLeaf = vtxoScript.findLeaf(hex.encode(multisig.script));
@@ -261,15 +261,15 @@ describe("arkade", () => {
         const intentProof = Intent.create(
             message,
             [coin],
-            [...outputs, makeIntrospectorExtensionOutput(1, arkadeScriptBytes)],
+            [...outputs, makeEmulatorExtensionOutput(1, arkadeScriptBytes)],
         );
 
         // Bob signs the intent
         const signedProof = await bob.sign(intentProof);
 
-        // Submit to introspector
+        // Submit to emulator
         const signedProofB64 = base64.encode(signedProof.toPSBT());
-        const introSignedProof = await introspector.submitIntent({
+        const introSignedProof = await emulator.submitIntent({
             proof: signedProofB64,
             message,
         });
@@ -291,7 +291,7 @@ describe("arkade", () => {
             message,
             session,
             arkProvider,
-            introspector,
+            emulator,
             networks.regtest,
         );
 
@@ -330,7 +330,7 @@ describe("arkade", () => {
         const vtxoScript = new arkade.ArkadeVtxoScript([
             {
                 arkadeScript: arkadeScriptBytes,
-                introspectors: [introspectorPubkey],
+                emulators: [emulatorPubkey],
                 tapscript: MultisigTapscript.encode({
                     pubkeys: [bobPubkey, serverXOnlyPubkey],
                 }),
@@ -366,7 +366,7 @@ describe("arkade", () => {
             pubkeys: [
                 bobPubkey,
                 serverXOnlyPubkey,
-                arkade.computeArkadeScriptPublicKey(introspectorPubkey, arkadeScriptBytes),
+                arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScriptBytes),
             ],
         });
         const arkadeLeaf = vtxoScript.findLeaf(hex.encode(multisig.script));
@@ -421,13 +421,13 @@ describe("arkade", () => {
         const intentProof = Intent.create(
             message,
             [coin],
-            [...outputs, makeIntrospectorExtensionOutput(1, arkadeScriptBytes)],
+            [...outputs, makeEmulatorExtensionOutput(1, arkadeScriptBytes)],
         );
 
         const signedProof = await bob.sign(intentProof);
         const signedProofB64 = base64.encode(signedProof.toPSBT());
 
-        const introSignedProof = await introspector.submitIntent({
+        const introSignedProof = await emulator.submitIntent({
             proof: signedProofB64,
             message,
         });
@@ -447,7 +447,7 @@ describe("arkade", () => {
             message,
             session,
             arkProvider,
-            introspector,
+            emulator,
             networks.regtest,
         );
 
@@ -502,7 +502,7 @@ describe("arkade", () => {
         const vtxoScript = new arkade.ArkadeVtxoScript([
             {
                 arkadeScript: arkadeScriptBytes,
-                introspectors: [introspectorPubkey],
+                emulators: [emulatorPubkey],
                 tapscript: MultisigTapscript.encode({
                     pubkeys: [bobPubkey, serverXOnlyPubkey],
                 }),
@@ -525,7 +525,7 @@ describe("arkade", () => {
             pubkeys: [
                 bobPubkey,
                 serverXOnlyPubkey,
-                arkade.computeArkadeScriptPublicKey(introspectorPubkey, arkadeScriptBytes),
+                arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScriptBytes),
             ],
         });
         const tapLeafScript = vtxoScript.findLeaf(hex.encode(multisig.script));
@@ -542,10 +542,10 @@ describe("arkade", () => {
             ),
         ]);
 
-        // Build offchain tx outputs (combined Extension with asset + introspector packets)
+        // Build offchain tx outputs (combined Extension with asset + emulator packets)
         const outputs = [
             { script: alicePkScript, amount: BigInt(fundAmount) },
-            makeIntrospectorExtensionOutput(0, arkadeScriptBytes, assetPacket),
+            makeEmulatorExtensionOutput(0, arkadeScriptBytes, assetPacket),
         ];
 
         const { arkTx, checkpoints } = buildOffchainTx(
@@ -554,12 +554,12 @@ describe("arkade", () => {
             checkpointUnrollClosure,
         );
 
-        // Bob signs the arkTx and checkpoints; introspector auto-finalizes via
+        // Bob signs the arkTx and checkpoints; emulator auto-finalizes via
         // arkd because it's the last non-arkd signer.
         const bobSignedArkTx = await bob.sign(arkTx);
         const bobSignedCheckpoints = await Promise.all(checkpoints.map((c) => bob.sign(c)));
 
-        const introResult = await introspector.submitTx(
+        const introResult = await emulator.submitTx(
             base64.encode(bobSignedArkTx.toPSBT()),
             bobSignedCheckpoints.map((c) => base64.encode(c.toPSBT())),
         );
@@ -604,7 +604,7 @@ describe("arkade", () => {
         const settleVtxoScript = new arkade.ArkadeVtxoScript([
             {
                 arkadeScript: settleArkadeScript,
-                introspectors: [introspectorPubkey],
+                emulators: [emulatorPubkey],
                 tapscript: MultisigTapscript.encode({
                     pubkeys: [bobPubkey, serverXOnlyPubkey],
                 }),
@@ -641,7 +641,7 @@ describe("arkade", () => {
         const mintVtxoScript = new arkade.ArkadeVtxoScript([
             {
                 arkadeScript: mintArkadeScript,
-                introspectors: [introspectorPubkey],
+                emulators: [emulatorPubkey],
                 tapscript: MultisigTapscript.encode({
                     pubkeys: [bobPubkey, serverXOnlyPubkey],
                 }),
@@ -664,7 +664,7 @@ describe("arkade", () => {
             pubkeys: [
                 bobPubkey,
                 serverXOnlyPubkey,
-                arkade.computeArkadeScriptPublicKey(introspectorPubkey, mintArkadeScript),
+                arkade.computeArkadeScriptPublicKey(emulatorPubkey, mintArkadeScript),
             ],
         });
         const mintTapLeaf = mintVtxoScript.findLeaf(hex.encode(mintMultisig.script));
@@ -689,21 +689,21 @@ describe("arkade", () => {
                     script: settleContractPkScript,
                     amount: BigInt(fundAmount),
                 },
-                makeIntrospectorExtensionOutput(0, mintArkadeScript, issuancePacket),
+                makeEmulatorExtensionOutput(0, mintArkadeScript, issuancePacket),
             ],
             checkpointUnrollClosure,
         );
 
-        // Bob signs the mint tx and checkpoints; introspector auto-finalizes via
+        // Bob signs the mint tx and checkpoints; emulator auto-finalizes via
         // arkd because it's the last non-arkd signer.
         const bobSignedMintTx = await bob.sign(mintTx);
         const bobSignedMintCheckpoints = await Promise.all(mintCheckpoints.map((c) => bob.sign(c)));
 
-        const introMintResult = await introspector.submitTx(
+        const introMintResult = await emulator.submitTx(
             base64.encode(bobSignedMintTx.toPSBT()),
             bobSignedMintCheckpoints.map((c) => base64.encode(c.toPSBT())),
         );
-        // Extract the mint txid from the introspector-finalized PSBT.
+        // Extract the mint txid from the emulator-finalized PSBT.
         const mintTxid = Transaction.fromPSBT(base64.decode(introMintResult.signedArkTx)).id;
         expect(mintTxid).toBeTruthy();
 
@@ -720,7 +720,7 @@ describe("arkade", () => {
             pubkeys: [
                 bobPubkey,
                 serverXOnlyPubkey,
-                arkade.computeArkadeScriptPublicKey(introspectorPubkey, settleArkadeScript),
+                arkade.computeArkadeScriptPublicKey(emulatorPubkey, settleArkadeScript),
             ],
         });
         const settleArkadeLeaf = settleVtxoScript.findLeaf(hex.encode(settleMultisig.script));
@@ -771,13 +771,13 @@ describe("arkade", () => {
         const settleIntentProof = Intent.create(
             settleMessage,
             [settleCoin],
-            [...outputs, makeIntrospectorExtensionOutput(1, settleArkadeScript, transferPacket)],
+            [...outputs, makeEmulatorExtensionOutput(1, settleArkadeScript, transferPacket)],
         );
 
         const signedSettleProof = await bob.sign(settleIntentProof);
         const signedSettleProofB64 = base64.encode(signedSettleProof.toPSBT());
 
-        const introSettleProof = await introspector.submitIntent({
+        const introSettleProof = await emulator.submitIntent({
             proof: signedSettleProofB64,
             message: settleMessage,
         });
@@ -796,7 +796,7 @@ describe("arkade", () => {
             settleMessage,
             session,
             arkProvider,
-            introspector,
+            emulator,
             networks.regtest,
         );
 

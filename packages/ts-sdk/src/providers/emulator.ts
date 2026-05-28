@@ -1,19 +1,19 @@
 /**
- * Introspector REST client.
+ * Emulator REST client.
  *
- * The introspector is a signing service that executes Arkade scripts
+ * The emulator is a signing service that executes Arkade scripts
  * and co-signs transactions when the scripts pass validation.
  */
 
 import { Intent } from "../intent";
 
-export interface IntrospectorInfo {
+export interface EmulatorInfo {
     version: string;
     signerPubkey: string;
 }
 
-export interface IntrospectorProvider {
-    getInfo(): Promise<IntrospectorInfo>;
+export interface EmulatorProvider {
+    getInfo(): Promise<EmulatorInfo>;
     submitTx(
         arkTx: string,
         checkpointTxs: string[],
@@ -44,29 +44,29 @@ export interface ConnectorTreeNode {
 }
 
 /**
- * REST-based introspector client.
+ * REST-based emulator client.
  *
  * @example
  * ```typescript
- * const client = new RestIntrospectorProvider('http://localhost:7073');
+ * const client = new RestEmulatorProvider('http://localhost:7073');
  * const info = await client.getInfo();
- * console.log('Introspector pubkey:', info.signerPubkey);
+ * console.log('Emulator pubkey:', info.signerPubkey);
  * ```
  */
-export class RestIntrospectorProvider implements IntrospectorProvider {
+export class RestEmulatorProvider implements EmulatorProvider {
     constructor(public serverUrl: string) {}
 
-    async getInfo(): Promise<IntrospectorInfo> {
+    async getInfo(): Promise<EmulatorInfo> {
         const url = `${this.serverUrl}/v1/info`;
         const response = await fetch(url);
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`Failed to get introspector info: ${errorText}`);
+            throw new Error(`Failed to get emulator info: ${errorText}`);
         }
         const data = await response.json();
         const signerPubkey = data.signerPubkey;
         if (typeof signerPubkey !== "string" || !signerPubkey) {
-            throw new Error("Invalid introspector info response: missing signerPubkey");
+            throw new Error("Invalid emulator info response: missing signerPubkey");
         }
         return {
             version: data.version ?? "",
@@ -93,19 +93,19 @@ export class RestIntrospectorProvider implements IntrospectorProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`Failed to submit tx to introspector: ${errorText}`);
+            throw new Error(`Failed to submit tx to emulator: ${errorText}`);
         }
 
         const data = await response.json();
         if (typeof data.signedArkTx !== "string" || !data.signedArkTx) {
-            throw new Error("Invalid introspector submitTx response: missing signedArkTx");
+            throw new Error("Invalid emulator submitTx response: missing signedArkTx");
         }
         if (
             !Array.isArray(data.signedCheckpointTxs) ||
             !data.signedCheckpointTxs.every((item: unknown) => typeof item === "string")
         ) {
             throw new Error(
-                "Invalid introspector submitTx response: signedCheckpointTxs must be an array of strings",
+                "Invalid emulator submitTx response: signedCheckpointTxs must be an array of strings",
             );
         }
         return {
@@ -132,12 +132,12 @@ export class RestIntrospectorProvider implements IntrospectorProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`Failed to submit intent to introspector: ${errorText}`);
+            throw new Error(`Failed to submit intent to emulator: ${errorText}`);
         }
 
         const data = await response.json();
         if (typeof data.signedProof !== "string" || !data.signedProof) {
-            throw new Error("Invalid introspector submitIntent response: missing signedProof");
+            throw new Error("Invalid emulator submitIntent response: missing signedProof");
         }
         return data.signedProof;
     }
@@ -159,7 +159,7 @@ export class RestIntrospectorProvider implements IntrospectorProvider {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             // Uses "signedIntent" (not "intent") because the proof was already
-            // co-signed by the introspector via submitIntent in a prior step.
+            // co-signed by the emulator via submitIntent in a prior step.
             body: JSON.stringify({
                 signedIntent: {
                     proof: intent.proof,
@@ -173,7 +173,7 @@ export class RestIntrospectorProvider implements IntrospectorProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`Failed to submit finalization to introspector: ${errorText}`);
+            throw new Error(`Failed to submit finalization to emulator: ${errorText}`);
         }
 
         const data = await response.json();
@@ -182,13 +182,13 @@ export class RestIntrospectorProvider implements IntrospectorProvider {
             !data.signedForfeits.every((item: unknown) => typeof item === "string")
         ) {
             throw new Error(
-                "Invalid introspector submitFinalization response: signedForfeits must be an array of strings",
+                "Invalid emulator submitFinalization response: signedForfeits must be an array of strings",
             );
         }
 
         if ("signedCommitmentTx" in data && typeof data.signedCommitmentTx !== "string") {
             throw new Error(
-                "Invalid introspector submitFinalization response: invalid signedCommitmentTx",
+                "Invalid emulator submitFinalization response: invalid signedCommitmentTx",
             );
         }
         return {
@@ -207,12 +207,12 @@ export class RestIntrospectorProvider implements IntrospectorProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`Failed to submit onchain tx to introspector: ${errorText}`);
+            throw new Error(`Failed to submit onchain tx to emulator: ${errorText}`);
         }
 
         const data = await response.json();
         if (typeof data.signedTx !== "string" || !data.signedTx) {
-            throw new Error("Invalid introspector submitOnchainTx response: missing signedTx");
+            throw new Error("Invalid emulator submitOnchainTx response: missing signedTx");
         }
         return { signedTx: data.signedTx };
     }

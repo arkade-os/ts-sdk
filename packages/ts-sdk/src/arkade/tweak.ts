@@ -5,7 +5,7 @@
  * The tweak is: tweakedPubKey = P + taggedHash("ArkScriptHash", script) * G
  *
  * This is NOT taproot tweaking — it's a simple EC point addition used by
- * the introspector service to bind a script to a signing key.
+ * the emulator service to bind a script to a signing key.
  */
 
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
@@ -46,7 +46,7 @@ export function arkadeWitnessHash(witness: Uint8Array): Uint8Array {
  * The input pubKey should be a compressed (33-byte) or x-only (32-byte) public key.
  * Returns a 32-byte x-only public key.
  *
- * @param pubKey - The introspector's base public key (32 or 33 bytes)
+ * @param pubKey - The emulator's base public key (32 or 33 bytes)
  * @param script - The raw Arkade script bytes
  * @returns 32-byte x-only tweaked public key
  */
@@ -54,7 +54,7 @@ export function computeArkadeScriptPublicKey(pubKey: Uint8Array, script: Uint8Ar
     const hash = arkadeScriptHash(script);
 
     // lift_x: always force even Y (BIP-340 convention).
-    // This matches the Go introspector's behavior which does:
+    // This matches the Go emulator's behavior which does:
     //   schnorr.ParsePubKey(schnorr.SerializePubKey(pubKey))
     // i.e. round-trips through x-only, forcing even Y regardless of input.
     const xOnly = pubKey.length === 33 ? pubKey.subarray(1) : pubKey;

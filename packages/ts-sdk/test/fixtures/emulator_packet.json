@@ -28,12 +28,12 @@
         {
             "name": "empty packet",
             "entries": [],
-            "expectedError": "empty introspector packet"
+            "expectedError": "empty emulator packet"
         },
         {
             "name": "empty packet from bytes",
             "encoded": "00",
-            "expectedError": "empty introspector packet"
+            "expectedError": "empty emulator packet"
         },
         {
             "name": "empty script",

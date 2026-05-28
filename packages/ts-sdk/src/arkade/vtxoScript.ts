@@ -2,7 +2,7 @@
  * Arkade VTXO Script
  *
  * Extends VtxoScript to support Arkade-enhanced tapscript leaves.
- * Arkade leaves have their pubkey set tweaked by the introspector's
+ * Arkade leaves have their pubkey set tweaked by the emulator's
  * script-bound key before being encoded into the taproot tree.
  *
  * @module arkade/vtxoScript
@@ -24,7 +24,7 @@ import { computeArkadeScriptPublicKey } from "./tweak";
 export type ArkadeLeaf = {
     arkadeScript: Uint8Array;
     tapscript: ArkTapscript<TapscriptType, any>;
-    introspectors: Uint8Array[];
+    emulators: Uint8Array[];
 };
 
 export type ArkadeVtxoInput = ArkadeLeaf | Uint8Array;
@@ -35,7 +35,7 @@ function isArkadeLeaf(input: ArkadeVtxoInput): input is ArkadeLeaf {
         !(input instanceof Uint8Array) &&
         "arkadeScript" in input &&
         "tapscript" in input &&
-        "introspectors" in input
+        "emulators" in input
     );
 }
 
@@ -65,7 +65,7 @@ function processScripts(scripts: ArkadeVtxoInput[]): {
 
     for (const input of scripts) {
         if (isArkadeLeaf(input)) {
-            const tweakedKeys = input.introspectors.map((pk) =>
+            const tweakedKeys = input.emulators.map((pk) =>
                 computeArkadeScriptPublicKey(pk, input.arkadeScript),
             );
             const params = {
@@ -87,7 +87,7 @@ function processScripts(scripts: ArkadeVtxoInput[]): {
 /**
  * VtxoScript subclass that supports Arkade-enhanced tapscript leaves.
  *
- * For each {@link ArkadeLeaf} in the constructor input, the introspectors'
+ * For each {@link ArkadeLeaf} in the constructor input, the emulators'
  * public keys are tweaked with the arkade script hash and appended to the
  * leaf's pubkey set before encoding into the taproot tree.
  * Plain `Uint8Array` leaves are passed through unchanged.
@@ -111,7 +111,7 @@ function processScripts(scripts: ArkadeVtxoInput[]): {
  * const vtxoScript = new ArkadeVtxoScript([
  *     {
  *         arkadeScript: arkadeScriptBytes,
- *         introspectors: [introspectorPubkey],
+ *         emulators: [emulatorPubkey],
  *         tapscript: MultisigTapscript.encode({
  *             pubkeys: [bobPubkey, serverPubkey],
  *         }),

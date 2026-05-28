@@ -464,8 +464,8 @@ describe("ArkadeVtxoScript", () => {
     // Deterministic test keys (32-byte x-only pubkeys)
     const userPubkey = new Uint8Array(32).fill(0x01);
     const serverPubkey = new Uint8Array(32).fill(0x02);
-    // Valid compressed introspector pubkey (secp256k1 generator point G)
-    const introspectorPubkey = hex.decode(
+    // Valid compressed emulator pubkey (secp256k1 generator point G)
+    const emulatorPubkey = hex.decode(
         "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
     );
 
@@ -485,7 +485,7 @@ describe("ArkadeVtxoScript", () => {
         const vtxo = new ArkadeVtxoScript([
             {
                 arkadeScript: arkadeScriptBytes,
-                introspectors: [introspectorPubkey],
+                emulators: [emulatorPubkey],
                 tapscript: multisig,
             },
         ]);
@@ -499,11 +499,11 @@ describe("ArkadeVtxoScript", () => {
         const vtxo = new ArkadeVtxoScript([
             {
                 arkadeScript: arkadeScriptBytes,
-                introspectors: [introspectorPubkey],
+                emulators: [emulatorPubkey],
                 tapscript: multisig,
             },
         ]);
-        const expectedTweaked = computeArkadeScriptPublicKey(introspectorPubkey, arkadeScriptBytes);
+        const expectedTweaked = computeArkadeScriptPublicKey(emulatorPubkey, arkadeScriptBytes);
         const expectedMultisig = MultisigTapscript.encode({
             pubkeys: [userPubkey, serverPubkey, expectedTweaked],
         });
@@ -518,7 +518,7 @@ describe("ArkadeVtxoScript", () => {
         const vtxo = new ArkadeVtxoScript([
             {
                 arkadeScript: arkadeScriptBytes,
-                introspectors: [introspectorPubkey],
+                emulators: [emulatorPubkey],
                 tapscript: multisig,
             },
         ]);
@@ -537,7 +537,7 @@ describe("ArkadeVtxoScript", () => {
         const vtxo = new ArkadeVtxoScript([
             {
                 arkadeScript: arkadeScriptBytes,
-                introspectors: [introspectorPubkey],
+                emulators: [emulatorPubkey],
                 tapscript: multisig,
             },
             csvExit.script,
@@ -548,7 +548,7 @@ describe("ArkadeVtxoScript", () => {
     });
 
     it("should match manual VtxoScript with arkade multisig + CSV exit", () => {
-        const expectedTweaked = computeArkadeScriptPublicKey(introspectorPubkey, arkadeScriptBytes);
+        const expectedTweaked = computeArkadeScriptPublicKey(emulatorPubkey, arkadeScriptBytes);
         const multisig = MultisigTapscript.encode({
             pubkeys: [userPubkey, serverPubkey],
         });
@@ -559,7 +559,7 @@ describe("ArkadeVtxoScript", () => {
         const vtxo = new ArkadeVtxoScript([
             {
                 arkadeScript: arkadeScriptBytes,
-                introspectors: [introspectorPubkey],
+                emulators: [emulatorPubkey],
                 tapscript: multisig,
             },
             csvExit.script,
@@ -580,11 +580,11 @@ describe("ArkadeVtxoScript", () => {
         const vtxo = new ArkadeVtxoScript([
             {
                 arkadeScript: arkadeScriptBytes,
-                introspectors: [introspectorPubkey],
+                emulators: [emulatorPubkey],
                 tapscript: csv,
             },
         ]);
-        const expectedTweaked = computeArkadeScriptPublicKey(introspectorPubkey, arkadeScriptBytes);
+        const expectedTweaked = computeArkadeScriptPublicKey(emulatorPubkey, arkadeScriptBytes);
         const manualCsv = CSVMultisigTapscript.encode({
             timelock: { type: "blocks", value: 100n },
             pubkeys: [userPubkey, expectedTweaked],
@@ -604,12 +604,12 @@ describe("ArkadeVtxoScript", () => {
         const vtxo = new ArkadeVtxoScript([
             {
                 arkadeScript: arkadeScriptBytes,
-                introspectors: [introspectorPubkey],
+                emulators: [emulatorPubkey],
                 tapscript: multisig1,
             },
             {
                 arkadeScript: arkadeScript2,
-                introspectors: [introspectorPubkey],
+                emulators: [emulatorPubkey],
                 tapscript: multisig2,
             },
         ]);
@@ -634,7 +634,7 @@ describe("ArkadeVtxoScript", () => {
     });
 });
 
-describe("Introspector Packet Opcodes", () => {
+describe("Emulator Packet Opcodes", () => {
     it("should define INSPECTINPUTARKADESCRIPTHASH at 0xc8", () => {
         expect(ARKADE_OP.INSPECTINPUTARKADESCRIPTHASH).toBe(0xc8);
         expect(OPCODE_NAMES[0xc8]).toBe("OP_INSPECTINPUTARKADESCRIPTHASH");

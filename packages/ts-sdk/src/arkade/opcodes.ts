@@ -4,7 +4,7 @@
  * This module defines ONLY Arkade-specific opcodes (0xb3, 0xc4-0xf3).
  * Standard Bitcoin opcodes are imported from @scure/btc-signer.
  *
- * Reference: arkade-os/introspector pkg/arkade/opcode.go
+ * Reference: arkade-os/emulator pkg/arkade/opcode.go
  */
 
 import { OP } from "@scure/btc-signer";
@@ -83,7 +83,7 @@ export const ARKADE_OP = {
     // Transaction ID (0xf3)
     TXID: 0xf3,
 
-    // Packet Introspection (0xf4-0xf5) — added in introspector v0.0.1
+    // Packet Introspection (0xf4-0xf5) — added in emulator v0.0.1
     INSPECTPACKET: 0xf4,
     INSPECTINPUTPACKET: 0xf5,
 } as const;

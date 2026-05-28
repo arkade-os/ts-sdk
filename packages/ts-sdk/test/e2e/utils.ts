@@ -20,7 +20,7 @@ import {
     ContractRepository,
     arkade,
     Extension,
-    IntrospectorPacket,
+    EmulatorPacket,
     networks,
     Transaction,
     WalletMode,
@@ -421,18 +421,18 @@ export function enforceSelfSend(): Uint8Array {
 
 /**
  * Inserts (or merges into existing) an Extension OP_RETURN containing an
- * IntrospectorPacket built from `entries`, modifying `tx` in place.
+ * EmulatorPacket built from `entries`, modifying `tx` in place.
  *
- * Behavior matches the Go `addIntrospectorPacket`:
- * - If an extension OP_RETURN already exists, the introspector packet is appended.
+ * Behavior matches the Go `addEmulatorPacket`:
+ * - If an extension OP_RETURN already exists, the emulator packet is appended.
  * - Otherwise, a new extension is inserted before the P2A anchor (if any),
  *   else appended at the end.
  */
-export function addIntrospectorPacket(
+export function addEmulatorPacket(
     tx: Transaction,
     entries: { vin: number; script: Uint8Array; witness?: Uint8Array }[],
 ): void {
-    const packet = IntrospectorPacket.create(
+    const packet = EmulatorPacket.create(
         entries.map((e) => ({
             vin: e.vin,
             script: e.script,

@@ -2,10 +2,10 @@ import { BufferReader, BufferWriter } from "../utils";
 import type { ExtensionPacket } from "../packet";
 
 /**
- * IntrospectorEntry represents a single entry in the Introspector Packet,
+ * EmulatorEntry represents a single entry in the Emulator Packet,
  * mapping a transaction input to its arkade script and witness data.
  */
-export interface IntrospectorEntry {
+export interface EmulatorEntry {
     /** Transaction input index (u16 LE) */
     vin: number;
     /** Arkade Script bytecode */
@@ -15,7 +15,7 @@ export interface IntrospectorEntry {
 }
 
 /**
- * IntrospectorPacket implements ExtensionPacket for type 0x01.
+ * EmulatorPacket implements ExtensionPacket for type 0x01.
  *
  * Internal wire format (inside TLV payload):
  *   compactSize(entry_count) + for each entry:
@@ -23,15 +23,15 @@ export interface IntrospectorEntry {
  *
  * Uses Bitcoin CompactSize encoding for internal length fields.
  */
-export class IntrospectorPacket implements ExtensionPacket {
+export class EmulatorPacket implements ExtensionPacket {
     /** PACKET_TYPE is the 1-byte TLV type tag used in the Extension envelope. */
     static readonly PACKET_TYPE = 1;
 
-    private constructor(public readonly entries: IntrospectorEntry[]) {}
+    private constructor(public readonly entries: EmulatorEntry[]) {}
 
-    static create(entries: IntrospectorEntry[]): IntrospectorPacket {
+    static create(entries: EmulatorEntry[]): EmulatorPacket {
         if (entries.length === 0) {
-            throw new Error("empty introspector packet");
+            throw new Error("empty emulator packet");
         }
         for (const entry of entries) {
             if (entry.script.length === 0) {
@@ -45,14 +45,14 @@ export class IntrospectorPacket implements ExtensionPacket {
             }
             seen.add(entry.vin);
         }
-        return new IntrospectorPacket(entries);
+        return new EmulatorPacket(entries);
     }
 
-    static fromBytes(data: Uint8Array): IntrospectorPacket {
+    static fromBytes(data: Uint8Array): EmulatorPacket {
         const reader = new BufferReader(data);
 
         const entryCount = reader.readCompactSize();
-        const entries: IntrospectorEntry[] = [];
+        const entries: EmulatorEntry[] = [];
 
         for (let i = 0; i < entryCount; i++) {
             const vin = reader.readUint16LE();
@@ -65,11 +65,11 @@ export class IntrospectorPacket implements ExtensionPacket {
             throw new Error(`unexpected ${reader.remaining()} trailing bytes`);
         }
 
-        return IntrospectorPacket.create(entries);
+        return EmulatorPacket.create(entries);
     }
 
     type(): number {
-        return IntrospectorPacket.PACKET_TYPE;
+        return EmulatorPacket.PACKET_TYPE;
     }
 
     serialize(): Uint8Array {

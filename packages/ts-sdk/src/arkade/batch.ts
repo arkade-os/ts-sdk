@@ -2,7 +2,7 @@
  * Arkade Batch Handler
  *
  * Factory function that creates a `Batch.Handler` for arkade-script
- * transactions with introspector co-signing. Handles both on-chain
+ * transactions with emulator co-signing. Handles both on-chain
  * boarding inputs and off-chain virtual VTXO settlement in a single batch.
  *
  * @module arkade/batch
@@ -15,7 +15,7 @@ import { tapLeafHash } from "@scure/btc-signer/payment.js";
 
 import type { Identity } from "../identity";
 import type { ArkProvider } from "../providers/ark";
-import type { IntrospectorProvider, ConnectorTreeNode } from "../providers/introspector";
+import type { EmulatorProvider, ConnectorTreeNode } from "../providers/emulator";
 import type { Network } from "../networks";
 import type { ExtendedCoin } from "../wallet";
 import type { SignerSession } from "../tree/signingSession";
@@ -46,7 +46,7 @@ export function createArkadeBatchHandler(
     message: Intent.RegisterMessage,
     session: SignerSession,
     arkProvider: ArkProvider,
-    introspector: IntrospectorProvider,
+    emulator: EmulatorProvider,
     network: Network,
 ): Batch.Handler {
     let batchId: string;
@@ -209,13 +209,13 @@ export function createArkadeBatchHandler(
             }
 
             // Sign boarding inputs on the commitment tx
-            // The introspector already knows the arkade scripts from the intent proof,
+            // The emulator already knows the arkade scripts from the intent proof,
             // so we don't modify the commitment tx outputs (which would change the txid).
             if (boardingIndices.length > 0) {
                 commitmentPsbt = await signer.sign(commitmentPsbt, boardingIndices);
             }
 
-            // Build connector tree nodes for introspector
+            // Build connector tree nodes for the emulator
             let connectorTreeNodes: ConnectorTreeNode[] | null = null;
             if (connectorTree) {
                 connectorTreeNodes = [];
@@ -236,8 +236,8 @@ export function createArkadeBatchHandler(
                 ? base64.encode(commitmentPsbt.toPSBT())
                 : event.commitmentTx;
 
-            // Submit to introspector for counter-signing
-            const introResult = await introspector.submitFinalization(
+            // Submit to the emulator for counter-signing
+            const emuResult = await emulator.submitFinalization(
                 { proof: signedProof, message },
                 signedForfeits,
                 connectorTreeNodes,
@@ -246,8 +246,8 @@ export function createArkadeBatchHandler(
 
             // Submit to server
             await arkProvider.submitSignedForfeitTxs(
-                introResult.signedForfeits,
-                introResult.signedCommitmentTx || (hasBoardingInputs ? commitmentB64 : undefined),
+                emuResult.signedForfeits,
+                emuResult.signedCommitmentTx || (hasBoardingInputs ? commitmentB64 : undefined),
             );
         },
     };
