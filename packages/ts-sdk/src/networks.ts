@@ -1,0 +1,41 @@
+import { NETWORK, TEST_NETWORK } from "@scure/btc-signer/utils.js";
+
+export type NetworkName = "bitcoin" | "testnet" | "signet" | "mutinynet" | "regtest";
+
+export interface Network {
+    hrp: string;
+    bech32: string;
+    pubKeyHash: number;
+    scriptHash: number;
+    wif: number;
+}
+export const getNetwork = (network: NetworkName): Network => {
+    return networks[network];
+};
+
+export const networks = {
+    bitcoin: withArkPrefix(NETWORK, "ark"),
+    testnet: withArkPrefix(TEST_NETWORK, "tark"),
+    signet: withArkPrefix(TEST_NETWORK, "tark"),
+    mutinynet: withArkPrefix(TEST_NETWORK, "tark"),
+    regtest: withArkPrefix(
+        {
+            ...TEST_NETWORK,
+            bech32: "bcrt",
+            pubKeyHash: 0x6f,
+            scriptHash: 0xc4,
+        },
+        "tark",
+    ),
+};
+
+function withArkPrefix(network: Omit<Network, "hrp">, prefix: string): Network {
+    return {
+        ...network,
+        hrp: prefix,
+    };
+}
+
+export const DEFAULT_ARKADE_SERVER_URL = "https://arkade.computer" as const;
+export const DEFAULT_NETWORK = networks.bitcoin;
+export const DEFAULT_NETWORK_NAME = "bitcoin" as const satisfies NetworkName;

@@ -4,7 +4,7 @@ name: TSDoc Actions
 on:
   push:
     tags:
-      - 'v*'  # Triggers on version tags
+      - "@arkade-os/sdk/**"
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
@@ -31,34 +31,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22.12.0'
-
       - name: Install pnpm
-        uses: pnpm/action-setup@v4.2.0
+        uses: pnpm/action-setup@v4
         with:
           version: 10.25.0
 
-      - name: Get pnpm store directory
-        shell: bash
-        run: |
-          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
+          node-version-file: ".nvmrc"
+          cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build TSDoc
-        run: pnpm run docs:build
+        run: pnpm -C packages/ts-sdk run docs:build
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

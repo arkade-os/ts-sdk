@@ -1,0 +1,119 @@
+{
+    "name": "@arkade-os/boltz-swap",
+    "version": "0.3.33",
+    "type": "module",
+    "description": "A production-ready TypeScript package that brings Boltz submarine-swaps to Arkade.",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "import": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.js"
+            },
+            "require": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.cjs"
+            }
+        },
+        "./expo": {
+            "import": {
+                "types": "./dist/expo/index.d.ts",
+                "default": "./dist/expo/index.js"
+            },
+            "require": {
+                "types": "./dist/expo/index.d.ts",
+                "default": "./dist/expo/index.cjs"
+            }
+        },
+        "./expo/background": {
+            "import": {
+                "types": "./dist/expo/background.d.ts",
+                "default": "./dist/expo/background.js"
+            },
+            "require": {
+                "types": "./dist/expo/background.d.ts",
+                "default": "./dist/expo/background.cjs"
+            }
+        },
+        "./repositories/sqlite": {
+            "import": {
+                "types": "./dist/repositories/sqlite/index.d.ts",
+                "default": "./dist/repositories/sqlite/index.js"
+            },
+            "require": {
+                "types": "./dist/repositories/sqlite/index.d.ts",
+                "default": "./dist/repositories/sqlite/index.cjs"
+            }
+        },
+        "./repositories/realm": {
+            "import": {
+                "types": "./dist/repositories/realm/index.d.ts",
+                "default": "./dist/repositories/realm/index.js"
+            },
+            "require": {
+                "types": "./dist/repositories/realm/index.d.ts",
+                "default": "./dist/repositories/realm/index.cjs"
+            }
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "build": "tsup src/index.ts src/expo/index.ts src/expo/background.ts src/repositories/sqlite/index.ts src/repositories/realm/index.ts --format esm,cjs --dts --clean",
+        "smoke:dist": "node scripts/smoke-dist.mjs",
+        "typecheck": "tsc --noEmit",
+        "format": "prettier --write src test",
+        "lint": "prettier --check src test",
+        "prepack": "pnpm run build",
+        "test": "vitest run",
+        "test:unit": "vitest run --exclude test/e2e",
+        "test:integration": "vitest run test/e2e/**",
+        "test:setup-docker": "node test/e2e/setup.mjs",
+        "test:integration-docker": "vitest run test/e2e/**",
+        "regtest:start": "./regtest/start-env.sh",
+        "regtest:stop": "./regtest/stop-env.sh",
+        "regtest:clean": "./regtest/clean-env.sh",
+        "regtest": "pnpm regtest:clean && pnpm regtest:start && pnpm test:setup-docker"
+    },
+    "keywords": [
+        "arkade",
+        "boltz",
+        "swap",
+        "lightning",
+        "bitcoin"
+    ],
+    "author": "Arkade-OS",
+    "license": "MIT",
+    "dependencies": {
+        "@arkade-os/sdk": "workspace:*",
+        "@noble/curves": "2.0.1",
+        "@noble/hashes": "2.0.1",
+        "@scure/base": "2.0.0",
+        "@scure/btc-signer": "2.0.1",
+        "bip68": "1.0.4",
+        "light-bolt11-decoder": "3.2.0"
+    },
+    "peerDependencies": {
+        "expo-task-manager": ">=3.0.0",
+        "expo-background-task": ">=0.1.0"
+    },
+    "peerDependenciesMeta": {
+        "expo-task-manager": {
+            "optional": true
+        },
+        "expo-background-task": {
+            "optional": true
+        }
+    },
+    "devDependencies": {
+        "@types/ws": "^8.18.1",
+        "vite": "7.1.11"
+    },
+    "publishConfig": {
+        "access": "public",
+        "registry": "https://registry.npmjs.org/"
+    },
+    "packageManager": "pnpm@10.25.0"
+}
