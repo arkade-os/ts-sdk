@@ -322,7 +322,7 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         return this.inner.waitAndClaimBtc(pendingSwap);
     }
 
-    claimBtc(pendingSwap: BoltzChainSwap): Promise<void> {
+    claimBtc(pendingSwap: BoltzChainSwap): Promise<{ txid: string }> {
         return this.inner.claimBtc(pendingSwap);
     }
 
@@ -342,7 +342,7 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         return this.inner.waitAndClaimArk(pendingSwap);
     }
 
-    claimArk(pendingSwap: BoltzChainSwap): Promise<void> {
+    claimArk(pendingSwap: BoltzChainSwap): Promise<{ txid: string }> {
         return this.inner.claimArk(pendingSwap);
     }
 

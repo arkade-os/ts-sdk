@@ -970,6 +970,238 @@ describe("SwapManager", () => {
 
             await swapManager.stop();
         });
+
+        it("should resolve submarine swap completion with the on-chain txid", async () => {
+            vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                status: "transaction.claimed",
+                transaction: { id: mockTxId },
+            });
+            const pendingSwap = { ...mockSubmarineSwap };
+            await swapManager.start([pendingSwap]);
+
+            const waitPromise = swapManager.waitForSwapCompletion("submarine-swap-1");
+
+            // 2nd arg is the *new* status; swap starts at invoice.set.
+            setTimeout(async () => {
+                await swapManager["handleSwapStatusUpdate"](pendingSwap, "transaction.claimed");
+            }, 10);
+
+            const result = await waitPromise;
+            expect(result.txid).toBe(mockTxId);
+            expect(swapProvider.getSwapStatus).toHaveBeenCalledWith("submarine-swap-1");
+            // Regression guard for #509: must not resolve the Boltz swap id.
+            expect(result.txid).not.toBe("submarine-swap-1");
+
+            await swapManager.stop();
+        });
+
+        it("should resolve chain swap completion with the on-chain txid", async () => {
+            vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                status: "transaction.claimed",
+                transaction: { id: mockTxId },
+            });
+            const pendingSwap = { ...mockChainSwap };
+            await swapManager.start([pendingSwap]);
+
+            const waitPromise = swapManager.waitForSwapCompletion("chain-swap-1");
+
+            // 2nd arg is the *new* status; swap starts at swap.created.
+            setTimeout(async () => {
+                await swapManager["handleSwapStatusUpdate"](pendingSwap, "transaction.claimed");
+            }, 10);
+
+            const result = await waitPromise;
+            expect(result.txid).toBe(mockTxId);
+            expect(swapProvider.getSwapStatus).toHaveBeenCalledWith("chain-swap-1");
+            // Regression guard for #509: must not resolve the Boltz swap id.
+            expect(result.txid).not.toBe("chain-swap-1");
+
+            await swapManager.stop();
+        });
+
+        it("should prefer the claim txid captured from the chain claim callback", async () => {
+            // For chain swaps the manager performs the claim itself, so the
+            // claim txid is the on-chain completion — it must win over
+            // getSwapStatus, which does not surface it at transaction.claimed.
+            const claimTxId = "claim-tx-id-deadbeef";
+            const getSwapStatus = vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                status: "transaction.claimed",
+                transaction: { id: "status-tx-id-should-not-be-used" },
+            });
+            // mockChainSwap is ARK→BTC, so the BTC claim runs at the
+            // server-confirmed (claimable) status.
+            const claimBtc = vi.fn().mockResolvedValue({ txid: claimTxId });
+            swapManager.setCallbacks(makeCallbacks({ claimBtc }));
+
+            const pendingSwap = { ...mockChainSwap };
+            await swapManager.start([pendingSwap]);
+
+            const waitPromise = swapManager.waitForSwapCompletion("chain-swap-1");
+
+            setTimeout(async () => {
+                // Claimable status → manager claims and captures the txid.
+                await swapManager["handleSwapStatusUpdate"](
+                    pendingSwap,
+                    "transaction.server.confirmed",
+                );
+                // Final status → completion resolves from the captured txid.
+                await swapManager["handleSwapStatusUpdate"](pendingSwap, "transaction.claimed");
+            }, 10);
+
+            const result = await waitPromise;
+            expect(claimBtc).toHaveBeenCalledOnce();
+            expect(result.txid).toBe(claimTxId);
+            // The captured claim txid wins; the provider status id is ignored.
+            expect(getSwapStatus).not.toHaveBeenCalled();
+
+            await swapManager.stop();
+        });
+
+        it("should resolve the claim txid when transaction.claimed races an in-flight claim", async () => {
+            // Regression: transaction.claimed can arrive while the chain claim
+            // is still in-flight (Boltz learns the preimage at the cooperative
+            // claim step, before our broadcast returns). Completion must await
+            // the claim we started and resolve its txid — not fall back to
+            // getSwapStatus, which does not surface the chain claim txid and
+            // would reject.
+            const claimTxId = "claim-tx-id-racewinner";
+            const getSwapStatus = vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                // No transaction.id: a fallback here would reject.
+                status: "transaction.claimed",
+            });
+
+            let releaseClaim!: () => void;
+            let claimEntered!: () => void;
+            const claimStarted = new Promise<void>((resolve) => {
+                claimEntered = resolve;
+            });
+            // The claim blocks until releaseClaim(), modelling a broadcast that
+            // has not yet returned its txid when transaction.claimed arrives.
+            const claimBtc = vi.fn().mockImplementation(
+                () =>
+                    new Promise<{ txid: string }>((resolve) => {
+                        releaseClaim = () => resolve({ txid: claimTxId });
+                        claimEntered();
+                    }),
+            );
+            swapManager.setCallbacks(makeCallbacks({ claimBtc }));
+
+            const pendingSwap = { ...mockChainSwap };
+            await swapManager.start([pendingSwap]);
+
+            const waitPromise = swapManager.waitForSwapCompletion("chain-swap-1");
+
+            // Claimable status starts the BTC claim; it blocks (still in-flight).
+            const claimableUpdate = swapManager["handleSwapStatusUpdate"](
+                pendingSwap,
+                "transaction.server.confirmed",
+            );
+            await claimStarted; // claim started and its promise was captured
+
+            // transaction.claimed arrives mid-claim and drives completion.
+            const claimedUpdate = swapManager["handleSwapStatusUpdate"](
+                pendingSwap,
+                "transaction.claimed",
+            );
+
+            releaseClaim(); // claim broadcast returns its txid
+            await Promise.all([claimableUpdate, claimedUpdate]);
+
+            const result = await waitPromise;
+            expect(claimBtc).toHaveBeenCalledOnce();
+            expect(result.txid).toBe(claimTxId);
+            // Completion awaited the in-flight claim, not the provider status.
+            expect(getSwapStatus).not.toHaveBeenCalled();
+
+            await swapManager.stop();
+        });
+
+        it("should reject if a claimed swap has no transaction id", async () => {
+            vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                status: "transaction.claimed",
+            });
+            const pendingSwap = { ...mockSubmarineSwap };
+            await swapManager.start([pendingSwap]);
+
+            const waitPromise = swapManager.waitForSwapCompletion("submarine-swap-1");
+
+            setTimeout(async () => {
+                await swapManager["handleSwapStatusUpdate"](pendingSwap, "transaction.claimed");
+            }, 10);
+
+            await expect(waitPromise).rejects.toThrow(
+                "Transaction ID not available for completed swap submarine-swap-1",
+            );
+
+            await swapManager.stop();
+        });
+
+        it("should reject when a swap reaches a failed final status", async () => {
+            const pendingSwap = { ...mockSubmarineSwap };
+            await swapManager.start([pendingSwap]);
+
+            const waitPromise = swapManager.waitForSwapCompletion("submarine-swap-1");
+
+            setTimeout(async () => {
+                await swapManager["handleSwapStatusUpdate"](pendingSwap, "swap.expired");
+            }, 10);
+
+            await expect(waitPromise).rejects.toThrow("Swap failed with status: swap.expired");
+
+            await swapManager.stop();
+        });
+
+        it("should return the txid for an already-claimed submarine swap", async () => {
+            vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                status: "transaction.claimed",
+                transaction: { id: mockTxId },
+            });
+            const completedSwap = {
+                ...mockSubmarineSwap,
+                status: "transaction.claimed" as const,
+            };
+            await swapManager.start([completedSwap]);
+
+            const result = await swapManager.waitForSwapCompletion("submarine-swap-1");
+            expect(result.txid).toBe(mockTxId);
+            expect(swapProvider.getSwapStatus).toHaveBeenCalledWith("submarine-swap-1");
+            expect(result.txid).not.toBe("submarine-swap-1");
+
+            await swapManager.stop();
+        });
+
+        it("should return the txid for an already-claimed chain swap", async () => {
+            vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                status: "transaction.claimed",
+                transaction: { id: mockTxId },
+            });
+            const completedSwap = {
+                ...mockChainSwap,
+                status: "transaction.claimed" as const,
+            };
+            await swapManager.start([completedSwap]);
+
+            const result = await swapManager.waitForSwapCompletion("chain-swap-1");
+            expect(result.txid).toBe(mockTxId);
+            expect(swapProvider.getSwapStatus).toHaveBeenCalledWith("chain-swap-1");
+            expect(result.txid).not.toBe("chain-swap-1");
+
+            await swapManager.stop();
+        });
+
+        it("should throw for an already-final swap that did not claim", async () => {
+            const expiredSwap = {
+                ...mockSubmarineSwap,
+                status: "swap.expired" as const,
+            };
+            await swapManager.start([expiredSwap]);
+
+            await expect(swapManager.waitForSwapCompletion("submarine-swap-1")).rejects.toThrow(
+                "already in final status: swap.expired",
+            );
+
+            await swapManager.stop();
+        });
     });
 
     describe("Restored Swaps Validation", () => {

@@ -225,6 +225,7 @@ export const joinBatch = async (
  * @param output
  * @param arkInfo
  * @param arkProvider
+ * @returns The Ark transaction ID of the claim.
  */
 export const claimVHTLCwithOffchainTx = async (
     identity: Identity,
@@ -234,7 +235,7 @@ export const claimVHTLCwithOffchainTx = async (
     output: TransactionOutput,
     arkInfo: ArkInfo,
     arkProvider: ArkProvider,
-): Promise<void> => {
+): Promise<string> => {
     // create the server unroll script for checkpoint transactions
     const rawCheckpointTapscript = hex.decode(arkInfo.checkpointTapscript);
     const serverUnrollScript = CSVMultisigTapscript.decode(rawCheckpointTapscript);
@@ -275,6 +276,8 @@ export const claimVHTLCwithOffchainTx = async (
 
     // submit the final transaction to the Ark provider
     await arkProvider.finalizeTx(arkTxid, finalCheckpoints);
+
+    return arkTxid;
 };
 
 /**

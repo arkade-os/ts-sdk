@@ -20,7 +20,7 @@ import {
     BoltzSwap,
     ChainArkRefundOutcome,
 } from "./types";
-import { NetworkError, SwapNotFoundError } from "./errors";
+import { NetworkError, SwapError, SwapNotFoundError } from "./errors";
 import { logger } from "./logger";
 
 /**
@@ -141,8 +141,19 @@ export interface SwapManagerClient {
 export interface SwapManagerCallbacks {
     claim: (swap: BoltzReverseSwap) => Promise<void>;
     refund: (swap: BoltzSubmarineSwap) => Promise<void>;
-    claimArk: (swap: BoltzChainSwap) => Promise<void>;
-    claimBtc: (swap: BoltzChainSwap) => Promise<void>;
+    /**
+     * Claim the ARK side of a BTC→ARK chain swap.
+     *
+     * Returns the on-chain claim txid — the manager surfaces it from
+     * {@link SwapManager.waitForSwapCompletion}, since Boltz does not report a
+     * usable transaction id for chain swaps at `transaction.claimed`.
+     */
+    claimArk: (swap: BoltzChainSwap) => Promise<{ txid: string }>;
+    /**
+     * Claim the BTC side of an ARK→BTC chain swap. Returns the on-chain claim
+     * txid; see {@link SwapManagerCallbacks.claimArk}.
+     */
+    claimBtc: (swap: BoltzChainSwap) => Promise<{ txid: string }>;
     refundArk: (swap: BoltzChainSwap) => Promise<ChainArkRefundOutcome>;
     signServerClaim?: (swap: BoltzChainSwap) => Promise<void>;
     saveSwap: (swap: BoltzSwap) => Promise<void>;
@@ -220,11 +231,19 @@ export class SwapManager implements SwapManagerClient {
     // Per-swap subscriptions for UI hooks
     private swapSubscriptions = new Map<string, Set<SwapUpdateCallback>>();
 
+    // In-flight (or settled) chain-swap claim promises, keyed by swap id. The
+    // manager performs chain claims itself, so the claim tx it broadcasts is
+    // the swap's on-chain completion; getSwapStatus does not surface that txid
+    // at transaction.claimed. resolveClaimedTxid awaits the stored promise so a
+    // transaction.claimed update that races an in-flight claim still resolves
+    // the real txid instead of falling back to the provider and failing.
+    private chainClaimPromises = new Map<string, Promise<{ txid?: string } | void>>();
+
     // Action callbacks (injected via setCallbacks)
     private claimCallback: ((swap: BoltzReverseSwap) => Promise<void>) | null = null;
     private refundCallback: ((swap: BoltzSubmarineSwap) => Promise<void>) | null = null;
-    private claimArkCallback: ((swap: BoltzChainSwap) => Promise<void>) | null = null;
-    private claimBtcCallback: ((swap: BoltzChainSwap) => Promise<void>) | null = null;
+    private claimArkCallback: ((swap: BoltzChainSwap) => Promise<{ txid: string }>) | null = null;
+    private claimBtcCallback: ((swap: BoltzChainSwap) => Promise<{ txid: string }>) | null = null;
     private refundArkCallback: ((swap: BoltzChainSwap) => Promise<ChainArkRefundOutcome>) | null =
         null;
     private signServerClaimCallback: ((swap: BoltzChainSwap) => Promise<void>) | null = null;
@@ -384,6 +403,7 @@ export class SwapManager implements SwapManagerClient {
 
         // Store all initial swaps (including completed ones) for waitForSwapCompletion
         this.initialSwaps.clear();
+        this.chainClaimPromises.clear();
         for (const swap of pendingSwaps) {
             this.initialSwaps.set(swap.id, swap);
         }
@@ -505,6 +525,7 @@ export class SwapManager implements SwapManagerClient {
     async removeSwap(swapId: string): Promise<void> {
         this.monitoredSwaps.delete(swapId);
         this.swapSubscriptions.delete(swapId);
+        this.chainClaimPromises.delete(swapId);
         const retryTimer = this.pollRetryTimers.get(swapId);
         if (retryTimer) {
             clearTimeout(retryTimer);
@@ -556,9 +577,14 @@ export class SwapManager implements SwapManagerClient {
      * Blocks until the swap reaches a final status or fails.
      * Useful when you want blocking behavior even with SwapManager enabled.
      *
-     * @throws If the swap is already in a final status (submarine/chain swaps throw immediately;
-     *         reverse swaps return the existing txid).
+     * If the swap is already in a final status, resolves immediately with the
+     * on-chain txid of the successfully claimed swap (reverse: from
+     * getReverseSwapTxId; submarine/chain: from getSwapStatus) and throws for a
+     * failed final status.
+     *
+     * @throws If the swap is already in a failed final status.
      * @throws If the swap is not found in the manager.
+     * @throws If a completed swap has no transaction id available yet.
      */
     async waitForSwapCompletion(swapId: string): Promise<{ txid: string }> {
         // Quick checks without async executor
@@ -578,10 +604,12 @@ export class SwapManager implements SwapManagerClient {
                 const response = await this.swapProvider.getReverseSwapTxId(swap.id);
                 return { txid: response.id };
             }
-            if (isPendingSubmarineSwap(swap)) {
-                throw new Error("Submarine swap already completed");
+            if (isPendingSubmarineSwap(swap) || isPendingChainSwap(swap)) {
+                if (swap.status === "transaction.claimed") {
+                    return this.resolveClaimedTxid(swap.id);
+                }
+                throw new Error(`Swap ${swap.id} already in final status: ${swap.status}`);
             }
-            throw new Error("Chain swap already completed");
         }
 
         return new Promise<{ txid: string }>((resolve, reject) => {
@@ -603,13 +631,13 @@ export class SwapManager implements SwapManagerClient {
                     }
                 } else if (isPendingSubmarineSwap(updatedSwap)) {
                     if (updatedSwap.status === "transaction.claimed") {
-                        resolve({ txid: updatedSwap.id });
+                        this.resolveClaimedTxid(updatedSwap.id).then(resolve).catch(reject);
                     } else {
                         reject(new Error(`Swap failed with status: ${updatedSwap.status}`));
                     }
                 } else if (isPendingChainSwap(updatedSwap)) {
                     if (updatedSwap.status === "transaction.claimed") {
-                        resolve({ txid: updatedSwap.id });
+                        this.resolveClaimedTxid(updatedSwap.id).then(resolve).catch(reject);
                     } else {
                         reject(new Error(`Swap failed with status: ${updatedSwap.status}`));
                     }
@@ -622,6 +650,44 @@ export class SwapManager implements SwapManagerClient {
                 })
                 .catch(reject);
         });
+    }
+
+    /**
+     * Resolve the on-chain txid for a claimed submarine/chain swap.
+     *
+     * Chain swaps are claimed by the manager itself, so the claim txid captured
+     * from the claimArk/claimBtc callback is the swap's on-chain completion and
+     * is preferred — Boltz does not surface it via getSwapStatus at
+     * transaction.claimed. Submarine swaps (claimed by Boltz) and chain swaps
+     * we never claimed in this session (e.g. restored already-claimed) fall
+     * back to the provider status. Rejects when no transaction id is available,
+     * so callers never receive the Boltz swap id in place of a real txid.
+     */
+    private async resolveClaimedTxid(swapId: string): Promise<{ txid: string }> {
+        // Await the claim we started — it may still be in-flight when a racing
+        // transaction.claimed update fires — and prefer its txid; getSwapStatus
+        // does not surface it at transaction.claimed for chain swaps. Swallow
+        // the claim's rejection (executeAutonomousAction surfaces it) and fall
+        // through to the provider status for swaps we never claimed this
+        // session (e.g. restored already-claimed swaps).
+        const claimPromise = this.chainClaimPromises.get(swapId);
+        if (claimPromise) {
+            const claimTxid = await claimPromise.then(
+                (result) => result?.txid,
+                () => undefined,
+            );
+            if (claimTxid && claimTxid.trim() !== "") {
+                return { txid: claimTxid };
+            }
+        }
+        const status = await this.swapProvider.getSwapStatus(swapId);
+        const txid = status.transaction?.id;
+        if (!txid || txid.trim() === "") {
+            throw new SwapError({
+                message: `Transaction ID not available for completed swap ${swapId}`,
+            });
+        }
+        return { txid };
     }
 
     /**
@@ -901,6 +967,7 @@ export class SwapManager implements SwapManagerClient {
         if (!this.monitoredSwaps.has(swap.id)) return;
         this.monitoredSwaps.delete(swap.id);
         this.swapSubscriptions.delete(swap.id);
+        this.chainClaimPromises.delete(swap.id);
         const retryTimer = this.pollRetryTimers.get(swap.id);
         if (retryTimer) {
             clearTimeout(retryTimer);
@@ -1116,7 +1183,9 @@ export class SwapManager implements SwapManagerClient {
             return;
         }
 
-        await this.claimArkCallback(swap);
+        const claimPromise = this.claimArkCallback(swap);
+        this.rememberChainClaim(swap.id, claimPromise);
+        await claimPromise;
     }
 
     /**
@@ -1128,7 +1197,27 @@ export class SwapManager implements SwapManagerClient {
             return;
         }
 
-        await this.claimBtcCallback(swap);
+        const claimPromise = this.claimBtcCallback(swap);
+        this.rememberChainClaim(swap.id, claimPromise);
+        await claimPromise;
+    }
+
+    /**
+     * Store the in-flight claim promise returned by a claim callback so
+     * {@link resolveClaimedTxid} can await it and surface the real on-chain
+     * txid at transaction.claimed — even when that update races the still
+     * in-flight claim. Storing the promise (not the resolved txid) closes the
+     * window where the txid is not yet captured when transaction.claimed
+     * arrives. Defensive against callbacks that don't return a promise (older
+     * integrations, test doubles): those simply fall back to getSwapStatus.
+     */
+    private rememberChainClaim(
+        swapId: string,
+        claimPromise: Promise<{ txid?: string } | void>,
+    ): void {
+        if (claimPromise) {
+            this.chainClaimPromises.set(swapId, claimPromise);
+        }
     }
 
     /**

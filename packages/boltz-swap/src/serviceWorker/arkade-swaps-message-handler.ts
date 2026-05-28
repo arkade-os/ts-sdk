@@ -362,6 +362,7 @@ export type RequestClaimArk = RequestEnvelope & {
 };
 export type ResponseClaimArk = ResponseEnvelope & {
     type: "ARK_CLAIM_EXECUTED";
+    payload: { txid: string };
 };
 
 export type RequestClaimBtc = RequestEnvelope & {
@@ -370,6 +371,7 @@ export type RequestClaimBtc = RequestEnvelope & {
 };
 export type ResponseClaimBtc = ResponseEnvelope & {
     type: "BTC_CLAIM_EXECUTED";
+    payload: { txid: string };
 };
 
 export type RequestRefundArk = RequestEnvelope & {
@@ -1032,13 +1034,15 @@ export class ArkadeSwapsMessageHandler
                     });
                 }
 
-                case "CLAIM_ARK":
-                    await this.handler.claimArk(message.payload);
-                    return this.tagged({ id, type: "ARK_CLAIM_EXECUTED" });
+                case "CLAIM_ARK": {
+                    const res = await this.handler.claimArk(message.payload);
+                    return this.tagged({ id, type: "ARK_CLAIM_EXECUTED", payload: res });
+                }
 
-                case "CLAIM_BTC":
-                    await this.handler.claimBtc(message.payload);
-                    return this.tagged({ id, type: "BTC_CLAIM_EXECUTED" });
+                case "CLAIM_BTC": {
+                    const res = await this.handler.claimBtc(message.payload);
+                    return this.tagged({ id, type: "BTC_CLAIM_EXECUTED", payload: res });
+                }
 
                 case "REFUND_ARK": {
                     const outcome = await this.handler.refundArk(message.payload);
