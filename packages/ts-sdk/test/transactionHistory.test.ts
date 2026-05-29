@@ -220,6 +220,178 @@ describe("buildTransactionHistory", () => {
             expect(receivedTxs[0].key.commitmentTxid).toBe(sweepTxid);
         });
 
+        it("should suppress duplicate boarding batch receives when the boarding commitment id is missing", async () => {
+            const boardingTxid = "boarding-txid";
+            const indexerCommitmentTxid =
+                "ebf6bebe7b510934cf2ed3c167f77ea06d19cc104edf8b66e4721a103e0ed4f3";
+            const amount = 84960;
+            const baseDate = new Date("2026-05-27T20:00:00Z");
+
+            const boardingTx: ArkTransaction = {
+                key: {
+                    boardingTxid,
+                    commitmentTxid: "",
+                    arkTxid: "",
+                },
+                amount,
+                type: TxType.TxReceived,
+                settled: true,
+                createdAt: baseDate.getTime(),
+            };
+
+            const leafVtxo: VirtualCoin = {
+                txid: "86e31825f6a50d88c71eca33c7b4830d0aae4f320c12b12df0053c7b341cd4f3",
+                vout: 0,
+                value: amount,
+                status: {
+                    confirmed: true,
+                    isLeaf: true,
+                },
+                virtualStatus: {
+                    state: "settled",
+                    commitmentTxIds: [indexerCommitmentTxid],
+                },
+                settledBy: "",
+                createdAt: new Date(baseDate.getTime() + 104000),
+                isUnrolled: false,
+                isSpent: false,
+            };
+
+            const transactions = await buildTransactionHistory(
+                [leafVtxo],
+                [boardingTx],
+                new Set<string>(),
+            );
+
+            const receivedTxs = transactions.filter((tx) => tx.type === TxType.TxReceived);
+
+            expect(receivedTxs).toHaveLength(1);
+            expect(receivedTxs[0].key.boardingTxid).toBe(boardingTxid);
+            expect(
+                receivedTxs.some(
+                    (tx) =>
+                        tx.key.boardingTxid === "" &&
+                        tx.key.commitmentTxid === indexerCommitmentTxid,
+                ),
+            ).toBe(false);
+        });
+
+        it("should suppress duplicate boarding batch receives when settledBy is missing", async () => {
+            const boardingTxid = "boarding-txid";
+            const sweepTxid = "onchain-sweep-txid";
+            const indexerCommitmentTxid =
+                "ebf6bebe7b510934cf2ed3c167f77ea06d19cc104edf8b66e4721a103e0ed4f3";
+            const amount = 84960;
+            const baseDate = new Date("2026-05-27T20:00:00Z");
+
+            const boardingTx: ArkTransaction = {
+                key: {
+                    boardingTxid,
+                    commitmentTxid: sweepTxid,
+                    arkTxid: "",
+                },
+                amount,
+                type: TxType.TxReceived,
+                settled: true,
+                createdAt: baseDate.getTime(),
+            };
+
+            const leafVtxo: VirtualCoin = {
+                txid: "86e31825f6a50d88c71eca33c7b4830d0aae4f320c12b12df0053c7b341cd4f3",
+                vout: 0,
+                value: amount,
+                status: {
+                    confirmed: true,
+                    isLeaf: true,
+                },
+                virtualStatus: {
+                    state: "settled",
+                    commitmentTxIds: [indexerCommitmentTxid],
+                },
+                settledBy: "",
+                createdAt: new Date(baseDate.getTime() + 104000),
+                isUnrolled: false,
+                isSpent: false,
+            };
+
+            const transactions = await buildTransactionHistory(
+                [leafVtxo],
+                [boardingTx],
+                new Set<string>([sweepTxid]),
+            );
+
+            const receivedTxs = transactions.filter((tx) => tx.type === TxType.TxReceived);
+
+            expect(receivedTxs).toHaveLength(1);
+            expect(receivedTxs[0].key.boardingTxid).toBe(boardingTxid);
+            expect(
+                receivedTxs.some(
+                    (tx) =>
+                        tx.key.boardingTxid === "" &&
+                        tx.key.commitmentTxid === indexerCommitmentTxid,
+                ),
+            ).toBe(false);
+        });
+
+        it("should only suppress one same-amount batch receive per settled boarding entry", async () => {
+            const amount = 84960;
+            const baseDate = new Date("2026-05-27T20:00:00Z");
+            const boardingTx: ArkTransaction = {
+                key: {
+                    boardingTxid: "boarding-txid",
+                    commitmentTxid: "onchain-sweep-txid",
+                    arkTxid: "",
+                },
+                amount,
+                type: TxType.TxReceived,
+                settled: true,
+                createdAt: baseDate.getTime(),
+            };
+            const boardingSweepLeaf: VirtualCoin = {
+                txid: "boarding-sweep-vtxo",
+                vout: 0,
+                value: amount,
+                status: { confirmed: true, isLeaf: true },
+                virtualStatus: {
+                    state: "settled",
+                    commitmentTxIds: ["indexer-boarding-commitment"],
+                },
+                settledBy: "",
+                createdAt: new Date(baseDate.getTime() + 60000),
+                isUnrolled: false,
+                isSpent: false,
+            };
+            const independentReceiveLeaf: VirtualCoin = {
+                txid: "independent-receive-vtxo",
+                vout: 0,
+                value: amount,
+                status: { confirmed: true, isLeaf: true },
+                virtualStatus: {
+                    state: "settled",
+                    commitmentTxIds: ["independent-receive-commitment"],
+                },
+                settledBy: "",
+                createdAt: new Date(baseDate.getTime() + 120000),
+                isUnrolled: false,
+                isSpent: false,
+            };
+
+            const transactions = await buildTransactionHistory(
+                [boardingSweepLeaf, independentReceiveLeaf],
+                [boardingTx],
+                new Set<string>(["onchain-sweep-txid"]),
+            );
+
+            const receivedTxs = transactions.filter((tx) => tx.type === TxType.TxReceived);
+
+            expect(receivedTxs).toHaveLength(2);
+            expect(
+                receivedTxs.some(
+                    (tx) => tx.key.commitmentTxid === "independent-receive-commitment",
+                ),
+            ).toBe(true);
+        });
+
         it("should create a receive transaction for a new vtxo", async () => {
             const arkTxId = "receive-ark-tx-id";
             const baseDate = new Date("2025-10-31T20:00:00Z");
