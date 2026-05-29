@@ -1,3 +1,8 @@
+import { generateMnemonic } from "@scure/bip39";
+import { wordlist } from "@scure/bip39/wordlists/english.js";
+import { execSync } from "child_process";
+import { p2tr } from "@scure/btc-signer";
+import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     Wallet,
     SingleKey,
@@ -13,12 +18,16 @@ import {
     RestArkProvider,
     WalletRepository,
     ContractRepository,
+    arkade,
+    Extension,
+    EmulatorPacket,
+    networks,
+    Transaction,
     WalletMode,
     RestDelegateProvider,
 } from "../../src";
-import { execSync } from "child_process";
-import { generateMnemonic } from "@scure/bip39";
-import { wordlist } from "@scure/bip39/wordlists/english.js";
+import { ANCHOR_PKSCRIPT } from "../../src/utils/anchor";
+import type { ExtensionPacket } from "../../src/extension";
 
 export const arkdExec = "docker exec -t arkd";
 
@@ -339,4 +348,173 @@ export async function createTestArkWalletWithDelegateAndOverride(opts: {
         wallet,
         identity: opts.identity,
     };
+}
+
+/**
+ * Returns a freshly-generated taproot pkScript (pay-to-key, no script-path).
+ * Used as a "throwaway recipient" where the destination identity is irrelevant.
+ */
+export function randomP2TR(): Uint8Array {
+    const sk = schnorr.utils.randomSecretKey();
+    const xonly = schnorr.getPublicKey(sk);
+    const payment = p2tr(xonly, undefined, networks.regtest);
+    return payment.script;
+}
+
+/**
+ * Builds an arkade script that enforces:
+ *   output[witness[0]].scriptPubKey == taproot(witness_program)  AND
+ *   output[witness[0]].value == amount
+ *
+ * Witness stack (provided at spend time): [output_index].
+ * Mirrors the Go `enforcePayTo` helper.
+ */
+export function enforcePayTo(pkScript: Uint8Array, amount: bigint): Uint8Array {
+    if (pkScript[0] !== 0x51 || pkScript[1] !== 0x20) {
+        throw new Error("enforcePayTo: expected a v1 P2TR pkScript");
+    }
+    const witnessProgram = pkScript.slice(2);
+    return arkade.ArkadeScript.encode([
+        "DUP",
+        "INSPECTOUTPUTSCRIPTPUBKEY",
+        1,
+        "EQUALVERIFY",
+        witnessProgram,
+        "EQUALVERIFY",
+        "INSPECTOUTPUTVALUE",
+        amount,
+        "EQUAL",
+    ]);
+}
+
+/**
+ * Builds an arkade script that enforces:
+ *   tx.version == 2  (intent-proof gate, blocks off-chain Ark txs at v=3)
+ *   output[0].scriptPubKey == input[self].scriptPubKey
+ *   output[0].value        == input[self].value
+ *
+ * Witness stack: empty. Mirrors the Go `enforceSelfSend` helper.
+ */
+export function enforceSelfSend(): Uint8Array {
+    return arkade.ArkadeScript.encode([
+        "INSPECTVERSION",
+        new Uint8Array([0x02, 0x00, 0x00, 0x00]),
+        "EQUALVERIFY",
+        // output[0].scriptPubKey
+        0,
+        "INSPECTOUTPUTSCRIPTPUBKEY",
+        1,
+        "EQUALVERIFY",
+        "PUSHCURRENTINPUTINDEX",
+        "INSPECTINPUTSCRIPTPUBKEY",
+        1,
+        "EQUALVERIFY",
+        "EQUALVERIFY",
+        // output[0].value
+        0,
+        "INSPECTOUTPUTVALUE",
+        "PUSHCURRENTINPUTINDEX",
+        "INSPECTINPUTVALUE",
+        "EQUAL",
+    ]);
+}
+
+/**
+ * Inserts (or merges into existing) an Extension OP_RETURN containing an
+ * EmulatorPacket built from `entries`, modifying `tx` in place.
+ *
+ * Behavior matches the Go `addEmulatorPacket`:
+ * - If an extension OP_RETURN already exists, the emulator packet is appended.
+ * - Otherwise, a new extension is inserted before the P2A anchor (if any),
+ *   else appended at the end.
+ */
+export function addEmulatorPacket(
+    tx: Transaction,
+    entries: { vin: number; script: Uint8Array; witness?: Uint8Array }[],
+): void {
+    const packet = EmulatorPacket.create(
+        entries.map((e) => ({
+            vin: e.vin,
+            script: e.script,
+            witness: e.witness ?? new Uint8Array(0),
+        })),
+    );
+
+    // Try to merge into an existing extension output.
+    for (let i = 0; i < tx.outputsLength; i++) {
+        const out = tx.getOutput(i);
+        if (!out?.script) continue;
+        if (!Extension.isExtension(out.script)) continue;
+        const existing = Extension.fromBytes(out.script);
+        const merged = Extension.create([...existing.getPackets(), packet as ExtensionPacket]);
+        tx.updateOutput(i, { script: merged.serialize(), amount: 0n });
+        return;
+    }
+
+    // No existing extension — insert a new one.
+    const ext = Extension.create([packet as ExtensionPacket]);
+    const newOut = ext.txOut();
+
+    // If the last output is the P2A anchor, swap it: [..., anchor] → [..., ext, anchor].
+    const lastIdx = tx.outputsLength - 1;
+    const lastOut = tx.getOutput(lastIdx);
+    if (
+        lastOut?.script &&
+        lastOut.script.length === ANCHOR_PKSCRIPT.length &&
+        lastOut.script.every((b, j) => b === ANCHOR_PKSCRIPT[j])
+    ) {
+        // @scure Transaction has no `insertOutput`. Rebuild the last two outputs:
+        // overwrite slot lastIdx with the extension and append the anchor.
+        tx.updateOutput(lastIdx, {
+            script: newOut.script,
+            amount: newOut.amount,
+        });
+        tx.addOutput({ script: lastOut.script, amount: lastOut.amount ?? 0n });
+        return;
+    }
+
+    tx.addOutput({ script: newOut.script, amount: newOut.amount });
+}
+
+/**
+ * Returns the index of the first output whose script matches `pkScript`.
+ * Throws if none is found.
+ */
+export function findOutputIndex(tx: Transaction, pkScript: Uint8Array): number {
+    for (let i = 0; i < tx.outputsLength; i++) {
+        const out = tx.getOutput(i);
+        if (!out?.script) continue;
+        if (
+            out.script.length === pkScript.length &&
+            out.script.every((b, j) => b === pkScript[j])
+        ) {
+            return i;
+        }
+    }
+    throw new Error("findOutputIndex: no matching output");
+}
+
+/**
+ * Polls esplora at localhost:3000 until a UTXO appears at the given address.
+ * Returns the first UTXO found. Used by onchain spend tests.
+ */
+export async function waitForUtxo(
+    address: string,
+    timeoutMs = 60_000,
+): Promise<{ txid: string; vout: number; value: number }> {
+    const provider = new EsploraProvider("http://localhost:3000");
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        try {
+            const utxos = await provider.getCoins(address);
+            if (utxos.length > 0) {
+                const u = utxos[0];
+                return { txid: u.txid, vout: u.vout, value: u.value };
+            }
+        } catch {
+            // ignore, keep polling
+        }
+        await new Promise((r) => setTimeout(r, 1000));
+    }
+    throw new Error(`waitForUtxo: timeout for ${address}`);
 }
