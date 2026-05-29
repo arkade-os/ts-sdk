@@ -75,6 +75,7 @@ import { DelegateManagerImpl, findDestinationOutputIndex, IDelegateManager } fro
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
+import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 import { validateVtxosForScript, saveVtxosForContract } from "../contracts/vtxoOwnership";
@@ -374,9 +375,18 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const offchainTapscript = !delegatePubKey
             ? new DefaultVtxo.Script(offchainOptions)
             : new DelegateVtxo.Script({ ...offchainOptions, delegatePubKey });
-        const boardingTapscript = new DefaultVtxo.Script({
-            ...offchainOptions,
-            csvTimelock: boardingTimelock,
+        // Source the boarding script from the registered `boarding` handler so
+        // wallet setup derives it through the contract type rather than ad-hoc
+        // construction. The handler returns a DefaultVtxo.Script byte-identical
+        // to the previous inline construction for equivalent params (the CSV
+        // timelock round-trips through the same BIP68 sequence encoding the
+        // script bytes already use), so getBoardingAddress() and pkScript are
+        // unchanged. Contract-manager initialization persists a matching
+        // `boarding` contract from these same params.
+        const boardingTapscript = BoardingContractHandler.createScript({
+            pubKey: hex.encode(pubKey),
+            serverPubKey: hex.encode(serverPubKey),
+            csvTimelock: timelockToSequence(boardingTimelock).toString(),
         });
 
         const walletRepository =
@@ -951,6 +961,46 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     state: "active",
                 });
             }
+        }
+
+        // Boarding contract: persisted from the same handler-produced boarding
+        // script the wallet uses (this.boardingTapscript). Created `active` so
+        // ContractWatcher monitors the boarding Arkade address and any VTXOs
+        // that land on the (valid) boarding script are visible and spendable
+        // through the normal contract paths — even though the SDK does not
+        // promote the boarding Arkade address as an L2 receive address.
+        // getBoardingAddress() does not depend on this contract (it derives from
+        // this.boardingTapscript directly), keeping the lazy contract-manager
+        // lifecycle intact.
+        //
+        // Create-if-missing (idempotent): contracts are keyed by script. When
+        // boardingExitDelay coincides with a baseline (default/delegate)
+        // timelock, the boarding script is byte-identical to that baseline
+        // contract's script, so we cannot — and need not — persist a second
+        // `boarding`-typed row for it: the script is already persisted and
+        // watched via the baseline contract, so funds landing on it stay
+        // visible/spendable. Re-running initialization is likewise a no-op once
+        // the boarding contract exists.
+        const boardingScriptHex = hex.encode(this.boardingTapscript.pkScript);
+        const boardingCsvTimelock =
+            this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        const [existingForBoardingScript] = await manager.getContracts({
+            script: boardingScriptHex,
+        });
+        if (!existingForBoardingScript) {
+            await manager.createContract({
+                type: "boarding",
+                params: {
+                    pubKey: hex.encode(this.boardingTapscript.options.pubKey),
+                    serverPubKey: hex.encode(this.boardingTapscript.options.serverPubKey),
+                    csvTimelock: timelockToSequence(boardingCsvTimelock).toString(),
+                },
+                script: boardingScriptHex,
+                address: this.boardingTapscript
+                    .address(this.network.hrp, this.arkServerPublicKey)
+                    .encode(),
+                state: "active",
+            });
         }
 
         return manager;

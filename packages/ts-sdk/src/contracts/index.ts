@@ -9,6 +9,8 @@ export { DelegateContractHandler } from "./handlers";
 export type { DelegateContractParams } from "./handlers";
 export { VHTLCContractHandler } from "./handlers";
 export type { VHTLCContractParams } from "./handlers";
+export { BoardingContractHandler } from "./handlers";
+export type { BoardingContractParams } from "./handlers";
 
 // arkcontract string codec
 export {
