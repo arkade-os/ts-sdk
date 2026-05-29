@@ -74,6 +74,7 @@ import { DelegateVtxo } from "../script/delegate";
 import { DelegateManagerImpl, findDestinationOutputIndex, IDelegateManager } from "./delegate";
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
+import type { CreateContractParams } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
 import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { timelockToSequence } from "../utils/timelock";
@@ -137,6 +138,73 @@ function dedupeTimelocks(timelocks: RelativeTimelock[]): RelativeTimelock[] {
     }
 
     return deduped;
+}
+
+/**
+ * Whether two wallet baseline contract types may legitimately share a single
+ * repository row when their scripts collide.
+ *
+ * Contracts are keyed by their pkScript (`script` is the unique identity), so a
+ * given script can own exactly one row. `default` and `boarding` are both built
+ * from the same `DefaultVtxo.Script` shape and differ only by CSV timelock
+ * value; when the offchain unilateral-exit delay and the boarding-exit delay
+ * coincide, the two derive a byte-identical script and either type may own the
+ * row. Same-type is trivially compatible. Every other pairing (e.g. a
+ * `delegate` script, which carries an extra leaf and cannot collide under
+ * normal semantics) is incompatible and signals a real script/params mismatch.
+ *
+ * @internal Exported for unit tests; not part of the public API surface.
+ */
+export function areSameScriptBaselineTypesCompatible(
+    existingType: string,
+    requestedType: string,
+): boolean {
+    if (existingType === requestedType) return true;
+    return (
+        (existingType === "default" && requestedType === "boarding") ||
+        (existingType === "boarding" && requestedType === "default")
+    );
+}
+
+/**
+ * Register a wallet baseline contract (`default` / `boarding`) idempotently,
+ * tolerating a same-script collision with a compatible baseline type.
+ *
+ * Because contracts are keyed by script, when `default` and `boarding` resolve
+ * to the same pkScript (coinciding CSV timelocks) the script can only have one
+ * row — and that existing row already satisfies the wallet invariant: it is
+ * persisted, created `active` (so watched), and its spend paths are valid (both
+ * types share the `DefaultVtxo.Script` forfeit/exit surface). In that case we
+ * accept the existing row instead of creating a duplicate or throwing.
+ *
+ * Resolution:
+ * - no existing row for the script → create it;
+ * - existing row of the same type → {@link ContractManager.createContract} is a
+ *   no-op (idempotent), so re-running initialization never duplicates;
+ * - existing row of a *compatible* baseline type → accept it (no second row);
+ * - existing row of an *incompatible* type → fall through to `createContract`,
+ *   which throws its descriptive script/type mismatch error.
+ *
+ * Used only for the wallet's own `default` / `boarding` baseline contracts;
+ * `delegate` creation stays strict (its script cannot collide with the others).
+ *
+ * @internal Exported for unit tests; not part of the public API surface.
+ */
+export async function ensureWalletContract(
+    manager: ContractManager,
+    params: CreateContractParams,
+): Promise<void> {
+    const [existing] = await manager.getContracts({ script: params.script });
+    if (
+        existing &&
+        existing.type !== params.type &&
+        areSameScriptBaselineTypesCompatible(existing.type, params.type)
+    ) {
+        // Compatible collision: the existing row already persists and watches
+        // this exact script, so the baseline purpose is fully served.
+        return;
+    }
+    await manager.createContract(params);
 }
 
 export type IncomingFunds =
@@ -925,7 +993,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
             });
             const defaultScriptHex = hex.encode(defaultScript.pkScript);
 
-            await manager.createContract({
+            // Use ensureWalletContract (not a strict createContract) so a
+            // default baseline whose script collides with an already-persisted
+            // `boarding` row — possible across boots when the server's
+            // unilateral-exit delay shifts to match a prior boarding-exit delay
+            // — accepts that row instead of throwing a type mismatch.
+            await ensureWalletContract(manager, {
                 type: "default",
                 params: {
                     pubKey: hex.encode(defaultScript.options.pubKey),
@@ -973,35 +1046,29 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // this.boardingTapscript directly), keeping the lazy contract-manager
         // lifecycle intact.
         //
-        // Create-if-missing (idempotent): contracts are keyed by script. When
-        // boardingExitDelay coincides with a baseline (default/delegate)
-        // timelock, the boarding script is byte-identical to that baseline
-        // contract's script, so we cannot — and need not — persist a second
-        // `boarding`-typed row for it: the script is already persisted and
-        // watched via the baseline contract, so funds landing on it stay
-        // visible/spendable. Re-running initialization is likewise a no-op once
-        // the boarding contract exists.
+        // Create-if-missing via ensureWalletContract (idempotent): contracts
+        // are keyed by script. When boardingExitDelay coincides with a baseline
+        // `default` timelock, the boarding script is byte-identical to that
+        // default contract's script, so we cannot — and need not — persist a
+        // second row for it: the script is already persisted and watched via
+        // the default contract, so funds landing on it stay visible/spendable.
+        // Re-running initialization is likewise a no-op once the row exists.
         const boardingScriptHex = hex.encode(this.boardingTapscript.pkScript);
         const boardingCsvTimelock =
             this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
-        const [existingForBoardingScript] = await manager.getContracts({
+        await ensureWalletContract(manager, {
+            type: "boarding",
+            params: {
+                pubKey: hex.encode(this.boardingTapscript.options.pubKey),
+                serverPubKey: hex.encode(this.boardingTapscript.options.serverPubKey),
+                csvTimelock: timelockToSequence(boardingCsvTimelock).toString(),
+            },
             script: boardingScriptHex,
+            address: this.boardingTapscript
+                .address(this.network.hrp, this.arkServerPublicKey)
+                .encode(),
+            state: "active",
         });
-        if (!existingForBoardingScript) {
-            await manager.createContract({
-                type: "boarding",
-                params: {
-                    pubKey: hex.encode(this.boardingTapscript.options.pubKey),
-                    serverPubKey: hex.encode(this.boardingTapscript.options.serverPubKey),
-                    csvTimelock: timelockToSequence(boardingCsvTimelock).toString(),
-                },
-                script: boardingScriptHex,
-                address: this.boardingTapscript
-                    .address(this.network.hrp, this.arkServerPublicKey)
-                    .encode(),
-                state: "active",
-            });
-        }
 
         return manager;
     }

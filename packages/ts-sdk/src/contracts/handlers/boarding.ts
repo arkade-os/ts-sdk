@@ -38,6 +38,19 @@ export type BoardingContractParams = DefaultContractParams;
  * selection for HD wallets is owned by the wallet / address-provider
  * layer, which hands this handler an already-derived pubkey. As a result
  * `isDiscoverable(BoardingContractHandler)` is `false`.
+ *
+ * Identity & the default/boarding collision: a contract's `script` (pkScript)
+ * is its unique identity — a script owns exactly one repository row. `boarding`
+ * is a first-class type with its own row **when its script is distinct** from
+ * the wallet's `default` baseline (the usual case, since boardingExitDelay and
+ * unilateralExitDelay differ). When those delays coincide the boarding script
+ * is byte-identical to the default script; the single shared row may then carry
+ * **either** `type` (`default` or `boarding`), and the funds are equally
+ * spendable through the shared `DefaultVtxo.Script` paths regardless. Consumers
+ * therefore must NOT rely on `contract.type === "boarding"` to identify the
+ * boarding purpose in that collision case — resolve the boarding script via
+ * `wallet.getBoardingAddress()` / `wallet.boardingTapscript` (which never depend
+ * on the persisted contract's type) and match by script when needed.
  */
 export const BoardingContractHandler: ContractHandler<BoardingContractParams, DefaultVtxo.Script> =
     {
