@@ -9,6 +9,9 @@ import {
     InMemoryContractRepository,
     DefaultVtxo,
     MissingSigningDescriptorError,
+    type BatchSignableIdentity,
+    type Identity,
+    type SignRequest,
 } from "../src";
 import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
 import { WalletReceiveRotator } from "../src/wallet/walletReceiveRotator";
@@ -1381,5 +1384,150 @@ describe("Wallet HD rotation", () => {
             signSpy.mockRestore();
             await wallet.dispose();
         });
+    });
+});
+
+describe("Wallet batch signing (BatchSignableIdentity)", () => {
+    // Decorate an Identity with a tracked `signMultiple` that delegates
+    // each request to `base.sign`. Explicit per-method delegation —
+    // spreading `base` doesn't carry prototype methods.
+    function makeBatchSignable(base: Identity): BatchSignableIdentity & {
+        signMultipleSpy: ReturnType<typeof vi.fn>;
+        signSpy: ReturnType<typeof vi.fn>;
+    } {
+        const signSpy = vi.fn(async (tx: Transaction, idx?: number[]) => base.sign(tx, idx));
+        const signMultipleSpy = vi.fn(async (requests: SignRequest[]) =>
+            Promise.all(requests.map((r) => base.sign(r.tx, r.inputIndexes))),
+        );
+        return {
+            xOnlyPublicKey: () => base.xOnlyPublicKey(),
+            compressedPublicKey: () => base.compressedPublicKey(),
+            signerSession: () => base.signerSession(),
+            signMessage: (msg, type) => base.signMessage(msg, type),
+            sign: signSpy as unknown as Identity["sign"],
+            signMultiple: signMultipleSpy as unknown as BatchSignableIdentity["signMultiple"],
+            signSpy,
+            signMultipleSpy,
+        };
+    }
+
+    async function makeStaticBatchWallet(contractRepo?: InMemoryContractRepository) {
+        // Use a baseline SingleKey wallet (no HD rotation): every input
+        // routes to the identity, so canBatch returns true and the batch
+        // path is exercised.
+        const base = SingleKey.fromHex(
+            "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
+        );
+        const identity = makeBatchSignable(base);
+        const wallet = await Wallet.create({
+            identity,
+            arkServerUrl: "http://localhost:7070",
+            storage: {
+                walletRepository: new InMemoryWalletRepository(),
+                contractRepository: contractRepo ?? new InMemoryContractRepository(),
+            },
+        });
+        return { wallet, identity, base };
+    }
+
+    function makeBaselineCoin(
+        wallet: Awaited<ReturnType<typeof makeStaticBatchWallet>>["wallet"],
+    ): ExtendedVirtualCoin {
+        // Reuse the wallet's own offchainTapscript so the coin's source
+        // script matches a registered baseline contract — the router needs
+        // a contract match to route to identity (vs silently skip).
+        const tapscript = (wallet as any).offchainTapscript as DefaultVtxo.Script;
+        return {
+            txid: "11".repeat(32),
+            vout: 0,
+            value: 50_000,
+            status: { confirmed: true },
+            virtualStatus: { state: "settled" },
+            createdAt: new Date(),
+            isUnrolled: false,
+            isSpent: false,
+            script: hex.encode(tapscript.pkScript),
+            forfeitTapLeafScript: tapscript.forfeit(),
+            intentTapLeafScript: tapscript.forfeit(),
+            tapTree: tapscript.encode(),
+        };
+    }
+
+    it("buildAndSubmitOffchainTx takes the batch path: signMultiple called once with arkTx + N checkpoints", async () => {
+        const { wallet, identity } = await makeStaticBatchWallet();
+        const coin = makeBaselineCoin(wallet);
+
+        // Short-circuit at submitTx so the test focuses on the signing
+        // dispatch and doesn't have to fabricate a server tapScriptSig to
+        // satisfy `combineTapscriptSigs`. signMultiple runs *before*
+        // submitTx in the batch path, so the spy assertions below capture
+        // the full picture even though the call aborts here.
+        const sentinel = new Error("STOP_AFTER_SUBMIT");
+        vi.spyOn(wallet.arkProvider, "submitTx").mockRejectedValue(sentinel);
+
+        await expect(
+            wallet.buildAndSubmitOffchainTx(
+                [coin],
+                [
+                    {
+                        amount: BigInt(coin.value - 1000),
+                        script: wallet.arkAddress.pkScript,
+                    },
+                ],
+            ),
+        ).rejects.toBe(sentinel);
+
+        // One batch call covers arkTx + every checkpoint (here: 1 of each).
+        expect(identity.signMultipleSpy).toHaveBeenCalledTimes(1);
+        expect(identity.signMultipleSpy.mock.calls[0][0]).toHaveLength(2);
+
+        // signMultiple is the one and only user-signing entry point on
+        // this path — per-tx sign() must not be invoked.
+        expect(identity.signSpy).not.toHaveBeenCalled();
+
+        await wallet.dispose();
+    });
+
+    it("falls back to sequential when identity does not implement signMultiple", async () => {
+        // Sanity check that the batch detection is conditional — a plain
+        // Identity (no signMultiple) keeps the existing per-PSBT path.
+        const base = SingleKey.fromHex(
+            "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
+        );
+        const signSpy = vi.spyOn(base, "sign");
+        const wallet = await Wallet.create({
+            identity: base,
+            arkServerUrl: "http://localhost:7070",
+            storage: {
+                walletRepository: new InMemoryWalletRepository(),
+                contractRepository: new InMemoryContractRepository(),
+            },
+        });
+        const coin = makeBaselineCoin(wallet);
+
+        vi.spyOn(wallet.arkProvider, "submitTx").mockImplementation(
+            async (arkTxB64, checkpointsB64) => ({
+                arkTxid: "cc".repeat(32),
+                finalArkTx: arkTxB64,
+                signedCheckpointTxs: checkpointsB64,
+            }),
+        );
+        vi.spyOn(wallet.arkProvider, "finalizeTx").mockResolvedValue(undefined);
+
+        await wallet.buildAndSubmitOffchainTx(
+            [coin],
+            [
+                {
+                    amount: BigInt(coin.value - 1000),
+                    script: wallet.arkAddress.pkScript,
+                },
+            ],
+        );
+
+        // arkTx + 1 checkpoint → 2 sign() invocations on the fallback.
+        expect(signSpy).toHaveBeenCalledTimes(2);
+
+        signSpy.mockRestore();
+        await wallet.dispose();
     });
 });

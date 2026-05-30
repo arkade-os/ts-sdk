@@ -21,7 +21,7 @@ import { SignerSession } from "../tree/signingSession";
 import { buildForfeitTx } from "../forfeit";
 import { validateConnectorsTxGraph, validateVtxoTxGraph } from "../tree/validation";
 import { validateBatchRecipients } from "./validation";
-import { Identity, ReadonlyIdentity } from "../identity";
+import { Identity, ReadonlyIdentity, isBatchSignable } from "../identity";
 import {
     ArkTransaction,
     Asset,
@@ -49,7 +49,12 @@ import {
 import { createAssetPacket, selectCoinsWithAsset, selectedCoinsToAssetInputs } from "./asset";
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
-import { buildOffchainTx, hasBoardingTxExpired, isValidArkAddress } from "../utils/arkTransaction";
+import {
+    buildOffchainTx,
+    combineTapscriptSigs,
+    hasBoardingTxExpired,
+    isValidArkAddress,
+} from "../utils/arkTransaction";
 import {
     DEFAULT_RENEWAL_CONFIG,
     DEFAULT_SETTLEMENT_CONFIG,
@@ -2320,16 +2325,49 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
                     batchPending.push(pendingTx.arkTxid);
                     try {
-                        const finalCheckpoints = await Promise.all(
-                            pendingTx.signedCheckpointTxs.map(async (c) => {
-                                const tx = Transaction.fromPSBT(base64.decode(c));
-                                const signedCheckpoint = await this._signerRouter.sign(
-                                    tx,
-                                    this.inputSigningJobsFromWitnessUtxos(tx),
-                                );
-                                return base64.encode(signedCheckpoint.toPSBT());
-                            }),
+                        const checkpointTxs = pendingTx.signedCheckpointTxs.map((c) =>
+                            Transaction.fromPSBT(base64.decode(c)),
                         );
+                        const checkpointJobs = checkpointTxs.map((tx) =>
+                            this.inputSigningJobsFromWitnessUtxos(tx),
+                        );
+                        const identity = this.identity;
+                        const batchEligible =
+                            isBatchSignable(identity) &&
+                            (
+                                await Promise.all(
+                                    checkpointJobs.map((jobs) => this._signerRouter.canBatch(jobs)),
+                                )
+                            ).every((b) => b);
+
+                        let finalCheckpoints: string[];
+                        if (batchEligible) {
+                            // Recovery batch: server already has its share,
+                            // we only add the user sig. signMultiple writes
+                            // directly onto the server-signed PSBTs so no
+                            // merge step is needed.
+                            const requests = checkpointTxs.map((tx, i) => ({
+                                tx,
+                                inputIndexes: checkpointJobs[i].map((j) => j.index),
+                            }));
+                            const signed = await identity.signMultiple(requests);
+                            if (signed.length !== requests.length) {
+                                throw new Error(
+                                    `signMultiple returned ${signed.length} transactions, expected ${requests.length}`,
+                                );
+                            }
+                            finalCheckpoints = signed.map((tx) => base64.encode(tx.toPSBT()));
+                        } else {
+                            finalCheckpoints = await Promise.all(
+                                checkpointTxs.map(async (tx, i) => {
+                                    const signedCheckpoint = await this._signerRouter.sign(
+                                        tx,
+                                        checkpointJobs[i],
+                                    );
+                                    return base64.encode(signedCheckpoint.toPSBT());
+                                }),
+                            );
+                        }
 
                         await this.arkProvider.finalizeTx(pendingTx.arkTxid, finalCheckpoints);
                         batchFinalized.push(pendingTx.arkTxid);
@@ -2633,7 +2671,51 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             index,
             lookupScript: VtxoScript.decode(input.tapTree).pkScript,
         }));
-        const signedVirtualTx = await this._signerRouter.sign(offchainTx.arkTx, arkTxJobs);
+        const checkpointJobs = offchainTx.checkpoints.map((c) =>
+            this.inputSigningJobsFromWitnessUtxos(c),
+        );
+
+        // Batch path: when every signable input across arkTx + checkpoints
+        // resolves to the baseline identity key, a `BatchSignableIdentity`
+        // can sign all N+1 PSBTs in a single wallet popup. Stash the
+        // user-signed checkpoints, submit the unsigned ones to the server
+        // for its share, then merge server + user tapscript sigs.
+        let signedVirtualTx: Transaction;
+        let userSignedCheckpoints: Transaction[] | undefined;
+        const identity = this.identity;
+        const batchEligible =
+            isBatchSignable(identity) &&
+            (await this._signerRouter.canBatch(arkTxJobs)) &&
+            (
+                await Promise.all(checkpointJobs.map((jobs) => this._signerRouter.canBatch(jobs)))
+            ).every((b) => b);
+
+        if (batchEligible) {
+            // Clone so a misbehaving provider can't mutate the originals
+            // before submitTx. The contract on `signMultiple` is "one
+            // result per request, in input order" — validated below.
+            const requests = [
+                {
+                    tx: offchainTx.arkTx.clone(),
+                    inputIndexes: arkTxJobs.map((j) => j.index),
+                },
+                ...offchainTx.checkpoints.map((c, i) => ({
+                    tx: c.clone(),
+                    inputIndexes: checkpointJobs[i].map((j) => j.index),
+                })),
+            ];
+            const signed = await identity.signMultiple(requests);
+            if (signed.length !== requests.length) {
+                throw new Error(
+                    `signMultiple returned ${signed.length} transactions, expected ${requests.length}`,
+                );
+            }
+            const [firstSignedTx, ...signedCheckpoints] = signed;
+            signedVirtualTx = firstSignedTx;
+            userSignedCheckpoints = signedCheckpoints;
+        } else {
+            signedVirtualTx = await this._signerRouter.sign(offchainTx.arkTx, arkTxJobs);
+        }
 
         // Mark pending before submitting — if we crash between submit and
         // finalize, the next init will recover via finalizePendingTxs.
@@ -2644,16 +2726,26 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT())),
         );
 
-        const finalCheckpoints = await Promise.all(
-            signedCheckpointTxs.map(async (c) => {
-                const tx = Transaction.fromPSBT(base64.decode(c));
-                const signedCheckpoint = await this._signerRouter.sign(
-                    tx,
-                    this.inputSigningJobsFromWitnessUtxos(tx),
-                );
-                return base64.encode(signedCheckpoint.toPSBT());
-            }),
-        );
+        let finalCheckpoints: string[];
+        if (userSignedCheckpoints) {
+            // Merge stashed user sigs onto the server-signed checkpoints.
+            finalCheckpoints = signedCheckpointTxs.map((c, i) => {
+                const serverSigned = Transaction.fromPSBT(base64.decode(c));
+                combineTapscriptSigs(userSignedCheckpoints![i], serverSigned);
+                return base64.encode(serverSigned.toPSBT());
+            });
+        } else {
+            finalCheckpoints = await Promise.all(
+                signedCheckpointTxs.map(async (c) => {
+                    const tx = Transaction.fromPSBT(base64.decode(c));
+                    const signedCheckpoint = await this._signerRouter.sign(
+                        tx,
+                        this.inputSigningJobsFromWitnessUtxos(tx),
+                    );
+                    return base64.encode(signedCheckpoint.toPSBT());
+                }),
+            );
+        }
 
         await this.arkProvider.finalizeTx(arkTxid, finalCheckpoints);
 
