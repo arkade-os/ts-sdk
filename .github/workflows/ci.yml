@@ -68,16 +68,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true
-
-      - uses: actions/setup-go@v5
-        with:
-            go-version: '1.23'
-
-      - uses: actions/cache@v4
-        with:
-            path: regtest/_build
-            key: nigiri-${{ hashFiles('regtest/.env.defaults', '.env.regtest') }}
+          submodules: recursive
 
       - uses: pnpm/action-setup@v4
         with:
@@ -93,14 +84,11 @@ jobs:
       - name: Build ts-sdk
         run: pnpm -C packages/ts-sdk build
 
-      - name: Make regtest scripts executable
-        run: chmod +x regtest/*.sh regtest/helpers/*.sh scripts/regtest.sh
+      - name: Make regtest controller executable
+        run: chmod +x scripts/regtest.sh
 
       - name: Start regtest environment
         run: pnpm run regtest:up:${{ matrix.package }}
-
-      - name: Add nigiri to PATH
-        run: echo "${{ github.workspace }}/regtest/_build/nigiri/build" >> $GITHUB_PATH
 
       - name: Setup test wallets
         run: pnpm run regtest:setup:${{ matrix.package }}
@@ -111,9 +99,7 @@ jobs:
       - name: Capture logs on failure
         if: failure()
         run: |
-          docker logs ark 2>&1 || true
           docker logs arkd 2>&1 || true
-          docker logs ark-wallet 2>&1 || true
           docker logs arkd-wallet 2>&1 || true
           docker logs boltz 2>&1 || true
           docker logs boltz-lnd 2>&1 || true

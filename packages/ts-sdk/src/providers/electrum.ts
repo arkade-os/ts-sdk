@@ -12,8 +12,8 @@ import type { ExplorerTransaction, OnchainProvider } from "./onchain";
  * `blockchain.transaction.broadcast_package` for atomic 1P1C TRUC
  * relay; see `ElectrumOnchainProvider.broadcastTransaction`). Testnet
  * defaults to Blockstream's public Fulcrum because Ark doesn't host
- * it. Regtest assumes the `electrum-ws` websocat bridge from
- * `vulpemventures/nigiri`.
+ * it. Regtest assumes the Fulcrum WebSocket endpoint exposed by the
+ * local `arkade-regtest` stack.
  *
  * @example
  * ```typescript
@@ -859,8 +859,8 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         txid: string,
     ): Promise<{ confirmed: false } | { confirmed: true; blockTime: number; blockHeight: number }> {
         // Use `transaction.get_merkle` rather than the verbose `transaction.get`
-        // because electrs (used by mempool.space, blockstream.info, and the
-        // nigiri regtest) doesn't implement verbose. get_merkle is part of the
+        // because electrs (used by mempool.space and blockstream.info) doesn't
+        // implement verbose. get_merkle is part of the
         // standard SPV protocol and supported by every Electrum server.
         const merkle = await this.chain.fetchTxMerkle(txid);
         if (!merkle) return { confirmed: false };

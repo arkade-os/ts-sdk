@@ -52,7 +52,7 @@ describe("Common", () => {
                 const boardingAddress = await alice.wallet.getBoardingAddress();
 
                 // faucet
-                execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+                execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
 
                 await waitFor(async () => (await alice.wallet.getBoardingUtxos()).length > 0);
 
@@ -227,7 +227,7 @@ describe("Common", () => {
                 // Alice onboarding
                 const boardingAmount = 10000;
                 const boardingAddress = await alice.wallet.getBoardingAddress();
-                execCommand(`nigiri faucet ${boardingAddress} ${boardingAmount * 0.00000001}`);
+                execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} ${boardingAmount * 0.00000001} --confirm`);
 
                 await new Promise((resolve) => setTimeout(resolve, 5000));
 
@@ -246,7 +246,7 @@ describe("Common", () => {
                 });
 
                 // Wait for the transaction to be processed
-                execCommand("nigiri rpc --generate 1");
+                execCommand("node regtest/regtest.mjs mine 1");
                 await new Promise((resolve) => setTimeout(resolve, 5000));
 
                 // Check history before sending to bob
@@ -320,7 +320,7 @@ describe("Common", () => {
                 });
 
                 // Wait for the transaction to be processed
-                execCommand("nigiri rpc --generate 1");
+                execCommand("node regtest/regtest.mjs mine 1");
                 await new Promise((resolve) => setTimeout(resolve, 5000));
 
                 // Verify Bob's history
@@ -348,7 +348,7 @@ describe("Common", () => {
                 expect(bobExitTxid).toBeDefined();
 
                 // Wait for the transaction to be processed
-                execCommand("nigiri rpc --generate 1");
+                execCommand("node regtest/regtest.mjs mine 1");
                 await new Promise((resolve) => setTimeout(resolve, 5000));
 
                 // Check bob's history
@@ -404,7 +404,7 @@ describe("Common", () => {
                 const offchainAddress = await alice.wallet.getAddress();
 
                 // faucet
-                execCommand(`nigiri faucet ${boardingAddress} 0.0001`);
+                execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.0001 --confirm`);
 
                 // wait until indexer reflects the faucet instead of sleeping.
                 await waitFor(async () => {
@@ -425,7 +425,7 @@ describe("Common", () => {
                     ],
                 });
 
-                execCommand(`nigiri rpc --generate 1`);
+                execCommand(`node regtest/regtest.mjs mine 1`);
 
                 // wait until indexer reflects the new block instead of sleeping.
                 await waitFor(async () => {
@@ -440,7 +440,7 @@ describe("Common", () => {
 
                 const onchainAlice = await OnchainWallet.create(alice.identity, "regtest");
 
-                execCommand(`nigiri faucet ${onchainAlice.address} 0.001`);
+                execCommand(`node regtest/regtest.mjs faucet ${onchainAlice.address} 0.001 --confirm`);
 
                 await new Promise((resolve) => setTimeout(resolve, 5000));
 
@@ -455,7 +455,7 @@ describe("Common", () => {
                     switch (done.type) {
                         case Unroll.StepType.WAIT:
                         case Unroll.StepType.UNROLL:
-                            execCommand(`nigiri rpc --generate 1`);
+                            execCommand(`node regtest/regtest.mjs mine 1`);
                             break;
                     }
                 }
@@ -476,7 +476,7 @@ describe("Common", () => {
                     const boardingAddress = await alice.wallet.getBoardingAddress();
                     const offchainAddress = await alice.wallet.getAddress();
 
-                    execCommand(`nigiri faucet ${boardingAddress} 0.0001`);
+                    execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.0001 --confirm`);
 
                     await waitFor(async () => {
                         const b = await alice.wallet.getBoardingUtxos();
@@ -496,7 +496,7 @@ describe("Common", () => {
                         ],
                     });
 
-                    execCommand(`nigiri rpc --generate 1`);
+                    execCommand(`node regtest/regtest.mjs mine 1`);
 
                     await waitFor(async () => {
                         const v = await alice.wallet.getVtxos();
@@ -510,7 +510,7 @@ describe("Common", () => {
 
                     const onchainAlice = await OnchainWallet.create(alice.identity, "regtest");
 
-                    execCommand(`nigiri faucet ${onchainAlice.address} 0.001`);
+                    execCommand(`node regtest/regtest.mjs faucet ${onchainAlice.address} 0.001 --confirm`);
                     await waitFor(async () => {
                         const b = await onchainAlice.getBalance();
                         return b > 0;
@@ -527,7 +527,7 @@ describe("Common", () => {
                         switch (done.type) {
                             case Unroll.StepType.WAIT:
                             case Unroll.StepType.UNROLL:
-                                execCommand(`nigiri rpc --generate 1`);
+                                execCommand(`node regtest/regtest.mjs mine 1`);
                                 break;
                         }
                     }
@@ -572,7 +572,7 @@ describe("Common", () => {
                     const boardingAddress = await alice.wallet.getBoardingAddress();
                     const offchainAddress = await alice.wallet.getAddress();
 
-                    execCommand(`nigiri faucet ${boardingAddress} 0.0001`);
+                    execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.0001 --confirm`);
 
                     await waitFor(async () => {
                         const b = await alice.wallet.getBoardingUtxos();
@@ -592,7 +592,7 @@ describe("Common", () => {
                         ],
                     });
 
-                    execCommand(`nigiri rpc --generate 1`);
+                    execCommand(`node regtest/regtest.mjs mine 1`);
 
                     await waitFor(async () => {
                         const v = await alice.wallet.getVtxos();
@@ -606,7 +606,7 @@ describe("Common", () => {
 
                     const onchainAlice = await OnchainWallet.create(alice.identity, "regtest");
 
-                    execCommand(`nigiri faucet ${onchainAlice.address} 0.001`);
+                    execCommand(`node regtest/regtest.mjs faucet ${onchainAlice.address} 0.001 --confirm`);
                     await waitFor(async () => {
                         const b = await onchainAlice.getBalance();
                         return b > 0;
@@ -623,7 +623,7 @@ describe("Common", () => {
                         switch (done.type) {
                             case Unroll.StepType.WAIT:
                             case Unroll.StepType.UNROLL:
-                                execCommand(`nigiri rpc --generate 1`);
+                                execCommand(`node regtest/regtest.mjs mine 1`);
                                 break;
                         }
                     }
@@ -649,10 +649,10 @@ describe("Common", () => {
                         const requiredHeight = txStatus.blockHeight + Number(exitTimelock.value);
                         const remainingBlocks = Math.max(0, requiredHeight - chainTip.height);
                         if (remainingBlocks > 0) {
-                            execCommand(`nigiri rpc --generate ${remainingBlocks}`);
+                            execCommand(`node regtest/regtest.mjs mine ${remainingBlocks}`);
                             // Wait for the onchain provider to observe the new
-                            // tip; nigiri-mined blocks are not always visible
-                            // to esplora the instant `nigiri rpc` returns.
+                            // tip; freshly mined blocks are not always visible
+                            // to esplora the instant `regtest.mjs mine` returns.
                             await waitFor(async () => {
                                 const tip = await alice.wallet.onchainProvider.getChainTip();
                                 return tip.height >= requiredHeight;
@@ -667,7 +667,7 @@ describe("Common", () => {
                             if (chainTip.time >= requiredTime) {
                                 break;
                             }
-                            execCommand(`nigiri rpc --generate 1`);
+                            execCommand(`node regtest/regtest.mjs mine 1`);
                             blocksMined += 1;
                         }
                         const finalTip = await alice.wallet.onchainProvider.getChainTip();
@@ -685,7 +685,7 @@ describe("Common", () => {
                     );
                     expect(completeTxid).toBeDefined();
 
-                    execCommand(`nigiri rpc --generate 1`);
+                    execCommand(`node regtest/regtest.mjs mine 1`);
 
                     await waitFor(async () => {
                         const status = await alice.wallet.onchainProvider.getTxStatus(completeTxid);
@@ -729,7 +729,7 @@ describe("Common", () => {
                 expect(aliceOffchainAddress).toBeDefined();
 
                 // faucet
-                execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+                execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
 
                 await new Promise((resolve) => setTimeout(resolve, 5000));
 
@@ -758,7 +758,7 @@ describe("Common", () => {
                 expect(vtxo.virtualStatus.state).toBe("settled");
 
                 // generate 25 blocks to make the vtxo swept (expiry set to 20 blocks)
-                execCommand(`nigiri rpc --generate 25`);
+                execCommand(`node regtest/regtest.mjs mine 25`);
 
                 // wait until indexer reflects the swept instead of sleeping.
                 await waitFor(async () => {
@@ -1138,7 +1138,7 @@ describe("Common", () => {
                 const boardingAddress = await alice.wallet.getBoardingAddress();
 
                 // faucet 100_000 sats
-                execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+                execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
 
                 await waitFor(async () => (await alice.wallet.getBoardingUtxos()).length > 0);
 
@@ -1170,7 +1170,7 @@ describe("Delegate", () => {
     it("should delegate renewal of vtxos", { timeout: 60000 }, async () => {
         const alice = await createTestArkWalletWithDelegate();
         const boardingAddress = await alice.wallet.getBoardingAddress();
-        execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+        execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
         await alice.wallet.settle();
@@ -1210,7 +1210,7 @@ describe("Delegate Lifecycle", () => {
             const contractRepository = new InMemoryContractRepository();
             const identity = createTestIdentity();
 
-            const onchainProvider = new EsploraProvider("http://localhost:3000", {
+            const onchainProvider = new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
             });
@@ -1367,7 +1367,7 @@ describe("Cross-contract spending", () => {
             const contractRepository = new InMemoryContractRepository();
             const identity = createTestIdentity();
 
-            const onchainProvider = new EsploraProvider("http://localhost:3000", {
+            const onchainProvider = new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
             });
@@ -1485,7 +1485,7 @@ describe("Cross-contract spending", () => {
             const contractRepository = new InMemoryContractRepository();
             const identity = createTestIdentity();
 
-            const onchainProvider = new EsploraProvider("http://localhost:3000", {
+            const onchainProvider = new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
             });
@@ -1642,7 +1642,7 @@ describe("Asset integration tests", () => {
 
         expect(settleTxid).toBeDefined();
 
-        execCommand("nigiri rpc --generate 1");
+        execCommand("node regtest/regtest.mjs mine 1");
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
         // verify the asset is still present on the settled vtxos
@@ -2001,7 +2001,7 @@ describe("Asset integration tests", () => {
 
         expect(settleTxid).toBeDefined();
 
-        execCommand("nigiri rpc --generate 1");
+        execCommand("node regtest/regtest.mjs mine 1");
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
         // verify the asset is still present on the settled vtxos
@@ -2023,7 +2023,7 @@ describe("Asset integration tests", () => {
             const contractRepository = new InMemoryContractRepository();
             const identity = createTestIdentity();
 
-            const onchainProvider = new EsploraProvider("http://localhost:3000", {
+            const onchainProvider = new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
             });
@@ -2173,7 +2173,7 @@ describe("Asset integration tests", () => {
             const contractRepository = new InMemoryContractRepository();
             const identity = createTestIdentity();
 
-            const onchainProvider = new EsploraProvider("http://localhost:3000", {
+            const onchainProvider = new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
             });
@@ -2275,7 +2275,7 @@ describe("Asset integration tests", () => {
             const contractRepository = new InMemoryContractRepository();
             const identity = createTestIdentity();
 
-            const onchainProvider = new EsploraProvider("http://localhost:3000", {
+            const onchainProvider = new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
             });

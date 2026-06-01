@@ -36,7 +36,7 @@ const createWalletStorage = () => ({
 });
 
 const generateBlocks = async (numBlocks = 1) => {
-    await execAsync(`nigiri rpc --generate ${numBlocks}`);
+    await execAsync(`node regtest/regtest.mjs mine ${numBlocks}`);
 };
 
 // Lightning helpers
@@ -69,7 +69,7 @@ const getBtcAddress = async (): Promise<string> => {
 };
 
 const getBtcAddressFunds = async (address: string): Promise<number> => {
-    const { stdout } = await execAsync(`curl -s http://localhost:3000/address/${address}`);
+    const { stdout } = await execAsync(`curl -s http://localhost:3000/api/address/${address}`);
     const outputJson = JSON.parse(stdout);
     return (
         outputJson.chain_stats.funded_txo_sum -
@@ -80,13 +80,13 @@ const getBtcAddressFunds = async (address: string): Promise<number> => {
 };
 
 const getBtcAddressTxs = async (address: string): Promise<number> => {
-    const { stdout } = await execAsync(`curl -s http://localhost:3000/address/${address}`);
+    const { stdout } = await execAsync(`curl -s http://localhost:3000/api/address/${address}`);
     const outputJson = JSON.parse(stdout);
     return outputJson.chain_stats.tx_count + outputJson.mempool_stats.tx_count;
 };
 
 const getBtcAddressTxUtxos = async (address: string): Promise<any[]> => {
-    const { stdout } = await execAsync(`curl -s http://localhost:3000/address/${address}/utxo`);
+    const { stdout } = await execAsync(`curl -s http://localhost:3000/api/address/${address}/utxo`);
     return JSON.parse(stdout);
 };
 
@@ -254,7 +254,7 @@ describe("ArkadeSwaps", () => {
             arkServerUrl: arkUrl,
             settlementConfig: false,
             storage: createWalletStorage(),
-            onchainProvider: new EsploraProvider("http://localhost:3000", {
+            onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
             }),

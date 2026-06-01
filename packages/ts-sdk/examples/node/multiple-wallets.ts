@@ -59,7 +59,7 @@ async function main() {
     const bobWallet = await Wallet.create({
         identity: bob,
         arkServerUrl: "http://localhost:7070",
-        esploraUrl: "http://localhost:3000",
+        esploraUrl: "http://localhost:3000/api",
         storage: {
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
@@ -75,7 +75,7 @@ async function main() {
     const aliceWallet = await Wallet.create({
         identity: alice,
         arkServerUrl: "http://localhost:7070",
-        esploraUrl: "http://localhost:3000",
+        esploraUrl: "http://localhost:3000/api",
         storage: {
             walletRepository: new SQLiteWalletRepository(executor),
             contractRepository: new SQLiteContractRepository(executor),
@@ -96,8 +96,8 @@ async function main() {
     const boardingAddress = await aliceWallet.getBoardingAddress();
     console.log("[Alice]\tBoarding Address:", boardingAddress);
 
-    console.log("[Alice]\tFunding boarding address via nigiri faucet...");
-    execSync(`nigiri faucet ${boardingAddress} 0.001`);
+    console.log("[Alice]\tFunding boarding address via regtest faucet...");
+    execSync(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
 
     // Wait for the boarding inputs to be available (timeout after 60s)
     console.log("[Alice]\tWaiting for boarding UTXOs...");
