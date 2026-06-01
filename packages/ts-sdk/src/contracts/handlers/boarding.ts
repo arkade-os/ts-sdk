@@ -42,15 +42,18 @@ export type BoardingContractParams = DefaultContractParams;
  * Identity & the default/boarding collision: a contract's `script` (pkScript)
  * is its unique identity — a script owns exactly one repository row. `boarding`
  * is a first-class type with its own row **when its script is distinct** from
- * the wallet's `default` baseline (the usual case, since boardingExitDelay and
- * unilateralExitDelay differ). When those delays coincide the boarding script
- * is byte-identical to the default script; the single shared row may then carry
- * **either** `type` (`default` or `boarding`), and the funds are equally
- * spendable through the shared `DefaultVtxo.Script` paths regardless. Consumers
- * therefore must NOT rely on `contract.type === "boarding"` to identify the
- * boarding purpose in that collision case — resolve the boarding script via
- * `wallet.getBoardingAddress()` / `wallet.boardingTapscript` (which never depend
- * on the persisted contract's type) and match by script when needed.
+ * the wallet's `default` baseline — the real-world case, since a sound Ark
+ * server keeps boardingExitDelay strictly longer than unilateralExitDelay (equal
+ * delays would expose the provider to a double-spend). Should those delays ever
+ * coincide (a misconfigured/malicious server), the boarding script is
+ * byte-identical to the default script and the wallet coalesces the single
+ * shared row onto the `default` type ("default wins"; see `ensureWalletContract`)
+ * rather than persisting a second row. Either way the funds are equally spendable
+ * through the shared `DefaultVtxo.Script` paths. Consumers must NOT rely on
+ * `contract.type === "boarding"` to identify the boarding purpose — resolve the
+ * boarding script via `wallet.getBoardingAddress()` / `wallet.boardingTapscript`
+ * (which never depend on the persisted contract's type) and match by script when
+ * needed.
  */
 export const BoardingContractHandler: ContractHandler<BoardingContractParams, DefaultVtxo.Script> =
     {

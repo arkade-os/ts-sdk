@@ -435,16 +435,24 @@ describe("ensureWalletContract", () => {
         }
     });
 
-    it("collision direction B: existing boarding, then default accepts the row (no duplicate, watched)", async () => {
+    it("collision direction B: existing boarding, then default promotes the row to default (default wins)", async () => {
         const { manager, indexerProvider } = await makeManager();
         try {
+            // Stale `boarding` row persisted first (an earlier boot where the
+            // boarding script did not collide with any default baseline).
             await ensureWalletContract(manager, baselineParams("boarding"));
+            // A later boot's default baseline now resolves to the same script.
             await ensureWalletContract(manager, baselineParams("default"));
 
             const rows = await manager.getContracts({ script: sharedScript });
             expect(rows).toHaveLength(1);
-            expect(rows[0].type).toBe("boarding");
+            // Promoted to `default` so the shared script — also the wallet's
+            // live offchain baseline — stays visible to the type-gated
+            // consumers (notifyIncomingFunds, getWalletScripts, getScriptMap).
+            expect(rows[0].type).toBe("default");
             expect(rows[0].state).toBe("active");
+            // No boarding-typed row remains for the shared script.
+            expect(await manager.getContracts({ type: ["boarding"] })).toHaveLength(0);
             expect(subscribedScripts(indexerProvider)).toContain(sharedScript);
         } finally {
             manager.dispose();
