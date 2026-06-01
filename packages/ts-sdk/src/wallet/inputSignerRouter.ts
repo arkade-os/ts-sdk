@@ -139,14 +139,23 @@ export class InputSignerRouter {
     }
 
     /**
-     * Returns `true` when every signable input in `jobs` resolves to the
-     * baseline {@link Identity} key — i.e. the descriptor provider would
-     * not be invoked. Used by the wallet's send/recovery paths to pre-flight
-     * the {@link BatchSignableIdentity.signMultiple} fast path, which can
-     * only fold work a single identity key can sign.
+     * Returns `true` when every signable input across all `jobSets` resolves
+     * to the baseline {@link Identity} key — i.e. the descriptor provider
+     * would not be invoked. Used by the wallet's send/recovery paths to
+     * pre-flight the {@link BatchSignableIdentity.signMultiple} fast path,
+     * which can only fold work a single identity key can sign.
+     *
+     * Accepts several job sets (e.g. an arkTx's jobs plus one set per
+     * checkpoint) and classifies their union in a single pass. Eligibility
+     * is monotonic — the union routes entirely to the baseline key iff every
+     * set does — so this returns the same answer as ANDing the per-set
+     * results, but with one {@link classify} (one repo round-trip + one
+     * `xOnlyPublicKey` call) instead of one per set. Only the routing buckets
+     * matter here, so the input-index collisions produced by flattening jobs
+     * from different transactions are irrelevant.
      */
-    async canBatch(jobs: InputSigningJob[]): Promise<boolean> {
-        const plan = await this.classify(jobs);
+    async canBatch(...jobSets: InputSigningJob[][]): Promise<boolean> {
+        const plan = await this.classify(jobSets.flat());
         return plan.descriptorGroups.size === 0;
     }
 

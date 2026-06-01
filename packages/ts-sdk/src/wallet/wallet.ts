@@ -2334,18 +2334,18 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                         const identity = this.identity;
                         const batchEligible =
                             isBatchSignable(identity) &&
-                            (
-                                await Promise.all(
-                                    checkpointJobs.map((jobs) => this._signerRouter.canBatch(jobs)),
-                                )
-                            ).every((b) => b);
+                            (await this._signerRouter.canBatch(...checkpointJobs));
 
                         let finalCheckpoints: string[];
                         if (batchEligible) {
-                            // Recovery batch: server already has its share,
-                            // we only add the user sig. signMultiple writes
-                            // directly onto the server-signed PSBTs so no
-                            // merge step is needed.
+                            // Recovery batch: these checkpoints already carry
+                            // the server's tapScriptSig. signMultiple adds the
+                            // user's share and, per the BatchSignableIdentity
+                            // contract, preserves the pre-existing server sig,
+                            // so the transactions it returns hold both. We use
+                            // those returned txs directly — no separate merge
+                            // step, unlike the send path which signs unsigned
+                            // checkpoints and merges via combineTapscriptSigs.
                             const requests = checkpointTxs.map((tx, i) => ({
                                 tx,
                                 inputIndexes: checkpointJobs[i].map((j) => j.index),
@@ -2685,10 +2685,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const identity = this.identity;
         const batchEligible =
             isBatchSignable(identity) &&
-            (await this._signerRouter.canBatch(arkTxJobs)) &&
-            (
-                await Promise.all(checkpointJobs.map((jobs) => this._signerRouter.canBatch(jobs)))
-            ).every((b) => b);
+            (await this._signerRouter.canBatch(arkTxJobs, ...checkpointJobs));
 
         if (batchEligible) {
             // Clone so a misbehaving provider can't mutate the originals

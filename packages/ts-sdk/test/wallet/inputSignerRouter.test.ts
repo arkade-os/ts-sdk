@@ -481,6 +481,73 @@ describe("InputSignerRouter", async () => {
                 MissingSigningDescriptorError,
             );
         });
+
+        it("unions multiple job sets and classifies them in a single repo pass", async () => {
+            const contractRepo = new InMemoryContractRepository();
+            const scriptA = taprootScript(BASELINE_REUSE_PUBKEY);
+            const scriptB = taprootScript(DELEGATE_BASELINE_PUBKEY);
+            await contractRepo.saveContract(
+                makeContract({
+                    script: hex.encode(scriptA),
+                    type: "default",
+                    params: { pubKey: baselinePubKey },
+                }),
+            );
+            await contractRepo.saveContract(
+                makeContract({
+                    script: hex.encode(scriptB),
+                    type: "delegate",
+                    params: { pubKey: baselinePubKey },
+                }),
+            );
+            // Spy after seeding so only the canBatch lookup is counted.
+            const getContracts = vi.spyOn(contractRepo, "getContracts");
+
+            const router = createRouter({ contractRepository: contractRepo });
+
+            // Mimic the wallet's call shape: an arkTx job set plus a
+            // checkpoint job set, every input baseline-owned.
+            const eligible = await router.canBatch(
+                [{ index: 0, lookupScript: scriptA }],
+                [{ index: 0, lookupScript: scriptB }],
+            );
+
+            expect(eligible).toBe(true);
+            // The whole union resolves in one classify, not one per set.
+            expect(getContracts).toHaveBeenCalledTimes(1);
+        });
+
+        it("returns false when any later job set routes to the descriptor provider", async () => {
+            const contractRepo = new InMemoryContractRepository();
+            const baselineScript = taprootScript(BASELINE_REUSE_PUBKEY);
+            const rotatedScript = taprootScript(ROTATED_A_PUBKEY);
+            await contractRepo.saveContract(
+                makeContract({
+                    script: hex.encode(baselineScript),
+                    type: "default",
+                    params: { pubKey: baselinePubKey },
+                }),
+            );
+            await contractRepo.saveContract(
+                makeContract({
+                    script: hex.encode(rotatedScript),
+                    type: "default",
+                    params: { pubKey: ROTATED_A_PUBKEY },
+                    metadata: { signingDescriptor: "tr(rotated)" },
+                }),
+            );
+
+            const router = createRouter({ contractRepository: contractRepo });
+
+            // First set is fully baseline; the rotated input hides in a
+            // later set and must still flip the whole bundle to false.
+            const eligible = await router.canBatch(
+                [{ index: 0, lookupScript: baselineScript }],
+                [{ index: 0, lookupScript: rotatedScript }],
+            );
+
+            expect(eligible).toBe(false);
+        });
     });
 
     it("keeps the first contract when the repo yields duplicates for one script", async () => {
