@@ -7,27 +7,6 @@ This file covers the **0.4.x** line. Pre-0.4 release history (0.3.x and
 earlier) lives in `git log` — those entries were not written in this
 style and have not been backfilled.
 
-## [Unreleased]
-
-### Bug Fixes
-
-- **`BatchSignableIdentity.signMultiple` was unreachable from
-  `Wallet.buildAndSubmitOffchainTx` after the `InputSignerRouter`
-  refactor.** The N+1 → 1 popup optimization introduced in #395 was
-  silently lost when per-input routing moved into
-  `src/wallet/inputSignerRouter.ts`: the send path called
-  `_signerRouter.sign` once per PSBT, never folding work across the
-  arkTx + N checkpoints. Restored by adding an `InputSignerRouter.classify`
-  primitive (single source of truth for routing) with a `canBatch`
-  predicate, and re-introducing the batch path in
-  `Wallet.buildAndSubmitOffchainTx` and the pending-tx recovery loop.
-  The batch path activates when the identity implements `signMultiple`
-  *and* every signable input across the bundle resolves to the baseline
-  key — i.e. no HD-rotated or other descriptor-bound contracts in scope.
-  HD/mixed sends keep using the existing sequential signing path
-  unchanged. Static single-key browser wallets (Xverse / UniSat / OKX
-  style identities) go back to one confirmation popup per send.
-
 ## [0.4.23] - 2026-05-04
 
 ### Breaking Changes
