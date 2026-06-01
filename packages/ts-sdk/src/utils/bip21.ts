@@ -112,8 +112,11 @@ export class BIP21 {
                 if (!value) continue;
 
                 if (key === "amount") {
+                    if (!/^\d+(?:\.\d+)?$/.test(value)) {
+                        continue;
+                    }
                     const amount = Number(value);
-                    if (!isFinite(amount)) {
+                    if (!isFinite(amount) || !Number.isSafeInteger(Math.trunc(amount))) {
                         continue;
                     }
                     if (amount < 0) {
