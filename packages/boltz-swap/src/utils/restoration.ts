@@ -1,6 +1,7 @@
 import { hex } from "@scure/base";
 import { Script } from "@scure/btc-signer";
 import { FeesResponse } from "../types";
+import type { Tree, TimeoutBlockHeights } from "../boltz-swap-provider";
 import bip68 from "bip68";
 
 /**
@@ -66,4 +67,39 @@ export function extractInvoiceAmount(amountSats: number | undefined, fees: FeesR
     if (miner >= amountSats) return 0;
 
     return Math.ceil((amountSats - miner) / (1 - percentage / 100));
+}
+
+/**
+ * Resolves a VHTLC's timeouts for a restored swap: prefers the server-provided
+ * `timeoutBlockHeights`, otherwise derives them from the tree leaves.
+ *
+ * Returns `undefined` when any locktime is missing/zero (an incomplete restore
+ * response, since `extractTimeLockFromLeafOutput` yields 0 for an empty or
+ * unparseable leaf). Building a VHTLC from zeroed timeouts would fail the
+ * downstream address-match check with a cryptic error; returning `undefined`
+ * instead lets callers' explicit "missing/incomplete timeouts" guards fire.
+ */
+export function resolveVhtlcTimeouts(
+    tree: Tree,
+    timeoutBlockHeights?: TimeoutBlockHeights,
+): TimeoutBlockHeights | undefined {
+    const resolved = timeoutBlockHeights ?? {
+        refund: extractTimeLockFromLeafOutput(tree.refundWithoutBoltzLeaf?.output ?? ""),
+        unilateralClaim: extractTimeLockFromLeafOutput(tree.unilateralClaimLeaf?.output ?? ""),
+        unilateralRefund: extractTimeLockFromLeafOutput(tree.unilateralRefundLeaf?.output ?? ""),
+        unilateralRefundWithoutReceiver: extractTimeLockFromLeafOutput(
+            tree.unilateralRefundWithoutBoltzLeaf?.output ?? "",
+        ),
+    };
+
+    if (
+        !resolved.refund ||
+        !resolved.unilateralClaim ||
+        !resolved.unilateralRefund ||
+        !resolved.unilateralRefundWithoutReceiver
+    ) {
+        return undefined;
+    }
+
+    return resolved;
 }

@@ -36,6 +36,7 @@ import {
 } from "../index";
 import { DelegateInfo } from "../../providers/delegate";
 import { ReadonlyWallet, Wallet } from "../wallet";
+import type { RenewVtxosOptions } from "../vtxo-manager";
 import { extendCoin } from "../utils";
 import { MessageHandler, RequestEnvelope, ResponseEnvelope } from "../../worker/messageBus";
 import { Transaction } from "../../utils/transaction";
@@ -473,6 +474,7 @@ export type ResponseGetExpiringVtxos = ResponseEnvelope & {
 
 export type RequestRenewVtxos = RequestEnvelope & {
     type: "RENEW_VTXOS";
+    payload?: RenewVtxosOptions;
 };
 export type ResponseRenewVtxos = ResponseEnvelope & {
     type: "RENEW_VTXOS_SUCCESS";
@@ -1055,7 +1057,7 @@ export class WalletMessageHandler
                                 payload: e,
                             }),
                         );
-                    });
+                    }, message.payload);
                     return this.tagged({
                         id,
                         type: "RENEW_VTXOS_SUCCESS",

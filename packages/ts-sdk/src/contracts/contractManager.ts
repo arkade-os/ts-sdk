@@ -19,7 +19,7 @@ import {
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
 import { ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
-import { extendVirtualCoinForContract } from "../wallet/utils";
+import { extendVirtualCoinForContract, type ContractTapscriptCache } from "../wallet/utils";
 import { ContractFilter, ContractRepository } from "../repositories";
 import {
     advanceSyncCursor,
@@ -645,7 +645,12 @@ export class ContractManager implements IContractManager {
             byScript.set(contract.script, contract);
         }
 
-        return vtxos.map((vtxo) => extendVirtualCoinForContract(vtxo, byScript));
+        // Tapscript data is derived solely from a contract's params, so it is
+        // identical for every VTXO locked to the same contract. Memoize it per
+        // contract to avoid rebuilding the taproot tree once per VTXO — the
+        // dominant cost when annotating long spent/swept histories (see #521).
+        const tapscriptCache: ContractTapscriptCache = new Map();
+        return vtxos.map((vtxo) => extendVirtualCoinForContract(vtxo, byScript, tapscriptCache));
     }
 
     private buildContractsDbFilter(filter: GetContractsFilter): ContractFilter {

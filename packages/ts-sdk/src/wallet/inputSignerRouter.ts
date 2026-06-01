@@ -30,6 +30,22 @@ export interface InputSignerRouterDeps {
 const DESCRIPTOR_CAPABLE_CONTRACT_TYPES = new Set(["default", "delegate"]);
 
 /**
+ * Routing decision for a single tx's signable inputs: which inputs the
+ * baseline {@link Identity} signs, and which are grouped by descriptor for
+ * the {@link DescriptorProvider}.
+ */
+export interface InputRoutingPlan {
+    /** Input indexes the baseline {@link Identity} should sign. */
+    identityIndexes: number[];
+    /**
+     * Per-descriptor buckets of input indexes routed to the
+     * {@link DescriptorProvider}. Empty map ⇒ batch-eligible (every input
+     * resolves to the baseline key).
+     */
+    descriptorGroups: Map<string, number[]>;
+}
+
+/**
  * Routes PSBT inputs to the correct signer based on the owning contract.
  * Inputs whose script matches a `default`/`delegate` contract with a
  * non-baseline owner are sent to {@link DescriptorProvider}; everything
@@ -41,8 +57,24 @@ const DESCRIPTOR_CAPABLE_CONTRACT_TYPES = new Set(["default", "delegate"]);
 export class InputSignerRouter {
     constructor(private readonly deps: InputSignerRouterDeps) {}
 
-    async sign(tx: Transaction, jobs: InputSigningJob[]): Promise<Transaction> {
-        if (jobs.length === 0) return tx;
+    /**
+     * Resolve each job to its target signer without invoking signing. The
+     * returned plan is the single source of truth for both {@link sign} and
+     * the batch-eligibility predicate {@link canBatch} — callers that want
+     * to pre-flight a batch path call {@link canBatch} (which delegates
+     * here) so the routing rules never live in two places.
+     *
+     * Throws {@link MissingSigningDescriptorError} for a non-baseline
+     * default/delegate contract whose `metadata.signingDescriptor` is
+     * missing — the same condition that would later abort signing. Failing
+     * here moves the failure earlier, before any PSBT is mutated.
+     */
+    async classify(jobs: InputSigningJob[]): Promise<InputRoutingPlan> {
+        const identityIndexes: number[] = [];
+        const descriptorGroups = new Map<string, number[]>();
+        if (jobs.length === 0) {
+            return { identityIndexes, descriptorGroups };
+        }
 
         const distinctScripts = Array.from(new Set(jobs.map((j) => hex.encode(j.lookupScript))));
         const contracts = await this.deps.contractRepository.getContracts({
@@ -59,9 +91,6 @@ export class InputSignerRouter {
 
         const baselinePubKeyHex = hex.encode(await this.deps.identity.xOnlyPublicKey());
         const boardingScriptHex = hex.encode(this.deps.boardingPkScript);
-
-        const identityIndexes: number[] = [];
-        const descriptorGroups = new Map<string, number[]>();
 
         for (const job of jobs) {
             const scriptHex = hex.encode(job.lookupScript);
@@ -105,6 +134,34 @@ export class InputSignerRouter {
                 descriptorGroups.set(descriptor, [job.index]);
             }
         }
+
+        return { identityIndexes, descriptorGroups };
+    }
+
+    /**
+     * Returns `true` when every signable input across all `jobSets` resolves
+     * to the baseline {@link Identity} key — i.e. the descriptor provider
+     * would not be invoked. Used by the wallet's send/recovery paths to
+     * pre-flight the {@link BatchSignableIdentity.signMultiple} fast path,
+     * which can only fold work a single identity key can sign.
+     *
+     * Accepts several job sets (e.g. an arkTx's jobs plus one set per
+     * checkpoint) and classifies their union in a single pass. Eligibility
+     * is monotonic — the union routes entirely to the baseline key iff every
+     * set does — so this returns the same answer as ANDing the per-set
+     * results, but with one {@link classify} (one repo round-trip + one
+     * `xOnlyPublicKey` call) instead of one per set. Only the routing buckets
+     * matter here, so the input-index collisions produced by flattening jobs
+     * from different transactions are irrelevant.
+     */
+    async canBatch(...jobSets: InputSigningJob[][]): Promise<boolean> {
+        const plan = await this.classify(jobSets.flat());
+        return plan.descriptorGroups.size === 0;
+    }
+
+    async sign(tx: Transaction, jobs: InputSigningJob[]): Promise<Transaction> {
+        if (jobs.length === 0) return tx;
+        const { identityIndexes, descriptorGroups } = await this.classify(jobs);
 
         let signed = tx;
         if (identityIndexes.length > 0) {

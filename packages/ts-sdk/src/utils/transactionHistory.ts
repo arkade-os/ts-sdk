@@ -9,6 +9,20 @@ const txKey: TxKey = {
     arkTxid: "",
 };
 
+function consumeBoardingReceive(
+    boardingTxs: ArkTransaction[],
+    predicate: (tx: ArkTransaction) => boolean,
+): boolean {
+    const index = boardingTxs.findIndex(predicate);
+    if (index === -1) return false;
+    boardingTxs.splice(index, 1);
+    return true;
+}
+
+function isSettledBoardingReceive(tx: ArkTransaction): boolean {
+    return tx.type === TxType.TxReceived && tx.settled && tx.key.boardingTxid !== "";
+}
+
 function collectAssets(vtxos: VirtualCoin[]): Asset[] | undefined {
     const map = new Map<string, bigint>();
     for (const vtxo of vtxos) {
@@ -64,6 +78,9 @@ export async function buildTransactionHistory(
     getTxCreatedAt?: (txid: string) => Promise<number | undefined>,
 ): Promise<ExtendedArkTransaction[]> {
     const fromOldestVtxo = [...vtxos].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    const unmatchedSettledBoardingTxs = allBoardingTxs
+        .filter(isSettledBoardingReceive)
+        .sort((a, b) => a.createdAt - b.createdAt);
 
     const sent: ExtendedArkTransaction[] = [];
     let received: ExtendedArkTransaction[] = [];
@@ -72,24 +89,44 @@ export async function buildTransactionHistory(
         if (vtxo.status.isLeaf) {
             // If this virtual output is a leaf and it's not the settlement of a boarding or there's no virtual output refreshed by it,
             // it's translated into a received batch transaction
-            if (
-                !commitmentsToIgnore.has(vtxo.virtualStatus.commitmentTxIds![0]) &&
+            const commitmentTxid = vtxo.virtualStatus.commitmentTxIds![0];
+            const vtxoCreatedAt = vtxo.createdAt.getTime();
+            const ignoredCommitment =
+                commitmentsToIgnore.has(commitmentTxid) ||
+                (!!vtxo.settledBy && commitmentsToIgnore.has(vtxo.settledBy));
+
+            if (ignoredCommitment) {
+                consumeBoardingReceive(
+                    unmatchedSettledBoardingTxs,
+                    (tx) =>
+                        tx.createdAt <= vtxoCreatedAt &&
+                        (tx.key.commitmentTxid === commitmentTxid ||
+                            tx.key.commitmentTxid === vtxo.settledBy),
+                );
+            } else if (
                 fromOldestVtxo.filter((v) => v.settledBy === vtxo.virtualStatus.commitmentTxIds![0])
                     .length === 0
             ) {
-                const assets = collectAssets([vtxo]);
-                received.push({
-                    key: {
-                        ...txKey,
-                        commitmentTxid: vtxo.virtualStatus.commitmentTxIds![0],
-                    },
-                    tag: "batch",
-                    type: TxType.TxReceived,
-                    amount: vtxo.value,
-                    settled: vtxo.status.isLeaf || vtxo.isSpent!,
-                    createdAt: vtxo.createdAt.getTime(),
-                    ...(assets && { assets }),
-                });
+                const duplicateBoardingReceive = consumeBoardingReceive(
+                    unmatchedSettledBoardingTxs,
+                    (tx) => tx.amount === vtxo.value && tx.createdAt <= vtxoCreatedAt,
+                );
+
+                if (!duplicateBoardingReceive) {
+                    const assets = collectAssets([vtxo]);
+                    received.push({
+                        key: {
+                            ...txKey,
+                            commitmentTxid,
+                        },
+                        tag: "batch",
+                        type: TxType.TxReceived,
+                        amount: vtxo.value,
+                        settled: vtxo.status.isLeaf || vtxo.isSpent!,
+                        createdAt: vtxoCreatedAt,
+                        ...(assets && { assets }),
+                    });
+                }
             }
         } else if (fromOldestVtxo.filter((v) => v.arkTxId === vtxo.txid).length === 0) {
             // If this virtual output is preconfirmed and does not spend any other virtual outputs,

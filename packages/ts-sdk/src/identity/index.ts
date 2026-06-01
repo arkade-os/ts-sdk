@@ -37,13 +37,26 @@ export interface SignRequest {
  * should implement this interface to reduce the number of confirmation popups
  * from N+1 to 1 during Arkade send transactions.
  *
- * Contract: implementations MUST return exactly one `Transaction` per request,
- * in the same order as the input array. The SDK validates this at runtime and
- * will throw if the lengths do not match.
+ * Contract:
+ * - Implementations MUST return exactly one `Transaction` per request, in the
+ *   same order as the input array. The SDK validates this at runtime and will
+ *   throw if the lengths do not match.
+ * - Implementations MUST preserve any partial signatures already present on the
+ *   input PSBTs and only ADD their own — never drop, replace, or normalize away
+ *   foreign signatures. The pending-tx recovery path
+ *   (`Wallet.finalizePendingTxs`) hands `signMultiple` checkpoint PSBTs that
+ *   already carry the server's `tapScriptSig` and relies on that server
+ *   signature surviving alongside the freshly added user signature. A provider
+ *   that discards the pre-existing server sig produces checkpoints that fail
+ *   server-side finalization, stranding the transaction in the pending state.
  */
 export interface BatchSignableIdentity extends Identity {
     /**
      * Sign multiple transactions in a single wallet interaction.
+     *
+     * Must preserve pre-existing partial signatures on each input PSBT (see the
+     * interface-level contract) and return one signed `Transaction` per request,
+     * in request order.
      *
      * @param requests - Transactions and optional input indexes to sign
      * @returns Signed transactions in the same order as the input requests

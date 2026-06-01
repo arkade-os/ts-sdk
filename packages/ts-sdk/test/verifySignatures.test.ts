@@ -5,7 +5,7 @@ import { randomPrivateKeyBytes } from "@scure/btc-signer/utils.js";
 import { VtxoScript } from "../src/script/base";
 import { MultisigTapscript } from "../src/script/tapscript";
 import { SingleKey } from "../src/identity/singleKey";
-import { verifyTapscriptSignatures } from "../src/utils/arkTransaction";
+import { verifyTapscriptSignatures, combineTapscriptSigs } from "../src/utils/arkTransaction";
 
 describe("verifyTapscriptSignatures", async () => {
     // Test identities
@@ -210,4 +210,74 @@ describe("verifyTapscriptSignatures", async () => {
     // Note: Additional edge case tests (invalid signature, invalid length, missing tapLeafScript, etc.)
     // are skipped because the Transaction API doesn't allow easy manipulation of signed data.
     // The core functionality is well-tested by the positive test cases above.
+});
+
+describe("combineTapscriptSigs", async () => {
+    const serverIdentity = SingleKey.fromPrivateKey(randomPrivateKeyBytes());
+    const serverPubKey = await serverIdentity.xOnlyPublicKey();
+    const userIdentity = SingleKey.fromPrivateKey(randomPrivateKeyBytes());
+    const userPubKey = await userIdentity.xOnlyPublicKey();
+
+    // 2-of-2 collaborative leaf — mirrors a checkpoint's co-sign path.
+    const collaborative = MultisigTapscript.encode({
+        pubkeys: [serverPubKey, userPubKey],
+        type: MultisigTapscript.MultisigType.CHECKSIG,
+    });
+    const vtxoScript = new VtxoScript([collaborative.script]);
+
+    // Build a checkpoint-shaped tx (single input on the collaborative leaf),
+    // optionally signed by `signer`. Omitting the signer yields an input with
+    // no tapScriptSig — the corruption case the guards must reject.
+    function makeTx(signer?: SingleKey): Transaction {
+        const tx = new Transaction();
+        tx.addInput({
+            txid: new Uint8Array(32).fill(0),
+            index: 0,
+            witnessUtxo: { script: vtxoScript.pkScript, amount: 1000n },
+            tapLeafScript: [vtxoScript.leaves[0]],
+        });
+        tx.addOutputAddress("bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq", 900n);
+        if (signer) {
+            tx.signIdx(signer["key"], 0, [SigHash.DEFAULT]);
+        }
+        return tx;
+    }
+
+    it("merges both parties' sigs onto originalTx when every input is co-signed", () => {
+        const serverSigned = makeTx(serverIdentity);
+        const userSigned = makeTx(userIdentity);
+
+        combineTapscriptSigs(userSigned, serverSigned);
+
+        const pubkeys = serverSigned.getInput(0).tapScriptSig!.map(([d]) => hex.encode(d.pubKey));
+        // Server sig preserved AND user sig appended — neither dropped.
+        expect(pubkeys).toContain(hex.encode(serverPubKey));
+        expect(pubkeys).toContain(hex.encode(userPubKey));
+    });
+
+    it("throws (no silent corruption) when signedTx is missing a sig", () => {
+        const serverSigned = makeTx(serverIdentity);
+        const userUnsigned = makeTx(); // user never signed
+
+        // Previously this appended `undefined` and corrupted the witness.
+        expect(() => combineTapscriptSigs(userUnsigned, serverSigned)).toThrow(
+            /signedTx input 0 has no tapScriptSig/,
+        );
+    });
+
+    it("throws when originalTx is missing a sig", () => {
+        const serverUnsigned = makeTx();
+        const userSigned = makeTx(userIdentity);
+
+        expect(() => combineTapscriptSigs(userSigned, serverUnsigned)).toThrow(
+            /originalTx input 0 has no tapScriptSig/,
+        );
+    });
+
+    it("throws on input-count mismatch instead of out-of-bounds access", () => {
+        const userSigned = makeTx(userIdentity); // 1 input
+        const empty = new Transaction(); // 0 inputs
+
+        expect(() => combineTapscriptSigs(userSigned, empty)).toThrow(/input count mismatch/);
+    });
 });

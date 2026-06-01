@@ -51,6 +51,8 @@ import type {
     ResponseVerifyChainSwap,
     ResponseWaitAndClaimArk,
     ResponseWaitAndClaimBtc,
+    ResponseClaimArk,
+    ResponseClaimBtc,
     ResponseWaitAndClaimChain,
     ResponseWaitAndClaim,
     ResponseWaitForSwapSettlement,
@@ -721,22 +723,24 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         }
     }
 
-    async claimArk(pendingSwap: BoltzChainSwap): Promise<void> {
-        await this.sendMessage({
+    async claimArk(pendingSwap: BoltzChainSwap): Promise<{ txid: string }> {
+        const res = await this.sendMessage({
             id: getRandomId(),
             tag: this.messageTag,
             type: "CLAIM_ARK",
             payload: pendingSwap,
         });
+        return (res as ResponseClaimArk).payload;
     }
 
-    async claimBtc(pendingSwap: BoltzChainSwap): Promise<void> {
-        await this.sendMessage({
+    async claimBtc(pendingSwap: BoltzChainSwap): Promise<{ txid: string }> {
+        const res = await this.sendMessage({
             id: getRandomId(),
             tag: this.messageTag,
             type: "CLAIM_BTC",
             payload: pendingSwap,
         });
+        return (res as ResponseClaimBtc).payload;
     }
 
     async refundArk(pendingSwap: BoltzChainSwap): Promise<ChainArkRefundOutcome> {
