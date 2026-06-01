@@ -9,6 +9,7 @@ import {
     InMemoryContractRepository,
     DefaultVtxo,
     MissingSigningDescriptorError,
+    buildOffchainTx,
     type BatchSignableIdentity,
     type Identity,
     type SignRequest,
@@ -1388,6 +1389,31 @@ describe("Wallet HD rotation", () => {
 });
 
 describe("Wallet batch signing (BatchSignableIdentity)", () => {
+    // The well-known generator-point key: privkey = 1, whose x-only pubkey
+    // is exactly `mockArkInfo.signerPubkey` (SERVER_PUBKEY_HEX). Lets the
+    // tests produce a REAL server `tapScriptSig` on a checkpoint's
+    // collaborative leaf, so the merge / recovery paths run against genuine
+    // signatures rather than fabricated ones.
+    const SERVER_KEY = SingleKey.fromHex(
+        "0000000000000000000000000000000000000000000000000000000000000001",
+    );
+
+    // Sign input 0 of a checkpoint PSBT with the server key on the
+    // collaborative (forfeit) leaf and return the re-encoded base64 PSBT.
+    async function serverSignCheckpoint(checkpointB64: string): Promise<string> {
+        const tx = Transaction.fromPSBT(base64.decode(checkpointB64));
+        const signed = await SERVER_KEY.sign(tx, [0]);
+        return base64.encode(signed.toPSBT());
+    }
+
+    // Pubkeys (x-only hex) that carry a tapScriptSig on the given input.
+    function tapscriptSignerPubkeysHex(psbtB64: string, inputIndex: number): string[] {
+        const tx = Transaction.fromPSBT(base64.decode(psbtB64));
+        return (tx.getInput(inputIndex).tapScriptSig ?? []).map(([data]) =>
+            hex.encode(data.pubKey),
+        );
+    }
+
     // Decorate an Identity with a tracked `signMultiple` that delegates
     // each request to `base.sign`. Explicit per-method delegation —
     // spreading `base` doesn't carry prototype methods.
@@ -1528,6 +1554,150 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         expect(signSpy).toHaveBeenCalledTimes(2);
 
         signSpy.mockRestore();
+        await wallet.dispose();
+    });
+
+    it("batch send merge: finalized checkpoint carries BOTH server and user tapScriptSig", async () => {
+        // Covers the merge step (`combineTapscriptSigs`) the other batch
+        // test skips by aborting at submitTx. The user pre-signs the
+        // unsigned checkpoints inside signMultiple; submitTx returns them
+        // carrying the server's sig; the wallet must merge the two so the
+        // checkpoint handed to finalizeTx is signed by BOTH parties.
+        const { wallet, identity } = await makeStaticBatchWallet();
+        const coin = makeBaselineCoin(wallet);
+        const userXOnlyHex = hex.encode(await identity.xOnlyPublicKey());
+        const serverXOnlyHex = hex.encode(await SERVER_KEY.xOnlyPublicKey());
+
+        const submitSpy = vi
+            .spyOn(wallet.arkProvider, "submitTx")
+            .mockImplementation(async (arkTxB64, checkpointsB64) => ({
+                arkTxid: "ab".repeat(32),
+                finalArkTx: arkTxB64,
+                // Server adds its share to the *unsigned* checkpoints it
+                // was handed — exactly what arkd does in production.
+                signedCheckpointTxs: await Promise.all(
+                    checkpointsB64.map((c) => serverSignCheckpoint(c)),
+                ),
+            }));
+
+        let finalizedCheckpoints: string[] | undefined;
+        const finalizeSpy = vi
+            .spyOn(wallet.arkProvider, "finalizeTx")
+            .mockImplementation(async (_arkTxid, checkpoints) => {
+                finalizedCheckpoints = checkpoints;
+            });
+
+        await wallet.buildAndSubmitOffchainTx(
+            [coin],
+            [{ amount: BigInt(coin.value - 1000), script: wallet.arkAddress.pkScript }],
+        );
+
+        // Batch path taken: one signMultiple, no per-tx sign.
+        expect(identity.signMultipleSpy).toHaveBeenCalledTimes(1);
+        expect(identity.signSpy).not.toHaveBeenCalled();
+
+        expect(finalizedCheckpoints).toHaveLength(1);
+        const signers = tapscriptSignerPubkeysHex(finalizedCheckpoints![0], 0);
+        // The merge preserved the server sig AND added the user sig.
+        expect(signers).toContain(serverXOnlyHex);
+        expect(signers).toContain(userXOnlyHex);
+
+        submitSpy.mockRestore();
+        finalizeSpy.mockRestore();
+        await wallet.dispose();
+    });
+
+    it("batch send merge: rejects when the server returns a mismatched checkpoint count", async () => {
+        // The merge pairs the server's signedCheckpointTxs with the stashed
+        // userSignedCheckpoints by index. A count mismatch must throw loudly
+        // rather than silently drop the tail (short response) or blow up with
+        // a cryptic undefined access mid-merge (long response).
+        const { wallet } = await makeStaticBatchWallet();
+        const coin = makeBaselineCoin(wallet);
+
+        const submitSpy = vi
+            .spyOn(wallet.arkProvider, "submitTx")
+            .mockImplementation(async (arkTxB64, checkpointsB64) => {
+                const signed = await Promise.all(
+                    checkpointsB64.map((c) => serverSignCheckpoint(c)),
+                );
+                return {
+                    arkTxid: "ab".repeat(32),
+                    finalArkTx: arkTxB64,
+                    // One more checkpoint than the user signed → mismatch.
+                    signedCheckpointTxs: [...signed, signed[0]],
+                };
+            });
+        const finalizeSpy = vi.spyOn(wallet.arkProvider, "finalizeTx").mockResolvedValue(undefined);
+
+        await expect(
+            wallet.buildAndSubmitOffchainTx(
+                [coin],
+                [{ amount: BigInt(coin.value - 1000), script: wallet.arkAddress.pkScript }],
+            ),
+        ).rejects.toThrow(/submitTx returned 2 checkpoints, expected 1/);
+
+        // Guard fired before finalize — no malformed checkpoint reaches arkd.
+        expect(finalizeSpy).not.toHaveBeenCalled();
+
+        submitSpy.mockRestore();
+        finalizeSpy.mockRestore();
+        await wallet.dispose();
+    });
+
+    it("batch recovery: signs server-signed checkpoints once and preserves the server sig", async () => {
+        // `finalizePendingTxs` batch path is NOT a restore of #395 — it is
+        // new code that hands signMultiple a checkpoint that ALREADY carries
+        // the server's tapScriptSig and uses the result directly (no merge).
+        // It is correct only if the user signer preserves the pre-existing
+        // server sig. This locks that contract in.
+        const { wallet, identity } = await makeStaticBatchWallet();
+        const coin = makeBaselineCoin(wallet);
+        const userXOnlyHex = hex.encode(await identity.xOnlyPublicKey());
+        const serverXOnlyHex = hex.encode(await SERVER_KEY.xOnlyPublicKey());
+
+        // Build the checkpoint the same way the wallet does, then have the
+        // server (and only the server) sign it — mimics what the server
+        // returns from submitTx and persists for recovery.
+        const offchain = buildOffchainTx(
+            [{ ...coin, tapLeafScript: coin.forfeitTapLeafScript }],
+            [{ amount: BigInt(coin.value - 1000), script: wallet.arkAddress.pkScript }],
+            wallet.serverUnrollScript,
+        );
+        const serverCheckpointB64 = await serverSignCheckpoint(
+            base64.encode(offchain.checkpoints[0].toPSBT()),
+        );
+        // Sanity: the persisted checkpoint carries the server sig and NOT
+        // the user sig (recovery is responsible for adding the user share).
+        expect(tapscriptSignerPubkeysHex(serverCheckpointB64, 0)).toEqual([serverXOnlyHex]);
+
+        // Pretend a previous send was interrupted after submit.
+        await (wallet as any).setPendingTxFlag(true);
+        const getPendingSpy = vi
+            .spyOn(wallet.arkProvider, "getPendingTxs")
+            .mockResolvedValue([
+                { arkTxid: "cd".repeat(32), signedCheckpointTxs: [serverCheckpointB64] },
+            ] as never);
+        let finalizedCheckpoints: string[] | undefined;
+        const finalizeSpy = vi
+            .spyOn(wallet.arkProvider, "finalizeTx")
+            .mockImplementation(async (_arkTxid, checkpoints) => {
+                finalizedCheckpoints = checkpoints;
+            });
+
+        const result = await wallet.finalizePendingTxs([coin]);
+
+        expect(result.finalized).toEqual(["cd".repeat(32)]);
+        // One batch call covers every checkpoint of the recovered tx.
+        expect(identity.signMultipleSpy).toHaveBeenCalledTimes(1);
+
+        expect(finalizedCheckpoints).toHaveLength(1);
+        const signers = tapscriptSignerPubkeysHex(finalizedCheckpoints![0], 0);
+        expect(signers).toContain(serverXOnlyHex); // server sig survived
+        expect(signers).toContain(userXOnlyHex); // user sig added on top
+
+        getPendingSpy.mockRestore();
+        finalizeSpy.mockRestore();
         await wallet.dispose();
     });
 });

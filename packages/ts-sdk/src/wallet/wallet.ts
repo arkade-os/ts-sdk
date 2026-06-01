@@ -2728,6 +2728,16 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         let finalCheckpoints: string[];
         if (userSignedCheckpoints) {
+            // The server must return exactly one checkpoint per user-signed
+            // checkpoint: the merge below pairs them by index, so a short
+            // response would silently drop the tail (→ incomplete finalizeTx)
+            // and a long one would throw a cryptic undefined access. Guard
+            // explicitly, mirroring the signMultiple length check above.
+            if (signedCheckpointTxs.length !== userSignedCheckpoints.length) {
+                throw new Error(
+                    `submitTx returned ${signedCheckpointTxs.length} checkpoints, expected ${userSignedCheckpoints.length}`,
+                );
+            }
             // Merge stashed user sigs onto the server-signed checkpoints.
             finalCheckpoints = signedCheckpointTxs.map((c, i) => {
                 const serverSigned = Transaction.fromPSBT(base64.decode(c));

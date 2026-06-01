@@ -328,17 +328,36 @@ export function verifyTapscriptSignatures(
 }
 
 /**
- * Merges the signed transaction with the original transaction
+ * Merges the tapscript signatures of `signedTx` onto `originalTx`, in place.
+ *
+ * Invariant: both transactions must have the same number of inputs and BOTH
+ * must carry a `tapScriptSig` on every input — the result is the per-input
+ * concatenation `originalTx.tapScriptSig ++ signedTx.tapScriptSig`. A missing
+ * signature on either side is rejected with an input-indexed error rather than
+ * silently corrupting the witness (the previous code appended `undefined` when
+ * `signedTx` was unsigned). Callers that partially sign must merge only fully
+ * co-signed inputs.
+ *
  * @param signedTx signed transaction
- * @param originalTx original transaction
+ * @param originalTx original transaction (mutated and returned)
  */
 export function combineTapscriptSigs(signedTx: Transaction, originalTx: Transaction) {
+    if (signedTx.inputsLength !== originalTx.inputsLength) {
+        throw new Error(
+            `combineTapscriptSigs: input count mismatch (signedTx ${signedTx.inputsLength}, originalTx ${originalTx.inputsLength})`,
+        );
+    }
     for (let i = 0; i < signedTx.inputsLength; i++) {
         const input = originalTx.getInput(i);
         const signedInput = signedTx.getInput(i);
-        if (!input.tapScriptSig) throw new Error("No tapScriptSig");
+        if (!input.tapScriptSig) {
+            throw new Error(`combineTapscriptSigs: originalTx input ${i} has no tapScriptSig`);
+        }
+        if (!signedInput.tapScriptSig) {
+            throw new Error(`combineTapscriptSigs: signedTx input ${i} has no tapScriptSig`);
+        }
         originalTx.updateInput(i, {
-            tapScriptSig: input.tapScriptSig?.concat(signedInput.tapScriptSig!),
+            tapScriptSig: input.tapScriptSig.concat(signedInput.tapScriptSig),
         });
     }
     return originalTx;
