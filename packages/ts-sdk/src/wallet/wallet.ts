@@ -2994,15 +2994,31 @@ export function selectVirtualCoins(
  */
 export async function waitForIncomingFunds(wallet: Wallet): Promise<IncomingFunds> {
     let stopFunc: (() => void) | undefined;
+    let settled = false;
 
     return new Promise<IncomingFunds>((resolve) => {
         wallet
-            .notifyIncomingFunds((coins: IncomingFunds) => {
-                resolve(coins);
-                if (stopFunc) stopFunc();
+            .notifyIncomingFunds((funds: IncomingFunds) => {
+                // `notifyIncomingFunds` also fires for purely outgoing activity:
+                // a `vtxo_spent` event carries `newVtxos: []`, and an onchain tx
+                // that only spends from the boarding address yields empty
+                // `coins`. Those hold no incoming funds, so skip them and keep
+                // waiting — otherwise this one-shot helper can resolve on the
+                // spent half of a self-send before the matching `vtxo_received`
+                // arrives, returning an empty result.
+                const hasFunds =
+                    funds.type === "utxo" ? funds.coins.length > 0 : funds.newVtxos.length > 0;
+                if (settled || !hasFunds) return;
+
+                settled = true;
+                resolve(funds);
+                stopFunc?.();
             })
             .then((stop) => {
                 stopFunc = stop;
+                // The callback may have already resolved before the subscription
+                // handle was available; tear it down now so we don't leak it.
+                if (settled) stop();
             });
     });
 }
