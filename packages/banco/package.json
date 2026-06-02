@@ -22,6 +22,7 @@
     ],
     "scripts": {
         "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+        "smoke:dist": "node scripts/smoke-dist.mjs",
         "typecheck": "tsc --noEmit",
         "format": "prettier --write src test",
         "lint": "prettier --check src test",
