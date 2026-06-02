@@ -738,7 +738,13 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
             isLeaf: !vtxo.isPreconfirmed,
         },
         virtualStatus: {
-            state: vtxo.isSwept ? "swept" : vtxo.isPreconfirmed ? "preconfirmed" : "settled",
+            state: vtxo.isSpent
+                ? "spent"
+                : vtxo.isSwept
+                  ? "swept"
+                  : vtxo.isPreconfirmed
+                    ? "preconfirmed"
+                    : "settled",
             commitmentTxIds: vtxo.commitmentTxids,
             batchExpiry: vtxo.expiresAt ? Number(vtxo.expiresAt) * 1000 : undefined,
         },
