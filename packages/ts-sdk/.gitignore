@@ -1,14 +1,11 @@
 node_modules/
+dist/
 docs/
 .mintlify-last
 .idea
 .claude/
 *.sqlite
 *.har
-
-# dist is committed so consumers installing via git (`&path:/packages/ts-sdk`)
-# get prebuilt output without a build-on-install step. Override the root .gitignore `dist`.
-!dist/
 
 # AI
 CLAUDE.md
