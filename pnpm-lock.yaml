@@ -44,6 +44,15 @@ importers:
         specifier: 3.2.4
         version: 3.2.4(@types/node@24.3.1)(lightningcss@1.32.0)(terser@5.46.0)(yaml@2.8.2)
 
+  packages/banco:
+    dependencies:
+      '@arkade-os/sdk':
+        specifier: workspace:*
+        version: link:../ts-sdk
+      '@scure/base':
+        specifier: 2.0.0
+        version: 2.0.0
+
   packages/boltz-swap:
     dependencies:
       '@arkade-os/sdk':

@@ -1,0 +1,52 @@
+{
+    "name": "@arkade-os/banco",
+    "version": "0.0.1",
+    "type": "module",
+    "description": "Banco swap protocol for Ark",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "import": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.js"
+            },
+            "require": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.cjs"
+            }
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+        "typecheck": "tsc --noEmit",
+        "format": "prettier --write src test",
+        "lint": "prettier --check src test",
+        "prepack": "pnpm run build",
+        "test": "vitest run --passWithNoTests",
+        "test:unit": "vitest run --exclude test/e2e --passWithNoTests",
+        "test:integration": "vitest run test/e2e/**",
+        "test:setup-docker": "node test/e2e/setup.mjs"
+    },
+    "keywords": [
+        "bitcoin",
+        "ark",
+        "banco",
+        "swap",
+        "arkade"
+    ],
+    "author": "Ark Labs",
+    "license": "MIT",
+    "dependencies": {
+        "@arkade-os/sdk": "workspace:*",
+        "@scure/base": "2.0.0"
+    },
+    "publishConfig": {
+        "access": "public",
+        "registry": "https://registry.npmjs.org/"
+    },
+    "packageManager": "pnpm@10.25.0"
+}

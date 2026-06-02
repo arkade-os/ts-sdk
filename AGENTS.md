@@ -4,7 +4,7 @@ This file provides guidance to AI coding assistants when working with code in th
 
 ## Project Overview
 
-**arkade-monorepo** — A pnpm workspace monorepo for the Arkade Bitcoin wallet ecosystem. Contains two published packages: `@arkade-os/sdk` (Bitcoin wallet SDK with Taproot/Ark protocol) and `@arkade-os/boltz-swap` (Lightning/chain swaps via Boltz). Both target browser, Node.js, and React Native (Expo).
+**arkade-monorepo** — A pnpm workspace monorepo for the Arkade Bitcoin wallet ecosystem. Contains three published packages: `@arkade-os/sdk` (Bitcoin wallet SDK with Taproot/Ark protocol), `@arkade-os/boltz-swap` (Lightning/chain swaps via Boltz), and `@arkade-os/banco` (non interactive swap protocol). All depend on `@arkade-os/sdk` and target browser, Node.js, and React Native (Expo).
 
 ## Commands
 
@@ -21,6 +21,8 @@ pnpm -C packages/ts-sdk test              # Unit tests for SDK
 pnpm -C packages/ts-sdk test:unit         # Unit tests excluding e2e
 pnpm -C packages/boltz-swap test          # Unit tests for boltz-swap
 pnpm -C packages/boltz-swap test:unit     # Unit tests excluding e2e
+pnpm -C packages/banco test               # Unit tests for banco (e2e only; passes with no unit tests)
+pnpm -C packages/banco test:unit          # Unit tests excluding e2e
 
 # Single test file
 pnpm -C packages/ts-sdk vitest run test/wallet.test.ts
@@ -32,27 +34,29 @@ pnpm -C packages/ts-sdk vitest run -t "test name pattern"
 # Integration tests (require Docker regtest stack)
 # `test:integration` runs each package's full cycle (reset + up + setup + test)
 # via `scripts/regtest.sh <pkg> cycle`, using packages/<pkg>/.env.regtest.
-pnpm run test:integration              # Both packages, end-to-end
+pnpm run test:integration              # All packages, end-to-end
 pnpm run test:integration:ts-sdk       # ts-sdk only
 pnpm run test:integration:boltz-swap   # boltz-swap only
+pnpm run test:integration:banco        # banco only
 
-# Per-package stack control (replace :ts-sdk with :boltz-swap for the other)
+# Per-package stack control (replace :ts-sdk with :boltz-swap or :banco for the others)
 pnpm run regtest:up:ts-sdk
 pnpm run regtest:setup:ts-sdk
 pnpm run regtest:test:ts-sdk
 pnpm run regtest:down:ts-sdk
 pnpm run regtest:reset:ts-sdk
 
-# Release (package-scoped; target = sdk | boltz-swap | all)
+# Release (package-scoped; target = sdk | boltz-swap | banco | all)
 pnpm run release -- boltz-swap patch          # Boltz bugfix only
+pnpm run release -- banco patch               # banco only
 pnpm run release -- sdk patch                 # SDK + dependent boltz-swap patch
 pnpm run release -- sdk prepatch --preid beta # Mirrors prerelease into boltz-swap
-pnpm run release -- all patch                 # Bump both
+pnpm run release -- all patch                 # Bump sdk, boltz-swap, and banco
 pnpm run release:dry-run -- sdk patch         # Preview without changes
 pnpm run release:cleanup                      # Auto-detect dirty release artifacts
 ```
 
-Tags are `@arkade-os/sdk/<version>` and `@arkade-os/boltz-swap/<version>` (no `v<version>`). Releasing SDK implies a dependent boltz-swap release because boltz-swap depends on SDK via `workspace:*`; override with `--boltz-bump <bump-or-version>`. The script runs tests, builds, commits, tags, publishes to npm (requires local npm credentials), and pushes commit + tags to `origin`.
+Tags are `@arkade-os/sdk/<version>`, `@arkade-os/boltz-swap/<version>`, and `@arkade-os/banco/<version>` (no `v<version>`). Releasing SDK implies a dependent boltz-swap release because boltz-swap depends on SDK via `workspace:*`; override with `--boltz-bump <bump-or-version>`. banco is released independently (included in `all` but not auto-bumped by an SDK release); its `workspace:*` SDK dependency is still pinned on pack/publish. The script runs tests, builds, commits, tags, publishes to npm (requires local npm credentials), and pushes commit + tags to `origin`.
 
 ## Code Style
 
@@ -69,9 +73,10 @@ config/              # Shared configs (tsconfig.base.json, vitest.base.ts)
 packages/
   ts-sdk/            # @arkade-os/sdk — core Bitcoin wallet SDK
   boltz-swap/        # @arkade-os/boltz-swap — Boltz submarine swaps (depends on ts-sdk)
+  banco/             # @arkade-os/banco — banco swap protocol (depends on ts-sdk)
 regtest/             # Git submodule (arkade-regtest) — shared regtest environment
 scripts/
-  release.mjs        # Root package-scoped release orchestrator (SDK first, then boltz-swap)
+  release.mjs        # Root package-scoped release orchestrator (SDK first, then boltz-swap, then banco)
   release.sh         # Thin wrapper that execs release.mjs
 ```
 
@@ -97,6 +102,17 @@ Key components:
 - **SwapManager** (`src/swap-manager.ts`) — Autonomous background swap monitoring and execution.
 - **Repositories** (`src/repositories/`) — `SwapRepository` interface with IndexedDB, InMemory, SQLite, and Realm implementations.
 - Swap types: Reverse (Lightning→Ark), Submarine (Ark→Lightning), Chain (ARK↔BTC on-chain).
+
+### `@arkade-os/banco` (packages/banco)
+
+Single-entry `tsup` build (ESM+CJS+dts). Depends on `@arkade-os/sdk` via `workspace:*`. Implements the banco swap protocol (asset ↔ BTC offers).
+
+Key components:
+- **Offer** (`src/offer.ts`) — Offer construction/decoding.
+- **Maker** (`src/maker.ts`) — Offer creation and lifecycle (`createOffer`, `OfferStatus`).
+- **Taker** (`src/taker.ts`) — Offer fulfillment (`fulfill`).
+
+Integration e2e (`test/e2e/`) requires the regtest stack plus the emulator co-signing service (same one the ts-sdk Arkade suite uses); `scripts/regtest.sh banco` brings the emulator up automatically.
 
 ### Integration Testing Stack (regtest/)
 
