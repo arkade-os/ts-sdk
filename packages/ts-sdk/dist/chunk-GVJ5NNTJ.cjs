@@ -1017,15 +1017,13 @@ var RestDelegateProvider = class {
     if (!isDelegateInfo(data)) {
       throw new Error("Invalid delegate info");
     }
-    return {
-      ...data,
-      delegateAddress: data.delegateAddress || data.delegatorAddress
-    };
+    const delegateAddress = typeof data.delegateAddress === "string" && data.delegateAddress !== "" ? data.delegateAddress : typeof data.delegatorAddress === "string" && data.delegatorAddress !== "" ? data.delegatorAddress : "";
+    return { ...data, delegateAddress };
   }
 };
 var RestDelegatorProvider = RestDelegateProvider;
 function isDelegateInfo(data) {
-  return !!data && typeof data === "object" && "pubkey" in data && "fee" in data && "delegatorAddress" in data && typeof data.pubkey === "string" && typeof data.fee === "string" && typeof data.delegatorAddress === "string" && data.pubkey !== "" && data.fee !== "" && data.delegatorAddress !== "";
+  return !!data && typeof data === "object" && "pubkey" in data && "fee" in data && typeof data.pubkey === "string" && typeof data.fee === "string" && data.pubkey !== "" && data.fee !== "" && (typeof data.delegateAddress === "string" && data.delegateAddress !== "" || typeof data.delegatorAddress === "string" && data.delegatorAddress !== "");
 }
 
 // src/providers/onchain.ts
@@ -2079,12 +2077,22 @@ function verifyTapscriptSignatures(tx, inputIndex, requiredSigners, excludePubke
   }
 }
 function combineTapscriptSigs(signedTx, originalTx) {
+  if (signedTx.inputsLength !== originalTx.inputsLength) {
+    throw new Error(
+      `combineTapscriptSigs: input count mismatch (signedTx ${signedTx.inputsLength}, originalTx ${originalTx.inputsLength})`
+    );
+  }
   for (let i = 0; i < signedTx.inputsLength; i++) {
     const input = originalTx.getInput(i);
     const signedInput = signedTx.getInput(i);
-    if (!input.tapScriptSig) throw new Error("No tapScriptSig");
+    if (!input.tapScriptSig) {
+      throw new Error(`combineTapscriptSigs: originalTx input ${i} has no tapScriptSig`);
+    }
+    if (!signedInput.tapScriptSig) {
+      throw new Error(`combineTapscriptSigs: signedTx input ${i} has no tapScriptSig`);
+    }
     originalTx.updateInput(i, {
-      tapScriptSig: input.tapScriptSig?.concat(signedInput.tapScriptSig)
+      tapScriptSig: input.tapScriptSig.concat(signedInput.tapScriptSig)
     });
   }
   return originalTx;
@@ -2369,27 +2377,57 @@ function extendCoin(wallet, utxo) {
     tapTree: wallet.boardingTapscript.encode()
   };
 }
-function extendVtxoFromContract(vtxo, contract) {
+function deriveContractTapscripts(contract) {
   const handler = chunkJH7WWDEA_cjs.contractHandlers.get(contract.type);
   if (!handler) {
     throw new Error(`No handler for contract type '${contract.type}'`);
   }
   const script = handler.createScript(contract.params);
   return {
-    ...vtxo,
     forfeitTapLeafScript: script.forfeit(),
     intentTapLeafScript: script.forfeit(),
     tapTree: script.encode()
   };
 }
-function extendVirtualCoinForContract(vtxo, contractOrMap) {
+function cloneTapLeafScript([
+  controlBlock,
+  script
+]) {
+  return [
+    {
+      version: controlBlock.version,
+      internalKey: new Uint8Array(controlBlock.internalKey),
+      merklePath: controlBlock.merklePath.map((hash) => new Uint8Array(hash))
+    },
+    new Uint8Array(script)
+  ];
+}
+function cloneContractTapscripts(tapscripts) {
+  return {
+    forfeitTapLeafScript: cloneTapLeafScript(tapscripts.forfeitTapLeafScript),
+    intentTapLeafScript: cloneTapLeafScript(tapscripts.intentTapLeafScript),
+    tapTree: new Uint8Array(tapscripts.tapTree)
+  };
+}
+function extendVtxoFromContract(vtxo, contract, cache) {
+  if (!cache) {
+    return { ...vtxo, ...deriveContractTapscripts(contract) };
+  }
+  let tapscripts = cache.get(contract.script);
+  if (!tapscripts) {
+    tapscripts = deriveContractTapscripts(contract);
+    cache.set(contract.script, tapscripts);
+  }
+  return { ...vtxo, ...cloneContractTapscripts(tapscripts) };
+}
+function extendVirtualCoinForContract(vtxo, contractOrMap, cache) {
   const contract = resolveContract(vtxo, contractOrMap);
   if (!contract) {
     throw new Error(
       "extendVirtualCoinForContract: no contract matched vtxo.script \u2014 callers must resolve the owning contract before annotating"
     );
   }
-  return extendVtxoFromContract(vtxo, contract);
+  return extendVtxoFromContract(vtxo, contract, cache);
 }
 function isContractMap(value) {
   return typeof value.get === "function";
@@ -2712,6 +2750,7 @@ var VtxoManager = class _VtxoManager {
    * primary way to prevent virtual outputs from expiring.
    *
    * @param eventCallback - Optional callback for settlement events
+   * @param options - Optional per-call overrides; see {@link RenewVtxosOptions}
    * @returns Settlement transaction ID
    * @throws Error if no virtual outputs available to renew
    * @throws Error if total amount is below dust threshold
@@ -2727,15 +2766,33 @@ var VtxoManager = class _VtxoManager {
    * const txid = await manager.renewVtxos((event) => {
    *   console.log('Settlement event:', event.type);
    * });
+   *
+   * // Renew only VTXOs that expire within 6 hours
+   * const txid = await manager.renewVtxos(undefined, { thresholdSeconds: 6 * 60 * 60 });
    * ```
    */
-  async renewVtxos(eventCallback) {
+  async renewVtxos(eventCallback, options) {
+    if (options?.thresholdSeconds !== void 0) {
+      const { thresholdSeconds } = options;
+      if (typeof thresholdSeconds !== "number" || !Number.isFinite(thresholdSeconds) || thresholdSeconds <= 0) {
+        throw new TypeError(
+          `Invalid thresholdSeconds: expected a positive finite number, got ${String(thresholdSeconds)}`
+        );
+      }
+    }
     if (this.renewalInProgress) {
       throw new Error("Renewal already in progress");
     }
     this.renewalInProgress = true;
     try {
-      const threshold = this.settlementConfig !== false && this.settlementConfig?.vtxoThreshold !== void 0 ? this.settlementConfig.vtxoThreshold * 1e3 : DEFAULT_RENEWAL_CONFIG.thresholdMs;
+      let threshold;
+      if (options?.thresholdSeconds !== void 0) {
+        threshold = options.thresholdSeconds * 1e3;
+      } else if (this.settlementConfig !== false && this.settlementConfig?.vtxoThreshold !== void 0) {
+        threshold = this.settlementConfig.vtxoThreshold * 1e3;
+      } else {
+        threshold = DEFAULT_RENEWAL_CONFIG.thresholdMs;
+      }
       let vtxos = await this.getExpiringVtxos(threshold);
       if (vtxos.length === 0) {
         throw new Error("No VTXOs available to renew");
@@ -3721,6 +3778,15 @@ var txKey = {
   boardingTxid: "",
   arkTxid: ""
 };
+function consumeBoardingReceive(boardingTxs, predicate) {
+  const index = boardingTxs.findIndex(predicate);
+  if (index === -1) return false;
+  boardingTxs.splice(index, 1);
+  return true;
+}
+function isSettledBoardingReceive(tx) {
+  return tx.type === "RECEIVED" /* TxReceived */ && tx.settled && tx.key.boardingTxid !== "";
+}
 function collectAssets(vtxos) {
   const map = /* @__PURE__ */ new Map();
   for (const vtxo of vtxos) {
@@ -3760,24 +3826,39 @@ function subtractAssets(spent, change) {
 }
 async function buildTransactionHistory(vtxos, allBoardingTxs, commitmentsToIgnore, getTxCreatedAt) {
   const fromOldestVtxo = [...vtxos].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  const unmatchedSettledBoardingTxs = allBoardingTxs.filter(isSettledBoardingReceive).sort((a, b) => a.createdAt - b.createdAt);
   const sent = [];
   let received = [];
   for (const vtxo of fromOldestVtxo) {
     if (vtxo.status.isLeaf) {
-      if (!commitmentsToIgnore.has(vtxo.virtualStatus.commitmentTxIds[0]) && fromOldestVtxo.filter((v) => v.settledBy === vtxo.virtualStatus.commitmentTxIds[0]).length === 0) {
-        const assets = collectAssets([vtxo]);
-        received.push({
-          key: {
-            ...txKey,
-            commitmentTxid: vtxo.virtualStatus.commitmentTxIds[0]
-          },
-          tag: "batch",
-          type: "RECEIVED" /* TxReceived */,
-          amount: vtxo.value,
-          settled: vtxo.status.isLeaf || vtxo.isSpent,
-          createdAt: vtxo.createdAt.getTime(),
-          ...assets && { assets }
-        });
+      const commitmentTxid = vtxo.virtualStatus.commitmentTxIds[0];
+      const vtxoCreatedAt = vtxo.createdAt.getTime();
+      const ignoredCommitment = commitmentsToIgnore.has(commitmentTxid) || !!vtxo.settledBy && commitmentsToIgnore.has(vtxo.settledBy);
+      if (ignoredCommitment) {
+        consumeBoardingReceive(
+          unmatchedSettledBoardingTxs,
+          (tx) => tx.createdAt <= vtxoCreatedAt && (tx.key.commitmentTxid === commitmentTxid || tx.key.commitmentTxid === vtxo.settledBy)
+        );
+      } else if (fromOldestVtxo.filter((v) => v.settledBy === vtxo.virtualStatus.commitmentTxIds[0]).length === 0) {
+        const duplicateBoardingReceive = consumeBoardingReceive(
+          unmatchedSettledBoardingTxs,
+          (tx) => tx.amount === vtxo.value && tx.createdAt <= vtxoCreatedAt
+        );
+        if (!duplicateBoardingReceive) {
+          const assets = collectAssets([vtxo]);
+          received.push({
+            key: {
+              ...txKey,
+              commitmentTxid
+            },
+            tag: "batch",
+            type: "RECEIVED" /* TxReceived */,
+            amount: vtxo.value,
+            settled: vtxo.status.isLeaf || vtxo.isSpent,
+            createdAt: vtxoCreatedAt,
+            ...assets && { assets }
+          });
+        }
       }
     } else if (fromOldestVtxo.filter((v) => v.arkTxId === vtxo.txid).length === 0) {
       const assets = collectAssets([vtxo]);
@@ -4343,7 +4424,7 @@ async function delegate(identity, delegateProvider, arkInfo, delegateInfo, vtxos
     amount += BigInt(coin.value) - BigInt(inputFee.value);
   }
   const { pubkey, fee } = delegateInfo;
-  const delegateAddress = delegateInfo.delegateAddress || delegateInfo.delegatorAddress;
+  const delegateAddress = delegateInfo.delegateAddress;
   const outputs = [];
   const delegateFee = BigInt(Number(fee));
   if (delegateFee > 0n) {
@@ -6783,7 +6864,8 @@ var ContractManager = class _ContractManager {
     for (const contract of contracts) {
       byScript.set(contract.script, contract);
     }
-    return vtxos.map((vtxo) => extendVirtualCoinForContract(vtxo, byScript));
+    const tapscriptCache = /* @__PURE__ */ new Map();
+    return vtxos.map((vtxo) => extendVirtualCoinForContract(vtxo, byScript, tapscriptCache));
   }
   buildContractsDbFilter(filter) {
     return {
@@ -7731,8 +7813,24 @@ var InputSignerRouter = class {
   constructor(deps) {
     this.deps = deps;
   }
-  async sign(tx, jobs) {
-    if (jobs.length === 0) return tx;
+  /**
+   * Resolve each job to its target signer without invoking signing. The
+   * returned plan is the single source of truth for both {@link sign} and
+   * the batch-eligibility predicate {@link canBatch} — callers that want
+   * to pre-flight a batch path call {@link canBatch} (which delegates
+   * here) so the routing rules never live in two places.
+   *
+   * Throws {@link MissingSigningDescriptorError} for a non-baseline
+   * default/delegate contract whose `metadata.signingDescriptor` is
+   * missing — the same condition that would later abort signing. Failing
+   * here moves the failure earlier, before any PSBT is mutated.
+   */
+  async classify(jobs) {
+    const identityIndexes = [];
+    const descriptorGroups = /* @__PURE__ */ new Map();
+    if (jobs.length === 0) {
+      return { identityIndexes, descriptorGroups };
+    }
     const distinctScripts = Array.from(new Set(jobs.map((j) => base.hex.encode(j.lookupScript))));
     const contracts = await this.deps.contractRepository.getContracts({
       script: distinctScripts
@@ -7745,8 +7843,6 @@ var InputSignerRouter = class {
     }
     const baselinePubKeyHex = base.hex.encode(await this.deps.identity.xOnlyPublicKey());
     const boardingScriptHex = base.hex.encode(this.deps.boardingPkScript);
-    const identityIndexes = [];
-    const descriptorGroups = /* @__PURE__ */ new Map();
     for (const job of jobs) {
       const scriptHex = base.hex.encode(job.lookupScript);
       const contract = scriptToContract.get(scriptHex);
@@ -7779,6 +7875,31 @@ var InputSignerRouter = class {
         descriptorGroups.set(descriptor, [job.index]);
       }
     }
+    return { identityIndexes, descriptorGroups };
+  }
+  /**
+   * Returns `true` when every signable input across all `jobSets` resolves
+   * to the baseline {@link Identity} key — i.e. the descriptor provider
+   * would not be invoked. Used by the wallet's send/recovery paths to
+   * pre-flight the {@link BatchSignableIdentity.signMultiple} fast path,
+   * which can only fold work a single identity key can sign.
+   *
+   * Accepts several job sets (e.g. an arkTx's jobs plus one set per
+   * checkpoint) and classifies their union in a single pass. Eligibility
+   * is monotonic — the union routes entirely to the baseline key iff every
+   * set does — so this returns the same answer as ANDing the per-set
+   * results, but with one {@link classify} (one repo round-trip + one
+   * `xOnlyPublicKey` call) instead of one per set. Only the routing buckets
+   * matter here, so the input-index collisions produced by flattening jobs
+   * from different transactions are irrelevant.
+   */
+  async canBatch(...jobSets) {
+    const plan = await this.classify(jobSets.flat());
+    return plan.descriptorGroups.size === 0;
+  }
+  async sign(tx, jobs) {
+    if (jobs.length === 0) return tx;
+    const { identityIndexes, descriptorGroups } = await this.classify(jobs);
     let signed = tx;
     if (identityIndexes.length > 0) {
       signed = await this.deps.identity.sign(signed, identityIndexes);
@@ -8183,7 +8304,7 @@ var ReadonlyWallet = class _ReadonlyWallet {
       const tx = {
         key: {
           boardingTxid: utxo.txid,
-          commitmentTxid: "",
+          commitmentTxid: utxo.virtualStatus.commitmentTxIds?.[0] ?? "",
           arkTxid: ""
         },
         amount: utxo.value,
@@ -9369,16 +9490,38 @@ var Wallet2 = class _Wallet extends ReadonlyWallet {
           seen.add(pendingTx.arkTxid);
           batchPending.push(pendingTx.arkTxid);
           try {
-            const finalCheckpoints = await Promise.all(
-              pendingTx.signedCheckpointTxs.map(async (c) => {
-                const tx = btcSigner.Transaction.fromPSBT(base.base64.decode(c));
-                const signedCheckpoint = await this._signerRouter.sign(
-                  tx,
-                  this.inputSigningJobsFromWitnessUtxos(tx)
-                );
-                return base.base64.encode(signedCheckpoint.toPSBT());
-              })
+            const checkpointTxs = pendingTx.signedCheckpointTxs.map(
+              (c) => btcSigner.Transaction.fromPSBT(base.base64.decode(c))
             );
+            const checkpointJobs = checkpointTxs.map(
+              (tx) => this.inputSigningJobsFromWitnessUtxos(tx)
+            );
+            const identity = this.identity;
+            const batchEligible = isBatchSignable(identity) && await this._signerRouter.canBatch(...checkpointJobs);
+            let finalCheckpoints;
+            if (batchEligible) {
+              const requests = checkpointTxs.map((tx, i) => ({
+                tx,
+                inputIndexes: checkpointJobs[i].map((j) => j.index)
+              }));
+              const signed = await identity.signMultiple(requests);
+              if (signed.length !== requests.length) {
+                throw new Error(
+                  `signMultiple returned ${signed.length} transactions, expected ${requests.length}`
+                );
+              }
+              finalCheckpoints = signed.map((tx) => base.base64.encode(tx.toPSBT()));
+            } else {
+              finalCheckpoints = await Promise.all(
+                checkpointTxs.map(async (tx, i) => {
+                  const signedCheckpoint = await this._signerRouter.sign(
+                    tx,
+                    checkpointJobs[i]
+                  );
+                  return base.base64.encode(signedCheckpoint.toPSBT());
+                })
+              );
+            }
             await this.arkProvider.finalizeTx(pendingTx.arkTxid, finalCheckpoints);
             batchFinalized.push(pendingTx.arkTxid);
           } catch (error) {
@@ -9621,22 +9764,65 @@ var Wallet2 = class _Wallet extends ReadonlyWallet {
       index,
       lookupScript: chunk4QHMS5XH_cjs.VtxoScript.decode(input.tapTree).pkScript
     }));
-    const signedVirtualTx = await this._signerRouter.sign(offchainTx.arkTx, arkTxJobs);
+    const checkpointJobs = offchainTx.checkpoints.map(
+      (c) => this.inputSigningJobsFromWitnessUtxos(c)
+    );
+    let signedVirtualTx;
+    let userSignedCheckpoints;
+    const identity = this.identity;
+    const batchEligible = isBatchSignable(identity) && await this._signerRouter.canBatch(arkTxJobs, ...checkpointJobs);
+    if (batchEligible) {
+      const requests = [
+        {
+          tx: offchainTx.arkTx.clone(),
+          inputIndexes: arkTxJobs.map((j) => j.index)
+        },
+        ...offchainTx.checkpoints.map((c, i) => ({
+          tx: c.clone(),
+          inputIndexes: checkpointJobs[i].map((j) => j.index)
+        }))
+      ];
+      const signed = await identity.signMultiple(requests);
+      if (signed.length !== requests.length) {
+        throw new Error(
+          `signMultiple returned ${signed.length} transactions, expected ${requests.length}`
+        );
+      }
+      const [firstSignedTx, ...signedCheckpoints] = signed;
+      signedVirtualTx = firstSignedTx;
+      userSignedCheckpoints = signedCheckpoints;
+    } else {
+      signedVirtualTx = await this._signerRouter.sign(offchainTx.arkTx, arkTxJobs);
+    }
     await this.setPendingTxFlag(true);
     const { arkTxid, signedCheckpointTxs } = await this.arkProvider.submitTx(
       base.base64.encode(signedVirtualTx.toPSBT()),
       offchainTx.checkpoints.map((c) => base.base64.encode(c.toPSBT()))
     );
-    const finalCheckpoints = await Promise.all(
-      signedCheckpointTxs.map(async (c) => {
-        const tx = btcSigner.Transaction.fromPSBT(base.base64.decode(c));
-        const signedCheckpoint = await this._signerRouter.sign(
-          tx,
-          this.inputSigningJobsFromWitnessUtxos(tx)
+    let finalCheckpoints;
+    if (userSignedCheckpoints) {
+      if (signedCheckpointTxs.length !== userSignedCheckpoints.length) {
+        throw new Error(
+          `submitTx returned ${signedCheckpointTxs.length} checkpoints, expected ${userSignedCheckpoints.length}`
         );
-        return base.base64.encode(signedCheckpoint.toPSBT());
-      })
-    );
+      }
+      finalCheckpoints = signedCheckpointTxs.map((c, i) => {
+        const serverSigned = btcSigner.Transaction.fromPSBT(base.base64.decode(c));
+        combineTapscriptSigs(userSignedCheckpoints[i], serverSigned);
+        return base.base64.encode(serverSigned.toPSBT());
+      });
+    } else {
+      finalCheckpoints = await Promise.all(
+        signedCheckpointTxs.map(async (c) => {
+          const tx = btcSigner.Transaction.fromPSBT(base.base64.decode(c));
+          const signedCheckpoint = await this._signerRouter.sign(
+            tx,
+            this.inputSigningJobsFromWitnessUtxos(tx)
+          );
+          return base.base64.encode(signedCheckpoint.toPSBT());
+        })
+      );
+    }
     await this.arkProvider.finalizeTx(arkTxid, finalCheckpoints);
     try {
       await this.setPendingTxFlag(false);
@@ -9886,12 +10072,17 @@ function selectVirtualCoins(coins, targetAmount) {
 }
 async function waitForIncomingFunds(wallet) {
   let stopFunc;
+  let settled = false;
   return new Promise((resolve) => {
-    wallet.notifyIncomingFunds((coins) => {
-      resolve(coins);
-      if (stopFunc) stopFunc();
+    wallet.notifyIncomingFunds((funds) => {
+      const hasFunds = funds.type === "utxo" ? funds.coins.length > 0 : funds.newVtxos.length > 0;
+      if (settled || !hasFunds) return;
+      settled = true;
+      resolve(funds);
+      stopFunc?.();
     }).then((stop) => {
       stopFunc = stop;
+      if (settled) stop();
     });
   });
 }
@@ -11035,7 +11226,7 @@ var WalletMessageHandler = class {
                 payload: e
               })
             );
-          });
+          }, message.payload);
           return this.tagged({
             id,
             type: "RENEW_VTXOS_SUCCESS",
@@ -11735,6 +11926,9 @@ var ServiceWorkerReadonlyWallet = class _ServiceWorkerReadonlyWallet {
       arkServerUrl: getArkadeServerUrl(options),
       arkServerPublicKey: options.arkServerPublicKey,
       delegateUrl: options.delegateUrl || options.delegatorUrl,
+      // Keep the deprecated field populated so pre-#519 service workers
+      // (which only read delegatorUrl) keep delegating until they activate
+      // a newer version.
       delegatorUrl: options.delegateUrl || options.delegatorUrl
     };
     const messageTimeouts = options.messageTimeouts ? {
@@ -11748,6 +11942,9 @@ var ServiceWorkerReadonlyWallet = class _ServiceWorkerReadonlyWallet {
         publicKey: options.arkServerPublicKey
       },
       delegateUrl: options.delegateUrl || options.delegatorUrl,
+      // Keep the deprecated field populated so pre-#519 service workers
+      // (which only read delegatorUrl) keep delegating until they activate
+      // a newer version.
       delegatorUrl: options.delegateUrl || options.delegatorUrl,
       indexerUrl: options.indexerUrl,
       esploraUrl: options.esploraUrl,
@@ -11971,6 +12168,9 @@ var ServiceWorkerReadonlyWallet = class _ServiceWorkerReadonlyWallet {
         publicKey: this.arkServerPublicKey
       },
       delegateUrl: this.delegateUrl || this.delegatorUrl,
+      // Keep the deprecated field populated so pre-#519 service workers
+      // (which only read delegatorUrl) keep delegating until they activate
+      // a newer version.
       delegatorUrl: this.delegateUrl || this.delegatorUrl,
       indexerUrl: this.indexerUrl,
       esploraUrl: this.esploraUrl,
@@ -12388,6 +12588,9 @@ var ServiceWorkerWallet = class _ServiceWorkerWallet extends ServiceWorkerReadon
       arkServerUrl: getArkadeServerUrl(options),
       arkServerPublicKey: options.arkServerPublicKey,
       delegateUrl: options.delegateUrl || options.delegatorUrl,
+      // Keep the deprecated field populated so pre-#519 service workers
+      // (which only read delegatorUrl) keep delegating until they activate
+      // a newer version.
       delegatorUrl: options.delegateUrl || options.delegatorUrl
     };
     const messageTimeouts = options.messageTimeouts ? {
@@ -12401,6 +12604,9 @@ var ServiceWorkerWallet = class _ServiceWorkerWallet extends ServiceWorkerReadon
         publicKey: options.arkServerPublicKey
       },
       delegateUrl: options.delegateUrl || options.delegatorUrl,
+      // Keep the deprecated field populated so pre-#519 service workers
+      // (which only read delegatorUrl) keep delegating until they activate
+      // a newer version.
       delegatorUrl: options.delegateUrl || options.delegatorUrl,
       indexerUrl: options.indexerUrl,
       esploraUrl: options.esploraUrl,
@@ -12637,11 +12843,12 @@ var ServiceWorkerWallet = class _ServiceWorkerWallet extends ServiceWorkerReadon
           throw new Error(`Failed to get expiring vtxos: ${e}`);
         }
       },
-      async renewVtxos(eventCallback) {
+      async renewVtxos(eventCallback, options) {
         const message = {
           tag: messageTag,
           type: "RENEW_VTXOS",
-          id: getRandomId()
+          id: getRandomId(),
+          payload: options
         };
         try {
           const response = await wallet.sendMessageWithEvents(
@@ -15356,5 +15563,5 @@ exports.validateVtxoTxGraph = validateVtxoTxGraph;
 exports.verifyTapscriptSignatures = verifyTapscriptSignatures;
 exports.waitForIncomingFunds = waitForIncomingFunds;
 exports.warnAndFilterVtxosForScript = warnAndFilterVtxosForScript;
-//# sourceMappingURL=chunk-ONLBFWK4.cjs.map
-//# sourceMappingURL=chunk-ONLBFWK4.cjs.map
+//# sourceMappingURL=chunk-GVJ5NNTJ.cjs.map
+//# sourceMappingURL=chunk-GVJ5NNTJ.cjs.map

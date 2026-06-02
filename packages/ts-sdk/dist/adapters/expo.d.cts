@@ -1,5 +1,5 @@
-import { j as RestArkProvider, h as SettlementEvent, T as TxNotification, k as RestIndexerProvider, l as SubscriptionResponse } from '../ark-loKbOrJY.cjs';
-export { m as ArkProvider, n as IndexerProvider } from '../ark-loKbOrJY.cjs';
+import { j as RestArkProvider, h as SettlementEvent, T as TxNotification, k as RestIndexerProvider, l as SubscriptionResponse } from '../ark-BCdDnaIQ.cjs';
+export { m as ArkProvider, n as IndexerProvider } from '../ark-BCdDnaIQ.cjs';
 import '@scure/btc-signer/transaction.js';
 import '@scure/btc-signer/utils.js';
 import '@scure/btc-signer/psbt.js';

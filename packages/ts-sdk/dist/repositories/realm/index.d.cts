@@ -1,4 +1,4 @@
-import { W as WalletRepository, E as ExtendedVirtualCoin, a2 as VtxoRepositoryKey, d as ExtendedCoin, A as ArkTransaction, a3 as WalletState, C as ContractRepository, a4 as ContractFilter, r as Contract } from '../../ark-loKbOrJY.cjs';
+import { W as WalletRepository, E as ExtendedVirtualCoin, s as VtxoRepositoryKey, d as ExtendedCoin, A as ArkTransaction, t as WalletState, C as ContractRepository, u as ContractFilter, r as Contract } from '../../ark-BCdDnaIQ.cjs';
 import '@scure/btc-signer/transaction.js';
 import '@scure/btc-signer/utils.js';
 import '@scure/btc-signer/psbt.js';
@@ -19,7 +19,7 @@ interface RealmResults<T = Record<string, unknown>> extends Iterable<T> {
 interface RealmLike {
     write(callback: () => void): void;
     objects<T = Record<string, unknown>>(schemaName: string): RealmResults<T>;
-    create(schemaName: string, values: Record<string, any>, mode?: string): void;
+    create(schemaName: string, values: Record<string, any>, mode?: boolean | string): void;
     delete(objects: unknown): void;
 }
 

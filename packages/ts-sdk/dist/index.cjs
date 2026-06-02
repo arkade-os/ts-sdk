@@ -1,6 +1,6 @@
 'use strict';
 
-var chunkONLBFWK4_cjs = require('./chunk-ONLBFWK4.cjs');
+var chunkGVJ5NNTJ_cjs = require('./chunk-GVJ5NNTJ.cjs');
 var chunkISZA7V2J_cjs = require('./chunk-ISZA7V2J.cjs');
 var chunkJH7WWDEA_cjs = require('./chunk-JH7WWDEA.cjs');
 var chunk4QHMS5XH_cjs = require('./chunk-4QHMS5XH.cjs');
@@ -10,383 +10,383 @@ require('./chunk-5BLDMQED.cjs');
 
 Object.defineProperty(exports, "ARKADE_MAGIC", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.ARKADE_MAGIC; }
+  get: function () { return chunkGVJ5NNTJ_cjs.ARKADE_MAGIC; }
 });
 Object.defineProperty(exports, "ArkNote", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.ArkNote; }
+  get: function () { return chunkGVJ5NNTJ_cjs.ArkNote; }
 });
 Object.defineProperty(exports, "AssetManager", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.AssetManager; }
+  get: function () { return chunkGVJ5NNTJ_cjs.AssetManager; }
 });
 Object.defineProperty(exports, "BIP322", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.BIP322; }
+  get: function () { return chunkGVJ5NNTJ_cjs.BIP322; }
 });
 Object.defineProperty(exports, "Batch", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.Batch; }
+  get: function () { return chunkGVJ5NNTJ_cjs.Batch; }
 });
 Object.defineProperty(exports, "ContractManager", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.ContractManager; }
+  get: function () { return chunkGVJ5NNTJ_cjs.ContractManager; }
 });
 Object.defineProperty(exports, "ContractRepositoryImpl", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.ContractRepositoryImpl; }
+  get: function () { return chunkGVJ5NNTJ_cjs.ContractRepositoryImpl; }
 });
 Object.defineProperty(exports, "ContractWatcher", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.ContractWatcher; }
+  get: function () { return chunkGVJ5NNTJ_cjs.ContractWatcher; }
 });
 Object.defineProperty(exports, "DEFAULT_MESSAGE_TIMEOUTS", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.DEFAULT_MESSAGE_TIMEOUTS; }
+  get: function () { return chunkGVJ5NNTJ_cjs.DEFAULT_MESSAGE_TIMEOUTS; }
 });
 Object.defineProperty(exports, "DelegateManagerImpl", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.DelegateManagerImpl; }
+  get: function () { return chunkGVJ5NNTJ_cjs.DelegateManagerImpl; }
 });
 Object.defineProperty(exports, "DelegateNotConfiguredError", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.DelegateNotConfiguredError; }
+  get: function () { return chunkGVJ5NNTJ_cjs.DelegateNotConfiguredError; }
 });
 Object.defineProperty(exports, "DelegatorManagerImpl", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.DelegatorManagerImpl; }
+  get: function () { return chunkGVJ5NNTJ_cjs.DelegatorManagerImpl; }
 });
 Object.defineProperty(exports, "DelegatorNotConfiguredError", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.DelegatorNotConfiguredError; }
+  get: function () { return chunkGVJ5NNTJ_cjs.DelegatorNotConfiguredError; }
 });
 Object.defineProperty(exports, "DescriptorSigningProviderMissingError", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.DescriptorSigningProviderMissingError; }
+  get: function () { return chunkGVJ5NNTJ_cjs.DescriptorSigningProviderMissingError; }
 });
 Object.defineProperty(exports, "DustChangeError", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.DustChangeError; }
+  get: function () { return chunkGVJ5NNTJ_cjs.DustChangeError; }
 });
 Object.defineProperty(exports, "ELECTRUM_TCP_HOST", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.ELECTRUM_TCP_HOST; }
+  get: function () { return chunkGVJ5NNTJ_cjs.ELECTRUM_TCP_HOST; }
 });
 Object.defineProperty(exports, "ELECTRUM_WS_URL", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.ELECTRUM_WS_URL; }
+  get: function () { return chunkGVJ5NNTJ_cjs.ELECTRUM_WS_URL; }
 });
 Object.defineProperty(exports, "ESPLORA_URL", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.ESPLORA_URL; }
+  get: function () { return chunkGVJ5NNTJ_cjs.ESPLORA_URL; }
 });
 Object.defineProperty(exports, "ElectrumOnchainProvider", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.ElectrumOnchainProvider; }
+  get: function () { return chunkGVJ5NNTJ_cjs.ElectrumOnchainProvider; }
 });
 Object.defineProperty(exports, "EmulatorPacket", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.EmulatorPacket; }
+  get: function () { return chunkGVJ5NNTJ_cjs.EmulatorPacket; }
 });
 Object.defineProperty(exports, "EsploraProvider", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.EsploraProvider; }
+  get: function () { return chunkGVJ5NNTJ_cjs.EsploraProvider; }
 });
 Object.defineProperty(exports, "Estimator", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.Estimator; }
+  get: function () { return chunkGVJ5NNTJ_cjs.Estimator; }
 });
 Object.defineProperty(exports, "Extension", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.Extension; }
+  get: function () { return chunkGVJ5NNTJ_cjs.Extension; }
 });
 Object.defineProperty(exports, "ExtensionNotFoundError", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.ExtensionNotFoundError; }
+  get: function () { return chunkGVJ5NNTJ_cjs.ExtensionNotFoundError; }
 });
 Object.defineProperty(exports, "HDDescriptorProvider", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.HDDescriptorProvider; }
+  get: function () { return chunkGVJ5NNTJ_cjs.HDDescriptorProvider; }
 });
 Object.defineProperty(exports, "InMemoryContractRepository", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.InMemoryContractRepository; }
+  get: function () { return chunkGVJ5NNTJ_cjs.InMemoryContractRepository; }
 });
 Object.defineProperty(exports, "InMemoryWalletRepository", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.InMemoryWalletRepository; }
+  get: function () { return chunkGVJ5NNTJ_cjs.InMemoryWalletRepository; }
 });
 Object.defineProperty(exports, "IndexedDBContractRepository", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.IndexedDBContractRepository; }
+  get: function () { return chunkGVJ5NNTJ_cjs.IndexedDBContractRepository; }
 });
 Object.defineProperty(exports, "IndexedDBWalletRepository", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.IndexedDBWalletRepository; }
+  get: function () { return chunkGVJ5NNTJ_cjs.IndexedDBWalletRepository; }
 });
 Object.defineProperty(exports, "MESSAGE_BUS_NOT_INITIALIZED", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.MESSAGE_BUS_NOT_INITIALIZED; }
+  get: function () { return chunkGVJ5NNTJ_cjs.MESSAGE_BUS_NOT_INITIALIZED; }
 });
 Object.defineProperty(exports, "MIGRATION_KEY", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.MIGRATION_KEY; }
+  get: function () { return chunkGVJ5NNTJ_cjs.MIGRATION_KEY; }
 });
 Object.defineProperty(exports, "MessageBus", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.MessageBus; }
+  get: function () { return chunkGVJ5NNTJ_cjs.MessageBus; }
 });
 Object.defineProperty(exports, "MessageBusNotInitializedError", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.MessageBusNotInitializedError; }
+  get: function () { return chunkGVJ5NNTJ_cjs.MessageBusNotInitializedError; }
 });
 Object.defineProperty(exports, "MissingSigningDescriptorError", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.MissingSigningDescriptorError; }
+  get: function () { return chunkGVJ5NNTJ_cjs.MissingSigningDescriptorError; }
 });
 Object.defineProperty(exports, "MnemonicIdentity", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.MnemonicIdentity; }
+  get: function () { return chunkGVJ5NNTJ_cjs.MnemonicIdentity; }
 });
 Object.defineProperty(exports, "OnchainWallet", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.OnchainWallet; }
+  get: function () { return chunkGVJ5NNTJ_cjs.OnchainWallet; }
 });
 Object.defineProperty(exports, "P2A", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.P2A; }
+  get: function () { return chunkGVJ5NNTJ_cjs.P2A; }
 });
 Object.defineProperty(exports, "Ramps", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.Ramps; }
+  get: function () { return chunkGVJ5NNTJ_cjs.Ramps; }
 });
 Object.defineProperty(exports, "ReadonlyAssetManager", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.ReadonlyAssetManager; }
+  get: function () { return chunkGVJ5NNTJ_cjs.ReadonlyAssetManager; }
 });
 Object.defineProperty(exports, "ReadonlyDescriptorIdentity", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.ReadonlyDescriptorIdentity; }
+  get: function () { return chunkGVJ5NNTJ_cjs.ReadonlyDescriptorIdentity; }
 });
 Object.defineProperty(exports, "ReadonlySingleKey", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.ReadonlySingleKey; }
+  get: function () { return chunkGVJ5NNTJ_cjs.ReadonlySingleKey; }
 });
 Object.defineProperty(exports, "ReadonlyWallet", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.ReadonlyWallet; }
+  get: function () { return chunkGVJ5NNTJ_cjs.ReadonlyWallet; }
 });
 Object.defineProperty(exports, "ReadonlyWalletError", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.ReadonlyWalletError; }
+  get: function () { return chunkGVJ5NNTJ_cjs.ReadonlyWalletError; }
 });
 Object.defineProperty(exports, "RestDelegateProvider", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.RestDelegateProvider; }
+  get: function () { return chunkGVJ5NNTJ_cjs.RestDelegateProvider; }
 });
 Object.defineProperty(exports, "RestDelegatorProvider", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.RestDelegatorProvider; }
+  get: function () { return chunkGVJ5NNTJ_cjs.RestDelegatorProvider; }
 });
 Object.defineProperty(exports, "RestEmulatorProvider", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.RestEmulatorProvider; }
+  get: function () { return chunkGVJ5NNTJ_cjs.RestEmulatorProvider; }
 });
 Object.defineProperty(exports, "SeedIdentity", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.SeedIdentity; }
+  get: function () { return chunkGVJ5NNTJ_cjs.SeedIdentity; }
 });
 Object.defineProperty(exports, "ServiceWorkerReadonlyWallet", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.ServiceWorkerReadonlyWallet; }
+  get: function () { return chunkGVJ5NNTJ_cjs.ServiceWorkerReadonlyWallet; }
 });
 Object.defineProperty(exports, "ServiceWorkerTimeoutError", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.ServiceWorkerTimeoutError; }
+  get: function () { return chunkGVJ5NNTJ_cjs.ServiceWorkerTimeoutError; }
 });
 Object.defineProperty(exports, "ServiceWorkerWallet", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.ServiceWorkerWallet; }
+  get: function () { return chunkGVJ5NNTJ_cjs.ServiceWorkerWallet; }
 });
 Object.defineProperty(exports, "SingleKey", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.SingleKey; }
+  get: function () { return chunkGVJ5NNTJ_cjs.SingleKey; }
 });
 Object.defineProperty(exports, "TxTree", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.TxTree; }
+  get: function () { return chunkGVJ5NNTJ_cjs.TxTree; }
 });
 Object.defineProperty(exports, "TxType", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.TxType; }
+  get: function () { return chunkGVJ5NNTJ_cjs.TxType; }
 });
 Object.defineProperty(exports, "TxWeightEstimator", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.TxWeightEstimator; }
+  get: function () { return chunkGVJ5NNTJ_cjs.TxWeightEstimator; }
 });
 Object.defineProperty(exports, "UnknownPacket", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.UnknownPacket; }
+  get: function () { return chunkGVJ5NNTJ_cjs.UnknownPacket; }
 });
 Object.defineProperty(exports, "Unroll", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.Unroll; }
+  get: function () { return chunkGVJ5NNTJ_cjs.Unroll; }
 });
 Object.defineProperty(exports, "VtxoManager", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.VtxoManager; }
+  get: function () { return chunkGVJ5NNTJ_cjs.VtxoManager; }
 });
 Object.defineProperty(exports, "Wallet", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.Wallet; }
+  get: function () { return chunkGVJ5NNTJ_cjs.Wallet; }
 });
 Object.defineProperty(exports, "WalletMessageHandler", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.WalletMessageHandler; }
+  get: function () { return chunkGVJ5NNTJ_cjs.WalletMessageHandler; }
 });
 Object.defineProperty(exports, "WalletNotInitializedError", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.WalletNotInitializedError; }
+  get: function () { return chunkGVJ5NNTJ_cjs.WalletNotInitializedError; }
 });
 Object.defineProperty(exports, "WalletRepositoryImpl", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.WalletRepositoryImpl; }
+  get: function () { return chunkGVJ5NNTJ_cjs.WalletRepositoryImpl; }
 });
 Object.defineProperty(exports, "WsElectrumChainSource", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.WsElectrumChainSource; }
+  get: function () { return chunkGVJ5NNTJ_cjs.WsElectrumChainSource; }
 });
 Object.defineProperty(exports, "arkade", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.arkade_exports; }
+  get: function () { return chunkGVJ5NNTJ_cjs.arkade_exports; }
 });
 Object.defineProperty(exports, "buildForfeitTx", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.buildForfeitTx; }
+  get: function () { return chunkGVJ5NNTJ_cjs.buildForfeitTx; }
 });
 Object.defineProperty(exports, "buildOffchainTx", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.buildOffchainTx; }
+  get: function () { return chunkGVJ5NNTJ_cjs.buildOffchainTx; }
 });
 Object.defineProperty(exports, "closeDatabase", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.closeDatabase; }
+  get: function () { return chunkGVJ5NNTJ_cjs.closeDatabase; }
 });
 Object.defineProperty(exports, "combineTapscriptSigs", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.combineTapscriptSigs; }
+  get: function () { return chunkGVJ5NNTJ_cjs.combineTapscriptSigs; }
 });
 Object.defineProperty(exports, "contractFromArkContract", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.contractFromArkContract; }
+  get: function () { return chunkGVJ5NNTJ_cjs.contractFromArkContract; }
 });
 Object.defineProperty(exports, "contractFromArkContractWithAddress", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.contractFromArkContractWithAddress; }
+  get: function () { return chunkGVJ5NNTJ_cjs.contractFromArkContractWithAddress; }
 });
 Object.defineProperty(exports, "createAssetPacket", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.createAssetPacket; }
+  get: function () { return chunkGVJ5NNTJ_cjs.createAssetPacket; }
 });
 Object.defineProperty(exports, "decodeArkContract", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.decodeArkContract; }
+  get: function () { return chunkGVJ5NNTJ_cjs.decodeArkContract; }
 });
 Object.defineProperty(exports, "encodeArkContract", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.encodeArkContract; }
+  get: function () { return chunkGVJ5NNTJ_cjs.encodeArkContract; }
 });
 Object.defineProperty(exports, "getMigrationStatus", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.getMigrationStatus; }
+  get: function () { return chunkGVJ5NNTJ_cjs.getMigrationStatus; }
 });
 Object.defineProperty(exports, "getRandomId", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.getRandomId; }
+  get: function () { return chunkGVJ5NNTJ_cjs.getRandomId; }
 });
 Object.defineProperty(exports, "hasBoardingTxExpired", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.hasBoardingTxExpired; }
+  get: function () { return chunkGVJ5NNTJ_cjs.hasBoardingTxExpired; }
 });
 Object.defineProperty(exports, "isArkContract", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.isArkContract; }
+  get: function () { return chunkGVJ5NNTJ_cjs.isArkContract; }
 });
 Object.defineProperty(exports, "isBatchSignable", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.isBatchSignable; }
+  get: function () { return chunkGVJ5NNTJ_cjs.isBatchSignable; }
 });
 Object.defineProperty(exports, "isDiscoverable", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.isDiscoverable; }
+  get: function () { return chunkGVJ5NNTJ_cjs.isDiscoverable; }
 });
 Object.defineProperty(exports, "isExpired", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.isExpired; }
+  get: function () { return chunkGVJ5NNTJ_cjs.isExpired; }
 });
 Object.defineProperty(exports, "isRecoverable", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.isRecoverable; }
+  get: function () { return chunkGVJ5NNTJ_cjs.isRecoverable; }
 });
 Object.defineProperty(exports, "isSpendable", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.isSpendable; }
+  get: function () { return chunkGVJ5NNTJ_cjs.isSpendable; }
 });
 Object.defineProperty(exports, "isSubdust", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.isSubdust; }
+  get: function () { return chunkGVJ5NNTJ_cjs.isSubdust; }
 });
 Object.defineProperty(exports, "isValidArkAddress", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.isValidArkAddress; }
+  get: function () { return chunkGVJ5NNTJ_cjs.isValidArkAddress; }
 });
 Object.defineProperty(exports, "isVtxoExpiringSoon", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.isVtxoExpiringSoon; }
+  get: function () { return chunkGVJ5NNTJ_cjs.isVtxoExpiringSoon; }
 });
 Object.defineProperty(exports, "migrateWalletRepository", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.migrateWalletRepository; }
+  get: function () { return chunkGVJ5NNTJ_cjs.migrateWalletRepository; }
 });
 Object.defineProperty(exports, "openDatabase", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.openDatabase; }
+  get: function () { return chunkGVJ5NNTJ_cjs.openDatabase; }
 });
 Object.defineProperty(exports, "requiresMigration", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.requiresMigration; }
+  get: function () { return chunkGVJ5NNTJ_cjs.requiresMigration; }
 });
 Object.defineProperty(exports, "rollbackMigration", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.rollbackMigration; }
+  get: function () { return chunkGVJ5NNTJ_cjs.rollbackMigration; }
 });
 Object.defineProperty(exports, "selectCoinsWithAsset", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.selectCoinsWithAsset; }
+  get: function () { return chunkGVJ5NNTJ_cjs.selectCoinsWithAsset; }
 });
 Object.defineProperty(exports, "selectVirtualCoins", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.selectVirtualCoins; }
+  get: function () { return chunkGVJ5NNTJ_cjs.selectVirtualCoins; }
 });
 Object.defineProperty(exports, "setupServiceWorker", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.setupServiceWorker; }
+  get: function () { return chunkGVJ5NNTJ_cjs.setupServiceWorker; }
 });
 Object.defineProperty(exports, "validateConnectorsTxGraph", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.validateConnectorsTxGraph; }
+  get: function () { return chunkGVJ5NNTJ_cjs.validateConnectorsTxGraph; }
 });
 Object.defineProperty(exports, "validateVtxoTxGraph", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.validateVtxoTxGraph; }
+  get: function () { return chunkGVJ5NNTJ_cjs.validateVtxoTxGraph; }
 });
 Object.defineProperty(exports, "verifyTapscriptSignatures", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.verifyTapscriptSignatures; }
+  get: function () { return chunkGVJ5NNTJ_cjs.verifyTapscriptSignatures; }
 });
 Object.defineProperty(exports, "waitForIncomingFunds", {
   enumerable: true,
-  get: function () { return chunkONLBFWK4_cjs.waitForIncomingFunds; }
+  get: function () { return chunkGVJ5NNTJ_cjs.waitForIncomingFunds; }
 });
 Object.defineProperty(exports, "ArkError", {
   enumerable: true,

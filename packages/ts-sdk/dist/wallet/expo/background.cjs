@@ -1,8 +1,8 @@
 'use strict';
 
+var chunkLIDVWQ6U_cjs = require('../../chunk-LIDVWQ6U.cjs');
 var chunkEEUWJXQS_cjs = require('../../chunk-EEUWJXQS.cjs');
-var chunk2IJFJJDM_cjs = require('../../chunk-2IJFJJDM.cjs');
-var chunkONLBFWK4_cjs = require('../../chunk-ONLBFWK4.cjs');
+var chunkGVJ5NNTJ_cjs = require('../../chunk-GVJ5NNTJ.cjs');
 require('../../chunk-ISZA7V2J.cjs');
 require('../../chunk-JH7WWDEA.cjs');
 require('../../chunk-4QHMS5XH.cjs');
@@ -36,7 +36,7 @@ function defineExpoBackgroundTask(taskName, options) {
     taskQueue,
     walletRepository,
     contractRepository,
-    processors = [chunk2IJFJJDM_cjs.contractPollProcessor]
+    processors = [chunkLIDVWQ6U_cjs.contractPollProcessor]
   } = options;
   TaskManager__namespace.defineTask(taskName, async () => {
     try {
@@ -46,22 +46,22 @@ function defineExpoBackgroundTask(taskName, options) {
       }
       const indexerProvider = new chunkEEUWJXQS_cjs.ExpoIndexerProvider(config.arkServerUrl);
       const arkProvider = new chunkEEUWJXQS_cjs.ExpoArkProvider(config.arkServerUrl);
-      const deps = chunk2IJFJJDM_cjs.createTaskDependencies({
+      const deps = chunkLIDVWQ6U_cjs.createTaskDependencies({
         walletRepository,
         contractRepository,
         indexerProvider,
         arkProvider
       });
-      await chunk2IJFJJDM_cjs.runTasks(taskQueue, processors, deps);
+      await chunkLIDVWQ6U_cjs.runTasks(taskQueue, processors, deps);
       const results = await taskQueue.getResults();
       if (results.length > 0) {
         await taskQueue.acknowledgeResults(results.map((r) => r.id));
       }
-      const existing = await taskQueue.getTasks(chunk2IJFJJDM_cjs.CONTRACT_POLL_TASK_TYPE);
+      const existing = await taskQueue.getTasks(chunkLIDVWQ6U_cjs.CONTRACT_POLL_TASK_TYPE);
       if (existing.length === 0) {
         const task = {
-          id: chunkONLBFWK4_cjs.getRandomId(),
-          type: chunk2IJFJJDM_cjs.CONTRACT_POLL_TASK_TYPE,
+          id: chunkGVJ5NNTJ_cjs.getRandomId(),
+          type: chunkLIDVWQ6U_cjs.CONTRACT_POLL_TASK_TYPE,
           data: {},
           createdAt: Date.now()
         };

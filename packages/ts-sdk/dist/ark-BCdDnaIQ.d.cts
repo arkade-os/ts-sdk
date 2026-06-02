@@ -153,13 +153,26 @@ interface SignRequest {
  * should implement this interface to reduce the number of confirmation popups
  * from N+1 to 1 during Arkade send transactions.
  *
- * Contract: implementations MUST return exactly one `Transaction` per request,
- * in the same order as the input array. The SDK validates this at runtime and
- * will throw if the lengths do not match.
+ * Contract:
+ * - Implementations MUST return exactly one `Transaction` per request, in the
+ *   same order as the input array. The SDK validates this at runtime and will
+ *   throw if the lengths do not match.
+ * - Implementations MUST preserve any partial signatures already present on the
+ *   input PSBTs and only ADD their own — never drop, replace, or normalize away
+ *   foreign signatures. The pending-tx recovery path
+ *   (`Wallet.finalizePendingTxs`) hands `signMultiple` checkpoint PSBTs that
+ *   already carry the server's `tapScriptSig` and relies on that server
+ *   signature surviving alongside the freshly added user signature. A provider
+ *   that discards the pre-existing server sig produces checkpoints that fail
+ *   server-side finalization, stranding the transaction in the pending state.
  */
 interface BatchSignableIdentity extends Identity {
     /**
      * Sign multiple transactions in a single wallet interaction.
+     *
+     * Must preserve pre-existing partial signatures on each input PSBT (see the
+     * interface-level contract) and return one signed `Transaction` per request,
+     * in request order.
      *
      * @param requests - Transactions and optional input indexes to sign
      * @returns Signed transactions in the same order as the input requests
@@ -609,6 +622,19 @@ interface SettlementConfig {
  */
 declare function isVtxoExpiringSoon(vtxo: ExtendedVirtualCoin, thresholdMs: number): boolean;
 /**
+ * Optional arguments for {@link IVtxoManager.renewVtxos}.
+ */
+interface RenewVtxosOptions {
+    /**
+     * Override the renewal threshold for this call only, in seconds.
+     *
+     * When provided, takes precedence over `SettlementConfig.vtxoThreshold`
+     * and the default (3 days). Useful for renewing only VTXOs that are
+     * more urgently expiring than the globally configured threshold.
+     */
+    thresholdSeconds?: number;
+}
+/**
  * VtxoManager is a unified class for managing virtual output lifecycle operations including
  * recovery of swept/expired virtual outputs and renewal to prevent expiration.
  *
@@ -662,7 +688,7 @@ interface IVtxoManager {
         vtxoCount: number;
     }>;
     getExpiringVtxos(thresholdMs?: number): Promise<ExtendedVirtualCoin[]>;
-    renewVtxos(eventCallback?: (event: SettlementEvent) => void): Promise<string>;
+    renewVtxos(eventCallback?: (event: SettlementEvent) => void, options?: RenewVtxosOptions): Promise<string>;
     getExpiredBoardingUtxos(): Promise<ExtendedCoin[]>;
     sweepExpiredBoardingUtxos(): Promise<string>;
     dispose(): Promise<void>;
@@ -784,6 +810,7 @@ declare class VtxoManager implements AsyncDisposable, IVtxoManager {
      * primary way to prevent virtual outputs from expiring.
      *
      * @param eventCallback - Optional callback for settlement events
+     * @param options - Optional per-call overrides; see {@link RenewVtxosOptions}
      * @returns Settlement transaction ID
      * @throws Error if no virtual outputs available to renew
      * @throws Error if total amount is below dust threshold
@@ -799,9 +826,12 @@ declare class VtxoManager implements AsyncDisposable, IVtxoManager {
      * const txid = await manager.renewVtxos((event) => {
      *   console.log('Settlement event:', event.type);
      * });
+     *
+     * // Renew only VTXOs that expire within 6 hours
+     * const txid = await manager.renewVtxos(undefined, { thresholdSeconds: 6 * 60 * 60 });
      * ```
      */
-    renewVtxos(eventCallback?: (event: SettlementEvent) => void): Promise<string>;
+    renewVtxos(eventCallback?: (event: SettlementEvent) => void, options?: RenewVtxosOptions): Promise<string>;
     /**
      * Get boarding inputs whose timelock has expired.
      *
@@ -2293,7 +2323,7 @@ interface DelegateInfo {
     /** Address for delegate fee collection. Sourced from `delegatorAddress` in Fulmine response, for now. */
     delegateAddress: string;
     /** @deprecated alias for @see DelegateInfo.delegateAddress */
-    delegatorAddress: string;
+    delegatorAddress?: string;
 }
 /**
  * Optional delegate behavior flags.
@@ -3893,4 +3923,4 @@ declare namespace ProtoTypes {
     export {  };
 }
 
-export { type SignerSession as $, type ArkTransaction as A, type BatchStartedEvent as B, type ContractRepository as C, type DescriptorProvider as D, type ExtendedVirtualCoin as E, type IReadonlyWallet as F, type GetVtxosFilter as G, type ReadonlyIdentity as H, type IWallet as I, type DelegateProvider as J, type ReadonlyWalletConfig as K, type IReadonlyAssetManager as L, type NetworkName as M, type Network as N, type OnchainProvider as O, type ArkInfo as P, ArkAddress as Q, type Recipient as R, type SendBitcoinParams as S, type TxNotification as T, type Coin as U, VtxoScript as V, type WalletRepository as W, ContractManager as X, CSVMultisigTapscript as Y, type SettlementConfig as Z, VtxoManager as _, type Identity as a, type HandlerError as a$, type SignedIntent as a0, Intent as a1, type VtxoRepositoryKey as a2, type WalletState as a3, type ContractFilter as a4, type DescriptorSigningRequest as a5, Transaction as a6, type IntentFeeConfig as a7, type OffchainInput as a8, FeeAmount as a9, type ChainTx as aA, type AssetMetadata as aB, type BaseWalletConfig as aC, type BatchInfo as aD, type BatchSignableIdentity as aE, CLTVMultisigTapscript as aF, ChainTxType as aG, type CommitmentTx as aH, ConditionCSVMultisigTapscript as aI, ConditionMultisigTapscript as aJ, type ContractBalance as aK, type ContractEventCallback as aL, type ContractHandler as aM, type ContractManagerConfig as aN, type ContractState as aO, type ContractVtxo as aP, ContractWatcher as aQ, DelegateManagerImpl as aR, type DelegateOptions as aS, DelegatorManagerImpl as aT, type DelegatorProvider as aU, type Discoverable as aV, type DiscoveredContract as aW, type DiscoveryDeps as aX, ESPLORA_URL as aY, EsploraProvider as aZ, type ExtendedContractVtxo as a_, type OnchainInput as aa, type FeeOutput as ab, type ContractWatcherConfig as ac, type Asset as ad, type FeeInfo as ae, type CreateContractParams as af, type GetContractsFilter as ag, type GetSpendablePathsOptions as ah, type GetAllSpendingPathsOptions as ai, type IssuanceParams as aj, type ReissuanceParams as ak, type BurnParams as al, type ContractWithVtxos as am, type PathSelection as an, type ContractEvent as ao, type AssetDetails as ap, type IssuanceResult as aq, type DelegateInfo as ar, type StorageConfig as as, type IVtxoManager as at, type ExplorerTransaction as au, type EncodedVtxoScript as av, type Status as aw, type ArkTapscript as ax, TapscriptType as ay, type Outpoint as az, type WalletConfig as b, type IDelegatorManager as b0, IndexerTxType as b1, type KnownMetadata as b2, MultisigTapscript as b3, type Nonces as b4, type Output as b5, type PageResponse as b6, type PaginationOptions as b7, PartialSig as b8, type PathContext as b9, isBatchSignable as bA, isDiscoverable as bB, isExpired as bC, isRecoverable as bD, isSpendable as bE, isSubdust as bF, isVtxoExpiringSoon as bG, networks as bH, type ProviderClass as ba, RestDelegateProvider as bb, RestDelegatorProvider as bc, type ScanContractsOptions as bd, type ScanResult as be, type ScheduledSession as bf, SettlementEventType as bg, type SignRequest as bh, type SubscriptionEvent as bi, type SubscriptionHeartbeat as bj, type TapLeaves as bk, TapTreeCoder as bl, type TreeNonces as bm, type TreePartialSigs as bn, type Tx as bo, type TxHistoryRecord as bp, type TxKey as bq, type TxTreeNode as br, TxType as bs, type VirtualStatus as bt, type Vtxo as bu, type VtxoChain as bv, type VtxoType as bw, type WalletMode as bx, decodeTapscript as by, getSequence as bz, type WalletBalance as c, type ExtendedCoin as d, type IContractManager as e, type IDelegateManager as f, type SettleParams as g, type SettlementEvent as h, type IAssetManager as i, RestArkProvider as j, RestIndexerProvider as k, type SubscriptionResponse as l, type ArkProvider as m, type IndexerProvider as n, type RelativeTimelock as o, type TapLeafScript as p, type VirtualCoin as q, type Contract as r, type TreeSigningStartedEvent as s, TxTree as t, type TreeNoncesEvent as u, type BatchFinalizationEvent as v, type BatchFinalizedEvent as w, type BatchFailedEvent as x, type TreeTxEvent as y, type TreeSignatureEvent as z };
+export { CSVMultisigTapscript as $, type ArkTransaction as A, type BatchStartedEvent as B, type ContractRepository as C, type BatchFailedEvent as D, type ExtendedVirtualCoin as E, type TreeTxEvent as F, type GetVtxosFilter as G, type TreeSignatureEvent as H, type IWallet as I, type DescriptorProvider as J, type IReadonlyWallet as K, type ReadonlyIdentity as L, type DelegateProvider as M, type Network as N, type OnchainProvider as O, type ReadonlyWalletConfig as P, type IReadonlyAssetManager as Q, type Recipient as R, type SendBitcoinParams as S, type TxNotification as T, type NetworkName as U, VtxoScript as V, type WalletRepository as W, type ArkInfo as X, ArkAddress as Y, type Coin as Z, ContractManager as _, type Identity as a, type ExtendedContractVtxo as a$, type SettlementConfig as a0, VtxoManager as a1, type SignerSession as a2, type SignedIntent as a3, Intent as a4, type DescriptorSigningRequest as a5, Transaction as a6, type IntentFeeConfig as a7, type OffchainInput as a8, FeeAmount as a9, type Outpoint as aA, type ChainTx as aB, type AssetMetadata as aC, type BaseWalletConfig as aD, type BatchInfo as aE, type BatchSignableIdentity as aF, CLTVMultisigTapscript as aG, ChainTxType as aH, type CommitmentTx as aI, ConditionCSVMultisigTapscript as aJ, ConditionMultisigTapscript as aK, type ContractBalance as aL, type ContractEventCallback as aM, type ContractHandler as aN, type ContractManagerConfig as aO, type ContractState as aP, type ContractVtxo as aQ, ContractWatcher as aR, DelegateManagerImpl as aS, type DelegateOptions as aT, DelegatorManagerImpl as aU, type DelegatorProvider as aV, type Discoverable as aW, type DiscoveredContract as aX, type DiscoveryDeps as aY, ESPLORA_URL as aZ, EsploraProvider as a_, type OnchainInput as aa, type FeeOutput as ab, type ContractWatcherConfig as ac, type Asset as ad, type FeeInfo as ae, type CreateContractParams as af, type GetContractsFilter as ag, type GetSpendablePathsOptions as ah, type GetAllSpendingPathsOptions as ai, type IssuanceParams as aj, type ReissuanceParams as ak, type BurnParams as al, type RenewVtxosOptions as am, type ContractWithVtxos as an, type PathSelection as ao, type ContractEvent as ap, type AssetDetails as aq, type IssuanceResult as ar, type DelegateInfo as as, type StorageConfig as at, type IVtxoManager as au, type ExplorerTransaction as av, type EncodedVtxoScript as aw, type Status as ax, type ArkTapscript as ay, TapscriptType as az, type WalletConfig as b, type HandlerError as b0, type IDelegatorManager as b1, IndexerTxType as b2, type KnownMetadata as b3, MultisigTapscript as b4, type Nonces as b5, type Output as b6, type PageResponse as b7, type PaginationOptions as b8, PartialSig as b9, getSequence as bA, isBatchSignable as bB, isDiscoverable as bC, isExpired as bD, isRecoverable as bE, isSpendable as bF, isSubdust as bG, isVtxoExpiringSoon as bH, networks as bI, type PathContext as ba, type ProviderClass as bb, RestDelegateProvider as bc, RestDelegatorProvider as bd, type ScanContractsOptions as be, type ScanResult as bf, type ScheduledSession as bg, SettlementEventType as bh, type SignRequest as bi, type SubscriptionEvent as bj, type SubscriptionHeartbeat as bk, type TapLeaves as bl, TapTreeCoder as bm, type TreeNonces as bn, type TreePartialSigs as bo, type Tx as bp, type TxHistoryRecord as bq, type TxKey as br, type TxTreeNode as bs, TxType as bt, type VirtualStatus as bu, type Vtxo as bv, type VtxoChain as bw, type VtxoType as bx, type WalletMode as by, decodeTapscript as bz, type WalletBalance as c, type ExtendedCoin as d, type IContractManager as e, type IDelegateManager as f, type SettleParams as g, type SettlementEvent as h, type IAssetManager as i, RestArkProvider as j, RestIndexerProvider as k, type SubscriptionResponse as l, type ArkProvider as m, type IndexerProvider as n, type RelativeTimelock as o, type TapLeafScript as p, type VirtualCoin as q, type Contract as r, type VtxoRepositoryKey as s, type WalletState as t, type ContractFilter as u, type TreeSigningStartedEvent as v, TxTree as w, type TreeNoncesEvent as x, type BatchFinalizationEvent as y, type BatchFinalizedEvent as z };

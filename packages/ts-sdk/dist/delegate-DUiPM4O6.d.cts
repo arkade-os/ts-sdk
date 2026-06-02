@@ -1,5 +1,5 @@
 import { Bytes } from '@scure/btc-signer/utils.js';
-import { o as RelativeTimelock, V as VtxoScript, p as TapLeafScript } from './ark-loKbOrJY.js';
+import { o as RelativeTimelock, V as VtxoScript, p as TapLeafScript } from './ark-BCdDnaIQ.cjs';
 
 /**
  * DefaultVtxo is the default implementation of a VtxoScript.

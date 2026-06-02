@@ -3,7 +3,6 @@
     "compilerOptions": {
         "lib": ["es2022", "dom", "dom.iterable"],
         "types": ["node"],
-        "outDir": "./dist",
         "declaration": true,
         "sourceMap": true,
         "noUnusedLocals": true,

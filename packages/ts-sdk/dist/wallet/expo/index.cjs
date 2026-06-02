@@ -1,7 +1,7 @@
 'use strict';
 
-var chunk2IJFJJDM_cjs = require('../../chunk-2IJFJJDM.cjs');
-var chunkONLBFWK4_cjs = require('../../chunk-ONLBFWK4.cjs');
+var chunkLIDVWQ6U_cjs = require('../../chunk-LIDVWQ6U.cjs');
+var chunkGVJ5NNTJ_cjs = require('../../chunk-GVJ5NNTJ.cjs');
 var chunkISZA7V2J_cjs = require('../../chunk-ISZA7V2J.cjs');
 var chunkJH7WWDEA_cjs = require('../../chunk-JH7WWDEA.cjs');
 require('../../chunk-4QHMS5XH.cjs');
@@ -52,14 +52,14 @@ var ExpoWallet = class _ExpoWallet {
    */
   static async setup(config) {
     warnOnRemovedBackgroundFields(config.background);
-    const wallet = await chunkONLBFWK4_cjs.Wallet.create(config);
-    const processors = config.background.processors ?? [chunk2IJFJJDM_cjs.contractPollProcessor];
+    const wallet = await chunkGVJ5NNTJ_cjs.Wallet.create(config);
+    const processors = config.background.processors ?? [chunkLIDVWQ6U_cjs.contractPollProcessor];
     const deps = {
       walletRepository: wallet.walletRepository,
       contractRepository: wallet.contractRepository,
       indexerProvider: wallet.indexerProvider,
       arkProvider: wallet.arkProvider,
-      extendVtxo: (vtxo, contract) => chunkONLBFWK4_cjs.extendVirtualCoinForContract(vtxo, contract)
+      extendVtxo: (vtxo, contract) => chunkGVJ5NNTJ_cjs.extendVirtualCoinForContract(vtxo, contract)
     };
     const { taskQueue } = config.background;
     if ("persistConfig" in taskQueue) {
@@ -93,7 +93,7 @@ var ExpoWallet = class _ExpoWallet {
     }, intervalMs);
   }
   async runForegroundPoll() {
-    await chunk2IJFJJDM_cjs.runTasks(this.taskQueue, this.processors, this.deps);
+    await chunkLIDVWQ6U_cjs.runTasks(this.taskQueue, this.processors, this.deps);
     const results = await this.taskQueue.getResults();
     if (results.length > 0) {
       await this.taskQueue.acknowledgeResults(results.map((r) => r.id));
@@ -101,11 +101,11 @@ var ExpoWallet = class _ExpoWallet {
     await this.seedContractPollTask();
   }
   async seedContractPollTask() {
-    const existing = await this.taskQueue.getTasks(chunk2IJFJJDM_cjs.CONTRACT_POLL_TASK_TYPE);
+    const existing = await this.taskQueue.getTasks(chunkLIDVWQ6U_cjs.CONTRACT_POLL_TASK_TYPE);
     if (existing.length > 0) return;
     const task = {
-      id: chunkONLBFWK4_cjs.getRandomId(),
-      type: chunk2IJFJJDM_cjs.CONTRACT_POLL_TASK_TYPE,
+      id: chunkGVJ5NNTJ_cjs.getRandomId(),
+      type: chunkLIDVWQ6U_cjs.CONTRACT_POLL_TASK_TYPE,
       data: {},
       createdAt: Date.now()
     };

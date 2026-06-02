@@ -1,6 +1,6 @@
 'use strict';
 
-var chunkONLBFWK4_cjs = require('../../chunk-ONLBFWK4.cjs');
+var chunkGVJ5NNTJ_cjs = require('../../chunk-GVJ5NNTJ.cjs');
 require('../../chunk-ISZA7V2J.cjs');
 require('../../chunk-JH7WWDEA.cjs');
 require('../../chunk-4QHMS5XH.cjs');
@@ -126,7 +126,7 @@ var SQLiteWalletRepository = class {
       for (const row of nullRows) {
         await this.db.run(
           `UPDATE ${this.tables.vtxos} SET script = ? WHERE txid = ? AND vout = ?`,
-          [chunkONLBFWK4_cjs.scriptFromArkAddress(row.address), row.txid, row.vout]
+          [chunkGVJ5NNTJ_cjs.scriptFromArkAddress(row.address), row.txid, row.vout]
         );
       }
       const tempName = `${this.tables.vtxos}__migrate_tmp`;
@@ -204,7 +204,7 @@ var SQLiteWalletRepository = class {
   async saveVtxos(address, vtxos) {
     await this.ensureInit();
     for (const vtxo of vtxos) {
-      const s = chunkONLBFWK4_cjs.serializeVtxo(vtxo);
+      const s = chunkGVJ5NNTJ_cjs.serializeVtxo(vtxo);
       await this.db.run(
         `INSERT OR REPLACE INTO ${this.tables.vtxos}
                     (txid, vout, value, address,
@@ -259,7 +259,7 @@ var SQLiteWalletRepository = class {
       throw new Error("SQLiteWalletRepository requires an address");
     }
     for (const vtxo of vtxos) {
-      if (!chunkONLBFWK4_cjs.isVtxoForScript(vtxo, key.script)) {
+      if (!chunkGVJ5NNTJ_cjs.isVtxoForScript(vtxo, key.script)) {
         throw new Error(
           `VTXO ${vtxo.txid}:${vtxo.vout} script mismatch: expected ${key.script}, got ${vtxo.script}`
         );
@@ -283,7 +283,7 @@ var SQLiteWalletRepository = class {
   async saveUtxos(address, utxos) {
     await this.ensureInit();
     for (const utxo of utxos) {
-      const s = chunkONLBFWK4_cjs.serializeUtxo(utxo);
+      const s = chunkGVJ5NNTJ_cjs.serializeUtxo(utxo);
       await this.db.run(
         `INSERT OR REPLACE INTO ${this.tables.utxos}
                     (txid, vout, value, address,
@@ -339,7 +339,7 @@ var SQLiteWalletRepository = class {
           tx.amount,
           tx.settled ? 1 : 0,
           tx.createdAt,
-          tx.assets ? JSON.stringify(chunkONLBFWK4_cjs.serializeAssets(tx.assets)) : null
+          tx.assets ? JSON.stringify(chunkGVJ5NNTJ_cjs.serializeAssets(tx.assets)) : null
         ]
       );
     }
@@ -413,9 +413,9 @@ function vtxoRowToDomain(row) {
     // Post-migration every row has `script`, but the backfill is
     // idempotent: derive from `address` if the legacy column is still
     // null (e.g. the migration hasn't run yet on this handle).
-    script: row.script ?? chunkONLBFWK4_cjs.scriptFromArkAddress(row.address)
+    script: row.script ?? chunkGVJ5NNTJ_cjs.scriptFromArkAddress(row.address)
   };
-  return chunkONLBFWK4_cjs.deserializeVtxo(serialized);
+  return chunkGVJ5NNTJ_cjs.deserializeVtxo(serialized);
 }
 function utxoRowToDomain(row) {
   const serialized = {
@@ -434,7 +434,7 @@ function utxoRowToDomain(row) {
     status: JSON.parse(row.status_json),
     extraWitness: row.extra_witness_json ? JSON.parse(row.extra_witness_json) : void 0
   };
-  return chunkONLBFWK4_cjs.deserializeUtxo(serialized);
+  return chunkGVJ5NNTJ_cjs.deserializeUtxo(serialized);
 }
 function txRowToDomain(row) {
   const tx = {
@@ -449,7 +449,7 @@ function txRowToDomain(row) {
     createdAt: row.created_at
   };
   if (row.assets_json) {
-    tx.assets = chunkONLBFWK4_cjs.deserializeAssets(JSON.parse(row.assets_json));
+    tx.assets = chunkGVJ5NNTJ_cjs.deserializeAssets(JSON.parse(row.assets_json));
   }
   return tx;
 }

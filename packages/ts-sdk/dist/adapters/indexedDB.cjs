@@ -1,6 +1,6 @@
 'use strict';
 
-var chunkONLBFWK4_cjs = require('../chunk-ONLBFWK4.cjs');
+var chunkGVJ5NNTJ_cjs = require('../chunk-GVJ5NNTJ.cjs');
 require('../chunk-ISZA7V2J.cjs');
 require('../chunk-JH7WWDEA.cjs');
 require('../chunk-4QHMS5XH.cjs');
@@ -11,7 +11,7 @@ var IndexedDBStorageAdapter = class {
   dbName;
   version;
   db = null;
-  constructor(dbName, version = chunkONLBFWK4_cjs.DB_VERSION) {
+  constructor(dbName, version = chunkGVJ5NNTJ_cjs.DB_VERSION) {
     this.dbName = dbName;
     this.version = version;
   }

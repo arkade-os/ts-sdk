@@ -1,5 +1,5 @@
-import { contractPollProcessor, runTasks, CONTRACT_POLL_TASK_TYPE } from '../../chunk-7QO5L3KE.js';
-import { Wallet, getRandomId, extendVirtualCoinForContract } from '../../chunk-MORTWGDE.js';
+import { contractPollProcessor, runTasks, CONTRACT_POLL_TASK_TYPE } from '../../chunk-4IDL2623.js';
+import { Wallet, getRandomId, extendVirtualCoinForContract } from '../../chunk-PX4JLJW7.js';
 import { RestArkProvider } from '../../chunk-DODG3PG2.js';
 import { DefaultVtxo } from '../../chunk-BUGGGM2S.js';
 import '../../chunk-HAYJZIA4.js';

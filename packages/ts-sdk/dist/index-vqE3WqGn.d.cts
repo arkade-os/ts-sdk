@@ -1,5 +1,5 @@
-import { o as RelativeTimelock, V as VtxoScript, p as TapLeafScript, aM as ContractHandler, aV as Discoverable } from './ark-loKbOrJY.js';
-import { D as DefaultVtxo, a as DelegateVtxo } from './delegate-ga-aZ53T.js';
+import { o as RelativeTimelock, V as VtxoScript, p as TapLeafScript, aN as ContractHandler, aW as Discoverable } from './ark-BCdDnaIQ.cjs';
+import { D as DefaultVtxo, a as DelegateVtxo } from './delegate-DUiPM4O6.cjs';
 import { Bytes } from '@scure/btc-signer/utils.js';
 
 /** Virtual Hash Time Lock Contract (VHTLC) namespace. */

@@ -1,6 +1,6 @@
 'use strict';
 
-var chunkONLBFWK4_cjs = require('../../chunk-ONLBFWK4.cjs');
+var chunkGVJ5NNTJ_cjs = require('../../chunk-GVJ5NNTJ.cjs');
 require('../../chunk-ISZA7V2J.cjs');
 require('../../chunk-JH7WWDEA.cjs');
 require('../../chunk-4QHMS5XH.cjs');
@@ -37,7 +37,7 @@ var RealmWalletRepository = class {
     await this.ensureInit();
     this.realm.write(() => {
       for (const vtxo of vtxos) {
-        const s = chunkONLBFWK4_cjs.serializeVtxo(vtxo);
+        const s = chunkGVJ5NNTJ_cjs.serializeVtxo(vtxo);
         this.realm.create(
           "ArkVtxo",
           {
@@ -85,7 +85,7 @@ var RealmWalletRepository = class {
       throw new Error("RealmWalletRepository requires an address");
     }
     for (const vtxo of vtxos) {
-      if (!chunkONLBFWK4_cjs.isVtxoForScript(vtxo, key.script)) {
+      if (!chunkGVJ5NNTJ_cjs.isVtxoForScript(vtxo, key.script)) {
         throw new Error(
           `VTXO ${vtxo.txid}:${vtxo.vout} script mismatch: expected ${key.script}, got ${vtxo.script}`
         );
@@ -110,7 +110,7 @@ var RealmWalletRepository = class {
     await this.ensureInit();
     this.realm.write(() => {
       for (const utxo of utxos) {
-        const s = chunkONLBFWK4_cjs.serializeUtxo(utxo);
+        const s = chunkGVJ5NNTJ_cjs.serializeUtxo(utxo);
         this.realm.create(
           "ArkUtxo",
           {
@@ -163,7 +163,7 @@ var RealmWalletRepository = class {
             amount: tx.amount,
             settled: tx.settled,
             createdAt: tx.createdAt,
-            assetsJson: tx.assets ? JSON.stringify(chunkONLBFWK4_cjs.serializeAssets(tx.assets)) : null
+            assetsJson: tx.assets ? JSON.stringify(chunkGVJ5NNTJ_cjs.serializeAssets(tx.assets)) : null
           },
           "modified"
         );
@@ -233,9 +233,9 @@ function vtxoObjectToDomain(obj) {
     // Post-migration every row has `script`, but the backfill is
     // idempotent: derive from `address` if the legacy column is still
     // null (e.g. the migration hasn't run yet on this handle).
-    script: obj.script ?? chunkONLBFWK4_cjs.scriptFromArkAddress(obj.address)
+    script: obj.script ?? chunkGVJ5NNTJ_cjs.scriptFromArkAddress(obj.address)
   };
-  return chunkONLBFWK4_cjs.deserializeVtxo(serialized);
+  return chunkGVJ5NNTJ_cjs.deserializeVtxo(serialized);
 }
 function utxoObjectToDomain(obj) {
   const serialized = {
@@ -254,7 +254,7 @@ function utxoObjectToDomain(obj) {
     status: JSON.parse(obj.statusJson),
     extraWitness: obj.extraWitnessJson ? JSON.parse(obj.extraWitnessJson) : void 0
   };
-  return chunkONLBFWK4_cjs.deserializeUtxo(serialized);
+  return chunkGVJ5NNTJ_cjs.deserializeUtxo(serialized);
 }
 function txObjectToDomain(obj) {
   const tx = {
@@ -269,7 +269,7 @@ function txObjectToDomain(obj) {
     createdAt: obj.createdAt
   };
   if (obj.assetsJson) {
-    tx.assets = chunkONLBFWK4_cjs.deserializeAssets(JSON.parse(obj.assetsJson));
+    tx.assets = chunkGVJ5NNTJ_cjs.deserializeAssets(JSON.parse(obj.assetsJson));
   }
   return tx;
 }
@@ -499,7 +499,7 @@ function runArkRealmMigrations(oldRealm, newRealm) {
   for (let i = 0; i < newVtxos.length; i++) {
     const newVtxo = newVtxos[i];
     if (!newVtxo.script) {
-      newVtxo.script = chunkONLBFWK4_cjs.scriptFromArkAddress(newVtxo.address);
+      newVtxo.script = chunkGVJ5NNTJ_cjs.scriptFromArkAddress(newVtxo.address);
     }
   }
 }

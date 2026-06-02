@@ -1,6 +1,4 @@
-'use strict';
-
-var chunkONLBFWK4_cjs = require('./chunk-ONLBFWK4.cjs');
+import { getRandomId, extendVirtualCoinForContract, warnAndFilterVtxosForScript, saveVtxosForContract } from './chunk-PX4JLJW7.js';
 
 // src/worker/expo/taskRunner.ts
 async function runTasks(queue, processors, deps) {
@@ -32,7 +30,7 @@ async function runTasks(queue, processors, deps) {
     }
     const result = {
       ...partial,
-      id: chunkONLBFWK4_cjs.getRandomId(),
+      id: getRandomId(),
       executedAt: Date.now()
     };
     await queue.pushResult(result);
@@ -44,7 +42,7 @@ async function runTasks(queue, processors, deps) {
 function createTaskDependencies(options) {
   return {
     ...options,
-    extendVtxo: (vtxo, contract) => chunkONLBFWK4_cjs.extendVirtualCoinForContract(vtxo, contract)
+    extendVtxo: (vtxo, contract) => extendVirtualCoinForContract(vtxo, contract)
   };
 }
 
@@ -74,12 +72,12 @@ var contractPollProcessor = {
         hasMore = page ? vtxos.length === pageSize : false;
         pageIndex++;
       }
-      const filtered = chunkONLBFWK4_cjs.warnAndFilterVtxosForScript(
+      const filtered = warnAndFilterVtxosForScript(
         allVtxos,
         contract.script,
         "contractPollProcessor"
       );
-      await chunkONLBFWK4_cjs.saveVtxosForContract(walletRepository, contract, filtered);
+      await saveVtxosForContract(walletRepository, contract, filtered);
       vtxosSaved += filtered.length;
       contractsProcessed++;
     }
@@ -92,9 +90,6 @@ var contractPollProcessor = {
   }
 };
 
-exports.CONTRACT_POLL_TASK_TYPE = CONTRACT_POLL_TASK_TYPE;
-exports.contractPollProcessor = contractPollProcessor;
-exports.createTaskDependencies = createTaskDependencies;
-exports.runTasks = runTasks;
-//# sourceMappingURL=chunk-2IJFJJDM.cjs.map
-//# sourceMappingURL=chunk-2IJFJJDM.cjs.map
+export { CONTRACT_POLL_TASK_TYPE, contractPollProcessor, createTaskDependencies, runTasks };
+//# sourceMappingURL=chunk-4IDL2623.js.map
+//# sourceMappingURL=chunk-4IDL2623.js.map
