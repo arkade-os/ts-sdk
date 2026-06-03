@@ -27,7 +27,7 @@ import { promisify } from "util";
 
 const execAsync = promisify(exec);
 const lncli = "docker exec -i lnd lncli --network=regtest";
-const bccli = "docker exec -t bitcoin bitcoin-cli -regtest";
+const bccli = "docker exec -t bitcoin bitcoin-cli -regtest -rpcuser=admin1 -rpcpassword=123";
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const createWalletStorage = () => ({
