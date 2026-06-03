@@ -312,11 +312,13 @@ describe("BoardingContractHandler.discoverAt", () => {
         expect(out[0].script).toBe(hex.encode(boarding.pkScript));
     });
 
-    it("equal-delay collision coalesces onto a `default` row (default wins)", async () => {
+    it("equal-delay collision still emits a `boarding` row (collision resolved at persistence)", async () => {
         // Degenerate server: boardingExitDelay === unilateralExitDelay → the
-        // boarding script is byte-identical to a default candidate, so the hit
-        // must be emitted as `default` to avoid a same-script/different-type
-        // clash aborting the restore scan.
+        // boarding script is byte-identical to a default candidate. discoverAt
+        // no longer pre-coalesces onto `default`; it always emits `boarding`,
+        // and the same-script collision is absorbed first-wins at the
+        // persistence layer (ContractManager.upsertContract). csvTimelocks is
+        // not read by the boarding handler anymore.
         const shared = UNILATERAL_EXIT_DELAY;
         const script = boardingScript(shared);
         const funded = new Set([script.onchainAddress(onchainNetwork)]);
@@ -326,7 +328,7 @@ describe("BoardingContractHandler.discoverAt", () => {
             deps(funded, { boardingTimelock: shared, csvTimelocks: [shared] }),
         );
         expect(out).toHaveLength(1);
-        expect(out[0].type).toBe("default");
+        expect(out[0].type).toBe("boarding");
         expect(out[0].script).toBe(hex.encode(script.pkScript));
     });
 });

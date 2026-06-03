@@ -44,8 +44,7 @@ export type BoardingContractParams = DefaultContractParams;
  * the L2 handlers in its source of truth: boarding probes the **on-chain**
  * UTXO set at its P2TR address (`OnchainProvider.getCoins`) rather than the
  * Ark indexer, and builds its candidate from the boarding-exit CSV
- * (`deps.boardingTimelock`) instead of the unilateral-exit matrix
- * (`deps.csvTimelocks`). When boarding discovery is not plumbed (no
+ * (`deps.boardingTimelock`). When boarding discovery is not plumbed (no
  * `deps.boardingTimelock` / `deps.onchainNetwork`) `discoverAt` no-ops.
  *
  * Identity & the default/boarding collision: a contract's `script` (pkScript)
@@ -55,14 +54,17 @@ export type BoardingContractParams = DefaultContractParams;
  * server keeps boardingExitDelay strictly longer than unilateralExitDelay (equal
  * delays would expose the provider to a double-spend). Should those delays ever
  * coincide (a misconfigured/malicious server), the boarding script is
- * byte-identical to the default script and the wallet coalesces the single
- * shared row onto the `default` type ("default wins"; see `ensureWalletContract`)
- * rather than persisting a second row. Either way the funds are equally spendable
- * through the shared `DefaultVtxo.Script` paths. Consumers must NOT rely on
- * `contract.type === "boarding"` to identify the boarding purpose — resolve the
- * boarding script via `wallet.getBoardingAddress()` / `wallet.boardingTapscript`
- * (which never depend on the persisted contract's type) and match by script when
- * needed.
+ * byte-identical to the default script. `discoverAt` does NOT pre-coalesce that
+ * collision: it always emits `type: "boarding"`, and the single shared row is
+ * resolved FIRST-WINS at the persistence layer
+ * ({@link ContractManager.upsertContract}) — whichever purpose is persisted
+ * first keeps the row, and the scan deliberately probes boarding first
+ * (see docs/hd-wallets_onchain_rotation_collision_fix.md §5.1–5.2). Either way
+ * the funds are equally spendable through the shared `DefaultVtxo.Script` paths.
+ * Consumers must NOT rely on `contract.type === "boarding"` to identify the
+ * boarding purpose — resolve the boarding script via
+ * `wallet.getBoardingAddress()` / `wallet.boardingTapscript` (which never depend
+ * on the persisted contract's type) and match by script when needed.
  */
 export const BoardingContractHandler: ContractHandler<BoardingContractParams, DefaultVtxo.Script> &
     Discoverable = {
@@ -117,12 +119,12 @@ export const BoardingContractHandler: ContractHandler<BoardingContractParams, De
      * `deps.boardingTimelock` or `deps.onchainNetwork` is absent — so the
      * scanner unit harness (which sets neither) is unaffected.
      *
-     * Equal-delay collision coalescing ("default wins", plan §6-I.3): when
-     * the boarding script is byte-identical to a `default` script at this
-     * index (a degenerate server with `boardingExitDelay ===
-     * unilateralExitDelay`), this emits the hit as a `default` contract
-     * rather than a conflicting `boarding` row, so the restore scan's strict
-     * `upsertContract` never aborts on a same-script/different-type clash.
+     * Always emits `type: "boarding"`, even in the degenerate equal-delay case
+     * where the boarding script is byte-identical to a `default` script at this
+     * index (`boardingExitDelay === unilateralExitDelay`). The collision is no
+     * longer pre-judged in discovery; it is tolerated FIRST-WINS at the
+     * persistence layer ({@link ContractManager.upsertContract}). `deps.csvTimelocks`
+     * is intentionally not read here.
      */
     async discoverAt(
         index: number,
@@ -143,20 +145,17 @@ export const BoardingContractHandler: ContractHandler<BoardingContractParams, De
         if (coins.length === 0) return [];
 
         const scriptHex = hex.encode(script.pkScript);
-        // Coalesce onto `default` when the boarding script collides with a
-        // `default` candidate at this index. Scripts are byte-identical iff
-        // the boarding-exit sequence equals one of the unilateral-exit
-        // sequences (same pubKey + serverPubKey + sequence). A `delegate`
-        // script carries an extra leaf and can never collide.
         const boardingSeq = timelockToSequence(deps.boardingTimelock);
-        const collidesWithDefault = deps.csvTimelocks.some(
-            (tl) => timelockToSequence(tl) === boardingSeq,
-        );
-        const type = collidesWithDefault ? "default" : "boarding";
 
+        // Always `type: "boarding"` (see method doc). The equal-delay
+        // same-script collision is resolved first-wins at persistence, and the
+        // scan probes boarding before default so a both-purpose rotated index
+        // resolves to a `boarding` row — keeping both the on-chain UTXO and any
+        // L2 VTXO recoverable (docs/hd-wallets_onchain_rotation_collision_fix.md
+        // §5.2, §5.4).
         return [
             {
-                type,
+                type: "boarding",
                 params: {
                     pubKey: hex.encode(pubKey),
                     serverPubKey: hex.encode(deps.serverPubKey),

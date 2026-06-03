@@ -10,6 +10,7 @@ import { isDiscoverable } from "../src/contracts/types";
 import { timelockToSequence } from "../src/utils/timelock";
 import { DefaultContractHandler } from "../src/contracts/handlers/default";
 import { DelegateContractHandler } from "../src/contracts/handlers/delegate";
+import { BoardingContractHandler } from "../src/contracts/handlers/boarding";
 import { DefaultVtxo } from "../src/script/default";
 import { DelegateVtxo } from "../src/script/delegate";
 import { VtxoScript } from "../src/script/base";
@@ -584,6 +585,40 @@ describe("ContractManager.scanContracts", () => {
             mgr.dispose();
         }
     });
+
+    it("probes boarding before default/delegate (load-bearing first-wins tie-break)", async () => {
+        // The iteration order IS the first-wins tie-break: each hit is
+        // persisted immediately, so a both-purpose equal-delay collision
+        // resolves to whichever handler is probed first. Boarding must be
+        // first so such a collision resolves to a `boarding` row (keeping the
+        // on-chain UTXO visible to the type-gated getBoardingUtxos). Guards
+        // against a future reorder of the registered handlers.
+        const order: string[] = [];
+        const spies = [
+            vi.spyOn(BoardingContractHandler, "discoverAt").mockImplementation(async () => {
+                order.push("boarding");
+                return [];
+            }),
+            vi.spyOn(DefaultContractHandler, "discoverAt").mockImplementation(async () => {
+                order.push("default");
+                return [];
+            }),
+            vi.spyOn(DelegateContractHandler, "discoverAt").mockImplementation(async () => {
+                order.push("delegate");
+                return [];
+            }),
+        ];
+        const mgr = await makeManagerForTest();
+        try {
+            await mgr.scanContracts({ gapLimit: 1, hd: false, materialize, deps: makeDeps() });
+            expect(order).toContain("boarding");
+            expect(order.indexOf("boarding")).toBeLessThan(order.indexOf("default"));
+            expect(order.indexOf("boarding")).toBeLessThan(order.indexOf("delegate"));
+        } finally {
+            for (const s of spies) s.mockRestore();
+            mgr.dispose();
+        }
+    });
 });
 
 describe("signingDescriptorIndex", () => {
@@ -704,16 +739,115 @@ describe("Wallet.restore", () => {
         }
     });
 
-    it("equal-delay server: a funded index-0 boarding UTXO restores without aborting (default wins)", async () => {
+    it("equal-delay server: a funded index-0 boarding UTXO restores without aborting (first-wins)", async () => {
         // mockArkInfo sets boardingExitDelay === unilateralExitDelay, so the
         // boarding script is byte-identical to the default candidate. A funded
-        // on-chain boarding UTXO must restore cleanly: the boarding hit
-        // coalesces onto the already-persisted `default` row (idempotent
-        // upsert) instead of aborting the scan with a same-script type clash.
+        // on-chain boarding UTXO must restore cleanly: the boarding hit is
+        // tolerated first-wins at the persistence layer (the init-persisted
+        // index-0 `default` baseline keeps the colliding row) instead of
+        // aborting the scan with a same-script type clash.
         const { wallet, fundedOnchain } = await makeHdWalletForTest();
         try {
             fundedOnchain.add(await wallet.getBoardingAddress());
             await expect(wallet.restore({ gapLimit: 5 })).resolves.toBeUndefined();
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("equal-delay: a funded ROTATED boarding index restores as a boarding UTXO (Finding #1)", async () => {
+        // The core regression. mockArkInfo is equal-delay, so the boarding
+        // script at a rotated index N (>0) is byte-identical to the default
+        // script at N. Fund index 2 ON-CHAIN ONLY (no L2 VTXO). The boarding
+        // probe is the sole hit, so the index is persisted as a `boarding`
+        // row — NOT mis-typed `default` (the old pre-coalescing bug, which hid
+        // the UTXO from the type-gated getBoardingUtxos).
+        const { wallet, hdProvider, fundedOnchain } = await makeHdWalletForTest();
+        try {
+            const serverPubKey = wallet.offchainTapscript.options.serverPubKey;
+            const boardingCsv = wallet.boardingTapscript.options.csvTimelock!;
+            const script = new DefaultVtxo.Script({
+                pubKey: deriveDescriptorLeafPubKey(hdProvider.materializeDescriptorAt(2)),
+                serverPubKey,
+                csvTimelock: boardingCsv,
+            });
+            const scriptHex = hex.encode(script.pkScript);
+            const onchainAddr = script.onchainAddress(wallet.network);
+            fundedOnchain.add(onchainAddr);
+
+            await wallet.restore({ gapLimit: 5 });
+
+            // Persisted as a boarding-typed contract at the rotated index.
+            const boardingRows = await wallet.contractRepository.getContracts({
+                type: ["boarding"],
+            });
+            expect(boardingRows.map((c) => c.script)).toContain(scriptHex);
+
+            // The on-chain UTXO is enumerated by getBoardingUtxos with the
+            // correct per-index boarding tapscript.
+            const utxos = await wallet.getBoardingUtxos();
+            const addrs = utxos.map((u) =>
+                VtxoScript.decode(u.tapTree).onchainAddress(wallet.network),
+            );
+            expect(addrs).toContain(onchainAddr);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("equal-delay: a both-hit rotated index recovers BOTH the on-chain UTXO and the L2 VTXO (reviewer's case)", async () => {
+        // The degenerate sub-case §6 calls out: a rotated index whose
+        // (byte-identical) script carries BOTH an on-chain boarding UTXO and an
+        // L2 VTXO. Boarding is probed first → the row resolves to `boarding`;
+        // the later default hit first-wins-no-ops. Both fund types must remain
+        // recoverable: the on-chain UTXO via the type-gated getBoardingUtxos,
+        // and the VTXO via the type-agnostic getVtxos.
+        const { wallet, indexer, hdProvider, fundedOnchain } = await makeHdWalletForTest();
+        try {
+            const serverPubKey = wallet.offchainTapscript.options.serverPubKey;
+            const boardingCsv = wallet.boardingTapscript.options.csvTimelock!;
+            const pubKey = deriveDescriptorLeafPubKey(hdProvider.materializeDescriptorAt(2));
+            const script = new DefaultVtxo.Script({
+                pubKey,
+                serverPubKey,
+                csvTimelock: boardingCsv,
+            });
+            const scriptHex = hex.encode(script.pkScript);
+            const onchainAddr = script.onchainAddress(wallet.network);
+
+            // Sanity: equal-delay → the index-2 default candidate is the SAME
+            // script as the boarding candidate.
+            const defaultScriptHex = hex.encode(
+                new DefaultVtxo.Script({
+                    pubKey,
+                    serverPubKey,
+                    csvTimelock: wallet.walletContractTimelocks[0],
+                }).pkScript,
+            );
+            expect(defaultScriptHex).toBe(scriptHex);
+
+            fundedOnchain.add(onchainAddr); // on-chain boarding UTXO
+            indexer.usedScripts.add(scriptHex); // L2 VTXO at the same script
+
+            await wallet.restore({ gapLimit: 5 });
+
+            // Resolved to a boarding row (boarding probed first, first-wins).
+            const boardingRows = await wallet.contractRepository.getContracts({
+                type: ["boarding"],
+            });
+            expect(boardingRows.map((c) => c.script)).toContain(scriptHex);
+
+            // On-chain UTXO recovered via the type-gated boarding reader.
+            const utxos = await wallet.getBoardingUtxos();
+            const addrs = utxos.map((u) =>
+                VtxoScript.decode(u.tapTree).onchainAddress(wallet.network),
+            );
+            expect(addrs).toContain(onchainAddr);
+
+            // L2 VTXO recovered via the type-agnostic getVtxos — proving a
+            // boarding-typed row's VTXOs stay visible/spendable.
+            const vtxos = await wallet.getVtxos();
+            expect(vtxos.some((v) => v.script === scriptHex)).toBe(true);
         } finally {
             await wallet.dispose();
         }

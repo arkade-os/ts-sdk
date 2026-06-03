@@ -148,61 +148,19 @@ function dedupeTimelocks(timelocks: RelativeTimelock[]): RelativeTimelock[] {
 }
 
 /**
- * Whether two wallet baseline contract types may legitimately share a single
- * repository row when their scripts collide.
+ * Register a wallet baseline contract (`default` / `boarding`) idempotently.
  *
- * Contracts are keyed by their pkScript (`script` is the unique identity), so a
- * given script can own exactly one row. `default` and `boarding` are both built
- * from the same `DefaultVtxo.Script` shape and differ only by CSV timelock
- * value; when the offchain unilateral-exit delay and the boarding-exit delay
- * coincide, the two derive a byte-identical script and may share a single row
- * (the wallet coalesces such a collision onto `default` — see
- * {@link ensureWalletContract}). Same-type is trivially compatible. Every other
- * pairing (e.g. a `delegate` script, which carries an extra leaf and cannot
- * collide under normal semantics) is incompatible and signals a real
- * script/params mismatch.
- *
- * @internal Exported for unit tests; not part of the public API surface.
- */
-export function areSameScriptBaselineTypesCompatible(
-    existingType: string,
-    requestedType: string,
-): boolean {
-    if (existingType === requestedType) return true;
-    return (
-        (existingType === "default" && requestedType === "boarding") ||
-        (existingType === "boarding" && requestedType === "default")
-    );
-}
-
-/**
- * Register a wallet baseline contract (`default` / `boarding`) idempotently,
- * coalescing a same-script collision onto the `default` type.
- *
- * Contracts are keyed by script, so when `default` and `boarding` resolve to the
- * same pkScript the script can own only one row. This collision is degenerate: a
- * sound Ark server keeps `boardingExitDelay` strictly longer than the offchain
- * unilateral-exit delay (equal delays would expose the provider to a
- * double-spend), so in practice the two scripts differ and the boarding row
- * keeps its own identity. They can coincide only against a misconfigured /
- * malicious server — and even then the wallet must stay usable, so we coalesce
- * rather than throw.
- *
- * Resolution ("default wins" on a shared script):
- * - no existing row for the script → create it;
- * - existing row of the same type → {@link ContractManager.createContract} is a
- *   no-op (idempotent), so re-running initialization never duplicates;
- * - requested `default`, existing `boarding` (compatible) → promote the row to
- *   `default`. The shared script is also the wallet's live offchain baseline, so
- *   typing it `default` keeps it visible to the type-gated consumers
- *   (`notifyIncomingFunds`, `getWalletScripts`, `getScriptMap`);
- * - requested `boarding`, existing `default` (compatible) → accept as-is (the
- *   shared script is already canonical);
- * - existing row of an *incompatible* type → fall through to `createContract`,
- *   which throws its descriptive script/type mismatch error.
- *
- * Used only for the wallet's own `default` / `boarding` baseline contracts;
- * `delegate` creation stays strict (its script cannot collide with the others).
+ * Thin pass-through to {@link ContractManager.createContract}, which is now the
+ * single source of truth for the degenerate `default`/`boarding` same-script
+ * collision: contracts are keyed by pkScript, so when the two derive a
+ * byte-identical script (a misconfigured server whose `boardingExitDelay`
+ * coincides with the offchain unilateral-exit delay) only one row can exist for
+ * it, and `createContract` resolves the clash FIRST-WINS — it keeps the row
+ * already persisted for the shared script instead of throwing (see
+ * {@link areCoalescibleContractTypes}). The wallet-layer "default wins +
+ * promote" coalescing this helper used to carry has been consolidated into that
+ * one place so init and the restore scan share a single rule (see
+ * docs/hd-wallets_onchain_rotation_collision_fix.md §5.1, §5.3).
  *
  * @internal Exported for unit tests; not part of the public API surface.
  */
@@ -210,23 +168,6 @@ export async function ensureWalletContract(
     manager: ContractManager,
     params: CreateContractParams,
 ): Promise<void> {
-    const [existing] = await manager.getContracts({ script: params.script });
-    if (
-        existing &&
-        existing.type !== params.type &&
-        areSameScriptBaselineTypesCompatible(existing.type, params.type)
-    ) {
-        // Compatible collision (degenerate; sound servers keep the delays
-        // distinct). The script already persists and is watched, so the baseline
-        // purpose is served. Coalesce onto `default` ("default wins") so a shared
-        // script that is also the wallet's live offchain baseline stays
-        // discoverable through the type-gated consumers; otherwise the existing
-        // row is already `default`, so accept it as-is.
-        if (params.type === "default" && existing.type === "boarding") {
-            await manager.updateContract(params.script, { type: "default" });
-        }
-        return;
-    }
     await manager.createContract(params);
 }
 
@@ -1163,12 +1104,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
             });
             const defaultScriptHex = hex.encode(defaultScript.pkScript);
 
-            // Use ensureWalletContract (not a strict createContract) so a
+            // ensureWalletContract (a thin pass-through to createContract) so a
             // default baseline whose script collides with an already-persisted
-            // `boarding` row promotes that row to `default` ("default wins")
-            // instead of throwing a type mismatch. Degenerate guard only: a
-            // sound server keeps the unilateral-exit and boarding-exit delays
-            // distinct, so these scripts never actually collide.
+            // `boarding` row is tolerated FIRST-WINS at the persistence layer
+            // instead of throwing a type mismatch. The default matrix is
+            // persisted before the boarding baseline below, so at index 0 the
+            // `default` row wins. Degenerate guard only: a sound server keeps
+            // the unilateral-exit and boarding-exit delays distinct, so these
+            // scripts never actually collide.
             await ensureWalletContract(manager, {
                 type: "default",
                 params: {
@@ -1229,9 +1172,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // sound servers keep them distinct), the boarding script is
         // byte-identical to that default contract's script, so we cannot — and
         // need not — persist a second row: the shared script is already
-        // persisted and watched as a `default` contract ("default wins"), so
-        // funds landing on it stay visible/spendable. Re-running initialization
-        // is likewise a no-op once the row exists.
+        // persisted and watched as the `default` baseline (which was created
+        // first, so first-wins keeps it `default`), so funds landing on it stay
+        // visible/spendable. Re-running initialization is likewise a no-op once
+        // the row exists.
         const boardingCsvTimelock =
             this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
         const baselineBoarding = new DefaultVtxo.Script({

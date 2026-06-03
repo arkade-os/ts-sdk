@@ -1,14 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
-import {
-    Wallet,
-    areSameScriptBaselineTypesCompatible,
-    ensureWalletContract,
-} from "../../src/wallet/wallet";
+import { Wallet, ensureWalletContract } from "../../src/wallet/wallet";
 import { InMemoryWalletRepository } from "../../src/repositories/inMemory/walletRepository";
 import { InMemoryContractRepository } from "../../src/repositories/inMemory/contractRepository";
 import { SingleKey } from "../../src/identity/singleKey";
 import { DefaultVtxo } from "../../src/script/default";
-import { ContractManager } from "../../src/contracts/contractManager";
+import { ContractManager, areCoalescibleContractTypes } from "../../src/contracts/contractManager";
 import { contractHandlers } from "../../src/contracts/handlers";
 import { DefaultContractHandler } from "../../src/contracts/handlers/default";
 import { isDiscoverable } from "../../src/contracts/types";
@@ -332,29 +328,27 @@ describe("boarding contract: HD key selection stays wallet-owned", () => {
     });
 });
 
-describe("areSameScriptBaselineTypesCompatible", () => {
-    it("treats default <-> boarding as compatible (both directions)", () => {
-        expect(areSameScriptBaselineTypesCompatible("default", "boarding")).toBe(true);
-        expect(areSameScriptBaselineTypesCompatible("boarding", "default")).toBe(true);
+describe("areCoalescibleContractTypes", () => {
+    it("treats default <-> boarding as coalescible (both directions)", () => {
+        expect(areCoalescibleContractTypes("default", "boarding")).toBe(true);
+        expect(areCoalescibleContractTypes("boarding", "default")).toBe(true);
     });
 
-    it("treats same type as compatible", () => {
-        for (const t of ["default", "boarding", "delegate", "vhtlc"]) {
-            expect(areSameScriptBaselineTypesCompatible(t, t)).toBe(true);
-        }
-    });
-
-    it("treats every other pairing as incompatible", () => {
-        const incompatible: [string, string][] = [
+    it("treats every other distinct pairing as not coalescible", () => {
+        // Same-type is identity, not coalescing (handled separately as the
+        // idempotent no-op in upsertContract), so it is intentionally excluded
+        // from the coalescible pair set — this helper only governs which
+        // *different* types may share one script-keyed row.
+        const notCoalescible: [string, string][] = [
             ["default", "delegate"],
             ["boarding", "delegate"],
             ["default", "vhtlc"],
             ["boarding", "vhtlc"],
             ["delegate", "vhtlc"],
         ];
-        for (const [a, b] of incompatible) {
-            expect(areSameScriptBaselineTypesCompatible(a, b)).toBe(false);
-            expect(areSameScriptBaselineTypesCompatible(b, a)).toBe(false);
+        for (const [a, b] of notCoalescible) {
+            expect(areCoalescibleContractTypes(a, b)).toBe(false);
+            expect(areCoalescibleContractTypes(b, a)).toBe(false);
         }
     });
 });
@@ -435,7 +429,7 @@ describe("ensureWalletContract", () => {
         }
     });
 
-    it("collision direction B: existing boarding, then default promotes the row to default (default wins)", async () => {
+    it("collision direction B: existing boarding, then default keeps boarding (first-wins, no promote)", async () => {
         const { manager, indexerProvider } = await makeManager();
         try {
             // Stale `boarding` row persisted first (an earlier boot where the
@@ -446,13 +440,14 @@ describe("ensureWalletContract", () => {
 
             const rows = await manager.getContracts({ script: sharedScript });
             expect(rows).toHaveLength(1);
-            // Promoted to `default` so the shared script — also the wallet's
-            // live offchain baseline — stays visible to the type-gated
-            // consumers (notifyIncomingFunds, getWalletScripts, getScriptMap).
-            expect(rows[0].type).toBe("default");
+            // First-wins: the row keeps its original `boarding` type (no
+            // promotion). The shared script stays watched, and its VTXOs stay
+            // visible via the type-agnostic getVtxos path; this is the symmetric
+            // case that never occurs at init (default is persisted first there).
+            expect(rows[0].type).toBe("boarding");
             expect(rows[0].state).toBe("active");
-            // No boarding-typed row remains for the shared script.
-            expect(await manager.getContracts({ type: ["boarding"] })).toHaveLength(0);
+            // The boarding-typed row is the one that remains for the shared script.
+            expect(await manager.getContracts({ type: ["boarding"] })).toHaveLength(1);
             expect(subscribedScripts(indexerProvider)).toContain(sharedScript);
         } finally {
             manager.dispose();
@@ -508,5 +503,90 @@ describe("boarding contract: default/boarding script collision (boardingExitDela
         expect(await wallet.getBoardingAddress()).toEqual(
             wallet.boardingTapscript.onchainAddress(wallet.network),
         );
+    });
+});
+
+describe("ContractManager.createContract: default/boarding first-wins collision", () => {
+    // Same (params -> script) pair as the ensureWalletContract suite: boarding
+    // and default derive a byte-identical script from identical params, so the
+    // shared script can back either type. Exercises upsertContract's first-wins
+    // branch directly through the public createContract API (the same core that
+    // persistAndWatchContract — the restore scan's path — also runs).
+    const PK = "5b3a7b5e8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f";
+    const SPK = "9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b";
+    const sharedParams = {
+        pubKey: PK,
+        serverPubKey: SPK,
+        csvTimelock: timelockToSequence({ value: 86016n, type: "seconds" }).toString(),
+    };
+    const sharedScript = hex.encode(DefaultContractHandler.createScript(sharedParams).pkScript);
+
+    async function makeManager() {
+        const contractRepository = new InMemoryContractRepository();
+        const manager = await ContractManager.create({
+            indexerProvider: makeIdleIndexer(),
+            contractRepository,
+            walletRepository: new InMemoryWalletRepository(),
+            watcherConfig: { failsafePollIntervalMs: 1000, reconnectDelayMs: 500 },
+        });
+        return { manager, contractRepository };
+    }
+
+    const params = (type: string, label?: string) => ({
+        type,
+        params: sharedParams,
+        script: sharedScript,
+        address: "addr",
+        state: "active" as const,
+        ...(label ? { label } : {}),
+    });
+
+    it("keeps the existing row both directions (no throw, no overwrite, no promote)", async () => {
+        for (const [first, second] of [
+            ["default", "boarding"],
+            ["boarding", "default"],
+        ] as const) {
+            const { manager } = await makeManager();
+            try {
+                const created = await manager.createContract(params(first, "first"));
+                // The colliding second create is a no-op that returns the
+                // existing row untouched — same type, same label, same
+                // createdAt, no throw.
+                const result = await manager.createContract(params(second, "second"));
+                expect(result.type).toBe(first);
+                expect(result.label).toBe("first");
+                expect(result.createdAt).toBe(created.createdAt);
+
+                const rows = await manager.getContracts({ script: sharedScript });
+                expect(rows).toHaveLength(1);
+                expect(rows[0].type).toBe(first);
+                expect(rows[0].label).toBe("first");
+            } finally {
+                manager.dispose();
+            }
+        }
+    });
+
+    it("still throws on a genuinely incompatible collision (default <-> vhtlc)", async () => {
+        const { manager, contractRepository } = await makeManager();
+        try {
+            // Seed an incompatible (vhtlc) row directly at the shared script,
+            // bypassing createContract's params validation.
+            await contractRepository.saveContract({
+                type: "vhtlc",
+                params: sharedParams,
+                script: sharedScript,
+                address: "addr",
+                state: "active",
+                createdAt: 0,
+            });
+            await expect(manager.createContract(params("default"))).rejects.toThrow(
+                /already exists with type vhtlc/,
+            );
+            // No duplicate row was created.
+            expect(await manager.getContracts({ script: sharedScript })).toHaveLength(1);
+        } finally {
+            manager.dispose();
+        }
     });
 });
