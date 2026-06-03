@@ -250,10 +250,10 @@ describe("boarding contract: VTXO annotation and spend paths", () => {
     });
 });
 
-describe("boarding contract: not discoverable", () => {
-    it("is not part of the discoverable handler set", () => {
+describe("boarding contract: discoverable", () => {
+    it("is part of the discoverable handler set (boarding restore, plan §6-I)", () => {
         const handler = contractHandlers.get("boarding");
-        expect(isDiscoverable(handler)).toBe(false);
+        expect(isDiscoverable(handler)).toBe(true);
     });
 });
 

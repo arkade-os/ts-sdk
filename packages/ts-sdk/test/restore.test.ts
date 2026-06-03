@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { hex } from "@scure/base";
 import { signingDescriptorIndex } from "../src/wallet/walletReceiveRotator";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -12,6 +12,7 @@ import { DefaultContractHandler } from "../src/contracts/handlers/default";
 import { DelegateContractHandler } from "../src/contracts/handlers/delegate";
 import { DefaultVtxo } from "../src/script/default";
 import { DelegateVtxo } from "../src/script/delegate";
+import { VtxoScript } from "../src/script/base";
 import type { RelativeTimelock } from "../src/script/tapscript";
 import { contractHandlers } from "../src/contracts/handlers";
 import { makeManagerForTest, makeDeps } from "./helpers/scanManager";
@@ -670,6 +671,172 @@ describe("Wallet.restore", () => {
             );
             const balance = await wallet.getBalance();
             expect(balance.total).toBeGreaterThan(0);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("HD: a funded boarding index is recovered via the on-chain probe (advances watermark)", async () => {
+        const { wallet, hdProvider, fundedOnchain } = await makeHdWalletForTest();
+        try {
+            // Boarding on-chain (P2TR) address at HD index 2, built the way
+            // BoardingContractHandler.discoverAt does. The index is funded
+            // ONLY on-chain (not in the indexer's usedScripts), so the index
+            // is recovered purely by the boarding on-chain probe — and the
+            // shared watermark advances to it.
+            const serverPubKey = wallet.offchainTapscript.options.serverPubKey;
+            const boardingCsv = wallet.boardingTapscript.options.csvTimelock!;
+            const boardingOnchainAt = (i: number) =>
+                new DefaultVtxo.Script({
+                    pubKey: deriveDescriptorLeafPubKey(hdProvider.materializeDescriptorAt(i)),
+                    serverPubKey,
+                    csvTimelock: boardingCsv,
+                }).onchainAddress(wallet.network);
+            fundedOnchain.add(boardingOnchainAt(2));
+
+            await wallet.restore({ gapLimit: 5 });
+
+            expect(await hdProvider.getCurrentSigningDescriptor()).toBe(
+                hdProvider.materializeDescriptorAt(2),
+            );
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("equal-delay server: a funded index-0 boarding UTXO restores without aborting (default wins)", async () => {
+        // mockArkInfo sets boardingExitDelay === unilateralExitDelay, so the
+        // boarding script is byte-identical to the default candidate. A funded
+        // on-chain boarding UTXO must restore cleanly: the boarding hit
+        // coalesces onto the already-persisted `default` row (idempotent
+        // upsert) instead of aborting the scan with a same-script type clash.
+        const { wallet, fundedOnchain } = await makeHdWalletForTest();
+        try {
+            fundedOnchain.add(await wallet.getBoardingAddress());
+            await expect(wallet.restore({ gapLimit: 5 })).resolves.toBeUndefined();
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("getBoardingUtxos unions funds across current + historical boarding addresses (plan §6-III.1)", async () => {
+        const { wallet, fundedOnchain } = await makeHdWalletForTest();
+        try {
+            const baselineBoarding = await wallet.getBoardingAddress();
+            const rotatedBoarding = await wallet.getNewBoardingAddress();
+            expect(rotatedBoarding).not.toBe(baselineBoarding);
+
+            // Fund BOTH the previous (index-0) and the current (rotated)
+            // boarding addresses on-chain.
+            fundedOnchain.add(baselineBoarding);
+            fundedOnchain.add(rotatedBoarding);
+
+            const utxos = await wallet.getBoardingUtxos();
+            expect(utxos).toHaveLength(2);
+            // Each coin is annotated with the tapscript of the address it sits
+            // on — so it can later be forfeited/exited with the right leaves.
+            const addrs = utxos.map((u) =>
+                VtxoScript.decode(u.tapTree).onchainAddress(wallet.network),
+            );
+            expect(new Set(addrs)).toEqual(new Set([baselineBoarding, rotatedBoarding]));
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("getBoardingTxs unions history across current + historical boarding addresses (plan §6-IV.1)", async () => {
+        const { wallet } = await makeHdWalletForTest();
+        try {
+            const baseline = await wallet.getBoardingAddress();
+            const rotated = await wallet.getNewBoardingAddress();
+            expect(rotated).not.toBe(baseline);
+
+            const txAt = (addr: string, txid: string) => ({
+                txid,
+                vout: [{ scriptpubkey_address: addr, value: 12_345 }],
+                status: { confirmed: true, block_time: 1_700_000_000 },
+            });
+            vi.spyOn(wallet.onchainProvider, "getTransactions").mockImplementation(
+                async (addr: string) => {
+                    if (addr === baseline) return [txAt(baseline, "aa".repeat(32))] as any;
+                    if (addr === rotated) return [txAt(rotated, "bb".repeat(32))] as any;
+                    return [];
+                },
+            );
+            vi.spyOn(wallet.onchainProvider, "getTxOutspends").mockResolvedValue([
+                { spent: false },
+            ] as any);
+
+            const { boardingTxs } = await wallet.getBoardingTxs();
+            const txids = boardingTxs.map((t) => t.key.boardingTxid);
+            expect(txids).toContain("aa".repeat(32));
+            expect(txids).toContain("bb".repeat(32));
+            // getBoardingAddress() stays single-valued (the QR / display target).
+            expect(await wallet.getBoardingAddress()).toBe(rotated);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("notifyIncomingFunds watches the full boarding-address set (plan §6-IV.2)", async () => {
+        const { wallet } = await makeHdWalletForTest();
+        try {
+            const baseline = await wallet.getBoardingAddress();
+            const rotated = await wallet.getNewBoardingAddress();
+
+            let watched: string[] = [];
+            vi.spyOn(wallet.onchainProvider, "watchAddresses").mockImplementation(
+                async (addrs: string[]) => {
+                    watched = addrs;
+                    return () => {};
+                },
+            );
+
+            const stop = await wallet.notifyIncomingFunds(() => {});
+            expect(new Set(watched)).toEqual(new Set([baseline, rotated]));
+            stop();
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("notifyIncomingFunds emits one coin per matching output, even when a tx pays two boarding addresses (review Finding 4)", async () => {
+        const { wallet } = await makeHdWalletForTest();
+        try {
+            const baseline = await wallet.getBoardingAddress();
+            const rotated = await wallet.getNewBoardingAddress();
+
+            let captured: ((txs: any[]) => void) | undefined;
+            vi.spyOn(wallet.onchainProvider, "watchAddresses").mockImplementation(
+                async (_addrs: string[], cb: (txs: any[]) => void) => {
+                    captured = cb;
+                    return () => {};
+                },
+            );
+
+            const received: any[] = [];
+            const stop = await wallet.notifyIncomingFunds((funds) => {
+                if (funds.type === "utxo") received.push(...funds.coins);
+            });
+
+            // One tx with outputs to BOTH boarding addresses (vout 0 and 2) plus
+            // an unrelated output (vout 1) that must be ignored.
+            captured!([
+                {
+                    txid: "ab".repeat(32),
+                    status: { confirmed: true },
+                    vout: [
+                        { scriptpubkey_address: baseline, value: 1000 },
+                        { scriptpubkey_address: "someone-else", value: 5 },
+                        { scriptpubkey_address: rotated, value: 2000 },
+                    ],
+                },
+            ]);
+
+            expect(received).toHaveLength(2);
+            expect(received.map((c) => c.vout).sort()).toEqual([0, 2]);
+            expect(received.map((c) => c.value).sort((a, b) => a - b)).toEqual([1000, 2000]);
+            stop();
         } finally {
             await wallet.dispose();
         }

@@ -37,7 +37,6 @@ import {
 import { DelegateInfo } from "../../providers/delegate";
 import { ReadonlyWallet, Wallet } from "../wallet";
 import type { RenewVtxosOptions } from "../vtxo-manager";
-import { extendCoin } from "../utils";
 import { MessageHandler, RequestEnvelope, ResponseEnvelope } from "../../worker/messageBus";
 import { Transaction } from "../../utils/transaction";
 import { buildTransactionHistory } from "../../utils/transactionHistory";
@@ -1316,12 +1315,14 @@ export class WalletMessageHandler
                     );
                 }
                 if (funds.type === "utxo") {
-                    const utxos = funds.coins.map((utxo) => extendCoin(this.readonlyWallet!, utxo));
-                    const boardingAddress = await this.readonlyWallet!.getBoardingAddress();
-                    // save boarding inputs using unified repository
-                    // TODO: remove UTXOs by address
-                    //  await this.walletRepository.clearUtxos(boardingAddress);
-                    await this.walletRepository?.saveUtxos(boardingAddress, utxos);
+                    // A deposit may land on the current OR a previous boarding
+                    // address (per-derivation rotation, plan §6-IV.2). The
+                    // notified `coins` carry no address, so re-fetch + re-cache
+                    // the full boarding-address set via getBoardingUtxos, which
+                    // buckets each UTXO under the address it sits on with the
+                    // correct per-UTXO tapscript — instead of assuming the
+                    // current boarding address.
+                    const utxos = await this.readonlyWallet!.getBoardingUtxos();
 
                     // notify all clients about the boarding input state update
                     this.scheduleForNextTick(() =>
@@ -1360,14 +1361,15 @@ export class WalletMessageHandler
         // Read virtual outputs from repository (now populated by contract manager)
         const vtxos = await this.getVtxosFromRepo();
 
-        // Fetch boarding inputs and save using unified repository
-        const boardingAddress = await this.readonlyWallet.getBoardingAddress();
-        const coins = await this.readonlyWallet.onchainProvider.getCoins(boardingAddress);
-        await this.walletRepository.deleteUtxos(boardingAddress);
-        await this.walletRepository.saveUtxos(
-            boardingAddress,
-            coins.map((utxo) => extendCoin(this.readonlyWallet!, utxo)),
-        );
+        // Fetch boarding inputs across the full boarding-address set (current +
+        // historical rotated; plan §6-IV.2). Clear each stale bucket first so
+        // spent coins drop, then let getBoardingUtxos re-fetch and re-save each
+        // address bucket with the correct per-UTXO tapscript.
+        const boardingAddresses = await this.readonlyWallet.getBoardingAddresses();
+        for (const addr of boardingAddresses) {
+            await this.walletRepository.deleteUtxos(addr);
+        }
+        await this.readonlyWallet.getBoardingUtxos();
 
         // Build transaction history from cached virtual outputs (no indexer call)
         const address = await this.readonlyWallet.getAddress();
