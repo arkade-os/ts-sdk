@@ -16,6 +16,7 @@ import {
     setArkPsbtField,
     ConditionWitness,
     Transaction,
+    VtxoScript,
 } from "../../src";
 import {
     addEmulatorPacket,
@@ -81,15 +82,14 @@ describe("arkade HTLC (covenant)", () => {
 
             const preimageCondition = Script.encode(["HASH160", HTLC_PREIMAGE_HASH, "EQUAL"]);
 
-            const vtxoScript = new arkade.ArkadeVtxoScript([
-                {
-                    arkadeScript,
-                    emulators: [emulatorPubkey],
-                    tapscript: ConditionMultisigTapscript.encode({
-                        conditionScript: preimageCondition,
-                        pubkeys: [serverXOnlyPubkey],
-                    }),
-                },
+            const vtxoScript = new VtxoScript([
+                ConditionMultisigTapscript.encode({
+                    conditionScript: preimageCondition,
+                    pubkeys: [
+                        serverXOnlyPubkey,
+                        arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScript),
+                    ],
+                }).script,
             ]);
 
             const contractAddress = vtxoScript
@@ -198,15 +198,14 @@ describe("arkade HTLC (covenant)", () => {
 
             const REFUND_LOCKTIME = 500_000_000n; // genesis-relative, always satisfied
 
-            const vtxoScript = new arkade.ArkadeVtxoScript([
-                {
-                    arkadeScript,
-                    emulators: [emulatorPubkey],
-                    tapscript: CLTVMultisigTapscript.encode({
-                        absoluteTimelock: REFUND_LOCKTIME,
-                        pubkeys: [serverXOnlyPubkey],
-                    }),
-                },
+            const vtxoScript = new VtxoScript([
+                CLTVMultisigTapscript.encode({
+                    absoluteTimelock: REFUND_LOCKTIME,
+                    pubkeys: [
+                        serverXOnlyPubkey,
+                        arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScript),
+                    ],
+                }).script,
             ]);
             const contractAddress = vtxoScript
                 .address(networks.regtest.hrp, serverXOnlyPubkey)

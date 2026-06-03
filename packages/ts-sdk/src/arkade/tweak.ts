@@ -53,10 +53,6 @@ export function arkadeWitnessHash(witness: Uint8Array): Uint8Array {
 export function computeArkadeScriptPublicKey(pubKey: Uint8Array, script: Uint8Array): Uint8Array {
     const hash = arkadeScriptHash(script);
 
-    // lift_x: always force even Y (BIP-340 convention).
-    // This matches the Go emulator's behavior which does:
-    //   schnorr.ParsePubKey(schnorr.SerializePubKey(pubKey))
-    // i.e. round-trips through x-only, forcing even Y regardless of input.
     const xOnly = pubKey.length === 33 ? pubKey.subarray(1) : pubKey;
     const point = secp256k1.Point.fromHex("02" + hex.encode(xOnly));
 

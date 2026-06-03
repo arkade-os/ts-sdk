@@ -28,6 +28,7 @@ import {
     faucetOffchain,
     randomP2TR,
 } from "./utils";
+import { computeArkadeScriptPublicKey } from "../../src/arkade";
 
 const EMULATOR_URL = "http://localhost:7073";
 const ARK_SERVER_URL = "http://localhost:7070";
@@ -61,14 +62,13 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
             // Build the VTXO script:
             //   Closure 1 (forfeit): MultisigTapscript { pubkeys: [server, intro_tweaked] }
             //   Closure 2 (exit):    CSVMultisigTapscript { pubkeys: [alice], timelock: 512s }
-            const vtxoScript = new arkade.ArkadeVtxoScript([
-                {
-                    arkadeScript,
-                    emulators: [emulatorPubkey],
-                    tapscript: MultisigTapscript.encode({
-                        pubkeys: [serverXOnlyPubkey],
-                    }),
-                },
+            const vtxoScript = new VtxoScript([
+                MultisigTapscript.encode({
+                    pubkeys: [
+                        serverXOnlyPubkey,
+                        computeArkadeScriptPublicKey(emulatorPubkey, arkadeScript),
+                    ],
+                }).script,
                 CSVMultisigTapscript.encode({
                     timelock: {
                         type: "seconds",

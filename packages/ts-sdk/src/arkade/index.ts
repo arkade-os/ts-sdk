@@ -36,4 +36,3 @@ export { toASM, fromASM, asmToBytes, bytesToASM } from "./script";
 export { arkadeScriptHash, arkadeWitnessHash, computeArkadeScriptPublicKey } from "./tweak";
 export * as BigNum from "./bignum";
 export { createArkadeBatchHandler, type ArkadeExtendedCoin } from "./batch";
-export { ArkadeVtxoScript, type ArkadeLeaf, type ArkadeVtxoInput } from "./vtxoScript";

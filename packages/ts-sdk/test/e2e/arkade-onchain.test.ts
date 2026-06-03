@@ -11,6 +11,7 @@ import {
     RestEmulatorProvider,
     setArkPsbtField,
     SingleKey,
+    VtxoScript,
 } from "../../src";
 import { Transaction } from "../../src/utils/transaction";
 import { addEmulatorPacket, enforcePayTo, execCommand, waitForUtxo } from "./utils";
@@ -54,7 +55,7 @@ describe("arkade SubmitOnchainTx", () => {
         rawFundingTx: Uint8Array;
         spendOutputScript: Uint8Array;
         spendOutputValue: bigint;
-        tapLeafScript: ReturnType<InstanceType<typeof arkade.ArkadeVtxoScript>["findLeaf"]>;
+        tapLeafScript: ReturnType<InstanceType<typeof VtxoScript>["findLeaf"]>;
         arkadeScript: Uint8Array | null;
     }): Transaction {
         const txid = hex.decode(opts.fundingTxid);
@@ -104,14 +105,10 @@ describe("arkade SubmitOnchainTx", () => {
         const arkadeScript = enforcePayTo(bobP2TR, SPEND_AMOUNT);
         const tweakedIntro = arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScript);
 
-        const vtxoScript = new arkade.ArkadeVtxoScript([
-            {
-                arkadeScript,
-                emulators: [emulatorPubkey],
-                tapscript: MultisigTapscript.encode({
-                    pubkeys: [bobX, aliceX],
-                }),
-            },
+        const vtxoScript = new VtxoScript([
+            MultisigTapscript.encode({
+                pubkeys: [bobX, aliceX, tweakedIntro],
+            }).script,
         ]);
 
         const arkadeLeafScript = MultisigTapscript.encode({
@@ -248,14 +245,15 @@ describe("arkade SubmitOnchainTx", () => {
         const bobP2TR = p2tr(bobX, undefined, networks.regtest).script;
         const arkadeScript = enforcePayTo(bobP2TR, SPEND_AMOUNT);
 
-        const vtxoScript = new arkade.ArkadeVtxoScript([
-            {
-                arkadeScript,
-                emulators: [emulatorPubkey],
-                tapscript: MultisigTapscript.encode({
-                    pubkeys: [bobX, arkdX], // arkd as a cosigner — must be rejected
-                }),
-            },
+        const vtxoScript = new VtxoScript([
+            MultisigTapscript.encode({
+                // arkd as a cosigner — must be rejected
+                pubkeys: [
+                    bobX,
+                    arkdX,
+                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScript),
+                ],
+            }).script,
         ]);
 
         const arkadeLeaf = MultisigTapscript.encode({

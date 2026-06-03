@@ -18,6 +18,7 @@ import {
     RestEmulatorProvider,
     Extension,
     EmulatorPacket,
+    VtxoScript,
 } from "../../src";
 import { beforeEachFaucet, createTestArkWallet, createTestIdentity, faucetOffchain } from "./utils";
 
@@ -111,14 +112,14 @@ describe("arkade", () => {
         const arkadeScriptBytes = buildCheckOutputScript(0, aliceWitnessProgram);
 
         // Create VtxoScript with arkade multisig
-        const vtxoScript = new arkade.ArkadeVtxoScript([
-            {
-                arkadeScript: arkadeScriptBytes,
-                emulators: [emulatorPubkey],
-                tapscript: MultisigTapscript.encode({
-                    pubkeys: [bobPubkey, serverXOnlyPubkey],
-                }),
-            },
+        const vtxoScript = new VtxoScript([
+            MultisigTapscript.encode({
+                pubkeys: [
+                    bobPubkey,
+                    serverXOnlyPubkey,
+                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScriptBytes),
+                ],
+            }).script,
         ]);
         const contractAddress = vtxoScript
             .address(networks.regtest.hrp, serverXOnlyPubkey)
@@ -187,14 +188,14 @@ describe("arkade", () => {
         const arkadeScriptBytes = buildCheckOutputScript(0, aliceWP);
 
         // Create VtxoScript with arkade closure + CSV exit
-        const vtxoScript = new arkade.ArkadeVtxoScript([
-            {
-                arkadeScript: arkadeScriptBytes,
-                emulators: [emulatorPubkey],
-                tapscript: MultisigTapscript.encode({
-                    pubkeys: [bobPubkey, serverXOnlyPubkey],
-                }),
-            },
+        const vtxoScript = new VtxoScript([
+            MultisigTapscript.encode({
+                pubkeys: [
+                    bobPubkey,
+                    serverXOnlyPubkey,
+                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScriptBytes),
+                ],
+            }).script,
             CSVMultisigTapscript.encode({
                 timelock: { type: "blocks", value: BigInt(5120) },
                 pubkeys: [bobPubkey, serverXOnlyPubkey],
@@ -327,14 +328,14 @@ describe("arkade", () => {
         const arkadeScriptBytes = buildCheckOutputScript(0, aliceWP);
 
         // Create boarding VtxoScript: arkade closure + bob-only CSV exit
-        const vtxoScript = new arkade.ArkadeVtxoScript([
-            {
-                arkadeScript: arkadeScriptBytes,
-                emulators: [emulatorPubkey],
-                tapscript: MultisigTapscript.encode({
-                    pubkeys: [bobPubkey, serverXOnlyPubkey],
-                }),
-            },
+        const vtxoScript = new VtxoScript([
+            MultisigTapscript.encode({
+                pubkeys: [
+                    bobPubkey,
+                    serverXOnlyPubkey,
+                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScriptBytes),
+                ],
+            }).script,
             CSVMultisigTapscript.encode({
                 timelock: {
                     type: "blocks",
@@ -499,14 +500,14 @@ describe("arkade", () => {
         ];
         const arkadeScriptBytes = arkade.ArkadeScript.encode(scriptOps);
 
-        const vtxoScript = new arkade.ArkadeVtxoScript([
-            {
-                arkadeScript: arkadeScriptBytes,
-                emulators: [emulatorPubkey],
-                tapscript: MultisigTapscript.encode({
-                    pubkeys: [bobPubkey, serverXOnlyPubkey],
-                }),
-            },
+        const vtxoScript = new VtxoScript([
+            MultisigTapscript.encode({
+                pubkeys: [
+                    bobPubkey,
+                    serverXOnlyPubkey,
+                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScriptBytes),
+                ],
+            }).script,
         ]);
         const contractAddress = vtxoScript
             .address(networks.regtest.hrp, serverXOnlyPubkey)
@@ -601,14 +602,14 @@ describe("arkade", () => {
         const settleArkadeScript = arkade.ArkadeScript.encode(settleScriptOps);
 
         // Create settle contract VtxoScript with CSV exit
-        const settleVtxoScript = new arkade.ArkadeVtxoScript([
-            {
-                arkadeScript: settleArkadeScript,
-                emulators: [emulatorPubkey],
-                tapscript: MultisigTapscript.encode({
-                    pubkeys: [bobPubkey, serverXOnlyPubkey],
-                }),
-            },
+        const settleVtxoScript = new VtxoScript([
+            MultisigTapscript.encode({
+                pubkeys: [
+                    bobPubkey,
+                    serverXOnlyPubkey,
+                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, settleArkadeScript),
+                ],
+            }).script,
             CSVMultisigTapscript.encode({
                 timelock: { type: "blocks", value: BigInt(5120) },
                 pubkeys: [bobPubkey, serverXOnlyPubkey],
@@ -638,14 +639,14 @@ describe("arkade", () => {
         ];
         const mintArkadeScript = arkade.ArkadeScript.encode(mintScriptOps);
 
-        const mintVtxoScript = new arkade.ArkadeVtxoScript([
-            {
-                arkadeScript: mintArkadeScript,
-                emulators: [emulatorPubkey],
-                tapscript: MultisigTapscript.encode({
-                    pubkeys: [bobPubkey, serverXOnlyPubkey],
-                }),
-            },
+        const mintVtxoScript = new VtxoScript([
+            MultisigTapscript.encode({
+                pubkeys: [
+                    bobPubkey,
+                    serverXOnlyPubkey,
+                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, mintArkadeScript),
+                ],
+            }).script,
         ]);
         const mintContractAddress = mintVtxoScript
             .address(networks.regtest.hrp, serverXOnlyPubkey)

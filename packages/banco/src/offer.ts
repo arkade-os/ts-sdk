@@ -5,11 +5,12 @@ import {
     CLTVMultisigTapscript,
     CSVMultisigTapscript,
     MultisigTapscript,
+    VtxoScript,
 } from "@arkade-os/sdk";
 import type { ExtensionPacket, RelativeTimelock } from "@arkade-os/sdk";
 
 const { AssetId } = asset;
-const { ArkadeScript, ArkadeVtxoScript } = arkade;
+const { ArkadeScript } = arkade;
 
 const TLV_SWAP_PK_SCRIPT = 0x01;
 const TLV_WANT_AMOUNT = 0x02;
@@ -315,15 +316,18 @@ export namespace Offer {
     export function vtxoScript(
         offer: Omit<Data, "swapPkScript">,
         serverPubkey: Uint8Array,
-    ): arkade.ArkadeVtxoScript {
-        const leaves: arkade.ArkadeVtxoInput[] = [
-            {
-                arkadeScript: covenantScript(offer),
-                emulators: [offer.emulatorPubkey],
-                tapscript: MultisigTapscript.encode({
-                    pubkeys: [serverPubkey],
-                }),
-            },
+    ): VtxoScript {
+        // Fulfill leaf: server + emulator key tweaked by the covenant script.
+        const leaves: Uint8Array[] = [
+            MultisigTapscript.encode({
+                pubkeys: [
+                    serverPubkey,
+                    arkade.computeArkadeScriptPublicKey(
+                        offer.emulatorPubkey,
+                        covenantScript(offer),
+                    ),
+                ],
+            }).script,
         ];
 
         if (offer.cancelDelay !== undefined) {
@@ -350,7 +354,7 @@ export namespace Offer {
             );
         }
 
-        return new ArkadeVtxoScript(leaves);
+        return new VtxoScript(leaves);
     }
 
     /** Full-fill arkade script. */

@@ -204,7 +204,6 @@ import {
     type ConnectorTreeNode,
 } from "./providers/emulator";
 import type { ArkadeExtendedCoin } from "./arkade/batch";
-import type { ArkadeLeaf, ArkadeVtxoInput } from "./arkade/vtxoScript";
 import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
@@ -642,8 +641,6 @@ export type {
 
     // Arkade types
     ArkadeExtendedCoin,
-    ArkadeLeaf,
-    ArkadeVtxoInput,
 
     // Delegate types (Delegator* aliases deprecated)
     IDelegateManager,
