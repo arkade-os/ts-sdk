@@ -239,10 +239,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         this.walletContractTimelocks =
             walletContractTimelocks && walletContractTimelocks.length > 0
                 ? dedupeTimelocks(walletContractTimelocks)
-                : [
-                      this.offchainTapscript.options.csvTimelock ??
-                          DefaultVtxo.Script.DEFAULT_TIMELOCK,
-                  ];
+                : [this.offchainTapscript.options.csvTimelock];
     }
 
     /**
