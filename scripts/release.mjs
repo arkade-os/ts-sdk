@@ -26,18 +26,10 @@ const PACKAGES = [
         tagPrefix: "@arkade-os/boltz-swap/",
         order: 2,
     },
-    {
-        key: "banco",
-        name: "@arkade-os/banco",
-        dir: path.join(ROOT_DIR, "packages/banco"),
-        pkgJson: path.join(ROOT_DIR, "packages/banco/package.json"),
-        tagPrefix: "@arkade-os/banco/",
-        order: 3,
-    },
 ];
 
 const PACKAGE_BY_KEY = Object.fromEntries(PACKAGES.map((p) => [p.key, p]));
-const VALID_TARGETS = new Set(["sdk", "boltz-swap", "banco", "all"]);
+const VALID_TARGETS = new Set(["sdk", "boltz-swap", "all"]);
 const BUMP_TYPES = new Set([
     "patch",
     "minor",
@@ -203,7 +195,7 @@ function showHelp() {
        scripts/release.mjs --cleanup [target]
 
 Targets:
-  sdk | boltz-swap | banco | all
+  sdk | boltz-swap | all
 
 Bump or version:
   patch | minor | major | prepatch | preminor | premajor | prerelease |
@@ -224,9 +216,7 @@ Options:
 
 Releasing SDK implies a dependent boltz-swap release because boltz-swap
 depends on SDK via workspace:* (pnpm rewrites this to an exact version on
-pack/publish). banco is released independently (it is included in 'all' but
-not auto-bumped by an SDK release); its workspace:* SDK dependency is still
-pinned to the current SDK version on pack/publish.
+pack/publish).
 `,
     );
 }
@@ -282,7 +272,7 @@ function parseArgs(argv) {
 
 function validateTarget(target) {
     if (!VALID_TARGETS.has(target)) {
-        die(`Invalid target: ${target}. Use sdk, boltz-swap, banco, or all.`);
+        die(`Invalid target: ${target}. Use sdk, boltz-swap, or all.`);
     }
 }
 
@@ -299,10 +289,9 @@ function validatePreid(preid) {
 }
 
 function primarySelection(target) {
-    if (target === "all") return ["sdk", "boltz-swap", "banco"];
+    if (target === "all") return ["sdk", "boltz-swap"];
     if (target === "sdk") return ["sdk", "boltz-swap"];
     if (target === "boltz-swap") return ["boltz-swap"];
-    if (target === "banco") return ["banco"];
     die(`Invalid target: ${target}`);
 }
 

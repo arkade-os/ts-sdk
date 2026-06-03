@@ -53,15 +53,6 @@ jobs:
       - name: Verify boltz-swap publish shape
         run: cd packages/boltz-swap && npm pack --dry-run --ignore-scripts
 
-      - name: Type-check banco
-        run: pnpm -C packages/banco run typecheck
-
-      - name: Smoke-test banco dist
-        run: pnpm -C packages/banco run smoke:dist
-
-      - name: Verify banco publish shape
-        run: cd packages/banco && npm pack --dry-run --ignore-scripts
-
       - name: Unit tests
         run: pnpm run test:unit
 
@@ -72,7 +63,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [ts-sdk, boltz-swap, banco]
+        package: [ts-sdk, boltz-swap]
 
     steps:
       - uses: actions/checkout@v4
