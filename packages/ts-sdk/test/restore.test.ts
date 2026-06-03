@@ -934,6 +934,143 @@ describe("Wallet.restore", () => {
         }
     });
 
+    it("notifyIncomingFunds re-subscribes the onchain watcher when boarding rotates within the session", async () => {
+        const { wallet } = await makeHdWalletForTest();
+        try {
+            const baseline = await wallet.getBoardingAddress();
+            const rotated1 = await wallet.getNewBoardingAddress();
+
+            // Record each subscription's address set + a per-call stop spy.
+            const calls: string[][] = [];
+            const stops: Array<ReturnType<typeof vi.fn>> = [];
+            vi.spyOn(wallet.onchainProvider, "watchAddresses").mockImplementation(
+                async (addrs: string[]) => {
+                    calls.push(addrs);
+                    const stop = vi.fn();
+                    stops.push(stop);
+                    return stop;
+                },
+            );
+
+            const stop = await wallet.notifyIncomingFunds(() => {});
+            expect(calls).toHaveLength(1);
+            expect(new Set(calls[0])).toEqual(new Set([baseline, rotated1]));
+
+            // Rotate boarding AFTER subscribing — rotate-on-board's situation.
+            const rotated2 = await wallet.getNewBoardingAddress();
+
+            // The watcher re-subscribes to the widened set without a re-init,
+            // then (subscribe-then-swap) retires the prior watcher only once
+            // the new one is live — so wait for that teardown to land.
+            await vi.waitFor(() => {
+                expect(calls).toHaveLength(2);
+                expect(stops[0]).toHaveBeenCalledTimes(1);
+            });
+            expect(calls[1]).toContain(rotated2);
+            expect(new Set(calls[1])).toEqual(new Set([baseline, rotated1, rotated2]));
+
+            // After stop(), the live watcher is torn down and the rotation
+            // listener is unregistered — a later rotation no longer re-subscribes.
+            stop();
+            expect(stops[1]).toHaveBeenCalledTimes(1);
+            await wallet.getNewBoardingAddress();
+            await new Promise((r) => setTimeout(r, 20));
+            expect(calls).toHaveLength(2);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("notifyIncomingFunds keeps the existing watcher live when a re-subscribe fails (no on-chain gap)", async () => {
+        const { wallet } = await makeHdWalletForTest();
+        try {
+            await wallet.getNewBoardingAddress();
+
+            const calls: string[][] = [];
+            const stops: Array<ReturnType<typeof vi.fn>> = [];
+            let failNext = false;
+            vi.spyOn(wallet.onchainProvider, "watchAddresses").mockImplementation(
+                async (addrs: string[]) => {
+                    if (failNext) throw new Error("watchAddresses failed");
+                    calls.push(addrs);
+                    const stop = vi.fn();
+                    stops.push(stop);
+                    return stop;
+                },
+            );
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+            const stop = await wallet.notifyIncomingFunds(() => {});
+            expect(calls).toHaveLength(1); // initial watcher live
+
+            // A rotation whose re-subscribe throws must NOT tear down the
+            // existing watcher (subscribe-then-swap): degrade to the stale set,
+            // never to no watcher at all.
+            failNext = true;
+            await wallet.getNewBoardingAddress();
+            await vi.waitFor(() =>
+                expect(warn).toHaveBeenCalledWith(
+                    "Failed to (re)subscribe boarding-funds watcher",
+                    expect.anything(),
+                ),
+            );
+            expect(stops[0]).not.toHaveBeenCalled(); // old watcher still live
+
+            // It is still the live watcher: stop() tears exactly it down.
+            stop();
+            expect(stops[0]).toHaveBeenCalledTimes(1);
+
+            warn.mockRestore();
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("notifyIncomingFunds does not miss a rotation that lands during initial subscribe setup", async () => {
+        const { wallet } = await makeHdWalletForTest();
+        try {
+            const baseline = await wallet.getBoardingAddress();
+            const rotated1 = await wallet.getNewBoardingAddress();
+
+            const calls: string[][] = [];
+            let signalFirstCalled!: () => void;
+            const firstCalled = new Promise<void>((r) => (signalFirstCalled = r));
+            let releaseFirst!: () => void;
+            const firstGate = new Promise<void>((r) => (releaseFirst = r));
+            vi.spyOn(wallet.onchainProvider, "watchAddresses").mockImplementation(
+                async (addrs: string[]) => {
+                    calls.push(addrs);
+                    if (calls.length === 1) {
+                        // Block the INITIAL subscribe so we can rotate while it
+                        // is mid-setup — the race Finding 2 is about.
+                        signalFirstCalled();
+                        await firstGate;
+                    }
+                    return vi.fn();
+                },
+            );
+
+            const notifyPromise = wallet.notifyIncomingFunds(() => {});
+            // Initial subscribe is now blocked in watchAddresses; the rotation
+            // listener was registered BEFORE this await, so the rotation below
+            // is observed and queued behind the initial subscribe on the chain.
+            await firstCalled;
+            const rotated2 = await wallet.getNewBoardingAddress();
+            releaseFirst();
+            const stop = await notifyPromise;
+
+            // The serialized chain runs the queued re-subscribe after the
+            // initial one, so the watcher ends up on the widened set rather than
+            // stuck on the pre-rotation addresses.
+            await vi.waitFor(() => expect(calls).toHaveLength(2));
+            expect(new Set(calls[1])).toEqual(new Set([baseline, rotated1, rotated2]));
+
+            stop();
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
     it("notifyIncomingFunds emits one coin per matching output, even when a tx pays two boarding addresses (review Finding 4)", async () => {
         const { wallet } = await makeHdWalletForTest();
         try {

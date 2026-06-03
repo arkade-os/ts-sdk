@@ -1,7 +1,7 @@
 import { expect, describe, it, beforeEach } from "vitest";
 import { generateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
-import { Wallet, EsploraProvider, MnemonicIdentity, RelativeTimelock } from "../../src";
+import { Wallet, EsploraProvider, MnemonicIdentity, RelativeTimelock, Ramps } from "../../src";
 import {
     beforeEachFaucet,
     createSharedRepos,
@@ -155,6 +155,55 @@ describe("Boarding HD rotation - multi-address discovery & sweep", () => {
             expect(swept.every((u) => !initialTxids.has(u.txid))).toBe(true);
 
             await wallet.dispose();
+        },
+    );
+});
+
+describe("Boarding HD rotation - rotate-on-board", () => {
+    beforeEach(beforeEachFaucet, 60_000);
+
+    it(
+        "rotates the boarding address after a boarding UTXO is boarded into Arkade",
+        { timeout: 120_000 },
+        async () => {
+            const mnemonic = generateMnemonic(wordlist);
+            const repos = createSharedRepos();
+            // Settlement disabled so the only board is the explicit one below —
+            // no background poll races the rotation assertion.
+            const wallet = await createHdWallet({ mnemonic, repos, settlementConfig: false });
+            try {
+                const before = await wallet.getBoardingAddress();
+
+                // Fund the current boarding address and confirm it.
+                faucetOnchain(before, 100_000);
+                await waitFor(async () => (await wallet.getBoardingUtxos()).length >= 1, {
+                    timeout: 60_000,
+                    interval: 2_000,
+                });
+                execCommand("nigiri rpc --generate 1");
+                await waitFor(
+                    async () => {
+                        const u = await wallet.getBoardingUtxos();
+                        return u.length >= 1 && u.every((c) => (c.status.block_height ?? 0) > 0);
+                    },
+                    { timeout: 30_000, interval: 2_000 },
+                );
+
+                // Board the UTXO into Arkade. rotate-on-board fires inside
+                // settle, so by the time onboard resolves the boarding address
+                // has already advanced to a fresh HD index.
+                const { fees } = await wallet.arkProvider.getInfo();
+                const settleTxid = await new Ramps(wallet).onboard(fees);
+                expect(settleTxid).toBeDefined();
+
+                const after = await wallet.getBoardingAddress();
+                expect(after).not.toBe(before);
+                // The retired address stays in the historical set, so any later
+                // deposit to it is still discoverable / spendable.
+                expect(await wallet.getBoardingAddresses()).toContain(before);
+            } finally {
+                await wallet.dispose();
+            }
         },
     );
 });

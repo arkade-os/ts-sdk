@@ -193,6 +193,91 @@ describe("Wallet boarding rotation", () => {
         });
     });
 
+    describe("rotate-on-board (settle trigger)", () => {
+        // Fake settle inputs: boarding coins are the non-VTXO coins (no
+        // `virtualStatus`); VTXOs carry one. The rotate-on-board helper keys
+        // off exactly this discriminator, so we don't need a full settle.
+        const boardingCoin = {
+            txid: "ab".repeat(32),
+            vout: 0,
+            value: 100_000,
+            status: { confirmed: true },
+        };
+        const vtxoCoin = {
+            txid: "cd".repeat(32),
+            vout: 0,
+            value: 100_000,
+            virtualStatus: { state: "settled" },
+        };
+
+        it("rotates the boarding address after a settle that consumed a boarding input", async () => {
+            const walletRepo = new InMemoryWalletRepository();
+            const wallet = await makeHdWallet(walletRepo);
+
+            const before = await wallet.getBoardingAddress();
+            await (wallet as any).maybeRotateBoardingAfterBoard([boardingCoin]);
+            const after = await wallet.getBoardingAddress();
+
+            // The board burned an index and swapped the current boarding address.
+            expect(after).not.toBe(before);
+            const state = await walletRepo.getWalletState();
+            expect(state?.settings?.hd?.lastIndexUsed).toBe(1);
+
+            await wallet.dispose();
+        });
+
+        it("does NOT rotate after a settle that consumed only VTXOs (renewal / offboard)", async () => {
+            const walletRepo = new InMemoryWalletRepository();
+            const wallet = await makeHdWallet(walletRepo);
+
+            const before = await wallet.getBoardingAddress();
+            await (wallet as any).maybeRotateBoardingAfterBoard([vtxoCoin]);
+
+            // No boarding input ⇒ no board ⇒ boarding address untouched.
+            expect(await wallet.getBoardingAddress()).toBe(before);
+            const state = await walletRepo.getWalletState();
+            expect(state?.settings?.hd?.lastIndexUsed).toBe(0);
+
+            await wallet.dispose();
+        });
+
+        it("ignores arknote string inputs without crashing, and still rotates on a mixed board", async () => {
+            const walletRepo = new InMemoryWalletRepository();
+            const wallet = await makeHdWallet(walletRepo);
+
+            const before = await wallet.getBoardingAddress();
+            // A string input alongside a boarding coin: the `typeof` guard must
+            // skip the string before the `in` test (which throws on strings).
+            await (wallet as any).maybeRotateBoardingAfterBoard(["arknote-string", boardingCoin]);
+
+            expect(await wallet.getBoardingAddress()).not.toBe(before);
+
+            await wallet.dispose();
+        });
+
+        it("does NOT rotate for a static / auto wallet (no descriptor provider) even after a board", async () => {
+            const walletRepo = new InMemoryWalletRepository();
+            const wallet = await Wallet.create({
+                identity: SingleKey.fromHex(SINGLEKEY_HEX),
+                walletMode: "static",
+                arkServerUrl: "http://localhost:7070",
+                storage: {
+                    walletRepository: walletRepo,
+                    contractRepository: new InMemoryContractRepository(),
+                },
+            });
+
+            const before = await wallet.getBoardingAddress();
+            await (wallet as any).maybeRotateBoardingAfterBoard([boardingCoin]);
+
+            expect(await wallet.getBoardingAddress()).toBe(before);
+            const state = await walletRepo.getWalletState();
+            expect(state?.settings?.hd).toBeUndefined();
+
+            await wallet.dispose();
+        });
+    });
+
     describe("boarding-address discovery (server-pubkey filter)", () => {
         it("ignores boarding rows registered against a different ASP server", async () => {
             const contractRepo = new InMemoryContractRepository();

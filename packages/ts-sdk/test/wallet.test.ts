@@ -1711,6 +1711,7 @@ describe("Wallet._settleImpl", () => {
             safeRegisterIntent,
             createBatchHandler,
             updateDbAfterSettle,
+            maybeRotateBoardingAfterBoard: vi.fn().mockResolvedValue(undefined),
         };
 
         const result = await (Wallet.prototype as any)._settleImpl.call(thisArg, {
@@ -1730,6 +1731,9 @@ describe("Wallet._settleImpl", () => {
         expect(stream.return).toHaveBeenCalledTimes(1);
         expect(createBatchHandler).toHaveBeenCalledWith("intent-id", [input], [], undefined);
         expect(updateDbAfterSettle).toHaveBeenCalledWith([input], "commitment-txid");
+        // A successful settle feeds its resolved inputs to the rotate-on-board
+        // hook (which decides whether a boarding UTXO was consumed).
+        expect(thisArg.maybeRotateBoardingAfterBoard).toHaveBeenCalledWith([input]);
         batchJoinSpy.mockRestore();
     });
 

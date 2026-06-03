@@ -357,6 +357,45 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
+     * Listeners fired after the boarding tapscript rotates to a fresh index
+     * (see {@link Wallet.setBoardingTapscriptForRotation}). A live
+     * {@link notifyIncomingFunds} onchain watcher registers one so it can
+     * re-subscribe to include the newly allocated boarding address within the
+     * same session — without it, a deposit to the fresh address wouldn't fire
+     * a notification until the watcher's next re-init. Always empty for
+     * readonly / static / `auto` wallets, which never rotate boarding.
+     */
+    private readonly _boardingRotationListeners = new Set<() => void>();
+
+    /**
+     * Register a listener invoked synchronously after each boarding rotation.
+     * Returns an unsubscribe function. Protected: only internal subscribers
+     * (the incoming-funds watcher) participate.
+     */
+    protected onBoardingRotation(listener: () => void): () => void {
+        this._boardingRotationListeners.add(listener);
+        return () => {
+            this._boardingRotationListeners.delete(listener);
+        };
+    }
+
+    /**
+     * Notify boarding-rotation listeners. Called by the boarding-rotation
+     * write path ({@link Wallet.setBoardingTapscriptForRotation}) once the new
+     * tapscript is in place. A throwing listener is isolated so it can neither
+     * break the rotation nor starve sibling listeners.
+     */
+    protected notifyBoardingRotation(): void {
+        for (const listener of this._boardingRotationListeners) {
+            try {
+                listener();
+            } catch (e) {
+                console.warn("Boarding-rotation listener failed", e);
+            }
+        }
+    }
+
+    /**
      * Protected helper to set up shared wallet configuration.
      * Extracts common logic used by both ReadonlyWallet.create() and Wallet.create().
      */
@@ -878,55 +917,118 @@ export class ReadonlyWallet implements IReadonlyWallet {
     /**
      * Subscribe to onchain and offchain notifications for newly received funds.
      *
-     * The boarding-address set is captured once, at call time. A boarding
-     * address allocated *after* subscribing (via {@link getNewBoardingAddress})
-     * is NOT added to the running watcher, so a deposit to it won't fire a
-     * notification until the subscription is torn down and re-created (e.g. the
-     * service worker's next init). Re-subscribe after rotating if the new
-     * address must be watched within the same session.
+     * The onchain watcher tracks the full boarding-address set (current +
+     * historical rotated). When boarding rotates *after* subscribing — e.g.
+     * rotate-on-board allocates a fresh address via
+     * {@link getNewBoardingAddress} — the watcher automatically re-subscribes
+     * to widen its set, so a deposit to the new address fires a notification
+     * within the same session (no watcher re-init required). The re-subscribe
+     * is driven by {@link onBoardingRotation}; static / `auto` / readonly
+     * wallets never rotate boarding, so it never fires for them.
      *
      * @param eventCallback - Callback invoked when matching funds are detected
      * @returns A function that stops the subscriptions
      */
     async notifyIncomingFunds(eventCallback: (coins: IncomingFunds) => void): Promise<() => void> {
         const arkAddress = await this.getAddress();
-        // Watch the full boarding-address set (current + historical rotated),
-        // not just the current address, so a late deposit to a rotated-away
-        // address still fires a notification (plan §6-IV.2).
-        const boardingAddresses = await this.getBoardingAddresses();
-        const boardingAddressSet = new Set(boardingAddresses);
 
-        let onchainStopFunc: () => void;
-        let indexerStopFunc: () => void;
+        let onchainStopFunc: (() => void) | undefined;
+        let indexerStopFunc: (() => void) | undefined;
+        let boardingRotationStopFunc: (() => void) | undefined;
+        let stopped = false;
 
-        if (this.onchainProvider && boardingAddresses.length > 0) {
-            onchainStopFunc = await this.onchainProvider.watchAddresses(
-                boardingAddresses,
-                (txs) => {
-                    // Emit a coin for EVERY output that pays one of our boarding
-                    // addresses. A single tx can pay several (e.g. the current
-                    // and a rotated-away boarding address, now that boarding
-                    // fans out — plan §6-IV.2), so map per matching vout rather
-                    // than reporting only the first match per tx.
-                    const coins: Coin[] = txs.flatMap((tx) => {
-                        const { txid, status } = tx;
-                        const matched: Coin[] = [];
-                        tx.vout.forEach((v: any, vout: number) => {
-                            if (boardingAddressSet.has(v.scriptpubkey_address)) {
-                                matched.push({ txid, vout, value: Number(v.value), status });
-                            }
-                        });
-                        return matched;
-                    });
+        // (Re)subscribe the onchain watcher to the CURRENT boarding-address set.
+        // Serialized on a single chain so a burst of rotations can't interleave
+        // teardown/setup and leak a watcher. Re-reads `getBoardingAddresses()`
+        // each time: a rotation appends a new address, so the watcher must
+        // widen to include it while keeping the historical ones (plan §6-IV.2).
+        let onchainChain: Promise<void> = Promise.resolve();
+        const subscribeOnchain = (): Promise<void> => {
+            onchainChain = onchainChain
+                .then(async () => {
+                    if (stopped || !this.onchainProvider) return;
 
-                    // and notify via callback
-                    eventCallback({
-                        type: "utxo",
-                        coins,
-                    });
-                },
-            );
-        }
+                    const boardingAddresses = await this.getBoardingAddresses();
+                    if (boardingAddresses.length === 0) return;
+                    const boardingAddressSet = new Set(boardingAddresses);
+
+                    // Subscribe-then-swap: bring the NEW watcher up *before*
+                    // retiring the previous one. If `watchAddresses` throws, the
+                    // catch leaves `onchainStopFunc` (the old watcher) untouched,
+                    // so the subscription degrades to the stale set rather than
+                    // to no watcher at all; and there's no blind window where
+                    // neither is live (which would let a deposit be seeded as
+                    // "already known" history and never reported). The newly
+                    // allocated boarding address can't have received funds before
+                    // now — it was just derived — so the widened set needs no
+                    // separate reconciliation fetch.
+                    const previousStop = onchainStopFunc;
+                    const stop = await this.onchainProvider.watchAddresses(
+                        boardingAddresses,
+                        (txs) => {
+                            // Emit a coin for EVERY output that pays one of our
+                            // boarding addresses. A single tx can pay several
+                            // (e.g. the current and a rotated-away boarding
+                            // address, now that boarding fans out — plan
+                            // §6-IV.2), so map per matching vout rather than
+                            // reporting only the first match per tx.
+                            const coins: Coin[] = txs.flatMap((tx) => {
+                                const { txid, status } = tx;
+                                const matched: Coin[] = [];
+                                tx.vout.forEach((v: any, vout: number) => {
+                                    if (boardingAddressSet.has(v.scriptpubkey_address)) {
+                                        matched.push({
+                                            txid,
+                                            vout,
+                                            value: Number(v.value),
+                                            status,
+                                        });
+                                    }
+                                });
+                                return matched;
+                            });
+
+                            // and notify via callback
+                            eventCallback({
+                                type: "utxo",
+                                coins,
+                            });
+                        },
+                    );
+
+                    // `stopFunc` may have run while we awaited the subscribe. It
+                    // already stopped the previous watcher (then held in
+                    // `onchainStopFunc`), so only the fresh one needs tearing
+                    // down here — don't touch `previousStop` again.
+                    if (stopped) {
+                        stop();
+                        return;
+                    }
+
+                    // New watcher is live: promote it, then atomically retire
+                    // the old one. Brief overlap is fine — at worst a duplicate
+                    // notification, never a missed deposit.
+                    onchainStopFunc = stop;
+                    previousStop?.();
+                })
+                .catch((e) => {
+                    console.warn("Failed to (re)subscribe boarding-funds watcher", e);
+                });
+            return onchainChain;
+        };
+
+        // Widen the onchain watcher whenever boarding rotates (rotate-on-board
+        // / explicit allocation), so a deposit to the freshly allocated address
+        // is watched within this same session. Registered BEFORE the initial
+        // subscribe so a rotation that lands during initial setup still queues a
+        // re-subscribe on the chain (rather than being dropped, leaving the
+        // watcher stuck on the stale set). No-op for wallets that never rotate
+        // boarding.
+        boardingRotationStopFunc = this.onBoardingRotation(() => {
+            void subscribeOnchain();
+        });
+
+        await subscribeOnchain();
 
         if (this.indexerProvider && arkAddress) {
             // Share the ContractWatcher's single subscription instead of
@@ -968,7 +1070,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
 
         const stopFunc = () => {
+            // Flag first so any in-flight (re)subscribe on `onchainChain` tears
+            // its fresh watcher down instead of leaking it.
+            stopped = true;
+            boardingRotationStopFunc?.();
             onchainStopFunc?.();
+            onchainStopFunc = undefined;
             indexerStopFunc?.();
         };
 
@@ -1319,6 +1426,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      */
     setBoardingTapscriptForRotation(tapscript: DefaultVtxo.Script): void {
         this._boardingTapscript = tapscript;
+        // Let live subscribers (the incoming-funds onchain watcher) widen to
+        // the freshly allocated boarding address. Harmless at boot — the
+        // boot-time restore runs before any subscription exists.
+        this.notifyBoardingRotation();
     }
 
     /**
@@ -2211,6 +2322,16 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             await this.updateDbAfterSettle(params.inputs, commitmentTxid);
 
+            // Boarding rotation (rotate-on-board): if this settle swept any
+            // boarding (on-chain) UTXO into Arkade, advance the boarding
+            // address to a fresh HD index so the next deposit lands on a new
+            // address. This is the boarding analogue of the L2 receive
+            // rotation that runs on `vtxo_received` — boarding has no on-chain
+            // receival event (ContractWatcher watches only the L2 indexer), so
+            // the board itself is the trigger. Best-effort: it never fails an
+            // already-committed settle.
+            await this.maybeRotateBoardingAfterBoard(params.inputs);
+
             return commitmentTxid;
         } catch (error) {
             // delete the intent to not be stuck in the queue. If deletion fails
@@ -2235,6 +2356,42 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             // (e.g. safeRegisterIntent threw before Batch.join was called).
             abortController.abort();
             await stream?.return?.().catch(() => {});
+        }
+    }
+
+    /**
+     * Rotate the boarding address after a board (rotate-on-board trigger).
+     *
+     * Mirrors {@link WalletReceiveRotator}'s L2 rotation, but driven by a
+     * board instead of a `vtxo_received` event: when a settle consumes at
+     * least one boarding (on-chain) UTXO, the current boarding address has
+     * served its purpose, so we allocate a fresh one via
+     * {@link getNewBoardingAddress}. A settle that consumed only VTXOs (a
+     * renewal / offboard) is not a board and leaves the boarding address
+     * untouched.
+     *
+     * Boarding inputs are the non-VTXO coins (no `virtualStatus`), the same
+     * discriminator {@link handleSettlementFinalizationEvent} uses; the
+     * `typeof` guard skips arknote string inputs before the `in` test.
+     *
+     * No-ops for static / `auto` wallets (no descriptor provider — boarding
+     * stays on its fixed index-0 address). Best-effort and non-fatal: the
+     * settle has already committed and its txid must be returned, so a
+     * rotation failure is logged and swallowed rather than thrown. Funds at
+     * the retired boarding address remain discoverable — the old `boarding`
+     * contract stays active and {@link getBoardingUtxos} fans out over the
+     * full historical boarding set.
+     */
+    private async maybeRotateBoardingAfterBoard(inputs: SettleParams["inputs"]): Promise<void> {
+        if (!this._descriptorProvider) return;
+        const consumedBoarding = inputs.some(
+            (input) => typeof input !== "string" && !("virtualStatus" in input),
+        );
+        if (!consumedBoarding) return;
+        try {
+            await this.getNewBoardingAddress();
+        } catch (e) {
+            console.warn("Failed to rotate boarding address after board", e);
         }
     }
 
