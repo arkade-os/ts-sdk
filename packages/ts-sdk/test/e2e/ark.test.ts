@@ -227,7 +227,9 @@ describe("Common", () => {
                 // Alice onboarding
                 const boardingAmount = 10000;
                 const boardingAddress = await alice.wallet.getBoardingAddress();
-                execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} ${boardingAmount * 0.00000001} --confirm`);
+                execCommand(
+                    `node regtest/regtest.mjs faucet ${boardingAddress} ${boardingAmount * 0.00000001} --confirm`,
+                );
 
                 await new Promise((resolve) => setTimeout(resolve, 5000));
 
@@ -440,7 +442,9 @@ describe("Common", () => {
 
                 const onchainAlice = await OnchainWallet.create(alice.identity, "regtest");
 
-                execCommand(`node regtest/regtest.mjs faucet ${onchainAlice.address} 0.001 --confirm`);
+                execCommand(
+                    `node regtest/regtest.mjs faucet ${onchainAlice.address} 0.001 --confirm`,
+                );
 
                 await new Promise((resolve) => setTimeout(resolve, 5000));
 
@@ -476,7 +480,9 @@ describe("Common", () => {
                     const boardingAddress = await alice.wallet.getBoardingAddress();
                     const offchainAddress = await alice.wallet.getAddress();
 
-                    execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.0001 --confirm`);
+                    execCommand(
+                        `node regtest/regtest.mjs faucet ${boardingAddress} 0.0001 --confirm`,
+                    );
 
                     await waitFor(async () => {
                         const b = await alice.wallet.getBoardingUtxos();
@@ -510,7 +516,9 @@ describe("Common", () => {
 
                     const onchainAlice = await OnchainWallet.create(alice.identity, "regtest");
 
-                    execCommand(`node regtest/regtest.mjs faucet ${onchainAlice.address} 0.001 --confirm`);
+                    execCommand(
+                        `node regtest/regtest.mjs faucet ${onchainAlice.address} 0.001 --confirm`,
+                    );
                     await waitFor(async () => {
                         const b = await onchainAlice.getBalance();
                         return b > 0;
@@ -572,7 +580,9 @@ describe("Common", () => {
                     const boardingAddress = await alice.wallet.getBoardingAddress();
                     const offchainAddress = await alice.wallet.getAddress();
 
-                    execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.0001 --confirm`);
+                    execCommand(
+                        `node regtest/regtest.mjs faucet ${boardingAddress} 0.0001 --confirm`,
+                    );
 
                     await waitFor(async () => {
                         const b = await alice.wallet.getBoardingUtxos();
@@ -606,7 +616,9 @@ describe("Common", () => {
 
                     const onchainAlice = await OnchainWallet.create(alice.identity, "regtest");
 
-                    execCommand(`node regtest/regtest.mjs faucet ${onchainAlice.address} 0.001 --confirm`);
+                    execCommand(
+                        `node regtest/regtest.mjs faucet ${onchainAlice.address} 0.001 --confirm`,
+                    );
                     await waitFor(async () => {
                         const b = await onchainAlice.getBalance();
                         return b > 0;
