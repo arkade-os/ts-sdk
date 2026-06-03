@@ -216,7 +216,10 @@ export async function resolveBoardingBootTapscript(
     try {
         const pubKey = hex.decode(newest.params.pubKey);
         return new DefaultVtxo.Script({ ...baseline.options, pubKey });
-    } catch {
+    } catch (e) {
+        // Fall back to the baseline boarding tapscript rather than fail boot,
+        // but surface the corrupt row so repo corruption is detectable.
+        console.warn("Skipping malformed boarding contract at boot", newest.script, e);
         return baseline;
     }
 }
@@ -828,14 +831,23 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // so fund discovery doesn't force contract-manager initialization as a
         // side effect; the boarding rows are persisted by init and the
         // allocator, which run earlier in the wallet lifecycle.
+        const serverPubKeyHex = hex.encode(this.boardingTapscript.options.serverPubKey);
         const boardingContracts = await this.contractRepository.getContracts({
             type: ["boarding"],
         });
         for (const c of boardingContracts) {
+            // Only this wallet's server. A row left by a previous ASP (e.g. a
+            // repo recovered against a different server) would otherwise emit a
+            // spurious onchain script — and a wasted getCoins/getTransactions
+            // call — on every boarding read. Mirrors the filter in
+            // resolveBoardingBootTapscript.
+            if (c.params.serverPubKey !== serverPubKeyHex) continue;
             try {
                 add(BoardingContractHandler.createScript(c.params));
-            } catch {
-                // Skip a malformed row rather than abort fund discovery.
+            } catch (e) {
+                // Skip a malformed row rather than abort fund discovery, but
+                // surface it so repo corruption is detectable.
+                console.warn("Skipping malformed boarding contract", c.script, e);
             }
         }
         return [...byScript.values()];
@@ -865,6 +877,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Subscribe to onchain and offchain notifications for newly received funds.
+     *
+     * The boarding-address set is captured once, at call time. A boarding
+     * address allocated *after* subscribing (via {@link getNewBoardingAddress})
+     * is NOT added to the running watcher, so a deposit to it won't fire a
+     * notification until the subscription is torn down and re-created (e.g. the
+     * service worker's next init). Re-subscribe after rotating if the new
+     * address must be watched within the same session.
      *
      * @param eventCallback - Callback invoked when matching funds are detected
      * @returns A function that stops the subscriptions
