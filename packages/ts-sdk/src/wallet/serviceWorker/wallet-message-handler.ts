@@ -1228,7 +1228,6 @@ export class WalletMessageHandler
                 const { pending, finalized } = await this.wallet.finalizePendingTxs(
                     vtxos.filter(
                         (vtxo) =>
-                            isSpendable(vtxo) &&
                             vtxo.virtualStatus.state !== "swept" &&
                             vtxo.virtualStatus.state !== "settled",
                     ),

@@ -1477,13 +1477,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             value: 20000,
             virtualStatus: { state: "swept" },
         });
-        const spent = createMockExtendedVtxo({
-            txid: "dd".repeat(32),
-            value: 10000,
-            virtualStatus: { state: "spent" },
-            isSpent: true,
-        });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [preconfirmed, settled, swept, spent]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [preconfirmed, settled, swept]);
 
         const finalizeSpy = vi.fn().mockResolvedValue({ pending: [], finalized: [] });
         (updater as any).wallet = {
@@ -1495,7 +1489,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
 
         expect(finalizeSpy).toHaveBeenCalledOnce();
         const vtxosArg = finalizeSpy.mock.calls[0][0];
-        // Should exclude swept, settled, and spent VTXOs
+        // Should exclude swept and settled VTXOs
         expect(vtxosArg).toHaveLength(1);
         expect(vtxosArg[0].txid).toBe("aa".repeat(32));
     });

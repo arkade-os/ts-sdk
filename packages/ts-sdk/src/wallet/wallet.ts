@@ -873,7 +873,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return vtxos
             .filter(
                 (vtxo) =>
-                    isSpendable(vtxo) &&
                     vtxo.virtualStatus.state !== "swept" &&
                     vtxo.virtualStatus.state !== "settled" &&
                     vtxo.arkTxId !== undefined,
@@ -2417,7 +2416,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 if (!vtxoScript) continue;
 
                 if (
-                    !isSpendable(vtxo) ||
                     vtxo.virtualStatus.state === "swept" ||
                     vtxo.virtualStatus.state === "settled"
                 ) {
