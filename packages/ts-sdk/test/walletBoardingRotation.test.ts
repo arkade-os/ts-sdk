@@ -21,6 +21,10 @@ const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 const SINGLEKEY_HEX = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
 const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+// A second, unrelated server key — stands in for a previous ASP. Valid hex so
+// `BoardingContractHandler.createScript` would succeed on it absent the filter.
+const FOREIGN_SERVER_PUBKEY_HEX =
+    "9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b";
 
 const mockArkInfo = {
     signerPubkey: SERVER_PUBKEY_HEX,
@@ -186,6 +190,80 @@ describe("Wallet boarding rotation", () => {
             const second = await makeHdWallet(walletRepo, contractRepo);
             expect(await second.getAddress()).toBe(receiveBefore);
             await second.dispose();
+        });
+    });
+
+    describe("boarding-address discovery (server-pubkey filter)", () => {
+        it("ignores boarding rows registered against a different ASP server", async () => {
+            const contractRepo = new InMemoryContractRepository();
+            const wallet = await makeHdWallet(new InMemoryWalletRepository(), contractRepo);
+
+            // Read the wallet's own server key in the exact form the filter
+            // compares against, so the test is independent of compressed vs
+            // x-only encoding.
+            const ownServerHex = hexEncode(wallet.boardingTapscript.options.serverPubKey);
+            expect(ownServerHex).not.toBe(FOREIGN_SERVER_PUBKEY_HEX);
+
+            const ownAddresses = new Set(await wallet.getBoardingAddresses());
+
+            // A boarding row this wallet owns but that was registered against a
+            // DIFFERENT server (e.g. a repo recovered while pointed at a
+            // previous ASP). Params are otherwise valid, so without the server
+            // filter `createScript` would succeed and surface a spurious
+            // boarding address — the assertion below would then fail.
+            await contractRepo.saveContract({
+                type: "boarding",
+                params: {
+                    pubKey: SINGLEKEY_HEX,
+                    serverPubKey: FOREIGN_SERVER_PUBKEY_HEX,
+                    csvTimelock: "144",
+                },
+                script: "ab".repeat(32), // not consulted by getBoardingTapscripts
+                address: "tb1pforeign-unused",
+                state: "active",
+                createdAt: 1,
+            });
+
+            const withForeign = new Set(await wallet.getBoardingAddresses());
+            // The foreign-server row contributed no boarding address: it was
+            // filtered out before its script was ever built.
+            expect(withForeign).toEqual(ownAddresses);
+
+            await wallet.dispose();
+        });
+
+        it("logs and skips a malformed boarding row without aborting discovery", async () => {
+            const contractRepo = new InMemoryContractRepository();
+            const wallet = await makeHdWallet(new InMemoryWalletRepository(), contractRepo);
+
+            const ownServerHex = hexEncode(wallet.boardingTapscript.options.serverPubKey);
+            const before = new Set(await wallet.getBoardingAddresses());
+
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+            // Passes the server filter (right server) but the owner key is
+            // unparseable, so createScript throws inside discovery.
+            await contractRepo.saveContract({
+                type: "boarding",
+                params: { pubKey: "not-hex", serverPubKey: ownServerHex, csvTimelock: "144" },
+                script: "deadbeef",
+                address: "tb1pbad-unused",
+                state: "active",
+                createdAt: 1,
+            });
+
+            const after = new Set(await wallet.getBoardingAddresses());
+            // Discovery still returns the good addresses — the bad row didn't
+            // abort it…
+            expect(after).toEqual(before);
+            // …and the malformed row was surfaced, not silently swallowed.
+            expect(warn).toHaveBeenCalledWith(
+                "Skipping malformed boarding contract",
+                "deadbeef",
+                expect.anything(),
+            );
+
+            warn.mockRestore();
+            await wallet.dispose();
         });
     });
 });
