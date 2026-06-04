@@ -1,10 +1,10 @@
 /**
  * Arkade Script Opcodes
  *
- * This module defines ONLY Arkade-specific opcodes (0xb3, 0xc4-0xf3).
+ * This module defines ONLY Arkade-specific opcodes (0xb3, 0xc4-0xf6).
  * Standard Bitcoin opcodes are imported from @scure/btc-signer.
  *
- * Reference: arkade-os/emulator pkg/arkade/opcode.go
+ * Reference: arkade-os/emulator v0.0.2 pkg/arkade/opcode.go
  */
 
 import { OP } from "@scure/btc-signer";
@@ -44,21 +44,17 @@ export const ARKADE_OP = {
     INSPECTNUMOUTPUTS: 0xd5,
     TXWEIGHT: 0xd6,
 
-    // 64-bit Arithmetic (0xd7-0xdf)
-    ADD64: 0xd7,
-    SUB64: 0xd8,
-    MUL64: 0xd9,
-    DIV64: 0xda,
-    NEG64: 0xdb,
-    LESSTHAN64: 0xdc,
-    LESSTHANOREQUAL64: 0xdd,
-    GREATERTHAN64: 0xde,
-    GREATERTHANOREQUAL64: 0xdf,
+    // Byte/Number Conversion & Arithmetic (0xd7-0xda)
+    NUM2BIN: 0xd7,
+    BIN2NUM: 0xd8,
+    REVERSEBYTES: 0xd9,
+    MODEXP: 0xda,
+    // 0xdb-0xdf are unassigned (OP_UNKNOWN219-223)
 
-    // Conversion (0xe0-0xe2)
-    SCRIPTNUMTOLE64: 0xe0,
-    LE64TOSCRIPTNUM: 0xe1,
-    LE32TOLE64: 0xe2,
+    // EC Operations (0xe0-0xe2)
+    ECADD: 0xe0,
+    ECMUL: 0xe1,
+    ECPAIRING: 0xe2,
 
     // EC Operations (0xe3-0xe4)
     ECMULSCALARVERIFY: 0xe3,
@@ -86,6 +82,9 @@ export const ARKADE_OP = {
     // Packet Introspection (0xf4-0xf5) — added in emulator v0.0.1
     INSPECTPACKET: 0xf4,
     INSPECTINPUTPACKET: 0xf5,
+
+    // Signature Hash (0xf6)
+    SIGHASH: 0xf6,
 } as const;
 
 export const ARKADE_OPCODES: number[] = Object.values(ARKADE_OP);

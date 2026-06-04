@@ -112,7 +112,7 @@ describe("Script Encoding/Decoding", () => {
                 "SHA256UPDATE",
                 "SHA256FINALIZE",
                 "INSPECTINPUTVALUE",
-                "ADD64",
+                "NUM2BIN",
             ];
 
             const decoded = ArkadeScript.decode(ArkadeScript.encode(script));
@@ -196,8 +196,8 @@ describe("ASM Conversion", () => {
         });
 
         it("should convert Arkade opcodes to ASM", () => {
-            expect(toASM(["SHA256INITIALIZE", "ADD64", "TWEAKVERIFY"])).toBe(
-                "OP_SHA256INITIALIZE OP_ADD64 OP_TWEAKVERIFY",
+            expect(toASM(["SHA256INITIALIZE", "NUM2BIN", "TWEAKVERIFY"])).toBe(
+                "OP_SHA256INITIALIZE OP_NUM2BIN OP_TWEAKVERIFY",
             );
         });
 
@@ -230,9 +230,9 @@ describe("ASM Conversion", () => {
         });
 
         it("should parse Arkade opcodes from ASM", () => {
-            expect(fromASM("OP_SHA256INITIALIZE OP_ADD64 OP_TWEAKVERIFY")).toEqual([
+            expect(fromASM("OP_SHA256INITIALIZE OP_NUM2BIN OP_TWEAKVERIFY")).toEqual([
                 "SHA256INITIALIZE",
-                "ADD64",
+                "NUM2BIN",
                 "TWEAKVERIFY",
             ]);
         });
@@ -258,7 +258,7 @@ describe("ASM Conversion", () => {
         });
 
         it("should round-trip Arkade opcodes", () => {
-            const original = "OP_INSPECTNUMASSETGROUPS OP_ADD64 deadbeef OP_EQUAL";
+            const original = "OP_INSPECTNUMASSETGROUPS OP_NUM2BIN deadbeef OP_EQUAL";
             expect(toASM(fromASM(original))).toBe(original);
         });
     });
@@ -275,7 +275,7 @@ describe("ArkadeScript CoderType", () => {
 
         it("should include Arkade extension opcodes", () => {
             expect(ARKADE_OPS.SHA256INITIALIZE).toBe(0xc4);
-            expect(ARKADE_OPS.ADD64).toBe(0xd7);
+            expect(ARKADE_OPS.NUM2BIN).toBe(0xd7);
             expect(ARKADE_OPS.TWEAKVERIFY).toBe(0xe4);
             expect(ARKADE_OPS.INSPECTINASSETLOOKUP).toBe(0xf2);
         });
@@ -288,12 +288,17 @@ describe("ArkadeScript CoderType", () => {
         });
 
         it("should encode Arkade opcodes by string", () => {
-            const bytes = ArkadeScript.encode(["ADD64", "SUB64", "SHA256INITIALIZE"]);
+            const bytes = ArkadeScript.encode(["NUM2BIN", "BIN2NUM", "SHA256INITIALIZE"]);
             expect(hex.encode(bytes)).toBe("d7d8c4");
         });
 
         it("should encode mixed Bitcoin + Arkade opcodes", () => {
-            const script: ArkadeScriptType = ["DUP", "INSPECTOUTPUTVALUE", "ADD64", "EQUALVERIFY"];
+            const script: ArkadeScriptType = [
+                "DUP",
+                "INSPECTOUTPUTVALUE",
+                "NUM2BIN",
+                "EQUALVERIFY",
+            ];
             const bytes = ArkadeScript.encode(script);
             expect(hex.encode(bytes)).toBe("76cfd788");
         });
@@ -333,7 +338,7 @@ describe("ArkadeScript CoderType", () => {
 
         it("should decode Arkade opcodes to string names", () => {
             const decoded = ArkadeScript.decode(hex.decode("d7d8c4"));
-            expect(decoded).toEqual(["ADD64", "SUB64", "SHA256INITIALIZE"]);
+            expect(decoded).toEqual(["NUM2BIN", "BIN2NUM", "SHA256INITIALIZE"]);
         });
 
         it("should decode OP_0 as number 0", () => {
@@ -382,7 +387,7 @@ describe("ArkadeScript CoderType", () => {
                 "SHA256INITIALIZE",
                 "SHA256UPDATE",
                 "SHA256FINALIZE",
-                "ADD64",
+                "NUM2BIN",
                 "INSPECTOUTPUTVALUE",
                 "TWEAKVERIFY",
             ];
@@ -401,7 +406,7 @@ describe("ArkadeScript CoderType", () => {
                 "EQUALVERIFY",
                 "CHECKSIG",
                 "INSPECTOUTPUTVALUE",
-                "ADD64",
+                "NUM2BIN",
             ];
             const decoded = ArkadeScript.decode(ArkadeScript.encode(script));
             expect(decoded.length).toBe(script.length);
@@ -411,7 +416,7 @@ describe("ArkadeScript CoderType", () => {
             expect(decoded[3]).toBe("EQUALVERIFY");
             expect(decoded[4]).toBe("CHECKSIG");
             expect(decoded[5]).toBe("INSPECTOUTPUTVALUE");
-            expect(decoded[6]).toBe("ADD64");
+            expect(decoded[6]).toBe("NUM2BIN");
         });
 
         it("should round-trip numbers 0-16", () => {

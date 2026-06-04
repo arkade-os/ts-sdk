@@ -42,7 +42,7 @@ export type ArkadeScriptType = ArkadeScriptOP[];
  *
  * @example
  * ```typescript
- * const script: ArkadeScriptType = ['DUP', 'HASH160', pubkeyHash, 'EQUALVERIFY', 'ADD64'];
+ * const script: ArkadeScriptType = ['DUP', 'HASH160', pubkeyHash, 'EQUALVERIFY', 'NUM2BIN'];
  * const bytes = ArkadeScript.encode(script);
  * const decoded = ArkadeScript.decode(bytes);
  * ```
@@ -156,8 +156,8 @@ export function toASM(script: ArkadeScriptType): string {
  *
  * @example
  * ```typescript
- * fromASM("OP_DUP OP_HASH160 deadbeef OP_ADD64")
- * // => ['DUP', 'HASH160', Uint8Array, 'ADD64']
+ * fromASM("OP_DUP OP_HASH160 deadbeef OP_NUM2BIN")
+ * // => ['DUP', 'HASH160', Uint8Array, 'NUM2BIN']
  * ```
  */
 export function fromASM(asm: string): ArkadeScriptType {
