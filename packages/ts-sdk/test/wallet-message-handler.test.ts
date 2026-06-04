@@ -1087,6 +1087,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).walletRepository = {
             getVtxos: vi.fn().mockResolvedValue([]),
             saveVtxos: vi.fn().mockResolvedValue(undefined),
+            getUtxos: vi.fn().mockResolvedValue([]),
             deleteUtxos: vi.fn().mockResolvedValue(undefined),
             saveUtxos: vi.fn().mockResolvedValue(undefined),
             saveTransactions: vi.fn().mockResolvedValue(undefined),
@@ -1122,6 +1123,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).walletRepository = {
             getVtxos: vi.fn().mockResolvedValue([]),
             saveVtxos: vi.fn().mockResolvedValue(undefined),
+            getUtxos: vi.fn().mockResolvedValue([]),
             deleteUtxos: vi.fn().mockResolvedValue(undefined),
             saveUtxos: vi.fn().mockResolvedValue(undefined),
             saveTransactions: vi.fn().mockResolvedValue(undefined),
