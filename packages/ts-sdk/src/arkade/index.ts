@@ -36,3 +36,25 @@ export { toASM, fromASM, asmToBytes, bytesToASM } from "./script";
 export { arkadeScriptHash, arkadeWitnessHash, computeArkadeScriptPublicKey } from "./tweak";
 export * as BigNum from "./bignum";
 export { createArkadeBatchHandler, type ArkadeExtendedCoin } from "./batch";
+export {
+    Arkade,
+    ArkadeContract,
+    ArkadeTransactionBuilder,
+    resolveAsm,
+    parseArtifact,
+    type Program,
+    type ArkadeFunction,
+    type FundingCoin,
+    type AssetSpec,
+    type TapscriptSegment,
+    type ArkadeSegment,
+    type AsmToken,
+    type ParamValue,
+    type ArgValue,
+    type SignerRef,
+    type WitnessRef,
+    type Utxo,
+    type ArkadeSpendResult,
+    type CallableFunctions,
+    type ArkadeConnectOptions,
+} from "./contract";
