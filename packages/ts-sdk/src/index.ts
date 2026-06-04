@@ -249,6 +249,7 @@ import { DelegateContractHandler } from "./contracts/handlers/delegate";
 import type { DelegateContractParams } from "./contracts/handlers/delegate";
 import { VHTLCContractHandler } from "./contracts/handlers/vhtlc";
 import type { VHTLCContractParams } from "./contracts/handlers/vhtlc";
+import { isCsvSpendable, isCltvSatisfied } from "./contracts/handlers/helpers";
 import { BoardingContractHandler } from "./contracts/handlers/boarding";
 import type { BoardingContractParams } from "./contracts/handlers/boarding";
 import {
@@ -451,6 +452,9 @@ export {
     contractFromArkContractWithAddress,
     isArkContract,
     isDiscoverable,
+    // Contract handler authoring helpers (spending-path selection)
+    isCsvSpendable,
+    isCltvSatisfied,
 
     // Assets
     ReadonlyAssetManager,
