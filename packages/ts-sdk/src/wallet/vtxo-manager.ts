@@ -970,8 +970,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // UTXOs at previous boarding addresses (plan §6-III.2). The per-UTXO
             // boarding tapscript is carried on the ExtendedCoin's tapTree.
             const utxoScript = VtxoScript.decode(utxo.tapTree);
-            const utxoExitLeaf = utxoScript.leaves.find((leaf) =>
-                CSVMultisigTapscript.isScriptValid(scriptFromTapLeafScript(leaf)),
+            const utxoExitLeaf = utxoScript.leaves.find(
+                (leaf) =>
+                    CSVMultisigTapscript.isScriptValid(scriptFromTapLeafScript(leaf)) === true,
             );
             if (!utxoExitLeaf) {
                 throw new Error(
