@@ -41,11 +41,12 @@ export class BIP21 {
             if (value === undefined) continue;
 
             if (key === "amount") {
-                if (!isFinite(value as number)) {
+                const amount = value as number;
+                if (!isFinite(amount) || !Number.isSafeInteger(Math.trunc(amount))) {
                     console.warn("Invalid amount");
                     continue;
                 }
-                if ((value as number) < 0) {
+                if (amount < 0) {
                     continue;
                 }
                 queryParams[key] = value;
@@ -117,9 +118,6 @@ export class BIP21 {
                     }
                     const amount = Number(value);
                     if (!isFinite(amount) || !Number.isSafeInteger(Math.trunc(amount))) {
-                        continue;
-                    }
-                    if (amount < 0) {
                         continue;
                     }
                     params[key] = amount;

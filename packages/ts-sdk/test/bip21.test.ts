@@ -20,4 +20,10 @@ describe("BIP21", () => {
 
         expect(result.params.amount).toBeUndefined();
     });
+
+    it("omits unsafe amount values when creating a URI", () => {
+        const uri = BIP21.create({ address: "bc1qexample", amount: Number.MAX_SAFE_INTEGER + 1 });
+
+        expect(uri).toBe("bitcoin:bc1qexample");
+    });
 });
