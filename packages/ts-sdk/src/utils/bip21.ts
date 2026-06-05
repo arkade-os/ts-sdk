@@ -113,7 +113,9 @@ export class BIP21 {
                 if (!value) continue;
 
                 if (key === "amount") {
-                    if (!/^\d+(?:\.\d+)?$/.test(value)) {
+                    // BIP21 ABNF: amount = *digit [ "." *digit ], so digits are
+                    // optional on either side of the decimal point (".5", "5.").
+                    if (!/^(?:\d+\.?\d*|\.\d+)$/.test(value)) {
                         continue;
                     }
                     const amount = Number(value);

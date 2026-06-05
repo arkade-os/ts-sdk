@@ -9,6 +9,11 @@ describe("BIP21", () => {
         expect(result.params.amount).toBe(1.25);
     });
 
+    it("parses amounts with digits omitted on either side of the decimal", () => {
+        expect(BIP21.parse("bitcoin:bc1qexample?amount=.5").params.amount).toBe(0.5);
+        expect(BIP21.parse("bitcoin:bc1qexample?amount=5.").params.amount).toBe(5);
+    });
+
     it("ignores malformed amount values", () => {
         const result = BIP21.parse("bitcoin:bc1qexample?amount=1abc");
 
