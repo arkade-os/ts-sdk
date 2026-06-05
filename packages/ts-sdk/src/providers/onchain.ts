@@ -333,7 +333,12 @@ export class EsploraProvider implements OnchainProvider {
         time: number;
         hash: string;
     }> {
-        const tipBlocks = await fetch(`${this.baseUrl}/blocks/tip`);
+        // Use the standard Esplora `/blocks` route (newest-first array of recent
+        // blocks) rather than `/blocks/tip`: the latter is not part of the Esplora
+        // spec — electrs happens to serve it as an alias for `/blocks`, but a
+        // strict backend like mempool returns an empty array, which surfaced here
+        // as "No chain tip found". `/blocks` works across every Esplora backend.
+        const tipBlocks = await fetch(`${this.baseUrl}/blocks`);
         if (!tipBlocks.ok) {
             throw new Error(`Failed to get chain tip: ${tipBlocks.statusText}`);
         }
