@@ -152,6 +152,14 @@ export class EsploraProvider implements OnchainProvider {
 
     async getFeeRate(): Promise<number | undefined> {
         const response = await fetch(`${this.baseUrl}/fee-estimates`);
+        // Not every Esplora backend serves /fee-estimates — mempool returns 404
+        // on regtest, where it has no fee history. Every caller falls back to
+        // MIN_FEE_RATE when this is undefined, so degrade gracefully on a missing
+        // endpoint rather than throwing and defeating those fallbacks. Other
+        // (e.g. 5xx) failures still surface.
+        if (response.status === 404) {
+            return undefined;
+        }
         if (!response.ok) {
             throw new Error(`Failed to fetch fee rate: ${response.statusText}`);
         }
