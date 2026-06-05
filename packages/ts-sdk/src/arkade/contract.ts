@@ -100,10 +100,13 @@ export type ArgValue = Uint8Array | bigint | number;
  * the corresponding `functions.<name>(...)` argument. Byte-like types map to
  * `Uint8Array`; `int` maps to `bigint | number`.
  */
-export type ArgType = "bytes" | "pubkey" | "sig" | "hash" | "int";
+export type ArkadeArgType = "bytes" | "pubkey" | "sig" | "hash" | "int";
 
-/** Maps an {@link ArgType} to its TypeScript argument type. */
-export interface ArgTypeToTs {
+/**
+ * Maps an {@link ArkadeArgType} to its TypeScript argument type.
+ * @internal
+ */
+interface ArkadeValueType {
     bytes: Uint8Array;
     pubkey: Uint8Array;
     sig: Uint8Array;
@@ -111,10 +114,10 @@ export interface ArgTypeToTs {
     int: bigint | number;
 }
 
-/** A typed function input: a name plus its {@link ArgType}. */
+/** A typed function input: a name plus its {@link ArkadeArgType}. */
 export interface InputDef {
     name: string;
-    type: ArgType;
+    type: ArkadeArgType;
 }
 
 /**
@@ -176,7 +179,7 @@ export interface Program {
 // --- Static typing of contract functions -----------------------------------
 
 /** The TS type of a single call argument, derived from its {@link InputRef}. */
-type ArgTsType<R> = R extends InputDef ? ArgTypeToTs[R["type"]] : ArgValue;
+type ArgTsType<R> = R extends InputDef ? ArkadeValueType[R["type"]] : ArgValue;
 
 /** The argument tuple of a function, derived from its declared `inputs`. */
 type ArgsTuple<I extends readonly InputRef[]> = { [K in keyof I]: ArgTsType<I[K]> };
