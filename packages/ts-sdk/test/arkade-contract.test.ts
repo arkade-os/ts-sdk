@@ -34,12 +34,16 @@ const payTo = [
     "EQUAL",
 ] as arkade.AsmToken[];
 
-function htlcProgram(): arkade.Program {
+// `satisfies arkade.Program` (not `: arkade.Program`) preserves the literal
+// type, and `inputs: [...] as const` keeps it a tuple — so the contract's
+// `functions.claim` is typed `(preimage: Uint8Array) => ...` with exact arity,
+// rather than falling back to the loose `(...args: ArgValue[])`.
+function htlcProgram() {
     return {
         params: ["hash", "receiver", "amount"],
         functions: {
             claim: {
-                inputs: ["preimage"],
+                inputs: [{ name: "preimage", type: "bytes" }] as const,
                 tapscript: {
                     signers: ["server"],
                     asm: ["HASH160", "$hash", "EQUALVERIFY"],
@@ -48,7 +52,21 @@ function htlcProgram(): arkade.Program {
                 arkadeScript: { asm: payTo, witness: [0] },
             },
         },
-    };
+    } satisfies arkade.Program;
+}
+
+// Compile-time guard for the strong typing — never executed; exists only so
+// `tsc --noEmit` fails if the input-descriptor → argument-type inference breaks.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _typecheckStrongInputs(ark: arkade.Arkade) {
+    const c = ark.contract(htlcProgram(), {});
+    c.functions.claim(new Uint8Array(32)); // ok: `preimage` is a Uint8Array
+    // @ts-expect-error preimage must be Uint8Array, not a number
+    c.functions.claim(123);
+    // @ts-expect-error claim takes exactly one argument
+    c.functions.claim();
+    // @ts-expect-error no such function
+    c.functions.nope();
 }
 
 function stubProviders(server: Uint8Array, emulatorKey: Uint8Array) {
