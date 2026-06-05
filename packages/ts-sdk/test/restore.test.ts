@@ -853,6 +853,125 @@ describe("Wallet.restore", () => {
         }
     });
 
+    it("spent-boarding blind spot: a fully-boarded index is invisible; the receive-destination index holds the line (plan §2/§4/§5)", async () => {
+        // Models a completed board. `Ramps.onboard` pays the boarded VTXO to
+        // `wallet.getAddress()` (the current L2 RECEIVE index), NOT back to the
+        // boarding index, so a boarding index that is funded and then fully
+        // boarded goes cold in BOTH restore signals: no current on-chain UTXO
+        // (not in fundedOnchain) and no L2 VTXO at its own index (not in
+        // usedScripts). The single-branch / current-UTXO model accepts this —
+        // the gap window is instead held open by the receive-destination index.
+        const { wallet, indexer, hdProvider, fundedOnchain } = await makeHdWalletForTest();
+        try {
+            const serverPubKey = wallet.offchainTapscript.options.serverPubKey;
+            const boardingCsv = wallet.boardingTapscript.options.csvTimelock!;
+
+            // L2 receive scripts at an HD index, built like DefaultContractHandler.discoverAt.
+            const receiveScriptsAt = (i: number) =>
+                wallet.walletContractTimelocks.map((csvTimelock) =>
+                    hex.encode(
+                        new DefaultVtxo.Script({
+                            pubKey: deriveDescriptorLeafPubKey(
+                                hdProvider.materializeDescriptorAt(i),
+                            ),
+                            serverPubKey,
+                            csvTimelock,
+                        }).pkScript,
+                    ),
+                );
+            // Boarding pkScript at an HD index, built like BoardingContractHandler.discoverAt.
+            const boardingScriptHexAt = (i: number) =>
+                hex.encode(
+                    new DefaultVtxo.Script({
+                        pubKey: deriveDescriptorLeafPubKey(hdProvider.materializeDescriptorAt(i)),
+                        serverPubKey,
+                        csvTimelock: boardingCsv,
+                    }).pkScript,
+                );
+
+            // The board came from boarding index 2 (now fully spent → left cold),
+            // and paid its VTXO to receive index 1.
+            for (const s of receiveScriptsAt(1)) indexer.usedScripts.add(s);
+            // index 2 deliberately funded in NEITHER signal.
+
+            await wallet.restore({ gapLimit: 5 });
+
+            // The spent boarding index 2 is NOT recovered: no boarding row for
+            // its script (the documented blind spot).
+            const boardingRows = await wallet.contractRepository.getContracts({
+                type: ["boarding"],
+            });
+            expect(boardingRows.map((c) => c.script)).not.toContain(boardingScriptHexAt(2));
+
+            // The watermark sits at the receive-destination index (1) — the
+            // index that actually held the gap window open — NOT the cold
+            // boarding index (2).
+            expect(await hdProvider.getCurrentSigningDescriptor()).toBe(
+                hdProvider.materializeDescriptorAt(1),
+            );
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("a cold (spent) boarding index between used indices does not close the gap window early (plan §4)", async () => {
+        // The reason the spent-boarding blind spot is tolerable: a used
+        // receive-destination index resets the gap counter, so a cold boarding
+        // index in between does not strand a later funded boarding index. Here
+        // gapLimit=3 with the only earlier hit at receive index 1; without that
+        // reset the window would close before reaching the funded boarding UTXO
+        // at index 4 (idx 0,1,2,3 = 4 consecutive misses > 3).
+        const { wallet, indexer, hdProvider, fundedOnchain } = await makeHdWalletForTest();
+        try {
+            const serverPubKey = wallet.offchainTapscript.options.serverPubKey;
+            const boardingCsv = wallet.boardingTapscript.options.csvTimelock!;
+            const receiveScriptsAt = (i: number) =>
+                wallet.walletContractTimelocks.map((csvTimelock) =>
+                    hex.encode(
+                        new DefaultVtxo.Script({
+                            pubKey: deriveDescriptorLeafPubKey(
+                                hdProvider.materializeDescriptorAt(i),
+                            ),
+                            serverPubKey,
+                            csvTimelock,
+                        }).pkScript,
+                    ),
+                );
+            const boardingOnchainAt = (i: number) =>
+                new DefaultVtxo.Script({
+                    pubKey: deriveDescriptorLeafPubKey(hdProvider.materializeDescriptorAt(i)),
+                    serverPubKey,
+                    csvTimelock: boardingCsv,
+                }).onchainAddress(wallet.network);
+
+            // Receive hit at index 1 (board destination); index 2 cold (spent
+            // boarding); a still-unspent funded boarding UTXO at index 4.
+            for (const s of receiveScriptsAt(1)) indexer.usedScripts.add(s);
+            fundedOnchain.add(boardingOnchainAt(4));
+
+            await wallet.restore({ gapLimit: 3 });
+
+            // The funded boarding index 4 is recovered because index 1 reset the
+            // gap counter — the watermark advances all the way to 4.
+            expect(await hdProvider.getCurrentSigningDescriptor()).toBe(
+                hdProvider.materializeDescriptorAt(4),
+            );
+            const boardingRows = await wallet.contractRepository.getContracts({
+                type: ["boarding"],
+            });
+            const boardingScript4 = hex.encode(
+                new DefaultVtxo.Script({
+                    pubKey: deriveDescriptorLeafPubKey(hdProvider.materializeDescriptorAt(4)),
+                    serverPubKey,
+                    csvTimelock: boardingCsv,
+                }).pkScript,
+            );
+            expect(boardingRows.map((c) => c.script)).toContain(boardingScript4);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
     it("getBoardingUtxos unions funds across current + historical boarding addresses (plan §6-III.1)", async () => {
         const { wallet, fundedOnchain } = await makeHdWalletForTest();
         try {
