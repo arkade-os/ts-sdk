@@ -37,6 +37,34 @@ import {
 const DEFAULT_PAGE_SIZE = 500;
 
 /**
+ * Whether two *different* contract types may legitimately share a single
+ * repository row when their derived scripts collide (byte-identical pkScript).
+ *
+ * Contracts are keyed by their pkScript (`script` is the unique identity), so a
+ * given script can own exactly one row. `default` and `boarding` are both built
+ * from the same `DefaultVtxo.Script` shape and differ only by CSV-timelock
+ * value; when the server's offchain unilateral-exit delay and its boarding-exit
+ * delay coincide (a degenerate / misconfigured server — a sound server keeps
+ * them distinct), the two derive a byte-identical script and must share a
+ * single row. {@link ContractManager.upsertContract} resolves such a collision
+ * first-wins (keep the existing row, don't throw). Every other distinct pairing
+ * (e.g. `default` ↔ `vhtlc`, or a `delegate` script — which carries an extra
+ * leaf and cannot collide under sound semantics) signals a real script/params
+ * mismatch and still throws.
+ *
+ * This is a pure *type-pair* rule with no notion of HD index or "baseline":
+ * `upsertContract` sees only the two type strings, so a `default` ↔ `boarding`
+ * collision coalesces at ANY index, including rotated ones — exactly what
+ * equal-delay restore needs (see
+ * docs/hd-wallets_onchain_rotation_collision_fix.md §5.1).
+ *
+ * @internal Exported for unit tests; not part of the public API surface.
+ */
+export function areCoalescibleContractTypes(a: string, b: string): boolean {
+    return (a === "default" && b === "boarding") || (a === "boarding" && b === "default");
+}
+
+/**
  * Hard upper bound on the HD index range probed by {@link scanContracts}.
  * Safety valve: a buggy or malicious `Discoverable` handler that returns a
  * hit at every index would otherwise keep the gap window open forever and
@@ -501,12 +529,31 @@ export class ContractManager implements IContractManager {
             );
         }
 
-        // Check if contract already exists and verify it's the same type to avoid silent mismatches
+        // A script is its own unique identity, so at most one row per script.
         const [existing] = await this.getContracts({ script: params.script });
         if (existing) {
+            // Same type → idempotent no-op (re-registering is a no-op).
             if (existing.type === params.type) return { contract: existing, persisted: false };
+            // Degenerate equal-delay collision: a `default` and a `boarding`
+            // script are byte-identical when the server's unilateral-exit and
+            // boarding-exit delays coincide. Tolerate it FIRST-WINS — keep the
+            // existing row exactly as-is (no overwrite, no type promotion, no
+            // throw) and report it was not (re)persisted. This mirrors NArk's
+            // script-keyed dedup (one row per script) and is the single source
+            // of truth for the collision, covering both `createContract` (init)
+            // and `persistAndWatchContract` (the restore scan). Because it never
+            // mutates the row it also preserves the watcher invariant: the
+            // winning row was registered with the watcher when first persisted,
+            // so event callbacks always see the authoritative type — there is no
+            // promote-then-forget-the-watcher gap. See
+            // docs/hd-wallets_onchain_rotation_collision_fix.md §5.1.
+            if (areCoalescibleContractTypes(existing.type, params.type)) {
+                return { contract: existing, persisted: false };
+            }
+            // Any other same-script/different-type collision is a real bug or
+            // hash anomaly — surface it loudly.
             throw new Error(
-                `Contract with script ${params.script} already exists with with type ${existing.type}.`,
+                `Contract with script ${params.script} already exists with type ${existing.type}.`,
             );
         }
 
@@ -546,10 +593,28 @@ export class ContractManager implements IContractManager {
                 `scanContracts: gapLimit must be a positive integer (got ${String(opts.gapLimit)})`,
             );
         }
-        const discoverables = contractHandlers
+        const registered = contractHandlers
             .getRegisteredTypes()
             .map((t) => contractHandlers.get(t))
             .filter(isDiscoverable);
+
+        // Probe `boarding` before `default`/`delegate`. This ordering is
+        // LOAD-BEARING, not cosmetic: each hit is persisted immediately and
+        // `upsertContract` resolves a same-script collision FIRST-WINS, so the
+        // iteration order IS the tie-break. In the degenerate equal-delay case
+        // a rotated index can carry BOTH an on-chain boarding UTXO and an L2
+        // VTXO at the same (byte-identical) script; probing boarding first
+        // resolves that collision to a `boarding` row, which keeps the on-chain
+        // UTXO visible to the type-gated `getBoardingUtxos` while the VTXO stays
+        // visible via the type-agnostic `getVtxos`. Resolving to `default` would
+        // hide the on-chain boarding UTXO (the original Finding #1 bug). The
+        // stable partition preserves the relative order of all non-boarding
+        // handlers. A future reorder must not regress this; a unit test pins it.
+        // See docs/hd-wallets_onchain_rotation_collision_fix.md §5.2.
+        const discoverables = [
+            ...registered.filter((h) => h.type === "boarding"),
+            ...registered.filter((h) => h.type !== "boarding"),
+        ];
 
         const maxIdx = opts.hd ? SCAN_MAX_INDEX : 0;
         const handlerErrors: HandlerError[] = [];

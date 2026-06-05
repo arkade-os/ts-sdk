@@ -27,7 +27,7 @@ export interface InputSignerRouterDeps {
     boardingPkScript: Uint8Array;
 }
 
-const DESCRIPTOR_CAPABLE_CONTRACT_TYPES = new Set(["default", "delegate"]);
+const DESCRIPTOR_CAPABLE_CONTRACT_TYPES = new Set(["default", "delegate", "boarding"]);
 
 /**
  * Routing decision for a single tx's signable inputs: which inputs the
@@ -47,12 +47,18 @@ export interface InputRoutingPlan {
 
 /**
  * Routes PSBT inputs to the correct signer based on the owning contract.
- * Inputs whose script matches a `default`/`delegate` contract with a
- * non-baseline owner are sent to {@link DescriptorProvider}; everything
- * else (baseline-owned contracts, non-default/non-delegate contracts,
- * and the boarding script) is sent to {@link Identity}. Inputs with no
+ * Inputs whose script matches a `default`/`delegate`/`boarding` contract with
+ * a non-baseline owner are sent to {@link DescriptorProvider}; everything
+ * else (baseline-owned contracts, other contract types, and the index-0
+ * boarding fallback script) is sent to {@link Identity}. Inputs with no
  * matching contract and no boarding match are silently skipped, matching
  * how the wallet historically handled cosigner/connector inputs.
+ *
+ * Boarding participates in descriptor-aware signing (plan §6-III.3): a
+ * *rotated* boarding UTXO is locked to its HD index's pubkey, so it must be
+ * signed with the key derived at that index, not the baseline identity key.
+ * The `pubKey === baseline` early-out below keeps index-0 / static boarding on
+ * the identity path, so the no-rotation case is byte-for-byte unchanged.
  */
 export class InputSignerRouter {
     constructor(private readonly deps: InputSignerRouterDeps) {}
@@ -123,7 +129,7 @@ export class InputSignerRouter {
             if (typeof descriptor !== "string" || descriptor.length === 0) {
                 throw new MissingSigningDescriptorError(
                     contract.script,
-                    contract.type as "default" | "delegate",
+                    contract.type as "default" | "delegate" | "boarding",
                 );
             }
 

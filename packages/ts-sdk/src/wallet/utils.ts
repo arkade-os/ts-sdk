@@ -24,16 +24,39 @@ export function getDustAmount(wallet: IWallet): bigint {
     return "dustAmount" in wallet ? (wallet.dustAmount as bigint) : FALLBACK_WALLET_DUST_AMOUNT;
 }
 
-export function extendCoin(
-    wallet: { boardingTapscript: ReadonlyWallet["boardingTapscript"] },
+/**
+ * Annotate an on-chain boarding {@link Coin} with the forfeit/intent leaves
+ * and tap tree of a *specific* boarding tapscript — the one the UTXO actually
+ * sits on, resolved by scriptPubKey.
+ *
+ * Under per-derivation boarding rotation (plan §6-II) a wallet can hold
+ * unspent boarding UTXOs at several historical boarding addresses at once, so
+ * the spending path must NOT assume the single current `boardingTapscript`;
+ * each UTXO is extended with the tapscript of its own address (plan §6-III.2).
+ */
+export function extendCoinWithTapscript(
+    boardingTapscript: DefaultVtxo.Script,
     utxo: Coin,
 ): ExtendedCoin {
     return {
         ...utxo,
-        forfeitTapLeafScript: wallet.boardingTapscript.forfeit(),
-        intentTapLeafScript: wallet.boardingTapscript.forfeit(),
-        tapTree: wallet.boardingTapscript.encode(),
+        forfeitTapLeafScript: boardingTapscript.forfeit(),
+        intentTapLeafScript: boardingTapscript.forfeit(),
+        tapTree: boardingTapscript.encode(),
     };
+}
+
+/**
+ * Annotate a boarding {@link Coin} with the wallet's *current* boarding
+ * tapscript. Kept for callers that only ever deal with the current boarding
+ * address; the multi-address spending path uses {@link extendCoinWithTapscript}
+ * with the per-UTXO tapscript instead.
+ */
+export function extendCoin(
+    wallet: { boardingTapscript: ReadonlyWallet["boardingTapscript"] },
+    utxo: Coin,
+): ExtendedCoin {
+    return extendCoinWithTapscript(wallet.boardingTapscript, utxo);
 }
 
 /**
