@@ -37,7 +37,7 @@ const payTo = [
 // `satisfies arkade.Program` (not `: arkade.Program`) preserves the literal
 // type, and `inputs: [...] as const` keeps it a tuple — so the contract's
 // `functions.claim` is typed `(preimage: Uint8Array) => ...` with exact arity,
-// rather than falling back to the loose `(...args: ArgValue[])`.
+// rather than falling back to the loose `(...args: ArkadeArgValue[])`.
 function htlcProgram() {
     return {
         params: ["hash", "receiver", "amount"],
