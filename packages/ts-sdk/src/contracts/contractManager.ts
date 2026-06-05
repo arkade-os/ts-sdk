@@ -8,7 +8,6 @@ import {
     ContractState,
     ContractVtxo,
     ContractWithVtxos,
-    DiscoveredContract,
     DiscoveryDeps,
     GetContractsFilter,
     PathContext,
@@ -33,8 +32,7 @@ import {
     saveVtxosForContract,
     warnAndFilterVtxosForScript,
 } from "./vtxoOwnership";
-
-const DEFAULT_PAGE_SIZE = 500;
+import { DEFAULT_PAGE_SIZE } from "./constants";
 
 /**
  * Whether two *different* contract types may legitimately share a single
@@ -585,6 +583,9 @@ export class ContractManager implements IContractManager {
      *   other handler hit it).
      * - `persistAndWatchContract` rejecting is operational/fatal and
      *   propagates (only `discoverAt` is guarded).
+     * - Within an index the handler probes run concurrently (independent
+     *   network reads); their hits are persisted sequentially in
+     *   `discoverables` order to preserve the first-wins collision tie-break.
      */
     async scanContracts(opts: ScanContractsOptions): Promise<ScanResult> {
         const gapLimit = opts.gapLimit ?? 20;
@@ -599,9 +600,10 @@ export class ContractManager implements IContractManager {
             .filter(isDiscoverable);
 
         // Probe `boarding` before `default`/`delegate`. This ordering is
-        // LOAD-BEARING, not cosmetic: each hit is persisted immediately and
-        // `upsertContract` resolves a same-script collision FIRST-WINS, so the
-        // iteration order IS the tie-break. In the degenerate equal-delay case
+        // LOAD-BEARING, not cosmetic: within each index the probes run
+        // concurrently, but their hits are persisted in THIS order and
+        // `upsertContract` resolves a same-script collision FIRST-WINS, so this
+        // order IS the persistence tie-break. In the degenerate equal-delay case
         // a rotated index can carry BOTH an on-chain boarding UTXO and an L2
         // VTXO at the same (byte-identical) script; probing boarding first
         // resolves that collision to a `boarding` row, which keeps the on-chain
@@ -625,20 +627,50 @@ export class ContractManager implements IContractManager {
         while (i <= maxIdx && unused < gapLimit) {
             // Materialization failure is fatal/structural — let it propagate.
             const descriptor = opts.materialize(i);
+
+            // Probe every discoverable handler for this index CONCURRENTLY:
+            // they are independent network reads (indexer / on-chain explorer),
+            // so overlapping them cuts per-index latency. The outer index loop
+            // stays sequential — the gap-limit stop condition needs index i
+            // fully evaluated before deciding whether to scan i+1. Each probe's
+            // try/catch mirrors the former serial guard, capturing a discoverAt
+            // rejection (or synchronous throw) instead of propagating it, so one
+            // failing handler never aborts the others.
+            const probes = await Promise.all(
+                discoverables.map(async (h) => {
+                    try {
+                        return {
+                            ok: true as const,
+                            found: await h.discoverAt(i, descriptor, opts.deps),
+                        };
+                    } catch (error) {
+                        return { ok: false as const, error };
+                    }
+                }),
+            );
+
+            // Persist SEQUENTIALLY in the original `discoverables` order — only
+            // the I/O above overlapped. That order is the FIRST-WINS collision
+            // tie-break (boarding before default/delegate), so it must not be
+            // reordered. A persistAndWatchContract rejection stays
+            // operational/fatal (unguarded), matching the materialize contract.
             let hitAtThisIndex = false;
-            for (const h of discoverables) {
-                let found: DiscoveredContract[];
-                try {
-                    found = await h.discoverAt(i, descriptor, opts.deps);
-                } catch (error) {
-                    handlerErrors.push({ handler: h.type, index: i, error });
+            for (let h = 0; h < discoverables.length; h++) {
+                const probe = probes[h];
+                if (!probe.ok) {
+                    handlerErrors.push({
+                        handler: discoverables[h].type,
+                        index: i,
+                        error: probe.error,
+                    });
                     continue;
                 }
-                for (const c of found) {
+                for (const c of probe.found) {
                     await this.persistAndWatchContract(c); // idempotent (script-keyed)
                     hitAtThisIndex = true;
                 }
             }
+
             if (hitAtThisIndex) {
                 lastIndexUsed = i;
                 unused = 0;

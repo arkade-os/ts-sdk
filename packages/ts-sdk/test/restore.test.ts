@@ -305,6 +305,48 @@ describe("DefaultContractHandler.discoverAt", () => {
         expect(out).toHaveLength(1);
         expect(calls.flat().filter((s) => s === script)).toHaveLength(1);
     });
+
+    it("batches all csvTimelock variants into a single indexer query (one probe)", async () => {
+        // Win: instead of one getVtxos per csvTimelock, discoverAt issues a
+        // single batched probe over the whole candidate set and maps the
+        // returned vtxos back by script. Both funded timelock scripts are
+        // still discovered, with no over-discovery of the unfunded ones.
+        const tl1: RelativeTimelock = DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        const tl2: RelativeTimelock = { value: 288n, type: "blocks" };
+        const pubKey = hex.decode(pkHex);
+        const mk = (csvTimelock: RelativeTimelock) =>
+            hex.encode(
+                new DefaultVtxo.Script({ pubKey, serverPubKey: server, csvTimelock }).pkScript,
+            );
+        const s1 = mk(tl1);
+        const s2 = mk(tl2);
+
+        const calls: string[][] = [];
+        const indexer = {
+            async getVtxos(opts: any) {
+                const scripts = (opts.scripts ?? []) as string[];
+                calls.push(scripts);
+                const vtxos = scripts
+                    .filter((s) => s === s1 || s === s2)
+                    .map((s) => ({ value: 1, script: s }) as any);
+                return { vtxos };
+            },
+        } as any;
+
+        const out = await DefaultContractHandler.discoverAt(2, descriptor, {
+            indexerProvider: indexer,
+            onchainProvider: {} as any,
+            network: { hrp: "ark" },
+            serverPubKey: server,
+            csvTimelocks: [tl1, tl2],
+        });
+
+        // Exactly ONE batched probe, covering BOTH candidate scripts.
+        expect(calls).toHaveLength(1);
+        expect(new Set(calls[0])).toEqual(new Set([s1, s2]));
+        // Both funded timelock scripts discovered.
+        expect(new Set(out.map((e) => e.script))).toEqual(new Set([s1, s2]));
+    });
 });
 
 describe("DelegateContractHandler.discoverAt", () => {
@@ -718,6 +760,57 @@ describe("ContractManager.scanContracts", () => {
             mgr.dispose();
         }
     });
+
+    it("probes the index's handlers concurrently, not serially", async () => {
+        // Concurrency proof: handler A, once inside discoverAt, waits for
+        // handler B to ALSO enter before returning. Serial probing would never
+        // start B until A returned (A would observe only itself); concurrent
+        // probing lets B enter while A waits, so A resolves via the shared
+        // barrier. A bounded fallback turns a serial regression into a fast
+        // assertion failure instead of a hang.
+        let entered = 0;
+        let releaseBoth!: () => void;
+        const bothInFlight = new Promise<void>((r) => (releaseBoth = r));
+        let seq = 0;
+        let firstSawBoth = false;
+        const makeConcurrentFake = (type: string) => ({
+            type,
+            createScript: (p: Record<string, string>) =>
+                ({ pkScript: hex.decode(p.script) }) as any,
+            serializeParams: (p: any) => p,
+            deserializeParams: (p: any) => p,
+            selectPath: () => null,
+            getAllSpendingPaths: () => [],
+            getSpendablePaths: () => [],
+            async discoverAt() {
+                const mine = ++seq; // 1 = first handler launched, 2 = second
+                entered += 1;
+                if (entered === 2) releaseBoth();
+                let timer: ReturnType<typeof setTimeout>;
+                const sawBoth = await Promise.race([
+                    bothInFlight.then(() => true),
+                    new Promise<boolean>((r) => {
+                        timer = setTimeout(() => r(false), 1000);
+                    }),
+                ]);
+                clearTimeout(timer!);
+                if (mine === 1) firstSawBoth = sawBoth;
+                return [];
+            },
+        });
+        register("concA", makeConcurrentFake("concA"));
+        register("concB", makeConcurrentFake("concB"));
+        const mgr = await makeManagerForTest();
+        try {
+            await mgr.scanContracts({ gapLimit: 1, hd: false, materialize, deps: makeDeps() });
+            expect(entered).toBe(2);
+            // The first-launched handler observed the second in-flight before
+            // returning — only possible if the probes overlapped.
+            expect(firstSawBoth).toBe(true);
+        } finally {
+            mgr.dispose();
+        }
+    });
 });
 
 describe("signingDescriptorIndex", () => {
@@ -763,10 +856,9 @@ describe("Wallet.restore", () => {
             const balance = await wallet.getBalance();
             expect(balance.total).toBeGreaterThan(0);
 
-            // Static mode is a single pass at index 0: the default
-            // handler probes each csvTimelock at index 0 exactly once.
-            // Every probed scripts-array should be index-0 derived; the
-            // scan must not have walked an HD range.
+            // Static mode is a single pass at index 0: the default handler
+            // probes its index-0 candidate scripts in one batched query, so
+            // a discovery probe ran. The scan must not have walked an HD range.
             expect(indexer.getVtxosCalls.length).toBeGreaterThan(0);
         } finally {
             await wallet.dispose();
@@ -1427,10 +1519,10 @@ describe("Wallet.restore", () => {
             expect(a).toBeUndefined();
             expect(b).toBeUndefined();
 
-            // Both awaited the same in-flight promise: the static scan
-            // is a single index-0 pass, so the number of probes equals
-            // exactly one run (one getVtxos per csvTimelock) plus the
-            // single inline refreshVtxos pull — NOT doubled.
+            // Both awaited the same in-flight promise: the static scan is a
+            // single index-0 pass, so the probe count reflects exactly one run
+            // (a batched discovery query plus the single inline refreshVtxos
+            // pull) — NOT doubled.
             const singleRunCalls = indexer.getVtxosCalls.length;
             expect(singleRunCalls).toBeGreaterThan(0);
 
