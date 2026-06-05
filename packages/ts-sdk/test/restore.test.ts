@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { hex } from "@scure/base";
 import { signingDescriptorIndex } from "../src/wallet/walletReceiveRotator";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -10,8 +10,10 @@ import { isDiscoverable } from "../src/contracts/types";
 import { timelockToSequence } from "../src/utils/timelock";
 import { DefaultContractHandler } from "../src/contracts/handlers/default";
 import { DelegateContractHandler } from "../src/contracts/handlers/delegate";
+import { BoardingContractHandler } from "../src/contracts/handlers/boarding";
 import { DefaultVtxo } from "../src/script/default";
 import { DelegateVtxo } from "../src/script/delegate";
+import { VtxoScript } from "../src/script/base";
 import type { RelativeTimelock } from "../src/script/tapscript";
 import { contractHandlers } from "../src/contracts/handlers";
 import { makeManagerForTest, makeDeps } from "./helpers/scanManager";
@@ -583,6 +585,40 @@ describe("ContractManager.scanContracts", () => {
             mgr.dispose();
         }
     });
+
+    it("probes boarding before default/delegate (load-bearing first-wins tie-break)", async () => {
+        // The iteration order IS the first-wins tie-break: each hit is
+        // persisted immediately, so a both-purpose equal-delay collision
+        // resolves to whichever handler is probed first. Boarding must be
+        // first so such a collision resolves to a `boarding` row (keeping the
+        // on-chain UTXO visible to the type-gated getBoardingUtxos). Guards
+        // against a future reorder of the registered handlers.
+        const order: string[] = [];
+        const spies = [
+            vi.spyOn(BoardingContractHandler, "discoverAt").mockImplementation(async () => {
+                order.push("boarding");
+                return [];
+            }),
+            vi.spyOn(DefaultContractHandler, "discoverAt").mockImplementation(async () => {
+                order.push("default");
+                return [];
+            }),
+            vi.spyOn(DelegateContractHandler, "discoverAt").mockImplementation(async () => {
+                order.push("delegate");
+                return [];
+            }),
+        ];
+        const mgr = await makeManagerForTest();
+        try {
+            await mgr.scanContracts({ gapLimit: 1, hd: false, materialize, deps: makeDeps() });
+            expect(order).toContain("boarding");
+            expect(order.indexOf("boarding")).toBeLessThan(order.indexOf("default"));
+            expect(order.indexOf("boarding")).toBeLessThan(order.indexOf("delegate"));
+        } finally {
+            for (const s of spies) s.mockRestore();
+            mgr.dispose();
+        }
+    });
 });
 
 describe("signingDescriptorIndex", () => {
@@ -670,6 +706,408 @@ describe("Wallet.restore", () => {
             );
             const balance = await wallet.getBalance();
             expect(balance.total).toBeGreaterThan(0);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("HD: a funded boarding index is recovered via the on-chain probe (advances watermark)", async () => {
+        const { wallet, hdProvider, fundedOnchain } = await makeHdWalletForTest();
+        try {
+            // Boarding on-chain (P2TR) address at HD index 2, built the way
+            // BoardingContractHandler.discoverAt does. The index is funded
+            // ONLY on-chain (not in the indexer's usedScripts), so the index
+            // is recovered purely by the boarding on-chain probe — and the
+            // shared watermark advances to it.
+            const serverPubKey = wallet.offchainTapscript.options.serverPubKey;
+            const boardingCsv = wallet.boardingTapscript.options.csvTimelock!;
+            const boardingOnchainAt = (i: number) =>
+                new DefaultVtxo.Script({
+                    pubKey: deriveDescriptorLeafPubKey(hdProvider.materializeDescriptorAt(i)),
+                    serverPubKey,
+                    csvTimelock: boardingCsv,
+                }).onchainAddress(wallet.network);
+            fundedOnchain.add(boardingOnchainAt(2));
+
+            await wallet.restore({ gapLimit: 5 });
+
+            expect(await hdProvider.getCurrentSigningDescriptor()).toBe(
+                hdProvider.materializeDescriptorAt(2),
+            );
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("equal-delay server: a funded index-0 boarding UTXO restores without aborting (first-wins)", async () => {
+        // mockArkInfo sets boardingExitDelay === unilateralExitDelay, so the
+        // boarding script is byte-identical to the default candidate. A funded
+        // on-chain boarding UTXO must restore cleanly: the boarding hit is
+        // tolerated first-wins at the persistence layer (the init-persisted
+        // index-0 `default` baseline keeps the colliding row) instead of
+        // aborting the scan with a same-script type clash.
+        const { wallet, fundedOnchain } = await makeHdWalletForTest();
+        try {
+            fundedOnchain.add(await wallet.getBoardingAddress());
+            await expect(wallet.restore({ gapLimit: 5 })).resolves.toBeUndefined();
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("equal-delay: a funded ROTATED boarding index restores as a boarding UTXO (Finding #1)", async () => {
+        // The core regression. mockArkInfo is equal-delay, so the boarding
+        // script at a rotated index N (>0) is byte-identical to the default
+        // script at N. Fund index 2 ON-CHAIN ONLY (no L2 VTXO). The boarding
+        // probe is the sole hit, so the index is persisted as a `boarding`
+        // row — NOT mis-typed `default` (the old pre-coalescing bug, which hid
+        // the UTXO from the type-gated getBoardingUtxos).
+        const { wallet, hdProvider, fundedOnchain } = await makeHdWalletForTest();
+        try {
+            const serverPubKey = wallet.offchainTapscript.options.serverPubKey;
+            const boardingCsv = wallet.boardingTapscript.options.csvTimelock!;
+            const script = new DefaultVtxo.Script({
+                pubKey: deriveDescriptorLeafPubKey(hdProvider.materializeDescriptorAt(2)),
+                serverPubKey,
+                csvTimelock: boardingCsv,
+            });
+            const scriptHex = hex.encode(script.pkScript);
+            const onchainAddr = script.onchainAddress(wallet.network);
+            fundedOnchain.add(onchainAddr);
+
+            await wallet.restore({ gapLimit: 5 });
+
+            // Persisted as a boarding-typed contract at the rotated index.
+            const boardingRows = await wallet.contractRepository.getContracts({
+                type: ["boarding"],
+            });
+            expect(boardingRows.map((c) => c.script)).toContain(scriptHex);
+
+            // The on-chain UTXO is enumerated by getBoardingUtxos with the
+            // correct per-index boarding tapscript.
+            const utxos = await wallet.getBoardingUtxos();
+            const addrs = utxos.map((u) =>
+                VtxoScript.decode(u.tapTree).onchainAddress(wallet.network),
+            );
+            expect(addrs).toContain(onchainAddr);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("equal-delay: a both-hit rotated index recovers BOTH the on-chain UTXO and the L2 VTXO (reviewer's case)", async () => {
+        // The degenerate sub-case §6 calls out: a rotated index whose
+        // (byte-identical) script carries BOTH an on-chain boarding UTXO and an
+        // L2 VTXO. Boarding is probed first → the row resolves to `boarding`;
+        // the later default hit first-wins-no-ops. Both fund types must remain
+        // recoverable: the on-chain UTXO via the type-gated getBoardingUtxos,
+        // and the VTXO via the type-agnostic getVtxos.
+        const { wallet, indexer, hdProvider, fundedOnchain } = await makeHdWalletForTest();
+        try {
+            const serverPubKey = wallet.offchainTapscript.options.serverPubKey;
+            const boardingCsv = wallet.boardingTapscript.options.csvTimelock!;
+            const pubKey = deriveDescriptorLeafPubKey(hdProvider.materializeDescriptorAt(2));
+            const script = new DefaultVtxo.Script({
+                pubKey,
+                serverPubKey,
+                csvTimelock: boardingCsv,
+            });
+            const scriptHex = hex.encode(script.pkScript);
+            const onchainAddr = script.onchainAddress(wallet.network);
+
+            // Sanity: equal-delay → the index-2 default candidate is the SAME
+            // script as the boarding candidate.
+            const defaultScriptHex = hex.encode(
+                new DefaultVtxo.Script({
+                    pubKey,
+                    serverPubKey,
+                    csvTimelock: wallet.walletContractTimelocks[0],
+                }).pkScript,
+            );
+            expect(defaultScriptHex).toBe(scriptHex);
+
+            fundedOnchain.add(onchainAddr); // on-chain boarding UTXO
+            indexer.usedScripts.add(scriptHex); // L2 VTXO at the same script
+
+            await wallet.restore({ gapLimit: 5 });
+
+            // Resolved to a boarding row (boarding probed first, first-wins).
+            const boardingRows = await wallet.contractRepository.getContracts({
+                type: ["boarding"],
+            });
+            expect(boardingRows.map((c) => c.script)).toContain(scriptHex);
+
+            // On-chain UTXO recovered via the type-gated boarding reader.
+            const utxos = await wallet.getBoardingUtxos();
+            const addrs = utxos.map((u) =>
+                VtxoScript.decode(u.tapTree).onchainAddress(wallet.network),
+            );
+            expect(addrs).toContain(onchainAddr);
+
+            // L2 VTXO recovered via the type-agnostic getVtxos — proving a
+            // boarding-typed row's VTXOs stay visible/spendable.
+            const vtxos = await wallet.getVtxos();
+            expect(vtxos.some((v) => v.script === scriptHex)).toBe(true);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("getBoardingUtxos unions funds across current + historical boarding addresses (plan §6-III.1)", async () => {
+        const { wallet, fundedOnchain } = await makeHdWalletForTest();
+        try {
+            const baselineBoarding = await wallet.getBoardingAddress();
+            const rotatedBoarding = await wallet.getNewBoardingAddress();
+            expect(rotatedBoarding).not.toBe(baselineBoarding);
+
+            // Fund BOTH the previous (index-0) and the current (rotated)
+            // boarding addresses on-chain.
+            fundedOnchain.add(baselineBoarding);
+            fundedOnchain.add(rotatedBoarding);
+
+            const utxos = await wallet.getBoardingUtxos();
+            expect(utxos).toHaveLength(2);
+            // Each coin is annotated with the tapscript of the address it sits
+            // on — so it can later be forfeited/exited with the right leaves.
+            const addrs = utxos.map((u) =>
+                VtxoScript.decode(u.tapTree).onchainAddress(wallet.network),
+            );
+            expect(new Set(addrs)).toEqual(new Set([baselineBoarding, rotatedBoarding]));
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("getBoardingTxs unions history across current + historical boarding addresses (plan §6-IV.1)", async () => {
+        const { wallet } = await makeHdWalletForTest();
+        try {
+            const baseline = await wallet.getBoardingAddress();
+            const rotated = await wallet.getNewBoardingAddress();
+            expect(rotated).not.toBe(baseline);
+
+            const txAt = (addr: string, txid: string) => ({
+                txid,
+                vout: [{ scriptpubkey_address: addr, value: 12_345 }],
+                status: { confirmed: true, block_time: 1_700_000_000 },
+            });
+            vi.spyOn(wallet.onchainProvider, "getTransactions").mockImplementation(
+                async (addr: string) => {
+                    if (addr === baseline) return [txAt(baseline, "aa".repeat(32))] as any;
+                    if (addr === rotated) return [txAt(rotated, "bb".repeat(32))] as any;
+                    return [];
+                },
+            );
+            vi.spyOn(wallet.onchainProvider, "getTxOutspends").mockResolvedValue([
+                { spent: false },
+            ] as any);
+
+            const { boardingTxs } = await wallet.getBoardingTxs();
+            const txids = boardingTxs.map((t) => t.key.boardingTxid);
+            expect(txids).toContain("aa".repeat(32));
+            expect(txids).toContain("bb".repeat(32));
+            // getBoardingAddress() stays single-valued (the QR / display target).
+            expect(await wallet.getBoardingAddress()).toBe(rotated);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("notifyIncomingFunds watches the full boarding-address set (plan §6-IV.2)", async () => {
+        const { wallet } = await makeHdWalletForTest();
+        try {
+            const baseline = await wallet.getBoardingAddress();
+            const rotated = await wallet.getNewBoardingAddress();
+
+            let watched: string[] = [];
+            vi.spyOn(wallet.onchainProvider, "watchAddresses").mockImplementation(
+                async (addrs: string[]) => {
+                    watched = addrs;
+                    return () => {};
+                },
+            );
+
+            const stop = await wallet.notifyIncomingFunds(() => {});
+            expect(new Set(watched)).toEqual(new Set([baseline, rotated]));
+            stop();
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("notifyIncomingFunds re-subscribes the onchain watcher when boarding rotates within the session", async () => {
+        const { wallet } = await makeHdWalletForTest();
+        try {
+            const baseline = await wallet.getBoardingAddress();
+            const rotated1 = await wallet.getNewBoardingAddress();
+
+            // Record each subscription's address set + a per-call stop spy.
+            const calls: string[][] = [];
+            const stops: Array<ReturnType<typeof vi.fn>> = [];
+            vi.spyOn(wallet.onchainProvider, "watchAddresses").mockImplementation(
+                async (addrs: string[]) => {
+                    calls.push(addrs);
+                    const stop = vi.fn();
+                    stops.push(stop);
+                    return stop;
+                },
+            );
+
+            const stop = await wallet.notifyIncomingFunds(() => {});
+            expect(calls).toHaveLength(1);
+            expect(new Set(calls[0])).toEqual(new Set([baseline, rotated1]));
+
+            // Rotate boarding AFTER subscribing — rotate-on-board's situation.
+            const rotated2 = await wallet.getNewBoardingAddress();
+
+            // The watcher re-subscribes to the widened set without a re-init,
+            // then (subscribe-then-swap) retires the prior watcher only once
+            // the new one is live — so wait for that teardown to land.
+            await vi.waitFor(() => {
+                expect(calls).toHaveLength(2);
+                expect(stops[0]).toHaveBeenCalledTimes(1);
+            });
+            expect(calls[1]).toContain(rotated2);
+            expect(new Set(calls[1])).toEqual(new Set([baseline, rotated1, rotated2]));
+
+            // After stop(), the live watcher is torn down and the rotation
+            // listener is unregistered — a later rotation no longer re-subscribes.
+            stop();
+            expect(stops[1]).toHaveBeenCalledTimes(1);
+            await wallet.getNewBoardingAddress();
+            await new Promise((r) => setTimeout(r, 20));
+            expect(calls).toHaveLength(2);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("notifyIncomingFunds keeps the existing watcher live when a re-subscribe fails (no on-chain gap)", async () => {
+        const { wallet } = await makeHdWalletForTest();
+        try {
+            await wallet.getNewBoardingAddress();
+
+            const calls: string[][] = [];
+            const stops: Array<ReturnType<typeof vi.fn>> = [];
+            let failNext = false;
+            vi.spyOn(wallet.onchainProvider, "watchAddresses").mockImplementation(
+                async (addrs: string[]) => {
+                    if (failNext) throw new Error("watchAddresses failed");
+                    calls.push(addrs);
+                    const stop = vi.fn();
+                    stops.push(stop);
+                    return stop;
+                },
+            );
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+            const stop = await wallet.notifyIncomingFunds(() => {});
+            expect(calls).toHaveLength(1); // initial watcher live
+
+            // A rotation whose re-subscribe throws must NOT tear down the
+            // existing watcher (subscribe-then-swap): degrade to the stale set,
+            // never to no watcher at all.
+            failNext = true;
+            await wallet.getNewBoardingAddress();
+            await vi.waitFor(() =>
+                expect(warn).toHaveBeenCalledWith(
+                    "Failed to (re)subscribe boarding-funds watcher",
+                    expect.anything(),
+                ),
+            );
+            expect(stops[0]).not.toHaveBeenCalled(); // old watcher still live
+
+            // It is still the live watcher: stop() tears exactly it down.
+            stop();
+            expect(stops[0]).toHaveBeenCalledTimes(1);
+
+            warn.mockRestore();
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("notifyIncomingFunds does not miss a rotation that lands during initial subscribe setup", async () => {
+        const { wallet } = await makeHdWalletForTest();
+        try {
+            const baseline = await wallet.getBoardingAddress();
+            const rotated1 = await wallet.getNewBoardingAddress();
+
+            const calls: string[][] = [];
+            let signalFirstCalled!: () => void;
+            const firstCalled = new Promise<void>((r) => (signalFirstCalled = r));
+            let releaseFirst!: () => void;
+            const firstGate = new Promise<void>((r) => (releaseFirst = r));
+            vi.spyOn(wallet.onchainProvider, "watchAddresses").mockImplementation(
+                async (addrs: string[]) => {
+                    calls.push(addrs);
+                    if (calls.length === 1) {
+                        // Block the INITIAL subscribe so we can rotate while it
+                        // is mid-setup — the race Finding 2 is about.
+                        signalFirstCalled();
+                        await firstGate;
+                    }
+                    return vi.fn();
+                },
+            );
+
+            const notifyPromise = wallet.notifyIncomingFunds(() => {});
+            // Initial subscribe is now blocked in watchAddresses; the rotation
+            // listener was registered BEFORE this await, so the rotation below
+            // is observed and queued behind the initial subscribe on the chain.
+            await firstCalled;
+            const rotated2 = await wallet.getNewBoardingAddress();
+            releaseFirst();
+            const stop = await notifyPromise;
+
+            // The serialized chain runs the queued re-subscribe after the
+            // initial one, so the watcher ends up on the widened set rather than
+            // stuck on the pre-rotation addresses.
+            await vi.waitFor(() => expect(calls).toHaveLength(2));
+            expect(new Set(calls[1])).toEqual(new Set([baseline, rotated1, rotated2]));
+
+            stop();
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("notifyIncomingFunds emits one coin per matching output, even when a tx pays two boarding addresses (review Finding 4)", async () => {
+        const { wallet } = await makeHdWalletForTest();
+        try {
+            const baseline = await wallet.getBoardingAddress();
+            const rotated = await wallet.getNewBoardingAddress();
+
+            let captured: ((txs: any[]) => void) | undefined;
+            vi.spyOn(wallet.onchainProvider, "watchAddresses").mockImplementation(
+                async (_addrs: string[], cb: (txs: any[]) => void) => {
+                    captured = cb;
+                    return () => {};
+                },
+            );
+
+            const received: any[] = [];
+            const stop = await wallet.notifyIncomingFunds((funds) => {
+                if (funds.type === "utxo") received.push(...funds.coins);
+            });
+
+            // One tx with outputs to BOTH boarding addresses (vout 0 and 2) plus
+            // an unrelated output (vout 1) that must be ignored.
+            captured!([
+                {
+                    txid: "ab".repeat(32),
+                    status: { confirmed: true },
+                    vout: [
+                        { scriptpubkey_address: baseline, value: 1000 },
+                        { scriptpubkey_address: "someone-else", value: 5 },
+                        { scriptpubkey_address: rotated, value: 2000 },
+                    ],
+                },
+            ]);
+
+            expect(received).toHaveLength(2);
+            expect(received.map((c) => c.vout).sort()).toEqual([0, 2]);
+            expect(received.map((c) => c.value).sort((a, b) => a - b)).toEqual([1000, 2000]);
+            stop();
         } finally {
             await wallet.dispose();
         }

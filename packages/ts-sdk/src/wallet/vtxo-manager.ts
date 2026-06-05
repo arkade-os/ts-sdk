@@ -14,7 +14,7 @@ import { maybeArkError } from "../providers/errors";
 import { hasBoardingTxExpired } from "../utils/arkTransaction";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { hex } from "@scure/base";
-import { getSequence } from "../script/base";
+import { getSequence, scriptFromTapLeafScript, VtxoScript } from "../script/base";
 import { Transaction } from "../utils/transaction";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Estimator } from "../arkfee";
@@ -33,6 +33,13 @@ interface SweepCapableWallet extends IReadonlyWallet {
     onchainProvider: OnchainProvider;
     arkProvider: ArkProvider;
     network: Network;
+    /**
+     * Descriptor-aware signer for on-chain boarding exit/sweep txs. Routes
+     * each input to the identity (baseline) or its per-index descriptor
+     * (rotated boarding), so a sweep that batches UTXOs across boarding
+     * addresses signs each with the correct key (plan §6-III.3).
+     */
+    signOnchainBoardingTx(tx: Transaction): Promise<Transaction>;
 }
 
 /**
@@ -46,7 +53,8 @@ function isSweepCapable(wallet: IWallet): wallet is IWallet & SweepCapableWallet
         "boardingTapscript" in wallet &&
         "onchainProvider" in wallet &&
         "arkProvider" in wallet &&
-        "network" in wallet
+        "network" in wallet &&
+        "signOnchainBoardingTx" in wallet
     );
 }
 
@@ -59,7 +67,7 @@ function isSweepCapable(wallet: IWallet): wallet is IWallet & SweepCapableWallet
 function assertSweepCapable(wallet: IWallet): asserts wallet is IWallet & SweepCapableWallet {
     if (!isSweepCapable(wallet)) {
         throw new Error(
-            "Boarding UTXO sweep requires a Wallet instance with boardingTapscript, onchainProvider, arkProvider, and network",
+            "Boarding UTXO sweep requires a Wallet instance with boardingTapscript, onchainProvider, arkProvider, network, and signOnchainBoardingTx",
         );
     }
 }
@@ -921,11 +929,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // Get fee rate from onchain provider
         const feeRate = (await this.getOnchainProvider().getFeeRate()) ?? 1;
 
-        // Get the exit tap leaf script for signing
+        // Representative exit leaf for fee estimation only. Every boarding
+        // exit leaf shares the same template (Alice + CSV) and so has an
+        // identical serialized size regardless of HD index — the actual
+        // per-UTXO leaf is resolved in the input loop below.
         const exitTapLeafScript = this.getBoardingExitLeaf();
-
-        // Estimate transaction size for fee calculation
-        const sequence = getSequence(exitTapLeafScript);
 
         // TapLeafScript: [{version, internalKey, merklePath}, scriptWithVersion]
         const leafScript = exitTapLeafScript[1];
@@ -956,22 +964,40 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const tx = new Transaction();
 
         for (const utxo of expiredUtxos) {
+            // Resolve the exit (CSV) leaf and output script of the boarding
+            // address THIS UTXO actually sits on — not necessarily the current
+            // boarding address, since per-derivation rotation can leave unspent
+            // UTXOs at previous boarding addresses (plan §6-III.2). The per-UTXO
+            // boarding tapscript is carried on the ExtendedCoin's tapTree.
+            const utxoScript = VtxoScript.decode(utxo.tapTree);
+            const utxoExitLeaf = utxoScript.leaves.find(
+                (leaf) =>
+                    CSVMultisigTapscript.isScriptValid(scriptFromTapLeafScript(leaf)) === true,
+            );
+            if (!utxoExitLeaf) {
+                throw new Error(
+                    `Boarding sweep: no CSV exit leaf for UTXO ${utxo.txid}:${utxo.vout}`,
+                );
+            }
             tx.addInput({
                 txid: utxo.txid,
                 index: utxo.vout,
                 witnessUtxo: {
-                    script: this.getBoardingOutputScript(),
+                    script: utxoScript.pkScript,
                     amount: BigInt(utxo.value),
                 },
-                tapLeafScript: [exitTapLeafScript],
-                sequence,
+                tapLeafScript: [utxoExitLeaf],
+                sequence: getSequence(utxoExitLeaf),
             });
         }
 
         tx.addOutputAddress(boardingAddress, outputAmount, this.getNetwork());
 
-        // Sign and finalize
-        const signedTx = await this.getIdentity().sign(tx);
+        // Sign and finalize. Route each input to the correct key — the
+        // identity for index-0 / static boarding, the per-index descriptor for
+        // a rotated boarding UTXO (plan §6-III.3) — instead of signing every
+        // input with the index-0 identity key.
+        const signedTx = await this.getSweepWallet().signOnchainBoardingTx(tx);
         signedTx.finalize();
 
         // Broadcast
@@ -1011,11 +1037,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         return this.getSweepWallet().boardingTapscript.exit();
     }
 
-    /** Returns the pkScript (output script) of the boarding tapscript. */
-    private getBoardingOutputScript() {
-        return this.getSweepWallet().boardingTapscript.pkScript;
-    }
-
     /** Returns the onchain provider for fee estimation and broadcasting. */
     private getOnchainProvider() {
         return this.getSweepWallet().onchainProvider;
@@ -1029,11 +1050,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     /** Returns the Bitcoin network configuration from the wallet. */
     private getNetwork() {
         return this.getSweepWallet().network;
-    }
-
-    /** Returns the wallet's identity for transaction signing. */
-    private getIdentity() {
-        return this.wallet.identity;
     }
 
     private async initializeSubscription(): Promise<(() => void) | undefined> {

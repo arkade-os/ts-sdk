@@ -182,24 +182,154 @@ describe("BoardingContractHandler param serialize/deserialize", () => {
     });
 });
 
-describe("BoardingContractHandler is not discoverable", () => {
-    it("does not implement discoverAt", () => {
-        expect((BoardingContractHandler as { discoverAt?: unknown }).discoverAt).toBeUndefined();
+describe("BoardingContractHandler is discoverable", () => {
+    it("implements discoverAt", () => {
+        expect(typeof (BoardingContractHandler as { discoverAt?: unknown }).discoverAt).toBe(
+            "function",
+        );
     });
 
-    it("isDiscoverable(BoardingContractHandler) is false", () => {
-        expect(isDiscoverable(BoardingContractHandler)).toBe(false);
-        // sanity: the default handler IS discoverable, proving the guard works
+    it("isDiscoverable(BoardingContractHandler) is true", () => {
+        expect(isDiscoverable(BoardingContractHandler)).toBe(true);
+        // sanity: the default handler is also discoverable, proving the guard works
         expect(isDiscoverable(DefaultContractHandler)).toBe(true);
     });
 
-    it("is excluded from the scanner's discoverable handler set", () => {
+    it("is included in the scanner's discoverable handler set", () => {
         const discoverables = contractHandlers
             .getRegisteredTypes()
             .map((t) => contractHandlers.get(t))
             .filter(isDiscoverable)
             .map((h) => h!.type);
-        expect(discoverables).not.toContain("boarding");
+        expect(discoverables).toContain("boarding");
+    });
+});
+
+describe("BoardingContractHandler.discoverAt", () => {
+    // Valid secp256k1 x-only points — deriveDescriptorLeafPubKey parses the
+    // descriptor, so the pubkey must be a real curve point (mirrors restore.test.ts).
+    const PK_HEX = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    const SERVER_HEX = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+    const PK = hex.decode(PK_HEX);
+    const SERVER = hex.decode(SERVER_HEX);
+    const descriptor = `tr(${PK_HEX})`;
+    // onchainAddress only reads `bech32` for taproot — a partial network is enough.
+    const onchainNetwork = { bech32: "bcrt", hrp: "tark" } as any;
+
+    const boardingScript = (csvTimelock = BOARDING_EXIT_DELAY) =>
+        new DefaultVtxo.Script({ pubKey: PK, serverPubKey: SERVER, csvTimelock });
+
+    const makeOnchain = (funded: Set<string>) =>
+        ({
+            async getCoins(address: string) {
+                return funded.has(address)
+                    ? [
+                          {
+                              txid: "00".repeat(32),
+                              vout: 0,
+                              value: 10_000,
+                              status: { confirmed: true },
+                          },
+                      ]
+                    : [];
+            },
+        }) as any;
+
+    const deps = (funded: Set<string>, overrides: Record<string, unknown> = {}) =>
+        ({
+            indexerProvider: {} as any,
+            onchainProvider: makeOnchain(funded),
+            network: { hrp: "tark" },
+            onchainNetwork,
+            serverPubKey: SERVER,
+            csvTimelocks: [UNILATERAL_EXIT_DELAY],
+            boardingTimelock: BOARDING_EXIT_DELAY,
+            ...overrides,
+        }) as any;
+
+    it("no-ops when boardingTimelock is absent (scanner harness)", async () => {
+        const funded = new Set([boardingScript().onchainAddress(onchainNetwork)]);
+        const out = await BoardingContractHandler.discoverAt(
+            0,
+            descriptor,
+            deps(funded, { boardingTimelock: undefined }),
+        );
+        expect(out).toEqual([]);
+    });
+
+    it("no-ops when onchainNetwork is absent", async () => {
+        const funded = new Set([boardingScript().onchainAddress(onchainNetwork)]);
+        const out = await BoardingContractHandler.discoverAt(
+            0,
+            descriptor,
+            deps(funded, { onchainNetwork: undefined }),
+        );
+        expect(out).toEqual([]);
+    });
+
+    it("misses when the on-chain address has no coins", async () => {
+        const out = await BoardingContractHandler.discoverAt(0, descriptor, deps(new Set()));
+        expect(out).toEqual([]);
+    });
+
+    it("hits at index 0 (baseline): untagged boarding row, Ark-address bucket, boarding CSV", async () => {
+        const script = boardingScript();
+        const funded = new Set([script.onchainAddress(onchainNetwork)]);
+        const out = await BoardingContractHandler.discoverAt(0, descriptor, deps(funded));
+        expect(out).toHaveLength(1);
+        const c = out[0];
+        expect(c.type).toBe("boarding");
+        expect(c.script).toBe(hex.encode(script.pkScript));
+        // The row's address is the *Ark* address (repo bucket key), NOT the
+        // on-chain P2TR used only for the getCoins probe.
+        expect(c.address).toBe(script.address("tark", SERVER).encode());
+        expect(c.address).not.toBe(script.onchainAddress(onchainNetwork));
+        // CSV is sourced from boardingTimelock, not csvTimelocks.
+        expect(c.params.csvTimelock).toBe(timelockToSequence(BOARDING_EXIT_DELAY).toString());
+        expect(c.metadata).toBeUndefined();
+    });
+
+    it("hits at a rotated index (>0): tagged with source + signingDescriptor", async () => {
+        const script = boardingScript();
+        const funded = new Set([script.onchainAddress(onchainNetwork)]);
+        const out = await BoardingContractHandler.discoverAt(3, descriptor, deps(funded));
+        expect(out).toHaveLength(1);
+        expect(out[0].metadata).toEqual({
+            source: "wallet-receive",
+            signingDescriptor: descriptor,
+        });
+    });
+
+    it("builds the candidate from boardingTimelock, not csvTimelocks", async () => {
+        // Fund ONLY the boarding-delay script; the unilateral-delay script at
+        // the same index is a distinct address and must not be the one probed.
+        const boarding = boardingScript(BOARDING_EXIT_DELAY);
+        const unilateral = boardingScript(UNILATERAL_EXIT_DELAY);
+        expect(hex.encode(boarding.pkScript)).not.toBe(hex.encode(unilateral.pkScript));
+        const funded = new Set([boarding.onchainAddress(onchainNetwork)]);
+        const out = await BoardingContractHandler.discoverAt(0, descriptor, deps(funded));
+        expect(out).toHaveLength(1);
+        expect(out[0].script).toBe(hex.encode(boarding.pkScript));
+    });
+
+    it("equal-delay collision still emits a `boarding` row (collision resolved at persistence)", async () => {
+        // Degenerate server: boardingExitDelay === unilateralExitDelay → the
+        // boarding script is byte-identical to a default candidate. discoverAt
+        // no longer pre-coalesces onto `default`; it always emits `boarding`,
+        // and the same-script collision is absorbed first-wins at the
+        // persistence layer (ContractManager.upsertContract). csvTimelocks is
+        // not read by the boarding handler anymore.
+        const shared = UNILATERAL_EXIT_DELAY;
+        const script = boardingScript(shared);
+        const funded = new Set([script.onchainAddress(onchainNetwork)]);
+        const out = await BoardingContractHandler.discoverAt(
+            0,
+            descriptor,
+            deps(funded, { boardingTimelock: shared, csvTimelocks: [shared] }),
+        );
+        expect(out).toHaveLength(1);
+        expect(out[0].type).toBe("boarding");
+        expect(out[0].script).toBe(hex.encode(script.pkScript));
     });
 });
 

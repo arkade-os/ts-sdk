@@ -1711,6 +1711,7 @@ describe("Wallet._settleImpl", () => {
             safeRegisterIntent,
             createBatchHandler,
             updateDbAfterSettle,
+            maybeRotateBoardingAfterBoard: vi.fn().mockResolvedValue(undefined),
         };
 
         const result = await (Wallet.prototype as any)._settleImpl.call(thisArg, {
@@ -1730,6 +1731,9 @@ describe("Wallet._settleImpl", () => {
         expect(stream.return).toHaveBeenCalledTimes(1);
         expect(createBatchHandler).toHaveBeenCalledWith("intent-id", [input], [], undefined);
         expect(updateDbAfterSettle).toHaveBeenCalledWith([input], "commitment-txid");
+        // A successful settle feeds its resolved inputs to the rotate-on-board
+        // hook (which decides whether a boarding UTXO was consumed).
+        expect(thisArg.maybeRotateBoardingAfterBoard).toHaveBeenCalledWith([input]);
         batchJoinSpy.mockRestore();
     });
 
@@ -2158,15 +2162,26 @@ describe("Wallet.updateDbAfterSettle", () => {
     const DELEGATE_ADDR = "ark1delegateaddress";
     const BOARDING_ADDR = "bc1boardingaddr";
 
+    // Per-address boarding-UTXO buckets keyed by address. `updateDbAfterSettle`
+    // resolves the source address of each boarding input from its tapTree, so
+    // the mock must return the right bucket per address (not a single global
+    // list) to exercise the address-aware cleanup (plan §6-III.4).
     const makeThisArg = (overrides: {
         annotateVtxos: ReturnType<typeof vi.fn>;
         contracts: { script: string; address: string }[];
         currentBoardingUtxos?: any[];
+        boardingUtxosByAddress?: Record<string, any[]>;
+        network?: any;
     }) => {
         const saveVtxos = vi.fn().mockResolvedValue(undefined);
         const saveUtxos = vi.fn().mockResolvedValue(undefined);
         const deleteUtxos = vi.fn().mockResolvedValue(undefined);
-        const getUtxos = vi.fn().mockResolvedValue(overrides.currentBoardingUtxos ?? []);
+        const byAddress = overrides.boardingUtxosByAddress;
+        const getUtxos = vi
+            .fn()
+            .mockImplementation(async (address: string) =>
+                byAddress ? (byAddress[address] ?? []) : (overrides.currentBoardingUtxos ?? []),
+            );
         const getContracts = vi.fn().mockResolvedValue(overrides.contracts);
         const getContractManager = vi.fn().mockResolvedValue({
             annotateVtxos: overrides.annotateVtxos,
@@ -2182,6 +2197,7 @@ describe("Wallet.updateDbAfterSettle", () => {
                 },
                 getContractManager,
                 getBoardingAddress: vi.fn().mockResolvedValue(BOARDING_ADDR),
+                network: overrides.network ?? { bech32: "bcrt", hrp: "tark" },
             } as any,
             saveVtxos,
             saveUtxos,
@@ -2189,6 +2205,23 @@ describe("Wallet.updateDbAfterSettle", () => {
             getUtxos,
         };
     };
+
+    // A boarding ExtendedCoin carrying a real per-UTXO tapTree, so
+    // `updateDbAfterSettle` can resolve its on-chain source address.
+    const makeBoardingCoin = (
+        tapscript: DefaultVtxo.Script,
+        txidChar: string,
+        value = 10_000,
+    ): ExtendedCoin =>
+        ({
+            txid: txidChar.repeat(64).slice(0, 64),
+            vout: 0,
+            value,
+            status: { confirmed: true },
+            forfeitTapLeafScript: tapscript.forfeit(),
+            intentTapLeafScript: tapscript.forfeit(),
+            tapTree: tapscript.encode(),
+        }) as ExtendedCoin;
 
     const makeVtxoInput = (script: string, suffix: string): ExtendedCoin =>
         ({
@@ -2204,14 +2237,6 @@ describe("Wallet.updateDbAfterSettle", () => {
             forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
             intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
             tapTree: new Uint8Array(64),
-        }) as ExtendedCoin;
-
-    const makeBoardingInput = (suffix: string): ExtendedCoin =>
-        ({
-            txid: suffix.repeat(64).slice(0, 64),
-            vout: 0,
-            value: 10_000,
-            status: { confirmed: true },
         }) as ExtendedCoin;
 
     it("saves single-contract settle rows under the primary bucket", async () => {
@@ -2259,8 +2284,15 @@ describe("Wallet.updateDbAfterSettle", () => {
         expect(calls.get(DELEGATE_ADDR)[0].script).toBe(DELEGATE_SCRIPT);
     });
 
-    it("removes settled boarding inputs even when no vtxo rows are settled", async () => {
-        const boardingInput = makeBoardingInput("b");
+    it("removes a settled boarding input from the bucket of the address it sits on", async () => {
+        const network = { bech32: "bcrt", hrp: "tark" } as any;
+        const boardingScript = new DefaultVtxo.Script({
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+        });
+        const boardingAddr = boardingScript.onchainAddress(network);
+        const boardingInput = makeBoardingCoin(boardingScript, "b");
         const otherUtxo = {
             txid: "c".repeat(64),
             vout: 0,
@@ -2271,7 +2303,10 @@ describe("Wallet.updateDbAfterSettle", () => {
         const { thisArg, saveVtxos, deleteUtxos, saveUtxos, getUtxos } = makeThisArg({
             annotateVtxos,
             contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
-            currentBoardingUtxos: [{ txid: boardingInput.txid, vout: 0, value: 10_000 }, otherUtxo],
+            network,
+            boardingUtxosByAddress: {
+                [boardingAddr]: [{ txid: boardingInput.txid, vout: 0, value: 10_000 }, otherUtxo],
+            },
         });
 
         await (Wallet.prototype as any).updateDbAfterSettle.call(
@@ -2281,9 +2316,71 @@ describe("Wallet.updateDbAfterSettle", () => {
         );
 
         expect(saveVtxos).not.toHaveBeenCalled();
-        expect(getUtxos).toHaveBeenCalledWith(BOARDING_ADDR);
-        expect(deleteUtxos).toHaveBeenCalledWith(BOARDING_ADDR);
-        expect(saveUtxos).toHaveBeenCalledWith(BOARDING_ADDR, [otherUtxo]);
+        // Cleanup targets the bucket of the address the UTXO actually sits on.
+        expect(getUtxos).toHaveBeenCalledWith(boardingAddr);
+        expect(deleteUtxos).toHaveBeenCalledWith(boardingAddr);
+        expect(saveUtxos).toHaveBeenCalledWith(boardingAddr, [otherUtxo]);
+    });
+
+    it("settling a boarding UTXO from a PREVIOUS boarding address cleans up that historical bucket only (plan §6-III.4)", async () => {
+        const network = { bech32: "bcrt", hrp: "tark" } as any;
+        // Two distinct boarding addresses (different owner pubkeys) — a current
+        // and a rotated-away "previous" one.
+        const currentScript = new DefaultVtxo.Script({
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+        });
+        const previousScript = new DefaultVtxo.Script({
+            pubKey: hex.decode("c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"),
+            serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+        });
+        const currentAddr = currentScript.onchainAddress(network);
+        const previousAddr = previousScript.onchainAddress(network);
+        expect(previousAddr).not.toBe(currentAddr);
+
+        // Settle a UTXO received at the PREVIOUS boarding address.
+        const previousInput = makeBoardingCoin(previousScript, "d");
+        const leftoverAtPrevious = {
+            txid: "e".repeat(64),
+            vout: 0,
+            value: 2000,
+            status: { confirmed: true },
+        };
+        const untouchedAtCurrent = {
+            txid: "f".repeat(64),
+            vout: 0,
+            value: 3000,
+            status: { confirmed: true },
+        };
+
+        const annotateVtxos = vi.fn().mockResolvedValue([]);
+        const { thisArg, deleteUtxos, saveUtxos, getUtxos } = makeThisArg({
+            annotateVtxos,
+            contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
+            network,
+            boardingUtxosByAddress: {
+                [previousAddr]: [
+                    { txid: previousInput.txid, vout: 0, value: 10_000 },
+                    leftoverAtPrevious,
+                ],
+                [currentAddr]: [untouchedAtCurrent],
+            },
+        });
+
+        await (Wallet.prototype as any).updateDbAfterSettle.call(
+            thisArg,
+            [previousInput],
+            "commitment-tx",
+        );
+
+        // Only the previous bucket is rewritten; the current bucket is untouched.
+        expect(getUtxos).toHaveBeenCalledWith(previousAddr);
+        expect(getUtxos).not.toHaveBeenCalledWith(currentAddr);
+        expect(deleteUtxos).toHaveBeenCalledWith(previousAddr);
+        expect(deleteUtxos).not.toHaveBeenCalledWith(currentAddr);
+        expect(saveUtxos).toHaveBeenCalledWith(previousAddr, [leftoverAtPrevious]);
     });
 
     it("rethrows when a settled VTXO has no script", async () => {
