@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { base64, hex } from "@scure/base";
 import { Address, OutScript, SigHash } from "@scure/btc-signer";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
@@ -8,7 +8,6 @@ import {
     Batch,
     CSVMultisigTapscript,
     Intent,
-    MultisigTapscript,
     networks,
     PrevArkTxField,
     RestArkProvider,
@@ -21,32 +20,57 @@ import {
 import { Transaction } from "../../src/utils/transaction";
 import { buildForfeitTx } from "../../src/forfeit";
 import type { ConnectorTreeNode } from "../../src/providers/emulator";
-import {
-    addEmulatorPacket,
-    beforeEachFaucet,
-    enforceSelfSend,
-    faucetOffchain,
-    randomP2TR,
-} from "./utils";
-import { computeArkadeScriptPublicKey } from "../../src/arkade";
+import { addEmulatorPacket, beforeEachFaucet, faucetOffchain, randomP2TR } from "./utils";
 
 const EMULATOR_URL = "http://localhost:7073";
 const ARK_SERVER_URL = "http://localhost:7070";
 const DELEGATE_AMOUNT = 10_000;
 const DELEGATE_EXIT_DELAY = 512;
 
+// Arkade self-send covenant (token form of the `enforceSelfSend` helper): the
+// spend must keep version 2, send output 0 to this same input's scriptPubKey,
+// and preserve its value — i.e. refresh in place.
+const selfSend = [
+    "INSPECTVERSION",
+    new Uint8Array([0x02, 0x00, 0x00, 0x00]),
+    "EQUALVERIFY",
+    0,
+    "INSPECTOUTPUTSCRIPTPUBKEY",
+    1,
+    "EQUALVERIFY",
+    "PUSHCURRENTINPUTINDEX",
+    "INSPECTINPUTSCRIPTPUBKEY",
+    1,
+    "EQUALVERIFY",
+    "EQUALVERIFY",
+    0,
+    "INSPECTOUTPUTVALUE",
+    "PUSHCURRENTINPUTINDEX",
+    "INSPECTINPUTVALUE",
+    "EQUAL",
+] satisfies arkade.AsmToken[];
+
+// Delegate contract: a server + arkade-tweaked-emulator forfeit closure (no user
+// key), plus an alice-only CSV exit. Mirrors the hand-built VtxoScript.
+const delegateProgram = {
+    functions: {
+        forfeit: {
+            tapscript: { signers: ["server"] },
+            arkadeScript: { asm: selfSend },
+        },
+        exit: {
+            tapscript: {
+                signers: ["user"],
+                csv: { type: "seconds", value: BigInt(DELEGATE_EXIT_DELAY) },
+            },
+        },
+    },
+} satisfies arkade.Program;
+
 describe("arkade delegate (covenant batch refresh) — intent submission", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
     const arkProvider = new RestArkProvider(ARK_SERVER_URL);
     const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
-
-    let serverXOnlyPubkey: Uint8Array;
-    let emulatorPubkey: Uint8Array;
-
-    beforeAll(async () => {
-        serverXOnlyPubkey = hex.decode((await arkProvider.getInfo()).signerPubkey).slice(1);
-        emulatorPubkey = hex.decode((await emulator.getInfo()).signerPubkey);
-    });
 
     beforeEach(beforeEachFaucet, 20000);
 
@@ -55,33 +79,21 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
         { timeout: 180000 },
         async () => {
             const aliceIdentity = SingleKey.fromRandomBytes();
-            const alicePubkey = await aliceIdentity.xOnlyPublicKey();
 
-            const arkadeScript = enforceSelfSend();
+            // Derive the delegate contract (forfeit covenant + alice CSV exit)
+            // from the program. Alice is the `"user"` signer of the exit leaf.
+            const ark = await arkade.Arkade.connect({
+                arkade: arkProvider,
+                emulator,
+                indexer: indexerProvider,
+                identity: aliceIdentity,
+                network: networks.regtest,
+            });
+            const contract = ark.contract(delegateProgram, {});
+            const arkadeScript = arkade.resolveAsm(selfSend, {});
 
-            // Build the VTXO script:
-            //   Closure 1 (forfeit): MultisigTapscript { pubkeys: [server, intro_tweaked] }
-            //   Closure 2 (exit):    CSVMultisigTapscript { pubkeys: [alice], timelock: 512s }
-            const vtxoScript = new VtxoScript([
-                MultisigTapscript.encode({
-                    pubkeys: [
-                        serverXOnlyPubkey,
-                        computeArkadeScriptPublicKey(emulatorPubkey, arkadeScript),
-                    ],
-                }).script,
-                CSVMultisigTapscript.encode({
-                    timelock: {
-                        type: "seconds",
-                        value: BigInt(DELEGATE_EXIT_DELAY),
-                    },
-                    pubkeys: [alicePubkey],
-                }).script,
-            ]);
-
-            const delegatePkScript = vtxoScript.pkScript;
-            const contractAddress = vtxoScript
-                .address(networks.regtest.hrp, serverXOnlyPubkey)
-                .encode();
+            const delegatePkScript = contract.pkScript;
+            const contractAddress = contract.address;
 
             // Fund the delegate VTXO via the arkd CLI faucet.
             faucetOffchain(contractAddress, DELEGATE_AMOUNT);
@@ -109,15 +121,9 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
             const fundingTx = Transaction.fromPSBT(base64.decode(virtualTxs[0]));
             const fundingTxRaw = fundingTx.toBytes();
 
-            // Build the tweaked arkade leaf (server + intro_tweaked).
-            const delegateClosure = MultisigTapscript.encode({
-                pubkeys: [
-                    serverXOnlyPubkey,
-                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScript),
-                ],
-            });
-            const arkadeLeaf = vtxoScript.findLeaf(hex.encode(delegateClosure.script));
-            const tapTree = vtxoScript.encode();
+            // The arkade forfeit leaf (server + intro_tweaked) is leaf 0.
+            const arkadeLeaf = contract.leafScript(0);
+            const tapTree = contract.tapTree;
 
             // A solver session pubkey is required in cosigners_public_keys.
             const solverIdentity = SingleKey.fromRandomBytes();
