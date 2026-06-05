@@ -36,7 +36,9 @@ describe("Contract params change", () => {
 
                 const firstManager = await first.wallet.getContractManager();
                 const contractsAfterFirst = await firstManager.getContracts();
-                expect(contractsAfterFirst).toHaveLength(2);
+                // default + delegate (both csv = unilateralExitDelay) + boarding
+                // (csv = boardingExitDelay, a distinct server delay).
+                expect(contractsAfterFirst).toHaveLength(3);
 
                 const oldDelegate = contractsAfterFirst.find((c) => c.type === "delegate");
                 const oldDefault = contractsAfterFirst.find((c) => c.type === "default");
@@ -76,7 +78,10 @@ describe("Contract params change", () => {
 
                 const secondManager = await second.wallet.getContractManager();
                 const contractsAfterSecond = await secondManager.getContracts();
-                expect(contractsAfterSecond).toHaveLength(4);
+                // Old default + old delegate (persisted) + new default + new
+                // delegate (new unilateralExitDelay) + the single boarding
+                // contract, whose boardingExitDelay never changed.
+                expect(contractsAfterSecond).toHaveLength(5);
 
                 const delegateContracts = contractsAfterSecond.filter((c) => c.type === "delegate");
                 const defaultContracts = contractsAfterSecond.filter((c) => c.type === "default");

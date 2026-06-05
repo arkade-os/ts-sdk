@@ -79,7 +79,9 @@ import { DelegateVtxo } from "../script/delegate";
 import { DelegateManagerImpl, findDestinationOutputIndex, IDelegateManager } from "./delegate";
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
+import type { CreateContractParams } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
+import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 import { validateVtxosForScript, saveVtxosForContract } from "../contracts/vtxoOwnership";
@@ -141,6 +143,89 @@ function dedupeTimelocks(timelocks: RelativeTimelock[]): RelativeTimelock[] {
     }
 
     return deduped;
+}
+
+/**
+ * Whether two wallet baseline contract types may legitimately share a single
+ * repository row when their scripts collide.
+ *
+ * Contracts are keyed by their pkScript (`script` is the unique identity), so a
+ * given script can own exactly one row. `default` and `boarding` are both built
+ * from the same `DefaultVtxo.Script` shape and differ only by CSV timelock
+ * value; when the offchain unilateral-exit delay and the boarding-exit delay
+ * coincide, the two derive a byte-identical script and may share a single row
+ * (the wallet coalesces such a collision onto `default` — see
+ * {@link ensureWalletContract}). Same-type is trivially compatible. Every other
+ * pairing (e.g. a `delegate` script, which carries an extra leaf and cannot
+ * collide under normal semantics) is incompatible and signals a real
+ * script/params mismatch.
+ *
+ * @internal Exported for unit tests; not part of the public API surface.
+ */
+export function areSameScriptBaselineTypesCompatible(
+    existingType: string,
+    requestedType: string,
+): boolean {
+    if (existingType === requestedType) return true;
+    return (
+        (existingType === "default" && requestedType === "boarding") ||
+        (existingType === "boarding" && requestedType === "default")
+    );
+}
+
+/**
+ * Register a wallet baseline contract (`default` / `boarding`) idempotently,
+ * coalescing a same-script collision onto the `default` type.
+ *
+ * Contracts are keyed by script, so when `default` and `boarding` resolve to the
+ * same pkScript the script can own only one row. This collision is degenerate: a
+ * sound Ark server keeps `boardingExitDelay` strictly longer than the offchain
+ * unilateral-exit delay (equal delays would expose the provider to a
+ * double-spend), so in practice the two scripts differ and the boarding row
+ * keeps its own identity. They can coincide only against a misconfigured /
+ * malicious server — and even then the wallet must stay usable, so we coalesce
+ * rather than throw.
+ *
+ * Resolution ("default wins" on a shared script):
+ * - no existing row for the script → create it;
+ * - existing row of the same type → {@link ContractManager.createContract} is a
+ *   no-op (idempotent), so re-running initialization never duplicates;
+ * - requested `default`, existing `boarding` (compatible) → promote the row to
+ *   `default`. The shared script is also the wallet's live offchain baseline, so
+ *   typing it `default` keeps it visible to the type-gated consumers
+ *   (`notifyIncomingFunds`, `getWalletScripts`, `getScriptMap`);
+ * - requested `boarding`, existing `default` (compatible) → accept as-is (the
+ *   shared script is already canonical);
+ * - existing row of an *incompatible* type → fall through to `createContract`,
+ *   which throws its descriptive script/type mismatch error.
+ *
+ * Used only for the wallet's own `default` / `boarding` baseline contracts;
+ * `delegate` creation stays strict (its script cannot collide with the others).
+ *
+ * @internal Exported for unit tests; not part of the public API surface.
+ */
+export async function ensureWalletContract(
+    manager: ContractManager,
+    params: CreateContractParams,
+): Promise<void> {
+    const [existing] = await manager.getContracts({ script: params.script });
+    if (
+        existing &&
+        existing.type !== params.type &&
+        areSameScriptBaselineTypesCompatible(existing.type, params.type)
+    ) {
+        // Compatible collision (degenerate; sound servers keep the delays
+        // distinct). The script already persists and is watched, so the baseline
+        // purpose is served. Coalesce onto `default` ("default wins") so a shared
+        // script that is also the wallet's live offchain baseline stays
+        // discoverable through the type-gated consumers; otherwise the existing
+        // row is already `default`, so accept it as-is.
+        if (params.type === "default" && existing.type === "boarding") {
+            await manager.updateContract(params.script, { type: "default" });
+        }
+        return;
+    }
+    await manager.createContract(params);
 }
 
 export type IncomingFunds =
@@ -239,10 +324,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         this.walletContractTimelocks =
             walletContractTimelocks && walletContractTimelocks.length > 0
                 ? dedupeTimelocks(walletContractTimelocks)
-                : [
-                      this.offchainTapscript.options.csvTimelock ??
-                          DefaultVtxo.Script.DEFAULT_TIMELOCK,
-                  ];
+                : [this.offchainTapscript.options.csvTimelock];
     }
 
     /**
@@ -379,9 +461,18 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const offchainTapscript = !delegatePubKey
             ? new DefaultVtxo.Script(offchainOptions)
             : new DelegateVtxo.Script({ ...offchainOptions, delegatePubKey });
-        const boardingTapscript = new DefaultVtxo.Script({
-            ...offchainOptions,
-            csvTimelock: boardingTimelock,
+        // Source the boarding script from the registered `boarding` handler so
+        // wallet setup derives it through the contract type rather than ad-hoc
+        // construction. The handler returns a DefaultVtxo.Script byte-identical
+        // to the previous inline construction for equivalent params (the CSV
+        // timelock round-trips through the same BIP68 sequence encoding the
+        // script bytes already use), so getBoardingAddress() and pkScript are
+        // unchanged. Contract-manager initialization persists a matching
+        // `boarding` contract from these same params.
+        const boardingTapscript = BoardingContractHandler.createScript({
+            pubKey: hex.encode(pubKey),
+            serverPubKey: hex.encode(serverPubKey),
+            csvTimelock: timelockToSequence(boardingTimelock).toString(),
         });
 
         const walletRepository =
@@ -920,7 +1011,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
             });
             const defaultScriptHex = hex.encode(defaultScript.pkScript);
 
-            await manager.createContract({
+            // Use ensureWalletContract (not a strict createContract) so a
+            // default baseline whose script collides with an already-persisted
+            // `boarding` row promotes that row to `default` ("default wins")
+            // instead of throwing a type mismatch. Degenerate guard only: a
+            // sound server keeps the unilateral-exit and boarding-exit delays
+            // distinct, so these scripts never actually collide.
+            await ensureWalletContract(manager, {
                 type: "default",
                 params: {
                     pubKey: hex.encode(defaultScript.options.pubKey),
@@ -957,6 +1054,42 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 });
             }
         }
+
+        // Boarding contract: persisted from the same handler-produced boarding
+        // script the wallet uses (this.boardingTapscript). Created `active` so
+        // ContractWatcher monitors the boarding Arkade address and any VTXOs
+        // that land on the (valid) boarding script are visible and spendable
+        // through the normal contract paths — even though the SDK does not
+        // promote the boarding Arkade address as an L2 receive address.
+        // getBoardingAddress() does not depend on this contract (it derives from
+        // this.boardingTapscript directly), keeping the lazy contract-manager
+        // lifecycle intact.
+        //
+        // Create-if-missing via ensureWalletContract (idempotent): contracts
+        // are keyed by script. In the degenerate case where boardingExitDelay
+        // coincides with a baseline `default` timelock (a misconfigured server;
+        // sound servers keep them distinct), the boarding script is
+        // byte-identical to that default contract's script, so we cannot — and
+        // need not — persist a second row: the shared script is already
+        // persisted and watched as a `default` contract ("default wins"), so
+        // funds landing on it stay visible/spendable. Re-running initialization
+        // is likewise a no-op once the row exists.
+        const boardingScriptHex = hex.encode(this.boardingTapscript.pkScript);
+        const boardingCsvTimelock =
+            this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        await ensureWalletContract(manager, {
+            type: "boarding",
+            params: {
+                pubKey: hex.encode(this.boardingTapscript.options.pubKey),
+                serverPubKey: hex.encode(this.boardingTapscript.options.serverPubKey),
+                csvTimelock: timelockToSequence(boardingCsvTimelock).toString(),
+            },
+            script: boardingScriptHex,
+            address: this.boardingTapscript
+                .address(this.network.hrp, this.arkServerPublicKey)
+                .encode(),
+            state: "active",
+        });
 
         return manager;
     }

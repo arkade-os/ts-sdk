@@ -117,6 +117,13 @@ describe("Wallet", () => {
             //    the wallet's default contract (includeSpent=true)
             // 4. ContractWatcher.subscribeForScripts for the wallet's script
             // 5. getContractsWithVtxos -> syncContracts delta fetch
+            //
+            // boardingExitDelay equals unilateralExitDelay here, so the
+            // boarding script is byte-identical to the default baseline
+            // contract's script. Contract-manager init creates the boarding
+            // contract create-if-missing, so it is skipped (the script is
+            // already persisted/watched via the default contract) and the
+            // fetch sequence above is unchanged.
 
             mockFetch
                 .mockResolvedValueOnce({
@@ -127,6 +134,7 @@ describe("Wallet", () => {
                             forfeitPubkey: mockServerKeyHex,
                             batchExpiry: BigInt(144),
                             unilateralExitDelay: BigInt(144),
+                            boardingExitDelay: BigInt(144),
                             roundInterval: BigInt(144),
                             network: "mutinynet",
                             forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
@@ -2042,10 +2050,12 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         const tapscriptOld = new DefaultVtxo.Script({
             pubKey: TEST_PUB_KEY,
             serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
         });
         const tapscriptNew = new DefaultVtxo.Script({
             pubKey: TEST_DELEGATE_PUB_KEY,
             serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
         });
         // Sanity: the two tapscripts produce distinguishable outputs.
         // Without this, any assertion below would be vacuously true.
