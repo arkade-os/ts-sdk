@@ -1100,6 +1100,10 @@ describe("Wallet.restore", () => {
             return reply([]);
         });
         vi.stubGlobal("fetch", mockFetch);
+        return () => {
+            vi.unstubAllGlobals();
+            installRestoreHarness();
+        };
     };
 
     it("discovers a VTXO minted under a deprecated signer and persists the deprecated key in BOTH params and address (plan §3/§4)", async () => {
@@ -1112,10 +1116,13 @@ describe("Wallet.restore", () => {
         const deprecatedKey = hex.decode(deprecatedXOnly);
 
         const { wallet, indexer, hdProvider, contractRepository } = await makeHdWalletForTest();
+        let unstub: (() => void) | undefined;
         try {
             const currentXOnly = hex.encode(wallet.offchainTapscript.options.serverPubKey);
             // Keep the current signer unchanged; advertise one deprecated key.
-            stubInfoWithDeprecated(currentXOnly, [{ cutoffDate: 0, pubkey: deprecatedCompressed }]);
+            unstub = stubInfoWithDeprecated(currentXOnly, [
+                { cutoffDate: 0, pubkey: deprecatedCompressed },
+            ]);
 
             // Mint an L2 VTXO at receive index 2 anchored to the DEPRECATED
             // signer's script (one csvTimelock on this network).
@@ -1146,6 +1153,7 @@ describe("Wallet.restore", () => {
                 hdProvider.materializeDescriptorAt(2),
             );
         } finally {
+            unstub?.();
             await wallet.dispose();
         }
     });
