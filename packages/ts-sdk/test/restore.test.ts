@@ -242,6 +242,69 @@ describe("DefaultContractHandler.discoverAt", () => {
         expect(out[0].script).toBe(script1);
         expect(out[0].params.csvTimelock).toBe(timelockToSequence(tl1).toString());
     });
+
+    it("scans deprecated signers and stamps the matched key into params AND address", async () => {
+        // A distinct valid x-only point standing in for a now-rotated signer.
+        const deprecatedHex = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
+        const deprecated = hex.decode(deprecatedHex);
+        const deprecatedScript = hex.encode(
+            new DefaultVtxo.Script({
+                pubKey: hex.decode(pkHex),
+                serverPubKey: deprecated,
+                csvTimelock: tl,
+            }).pkScript,
+        );
+        // Only the deprecated-key script is funded — the current key has none.
+        const out = await DefaultContractHandler.discoverAt(2, descriptor, {
+            indexerProvider: mockIndexer(new Set([deprecatedScript])),
+            onchainProvider: {} as any,
+            network: { hrp: "ark" },
+            serverPubKey: server,
+            deprecatedSignerPubKeys: [deprecated],
+            csvTimelocks: [tl],
+        });
+        expect(out).toHaveLength(1);
+        expect(out[0].script).toBe(deprecatedScript);
+        // The matched deprecated key is threaded through BOTH the persisted
+        // params and the encoded address — not the current serverPubKey.
+        expect(out[0].params.serverPubKey).toBe(deprecatedHex);
+        expect(out[0].address).toBe(
+            new DefaultVtxo.Script({
+                pubKey: hex.decode(pkHex),
+                serverPubKey: deprecated,
+                csvTimelock: tl,
+            })
+                .address("ark", deprecated)
+                .encode(),
+        );
+    });
+
+    it("dedups by scriptHex: a deprecated signer reproducing the current script yields one entry and one probe", async () => {
+        // Degenerate deprecated set: the same key as the current signer, so it
+        // rebuilds a byte-identical script. The `seen` guard must collapse the
+        // two passes into a single probe and a single emitted contract.
+        const calls: string[][] = [];
+        const indexer = {
+            async getVtxos(opts: any) {
+                const scripts = (opts.scripts ?? []) as string[];
+                calls.push(scripts);
+                const vtxos = scripts
+                    .filter((s) => s === script)
+                    .map((s) => ({ value: 1, script: s }) as any);
+                return { vtxos };
+            },
+        } as any;
+        const out = await DefaultContractHandler.discoverAt(2, descriptor, {
+            indexerProvider: indexer,
+            onchainProvider: {} as any,
+            network: { hrp: "ark" },
+            serverPubKey: server,
+            deprecatedSignerPubKeys: [server],
+            csvTimelocks: [tl],
+        });
+        expect(out).toHaveLength(1);
+        expect(calls.flat().filter((s) => s === script)).toHaveLength(1);
+    });
 });
 
 describe("DelegateContractHandler.discoverAt", () => {
@@ -354,6 +417,42 @@ describe("DelegateContractHandler.discoverAt", () => {
 
         expect(entry1.params.csvTimelock).toBe(timelockToSequence(tl1).toString());
         expect(entry2.params.csvTimelock).toBe(timelockToSequence(tl2).toString());
+    });
+
+    it("scans deprecated signers and stamps the matched key into params AND address", async () => {
+        // A distinct valid x-only point standing in for a now-rotated signer.
+        const deprecatedHex = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+        const deprecated = hex.decode(deprecatedHex);
+        const deprecatedScript = hex.encode(
+            new DelegateVtxo.Script({
+                pubKey,
+                serverPubKey: deprecated,
+                delegatePubKey: del,
+                csvTimelock: tl,
+            }).pkScript,
+        );
+        const out = await DelegateContractHandler.discoverAt(2, descriptor, {
+            indexerProvider: mockIndexer(new Set([deprecatedScript])),
+            onchainProvider: {} as any,
+            network: { hrp: "ark" },
+            serverPubKey: server,
+            delegatePubKey: del,
+            deprecatedSignerPubKeys: [deprecated],
+            csvTimelocks: [tl],
+        });
+        expect(out).toHaveLength(1);
+        expect(out[0].script).toBe(deprecatedScript);
+        expect(out[0].params.serverPubKey).toBe(deprecatedHex);
+        expect(out[0].address).toBe(
+            new DelegateVtxo.Script({
+                pubKey,
+                serverPubKey: deprecated,
+                delegatePubKey: del,
+                csvTimelock: tl,
+            })
+                .address("ark", deprecated)
+                .encode(),
+        );
     });
 });
 
@@ -967,6 +1066,85 @@ describe("Wallet.restore", () => {
                 }).pkScript,
             );
             expect(boardingRows.map((c) => c.script)).toContain(boardingScript4);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    // Re-point the global fetch's `/info` reply at a fresh server-info
+    // snapshot carrying `deprecatedSigners`. `_runRestore` re-reads
+    // `getInfo()` live, so a stub installed AFTER wallet creation but BEFORE
+    // restore() drives the signer axis without disturbing the build-time key.
+    const stubInfoWithDeprecated = (
+        signerPubkey: string,
+        deprecatedSigners: { cutoffDate: number; pubkey: string }[],
+    ) => {
+        const mockFetch = vi.fn().mockImplementation((url: string) => {
+            const reply = (body: unknown) =>
+                Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+            if (url.includes("/info"))
+                return reply({
+                    signerPubkey,
+                    forfeitPubkey: signerPubkey,
+                    boardingExitDelay: 144,
+                    unilateralExitDelay: 144,
+                    network: "mutinynet",
+                    dust: 1000,
+                    forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                    checkpointTapscript:
+                        "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+                    deprecatedSigners,
+                });
+            if (url.includes("subscribe") || url.includes("subscriptions"))
+                return reply({ subscriptionId: "sub-1" });
+            return reply([]);
+        });
+        vi.stubGlobal("fetch", mockFetch);
+    };
+
+    it("discovers a VTXO minted under a deprecated signer and persists the deprecated key in BOTH params and address (plan §3/§4)", async () => {
+        // A COMPRESSED (33-byte) deprecated signer key, distinct from the
+        // current one. Restore must x-only-normalize it (33→32 slice, plan
+        // step 2) before building candidate scripts; using the compressed
+        // form keeps that normalization under test.
+        const deprecatedCompressed = "03" + "ab".repeat(32);
+        const deprecatedXOnly = deprecatedCompressed.slice(2);
+        const deprecatedKey = hex.decode(deprecatedXOnly);
+
+        const { wallet, indexer, hdProvider, contractRepository } = await makeHdWalletForTest();
+        try {
+            const currentXOnly = hex.encode(wallet.offchainTapscript.options.serverPubKey);
+            // Keep the current signer unchanged; advertise one deprecated key.
+            stubInfoWithDeprecated(currentXOnly, [{ cutoffDate: 0, pubkey: deprecatedCompressed }]);
+
+            // Mint an L2 VTXO at receive index 2 anchored to the DEPRECATED
+            // signer's script (one csvTimelock on this network).
+            const pubKey2 = deriveDescriptorLeafPubKey(hdProvider.materializeDescriptorAt(2));
+            const deprecatedScript = new DefaultVtxo.Script({
+                pubKey: pubKey2,
+                serverPubKey: deprecatedKey,
+                csvTimelock: wallet.walletContractTimelocks[0],
+            });
+            const deprecatedScriptHex = hex.encode(deprecatedScript.pkScript);
+            indexer.usedScripts.add(deprecatedScriptHex);
+
+            await wallet.restore({ gapLimit: 5 });
+
+            // The contract is recovered and carries the deprecated signer in
+            // BOTH the persisted params and the encoded Ark address — so later
+            // signing/forfeit resolves the key the VTXO was actually minted
+            // under, not the current one.
+            const rows = await contractRepository.getContracts({ type: ["default"] });
+            const match = rows.find((c) => c.script === deprecatedScriptHex);
+            expect(match).toBeDefined();
+            expect(match!.params.serverPubKey).toBe(deprecatedXOnly);
+            expect(match!.address).toBe(
+                deprecatedScript.address(wallet.network.hrp, deprecatedKey).encode(),
+            );
+            // The watermark advances to the recovered index.
+            expect(await hdProvider.getCurrentSigningDescriptor()).toBe(
+                hdProvider.materializeDescriptorAt(2),
+            );
         } finally {
             await wallet.dispose();
         }

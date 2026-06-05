@@ -134,37 +134,47 @@ export const DelegateContractHandler: ContractHandler<DelegateContractParams, De
         if (!deps.delegatePubKey) return [];
         const pubKey = deriveDescriptorLeafPubKey(descriptor);
         const out: DiscoveredContract[] = [];
-        for (const csvTimelock of deps.csvTimelocks) {
-            const script = new DelegateVtxo.Script({
-                pubKey,
-                serverPubKey: deps.serverPubKey,
-                delegatePubKey: deps.delegatePubKey,
-                csvTimelock,
-            });
-            const scriptHex = hex.encode(script.pkScript);
-            const { vtxos } = await deps.indexerProvider.getVtxos({
-                scripts: [scriptHex],
-            });
-            if (vtxos.length === 0) continue;
-            out.push({
-                type: "delegate",
-                params: {
-                    pubKey: hex.encode(pubKey),
-                    serverPubKey: hex.encode(deps.serverPubKey),
-                    delegatePubKey: hex.encode(deps.delegatePubKey),
-                    csvTimelock: timelockToSequence(csvTimelock).toString(),
-                },
-                script: scriptHex,
-                address: script.address(deps.network.hrp, deps.serverPubKey).encode(),
-                ...(index > 0
-                    ? {
-                          metadata: {
-                              source: WALLET_RECEIVE_SOURCE,
-                              signingDescriptor: descriptor,
-                          },
-                      }
-                    : {}),
-            });
+        // Scan the current signer first, then any deprecated signers (see
+        // DefaultContractHandler.discoverAt for the rationale). The matched
+        // signer is threaded through script, params, and address; scriptHex
+        // dedup suppresses duplicate emissions from a non-rotating signer.
+        const signers = [deps.serverPubKey, ...(deps.deprecatedSignerPubKeys ?? [])];
+        const seen = new Set<string>();
+        for (const serverPubKey of signers) {
+            for (const csvTimelock of deps.csvTimelocks) {
+                const script = new DelegateVtxo.Script({
+                    pubKey,
+                    serverPubKey,
+                    delegatePubKey: deps.delegatePubKey,
+                    csvTimelock,
+                });
+                const scriptHex = hex.encode(script.pkScript);
+                if (seen.has(scriptHex)) continue;
+                seen.add(scriptHex);
+                const { vtxos } = await deps.indexerProvider.getVtxos({
+                    scripts: [scriptHex],
+                });
+                if (vtxos.length === 0) continue;
+                out.push({
+                    type: "delegate",
+                    params: {
+                        pubKey: hex.encode(pubKey),
+                        serverPubKey: hex.encode(serverPubKey),
+                        delegatePubKey: hex.encode(deps.delegatePubKey),
+                        csvTimelock: timelockToSequence(csvTimelock).toString(),
+                    },
+                    script: scriptHex,
+                    address: script.address(deps.network.hrp, serverPubKey).encode(),
+                    ...(index > 0
+                        ? {
+                              metadata: {
+                                  source: WALLET_RECEIVE_SOURCE,
+                                  signingDescriptor: descriptor,
+                              },
+                          }
+                        : {}),
+                });
+            }
         }
         return out;
     },

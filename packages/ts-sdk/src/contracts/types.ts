@@ -272,7 +272,21 @@ export interface DiscoveryDeps {
      * the scanner unit harness), in which case boarding `discoverAt` no-ops.
      */
     onchainNetwork?: Network;
+    /**
+     * The server's **current** signer key (x-only, 32 bytes), taken from a
+     * fresh server-info snapshot at restore time. L2 (`default`/`delegate`)
+     * discovery probes this key first.
+     */
     serverPubKey: Uint8Array;
+    /**
+     * The server's **deprecated** signer keys (x-only, 32 bytes) from the same
+     * snapshot. A VTXO minted under a now-rotated signer is anchored to a
+     * different script; L2 discovery scans these keys alongside
+     * {@link DiscoveryDeps.serverPubKey} so signer rotation does not strand
+     * funds. Empty/absent when the server advertises no deprecated signers.
+     * Boarding discovery does not consult this set (current UTXO set only).
+     */
+    deprecatedSignerPubKeys?: Uint8Array[];
     /** Relative timelocks the wallet treats as its baseline matrix. */
     csvTimelocks: RelativeTimelock[];
     /**
