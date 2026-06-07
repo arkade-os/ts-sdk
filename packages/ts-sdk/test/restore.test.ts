@@ -811,6 +811,116 @@ describe("ContractManager.scanContracts", () => {
             mgr.dispose();
         }
     });
+
+    it("rejects a non-positive / non-integer batchSize", async () => {
+        const mgr = await makeManagerForTest();
+        try {
+            for (const bad of [0, -1, 2.5]) {
+                await expect(
+                    mgr.scanContracts({
+                        batchSize: bad,
+                        hd: true,
+                        materialize,
+                        deps: makeDeps(),
+                    }),
+                ).rejects.toThrow(/batchSize/);
+            }
+        } finally {
+            mgr.dispose();
+        }
+    });
+
+    it("probes a WINDOW of indices concurrently, not one index at a time", async () => {
+        // Cross-index concurrency proof (the point of batching). A SINGLE
+        // handler is registered so the only overlap possible is between
+        // DIFFERENT indices. The handler's probe at the first index waits for a
+        // later index to ALSO enter before returning; a one-index-at-a-time
+        // loop would never launch index 1 until index 0 returned, so index 0
+        // would only ever observe itself and time out. gapLimit 3 → the first
+        // window caps to indices 0,1,2 (all probed concurrently). The handler
+        // always misses so the gap window still closes.
+        let entered = 0;
+        let releaseBoth!: () => void;
+        const bothInFlight = new Promise<void>((r) => (releaseBoth = r));
+        let firstSawBoth = false;
+        const fake = {
+            type: "windowfake",
+            createScript: (p: Record<string, string>) =>
+                ({ pkScript: hex.decode(p.script) }) as any,
+            serializeParams: (p: any) => p,
+            deserializeParams: (p: any) => p,
+            selectPath: () => null,
+            getAllSpendingPaths: () => [],
+            getSpendablePaths: () => [],
+            async discoverAt(index: number) {
+                entered += 1;
+                if (entered === 2) releaseBoth();
+                let timer: ReturnType<typeof setTimeout>;
+                const sawBoth = await Promise.race([
+                    bothInFlight.then(() => true),
+                    new Promise<boolean>((r) => {
+                        timer = setTimeout(() => r(false), 1000);
+                    }),
+                ]);
+                clearTimeout(timer!);
+                if (index === 0) firstSawBoth = sawBoth;
+                return [];
+            },
+        };
+        register("windowfake", fake);
+        const mgr = await makeManagerForTest();
+        try {
+            await mgr.scanContracts({ gapLimit: 3, hd: true, materialize, deps: makeDeps() });
+            expect(entered).toBeGreaterThanOrEqual(2);
+            // Index 0's probe observed a later index in-flight before
+            // returning — only possible if the window overlapped distinct
+            // indices. A serial regression makes this time out (false).
+            expect(firstSawBoth).toBe(true);
+        } finally {
+            mgr.dispose();
+        }
+    });
+
+    it("batchSize is a pure latency knob: the probe sequence and result are batch-invariant", async () => {
+        // The swap-hit-at-4 scenario probes EXACTLY 0..9 under the serial path
+        // (see the core test above). Re-run it under several batch sizes — the
+        // window cap (`gapLimit - unused`) must keep the probed set, its order,
+        // and lastIndexUsed byte-identical regardless of how indices are
+        // grouped. A batch that over-scanned past the gap-close point would
+        // probe index 10+ and break this.
+        for (const batchSize of [1, 2, 3, 7, 100]) {
+            const { handler, calls } = makeFakeHandler("swapbatch", (i) =>
+                i === 4
+                    ? [
+                          {
+                              type: "swapbatch",
+                              params: { script: "aabb" },
+                              script: "aabb",
+                              address: "ark1qswap",
+                          },
+                      ]
+                    : [],
+            );
+            register("swapbatch", handler);
+            const mgr = await makeManagerForTest();
+            try {
+                const res = await mgr.scanContracts({
+                    gapLimit: 5,
+                    batchSize,
+                    hd: true,
+                    materialize,
+                    deps: makeDeps(),
+                });
+                expect(res.lastIndexUsed).toBe(4);
+                expect(res.handlerErrors).toEqual([]);
+                expect([...calls].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+            } finally {
+                mgr.dispose();
+                contractHandlers.unregister("swapbatch");
+                registered.splice(registered.indexOf("swapbatch"), 1);
+            }
+        }
+    });
 });
 
 describe("signingDescriptorIndex", () => {
