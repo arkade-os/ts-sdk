@@ -41,11 +41,12 @@ export class BIP21 {
             if (value === undefined) continue;
 
             if (key === "amount") {
-                if (!isFinite(value as number)) {
+                const amount = value as number;
+                if (!isFinite(amount) || !Number.isSafeInteger(Math.trunc(amount))) {
                     console.warn("Invalid amount");
                     continue;
                 }
-                if ((value as number) < 0) {
+                if (amount < 0) {
                     continue;
                 }
                 queryParams[key] = value;
@@ -112,11 +113,13 @@ export class BIP21 {
                 if (!value) continue;
 
                 if (key === "amount") {
-                    const amount = Number(value);
-                    if (!isFinite(amount)) {
+                    // BIP21 ABNF: amount = *digit [ "." *digit ], so digits are
+                    // optional on either side of the decimal point (".5", "5.").
+                    if (!/^(?:\d+\.?\d*|\.\d+)$/.test(value)) {
                         continue;
                     }
-                    if (amount < 0) {
+                    const amount = Number(value);
+                    if (!isFinite(amount) || !Number.isSafeInteger(Math.trunc(amount))) {
                         continue;
                     }
                     params[key] = amount;

@@ -228,7 +228,7 @@ If you don't pass a provider explicitly, `OnchainWallet` and `Wallet.create({ ..
 
 #### Default URLs
 
-The SDK ships with reachable defaults for each network — bitcoin, signet, and mutinynet point at Ark Labs–operated deployments; testnet falls back to mempool.space; regtest assumes a local nigiri stack.
+The SDK ships with reachable defaults for each network — bitcoin, signet, and mutinynet point at Ark Labs–operated deployments; testnet falls back to mempool.space; regtest assumes a local [arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest) stack (esplora API on `http://localhost:3000/api`).
 
 ```typescript
 import {
