@@ -58,6 +58,7 @@ import {
 import {
     DEFAULT_RENEWAL_CONFIG,
     DEFAULT_SETTLEMENT_CONFIG,
+    MAX_VTXOS_PER_SETTLEMENT,
     SettlementConfig,
     VtxoManager,
 } from "./vtxo-manager";
@@ -2141,8 +2142,18 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             const vtxos = await this.getVtxos({ withRecoverable: true });
 
+            // Cap the VTXOs per settlement to stay under the server's
+            // intent-size limit (see MAX_VTXOS_PER_SETTLEMENT). Apply the cap to
+            // economically viable VTXOs only: skipping uneconomic inputs and
+            // continuing past the cap avoids an uneconomic prefix permanently
+            // starving valid VTXOs behind it. The boarding inputs above are
+            // added uncapped; the headroom absorbs them. Any overflow is
+            // settled on the next call.
             const filteredVtxos = [];
             for (const vtxo of vtxos) {
+                if (filteredVtxos.length >= MAX_VTXOS_PER_SETTLEMENT) {
+                    break;
+                }
                 const inputFee = estimator.evalOffchainInput({
                     amount: BigInt(vtxo.value),
                     type: vtxo.virtualStatus.state === "swept" ? "recoverable" : "vtxo",

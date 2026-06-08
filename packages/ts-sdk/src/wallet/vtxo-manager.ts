@@ -105,6 +105,17 @@ async function runWithCrossInstanceLock(name: string, fn: () => Promise<void>): 
     });
 }
 
+/**
+ * Maximum number of VTXOs included in a single settlement intent.
+ *
+ * arkd rejects intents carrying more than 91 VTXOs with a `TX_TOO_LARGE`
+ * error. We cap well below that so the remaining headroom absorbs any
+ * boarding inputs (which are added uncapped) plus transaction-size overhead.
+ * When more VTXOs are eligible, the overflow is left for the next
+ * settlement cycle. Mirrors the go-sdk `maxVtxosPerBatch`.
+ */
+export const MAX_VTXOS_PER_SETTLEMENT = 50;
+
 /** Default renewal threshold in seconds (3 days). */
 export const DEFAULT_THRESHOLD_SECONDS = 259_200;
 
@@ -583,10 +594,28 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const dustAmount = getDustAmount(this.wallet);
 
         // Filter recoverable virtual outputs and handle subdust logic
-        const { vtxosToRecover, totalAmount } = getRecoverableWithSubdust(allVtxos, dustAmount);
+        let { vtxosToRecover, totalAmount } = getRecoverableWithSubdust(allVtxos, dustAmount);
 
         if (vtxosToRecover.length === 0) {
             throw new Error("No recoverable VTXOs found");
+        }
+
+        // Cap the number of VTXOs per settlement to stay under the server's
+        // intent-size limit (see MAX_VTXOS_PER_SETTLEMENT). The subdust
+        // inclusion decision above was made on the full set's combined total,
+        // so a naive slice can drop the batch below dust — which the server
+        // rejects, and the next cycle would re-pick the same prefix forever.
+        // Preserve selection order for go-sdk parity, but re-run the
+        // subdust/dust eligibility on that exact capped subset. The overflow
+        // is recovered next cycle.
+        if (vtxosToRecover.length > MAX_VTXOS_PER_SETTLEMENT) {
+            const capped = vtxosToRecover.slice(0, MAX_VTXOS_PER_SETTLEMENT);
+            ({ vtxosToRecover, totalAmount } = getRecoverableWithSubdust(capped, dustAmount));
+            if (vtxosToRecover.length === 0) {
+                // The capped batch stays below dust, so submitting it would be
+                // rejected and the next cycle would pick the same prefix.
+                throw new Error("No recoverable VTXOs found");
+            }
         }
 
         const arkAddress = await this.wallet.getAddress();
@@ -795,6 +824,14 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             vtxos = await this.revalidateBeforeSettle(vtxos, threshold);
             if (vtxos.length === 0) {
                 throw new Error("No VTXOs available to renew");
+            }
+
+            // Cap the number of VTXOs per settlement to stay under the
+            // server's intent-size limit (see MAX_VTXOS_PER_SETTLEMENT). The
+            // output amount is summed from the capped set below, so it stays
+            // consistent; the overflow is renewed on the next cycle.
+            if (vtxos.length > MAX_VTXOS_PER_SETTLEMENT) {
+                vtxos = vtxos.slice(0, MAX_VTXOS_PER_SETTLEMENT);
             }
 
             const totalAmount = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
@@ -1438,8 +1475,17 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             totalAmount += BigInt(u.value) - BigInt(inputFee.satoshis);
         }
 
+        // Cap the VTXOs per settlement to stay under the server's intent-size
+        // limit (see MAX_VTXOS_PER_SETTLEMENT). Apply the cap to economically
+        // viable VTXOs only: skipping uneconomic inputs and continuing past the
+        // cap avoids an uneconomic prefix permanently starving valid VTXOs
+        // behind it. Boarding inputs are added uncapped above; the headroom
+        // absorbs them. Any overflow is settled on the next cycle.
         const filteredVtxos: ExtendedVirtualCoin[] = [];
         for (const v of expiringVtxos) {
+            if (filteredVtxos.length >= MAX_VTXOS_PER_SETTLEMENT) {
+                break;
+            }
             const inputFee = estimator.evalOffchainInput({
                 amount: BigInt(v.value),
                 type: v.virtualStatus.state === "swept" ? "recoverable" : "vtxo",

@@ -17,7 +17,9 @@ import {
     DelegateProvider,
 } from "../src";
 import { TEST_PUB_KEY, TEST_DELEGATE_PUB_KEY, TEST_SERVER_PUB_KEY } from "./contracts/helpers";
-import type { ExtendedCoin } from "../src/wallet";
+import type { ExtendedCoin, ExtendedVirtualCoin } from "../src/wallet";
+import { CSVMultisigTapscript } from "../src/script/tapscript";
+import { MAX_VTXOS_PER_SETTLEMENT } from "../src/wallet/vtxo-manager";
 import { ReadonlySingleKey } from "../src/identity/singleKey";
 import { IndexedDBWalletRepository, IndexedDBContractRepository } from "../src/repositories";
 import type { Coin, VirtualCoin } from "../src/wallet";
@@ -1798,6 +1800,107 @@ describe("Wallet._settleImpl", () => {
         expect(deleteIntent).toHaveBeenCalledTimes(1);
         expect(batchJoinSpy).not.toHaveBeenCalled();
         batchJoinSpy.mockRestore();
+    });
+
+    // Regression coverage for the no-params (auto-select) settle branch, which
+    // selects all spendable inputs itself and applies MAX_VTXOS_PER_SETTLEMENT.
+    describe("no-params auto-select cap", () => {
+        const exitScriptHex = hex.encode(
+            CSVMultisigTapscript.encode({
+                timelock: { type: "seconds", value: 604_672n },
+                pubkeys: [new Uint8Array(32).fill(0x01)],
+            }).script,
+        );
+
+        const makeVtxo = (value: number, i: number): ExtendedVirtualCoin =>
+            ({
+                txid: `vtxo-${value}-${i}`,
+                vout: 0,
+                value,
+                virtualStatus: {
+                    state: "settled",
+                    batchExpiry: Date.now() + 60 * 60 * 1000,
+                },
+                isSpent: false,
+                status: { confirmed: true },
+                createdAt: new Date(),
+                isUnrolled: false,
+                forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
+                intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+                tapTree: new Uint8Array(),
+            }) as any;
+
+        // Build a `this` for _settleImpl that runs the auto-select branch and
+        // short-circuits at makeRegisterIntentSignature, capturing the final
+        // selected inputs (which is what gets registered with the server).
+        const buildThisArg = (vtxos: ExtendedVirtualCoin[], intentFee: Record<string, string>) => {
+            let capturedInputs: ExtendedCoin[] | undefined;
+            const sentinel = new Error("stop-after-selection");
+            const thisArg: any = {
+                network: "mutinynet",
+                dustAmount: 330n,
+                arkProvider: {
+                    getInfo: vi.fn().mockResolvedValue({ fees: { intentFee } }),
+                },
+                onchainProvider: {
+                    getChainTip: vi.fn().mockResolvedValue({ height: 1000 }),
+                },
+                boardingTapscript: { exitScript: exitScriptHex },
+                getBoardingUtxos: vi.fn().mockResolvedValue([]),
+                getVtxos: vi.fn().mockResolvedValue(vtxos),
+                getAddress: vi.fn().mockResolvedValue(walletAddress),
+                identity: {
+                    signerSession: () => ({
+                        getPublicKey: async () => new Uint8Array(32),
+                    }),
+                },
+                makeRegisterIntentSignature: vi.fn(async (coins: ExtendedCoin[]) => {
+                    capturedInputs = coins;
+                    throw sentinel;
+                }),
+                makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+                    proof: "delete-proof",
+                    message: { type: "delete", expire_at: 0 },
+                }),
+                _addPendingSpends: vi.fn(),
+            };
+            return { thisArg, sentinel, getCaptured: () => capturedInputs };
+        };
+
+        it("caps the number of auto-selected VTXOs at MAX_VTXOS_PER_SETTLEMENT", async () => {
+            const value = 5_000;
+            const vtxos = Array.from({ length: MAX_VTXOS_PER_SETTLEMENT + 5 }, (_, i) =>
+                makeVtxo(value, i),
+            );
+            const { thisArg, sentinel, getCaptured } = buildThisArg(vtxos, {});
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            expect(getCaptured()).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+        });
+
+        it("caps viable VTXOs, not an uneconomic prefix", async () => {
+            // 50 uneconomic VTXOs ahead of 3 viable ones, with a flat 200-sat
+            // offchain input fee. The cap must count viable inputs only, so the
+            // 3 VTXOs behind the uneconomic prefix are still selected.
+            const tiny = Array.from({ length: MAX_VTXOS_PER_SETTLEMENT }, (_, i) =>
+                makeVtxo(100, i),
+            );
+            const normal = Array.from({ length: 3 }, (_, i) => makeVtxo(10_000, 1_000 + i));
+            const { thisArg, sentinel, getCaptured } = buildThisArg([...tiny, ...normal], {
+                offchainInput: "200.0",
+            });
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            const captured = getCaptured()!;
+            expect(captured).toHaveLength(3);
+            expect(captured.every((v: any) => v.value === 10_000)).toBe(true);
+        });
     });
 });
 
