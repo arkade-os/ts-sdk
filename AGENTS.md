@@ -115,7 +115,7 @@ Key components:
 
 ### Integration Testing Stack (regtest/)
 
-Git submodule pointing to [arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest). Manages nigiri, arkd, boltz, LND, fulmine, and supporting services. Uses `start-env.sh` / `stop-env.sh` / `clean-env.sh`. Run `git submodule update --init` after cloning.
+Git submodule pointing to [arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest). Manages a Docker Compose stack (Bitcoin Core, Fulcrum, mempool, NBXplorer, arkd, boltz, LND, fulmine, and supporting services) driven by the in-house Node CLI `regtest.mjs`. Use `node regtest/regtest.mjs start` / `stop` / `clean` (or the `scripts/regtest.sh` controller). Run `git submodule update --init` after cloning.
 
 ### Shared Config Pattern
 

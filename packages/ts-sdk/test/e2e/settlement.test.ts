@@ -20,7 +20,7 @@ describe("Settlement - Auto-settle boarding UTXOs", () => {
         const wallet = await Wallet.create({
             identity,
             arkServerUrl: "http://localhost:7070",
-            onchainProvider: new EsploraProvider("http://localhost:3000", {
+            onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
             }),
@@ -34,7 +34,7 @@ describe("Settlement - Auto-settle boarding UTXOs", () => {
         });
 
         const boardingAddress = await wallet.getBoardingAddress();
-        execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+        execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
 
         // Wait for boarding UTXOs to appear
         await waitFor(async () => (await wallet.getBoardingUtxos()).length > 0);
@@ -72,7 +72,7 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
             const setupWallet = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
-                onchainProvider: new EsploraProvider("http://localhost:3000", {
+                onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                     forcePolling: true,
                     pollingInterval: 2000,
                 }),
@@ -81,7 +81,7 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
             });
 
             const boardingAddress = await setupWallet.getBoardingAddress();
-            execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+            execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
 
             await waitFor(async () => (await setupWallet.getBoardingUtxos()).length > 0);
 
@@ -90,11 +90,11 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
             const initialTxid = initialUtxos[0].txid;
 
             // Mine to expire the boarding UTXO
-            execCommand("nigiri rpc --generate 21");
+            execCommand("node regtest/regtest.mjs mine 21");
 
             // Wait for esplora to index the new blocks so the chain tip
             // is consistent when the wallet's poll loop starts.
-            const esplora = new EsploraProvider("http://localhost:3000", {
+            const esplora = new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
             });
@@ -114,7 +114,7 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
             const wallet = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
-                onchainProvider: new EsploraProvider("http://localhost:3000", {
+                onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                     forcePolling: true,
                     pollingInterval: 2000,
                 }),
@@ -131,7 +131,7 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
             // UTXO appears in esplora's confirmed UTXO set.
             await waitFor(
                 async () => {
-                    execCommand("nigiri rpc --generate 1");
+                    execCommand("node regtest/regtest.mjs mine 1");
                     const utxos = await wallet.getBoardingUtxos();
                     const hasUtxos = utxos.length > 0;
                     const hasDifferentUtxos = utxos.every((u) => u.txid !== initialTxid);
@@ -161,7 +161,7 @@ describe("Settlement - VtxoManager Recovery", () => {
         const wallet = await Wallet.create({
             identity,
             arkServerUrl: "http://localhost:7070",
-            onchainProvider: new EsploraProvider("http://localhost:3000", {
+            onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
             }),
@@ -176,7 +176,7 @@ describe("Settlement - VtxoManager Recovery", () => {
         const boardingAddress = await wallet.getBoardingAddress();
 
         // Onboard via boarding to create a settled VTXO
-        execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+        execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
         const boardingInputs = await wallet.getBoardingUtxos();
@@ -201,7 +201,7 @@ describe("Settlement - VtxoManager Recovery", () => {
         expect(vtxos[0].virtualStatus.state).toBe("settled");
 
         // Mine 25 blocks to trigger server sweep (VTXO_TREE_EXPIRY=20)
-        execCommand("nigiri rpc --generate 25");
+        execCommand("node regtest/regtest.mjs mine 25");
 
         // Wait for VTXO to become swept
         await waitFor(async () => {
@@ -235,7 +235,7 @@ describe("Settlement - VtxoManager Recovery", () => {
         const wallet = await Wallet.create({
             identity,
             arkServerUrl: "http://localhost:7070",
-            onchainProvider: new EsploraProvider("http://localhost:3000", {
+            onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
             }),
@@ -250,7 +250,7 @@ describe("Settlement - VtxoManager Recovery", () => {
         const boardingAddress = await wallet.getBoardingAddress();
 
         // Create a settled VTXO
-        execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+        execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
         const boardingInputs = await wallet.getBoardingUtxos();
@@ -273,7 +273,7 @@ describe("Settlement - VtxoManager Recovery", () => {
         const originalTxid = vtxos[0].txid;
 
         // Mine 25 blocks to make VTXO swept (recoverable/expired)
-        execCommand("nigiri rpc --generate 25");
+        execCommand("node regtest/regtest.mjs mine 25");
 
         await waitFor(async () => {
             const v = await wallet.getVtxos({ withRecoverable: true });
@@ -310,7 +310,7 @@ describe("Settlement - Auto-delegation on vtxo_received", () => {
             const wallet = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
-                onchainProvider: new EsploraProvider("http://localhost:3000", {
+                onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                     forcePolling: true,
                     pollingInterval: 2000,
                 }),
@@ -325,7 +325,7 @@ describe("Settlement - Auto-delegation on vtxo_received", () => {
             });
 
             const boardingAddress = await wallet.getBoardingAddress();
-            execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+            execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
 
             // The flow: poll detects boarding UTXO → auto-settle → vtxo_received
             // → auto-delegate. Wait for a delegated VTXO (txid changes after delegation).
@@ -374,7 +374,7 @@ describe("Settlement - VtxoManager Lifecycle", () => {
             const wallet = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
-                onchainProvider: new EsploraProvider("http://localhost:3000", {
+                onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                     forcePolling: true,
                     pollingInterval: 2000,
                 }),
@@ -408,7 +408,7 @@ describe("Settlement - VtxoManager Lifecycle", () => {
             const wallet = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
-                onchainProvider: new EsploraProvider("http://localhost:3000", {
+                onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                     forcePolling: true,
                     pollingInterval: 2000,
                 }),
@@ -448,7 +448,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
             const walletA = await Wallet.create({
                 identity: identityA,
                 arkServerUrl: "http://localhost:7070",
-                onchainProvider: new EsploraProvider("http://localhost:3000", {
+                onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                     forcePolling: true,
                     pollingInterval: 2000,
                 }),
@@ -466,7 +466,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
             const walletB = await Wallet.create({
                 identity: identityB,
                 arkServerUrl: "http://localhost:7070",
-                onchainProvider: new EsploraProvider("http://localhost:3000", {
+                onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                     forcePolling: true,
                     pollingInterval: 2000,
                 }),
@@ -481,7 +481,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
 
             // Fund wallet A via boarding and let VtxoManager auto-settle it
             const boardingAddress = await walletA.getBoardingAddress();
-            execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+            execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
 
             // Wait for VtxoManager poll to auto-settle the boarding UTXO
             await waitFor(
@@ -540,7 +540,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
             const walletA = await Wallet.create({
                 identity: identityA,
                 arkServerUrl: "http://localhost:7070",
-                onchainProvider: new EsploraProvider("http://localhost:3000", {
+                onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                     forcePolling: true,
                     pollingInterval: 2000,
                 }),
@@ -558,7 +558,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
             const walletB = await Wallet.create({
                 identity: identityB,
                 arkServerUrl: "http://localhost:7070",
-                onchainProvider: new EsploraProvider("http://localhost:3000", {
+                onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                     forcePolling: true,
                     pollingInterval: 2000,
                 }),
@@ -661,7 +661,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
             const walletA = await Wallet.create({
                 identity: identityA,
                 arkServerUrl: "http://localhost:7070",
-                onchainProvider: new EsploraProvider("http://localhost:3000", {
+                onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                     forcePolling: true,
                     pollingInterval: 2000,
                 }),
@@ -678,7 +678,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
             const walletB = await Wallet.create({
                 identity: identityB,
                 arkServerUrl: "http://localhost:7070",
-                onchainProvider: new EsploraProvider("http://localhost:3000", {
+                onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                     forcePolling: true,
                     pollingInterval: 2000,
                 }),
@@ -693,7 +693,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
 
             // Fund via boarding and let VtxoManager auto-settle
             const boardingAddress = await walletA.getBoardingAddress();
-            execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+            execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
 
             await waitFor(
                 async () => {

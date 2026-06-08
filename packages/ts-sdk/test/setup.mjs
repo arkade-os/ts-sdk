@@ -9,7 +9,7 @@ function initArkCli() {
     console.log("Initializing ark CLI client...");
     try {
         execSync(
-            "docker exec arkd ark init --password secret --server-url localhost:7070 --explorer http://chopsticks:3000",
+            "docker exec arkd ark init --password secret --server-url localhost:7070 --explorer http://mempool_web/api",
             { stdio: "pipe", encoding: "utf8" },
         );
         console.log("  ✔ ark CLI initialized");

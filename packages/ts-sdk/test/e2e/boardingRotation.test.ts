@@ -32,7 +32,7 @@ function createHdWallet(opts: HdWalletOpts): Promise<Wallet> {
         identity: MnemonicIdentity.fromMnemonic(opts.mnemonic, { isMainnet: false }),
         walletMode: "hd",
         arkServerUrl: "http://localhost:7070",
-        onchainProvider: new EsploraProvider("http://localhost:3000", {
+        onchainProvider: new EsploraProvider("http://localhost:3000/api", {
             forcePolling: true,
             pollingInterval: 2000,
         }),
@@ -46,7 +46,7 @@ function createHdWallet(opts: HdWalletOpts): Promise<Wallet> {
 }
 
 async function waitForChainTip(minHeight: number): Promise<void> {
-    const esplora = new EsploraProvider("http://localhost:3000", {
+    const esplora = new EsploraProvider("http://localhost:3000/api", {
         forcePolling: true,
         pollingInterval: 2000,
     });
@@ -104,7 +104,7 @@ describe("Boarding HD rotation - multi-address discovery & sweep", () => {
             // Confirm the faucet txs and read their funding height — the CSV
             // exit delay counts from confirmation, so we must mature both
             // inputs relative to the block they actually land in.
-            execCommand("nigiri rpc --generate 1");
+            execCommand("node regtest/regtest.mjs mine 1");
             await waitFor(
                 async () => {
                     const u = await setup.getBoardingUtxos();
@@ -116,7 +116,7 @@ describe("Boarding HD rotation - multi-address discovery & sweep", () => {
             const fundingHeight = Math.max(...confirmed.map((c) => c.status.block_height ?? 0));
 
             // Expire both inputs (CSV = 20 blocks).
-            execCommand("nigiri rpc --generate 20");
+            execCommand("node regtest/regtest.mjs mine 20");
             await waitForChainTip(fundingHeight + 20);
             await setup.dispose();
 
@@ -142,7 +142,7 @@ describe("Boarding HD rotation - multi-address discovery & sweep", () => {
             // so the sweep tx confirms and the new UTXO enters esplora's set.
             await waitFor(
                 async () => {
-                    execCommand("nigiri rpc --generate 1");
+                    execCommand("node regtest/regtest.mjs mine 1");
                     const utxos = await wallet.getBoardingUtxos();
                     return utxos.length > 0 && utxos.every((u) => !initialTxids.has(u.txid));
                 },
@@ -180,7 +180,7 @@ describe("Boarding HD rotation - rotate-on-board", () => {
                     timeout: 60_000,
                     interval: 2_000,
                 });
-                execCommand("nigiri rpc --generate 1");
+                execCommand("node regtest/regtest.mjs mine 1");
                 await waitFor(
                     async () => {
                         const u = await wallet.getBoardingUtxos();
@@ -236,7 +236,7 @@ describe("Boarding HD rotation - restore()", () => {
                     interval: 2_000,
                 });
                 // Confirm so the on-chain discovery probe (getCoins) sees it.
-                execCommand("nigiri rpc --generate 1");
+                execCommand("node regtest/regtest.mjs mine 1");
                 const fundedA = await a.getBoardingUtxos();
                 await waitForChainTip((fundedA[0].status.block_height ?? 0) + 1);
 
