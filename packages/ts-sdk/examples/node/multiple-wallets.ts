@@ -27,7 +27,7 @@ import {
     SQLExecutor,
 } from "../../src/repositories/sqlite";
 import Database from "better-sqlite3";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 
 // EventSource is used internally by the SDK for settlement events (SSE).
 // It is not available in Node.js by default, so we need to polyfill it.
@@ -97,7 +97,7 @@ async function main() {
     console.log("[Alice]\tBoarding Address:", boardingAddress);
 
     console.log("[Alice]\tFunding boarding address via regtest faucet...");
-    execSync(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
+    execFileSync("node", ["regtest/regtest.mjs", "faucet", boardingAddress, "0.001", "--confirm"]);
 
     // Wait for the boarding inputs to be available (timeout after 60s)
     console.log("[Alice]\tWaiting for boarding UTXOs...");

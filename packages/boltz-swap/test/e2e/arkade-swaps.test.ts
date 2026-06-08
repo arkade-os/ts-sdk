@@ -989,9 +989,11 @@ describe("ArkadeSwaps", () => {
                 );
 
                 const btcBalance = await getBtcAddressFunds(toAddress);
-                // boltz/boltz:latest does not gross the onchain claim fee into the
-                // receiver lock-up the way nigiri's pinned Boltz did, so the receiver
-                // nets receiverLockAmount minus the (feeSatsPerByte:1) claim fee.
+                // serverLockAmount = receiverLockAmount + minerFees.user.claim grosses the
+                // estimated claim fee into the server lock-up. claimBtc subtracts the
+                // larger of that estimate and the actual claim-tx fee (sized at
+                // feeSatsPerByte), so the receiver nets exactly receiverLockAmount when the
+                // estimate covers the fee and a few sats less when the actual fee is higher.
                 // Assert that bound rather than an exact sat value.
                 expect(btcBalance).toBeLessThanOrEqual(amountSats);
                 expect(btcBalance).toBeGreaterThan(amountSats - 200);
