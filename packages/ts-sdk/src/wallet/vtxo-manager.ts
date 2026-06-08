@@ -108,13 +108,49 @@ async function runWithCrossInstanceLock(name: string, fn: () => Promise<void>): 
 /**
  * Maximum number of VTXOs included in a single settlement intent.
  *
- * arkd rejects intents carrying more than 91 VTXOs with a `TX_TOO_LARGE`
- * error. We cap well below that so the remaining headroom absorbs any
- * boarding inputs (which are added uncapped) plus transaction-size overhead.
- * When more VTXOs are eligible, the overflow is left for the next
- * settlement cycle. Mirrors the go-sdk `maxVtxosPerBatch`.
+ * arkd has no fixed per-intent VTXO count limit; it rejects an intent with
+ * `TX_TOO_LARGE` once the resulting ark transaction exceeds its weight budget
+ * (`maxTxWeight`, ~40k weight units by default). 50 is a conservative count
+ * that stays well under that weight, leaving headroom for boarding inputs
+ * (added uncapped) plus transaction-size overhead. When more VTXOs are
+ * eligible, the overflow is left for the next settlement cycle.
+ *
+ * This cap is a ts-sdk-specific safeguard: neither go-sdk nor NArk caps the
+ * settlement batch — go-sdk submits every spendable VTXO in a single intent.
+ * Because the reference SDKs impose no selection order (go-sdk's query has no
+ * `ORDER BY`), we are free to order the candidates before capping so the most
+ * important VTXOs survive the cut — see {@link byValueDescending} and
+ * {@link byExpiryAscending}.
  */
 export const MAX_VTXOS_PER_SETTLEMENT = 50;
+
+/**
+ * Order VTXOs so the highest-value ones come first. New array; input untouched.
+ *
+ * Used by the value-driven paths (recovery, manual full settle): when the
+ * {@link MAX_VTXOS_PER_SETTLEMENT} cap defers the overflow to a later cycle,
+ * the batch should carry the most value. For recovery this also gives the
+ * capped subset the best chance of clearing the dust threshold.
+ */
+export function byValueDescending<T extends { value: number }>(vtxos: T[]): T[] {
+    return [...vtxos].sort((a, b) => b.value - a.value);
+}
+
+/**
+ * Order VTXOs so the soonest-expiring ones come first. New array; input
+ * untouched. VTXOs without a batch expiry never expire, so they sort last.
+ *
+ * Used by the expiry-driven paths (renewal, periodic settle): when the
+ * {@link MAX_VTXOS_PER_SETTLEMENT} cap defers the overflow to a later cycle,
+ * the most urgent VTXOs must make the cut so none miss their renewal window
+ * and get forced into a unilateral exit.
+ */
+export function byExpiryAscending(vtxos: ExtendedVirtualCoin[]): ExtendedVirtualCoin[] {
+    return [...vtxos].sort(
+        (a, b) =>
+            (a.virtualStatus.batchExpiry ?? Infinity) - (b.virtualStatus.batchExpiry ?? Infinity),
+    );
+}
 
 /** Default renewal threshold in seconds (3 days). */
 export const DEFAULT_THRESHOLD_SECONDS = 259_200;
@@ -601,15 +637,16 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         }
 
         // Cap the number of VTXOs per settlement to stay under the server's
-        // intent-size limit (see MAX_VTXOS_PER_SETTLEMENT). The subdust
-        // inclusion decision above was made on the full set's combined total,
-        // so a naive slice can drop the batch below dust — which the server
-        // rejects, and the next cycle would re-pick the same prefix forever.
-        // Preserve selection order for go-sdk parity, but re-run the
-        // subdust/dust eligibility on that exact capped subset. The overflow
-        // is recovered next cycle.
+        // intent-size limit (see MAX_VTXOS_PER_SETTLEMENT). Recover the
+        // highest-value VTXOs first: the subdust inclusion decision above was
+        // made on the full set's combined total, so a naive prefix can drop the
+        // capped batch below dust — which the server rejects, leaving the next
+        // cycle to re-pick the same prefix forever. Ordering by value maximizes
+        // the recovered amount and gives the capped subset the best chance of
+        // clearing dust. We re-run the subdust/dust eligibility on that exact
+        // capped subset; the overflow is recovered next cycle.
         if (vtxosToRecover.length > MAX_VTXOS_PER_SETTLEMENT) {
-            const capped = vtxosToRecover.slice(0, MAX_VTXOS_PER_SETTLEMENT);
+            const capped = byValueDescending(vtxosToRecover).slice(0, MAX_VTXOS_PER_SETTLEMENT);
             ({ vtxosToRecover, totalAmount } = getRecoverableWithSubdust(capped, dustAmount));
             if (vtxosToRecover.length === 0) {
                 // The capped batch stays below dust, so submitting it would be
@@ -827,11 +864,14 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             }
 
             // Cap the number of VTXOs per settlement to stay under the
-            // server's intent-size limit (see MAX_VTXOS_PER_SETTLEMENT). The
-            // output amount is summed from the capped set below, so it stays
-            // consistent; the overflow is renewed on the next cycle.
+            // server's intent-size limit (see MAX_VTXOS_PER_SETTLEMENT). Renew
+            // the soonest-expiring VTXOs first so the most urgent ones make the
+            // cut — otherwise a viable VTXO past the cap could miss its renewal
+            // window and be forced into a unilateral exit. The output amount is
+            // summed from the capped set below, so it stays consistent; the
+            // overflow is renewed on the next cycle.
             if (vtxos.length > MAX_VTXOS_PER_SETTLEMENT) {
-                vtxos = vtxos.slice(0, MAX_VTXOS_PER_SETTLEMENT);
+                vtxos = byExpiryAscending(vtxos).slice(0, MAX_VTXOS_PER_SETTLEMENT);
             }
 
             const totalAmount = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
@@ -1476,13 +1516,15 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         }
 
         // Cap the VTXOs per settlement to stay under the server's intent-size
-        // limit (see MAX_VTXOS_PER_SETTLEMENT). Apply the cap to economically
-        // viable VTXOs only: skipping uneconomic inputs and continuing past the
-        // cap avoids an uneconomic prefix permanently starving valid VTXOs
-        // behind it. Boarding inputs are added uncapped above; the headroom
-        // absorbs them. Any overflow is settled on the next cycle.
+        // limit (see MAX_VTXOS_PER_SETTLEMENT). Settle the soonest-expiring
+        // VTXOs first so the most urgent ones make the cut. Apply the cap to
+        // economically viable VTXOs only: skipping uneconomic inputs and
+        // continuing past the cap avoids an uneconomic prefix permanently
+        // starving valid VTXOs behind it. Boarding inputs are added uncapped
+        // above; the headroom absorbs them. Any overflow is settled on the next
+        // cycle.
         const filteredVtxos: ExtendedVirtualCoin[] = [];
-        for (const v of expiringVtxos) {
+        for (const v of byExpiryAscending(expiringVtxos)) {
             if (filteredVtxos.length >= MAX_VTXOS_PER_SETTLEMENT) {
                 break;
             }

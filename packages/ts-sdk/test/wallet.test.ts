@@ -1881,6 +1881,25 @@ describe("Wallet._settleImpl", () => {
             expect(getCaptured()).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
         });
 
+        it("settles the highest-value VTXOs first when capping", async () => {
+            // 10 large VTXOs listed AFTER 50 small ones. Sorting by value
+            // before the cap must rescue the large ones so the capped batch
+            // carries the most value (overflow settles on the next call).
+            const small = Array.from({ length: MAX_VTXOS_PER_SETTLEMENT }, (_, i) =>
+                makeVtxo(1_000, i),
+            );
+            const large = Array.from({ length: 10 }, (_, i) => makeVtxo(10_000, 1_000 + i));
+            const { thisArg, sentinel, getCaptured } = buildThisArg([...small, ...large], {});
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            const captured = getCaptured()!;
+            expect(captured).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+            expect(captured.filter((v: any) => v.value === 10_000)).toHaveLength(10);
+        });
+
         it("caps viable VTXOs, not an uneconomic prefix", async () => {
             // 50 uneconomic VTXOs ahead of 3 viable ones, with a flat 200-sat
             // offchain input fee. The cap must count viable inputs only, so the
