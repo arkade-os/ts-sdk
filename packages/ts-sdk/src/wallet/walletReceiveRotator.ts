@@ -1,6 +1,5 @@
 import { equalBytes } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
-
 import { deriveDescriptorLeafPubKey } from "../identity/descriptor";
 import { DescriptorProvider } from "../identity/descriptorProvider";
 import { isHDCapableIdentity } from "../identity/hdCapableIdentity";
@@ -34,6 +33,17 @@ export interface ReceiveRotatorBootOpts {
      * accidentally picking up a delegate contract or vice versa.
      */
     expectedContractType?: "default" | "delegate";
+    /**
+     * The wallet's baseline (index-0) receive pubkey — the x-only key the
+     * initial offchain tapscript is built from. Used by {@link
+     * WalletReceiveRotator.defaultBoot} as the no-tagged-row fallback:
+     * because boarding shares the single HD index stream, the raw watermark
+     * may have been advanced by a boarding-only allocation, so the boot must
+     * NOT derive the receive pubkey from it. A wallet with no tagged receive
+     * row has never rotated L2, so its correct current receive *is* the
+     * baseline index-0 key (plan §6-II.5).
+     */
+    baselineReceivePubKey?: Uint8Array;
     /**
      * Logger to receive rotation-failure + backoff diagnostics. Defaults
      * to `console` when omitted. Any object implementing
@@ -296,6 +306,7 @@ export class WalletReceiveRotator {
             contractRepository: setup.contractRepository,
             serverPubKey: setup.serverPubKey,
             expectedContractType,
+            baselineReceivePubKey: setup.offchainTapscript.options.pubKey,
         };
 
         let boot: ReceiveRotatorBoot | undefined;
@@ -360,21 +371,36 @@ export class WalletReceiveRotator {
             };
         }
 
-        // No tagged display contract on this repo. Avoid burning a
-        // fresh HD index per restart: re-derive the descriptor at the
-        // most recently allocated index when the provider supports it
-        // (HD-style allocators do; static / one-shot providers don't
-        // and fall through to a regular allocation, which is a no-op
-        // for them anyway).
-        let descriptor: string | undefined;
-        if (hasPeekableDescriptor(provider)) {
-            descriptor = await provider.getCurrentSigningDescriptor();
+        // No tagged display contract on this repo. Two cases:
+        //
+        // 1. Fresh repo (no watermark yet, or a non-peekable provider) —
+        //    allocate the first index to establish the watermark so the
+        //    first rotation advances to the next index instead of landing
+        //    back on the baseline. For HD the allocated index-0 leaf IS the
+        //    baseline receive pubkey.
+        //
+        // 2. Watermark already set but no tagged receive row — the wallet
+        //    has never rotated L2 (a rotation would have left a tagged row),
+        //    so its correct current receive is the BASELINE index-0 key. We
+        //    must NOT derive from the raw watermark: boarding shares the one
+        //    HD index stream, so a boarding-only allocation may have advanced
+        //    it past index 0, and reading it here would drift the receive
+        //    address onto a boarding index (plan §6-II.5). A partial repo
+        //    that lost its tag self-heals on the next restore() scan, which
+        //    re-tags rotated receive rows.
+        const current = hasPeekableDescriptor(provider)
+            ? await provider.getCurrentSigningDescriptor()
+            : undefined;
+        if (current === undefined) {
+            const descriptor = await provider.getNextSigningDescriptor();
+            return {
+                rotator: new WalletReceiveRotator(provider, undefined, opts.logger),
+                receivePubkey: deriveLeafPubkey(descriptor),
+            };
         }
-        descriptor ??= await provider.getNextSigningDescriptor();
-
         return {
             rotator: new WalletReceiveRotator(provider, undefined, opts.logger),
-            receivePubkey: deriveLeafPubkey(descriptor),
+            receivePubkey: opts.baselineReceivePubKey ?? deriveLeafPubkey(current),
         };
     }
 
@@ -512,7 +538,7 @@ export class WalletReceiveRotator {
             .encode();
 
         const manager = await wallet.getContractManager();
-        const csvTimelock = newTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        const csvTimelock = newTapscript.options.csvTimelock;
         const csvTimelockStr = timelockToSequence(csvTimelock).toString();
         const serverPubKeyHex = hex.encode(newTapscript.options.serverPubKey);
 

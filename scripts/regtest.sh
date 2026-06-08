@@ -3,7 +3,7 @@
 #
 # All packages share the regtest submodule at ./regtest but use distinct
 # .env.regtest overrides (packages/<pkg>/.env.regtest). This script wires the
-# right override file into the regtest scripts via --env / USER_ENV.
+# right override file into the regtest Node CLI via --env.
 #
 # Usage: scripts/regtest.sh <ts-sdk|boltz-swap|banco> <up|down|reset|setup|test|cycle>
 #   up     – clean + start with the package's .env.regtest
@@ -53,6 +53,13 @@ if [ ! -f "$ENV_FILE" ]; then
   echo "Missing env file: $ENV_FILE" >&2
   exit 1
 fi
+
+# The package e2e suites + setup waiter invoke `node regtest/regtest.mjs ...`
+# with a path relative to the package directory (their cwd under `pnpm -C`).
+# The submodule itself lives at the repo root, so expose it inside the package
+# via a symlink (git-ignored, recreated idempotently on every run) so that the
+# relative path resolves regardless of the package the controller targets.
+ln -sfn "$REGTEST_DIR" "$ROOT_DIR/packages/$PKG/regtest"
 
 cmd_up() {
   bash "$REGTEST_DIR/start-env.sh" --env "$ENV_FILE"

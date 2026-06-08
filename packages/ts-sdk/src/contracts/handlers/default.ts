@@ -53,9 +53,14 @@ export const DefaultContractHandler: ContractHandler<DefaultContractParams, Defa
     },
 
     deserializeParams(params: Record<string, string>): DefaultContractParams {
-        const csvTimelock = params.csvTimelock
-            ? sequenceToTimelock(Number(params.csvTimelock))
-            : DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        // csvTimelock may be absent on legacy/minimal params (e.g. hex pubkeys
+        // with no timelock). DefaultVtxo.Script no longer applies its own
+        // fallback, so restore it here rather than feeding sequenceToTimelock
+        // a NaN (which silently decodes to a zero timelock).
+        const csvTimelock =
+            params.csvTimelock !== undefined && params.csvTimelock !== ""
+                ? sequenceToTimelock(Number(params.csvTimelock))
+                : DefaultVtxo.Script.DEFAULT_TIMELOCK;
         return {
             pubKey: extractPubKeyBytes(params.pubKey),
             serverPubKey: extractPubKeyBytes(params.serverPubKey),
