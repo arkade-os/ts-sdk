@@ -1830,10 +1830,25 @@ describe("Wallet._settleImpl", () => {
                 tapTree: new Uint8Array(),
             }) as any;
 
+        const makeBoardingUtxo = (value: number, vout = 0): ExtendedCoin =>
+            ({
+                txid: `boarding-${value}-${vout}`,
+                vout,
+                value,
+                status: {
+                    confirmed: true,
+                    block_time: Math.floor(Date.now() / 1000) - 60,
+                },
+            }) as ExtendedCoin;
+
         // Build a `this` for _settleImpl that runs the auto-select branch and
         // short-circuits at makeRegisterIntentSignature, capturing the final
         // selected inputs (which is what gets registered with the server).
-        const buildThisArg = (vtxos: ExtendedVirtualCoin[], intentFee: Record<string, string>) => {
+        const buildThisArg = (
+            vtxos: ExtendedVirtualCoin[],
+            intentFee: Record<string, string>,
+            boardingUtxos: ExtendedCoin[] = [],
+        ) => {
             let capturedInputs: ExtendedCoin[] | undefined;
             const sentinel = new Error("stop-after-selection");
             const thisArg: any = {
@@ -1846,7 +1861,7 @@ describe("Wallet._settleImpl", () => {
                     getChainTip: vi.fn().mockResolvedValue({ height: 1000 }),
                 },
                 boardingTapscript: { exitScript: exitScriptHex },
-                getBoardingUtxos: vi.fn().mockResolvedValue([]),
+                getBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
                 getVtxos: vi.fn().mockResolvedValue(vtxos),
                 getAddress: vi.fn().mockResolvedValue(walletAddress),
                 identity: {
@@ -1879,6 +1894,24 @@ describe("Wallet._settleImpl", () => {
             ).rejects.toBe(sentinel);
 
             expect(getCaptured()).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+        });
+
+        it("keeps boarding inputs in addition to capped auto-selected VTXOs", async () => {
+            const boarding = [makeBoardingUtxo(10_000), makeBoardingUtxo(12_000, 1)];
+            const value = 5_000;
+            const vtxos = Array.from({ length: MAX_VTXOS_PER_SETTLEMENT + 5 }, (_, i) =>
+                makeVtxo(value, i),
+            );
+            const { thisArg, sentinel, getCaptured } = buildThisArg(vtxos, {}, boarding);
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            const captured = getCaptured()!;
+            expect(captured).toHaveLength(boarding.length + MAX_VTXOS_PER_SETTLEMENT);
+            expect(captured.slice(0, boarding.length)).toEqual(boarding);
+            expect(captured.slice(boarding.length)).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
         });
 
         it("settles the highest-value VTXOs first when capping", async () => {

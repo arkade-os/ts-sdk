@@ -138,7 +138,9 @@ export function byValueDescending<T extends { value: number }>(vtxos: T[]): T[] 
 
 /**
  * Order VTXOs so the soonest-expiring ones come first. New array; input
- * untouched. VTXOs without a batch expiry never expire, so they sort last.
+ * untouched. Already recoverable/expired VTXOs sort first. VTXOs without a
+ * batch expiry, or with a block-height-looking expiry value, sort last because
+ * they do not have a usable wall-clock expiry.
  *
  * Used by the expiry-driven paths (renewal, periodic settle): when the
  * {@link MAX_VTXOS_PER_SETTLEMENT} cap defers the overflow to a later cycle,
@@ -146,10 +148,23 @@ export function byValueDescending<T extends { value: number }>(vtxos: T[]): T[] 
  * and get forced into a unilateral exit.
  */
 export function byExpiryAscending(vtxos: ExtendedVirtualCoin[]): ExtendedVirtualCoin[] {
-    return [...vtxos].sort(
-        (a, b) =>
-            (a.virtualStatus.batchExpiry ?? Infinity) - (b.virtualStatus.batchExpiry ?? Infinity),
-    );
+    const expiryKey = (vtxo: ExtendedVirtualCoin) => {
+        if (isRecoverable(vtxo)) return -Infinity;
+
+        const batchExpiry = vtxo.virtualStatus.batchExpiry;
+
+        if (isExpired(vtxo)) return batchExpiry ?? -Infinity;
+        if (!batchExpiry) return Infinity;
+
+        // Some regtest-like indexers return a block height here instead of a
+        // timestamp. Match isVtxoExpiringSoon/isExpired and avoid treating that
+        // as the most urgent wall-clock expiry.
+        if (new Date(batchExpiry).getFullYear() < 2025) return Infinity;
+
+        return batchExpiry;
+    };
+
+    return [...vtxos].sort((a, b) => expiryKey(a) - expiryKey(b));
 }
 
 /** Default renewal threshold in seconds (3 days). */
