@@ -126,6 +126,16 @@ function extractArkProviderUrl(provider: ArkProvider): string | undefined {
 // legacy address after arkd starts advertising a different delay.
 const MAINNET_UNILATERAL_EXIT_DELAY = 605184n;
 
+// Normalize a server signer pubkey to the x-only (32-byte) form script
+// encoding requires (CSVMultisigTapscript.encode throws on anything else).
+// A 33-byte compressed key drops its parity prefix; a 32-byte key is already
+// x-only. Mirrors the setup path's `hex.decode(info.signerPubkey).slice(1)`.
+function toXOnlyPubKey(pubkey: Uint8Array): Uint8Array {
+    if (pubkey.length === 33) return pubkey.slice(1);
+    if (pubkey.length === 32) return pubkey;
+    throw new Error(`invalid signer pubkey length: expected 32 or 33, got ${pubkey.length}`);
+}
+
 function delayToTimelock(delay: bigint): RelativeTimelock {
     return {
         value: delay,
@@ -1609,6 +1619,17 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 ? this.offchainTapscript.options.delegatePubKey
                 : undefined;
 
+        // Source the signer axis from a single fresh server-info snapshot so
+        // the current and deprecated signers are mutually consistent (mirrors
+        // NArk's recovery-time snapshot). Deriving the current signer from this
+        // snapshot rather than `this.offchainTapscript.options.serverPubKey`
+        // avoids mixing a stale instance signer with fresh history.
+        const arkInfo = await this.arkProvider.getInfo();
+        const currentSignerPubKey = toXOnlyPubKey(hex.decode(arkInfo.signerPubkey));
+        const deprecatedSignerPubKeys = arkInfo.deprecatedSigners.map((s) =>
+            toXOnlyPubKey(hex.decode(s.pubkey)),
+        );
+
         const deps: DiscoveryDeps = {
             indexerProvider: this.indexerProvider,
             onchainProvider: this.onchainProvider,
@@ -1617,7 +1638,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             // `{ hrp }` shape above lacks the `bech32` data
             // `VtxoScript.onchainAddress` needs (plan §6-I.1).
             onchainNetwork: this.network,
-            serverPubKey: this.offchainTapscript.options.serverPubKey,
+            serverPubKey: currentSignerPubKey,
+            deprecatedSignerPubKeys,
             csvTimelocks: this.walletContractTimelocks,
             // Boarding-exit CSV so the boarding handler can build its
             // candidate script (distinct from the unilateral-exit matrix).

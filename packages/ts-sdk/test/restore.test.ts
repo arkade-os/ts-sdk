@@ -242,6 +242,111 @@ describe("DefaultContractHandler.discoverAt", () => {
         expect(out[0].script).toBe(script1);
         expect(out[0].params.csvTimelock).toBe(timelockToSequence(tl1).toString());
     });
+
+    it("scans deprecated signers and stamps the matched key into params AND address", async () => {
+        // A distinct valid x-only point standing in for a now-rotated signer.
+        const deprecatedHex = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
+        const deprecated = hex.decode(deprecatedHex);
+        const deprecatedScript = hex.encode(
+            new DefaultVtxo.Script({
+                pubKey: hex.decode(pkHex),
+                serverPubKey: deprecated,
+                csvTimelock: tl,
+            }).pkScript,
+        );
+        // Only the deprecated-key script is funded — the current key has none.
+        const out = await DefaultContractHandler.discoverAt(2, descriptor, {
+            indexerProvider: mockIndexer(new Set([deprecatedScript])),
+            onchainProvider: {} as any,
+            network: { hrp: "ark" },
+            serverPubKey: server,
+            deprecatedSignerPubKeys: [deprecated],
+            csvTimelocks: [tl],
+        });
+        expect(out).toHaveLength(1);
+        expect(out[0].script).toBe(deprecatedScript);
+        // The matched deprecated key is threaded through BOTH the persisted
+        // params and the encoded address — not the current serverPubKey.
+        expect(out[0].params.serverPubKey).toBe(deprecatedHex);
+        expect(out[0].address).toBe(
+            new DefaultVtxo.Script({
+                pubKey: hex.decode(pkHex),
+                serverPubKey: deprecated,
+                csvTimelock: tl,
+            })
+                .address("ark", deprecated)
+                .encode(),
+        );
+    });
+
+    it("dedups by scriptHex: a deprecated signer reproducing the current script yields one entry and one probe", async () => {
+        // Degenerate deprecated set: the same key as the current signer, so it
+        // rebuilds a byte-identical script. The `seen` guard must collapse the
+        // two passes into a single probe and a single emitted contract.
+        const calls: string[][] = [];
+        const indexer = {
+            async getVtxos(opts: any) {
+                const scripts = (opts.scripts ?? []) as string[];
+                calls.push(scripts);
+                const vtxos = scripts
+                    .filter((s) => s === script)
+                    .map((s) => ({ value: 1, script: s }) as any);
+                return { vtxos };
+            },
+        } as any;
+        const out = await DefaultContractHandler.discoverAt(2, descriptor, {
+            indexerProvider: indexer,
+            onchainProvider: {} as any,
+            network: { hrp: "ark" },
+            serverPubKey: server,
+            deprecatedSignerPubKeys: [server],
+            csvTimelocks: [tl],
+        });
+        expect(out).toHaveLength(1);
+        expect(calls.flat().filter((s) => s === script)).toHaveLength(1);
+    });
+
+    it("batches all csvTimelock variants into a single indexer query (one probe)", async () => {
+        // Win: instead of one getVtxos per csvTimelock, discoverAt issues a
+        // single batched probe over the whole candidate set and maps the
+        // returned vtxos back by script. Both funded timelock scripts are
+        // still discovered, with no over-discovery of the unfunded ones.
+        const tl1: RelativeTimelock = DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        const tl2: RelativeTimelock = { value: 288n, type: "blocks" };
+        const pubKey = hex.decode(pkHex);
+        const mk = (csvTimelock: RelativeTimelock) =>
+            hex.encode(
+                new DefaultVtxo.Script({ pubKey, serverPubKey: server, csvTimelock }).pkScript,
+            );
+        const s1 = mk(tl1);
+        const s2 = mk(tl2);
+
+        const calls: string[][] = [];
+        const indexer = {
+            async getVtxos(opts: any) {
+                const scripts = (opts.scripts ?? []) as string[];
+                calls.push(scripts);
+                const vtxos = scripts
+                    .filter((s) => s === s1 || s === s2)
+                    .map((s) => ({ value: 1, script: s }) as any);
+                return { vtxos };
+            },
+        } as any;
+
+        const out = await DefaultContractHandler.discoverAt(2, descriptor, {
+            indexerProvider: indexer,
+            onchainProvider: {} as any,
+            network: { hrp: "ark" },
+            serverPubKey: server,
+            csvTimelocks: [tl1, tl2],
+        });
+
+        // Exactly ONE batched probe, covering BOTH candidate scripts.
+        expect(calls).toHaveLength(1);
+        expect(new Set(calls[0])).toEqual(new Set([s1, s2]));
+        // Both funded timelock scripts discovered.
+        expect(new Set(out.map((e) => e.script))).toEqual(new Set([s1, s2]));
+    });
 });
 
 describe("DelegateContractHandler.discoverAt", () => {
@@ -354,6 +459,42 @@ describe("DelegateContractHandler.discoverAt", () => {
 
         expect(entry1.params.csvTimelock).toBe(timelockToSequence(tl1).toString());
         expect(entry2.params.csvTimelock).toBe(timelockToSequence(tl2).toString());
+    });
+
+    it("scans deprecated signers and stamps the matched key into params AND address", async () => {
+        // A distinct valid x-only point standing in for a now-rotated signer.
+        const deprecatedHex = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+        const deprecated = hex.decode(deprecatedHex);
+        const deprecatedScript = hex.encode(
+            new DelegateVtxo.Script({
+                pubKey,
+                serverPubKey: deprecated,
+                delegatePubKey: del,
+                csvTimelock: tl,
+            }).pkScript,
+        );
+        const out = await DelegateContractHandler.discoverAt(2, descriptor, {
+            indexerProvider: mockIndexer(new Set([deprecatedScript])),
+            onchainProvider: {} as any,
+            network: { hrp: "ark" },
+            serverPubKey: server,
+            delegatePubKey: del,
+            deprecatedSignerPubKeys: [deprecated],
+            csvTimelocks: [tl],
+        });
+        expect(out).toHaveLength(1);
+        expect(out[0].script).toBe(deprecatedScript);
+        expect(out[0].params.serverPubKey).toBe(deprecatedHex);
+        expect(out[0].address).toBe(
+            new DelegateVtxo.Script({
+                pubKey,
+                serverPubKey: deprecated,
+                delegatePubKey: del,
+                csvTimelock: tl,
+            })
+                .address("ark", deprecated)
+                .encode(),
+        );
     });
 });
 
@@ -619,6 +760,167 @@ describe("ContractManager.scanContracts", () => {
             mgr.dispose();
         }
     });
+
+    it("probes the index's handlers concurrently, not serially", async () => {
+        // Concurrency proof: handler A, once inside discoverAt, waits for
+        // handler B to ALSO enter before returning. Serial probing would never
+        // start B until A returned (A would observe only itself); concurrent
+        // probing lets B enter while A waits, so A resolves via the shared
+        // barrier. A bounded fallback turns a serial regression into a fast
+        // assertion failure instead of a hang.
+        let entered = 0;
+        let releaseBoth!: () => void;
+        const bothInFlight = new Promise<void>((r) => (releaseBoth = r));
+        let seq = 0;
+        let firstSawBoth = false;
+        const makeConcurrentFake = (type: string) => ({
+            type,
+            createScript: (p: Record<string, string>) =>
+                ({ pkScript: hex.decode(p.script) }) as any,
+            serializeParams: (p: any) => p,
+            deserializeParams: (p: any) => p,
+            selectPath: () => null,
+            getAllSpendingPaths: () => [],
+            getSpendablePaths: () => [],
+            async discoverAt() {
+                const mine = ++seq; // 1 = first handler launched, 2 = second
+                entered += 1;
+                if (entered === 2) releaseBoth();
+                let timer: ReturnType<typeof setTimeout>;
+                const sawBoth = await Promise.race([
+                    bothInFlight.then(() => true),
+                    new Promise<boolean>((r) => {
+                        timer = setTimeout(() => r(false), 1000);
+                    }),
+                ]);
+                clearTimeout(timer!);
+                if (mine === 1) firstSawBoth = sawBoth;
+                return [];
+            },
+        });
+        register("concA", makeConcurrentFake("concA"));
+        register("concB", makeConcurrentFake("concB"));
+        const mgr = await makeManagerForTest();
+        try {
+            await mgr.scanContracts({ gapLimit: 1, hd: false, materialize, deps: makeDeps() });
+            expect(entered).toBe(2);
+            // The first-launched handler observed the second in-flight before
+            // returning — only possible if the probes overlapped.
+            expect(firstSawBoth).toBe(true);
+        } finally {
+            mgr.dispose();
+        }
+    });
+
+    it("rejects a non-positive / non-integer batchSize", async () => {
+        const mgr = await makeManagerForTest();
+        try {
+            for (const bad of [0, -1, 2.5]) {
+                await expect(
+                    mgr.scanContracts({
+                        batchSize: bad,
+                        hd: true,
+                        materialize,
+                        deps: makeDeps(),
+                    }),
+                ).rejects.toThrow(/batchSize/);
+            }
+        } finally {
+            mgr.dispose();
+        }
+    });
+
+    it("probes a WINDOW of indices concurrently, not one index at a time", async () => {
+        // Cross-index concurrency proof (the point of batching). A SINGLE
+        // handler is registered so the only overlap possible is between
+        // DIFFERENT indices. The handler's probe at the first index waits for a
+        // later index to ALSO enter before returning; a one-index-at-a-time
+        // loop would never launch index 1 until index 0 returned, so index 0
+        // would only ever observe itself and time out. gapLimit 3 → the first
+        // window caps to indices 0,1,2 (all probed concurrently). The handler
+        // always misses so the gap window still closes.
+        let entered = 0;
+        let releaseBoth!: () => void;
+        const bothInFlight = new Promise<void>((r) => (releaseBoth = r));
+        let firstSawBoth = false;
+        const fake = {
+            type: "windowfake",
+            createScript: (p: Record<string, string>) =>
+                ({ pkScript: hex.decode(p.script) }) as any,
+            serializeParams: (p: any) => p,
+            deserializeParams: (p: any) => p,
+            selectPath: () => null,
+            getAllSpendingPaths: () => [],
+            getSpendablePaths: () => [],
+            async discoverAt(index: number) {
+                entered += 1;
+                if (entered === 2) releaseBoth();
+                let timer: ReturnType<typeof setTimeout>;
+                const sawBoth = await Promise.race([
+                    bothInFlight.then(() => true),
+                    new Promise<boolean>((r) => {
+                        timer = setTimeout(() => r(false), 1000);
+                    }),
+                ]);
+                clearTimeout(timer!);
+                if (index === 0) firstSawBoth = sawBoth;
+                return [];
+            },
+        };
+        register("windowfake", fake);
+        const mgr = await makeManagerForTest();
+        try {
+            await mgr.scanContracts({ gapLimit: 3, hd: true, materialize, deps: makeDeps() });
+            expect(entered).toBeGreaterThanOrEqual(2);
+            // Index 0's probe observed a later index in-flight before
+            // returning — only possible if the window overlapped distinct
+            // indices. A serial regression makes this time out (false).
+            expect(firstSawBoth).toBe(true);
+        } finally {
+            mgr.dispose();
+        }
+    });
+
+    it("batchSize is a pure latency knob: the probe sequence and result are batch-invariant", async () => {
+        // The swap-hit-at-4 scenario probes EXACTLY 0..9 under the serial path
+        // (see the core test above). Re-run it under several batch sizes — the
+        // window cap (`gapLimit - unused`) must keep the probed set, its order,
+        // and lastIndexUsed byte-identical regardless of how indices are
+        // grouped. A batch that over-scanned past the gap-close point would
+        // probe index 10+ and break this.
+        for (const batchSize of [1, 2, 3, 7, 100]) {
+            const { handler, calls } = makeFakeHandler("swapbatch", (i) =>
+                i === 4
+                    ? [
+                          {
+                              type: "swapbatch",
+                              params: { script: "aabb" },
+                              script: "aabb",
+                              address: "ark1qswap",
+                          },
+                      ]
+                    : [],
+            );
+            register("swapbatch", handler);
+            const mgr = await makeManagerForTest();
+            try {
+                const res = await mgr.scanContracts({
+                    gapLimit: 5,
+                    batchSize,
+                    hd: true,
+                    materialize,
+                    deps: makeDeps(),
+                });
+                expect(res.lastIndexUsed).toBe(4);
+                expect(res.handlerErrors).toEqual([]);
+                expect([...calls].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+            } finally {
+                mgr.dispose();
+                contractHandlers.unregister("swapbatch");
+                registered.splice(registered.indexOf("swapbatch"), 1);
+            }
+        }
+    });
 });
 
 describe("signingDescriptorIndex", () => {
@@ -664,10 +966,9 @@ describe("Wallet.restore", () => {
             const balance = await wallet.getBalance();
             expect(balance.total).toBeGreaterThan(0);
 
-            // Static mode is a single pass at index 0: the default
-            // handler probes each csvTimelock at index 0 exactly once.
-            // Every probed scripts-array should be index-0 derived; the
-            // scan must not have walked an HD range.
+            // Static mode is a single pass at index 0: the default handler
+            // probes its index-0 candidate scripts in one batched query, so
+            // a discovery probe ran. The scan must not have walked an HD range.
             expect(indexer.getVtxosCalls.length).toBeGreaterThan(0);
         } finally {
             await wallet.dispose();
@@ -849,6 +1150,212 @@ describe("Wallet.restore", () => {
             const vtxos = await wallet.getVtxos();
             expect(vtxos.some((v) => v.script === scriptHex)).toBe(true);
         } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("spent-boarding blind spot: a fully-boarded index is invisible; the receive-destination index holds the line (plan §2/§4/§5)", async () => {
+        // Models a completed board. `Ramps.onboard` pays the boarded VTXO to
+        // `wallet.getAddress()` (the current L2 RECEIVE index), NOT back to the
+        // boarding index, so a boarding index that is funded and then fully
+        // boarded goes cold in BOTH restore signals: no current on-chain UTXO
+        // (not in fundedOnchain) and no L2 VTXO at its own index (not in
+        // usedScripts). The single-branch / current-UTXO model accepts this —
+        // the gap window is instead held open by the receive-destination index.
+        const { wallet, indexer, hdProvider, fundedOnchain } = await makeHdWalletForTest();
+        try {
+            const serverPubKey = wallet.offchainTapscript.options.serverPubKey;
+            const boardingCsv = wallet.boardingTapscript.options.csvTimelock!;
+
+            // L2 receive scripts at an HD index, built like DefaultContractHandler.discoverAt.
+            const receiveScriptsAt = (i: number) =>
+                wallet.walletContractTimelocks.map((csvTimelock) =>
+                    hex.encode(
+                        new DefaultVtxo.Script({
+                            pubKey: deriveDescriptorLeafPubKey(
+                                hdProvider.materializeDescriptorAt(i),
+                            ),
+                            serverPubKey,
+                            csvTimelock,
+                        }).pkScript,
+                    ),
+                );
+            // Boarding pkScript at an HD index, built like BoardingContractHandler.discoverAt.
+            const boardingScriptHexAt = (i: number) =>
+                hex.encode(
+                    new DefaultVtxo.Script({
+                        pubKey: deriveDescriptorLeafPubKey(hdProvider.materializeDescriptorAt(i)),
+                        serverPubKey,
+                        csvTimelock: boardingCsv,
+                    }).pkScript,
+                );
+
+            // The board came from boarding index 2 (now fully spent → left cold),
+            // and paid its VTXO to receive index 1.
+            for (const s of receiveScriptsAt(1)) indexer.usedScripts.add(s);
+            // index 2 deliberately funded in NEITHER signal.
+
+            await wallet.restore({ gapLimit: 5 });
+
+            // The spent boarding index 2 is NOT recovered: no boarding row for
+            // its script (the documented blind spot).
+            const boardingRows = await wallet.contractRepository.getContracts({
+                type: ["boarding"],
+            });
+            expect(boardingRows.map((c) => c.script)).not.toContain(boardingScriptHexAt(2));
+
+            // The watermark sits at the receive-destination index (1) — the
+            // index that actually held the gap window open — NOT the cold
+            // boarding index (2).
+            expect(await hdProvider.getCurrentSigningDescriptor()).toBe(
+                hdProvider.materializeDescriptorAt(1),
+            );
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("a cold (spent) boarding index between used indices does not close the gap window early (plan §4)", async () => {
+        // The reason the spent-boarding blind spot is tolerable: a used
+        // receive-destination index resets the gap counter, so a cold boarding
+        // index in between does not strand a later funded boarding index. Here
+        // gapLimit=3 with the only earlier hit at receive index 1; without that
+        // reset the window would close before reaching the funded boarding UTXO
+        // at index 4 (idx 0,1,2,3 = 4 consecutive misses > 3).
+        const { wallet, indexer, hdProvider, fundedOnchain } = await makeHdWalletForTest();
+        try {
+            const serverPubKey = wallet.offchainTapscript.options.serverPubKey;
+            const boardingCsv = wallet.boardingTapscript.options.csvTimelock!;
+            const receiveScriptsAt = (i: number) =>
+                wallet.walletContractTimelocks.map((csvTimelock) =>
+                    hex.encode(
+                        new DefaultVtxo.Script({
+                            pubKey: deriveDescriptorLeafPubKey(
+                                hdProvider.materializeDescriptorAt(i),
+                            ),
+                            serverPubKey,
+                            csvTimelock,
+                        }).pkScript,
+                    ),
+                );
+            const boardingOnchainAt = (i: number) =>
+                new DefaultVtxo.Script({
+                    pubKey: deriveDescriptorLeafPubKey(hdProvider.materializeDescriptorAt(i)),
+                    serverPubKey,
+                    csvTimelock: boardingCsv,
+                }).onchainAddress(wallet.network);
+
+            // Receive hit at index 1 (board destination); index 2 cold (spent
+            // boarding); a still-unspent funded boarding UTXO at index 4.
+            for (const s of receiveScriptsAt(1)) indexer.usedScripts.add(s);
+            fundedOnchain.add(boardingOnchainAt(4));
+
+            await wallet.restore({ gapLimit: 3 });
+
+            // The funded boarding index 4 is recovered because index 1 reset the
+            // gap counter — the watermark advances all the way to 4.
+            expect(await hdProvider.getCurrentSigningDescriptor()).toBe(
+                hdProvider.materializeDescriptorAt(4),
+            );
+            const boardingRows = await wallet.contractRepository.getContracts({
+                type: ["boarding"],
+            });
+            const boardingScript4 = hex.encode(
+                new DefaultVtxo.Script({
+                    pubKey: deriveDescriptorLeafPubKey(hdProvider.materializeDescriptorAt(4)),
+                    serverPubKey,
+                    csvTimelock: boardingCsv,
+                }).pkScript,
+            );
+            expect(boardingRows.map((c) => c.script)).toContain(boardingScript4);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    // Re-point the global fetch's `/info` reply at a fresh server-info
+    // snapshot carrying `deprecatedSigners`. `_runRestore` re-reads
+    // `getInfo()` live, so a stub installed AFTER wallet creation but BEFORE
+    // restore() drives the signer axis without disturbing the build-time key.
+    const stubInfoWithDeprecated = (
+        signerPubkey: string,
+        deprecatedSigners: { cutoffDate: number; pubkey: string }[],
+    ) => {
+        const mockFetch = vi.fn().mockImplementation((url: string) => {
+            const reply = (body: unknown) =>
+                Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+            if (url.includes("/info"))
+                return reply({
+                    signerPubkey,
+                    forfeitPubkey: signerPubkey,
+                    boardingExitDelay: 144,
+                    unilateralExitDelay: 144,
+                    network: "mutinynet",
+                    dust: 1000,
+                    forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                    checkpointTapscript:
+                        "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+                    deprecatedSigners,
+                });
+            if (url.includes("subscribe") || url.includes("subscriptions"))
+                return reply({ subscriptionId: "sub-1" });
+            return reply([]);
+        });
+        vi.stubGlobal("fetch", mockFetch);
+        return () => {
+            vi.unstubAllGlobals();
+            installRestoreHarness();
+        };
+    };
+
+    it("discovers a VTXO minted under a deprecated signer and persists the deprecated key in BOTH params and address (plan §3/§4)", async () => {
+        // A COMPRESSED (33-byte) deprecated signer key, distinct from the
+        // current one. Restore must x-only-normalize it (33→32 slice, plan
+        // step 2) before building candidate scripts; using the compressed
+        // form keeps that normalization under test.
+        const deprecatedCompressed = "03" + "ab".repeat(32);
+        const deprecatedXOnly = deprecatedCompressed.slice(2);
+        const deprecatedKey = hex.decode(deprecatedXOnly);
+
+        const { wallet, indexer, hdProvider, contractRepository } = await makeHdWalletForTest();
+        let unstub: (() => void) | undefined;
+        try {
+            const currentXOnly = hex.encode(wallet.offchainTapscript.options.serverPubKey);
+            // Keep the current signer unchanged; advertise one deprecated key.
+            unstub = stubInfoWithDeprecated(currentXOnly, [
+                { cutoffDate: 0, pubkey: deprecatedCompressed },
+            ]);
+
+            // Mint an L2 VTXO at receive index 2 anchored to the DEPRECATED
+            // signer's script (one csvTimelock on this network).
+            const pubKey2 = deriveDescriptorLeafPubKey(hdProvider.materializeDescriptorAt(2));
+            const deprecatedScript = new DefaultVtxo.Script({
+                pubKey: pubKey2,
+                serverPubKey: deprecatedKey,
+                csvTimelock: wallet.walletContractTimelocks[0],
+            });
+            const deprecatedScriptHex = hex.encode(deprecatedScript.pkScript);
+            indexer.usedScripts.add(deprecatedScriptHex);
+
+            await wallet.restore({ gapLimit: 5 });
+
+            // The contract is recovered and carries the deprecated signer in
+            // BOTH the persisted params and the encoded Ark address — so later
+            // signing/forfeit resolves the key the VTXO was actually minted
+            // under, not the current one.
+            const rows = await contractRepository.getContracts({ type: ["default"] });
+            const match = rows.find((c) => c.script === deprecatedScriptHex);
+            expect(match).toBeDefined();
+            expect(match!.params.serverPubKey).toBe(deprecatedXOnly);
+            expect(match!.address).toBe(
+                deprecatedScript.address(wallet.network.hrp, deprecatedKey).encode(),
+            );
+            // The watermark advances to the recovered index.
+            expect(await hdProvider.getCurrentSigningDescriptor()).toBe(
+                hdProvider.materializeDescriptorAt(2),
+            );
+        } finally {
+            unstub?.();
             await wallet.dispose();
         }
     });
@@ -1122,10 +1629,10 @@ describe("Wallet.restore", () => {
             expect(a).toBeUndefined();
             expect(b).toBeUndefined();
 
-            // Both awaited the same in-flight promise: the static scan
-            // is a single index-0 pass, so the number of probes equals
-            // exactly one run (one getVtxos per csvTimelock) plus the
-            // single inline refreshVtxos pull — NOT doubled.
+            // Both awaited the same in-flight promise: the static scan is a
+            // single index-0 pass, so the probe count reflects exactly one run
+            // (a batched discovery query plus the single inline refreshVtxos
+            // pull) — NOT doubled.
             const singleRunCalls = indexer.getVtxosCalls.length;
             expect(singleRunCalls).toBeGreaterThan(0);
 
