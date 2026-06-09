@@ -17,23 +17,6 @@ set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REGTEST_DIR="$ROOT_DIR/regtest"
-# Emulator co-signing service used by the ts-sdk Arkade e2e suite.
-# It joins the external "nigiri" network created by start-env.sh, so it must
-# start after the regtest stack is up.
-EMULATOR_COMPOSE="$ROOT_DIR/docker-compose.emulator.yml"
-
-emulator_up() {
-  docker compose -f "$EMULATOR_COMPOSE" up -d
-}
-
-emulator_down() {
-  docker compose -f "$EMULATOR_COMPOSE" down -v 2>/dev/null || true
-}
-
-# Packages whose e2e suites require the emulator co-signing service.
-needs_emulator() {
-  [ "$PKG" = "ts-sdk" ]
-}
 
 PKG="${1:-}"
 CMD="${2:-}"
@@ -63,22 +46,13 @@ ln -sfn "$REGTEST_DIR" "$ROOT_DIR/packages/$PKG/regtest"
 
 cmd_up() {
   node "$REGTEST_DIR/regtest.mjs" start --env "$ENV_FILE"
-  if needs_emulator; then
-    emulator_up
-  fi
 }
 
 cmd_down() {
-  if needs_emulator; then
-    emulator_down
-  fi
   node "$REGTEST_DIR/regtest.mjs" stop --env "$ENV_FILE"
 }
 
 cmd_reset() {
-  if needs_emulator; then
-    emulator_down
-  fi
   node "$REGTEST_DIR/regtest.mjs" clean --env "$ENV_FILE"
 }
 
