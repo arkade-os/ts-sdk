@@ -646,12 +646,21 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // clearing dust. We re-run the subdust/dust eligibility on that exact
         // capped subset; the overflow is recovered next cycle.
         if (vtxosToRecover.length > MAX_VTXOS_PER_SETTLEMENT) {
+            const recoverableCount = vtxosToRecover.length;
             const capped = byValueDescending(vtxosToRecover).slice(0, MAX_VTXOS_PER_SETTLEMENT);
             ({ vtxosToRecover, totalAmount } = getRecoverableWithSubdust(capped, dustAmount));
             if (vtxosToRecover.length === 0) {
-                // The capped batch stays below dust, so submitting it would be
-                // rejected and the next cycle would pick the same prefix.
-                throw new Error("No recoverable VTXOs found");
+                // Recoverable VTXOs exist, but the highest-value subset that
+                // fits in one settlement stays below dust, so submitting it
+                // would be rejected and the next cycle would pick the same
+                // prefix. Distinct from the "none recoverable" case above so
+                // operators can tell a stuck-but-funded wallet from an empty
+                // one. Recovery resumes once the prefix accumulates dust.
+                throw new Error(
+                    `Capped recovery batch (highest-value ${MAX_VTXOS_PER_SETTLEMENT} of ` +
+                        `${recoverableCount} recoverable VTXOs) is below the dust threshold ` +
+                        `${dustAmount}`,
+                );
             }
         }
 

@@ -306,7 +306,11 @@ describe("VtxoManager - Recovery", () => {
             const wallet = createMockWallet(subdust, "arkade1myaddress");
             const manager = new VtxoManager(wallet);
 
-            await expect(manager.recoverVtxos()).rejects.toThrow("No recoverable VTXOs found");
+            // Distinct from the genuine "no recoverable VTXOs" message: this
+            // wallet IS funded, the capped batch just can't reach dust yet.
+            await expect(manager.recoverVtxos()).rejects.toThrow(
+                /Capped recovery batch .* is below the dust threshold/,
+            );
             expect((wallet.settle as any).mock.calls).toHaveLength(0);
         });
 
