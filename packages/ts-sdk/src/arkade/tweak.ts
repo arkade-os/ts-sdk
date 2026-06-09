@@ -54,6 +54,11 @@ export function computeArkadeScriptPublicKey(pubKey: Uint8Array, script: Uint8Ar
     const hash = arkadeScriptHash(script);
 
     const xOnly = pubKey.length === 33 ? pubKey.subarray(1) : pubKey;
+    // Force the even-Y ("02") interpretation of the x-only key. This mirrors the
+    // emulator, which lifts its key to even Y (BIP-340 lift_x) before tweaking;
+    // we must derive the tweaked pubkey from the same point or it won't match the
+    // key the emulator signs with. Prepending the prefix also lets `fromHex`
+    // accept both 32-byte (x-only) and 33-byte (compressed) inputs uniformly.
     const point = secp256k1.Point.fromHex("02" + hex.encode(xOnly));
 
     // tweakPoint = hash * G (reduce modulo curve order n)

@@ -32,11 +32,16 @@ import { Transaction } from "../utils/transaction";
 import { buildForfeitTx } from "../forfeit";
 import { Batch } from "../wallet/batch";
 import { Intent } from "../intent";
+import { isRecoverable, isSubdust } from "../wallet";
+import type { ExtendedVirtualCoin } from "../wallet";
 import type { TxTree } from "../tree/txTree";
 
 export type ArkadeExtendedCoin = ExtendedCoin & {
     arkadeScriptBytes: Uint8Array;
 };
+
+const isVtxoCoin = (input: ArkadeExtendedCoin): input is ArkadeExtendedCoin & ExtendedVirtualCoin =>
+    "virtualStatus" in input;
 
 export function createArkadeBatchHandler(
     intentId: string,
@@ -165,6 +170,18 @@ export function createArkadeBatchHandler(
                     boardingIndices.push(boardingIdx);
                     hasBoardingInputs = true;
                 } else {
+                    // Recoverable or subdust VTXOs don't get a forfeit tx, and the
+                    // server allocates no connector for them. Skip so we don't consume
+                    // a connector meant for a forfeitable input (which would misalign
+                    // the connector indices and fail). Mirrors the standard settlement
+                    // flow in Wallet.handleSettlementFinalizationEvent.
+                    if (
+                        isVtxoCoin(input) &&
+                        (isRecoverable(input) || isSubdust(input, info.dust))
+                    ) {
+                        continue;
+                    }
+
                     // Settlement: build forfeit from connector leaf
                     if (connectorIndex >= connectorLeaves.length) {
                         throw new Error("not enough connectors received");
