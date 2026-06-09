@@ -23,5 +23,105 @@
             "03010040b275201ad0602183f84bf33205d574dbbbe1b2bfecfd35bf4ba9fed39852606ed62391ad20e106ad991696429bfdd602890800d275937b3b3858024774efc21fb5e8b75c30ac"
         ],
         "taprootKey": "5de945bb60e4c8c0cf5096f71f4707018d0a9879c76c9cf7a7996d8a555b812e"
+    },
+    {
+        "name": "btcd tree, 3 tapscripts",
+        "scripts": ["0100", "0101", "0102"],
+        "taprootKey": "d6a706210e14ed1713cd17a9d891e321587589050a33b639d0ffc2e377bc12a3"
+    },
+    {
+        "name": "btcd tree, 5 tapscripts",
+        "scripts": ["0100", "0101", "0102", "0103", "0104"],
+        "taprootKey": "a2a6c305693c1ea83ca9d35727cb99ddc302f0064c707418283f8b677bfe8705"
+    },
+    {
+        "name": "btcd tree, 9 tapscripts",
+        "scripts": ["0100", "0101", "0102", "0103", "0104", "0105", "0106", "0107", "0108"],
+        "taprootKey": "68ddc6fac632e21649a16ef044cdeaf43b1aa3c7adad6fa907bd2778df34e444"
+    },
+    {
+        "name": "btcd tree, 10 tapscripts",
+        "scripts": ["0100", "0101", "0102", "0103", "0104", "0105", "0106", "0107", "0108", "0109"],
+        "taprootKey": "6dd7071ff012089fe6436866351a6f67b61a2b88ba08eae47b1a126616a9f1dc"
+    },
+    {
+        "name": "btcd tree, 11 tapscripts",
+        "scripts": [
+            "0100",
+            "0101",
+            "0102",
+            "0103",
+            "0104",
+            "0105",
+            "0106",
+            "0107",
+            "0108",
+            "0109",
+            "010a"
+        ],
+        "taprootKey": "7190eeca40e212fc1f1079dfe3d48743f16ef37bb4051986ce76014309b0d099"
+    },
+    {
+        "name": "btcd tree, 13 tapscripts",
+        "scripts": [
+            "0100",
+            "0101",
+            "0102",
+            "0103",
+            "0104",
+            "0105",
+            "0106",
+            "0107",
+            "0108",
+            "0109",
+            "010a",
+            "010b",
+            "010c"
+        ],
+        "taprootKey": "0d79f43b99b3d15069ff9a03b3f43bfeaa26725b4a93e4b2539f94abb7d015fd"
+    },
+    {
+        "name": "btcd tree, 15 tapscripts",
+        "scripts": [
+            "0100",
+            "0101",
+            "0102",
+            "0103",
+            "0104",
+            "0105",
+            "0106",
+            "0107",
+            "0108",
+            "0109",
+            "010a",
+            "010b",
+            "010c",
+            "010d",
+            "010e"
+        ],
+        "taprootKey": "e5fffed45970cc4371fd323094bf64ebf661218a78b42e787fcff4cefc2baa36"
+    },
+    {
+        "name": "btcd tree, 17 tapscripts",
+        "scripts": [
+            "0100",
+            "0101",
+            "0102",
+            "0103",
+            "0104",
+            "0105",
+            "0106",
+            "0107",
+            "0108",
+            "0109",
+            "010a",
+            "010b",
+            "010c",
+            "010d",
+            "010e",
+            "010f",
+            "0110"
+        ],
+        "taprootKey": "b6feb75b9f1c25b31174671c64552dd0c2f2c94e73be31d77d186d7fb4fd05eb"
     }
 ]
