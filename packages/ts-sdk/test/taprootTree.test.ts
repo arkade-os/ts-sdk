@@ -10,13 +10,20 @@ import { assembleBtcdTaprootTree, VtxoScript } from "../src";
  * Huffman builder (`taprootListToTree`) and arkd's btcd builder
  * (`txscript.AssembleTaprootScriptTree`). For power-of-2 counts both
  * algorithms produce the same balanced tree; for any other count they
- * differ. We don't assert specific tap keys here (they're proven by the
- * VtxoScript fixture tests in `tapscript.test.ts`), but we DO assert:
+ * differ.
+ *
+ * Correctness of the derived tap key for the divergent counts is NOT
+ * asserted here — a round-trip through the same builder proves only that
+ * the builder is deterministic, not that it matches btcd. The authoritative
+ * checks are the golden vectors in `fixtures/vtxoscript.json`, exercised by
+ * `tapscript.test.ts`: their `taprootKey`s were generated independently with
+ * btcd's `txscript.AssembleTaprootScriptTree` + `ComputeTaprootOutputKey`
+ * (using scure's `TAPROOT_UNSPENDABLE_KEY` as the internal key), so they fail
+ * if our builder produces a wrong tree. This file only asserts:
  *
  *   1. The function accepts arbitrary leaf counts and produces a tree.
  *   2. p2tr accepts the produced tree and returns N tap-leaf scripts.
- *   3. VtxoScript can be round-trip encoded/decoded with the new
- *      algorithm and yield the same tap key.
+ *   3. VtxoScript serialization (encode→decode) preserves the script set.
  */
 
 function dummyScript(byte: number): Uint8Array {
@@ -43,15 +50,18 @@ describe("assembleBtcdTaprootTree", () => {
         expect(() => assembleBtcdTaprootTree([])).toThrow();
     });
 
-    it("VtxoScript encode→decode round-trips the tap key for any leaf count", () => {
-        for (const count of [3, 5, 7, 9, 10, 11, 13]) {
-            const scripts = makeScripts(count);
-            const original = new VtxoScript(scripts);
+    // Serialization round-trip: encode() drops the tree shape (flat depth-1
+    // TapTree), so decode() rebuilds it via the same btcd builder. This
+    // asserts the script set survives the round-trip, NOT that the tap key is
+    // correct — that is covered by the golden vectors in vtxoscript.json.
+    it("VtxoScript encode→decode preserves the script set", () => {
+        for (const count of [3, 10]) {
+            const original = new VtxoScript(makeScripts(count));
             const roundtripped = VtxoScript.decode(original.encode());
+            expect(roundtripped.scripts.map(hex.encode)).toEqual(original.scripts.map(hex.encode));
             expect(hex.encode(roundtripped.tweakedPublicKey)).toBe(
                 hex.encode(original.tweakedPublicKey),
             );
-            expect(hex.encode(roundtripped.pkScript)).toBe(hex.encode(original.pkScript));
         }
     });
 });
