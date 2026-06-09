@@ -29,6 +29,11 @@
         "regtest:reset:boltz-swap": "bash scripts/regtest.sh boltz-swap reset",
         "prepare": "husky"
     },
+    "pnpm": {
+        "overrides": {
+            "minimatch": "^10.2.5"
+        }
+    },
     "devDependencies": {
         "@types/node": "24.3.1",
         "eventsource": "4.1.0",
