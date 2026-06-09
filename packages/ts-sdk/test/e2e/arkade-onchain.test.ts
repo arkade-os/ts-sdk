@@ -14,12 +14,12 @@ import {
     VtxoScript,
 } from "../../src";
 import { Transaction } from "../../src/utils/transaction";
-import { addEmulatorPacket, enforcePayTo, execCommand, waitForUtxo } from "./utils";
+import { addEmulatorPacket, enforcePayTo, faucetOnchain, waitForUtxo } from "./utils";
 
 const EMULATOR_URL = "http://localhost:7073";
 const ARK_SERVER_URL = "http://localhost:7070";
 const ESPLORA_URL = "http://localhost:3000";
-const FUNDING_BTC = "0.01";
+const FUNDING_SATS = 1_000_000;
 const FUNDING_AMOUNT = 1_000_000n;
 const FEE_AMOUNT = 500n;
 const SPEND_AMOUNT = FUNDING_AMOUNT - FEE_AMOUNT;
@@ -118,8 +118,7 @@ describe("arkade SubmitOnchainTx", () => {
 
         const contractAddress = vtxoScript.onchainAddress(networks.regtest);
 
-        execCommand(`nigiri faucet ${contractAddress} ${FUNDING_BTC}`);
-        execCommand(`nigiri rpc -generate 1`);
+        faucetOnchain(contractAddress, FUNDING_SATS);
 
         const utxo = await waitForUtxo(contractAddress);
         const rawHex = await fetchTxHex(utxo.txid);

@@ -1,6 +1,5 @@
 import { expect, describe, it, beforeEach, beforeAll } from "vitest";
 import { base64, hex } from "@scure/base";
-import { execSync } from "child_process";
 
 import {
     arkade,
@@ -20,7 +19,13 @@ import {
     EmulatorPacket,
     VtxoScript,
 } from "../../src";
-import { beforeEachFaucet, createTestArkWallet, createTestIdentity, faucetOffchain } from "./utils";
+import {
+    beforeEachFaucet,
+    createTestArkWallet,
+    createTestIdentity,
+    faucetOffchain,
+    faucetOnchain,
+} from "./utils";
 
 /**
  * Creates an Extension OP_RETURN output containing an EmulatorPacket.
@@ -357,9 +362,8 @@ describe("arkade", () => {
         });
 
         // Fund on-chain via faucet
-        const fundAmountBtc = 0.0001; // 10000 sats
         const fundAmount = 10000;
-        execSync(`nigiri faucet ${btcAddress} ${fundAmountBtc.toFixed(8)}`);
+        faucetOnchain(btcAddress, fundAmount);
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
         // Get the arkade closure leaf
