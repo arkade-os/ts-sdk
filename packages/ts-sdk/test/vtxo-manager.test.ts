@@ -1077,6 +1077,55 @@ describe("VtxoManager - Renewal", () => {
             expect(settleArgs.outputs[0].amount).toBeLessThanOrEqual(12000n);
         });
 
+        it("warns when an oversized VTXO cannot be renewed within vtxoMaxAmount", async () => {
+            const now = Date.now();
+            const createdAt = new Date(now - 100_000);
+            // The soonest-expiring VTXO (12000) alone exceeds the 10000 ceiling,
+            // so it is skipped and drifts toward a unilateral exit while the
+            // smaller 5000 one renews. The skip must be surfaced, not silent.
+            const vtxos = [
+                {
+                    txid: "oversized",
+                    vout: 0,
+                    value: 12_000,
+                    createdAt,
+                    virtualStatus: { state: "settled", batchExpiry: now + 1_000 },
+                    status: { confirmed: true },
+                    isUnrolled: false,
+                    isSpent: false,
+                } as any,
+                {
+                    txid: "fits",
+                    vout: 0,
+                    value: 5_000,
+                    createdAt,
+                    virtualStatus: { state: "settled", batchExpiry: now + 5_000 },
+                    status: { confirmed: true },
+                    isUnrolled: false,
+                    isSpent: false,
+                } as any,
+            ];
+            const wallet = createMockWallet(vtxos, "arkade1myaddress", {
+                vtxoMaxAmount: 10_000n,
+            });
+            const manager = new VtxoManager(wallet, undefined, {});
+            const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+            try {
+                const txid = await manager.renewVtxos();
+
+                expect(txid).toBe("mock-txid");
+                const settleArgs = (wallet.settle as any).mock.calls[0][0];
+                expect(settleArgs.inputs).toHaveLength(1);
+                expect(settleArgs.inputs[0].txid).toBe("fits");
+                expect(warnSpy).toHaveBeenCalledWith(
+                    expect.stringContaining("exceed the per-output limit 10000"),
+                );
+            } finally {
+                warnSpy.mockRestore();
+            }
+        });
+
         it("should renew the soonest-expiring VTXOs first when capping", async () => {
             // The 10 most urgent VTXOs are listed AFTER 50 less-urgent ones.
             // Sorting by expiry before the cap must rescue them so they don't

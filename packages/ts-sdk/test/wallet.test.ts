@@ -2005,6 +2005,28 @@ describe("Wallet._settleImpl", () => {
             expect(captured).toHaveLength(1);
             expect(captured[0].value).toBe(5_000);
         });
+
+        it("compares vtxoMaxAmount against the projected post-fee output", async () => {
+            // Pre-fee subtotal (10_500) exceeds the 10_000 ceiling, but the
+            // flat 1000-sat output fee brings the registered output down to
+            // 9_500, which fits. The VTXO must be selected, not dropped.
+            const vtxos = [makeVtxo(10_500, 0)];
+            const { thisArg, sentinel, getCaptured } = buildThisArg(vtxos, {
+                offchainOutput: "1000.0",
+            });
+            thisArg.arkProvider.getInfo.mockResolvedValue({
+                fees: { intentFee: { offchainOutput: "1000.0" } },
+                vtxoMaxAmount: 10_000n,
+            });
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            const captured = getCaptured()!;
+            expect(captured).toHaveLength(1);
+            expect(captured[0].value).toBe(10_500);
+        });
     });
 });
 

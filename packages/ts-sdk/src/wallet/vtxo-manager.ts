@@ -179,6 +179,14 @@ export function byExpiryAscending(vtxos: ExtendedVirtualCoin[]): ExtendedVirtual
  * within bounds; the overflow is settled on the next cycle, mirroring the
  * count-cap behaviour.
  *
+ * The bound is applied to each input's gross `value`, not its fee-adjusted net
+ * contribution. This is intentional and strictly conservative: the real output
+ * is smaller once the offchain output fee is removed, so a batch that fits on
+ * gross value always fits post-fee. The helper has no fee context, and erring
+ * toward fewer inputs per cycle is safe. Do not "tighten" this by subtracting
+ * fees here. (The periodic-settle / manual-settle paths, which do have a fee
+ * estimator on hand, cap on net instead — a deliberate, harmless asymmetry.)
+ *
  * `sorted` must already be ordered by the caller's priority (value-descending
  * for recovery / manual full settle, expiry-ascending for renewal) so the
  * inputs that matter most are tried first. An input that would breach the
@@ -196,6 +204,7 @@ export function capSettlementBatch<T extends { value: number }>(
     let total = 0n;
     for (const vtxo of sorted) {
         if (batch.length >= MAX_VTXOS_PER_SETTLEMENT) break;
+        // Gross value, intentionally not fee-adjusted — see the note above.
         const next = total + BigInt(vtxo.value);
         if (maxAmount >= 0n && next > maxAmount) continue;
         batch.push(vtxo);
@@ -936,6 +945,20 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // renewed on the next cycle.
             const vtxoMaxAmount = (await this.getInfoProvider()?.getInfo())?.vtxoMaxAmount ?? -1n;
             const capped = capSettlementBatch(byExpiryAscending(vtxos), vtxoMaxAmount);
+            if (vtxoMaxAmount >= 0n) {
+                // A VTXO whose value alone exceeds the per-output ceiling can
+                // never be renewed by this path (the server would reject it) and
+                // will drift toward a unilateral exit as it nears expiry. The
+                // routine count-cap overflow is benign (deferred next cycle), but
+                // this is not — surface it so operators can act (e.g. split it).
+                const oversized = vtxos.filter((vtxo) => BigInt(vtxo.value) > vtxoMaxAmount);
+                if (oversized.length > 0) {
+                    console.warn(
+                        `Renewal: ${oversized.length} VTXO(s) exceed the per-output limit ` +
+                            `${vtxoMaxAmount} and cannot be renewed; they risk unilateral exit`,
+                    );
+                }
+            }
             if (capped.length < vtxos.length) {
                 // A cap dropped inputs: settle the soonest-expiring subset now
                 // and renew the overflow next cycle. When neither cap bites we
@@ -1209,7 +1232,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * "no limit".
      */
     private getInfoProvider(): ArkProvider | undefined {
-        return (this.wallet as Partial<SweepCapableWallet>).arkProvider;
+        // Narrow cast: reach only for an optional arkProvider rather than the
+        // full sweep-capable shape, so an incompatible future IWallet.arkProvider
+        // surfaces here as a type error instead of being silently absorbed.
+        return (this.wallet as { arkProvider?: ArkProvider }).arkProvider;
     }
 
     /** Returns the Bitcoin network configuration from the wallet. */

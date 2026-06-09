@@ -2165,6 +2165,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             const vtxos = await this.getVtxos({ withRecoverable: true });
 
+            const offchainAddress = await this.getAddress();
+            const offchainOutputScript = hex.encode(ArkAddress.decode(offchainAddress).pkScript);
+
             // Cap the VTXOs per settlement to stay under the server's
             // intent-size limit (MAX_VTXOS_PER_SETTLEMENT inputs) and its
             // per-output ceiling (vtxoMaxAmount; -1 means no limit). Settle the
@@ -2197,9 +2200,20 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
                 const net = vtxo.value - inputFee.satoshis;
                 // Skip (don't stop at) a VTXO that would push the output past
-                // the ceiling; a smaller VTXO behind it can still fit.
-                if (vtxoMaxAmount >= 0n && BigInt(amount + net) > vtxoMaxAmount) {
-                    continue;
+                // the ceiling; a smaller VTXO behind it can still fit. Compare
+                // against the projected post-fee output (what the server
+                // actually receives) rather than the pre-fee subtotal, so a
+                // VTXO whose output would fit once the output fee is deducted
+                // isn't dropped.
+                if (vtxoMaxAmount >= 0n) {
+                    const projectedAmount = BigInt(amount + net);
+                    const projectedOutputFee = estimator.evalOffchainOutput({
+                        amount: projectedAmount,
+                        script: offchainOutputScript,
+                    });
+                    if (projectedAmount - BigInt(projectedOutputFee.satoshis) > vtxoMaxAmount) {
+                        continue;
+                    }
                 }
 
                 filteredVtxos.push(vtxo);
@@ -2212,13 +2226,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
 
             const output = {
-                address: await this.getAddress(),
+                address: offchainAddress,
                 amount: BigInt(amount),
             };
 
             const outputFee = estimator.evalOffchainOutput({
                 amount: output.amount,
-                script: hex.encode(ArkAddress.decode(output.address).pkScript),
+                script: offchainOutputScript,
             });
 
             output.amount -= BigInt(outputFee.satoshis);
