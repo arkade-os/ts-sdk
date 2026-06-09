@@ -167,6 +167,43 @@ export function byExpiryAscending(vtxos: ExtendedVirtualCoin[]): ExtendedVirtual
     return [...vtxos].sort((a, b) => expiryKey(a) - expiryKey(b));
 }
 
+/**
+ * Select inputs from `sorted` that fit in a single settlement: at most
+ * {@link MAX_VTXOS_PER_SETTLEMENT} inputs AND a cumulative `value` no greater
+ * than `maxAmount`. `maxAmount < 0` disables the amount bound — it is the
+ * server's `-1` "no limit" sentinel for `ArkInfo.vtxoMaxAmount`.
+ *
+ * Each settlement path builds a single output equal to the (fee-adjusted) sum
+ * of its inputs, and the server rejects any virtual output above `vtxoMaxAmount`
+ * with `AMOUNT_TOO_HIGH`. Capping the input total therefore keeps that output
+ * within bounds; the overflow is settled on the next cycle, mirroring the
+ * count-cap behaviour.
+ *
+ * `sorted` must already be ordered by the caller's priority (value-descending
+ * for recovery / manual full settle, expiry-ascending for renewal) so the
+ * inputs that matter most are tried first. An input that would breach the
+ * amount cap is skipped — not a stopping point — so a smaller input behind an
+ * oversized or awkwardly-sized one still gets in (a break would strand it and
+ * could leave the batch below dust). The count cap is a hard stop. Uses
+ * `> maxAmount` to mirror the server's strict check, so a batch whose total
+ * equals the limit still fits.
+ */
+export function capSettlementBatch<T extends { value: number }>(
+    sorted: T[],
+    maxAmount: bigint,
+): T[] {
+    const batch: T[] = [];
+    let total = 0n;
+    for (const vtxo of sorted) {
+        if (batch.length >= MAX_VTXOS_PER_SETTLEMENT) break;
+        const next = total + BigInt(vtxo.value);
+        if (maxAmount >= 0n && next > maxAmount) continue;
+        batch.push(vtxo);
+        total = next;
+    }
+    return batch;
+}
+
 /** Default renewal threshold in seconds (3 days). */
 export const DEFAULT_THRESHOLD_SECONDS = 259_200;
 
@@ -651,18 +688,20 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             throw new Error("No recoverable VTXOs found");
         }
 
-        // Cap the number of VTXOs per settlement to stay under the server's
-        // intent-size limit (see MAX_VTXOS_PER_SETTLEMENT). Recover the
-        // highest-value VTXOs first: the subdust inclusion decision above was
-        // made on the full set's combined total, so a naive prefix can drop the
-        // capped batch below dust — which the server rejects, leaving the next
-        // cycle to re-pick the same prefix forever. Ordering by value maximizes
-        // the recovered amount and gives the capped subset the best chance of
-        // clearing dust. We re-run the subdust/dust eligibility on that exact
-        // capped subset; the overflow is recovered next cycle.
-        if (vtxosToRecover.length > MAX_VTXOS_PER_SETTLEMENT) {
+        // Cap the recovery batch to stay under both the server's intent-size
+        // limit (MAX_VTXOS_PER_SETTLEMENT inputs) and its per-output ceiling
+        // (vtxoMaxAmount; -1 means no limit). Recover the highest-value VTXOs
+        // first: the subdust inclusion decision above was made on the full set's
+        // combined total, so a naive prefix can drop the capped batch below
+        // dust — which the server rejects, leaving the next cycle to re-pick the
+        // same prefix forever. Ordering by value maximizes the recovered amount
+        // and gives the capped subset the best chance of clearing dust. We
+        // re-run the subdust/dust eligibility on that exact capped subset; the
+        // overflow is recovered next cycle.
+        const vtxoMaxAmount = (await this.getInfoProvider()?.getInfo())?.vtxoMaxAmount ?? -1n;
+        const capped = capSettlementBatch(byValueDescending(vtxosToRecover), vtxoMaxAmount);
+        if (capped.length < vtxosToRecover.length) {
             const recoverableCount = vtxosToRecover.length;
-            const capped = byValueDescending(vtxosToRecover).slice(0, MAX_VTXOS_PER_SETTLEMENT);
             ({ vtxosToRecover, totalAmount } = getRecoverableWithSubdust(capped, dustAmount));
             if (vtxosToRecover.length === 0) {
                 // Recoverable VTXOs exist, but the highest-value subset that
@@ -672,9 +711,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 // operators can tell a stuck-but-funded wallet from an empty
                 // one. Recovery resumes once the prefix accumulates dust.
                 throw new Error(
-                    `Capped recovery batch (highest-value ${MAX_VTXOS_PER_SETTLEMENT} of ` +
-                        `${recoverableCount} recoverable VTXOs) is below the dust threshold ` +
-                        `${dustAmount}`,
+                    `Capped recovery batch (highest-value subset of ${recoverableCount} ` +
+                        `recoverable VTXOs within the ${MAX_VTXOS_PER_SETTLEMENT}-input and ` +
+                        `${vtxoMaxAmount}-sat limits) is below the dust threshold ${dustAmount}`,
                 );
             }
         }
@@ -887,15 +926,29 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 throw new Error("No VTXOs available to renew");
             }
 
-            // Cap the number of VTXOs per settlement to stay under the
-            // server's intent-size limit (see MAX_VTXOS_PER_SETTLEMENT). Renew
-            // the soonest-expiring VTXOs first so the most urgent ones make the
-            // cut — otherwise a viable VTXO past the cap could miss its renewal
-            // window and be forced into a unilateral exit. The output amount is
-            // summed from the capped set below, so it stays consistent; the
-            // overflow is renewed on the next cycle.
-            if (vtxos.length > MAX_VTXOS_PER_SETTLEMENT) {
-                vtxos = byExpiryAscending(vtxos).slice(0, MAX_VTXOS_PER_SETTLEMENT);
+            // Cap the renewal batch to stay under both the server's intent-size
+            // limit (MAX_VTXOS_PER_SETTLEMENT inputs) and its per-output ceiling
+            // (vtxoMaxAmount; -1 means no limit). Renew the soonest-expiring
+            // VTXOs first so the most urgent ones make the cut — otherwise a
+            // viable VTXO past the cap could miss its renewal window and be
+            // forced into a unilateral exit. The output amount is summed from
+            // the capped set below, so it stays consistent; the overflow is
+            // renewed on the next cycle.
+            const vtxoMaxAmount = (await this.getInfoProvider()?.getInfo())?.vtxoMaxAmount ?? -1n;
+            const capped = capSettlementBatch(byExpiryAscending(vtxos), vtxoMaxAmount);
+            if (capped.length < vtxos.length) {
+                // A cap dropped inputs: settle the soonest-expiring subset now
+                // and renew the overflow next cycle. When neither cap bites we
+                // keep the original selection (and order) untouched.
+                vtxos = capped;
+                if (vtxos.length === 0) {
+                    // The soonest-expiring VTXO alone exceeds vtxoMaxAmount, so
+                    // no batch fits. Only reachable if the server lowered the
+                    // ceiling below an existing VTXO; it would reject it anyway.
+                    throw new Error(
+                        `No VTXOs available to renew within the per-output limit ${vtxoMaxAmount}`,
+                    );
+                }
             }
 
             const totalAmount = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
@@ -1146,6 +1199,17 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     /** Returns the Ark provider for intent fee and server info lookups. */
     private getArkProvider() {
         return this.getSweepWallet().arkProvider;
+    }
+
+    /**
+     * Read-only access to the ark provider for fetching server limits. Unlike
+     * {@link getArkProvider}, this does not require full boarding-sweep
+     * capability — recovery and renewal only need it to read `vtxoMaxAmount`.
+     * Returns undefined when no provider is wired, which callers treat as
+     * "no limit".
+     */
+    private getInfoProvider(): ArkProvider | undefined {
+        return (this.wallet as Partial<SweepCapableWallet>).arkProvider;
     }
 
     /** Returns the Bitcoin network configuration from the wallet. */
@@ -1521,7 +1585,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // Without this, settle sends `outputAmount = sum(inputs)` and the
         // server rejects with INTENT_INSUFFICIENT_FEE whenever the operator
         // charges non-zero intent fees.
-        const { fees } = await this.getArkProvider().getInfo();
+        const { fees, vtxoMaxAmount } = await this.getArkProvider().getInfo();
         const estimator = new Estimator(fees.intentFee);
 
         let totalAmount = 0n;
@@ -1540,13 +1604,17 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         }
 
         // Cap the VTXOs per settlement to stay under the server's intent-size
-        // limit (see MAX_VTXOS_PER_SETTLEMENT). Settle the soonest-expiring
-        // VTXOs first so the most urgent ones make the cut. Apply the cap to
+        // limit (MAX_VTXOS_PER_SETTLEMENT inputs) and its per-output ceiling
+        // (vtxoMaxAmount; -1 means no limit). Settle the soonest-expiring VTXOs
+        // first so the most urgent ones make the cut. Apply the cap to
         // economically viable VTXOs only: skipping uneconomic inputs and
         // continuing past the cap avoids an uneconomic prefix permanently
         // starving valid VTXOs behind it. Boarding inputs are added uncapped
-        // above; the headroom absorbs them. Any overflow is settled on the next
-        // cycle.
+        // above; the amount cap accounts for them via the running total (so if
+        // boarding alone already exceeds vtxoMaxAmount no VTXO fits and the
+        // server rejects the over-limit output — a multi-output split would be
+        // needed to settle that, which is out of scope here). Any overflow is
+        // settled on the next cycle.
         const filteredVtxos: ExtendedVirtualCoin[] = [];
         for (const v of byExpiryAscending(expiringVtxos)) {
             if (filteredVtxos.length >= MAX_VTXOS_PER_SETTLEMENT) {
@@ -1564,8 +1632,14 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             if (inputFee.satoshis >= v.value) {
                 continue;
             }
+            const net = BigInt(v.value) - BigInt(inputFee.satoshis);
+            // Skip (don't stop at) a VTXO that would push the output past the
+            // ceiling; a smaller VTXO behind it can still fit.
+            if (vtxoMaxAmount >= 0n && totalAmount + net > vtxoMaxAmount) {
+                continue;
+            }
             filteredVtxos.push(v);
-            totalAmount += BigInt(v.value) - BigInt(inputFee.satoshis);
+            totalAmount += net;
         }
 
         if (filteredBoarding.length === 0 && filteredVtxos.length === 0) {
