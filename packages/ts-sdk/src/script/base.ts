@@ -1,11 +1,4 @@
-import {
-    Script,
-    Address,
-    p2tr,
-    taprootListToTree,
-    TAPROOT_UNSPENDABLE_KEY,
-    NETWORK,
-} from "@scure/btc-signer";
+import { Script, Address, p2tr, TAPROOT_UNSPENDABLE_KEY, NETWORK } from "@scure/btc-signer";
 import { TAP_LEAF_VERSION } from "@scure/btc-signer/payment.js";
 import { PSBTOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes } from "@scure/btc-signer/utils.js";
@@ -17,6 +10,7 @@ import {
     ConditionCSVMultisigTapscript,
     CSVMultisigTapscript,
 } from "./tapscript";
+import { assembleBtcdTaprootTree } from "./taprootTree";
 import { DEFAULT_NETWORK } from "../networks";
 
 export type TapLeafScript = [
@@ -66,23 +60,17 @@ export class VtxoScript {
     /**
      * Create a virtual output script from its tapleaf scripts.
      *
+     * The Taproot script tree is assembled using btcd's algorithm
+     * (`txscript.AssembleTaprootScriptTree`) so the derived taproot output
+     * key agrees with arkd for any leaf count. `@scure/btc-signer`'s
+     * default `taprootListToTree` is a Huffman builder that only agrees
+     * with arkd for power-of-2 leaf counts.
+     *
      * @param scripts - Raw tapscript bytes for each leaf
      * @throws Error if the provided leaves cannot produce a valid Taproot tree
      */
     constructor(readonly scripts: Bytes[]) {
-        // reverse the scripts if the number of scripts is odd
-        // this is to be compatible with arkd algorithm computing taproot tree from list of tapscripts
-        // the scripts must be reversed only HERE while we compute the tweaked public key
-        // but the original order should be preserved while encoding as taptree
-        // note: .slice().reverse() is used instead of .reverse() to avoid mutating the original array
-        const list = scripts.length % 2 !== 0 ? scripts.slice().reverse() : scripts;
-
-        const tapTree = taprootListToTree(
-            list.map((script) => ({
-                script,
-                leafVersion: TAP_LEAF_VERSION,
-            })),
-        );
+        const tapTree = assembleBtcdTaprootTree(scripts);
 
         const payment = p2tr(TAPROOT_UNSPENDABLE_KEY, tapTree, undefined, true);
 

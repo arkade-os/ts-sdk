@@ -30,6 +30,7 @@ import {
     TapTreeCoder,
     getSequence,
 } from "./script/base";
+import { assembleBtcdTaprootTree } from "./script/taprootTree";
 import {
     TxType,
     IWallet,
@@ -330,6 +331,7 @@ export {
     DelegateVtxo,
     VtxoScript,
     VHTLC,
+    assembleBtcdTaprootTree,
 
     // Enums
     TxType,
