@@ -1,6 +1,8 @@
 import { sequenceToTimelock } from "../../utils/timelock";
 import { Contract, PathContext } from "../types";
 import { isDescriptor, extractPubKey } from "../../identity/descriptor";
+import type { IndexerProvider } from "../../providers/indexer";
+import { DEFAULT_PAGE_SIZE } from "../constants";
 
 /**
  * Extract raw hex pubkey from a value that may be a descriptor or raw hex.
@@ -115,4 +117,48 @@ export function isCsvSpendable(context: PathContext, sequence?: number): boolean
     }
 
     return false;
+}
+
+/**
+ * Batched discovery probe for a single wallet index: given the candidate
+ * pkScripts a `discoverAt` built (the signer × CSV-timelock cross-product,
+ * already deduped), return the subset the indexer has at least one VTXO for —
+ * in any state, since restore counts a spent-but-used script as activity.
+ *
+ * Collapses what used to be one `getVtxos` call per candidate script into a
+ * single call per page, the same batching shape as
+ * {@link ContractManager.fetchContractVtxosBulk}: the indexer reports each
+ * returned VTXO's `script`, which is matched back to the candidate set. It
+ * pages only as far as needed to observe every candidate (stopping early once
+ * all are seen), and otherwise to the end of history, so the discovered set is
+ * identical to the prior per-script path — a heavily-reused candidate cannot
+ * starve another candidate off the first page.
+ */
+export async function detectUsedScripts(
+    indexerProvider: IndexerProvider,
+    scriptHexes: string[],
+): Promise<Set<string>> {
+    const used = new Set<string>();
+    if (scriptHexes.length === 0) return used;
+
+    // `scripts` stays the full candidate set across pages so the indexer's
+    // pagination is consistent; `remaining` only drives the early stop.
+    const remaining = new Set(scriptHexes);
+    let pageIndex = 0;
+    let hasMore = true;
+    while (hasMore && remaining.size > 0) {
+        const { vtxos, page } = await indexerProvider.getVtxos({
+            scripts: scriptHexes,
+            pageIndex,
+            pageSize: DEFAULT_PAGE_SIZE,
+        });
+        for (const vtxo of vtxos) {
+            if (remaining.delete(vtxo.script)) used.add(vtxo.script);
+        }
+        // Same end-of-history heuristic as fetchContractVtxosBulk: a short page
+        // (or absent page metadata) means there is nothing left to fetch.
+        hasMore = page ? vtxos.length === DEFAULT_PAGE_SIZE : false;
+        pageIndex++;
+    }
+    return used;
 }

@@ -8,7 +8,6 @@ import {
     ContractState,
     ContractVtxo,
     ContractWithVtxos,
-    DiscoveredContract,
     DiscoveryDeps,
     GetContractsFilter,
     PathContext,
@@ -33,8 +32,7 @@ import {
     saveVtxosForContract,
     warnAndFilterVtxosForScript,
 } from "./vtxoOwnership";
-
-const DEFAULT_PAGE_SIZE = 500;
+import { DEFAULT_PAGE_SIZE } from "./constants";
 
 /**
  * Whether two *different* contract types may legitimately share a single
@@ -73,6 +71,17 @@ export function areCoalescibleContractTypes(a: string, b: string): boolean {
  * failure rather than a normal scan completion.
  */
 const SCAN_MAX_INDEX = 10_000;
+
+/**
+ * Default number of HD indices probed concurrently per {@link scanContracts}
+ * window. The gap loop is still gap-limit bounded and its discovered set is
+ * identical to a one-index-at-a-time scan (see the over-scan-discard rule in
+ * `scanContracts`); the window only overlaps the per-index network round-trips
+ * so an empty wallet closes its `gapLimit` window in `ceil(gapLimit / batch)`
+ * rounds instead of `gapLimit` serial ones. 10 keeps the worst-case over-scan
+ * (indices probed but discarded past the gap-close point) under one window.
+ */
+const DEFAULT_SCAN_BATCH = 10;
 
 export type RefreshVtxosOptions = {
     scripts?: string[];
@@ -126,6 +135,14 @@ export interface ScanResult {
 export interface ScanContractsOptions {
     /** Default 20. A non-positive / non-integer value throws. */
     gapLimit?: number;
+    /**
+     * Number of HD indices probed concurrently per window (default
+     * {@link DEFAULT_SCAN_BATCH}). Pure latency knob: the gap loop stays
+     * gap-limit bounded and the discovered set is identical regardless of
+     * batch size. A non-positive / non-integer value throws. Ignored when
+     * `hd` is false (the static pass probes only index 0).
+     */
+    batchSize?: number;
     /** HD mode → unbounded gap loop guided by the gap counter; false → probe only index 0 (single static pass). */
     hd: boolean;
     /**
@@ -585,6 +602,19 @@ export class ContractManager implements IContractManager {
      *   other handler hit it).
      * - `persistAndWatchContract` rejecting is operational/fatal and
      *   propagates (only `discoverAt` is guarded).
+     * - Within an index the handler probes run concurrently (independent
+     *   network reads); their hits are persisted sequentially in
+     *   `discoverables` order to preserve the first-wins collision tie-break.
+     * - Indices are probed `batchSize` at a time (a second concurrency layer
+     *   over the per-index probes), but each window is CAPPED to
+     *   `gapLimit - unused` indices — the most a serial scan could still reach
+     *   before the gap window is guaranteed to close. So every index probed in
+     *   a window is one a one-index-at-a-time scan would also reach: nothing is
+     *   over-scanned, nothing is discarded, and `materialize`/`discoverAt` are
+     *   invoked on exactly the same index set. The window's hits are still
+     *   processed strictly in ascending index order, so the discovered set,
+     *   persisted rows, `lastIndexUsed`, and `handlerErrors` are byte-for-byte
+     *   identical to the serial path — only the wall-clock differs.
      */
     async scanContracts(opts: ScanContractsOptions): Promise<ScanResult> {
         const gapLimit = opts.gapLimit ?? 20;
@@ -593,15 +623,22 @@ export class ContractManager implements IContractManager {
                 `scanContracts: gapLimit must be a positive integer (got ${String(opts.gapLimit)})`,
             );
         }
+        const batchSize = opts.batchSize ?? DEFAULT_SCAN_BATCH;
+        if (!Number.isInteger(batchSize) || batchSize <= 0) {
+            throw new Error(
+                `scanContracts: batchSize must be a positive integer (got ${String(opts.batchSize)})`,
+            );
+        }
         const registered = contractHandlers
             .getRegisteredTypes()
             .map((t) => contractHandlers.get(t))
             .filter(isDiscoverable);
 
         // Probe `boarding` before `default`/`delegate`. This ordering is
-        // LOAD-BEARING, not cosmetic: each hit is persisted immediately and
-        // `upsertContract` resolves a same-script collision FIRST-WINS, so the
-        // iteration order IS the tie-break. In the degenerate equal-delay case
+        // LOAD-BEARING, not cosmetic: within each index the probes run
+        // concurrently, but their hits are persisted in THIS order and
+        // `upsertContract` resolves a same-script collision FIRST-WINS, so this
+        // order IS the persistence tie-break. In the degenerate equal-delay case
         // a rotated index can carry BOTH an on-chain boarding UTXO and an L2
         // VTXO at the same (byte-identical) script; probing boarding first
         // resolves that collision to a `boarding` row, which keeps the on-chain
@@ -622,30 +659,76 @@ export class ContractManager implements IContractManager {
         let unused = 0;
         let i = 0;
 
+        // Probe one index's discoverable handlers CONCURRENTLY: they are
+        // independent network reads (indexer / on-chain explorer), so
+        // overlapping them cuts per-index latency. Each probe's try/catch
+        // mirrors the former serial guard, capturing a discoverAt rejection
+        // (or synchronous throw) instead of propagating it, so one failing
+        // handler never aborts the others. Materialization failure is
+        // fatal/structural — it is NOT guarded and propagates.
+        const probeIndex = async (index: number) => {
+            const descriptor = opts.materialize(index);
+            return Promise.all(
+                discoverables.map(async (h) => {
+                    try {
+                        return {
+                            ok: true as const,
+                            found: await h.discoverAt(index, descriptor, opts.deps),
+                        };
+                    } catch (error) {
+                        return { ok: false as const, error };
+                    }
+                }),
+            );
+        };
+
         while (i <= maxIdx && unused < gapLimit) {
-            // Materialization failure is fatal/structural — let it propagate.
-            const descriptor = opts.materialize(i);
-            let hitAtThisIndex = false;
-            for (const h of discoverables) {
-                let found: DiscoveredContract[];
-                try {
-                    found = await h.discoverAt(i, descriptor, opts.deps);
-                } catch (error) {
-                    handlerErrors.push({ handler: h.type, index: i, error });
-                    continue;
+            // Probe a WINDOW of indices concurrently (a second concurrency
+            // layer over the per-index probes). The window is capped to
+            // `gapLimit - unused` indices: the most a serial scan could still
+            // reach before the gap window is guaranteed to close. So every
+            // index probed here is one a one-index-at-a-time scan would also
+            // reach — nothing is over-scanned or discarded, and the discovered
+            // set stays byte-for-byte identical to the serial path.
+            const windowEnd = Math.min(maxIdx, i + Math.min(batchSize, gapLimit - unused) - 1);
+            const windowIndices: number[] = [];
+            for (let idx = i; idx <= windowEnd; idx++) windowIndices.push(idx);
+            const windowProbes = await Promise.all(windowIndices.map(probeIndex));
+
+            // Process the window strictly in ASCENDING index order, and within
+            // each index persist in the original `discoverables` order — that
+            // order is the FIRST-WINS collision tie-break (boarding before
+            // default/delegate), so it must not be reordered. Only the I/O
+            // above overlapped. A persistAndWatchContract rejection stays
+            // operational/fatal (unguarded), matching the materialize contract.
+            for (let w = 0; w < windowIndices.length; w++) {
+                const index = windowIndices[w];
+                const probes = windowProbes[w];
+                let hitAtThisIndex = false;
+                for (let h = 0; h < discoverables.length; h++) {
+                    const probe = probes[h];
+                    if (!probe.ok) {
+                        handlerErrors.push({
+                            handler: discoverables[h].type,
+                            index,
+                            error: probe.error,
+                        });
+                        continue;
+                    }
+                    for (const c of probe.found) {
+                        await this.persistAndWatchContract(c); // idempotent (script-keyed)
+                        hitAtThisIndex = true;
+                    }
                 }
-                for (const c of found) {
-                    await this.persistAndWatchContract(c); // idempotent (script-keyed)
-                    hitAtThisIndex = true;
+
+                if (hitAtThisIndex) {
+                    lastIndexUsed = index;
+                    unused = 0;
+                } else {
+                    unused += 1;
                 }
             }
-            if (hitAtThisIndex) {
-                lastIndexUsed = i;
-                unused = 0;
-            } else {
-                unused += 1;
-            }
-            i += 1;
+            i = windowEnd + 1;
         }
 
         // Hit the safety ceiling without the gap window closing — the
