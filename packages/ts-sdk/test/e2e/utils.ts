@@ -31,6 +31,12 @@ import type { ExtensionPacket } from "../../src/extension";
 
 export const arkdExec = "docker exec -t arkd";
 
+// Regtest Esplora REST API base URL. The arkade-regtest stack runs mempool,
+// which serves the Esplora-compatible REST API under `/api` (the web UI lives
+// at the root path and returns HTML). Every onchain helper must use this base —
+// hitting the root path makes JSON parsing fail on the HTML frontend.
+export const ESPLORA_API_URL = "http://localhost:3000/api";
+
 let arkCliInitialized = false;
 
 function ensureArkCliInitialized(): void {
@@ -88,7 +94,7 @@ export async function createTestArkWallet(): Promise<TestArkWallet> {
     const wallet = await Wallet.create({
         identity,
         arkServerUrl: "http://localhost:7070",
-        onchainProvider: new EsploraProvider("http://localhost:3000/api", {
+        onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
         }),
@@ -111,7 +117,7 @@ export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> 
     const wallet = await Wallet.create({
         identity,
         arkServerUrl: "http://localhost:7070",
-        onchainProvider: new EsploraProvider("http://localhost:3000/api", {
+        onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
         }),
@@ -138,7 +144,7 @@ export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> 
     const wallet = await Wallet.create({
         identity,
         arkServerUrl: "http://localhost:7070",
-        onchainProvider: new EsploraProvider("http://localhost:3000/api", {
+        onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
         }),
@@ -183,7 +189,7 @@ export async function createTestArkWalletFromMnemonic(
         identity,
         ...(walletMode !== undefined ? { walletMode } : {}),
         arkServerUrl: "http://localhost:7070",
-        onchainProvider: new EsploraProvider("http://localhost:3000/api", {
+        onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
         }),
@@ -334,7 +340,7 @@ export async function createTestArkWalletWithDelegateAndOverride(opts: {
         identity: opts.identity,
         arkServerUrl,
         arkProvider,
-        onchainProvider: new EsploraProvider("http://localhost:3000/api", {
+        onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
         }),
@@ -497,14 +503,14 @@ export function findOutputIndex(tx: Transaction, pkScript: Uint8Array): number {
 }
 
 /**
- * Polls esplora at localhost:3000 until a UTXO appears at the given address.
+ * Polls the regtest esplora API until a UTXO appears at the given address.
  * Returns the first UTXO found. Used by onchain spend tests.
  */
 export async function waitForUtxo(
     address: string,
     timeoutMs = 60_000,
 ): Promise<{ txid: string; vout: number; value: number }> {
-    const provider = new EsploraProvider("http://localhost:3000");
+    const provider = new EsploraProvider(ESPLORA_API_URL);
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
         try {

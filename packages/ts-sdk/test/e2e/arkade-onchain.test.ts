@@ -18,7 +18,8 @@ import { addEmulatorPacket, enforcePayTo, faucetOnchain, waitForUtxo } from "./u
 
 const EMULATOR_URL = "http://localhost:7073";
 const ARK_SERVER_URL = "http://localhost:7070";
-const ESPLORA_URL = "http://localhost:3000";
+// mempool serves the Esplora REST API under `/api`; the root path is the HTML UI.
+const ESPLORA_URL = "http://localhost:3000/api";
 const FUNDING_SATS = 1_000_000;
 const FUNDING_AMOUNT = 1_000_000n;
 const FEE_AMOUNT = 500n;

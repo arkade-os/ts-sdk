@@ -383,7 +383,8 @@ describe("arkade", () => {
 
         // We need to find the funded UTXO on-chain
         // Use esplora to find the tx
-        const utxoResp = await fetch(`http://localhost:3000/address/${btcAddress}/utxo`);
+        // mempool serves the Esplora REST API under `/api` (root path is the HTML UI).
+        const utxoResp = await fetch(`http://localhost:3000/api/address/${btcAddress}/utxo`);
         const utxos = await utxoResp.json();
         expect(utxos.length).toBeGreaterThan(0);
         const utxo = utxos[0];
