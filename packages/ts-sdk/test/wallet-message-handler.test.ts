@@ -1063,6 +1063,8 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {
             getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
             getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
+            getBoardingAddresses: vi.fn().mockResolvedValue(["bc1-boarding"]),
+            getBoardingUtxos: vi.fn().mockResolvedValue([]),
             getBoardingTxs: vi.fn().mockResolvedValue({
                 boardingTxs: [],
                 commitmentsToIgnore: new Set(),
@@ -1085,6 +1087,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).walletRepository = {
             getVtxos: vi.fn().mockResolvedValue([]),
             saveVtxos: vi.fn().mockResolvedValue(undefined),
+            getUtxos: vi.fn().mockResolvedValue([]),
             deleteUtxos: vi.fn().mockResolvedValue(undefined),
             saveUtxos: vi.fn().mockResolvedValue(undefined),
             saveTransactions: vi.fn().mockResolvedValue(undefined),
@@ -1099,6 +1102,8 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {
             getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
             getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
+            getBoardingAddresses: vi.fn().mockResolvedValue(["bc1-boarding"]),
+            getBoardingUtxos: vi.fn().mockResolvedValue([]),
             getBoardingTxs: vi.fn().mockResolvedValue({
                 boardingTxs: [],
                 commitmentsToIgnore: new Set(),
@@ -1118,6 +1123,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).walletRepository = {
             getVtxos: vi.fn().mockResolvedValue([]),
             saveVtxos: vi.fn().mockResolvedValue(undefined),
+            getUtxos: vi.fn().mockResolvedValue([]),
             deleteUtxos: vi.fn().mockResolvedValue(undefined),
             saveUtxos: vi.fn().mockResolvedValue(undefined),
             saveTransactions: vi.fn().mockResolvedValue(undefined),
@@ -1238,6 +1244,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         (updater as any).readonlyWallet = {
             getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
             getBoardingAddress: vi.fn().mockResolvedValue("boarding-address"),
+            getBoardingAddresses: vi.fn().mockResolvedValue(["boarding-address"]),
             getBoardingUtxos: vi.fn().mockResolvedValue([]),
             getBoardingTxs: vi.fn().mockResolvedValue({
                 boardingTxs: [],
@@ -1494,9 +1501,9 @@ describe("WalletMessageHandler repo-backed reads", () => {
         expect(vtxosArg[0].txid).toBe("aa".repeat(32));
     });
 
-    it("boarding UTXO fetch via onchainProvider is unaffected", async () => {
+    it("boarding cache refresh fans out over the boarding-address set (plan §6-IV.2)", async () => {
         setupHandler();
-        const getCoinsSpy = (updater as any).readonlyWallet.onchainProvider.getCoins;
+        const rw = (updater as any).readonlyWallet;
         (updater as any).wallet = {
             getVtxoManager: vi.fn().mockResolvedValue({}),
             finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
@@ -1504,7 +1511,11 @@ describe("WalletMessageHandler repo-backed reads", () => {
 
         await (updater as any).onWalletInitialized();
 
-        expect(getCoinsSpy).toHaveBeenCalledWith("boarding-address");
+        // refreshCachedData now enumerates every boarding address and delegates
+        // the per-address fetch + cache to getBoardingUtxos, instead of fetching
+        // a single getBoardingAddress() via the onchain provider directly.
+        expect(rw.getBoardingAddresses).toHaveBeenCalled();
+        expect(rw.getBoardingUtxos).toHaveBeenCalled();
     });
 
     it("RELOAD_WALLET forces refreshVtxos before reading from repo", async () => {

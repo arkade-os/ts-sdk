@@ -11,18 +11,18 @@ import {
 import { networks } from "../../src/networks";
 import { waitFor } from "./utils";
 
-// nigiri's electrum-ws bridge (from vulpemventures/nigiri#258) exposes the
-// existing electrs TCP endpoint as a WebSocket on this port.
+// The arkade-regtest Fulcrum service exposes its Electrum TCP endpoint as a
+// WebSocket on this port.
 const ELECTRUM_WS_URL = "ws://localhost:50003";
 
 function faucet(address: string, btc = 0.001): number {
-    execSync(`nigiri faucet ${address} ${btc}`);
+    execSync(`node regtest/regtest.mjs faucet ${address} ${btc} --confirm`);
     // Mine a block immediately so electrs has a stable confirmed state to
     // index. Without this the bridge can race: listunspent reports the tx
     // at height N before block.header(N) is queryable, surfacing as
     // "missingheight" errors. Other e2e suites mine after every state
     // change for the same reason (settlement.test.ts etc.).
-    execSync(`nigiri rpc --generate 1`);
+    execSync(`node regtest/regtest.mjs mine 1`);
     return Math.round(btc * 100_000_000);
 }
 
@@ -51,8 +51,8 @@ describe("ElectrumOnchainProvider integration tests", () => {
         { timeout: 10_000 },
         async () => {
             const tip = await provider.getChainTip();
-            // Regtest tips have non-zero height after `nigiri start` mines its
-            // genesis-plus-N blocks; assert the shape and a sane lower bound.
+            // Regtest tips have non-zero height after the stack bootstraps and
+            // mines its genesis-plus-N blocks; assert the shape and a sane lower bound.
             expect(tip.height).toBeGreaterThanOrEqual(0);
             expect(typeof tip.hash).toBe("string");
             expect(tip.hash).toMatch(/^[0-9a-f]{64}$/);

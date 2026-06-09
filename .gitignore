@@ -24,3 +24,6 @@ CLAUDE.md
 .claude
 *.agents.md
 REVIEW.md
+
+# Per-package symlink to the shared regtest submodule (created by scripts/regtest.sh)
+packages/*/regtest

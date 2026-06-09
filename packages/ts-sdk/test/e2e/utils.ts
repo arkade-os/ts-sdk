@@ -37,7 +37,7 @@ function ensureArkCliInitialized(): void {
     if (arkCliInitialized) return;
     try {
         execSync(
-            `${arkdExec} ark init --password secret --server-url localhost:7070 --explorer http://chopsticks:3000`,
+            `${arkdExec} ark init --password secret --server-url localhost:7070 --explorer http://mempool_web/api`,
             { stdio: "pipe" },
         );
     } catch {
@@ -88,7 +88,7 @@ export async function createTestArkWallet(): Promise<TestArkWallet> {
     const wallet = await Wallet.create({
         identity,
         arkServerUrl: "http://localhost:7070",
-        onchainProvider: new EsploraProvider("http://localhost:3000", {
+        onchainProvider: new EsploraProvider("http://localhost:3000/api", {
             forcePolling: true,
             pollingInterval: 2000,
         }),
@@ -111,7 +111,7 @@ export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> 
     const wallet = await Wallet.create({
         identity,
         arkServerUrl: "http://localhost:7070",
-        onchainProvider: new EsploraProvider("http://localhost:3000", {
+        onchainProvider: new EsploraProvider("http://localhost:3000/api", {
             forcePolling: true,
             pollingInterval: 2000,
         }),
@@ -138,7 +138,7 @@ export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> 
     const wallet = await Wallet.create({
         identity,
         arkServerUrl: "http://localhost:7070",
-        onchainProvider: new EsploraProvider("http://localhost:3000", {
+        onchainProvider: new EsploraProvider("http://localhost:3000/api", {
             forcePolling: true,
             pollingInterval: 2000,
         }),
@@ -183,7 +183,7 @@ export async function createTestArkWalletFromMnemonic(
         identity,
         ...(walletMode !== undefined ? { walletMode } : {}),
         arkServerUrl: "http://localhost:7070",
-        onchainProvider: new EsploraProvider("http://localhost:3000", {
+        onchainProvider: new EsploraProvider("http://localhost:3000/api", {
             forcePolling: true,
             pollingInterval: 2000,
         }),
@@ -206,7 +206,9 @@ export function faucetOffchain(address: string, amount: number): void {
 
 export function faucetOnchain(address: string, amount: number): void {
     const btc = (amount / 100_000_000).toFixed(8); // BTC with 8 decimals
-    execCommand(`nigiri faucet ${address} ${btc}`);
+    // --confirm mines 1 block immediately so the funds confirm (the new
+    // arkade-regtest CLI does not auto-mine on faucet). Run from repo root.
+    execCommand(`node regtest/regtest.mjs faucet ${address} ${btc} --confirm`);
 }
 
 export async function createVtxo(alice: TestArkWallet, amount: number): Promise<string> {
@@ -332,7 +334,7 @@ export async function createTestArkWalletWithDelegateAndOverride(opts: {
         identity: opts.identity,
         arkServerUrl,
         arkProvider,
-        onchainProvider: new EsploraProvider("http://localhost:3000", {
+        onchainProvider: new EsploraProvider("http://localhost:3000/api", {
             forcePolling: true,
             pollingInterval: 2000,
         }),

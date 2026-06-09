@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import {
     ContractManager,
@@ -31,6 +31,7 @@ import {
 const SECOND_DEFAULT_SCRIPT_TAPSCRIPT = new DefaultVtxo.Script({
     pubKey: TEST_DELEGATE_PUB_KEY,
     serverPubKey: TEST_SERVER_PUB_KEY,
+    csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
 });
 const SECOND_DEFAULT_SCRIPT = hex.encode(SECOND_DEFAULT_SCRIPT_TAPSCRIPT.pkScript);
 const SECOND_DEFAULT_PARAMS = DefaultContractHandler.serializeParams({

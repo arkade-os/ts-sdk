@@ -37,7 +37,7 @@ const signerPubkeyRaw = execSync("curl -s http://localhost:7070/v1/info | jq -r 
 
 const SERVER_PUBLIC_KEY = hex.decode(signerPubkeyRaw.slice(2));
 
-const arkdExec = process.argv[2] || "docker exec -t ark";
+const arkdExec = process.argv[2] || "docker exec -t arkd";
 
 // Alice is the sender (e.g., paying for a Lightning invoice)
 const alice = SingleKey.fromHex(hex.encode(randomPrivateKeyBytes()));
@@ -60,7 +60,7 @@ async function main() {
     console.log("Creating Alice's wallet...");
     const aliceWallet = await Wallet.create({
         identity: alice,
-        esploraUrl: "http://localhost:3000",
+        esploraUrl: "http://localhost:3000/api",
         arkServerUrl: "http://localhost:7070",
         storage,
         // force refresh in 2s at most for the example to run quickly
@@ -74,7 +74,7 @@ async function main() {
     console.log("Bob pubkey:", hex.encode(bobPubKey));
 
     // Get current chain tip for locktime
-    const chainTip = await fetch("http://localhost:3000/blocks/tip/height").then((res) =>
+    const chainTip = await fetch("http://localhost:3000/api/blocks/tip/height").then((res) =>
         res.json(),
     );
 

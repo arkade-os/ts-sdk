@@ -23,6 +23,10 @@ export namespace DelegateVtxo {
      *     pubKey: new Uint8Array(32),
      *     serverPubKey: new Uint8Array(32),
      *     delegatePubKey: new Uint8Array(32),
+     *     csvTimelock: {
+     *         value: 605184n,
+     *         type: "seconds"
+     *     }
      * });
      *
      * console.log("script pub key:", vtxoScript.pkScript)

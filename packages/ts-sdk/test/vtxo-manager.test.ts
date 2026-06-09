@@ -1264,6 +1264,10 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                 sign: vi.fn().mockImplementation((tx: any) => tx),
                 xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
             },
+            // Descriptor-aware on-chain boarding signer (plan §6-III.3). The
+            // mock mirrors the old identity-sign behaviour (returns the tx
+            // unchanged) so sweep tests still finalize a "signed" tx.
+            signOnchainBoardingTx: vi.fn().mockImplementation((tx: any) => tx),
         } as any;
     };
 
@@ -1491,6 +1495,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                     sign: vi.fn().mockImplementation((tx: any) => tx),
                     xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
                 },
+                signOnchainBoardingTx: vi.fn().mockImplementation((tx: any) => tx),
             } as any;
         };
 
@@ -1796,6 +1801,10 @@ describe("VtxoManager - Periodic settle cooldown", () => {
                 sign: vi.fn().mockImplementation((tx: any) => tx),
                 xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
             },
+            // Descriptor-aware on-chain boarding signer (plan §6-III.3). The
+            // mock mirrors the old identity-sign behaviour (returns the tx
+            // unchanged) so sweep tests still finalize a "signed" tx.
+            signOnchainBoardingTx: vi.fn().mockImplementation((tx: any) => tx),
         } as any;
     };
 
@@ -2074,6 +2083,10 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
                 sign: vi.fn().mockImplementation((tx: any) => tx),
                 xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
             },
+            // Descriptor-aware on-chain boarding signer (plan §6-III.3). The
+            // mock mirrors the old identity-sign behaviour (returns the tx
+            // unchanged) so sweep tests still finalize a "signed" tx.
+            signOnchainBoardingTx: vi.fn().mockImplementation((tx: any) => tx),
         } as any;
     };
 
@@ -2334,6 +2347,10 @@ describe("VtxoManager - Cross-instance poll guard", () => {
                 sign: vi.fn().mockImplementation((tx: any) => tx),
                 xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
             },
+            // Descriptor-aware on-chain boarding signer (plan §6-III.3). The
+            // mock mirrors the old identity-sign behaviour (returns the tx
+            // unchanged) so sweep tests still finalize a "signed" tx.
+            signOnchainBoardingTx: vi.fn().mockImplementation((tx: any) => tx),
         } as any;
     };
 
@@ -2469,6 +2486,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
                     sign: vi.fn().mockImplementation((tx: any) => tx),
                     xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
                 },
+                signOnchainBoardingTx: vi.fn().mockImplementation((tx: any) => tx),
             } as any,
             contractManager,
         };
