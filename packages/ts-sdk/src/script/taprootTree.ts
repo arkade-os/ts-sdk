@@ -15,8 +15,7 @@ export interface TaprootLeaf {
  *   - A leaf is `{ script, leafVersion }`
  *   - A branch is a 2-element tuple `[leftNode, rightNode]` of nodes
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type TaprootTreeNode = TaprootLeaf | any[];
+export type TaprootTreeNode = TaprootLeaf | [TaprootTreeNode, TaprootTreeNode];
 
 /**
  * Assemble a Taproot script tree from a flat list of scripts using the
