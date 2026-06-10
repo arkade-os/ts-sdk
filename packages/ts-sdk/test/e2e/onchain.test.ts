@@ -14,9 +14,9 @@ describe("Onchain integration tests", () => {
         expect(aliceInitialBalance).toBe(0);
         expect(bobInitialBalance).toBe(0);
 
-        // Fund Alice's address using nigiri faucet
+        // Fund Alice's address using the regtest faucet
         const faucetAmountSats = 0.001 * 100_000_000; // Amount in sats
-        execSync(`nigiri faucet ${alice.wallet.address} 0.001`);
+        execSync(`node regtest/regtest.mjs faucet ${alice.wallet.address} 0.001 --confirm`);
 
         // Wait for the faucet transaction to be processed
         await new Promise((resolve) => setTimeout(resolve, 5000));

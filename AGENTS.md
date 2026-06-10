@@ -6,6 +6,21 @@ This file provides guidance to AI coding assistants when working with code in th
 
 **arkade-monorepo** — A pnpm workspace monorepo for the Arkade Bitcoin wallet ecosystem. Contains two published packages: `@arkade-os/sdk` (Bitcoin wallet SDK with Taproot/Ark protocol) and `@arkade-os/boltz-swap` (Lightning/chain swaps via Boltz). Both target browser, Node.js, and React Native (Expo).
 
+## Reference Implementation & Technical Direction
+
+**The .NET Ark SDK (`NArk`, ArkLabsHQ) is the reference implementation for this TypeScript SDK** —
+for feature parity and, more broadly, for technical direction and architecture. When designing a new
+feature, refactoring, or resolving an ambiguity about how something *should* work, check how `NArk`
+does it and align with it unless there's a TypeScript- or platform-specific reason to diverge (and
+note the reason when you do). A local checkout typically lives alongside this repo at `../dotnet-sdk`.
+
+Context for why this matters: this TypeScript SDK began as a fairly literal port of the Go SDK. That
+origin left it carrying Go idioms and structural choices that don't fit TypeScript well, so parts of
+the codebase are shaped by the translation rather than by what's idiomatic or best for this platform.
+Treat such patterns as legacy to be improved, not as precedent to extend. The `NArk` codebase is the
+better-architected, more deliberately designed expression of the same domain; prefer its structure
+and naming when they conflict with the inherited Go-shaped patterns here.
+
 ## Commands
 
 ```bash
@@ -83,7 +98,11 @@ Key layers:
 - **Wallet** (`src/wallet/`) — `Wallet` (signing), `ReadonlyWallet` (watch-only), `OnchainWallet` (on-chain UTXOs). Service worker variants communicate via `MessageBus`.
 - **Providers** (`src/providers/`) — `ArkProvider` (Ark server/SSE), `IndexerProvider` (VTXO queries), `OnchainProvider` (Esplora). Each has REST and Expo-compatible implementations.
 - **Repositories** (`src/repositories/`) — `WalletRepository` and `ContractRepository` interfaces with IndexedDB, InMemory, FileSystem, AsyncStorage, SQLite, and Realm backends. Interfaces carry `readonly version: N` to force compile-time updates on schema changes.
-- **Contracts** (`src/contracts/`) — Event-driven: ContractWatcher detects changes → ContractManager handles events/updates repos → Wallet reads repos (offline-first).
+- **Contracts** (`src/contracts/`) — Event-driven pipeline with strict ownership rules:
+  - `ContractWatcher` is event-only: emits `vtxo_received`/`vtxo_spent`, never writes to repositories, never reads VTXO state from `IndexerProvider`.
+  - `ContractManager` owns orchestration: subscribes to watcher events, fetches fresh VTXO data from `IndexerProvider`, and is the **only** component that writes VTXO/contract state to repositories.
+  - `Wallet`/`ReadonlyWallet` read balance and VTXO state from repositories only (offline-first); any indexer synchronization is delegated to `ContractManager`.
+  - Repositories are the system of record and are mutated exclusively by `ContractManager`.
 - **Service Worker** (`src/worker/`) — `MessageBus` orchestrator with pluggable `MessageHandler`s and tick-based scheduling.
 - **Bitcoin primitives** — `src/script/` (tapscript, VHTLC, Ark addresses), `src/musig2/` (MuSig2), `src/tree/` (transaction trees), `src/forfeit.ts` (unilateral exit).
 
@@ -100,7 +119,7 @@ Key components:
 
 ### Integration Testing Stack (regtest/)
 
-Git submodule pointing to [arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest). Manages nigiri, arkd, boltz, LND, fulmine, and supporting services. Uses `start-env.sh` / `stop-env.sh` / `clean-env.sh`. Run `git submodule update --init` after cloning.
+Git submodule pointing to [arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest). Manages a Docker Compose stack (Bitcoin Core, Fulcrum, mempool, NBXplorer, arkd, boltz, LND, fulmine, and supporting services) driven by the in-house Node CLI `regtest.mjs`. Use `node regtest/regtest.mjs start` / `stop` / `clean` (or the `scripts/regtest.sh` controller). Run `git submodule update --init` after cloning.
 
 ### Shared Config Pattern
 

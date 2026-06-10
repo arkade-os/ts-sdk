@@ -1,6 +1,6 @@
 {
     "name": "@arkade-os/boltz-swap",
-    "version": "0.3.37",
+    "version": "0.3.39",
     "type": "module",
     "description": "A production-ready TypeScript package that brings Boltz submarine-swaps to Arkade.",
     "main": "./dist/index.js",
@@ -72,9 +72,9 @@
         "test:integration": "vitest run test/e2e/**",
         "test:setup-docker": "node test/e2e/setup.mjs",
         "test:integration-docker": "vitest run test/e2e/**",
-        "regtest:start": "./regtest/start-env.sh",
-        "regtest:stop": "./regtest/stop-env.sh",
-        "regtest:clean": "./regtest/clean-env.sh",
+        "regtest:start": "node ./regtest/regtest.mjs start",
+        "regtest:stop": "node ./regtest/regtest.mjs stop",
+        "regtest:clean": "node ./regtest/regtest.mjs clean",
         "regtest": "pnpm regtest:clean && pnpm regtest:start && pnpm test:setup-docker"
     },
     "keywords": [

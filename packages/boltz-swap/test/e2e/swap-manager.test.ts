@@ -42,7 +42,7 @@ describe("SwapManager", () => {
         wallet = await Wallet.create({
             identity,
             arkServerUrl: arkUrl,
-            onchainProvider: new EsploraProvider("http://localhost:3000", {
+            onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
             }),

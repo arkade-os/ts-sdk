@@ -30,6 +30,7 @@ import {
     TapTreeCoder,
     getSequence,
 } from "./script/base";
+import { assembleBtcdTaprootTree } from "./script/taprootTree";
 import {
     TxType,
     IWallet,
@@ -263,6 +264,9 @@ import { DelegateContractHandler } from "./contracts/handlers/delegate";
 import type { DelegateContractParams } from "./contracts/handlers/delegate";
 import { VHTLCContractHandler } from "./contracts/handlers/vhtlc";
 import type { VHTLCContractParams } from "./contracts/handlers/vhtlc";
+import { isCsvSpendable, isCltvSatisfied } from "./contracts/handlers/helpers";
+import { BoardingContractHandler } from "./contracts/handlers/boarding";
+import type { BoardingContractParams } from "./contracts/handlers/boarding";
 import {
     encodeArkContract,
     decodeArkContract,
@@ -342,6 +346,7 @@ export {
     DelegateVtxo,
     VtxoScript,
     VHTLC,
+    assembleBtcdTaprootTree,
 
     // Enums
     TxType,
@@ -463,12 +468,16 @@ export {
     DefaultContractHandler,
     DelegateContractHandler,
     VHTLCContractHandler,
+    BoardingContractHandler,
     encodeArkContract,
     decodeArkContract,
     contractFromArkContract,
     contractFromArkContractWithAddress,
     isArkContract,
     isDiscoverable,
+    // Contract handler authoring helpers (spending-path selection)
+    isCsvSpendable,
+    isCltvSatisfied,
 
     // Assets
     ReadonlyAssetManager,
@@ -625,6 +634,7 @@ export type {
     DefaultContractParams,
     DelegateContractParams,
     VHTLCContractParams,
+    BoardingContractParams,
     Discoverable,
     DiscoveryDeps,
     DiscoveredContract,

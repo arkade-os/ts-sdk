@@ -5,6 +5,7 @@ import { ContractFilter } from "../repositories";
 import type { RelativeTimelock } from "../script/tapscript";
 import type { IndexerProvider } from "../providers/indexer";
 import type { OnchainProvider } from "../providers/onchain";
+import type { Network } from "../networks";
 
 /**
  * Contract state indicating whether it should be actively monitored.
@@ -257,10 +258,45 @@ export interface DiscoveredContract {
 export interface DiscoveryDeps {
     indexerProvider: IndexerProvider;
     onchainProvider: OnchainProvider;
+    /**
+     * Ark-address network data. The `{ hrp }` shape is all the L2
+     * (`default`/`delegate`) discovery path needs to render an Ark address.
+     */
     network: { hrp: string };
+    /**
+     * Full Bitcoin network descriptor for on-chain (P2TR) address
+     * rendering. Required by the boarding discovery probe, which derives an
+     * on-chain Taproot address via {@link VtxoScript.onchainAddress} — the
+     * `{ hrp }`-only {@link DiscoveryDeps.network} lacks the `bech32` data
+     * that needs. Absent only when no boarding discovery is plumbed (e.g.
+     * the scanner unit harness), in which case boarding `discoverAt` no-ops.
+     */
+    onchainNetwork?: Network;
+    /**
+     * The server's **current** signer key (x-only, 32 bytes), taken from a
+     * fresh server-info snapshot at restore time. L2 (`default`/`delegate`)
+     * discovery probes this key first.
+     */
     serverPubKey: Uint8Array;
+    /**
+     * The server's **deprecated** signer keys (x-only, 32 bytes) from the same
+     * snapshot. A VTXO minted under a now-rotated signer is anchored to a
+     * different script; L2 discovery scans these keys alongside
+     * {@link DiscoveryDeps.serverPubKey} so signer rotation does not strand
+     * funds. Empty/absent when the server advertises no deprecated signers.
+     * Boarding discovery does not consult this set (current UTXO set only).
+     */
+    deprecatedSignerPubKeys?: Uint8Array[];
     /** Relative timelocks the wallet treats as its baseline matrix. */
     csvTimelocks: RelativeTimelock[];
+    /**
+     * Boarding-exit CSV timelock. Distinct from {@link DiscoveryDeps.csvTimelocks}
+     * (the unilateral-exit matrix): boarding scripts source their CSV from the
+     * server's boarding-exit delay. Present only when boarding discovery is
+     * plumbed; when absent, boarding `discoverAt` no-ops (so the scanner unit
+     * harness, which never sets it, is unaffected).
+     */
+    boardingTimelock?: RelativeTimelock;
     /** Present only for delegate wallets. */
     delegatePubKey?: Uint8Array;
 }

@@ -17,7 +17,7 @@ export namespace DefaultVtxo {
     export interface Options {
         pubKey: Bytes;
         serverPubKey: Bytes;
-        csvTimelock?: RelativeTimelock;
+        csvTimelock: RelativeTimelock;
     }
 
     /**
@@ -27,6 +27,10 @@ export namespace DefaultVtxo {
      * const vtxoScript = new DefaultVtxo.Script({
      *     pubKey: new Uint8Array(32),
      *     serverPubKey: new Uint8Array(32),
+     *     csvTimelock: {
+     *         value: 605184n,
+     *         type: "seconds"
+     *     }
      * });
      *
      * console.log("script pub key:", vtxoScript.pkScript)
@@ -43,7 +47,7 @@ export namespace DefaultVtxo {
 
         /** Create the default virtual output script with one forfeit path and one exit path. */
         constructor(readonly options: Options) {
-            const { pubKey, serverPubKey, csvTimelock = Script.DEFAULT_TIMELOCK } = options;
+            const { pubKey, serverPubKey, csvTimelock } = options;
 
             const forfeitScript = MultisigTapscript.encode({
                 pubkeys: [pubKey, serverPubKey],

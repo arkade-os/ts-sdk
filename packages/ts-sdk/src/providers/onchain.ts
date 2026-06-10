@@ -7,15 +7,15 @@ import { Coin } from "../wallet";
  * Mainnet, mutinynet, and signet point at Ark Labs–operated
  * mempool deployments (mempool.space-compatible esplora API).
  * Testnet falls back to the public mempool.space deployment
- * because Ark doesn't host it. Regtest assumes a local nigiri
- * stack on the standard port.
+ * because Ark doesn't host it. Regtest assumes a local arkade-regtest
+ * stack exposing mempool's esplora API on the standard port.
  */
 export const ESPLORA_URL: Record<NetworkName, string> = {
     bitcoin: "https://mempool.arkade.sh/api",
     testnet: "https://mempool.space/testnet/api",
     signet: "https://mempool.signet.arkade.sh/api",
     mutinynet: "https://mempool.mutinynet.arkade.sh/api",
-    regtest: "http://localhost:3000",
+    regtest: "http://localhost:3000/api",
 };
 
 export type ExplorerTransaction = {
@@ -152,6 +152,14 @@ export class EsploraProvider implements OnchainProvider {
 
     async getFeeRate(): Promise<number | undefined> {
         const response = await fetch(`${this.baseUrl}/fee-estimates`);
+        // Not every Esplora backend serves /fee-estimates — mempool returns 404
+        // on regtest, where it has no fee history. Every caller falls back to
+        // MIN_FEE_RATE when this is undefined, so degrade gracefully on a missing
+        // endpoint rather than throwing and defeating those fallbacks. Other
+        // (e.g. 5xx) failures still surface.
+        if (response.status === 404) {
+            return undefined;
+        }
         if (!response.ok) {
             throw new Error(`Failed to fetch fee rate: ${response.statusText}`);
         }
@@ -333,7 +341,12 @@ export class EsploraProvider implements OnchainProvider {
         time: number;
         hash: string;
     }> {
-        const tipBlocks = await fetch(`${this.baseUrl}/blocks/tip`);
+        // Use the standard Esplora `/blocks` route (newest-first array of recent
+        // blocks) rather than `/blocks/tip`: the latter is not part of the Esplora
+        // spec — electrs happens to serve it as an alias for `/blocks`, but a
+        // strict backend like mempool returns an empty array, which surfaced here
+        // as "No chain tip found". `/blocks` works across every Esplora backend.
+        const tipBlocks = await fetch(`${this.baseUrl}/blocks`);
         if (!tipBlocks.ok) {
             throw new Error(`Failed to get chain tip: ${tipBlocks.statusText}`);
         }

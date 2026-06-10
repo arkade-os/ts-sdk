@@ -14,7 +14,7 @@ import { maybeArkError } from "../providers/errors";
 import { hasBoardingTxExpired } from "../utils/arkTransaction";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { hex } from "@scure/base";
-import { getSequence } from "../script/base";
+import { getSequence, scriptFromTapLeafScript, VtxoScript } from "../script/base";
 import { Transaction } from "../utils/transaction";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Estimator } from "../arkfee";
@@ -33,6 +33,13 @@ interface SweepCapableWallet extends IReadonlyWallet {
     onchainProvider: OnchainProvider;
     arkProvider: ArkProvider;
     network: Network;
+    /**
+     * Descriptor-aware signer for on-chain boarding exit/sweep txs. Routes
+     * each input to the identity (baseline) or its per-index descriptor
+     * (rotated boarding), so a sweep that batches UTXOs across boarding
+     * addresses signs each with the correct key (plan §6-III.3).
+     */
+    signOnchainBoardingTx(tx: Transaction): Promise<Transaction>;
 }
 
 /**
@@ -46,7 +53,8 @@ function isSweepCapable(wallet: IWallet): wallet is IWallet & SweepCapableWallet
         "boardingTapscript" in wallet &&
         "onchainProvider" in wallet &&
         "arkProvider" in wallet &&
-        "network" in wallet
+        "network" in wallet &&
+        "signOnchainBoardingTx" in wallet
     );
 }
 
@@ -59,7 +67,7 @@ function isSweepCapable(wallet: IWallet): wallet is IWallet & SweepCapableWallet
 function assertSweepCapable(wallet: IWallet): asserts wallet is IWallet & SweepCapableWallet {
     if (!isSweepCapable(wallet)) {
         throw new Error(
-            "Boarding UTXO sweep requires a Wallet instance with boardingTapscript, onchainProvider, arkProvider, and network",
+            "Boarding UTXO sweep requires a Wallet instance with boardingTapscript, onchainProvider, arkProvider, network, and signOnchainBoardingTx",
         );
     }
 }
@@ -95,6 +103,68 @@ async function runWithCrossInstanceLock(name: string, fn: () => Promise<void>): 
         if (lock === null) return;
         await fn();
     });
+}
+
+/**
+ * Maximum number of VTXOs included in a single settlement intent.
+ *
+ * arkd has no fixed per-intent VTXO count limit; it rejects an intent with
+ * `TX_TOO_LARGE` once the resulting ark transaction exceeds its weight budget
+ * (`maxTxWeight`, ~40k weight units by default). 50 is a conservative count
+ * that stays well under that weight, leaving headroom for boarding inputs
+ * (added uncapped) plus transaction-size overhead. When more VTXOs are
+ * eligible, the overflow is left for the next settlement cycle.
+ *
+ * This cap is a ts-sdk-specific safeguard: neither go-sdk nor NArk caps the
+ * settlement batch — go-sdk submits every spendable VTXO in a single intent.
+ * Because the reference SDKs impose no selection order (go-sdk's query has no
+ * `ORDER BY`), we are free to order the candidates before capping so the most
+ * important VTXOs survive the cut — see {@link byValueDescending} and
+ * {@link byExpiryAscending}.
+ */
+export const MAX_VTXOS_PER_SETTLEMENT = 50;
+
+/**
+ * Order VTXOs so the highest-value ones come first. New array; input untouched.
+ *
+ * Used by the value-driven paths (recovery, manual full settle): when the
+ * {@link MAX_VTXOS_PER_SETTLEMENT} cap defers the overflow to a later cycle,
+ * the batch should carry the most value. For recovery this also gives the
+ * capped subset the best chance of clearing the dust threshold.
+ */
+export function byValueDescending<T extends { value: number }>(vtxos: T[]): T[] {
+    return [...vtxos].sort((a, b) => b.value - a.value);
+}
+
+/**
+ * Order VTXOs so the soonest-expiring ones come first. New array; input
+ * untouched. Already recoverable/expired VTXOs sort first. VTXOs without a
+ * batch expiry, or with a block-height-looking expiry value, sort last because
+ * they do not have a usable wall-clock expiry.
+ *
+ * Used by the expiry-driven paths (renewal, periodic settle): when the
+ * {@link MAX_VTXOS_PER_SETTLEMENT} cap defers the overflow to a later cycle,
+ * the most urgent VTXOs must make the cut so none miss their renewal window
+ * and get forced into a unilateral exit.
+ */
+export function byExpiryAscending(vtxos: ExtendedVirtualCoin[]): ExtendedVirtualCoin[] {
+    const expiryKey = (vtxo: ExtendedVirtualCoin) => {
+        if (isRecoverable(vtxo)) return -Infinity;
+
+        const batchExpiry = vtxo.virtualStatus.batchExpiry;
+
+        if (isExpired(vtxo)) return batchExpiry ?? -Infinity;
+        if (!batchExpiry) return Infinity;
+
+        // Some regtest-like indexers return a block height here instead of a
+        // timestamp. Match isVtxoExpiringSoon/isExpired and avoid treating that
+        // as the most urgent wall-clock expiry.
+        if (new Date(batchExpiry).getFullYear() < 2025) return Infinity;
+
+        return batchExpiry;
+    };
+
+    return [...vtxos].sort((a, b) => expiryKey(a) - expiryKey(b));
 }
 
 /** Default renewal threshold in seconds (3 days). */
@@ -575,10 +645,38 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const dustAmount = getDustAmount(this.wallet);
 
         // Filter recoverable virtual outputs and handle subdust logic
-        const { vtxosToRecover, totalAmount } = getRecoverableWithSubdust(allVtxos, dustAmount);
+        let { vtxosToRecover, totalAmount } = getRecoverableWithSubdust(allVtxos, dustAmount);
 
         if (vtxosToRecover.length === 0) {
             throw new Error("No recoverable VTXOs found");
+        }
+
+        // Cap the number of VTXOs per settlement to stay under the server's
+        // intent-size limit (see MAX_VTXOS_PER_SETTLEMENT). Recover the
+        // highest-value VTXOs first: the subdust inclusion decision above was
+        // made on the full set's combined total, so a naive prefix can drop the
+        // capped batch below dust — which the server rejects, leaving the next
+        // cycle to re-pick the same prefix forever. Ordering by value maximizes
+        // the recovered amount and gives the capped subset the best chance of
+        // clearing dust. We re-run the subdust/dust eligibility on that exact
+        // capped subset; the overflow is recovered next cycle.
+        if (vtxosToRecover.length > MAX_VTXOS_PER_SETTLEMENT) {
+            const recoverableCount = vtxosToRecover.length;
+            const capped = byValueDescending(vtxosToRecover).slice(0, MAX_VTXOS_PER_SETTLEMENT);
+            ({ vtxosToRecover, totalAmount } = getRecoverableWithSubdust(capped, dustAmount));
+            if (vtxosToRecover.length === 0) {
+                // Recoverable VTXOs exist, but the highest-value subset that
+                // fits in one settlement stays below dust, so submitting it
+                // would be rejected and the next cycle would pick the same
+                // prefix. Distinct from the "none recoverable" case above so
+                // operators can tell a stuck-but-funded wallet from an empty
+                // one. Recovery resumes once the prefix accumulates dust.
+                throw new Error(
+                    `Capped recovery batch (highest-value ${MAX_VTXOS_PER_SETTLEMENT} of ` +
+                        `${recoverableCount} recoverable VTXOs) is below the dust threshold ` +
+                        `${dustAmount}`,
+                );
+            }
         }
 
         const arkAddress = await this.wallet.getAddress();
@@ -789,6 +887,17 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 throw new Error("No VTXOs available to renew");
             }
 
+            // Cap the number of VTXOs per settlement to stay under the
+            // server's intent-size limit (see MAX_VTXOS_PER_SETTLEMENT). Renew
+            // the soonest-expiring VTXOs first so the most urgent ones make the
+            // cut — otherwise a viable VTXO past the cap could miss its renewal
+            // window and be forced into a unilateral exit. The output amount is
+            // summed from the capped set below, so it stays consistent; the
+            // overflow is renewed on the next cycle.
+            if (vtxos.length > MAX_VTXOS_PER_SETTLEMENT) {
+                vtxos = byExpiryAscending(vtxos).slice(0, MAX_VTXOS_PER_SETTLEMENT);
+            }
+
             const totalAmount = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
 
             // Get dust amount from wallet
@@ -921,11 +1030,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // Get fee rate from onchain provider
         const feeRate = (await this.getOnchainProvider().getFeeRate()) ?? 1;
 
-        // Get the exit tap leaf script for signing
+        // Representative exit leaf for fee estimation only. Every boarding
+        // exit leaf shares the same template (Alice + CSV) and so has an
+        // identical serialized size regardless of HD index — the actual
+        // per-UTXO leaf is resolved in the input loop below.
         const exitTapLeafScript = this.getBoardingExitLeaf();
-
-        // Estimate transaction size for fee calculation
-        const sequence = getSequence(exitTapLeafScript);
 
         // TapLeafScript: [{version, internalKey, merklePath}, scriptWithVersion]
         const leafScript = exitTapLeafScript[1];
@@ -956,22 +1065,40 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const tx = new Transaction();
 
         for (const utxo of expiredUtxos) {
+            // Resolve the exit (CSV) leaf and output script of the boarding
+            // address THIS UTXO actually sits on — not necessarily the current
+            // boarding address, since per-derivation rotation can leave unspent
+            // UTXOs at previous boarding addresses (plan §6-III.2). The per-UTXO
+            // boarding tapscript is carried on the ExtendedCoin's tapTree.
+            const utxoScript = VtxoScript.decode(utxo.tapTree);
+            const utxoExitLeaf = utxoScript.leaves.find(
+                (leaf) =>
+                    CSVMultisigTapscript.isScriptValid(scriptFromTapLeafScript(leaf)) === true,
+            );
+            if (!utxoExitLeaf) {
+                throw new Error(
+                    `Boarding sweep: no CSV exit leaf for UTXO ${utxo.txid}:${utxo.vout}`,
+                );
+            }
             tx.addInput({
                 txid: utxo.txid,
                 index: utxo.vout,
                 witnessUtxo: {
-                    script: this.getBoardingOutputScript(),
+                    script: utxoScript.pkScript,
                     amount: BigInt(utxo.value),
                 },
-                tapLeafScript: [exitTapLeafScript],
-                sequence,
+                tapLeafScript: [utxoExitLeaf],
+                sequence: getSequence(utxoExitLeaf),
             });
         }
 
         tx.addOutputAddress(boardingAddress, outputAmount, this.getNetwork());
 
-        // Sign and finalize
-        const signedTx = await this.getIdentity().sign(tx);
+        // Sign and finalize. Route each input to the correct key — the
+        // identity for index-0 / static boarding, the per-index descriptor for
+        // a rotated boarding UTXO (plan §6-III.3) — instead of signing every
+        // input with the index-0 identity key.
+        const signedTx = await this.getSweepWallet().signOnchainBoardingTx(tx);
         signedTx.finalize();
 
         // Broadcast
@@ -1011,11 +1138,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         return this.getSweepWallet().boardingTapscript.exit();
     }
 
-    /** Returns the pkScript (output script) of the boarding tapscript. */
-    private getBoardingOutputScript() {
-        return this.getSweepWallet().boardingTapscript.pkScript;
-    }
-
     /** Returns the onchain provider for fee estimation and broadcasting. */
     private getOnchainProvider() {
         return this.getSweepWallet().onchainProvider;
@@ -1029,11 +1151,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     /** Returns the Bitcoin network configuration from the wallet. */
     private getNetwork() {
         return this.getSweepWallet().network;
-    }
-
-    /** Returns the wallet's identity for transaction signing. */
-    private getIdentity() {
-        return this.wallet.identity;
     }
 
     private async initializeSubscription(): Promise<(() => void) | undefined> {
@@ -1422,8 +1539,19 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             totalAmount += BigInt(u.value) - BigInt(inputFee.satoshis);
         }
 
+        // Cap the VTXOs per settlement to stay under the server's intent-size
+        // limit (see MAX_VTXOS_PER_SETTLEMENT). Settle the soonest-expiring
+        // VTXOs first so the most urgent ones make the cut. Apply the cap to
+        // economically viable VTXOs only: skipping uneconomic inputs and
+        // continuing past the cap avoids an uneconomic prefix permanently
+        // starving valid VTXOs behind it. Boarding inputs are added uncapped
+        // above; the headroom absorbs them. Any overflow is settled on the next
+        // cycle.
         const filteredVtxos: ExtendedVirtualCoin[] = [];
-        for (const v of expiringVtxos) {
+        for (const v of byExpiryAscending(expiringVtxos)) {
+            if (filteredVtxos.length >= MAX_VTXOS_PER_SETTLEMENT) {
+                break;
+            }
             const inputFee = estimator.evalOffchainInput({
                 amount: BigInt(v.value),
                 type: v.virtualStatus.state === "swept" ? "recoverable" : "vtxo",

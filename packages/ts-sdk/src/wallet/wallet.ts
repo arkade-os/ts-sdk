@@ -56,8 +56,10 @@ import {
     isValidArkAddress,
 } from "../utils/arkTransaction";
 import {
+    byValueDescending,
     DEFAULT_RENEWAL_CONFIG,
     DEFAULT_SETTLEMENT_CONFIG,
+    MAX_VTXOS_PER_SETTLEMENT,
     SettlementConfig,
     VtxoManager,
 } from "./vtxo-manager";
@@ -67,7 +69,7 @@ import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
-import { extendCoin, validateRecipients } from "./utils";
+import { extendCoin, extendCoinWithTapscript, validateRecipients } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
@@ -79,13 +81,17 @@ import { DelegateVtxo } from "../script/delegate";
 import { DelegateManagerImpl, findDestinationOutputIndex, IDelegateManager } from "./delegate";
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
+import type { CreateContractParams } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
+import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 import { validateVtxosForScript, saveVtxosForContract } from "../contracts/vtxoOwnership";
-import { WalletReceiveRotator } from "./walletReceiveRotator";
+import { WalletReceiveRotator, signingDescriptorIndex } from "./walletReceiveRotator";
 import { HDDescriptorProvider } from "./hdDescriptorProvider";
 import { DescriptorProvider } from "../identity/descriptorProvider";
+import { deriveDescriptorLeafPubKey } from "../identity/descriptor";
+import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
 import { DiscoveryDeps } from "../contracts/types";
 import { InputSignerRouter, InputSigningJob } from "./inputSignerRouter";
 import {
@@ -122,6 +128,16 @@ function extractArkProviderUrl(provider: ArkProvider): string | undefined {
 // legacy address after arkd starts advertising a different delay.
 const MAINNET_UNILATERAL_EXIT_DELAY = 605184n;
 
+// Normalize a server signer pubkey to the x-only (32-byte) form script
+// encoding requires (CSVMultisigTapscript.encode throws on anything else).
+// A 33-byte compressed key drops its parity prefix; a 32-byte key is already
+// x-only. Mirrors the setup path's `hex.decode(info.signerPubkey).slice(1)`.
+function toXOnlyPubKey(pubkey: Uint8Array): Uint8Array {
+    if (pubkey.length === 33) return pubkey.slice(1);
+    if (pubkey.length === 32) return pubkey;
+    throw new Error(`invalid signer pubkey length: expected 32 or 33, got ${pubkey.length}`);
+}
+
 function delayToTimelock(delay: bigint): RelativeTimelock {
     return {
         value: delay,
@@ -141,6 +157,83 @@ function dedupeTimelocks(timelocks: RelativeTimelock[]): RelativeTimelock[] {
     }
 
     return deduped;
+}
+
+/**
+ * Register a wallet baseline contract (`default` / `boarding`) idempotently.
+ *
+ * Thin pass-through to {@link ContractManager.createContract}, which is now the
+ * single source of truth for the degenerate `default`/`boarding` same-script
+ * collision: contracts are keyed by pkScript, so when the two derive a
+ * byte-identical script (a misconfigured server whose `boardingExitDelay`
+ * coincides with the offchain unilateral-exit delay) only one row can exist for
+ * it, and `createContract` resolves the clash FIRST-WINS — it keeps the row
+ * already persisted for the shared script instead of throwing (see
+ * {@link areCoalescibleContractTypes}). The wallet-layer "default wins +
+ * promote" coalescing this helper used to carry has been consolidated into that
+ * one place so init and the restore scan share a single rule (see
+ * docs/hd-wallets_onchain_rotation_collision_fix.md §5.1, §5.3).
+ *
+ * @internal Exported for unit tests; not part of the public API surface.
+ */
+export async function ensureWalletContract(
+    manager: ContractManager,
+    params: CreateContractParams,
+): Promise<void> {
+    await manager.createContract(params);
+}
+
+/**
+ * Resolve the wallet's current boarding tapscript at boot.
+ *
+ * Mirrors {@link WalletReceiveRotator.resolveBoot} for the boarding domain:
+ * when the wallet rotates boarding (plan §6-II) the latest allocated boarding
+ * address is persisted as the newest `active` `boarding` contract tagged
+ * {@link WALLET_RECEIVE_SOURCE}. On restart this re-derives the boarding
+ * tapscript at that contract's pubkey so {@link Wallet.getBoardingAddress}
+ * keeps returning the most recently allocated boarding address.
+ *
+ * Returns the `baseline` boarding tapscript unchanged when no rotated boarding
+ * row exists (a fresh wallet, a never-rotated wallet, or — in the degenerate
+ * equal-delay case — an index-0 boarding row coalesced onto `default`). The
+ * boarding-exit CSV is index-independent, so the resolved tapscript reuses the
+ * baseline's options and swaps only the owner pubkey.
+ *
+ * @internal Exported for unit tests; not part of the public API surface.
+ */
+export async function resolveBoardingBootTapscript(
+    contractRepository: ContractRepository,
+    serverPubKey: Bytes,
+    baseline: DefaultVtxo.Script,
+): Promise<DefaultVtxo.Script> {
+    const serverPubKeyHex = hex.encode(serverPubKey);
+    const candidates = await contractRepository.getContracts({
+        type: ["boarding"],
+        state: "active",
+    });
+    const newest = candidates
+        .filter(
+            (c) =>
+                c.params.serverPubKey === serverPubKeyHex &&
+                c.metadata?.source === WALLET_RECEIVE_SOURCE,
+        )
+        .sort((a, b) => {
+            if (b.createdAt !== a.createdAt) return b.createdAt - a.createdAt;
+            return (
+                signingDescriptorIndex(b.metadata?.signingDescriptor) -
+                signingDescriptorIndex(a.metadata?.signingDescriptor)
+            );
+        })[0];
+    if (!newest?.params.pubKey) return baseline;
+    try {
+        const pubKey = hex.decode(newest.params.pubKey);
+        return new DefaultVtxo.Script({ ...baseline.options, pubKey });
+    } catch (e) {
+        // Fall back to the baseline boarding tapscript rather than fail boot,
+        // but surface the corrupt row so repo corruption is detectable.
+        console.warn("Skipping malformed boarding contract at boot", newest.script, e);
+        return baseline;
+    }
 }
 
 export type IncomingFunds =
@@ -201,6 +294,18 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     protected _offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script;
 
+    /**
+     * Backing field for the current boarding tapscript (the QR / onboarding
+     * target). Read via the public `boardingTapscript` getter; written only
+     * by {@link Wallet.setBoardingTapscriptForRotation}, the sanctioned
+     * boarding-rotation write path (analogue of `_offchainTapscript`). It is
+     * a *current value*, not a fixed setup constant, because per-derivation
+     * boarding rotation (plan §6-II) swaps it when a fresh boarding address
+     * is explicitly allocated. Static / `auto` wallets never rotate it, so
+     * it stays the index-0 baseline for their lifetime.
+     */
+    protected _boardingTapscript: DefaultVtxo.Script;
+
     protected constructor(
         readonly identity: ReadonlyIdentity,
         readonly network: Network,
@@ -208,7 +313,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly indexerProvider: IndexerProvider,
         readonly arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
-        readonly boardingTapscript: DefaultVtxo.Script,
+        boardingTapscript: DefaultVtxo.Script,
         readonly dustAmount: bigint,
         public readonly walletRepository: WalletRepository,
         public readonly contractRepository: ContractRepository,
@@ -232,6 +337,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             }
         }
         this._offchainTapscript = offchainTapscript;
+        this._boardingTapscript = boardingTapscript;
         this.watcherConfig = watcherConfig;
         this._assetManager = new ReadonlyAssetManager(this.indexerProvider);
         // Defensive for direct-construction callers; setupWalletConfig already
@@ -239,10 +345,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         this.walletContractTimelocks =
             walletContractTimelocks && walletContractTimelocks.length > 0
                 ? dedupeTimelocks(walletContractTimelocks)
-                : [
-                      this.offchainTapscript.options.csvTimelock ??
-                          DefaultVtxo.Script.DEFAULT_TIMELOCK,
-                  ];
+                : [this.offchainTapscript.options.csvTimelock];
     }
 
     /**
@@ -252,6 +355,56 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     get offchainTapscript(): DefaultVtxo.Script | DelegateVtxo.Script {
         return this._offchainTapscript;
+    }
+
+    /**
+     * The wallet's current boarding tapscript (the on-chain onboarding
+     * target). Read-only from the outside; mutated only via
+     * {@link Wallet.setBoardingTapscriptForRotation} when a fresh boarding
+     * address is explicitly allocated. Single-valued for static / `auto`
+     * wallets.
+     */
+    get boardingTapscript(): DefaultVtxo.Script {
+        return this._boardingTapscript;
+    }
+
+    /**
+     * Listeners fired after the boarding tapscript rotates to a fresh index
+     * (see {@link Wallet.setBoardingTapscriptForRotation}). A live
+     * {@link notifyIncomingFunds} onchain watcher registers one so it can
+     * re-subscribe to include the newly allocated boarding address within the
+     * same session — without it, a deposit to the fresh address wouldn't fire
+     * a notification until the watcher's next re-init. Always empty for
+     * readonly / static / `auto` wallets, which never rotate boarding.
+     */
+    private readonly _boardingRotationListeners = new Set<() => void>();
+
+    /**
+     * Register a listener invoked synchronously after each boarding rotation.
+     * Returns an unsubscribe function. Protected: only internal subscribers
+     * (the incoming-funds watcher) participate.
+     */
+    protected onBoardingRotation(listener: () => void): () => void {
+        this._boardingRotationListeners.add(listener);
+        return () => {
+            this._boardingRotationListeners.delete(listener);
+        };
+    }
+
+    /**
+     * Notify boarding-rotation listeners. Called by the boarding-rotation
+     * write path ({@link Wallet.setBoardingTapscriptForRotation}) once the new
+     * tapscript is in place. A throwing listener is isolated so it can neither
+     * break the rotation nor starve sibling listeners.
+     */
+    protected notifyBoardingRotation(): void {
+        for (const listener of this._boardingRotationListeners) {
+            try {
+                listener();
+            } catch (e) {
+                console.warn("Boarding-rotation listener failed", e);
+            }
+        }
     }
 
     /**
@@ -379,9 +532,18 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const offchainTapscript = !delegatePubKey
             ? new DefaultVtxo.Script(offchainOptions)
             : new DelegateVtxo.Script({ ...offchainOptions, delegatePubKey });
-        const boardingTapscript = new DefaultVtxo.Script({
-            ...offchainOptions,
-            csvTimelock: boardingTimelock,
+        // Source the boarding script from the registered `boarding` handler so
+        // wallet setup derives it through the contract type rather than ad-hoc
+        // construction. The handler returns a DefaultVtxo.Script byte-identical
+        // to the previous inline construction for equivalent params (the CSV
+        // timelock round-trips through the same BIP68 sequence encoding the
+        // script bytes already use), so getBoardingAddress() and pkScript are
+        // unchanged. Contract-manager initialization persists a matching
+        // `boarding` contract from these same params.
+        const boardingTapscript = BoardingContractHandler.createScript({
+            pubKey: hex.encode(pubKey),
+            serverPubKey: hex.encode(serverPubKey),
+            csvTimelock: timelockToSequence(boardingTimelock).toString(),
         });
 
         const walletRepository =
@@ -583,7 +745,20 @@ export class ReadonlyWallet implements IReadonlyWallet {
         await clearSyncCursor(this.walletRepository);
     }
     /**
-     * Build a transaction history view for the wallet's boarding address.
+     * The on-chain (P2TR) addresses of every boarding tapscript this wallet
+     * uses — the current address plus any historical rotated boarding
+     * addresses. The aggregating boarding readers (history, notifications) fan
+     * out over this set so deposits at previous boarding addresses are still
+     * surfaced (plan §6-IV); {@link getBoardingAddress} stays single-valued.
+     */
+    async getBoardingAddresses(): Promise<string[]> {
+        const tapscripts = await this.getBoardingTapscripts();
+        return tapscripts.map((t) => t.onchainAddress(this.network));
+    }
+
+    /**
+     * Build a transaction history view across the wallet's boarding addresses
+     * (current + historical rotated; plan §6-IV.1).
      */
     async getBoardingTxs(): Promise<{
         boardingTxs: ArkTransaction[];
@@ -591,47 +766,54 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }> {
         const utxos: VirtualCoin[] = [];
         const commitmentsToIgnore = new Set<string>();
-        const boardingAddress = await this.getBoardingAddress();
-        const txs = await this.onchainProvider.getTransactions(boardingAddress);
+        const tapscripts = await this.getBoardingTapscripts();
 
         const outspendCache = new Map<
             string,
             Awaited<ReturnType<typeof this.onchainProvider.getTxOutspends>>
         >();
 
-        for (const tx of txs) {
-            for (let i = 0; i < tx.vout.length; i++) {
-                const vout = tx.vout[i];
-                if (vout.scriptpubkey_address === boardingAddress) {
-                    let spentStatuses = outspendCache.get(tx.txid);
-                    if (!spentStatuses) {
-                        spentStatuses = await this.onchainProvider.getTxOutspends(tx.txid);
-                        outspendCache.set(tx.txid, spentStatuses);
-                    }
-                    const spentStatus = spentStatuses[i];
+        for (const tapscript of tapscripts) {
+            const boardingAddress = tapscript.onchainAddress(this.network);
+            const scriptHex = hex.encode(tapscript.pkScript);
+            const txs = await this.onchainProvider.getTransactions(boardingAddress);
 
-                    if (spentStatus?.spent) {
-                        commitmentsToIgnore.add(spentStatus.txid);
-                    }
+            for (const tx of txs) {
+                for (let i = 0; i < tx.vout.length; i++) {
+                    const vout = tx.vout[i];
+                    if (vout.scriptpubkey_address === boardingAddress) {
+                        let spentStatuses = outspendCache.get(tx.txid);
+                        if (!spentStatuses) {
+                            spentStatuses = await this.onchainProvider.getTxOutspends(tx.txid);
+                            outspendCache.set(tx.txid, spentStatuses);
+                        }
+                        const spentStatus = spentStatuses[i];
 
-                    utxos.push({
-                        txid: tx.txid,
-                        vout: i,
-                        value: Number(vout.value),
-                        status: {
-                            confirmed: tx.status.confirmed,
-                            block_time: tx.status.block_time,
-                        },
-                        isUnrolled: true,
-                        virtualStatus: {
-                            state: spentStatus?.spent ? "spent" : "settled",
-                            commitmentTxIds: spentStatus?.spent ? [spentStatus.txid] : undefined,
-                        },
-                        createdAt: tx.status.confirmed
-                            ? new Date(tx.status.block_time * 1000)
-                            : new Date(0),
-                        script: hex.encode(this.boardingTapscript.pkScript),
-                    });
+                        if (spentStatus?.spent) {
+                            commitmentsToIgnore.add(spentStatus.txid);
+                        }
+
+                        utxos.push({
+                            txid: tx.txid,
+                            vout: i,
+                            value: Number(vout.value),
+                            status: {
+                                confirmed: tx.status.confirmed,
+                                block_time: tx.status.block_time,
+                            },
+                            isUnrolled: true,
+                            virtualStatus: {
+                                state: spentStatus?.spent ? "spent" : "settled",
+                                commitmentTxIds: spentStatus?.spent
+                                    ? [spentStatus.txid]
+                                    : undefined,
+                            },
+                            createdAt: tx.status.confirmed
+                                ? new Date(tx.status.block_time * 1000)
+                                : new Date(0),
+                            script: scriptHex,
+                        });
+                    }
                 }
             }
         }
@@ -668,62 +850,197 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Fetch and cache onchain inputs (UTXOs) received at the boarding address.
+     * The set of boarding tapscripts whose on-chain UTXOs belong to this
+     * wallet — the current display tapscript plus every historical boarding
+     * address it has used. Under per-derivation rotation (plan §6-II) a wallet
+     * can hold unspent boarding UTXOs at several addresses at once, so fund
+     * discovery / spending must enumerate them all, not just the current one
+     * (plan §6-III.1). Deduplicated by scriptPubKey.
+     *
+     * Always includes the index-0 baseline (identity x-only key), which covers
+     * the degenerate equal-delay case where the index-0 boarding row is
+     * coalesced onto a `default` row and so isn't a `boarding`-typed contract.
+     */
+    protected async getBoardingTapscripts(): Promise<DefaultVtxo.Script[]> {
+        const byScript = new Map<string, DefaultVtxo.Script>();
+        const add = (s: DefaultVtxo.Script) => byScript.set(hex.encode(s.pkScript), s);
+
+        const boardingCsv =
+            this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        // Index-0 baseline boarding (identity x-only key) — always in scope.
+        add(
+            new DefaultVtxo.Script({
+                pubKey: await this.identity.xOnlyPublicKey(),
+                serverPubKey: this.boardingTapscript.options.serverPubKey,
+                csvTimelock: boardingCsv,
+            }),
+        );
+        // Current display boarding tapscript (may be a rotated index).
+        add(this.boardingTapscript);
+        // Every persisted boarding contract — current + historical rotated.
+        // Read the contract repository directly (not via getContractManager)
+        // so fund discovery doesn't force contract-manager initialization as a
+        // side effect; the boarding rows are persisted by init and the
+        // allocator, which run earlier in the wallet lifecycle.
+        const serverPubKeyHex = hex.encode(this.boardingTapscript.options.serverPubKey);
+        const boardingContracts = await this.contractRepository.getContracts({
+            type: ["boarding"],
+        });
+        for (const c of boardingContracts) {
+            // Only this wallet's server. A row left by a previous ASP (e.g. a
+            // repo recovered against a different server) would otherwise emit a
+            // spurious onchain script — and a wasted getCoins/getTransactions
+            // call — on every boarding read. Mirrors the filter in
+            // resolveBoardingBootTapscript.
+            if (c.params.serverPubKey !== serverPubKeyHex) continue;
+            try {
+                add(BoardingContractHandler.createScript(c.params));
+            } catch (e) {
+                // Skip a malformed row rather than abort fund discovery, but
+                // surface it so repo corruption is detectable.
+                console.warn("Skipping malformed boarding contract", c.script, e);
+            }
+        }
+        return [...byScript.values()];
+    }
+
+    /**
+     * Fetch and cache onchain inputs (UTXOs) received at the wallet's boarding
+     * addresses — the current address plus any historical rotated boarding
+     * addresses that still hold unspent UTXOs (plan §6-III.1). Each UTXO is
+     * annotated with the tapscript of the address it actually sits on, so the
+     * spending path forfeits / exits it with the correct per-index leaves.
      */
     async getBoardingUtxos(): Promise<ExtendedCoin[]> {
-        const boardingAddress = await this.getBoardingAddress();
-        const boardingUtxos = await this.onchainProvider.getCoins(boardingAddress);
-
-        const utxos = boardingUtxos.map((utxo) => {
-            return extendCoin(this, utxo);
-        });
-
-        // Save boarding inputs using unified repository
-        await this.walletRepository.saveUtxos(boardingAddress, utxos);
-
-        return utxos;
+        const tapscripts = await this.getBoardingTapscripts();
+        const all: ExtendedCoin[] = [];
+        for (const tapscript of tapscripts) {
+            const address = tapscript.onchainAddress(this.network);
+            const coins = await this.onchainProvider.getCoins(address);
+            const utxos = coins.map((utxo) => extendCoinWithTapscript(tapscript, utxo));
+            // Save boarding inputs using unified repository, keyed by the
+            // address the UTXOs actually sit on.
+            await this.walletRepository.saveUtxos(address, utxos);
+            all.push(...utxos);
+        }
+        return all;
     }
 
     /**
      * Subscribe to onchain and offchain notifications for newly received funds.
+     *
+     * The onchain watcher tracks the full boarding-address set (current +
+     * historical rotated). When boarding rotates *after* subscribing — e.g.
+     * rotate-on-board allocates a fresh address via
+     * {@link getNewBoardingAddress} — the watcher automatically re-subscribes
+     * to widen its set, so a deposit to the new address fires a notification
+     * within the same session (no watcher re-init required). The re-subscribe
+     * is driven by {@link onBoardingRotation}; static / `auto` / readonly
+     * wallets never rotate boarding, so it never fires for them.
      *
      * @param eventCallback - Callback invoked when matching funds are detected
      * @returns A function that stops the subscriptions
      */
     async notifyIncomingFunds(eventCallback: (coins: IncomingFunds) => void): Promise<() => void> {
         const arkAddress = await this.getAddress();
-        const boardingAddress = await this.getBoardingAddress();
 
-        let onchainStopFunc: () => void;
-        let indexerStopFunc: () => void;
+        let onchainStopFunc: (() => void) | undefined;
+        let indexerStopFunc: (() => void) | undefined;
+        let boardingRotationStopFunc: (() => void) | undefined;
+        let stopped = false;
 
-        if (this.onchainProvider && boardingAddress) {
-            const findVoutOnTx = (tx: any) => {
-                return tx.vout.findIndex((v: any) => v.scriptpubkey_address === boardingAddress);
-            };
-            onchainStopFunc = await this.onchainProvider.watchAddresses(
-                [boardingAddress],
-                (txs) => {
-                    // find all onchain outputs belonging to our boarding address
-                    const coins: Coin[] = txs
-                        // filter txs where address is in output
-                        .filter((tx) => findVoutOnTx(tx) !== -1)
-                        // return boarding input as Coin
-                        .map((tx) => {
-                            const { txid, status } = tx;
-                            const vout = findVoutOnTx(tx);
-                            const value = Number(tx.vout[vout].value);
-                            return { txid, vout, value, status };
-                        });
+        // (Re)subscribe the onchain watcher to the CURRENT boarding-address set.
+        // Serialized on a single chain so a burst of rotations can't interleave
+        // teardown/setup and leak a watcher. Re-reads `getBoardingAddresses()`
+        // each time: a rotation appends a new address, so the watcher must
+        // widen to include it while keeping the historical ones (plan §6-IV.2).
+        let onchainChain: Promise<void> = Promise.resolve();
+        const subscribeOnchain = (): Promise<void> => {
+            onchainChain = onchainChain
+                .then(async () => {
+                    if (stopped || !this.onchainProvider) return;
 
-                    // and notify via callback
-                    eventCallback({
-                        type: "utxo",
-                        coins,
-                    });
-                },
-            );
-        }
+                    const boardingAddresses = await this.getBoardingAddresses();
+                    if (boardingAddresses.length === 0) return;
+                    const boardingAddressSet = new Set(boardingAddresses);
+
+                    // Subscribe-then-swap: bring the NEW watcher up *before*
+                    // retiring the previous one. If `watchAddresses` throws, the
+                    // catch leaves `onchainStopFunc` (the old watcher) untouched,
+                    // so the subscription degrades to the stale set rather than
+                    // to no watcher at all; and there's no blind window where
+                    // neither is live (which would let a deposit be seeded as
+                    // "already known" history and never reported). The newly
+                    // allocated boarding address can't have received funds before
+                    // now — it was just derived — so the widened set needs no
+                    // separate reconciliation fetch.
+                    const previousStop = onchainStopFunc;
+                    const stop = await this.onchainProvider.watchAddresses(
+                        boardingAddresses,
+                        (txs) => {
+                            // Emit a coin for EVERY output that pays one of our
+                            // boarding addresses. A single tx can pay several
+                            // (e.g. the current and a rotated-away boarding
+                            // address, now that boarding fans out — plan
+                            // §6-IV.2), so map per matching vout rather than
+                            // reporting only the first match per tx.
+                            const coins: Coin[] = txs.flatMap((tx) => {
+                                const { txid, status } = tx;
+                                const matched: Coin[] = [];
+                                tx.vout.forEach((v: any, vout: number) => {
+                                    if (boardingAddressSet.has(v.scriptpubkey_address)) {
+                                        matched.push({
+                                            txid,
+                                            vout,
+                                            value: Number(v.value),
+                                            status,
+                                        });
+                                    }
+                                });
+                                return matched;
+                            });
+
+                            // and notify via callback
+                            eventCallback({
+                                type: "utxo",
+                                coins,
+                            });
+                        },
+                    );
+
+                    // `stopFunc` may have run while we awaited the subscribe. It
+                    // already stopped the previous watcher (then held in
+                    // `onchainStopFunc`), so only the fresh one needs tearing
+                    // down here — don't touch `previousStop` again.
+                    if (stopped) {
+                        stop();
+                        return;
+                    }
+
+                    // New watcher is live: promote it, then atomically retire
+                    // the old one. Brief overlap is fine — at worst a duplicate
+                    // notification, never a missed deposit.
+                    onchainStopFunc = stop;
+                    previousStop?.();
+                })
+                .catch((e) => {
+                    console.warn("Failed to (re)subscribe boarding-funds watcher", e);
+                });
+            return onchainChain;
+        };
+
+        // Widen the onchain watcher whenever boarding rotates (rotate-on-board
+        // / explicit allocation), so a deposit to the freshly allocated address
+        // is watched within this same session. Registered BEFORE the initial
+        // subscribe so a rotation that lands during initial setup still queues a
+        // re-subscribe on the chain (rather than being dropped, leaving the
+        // watcher stuck on the stale set). No-op for wallets that never rotate
+        // boarding.
+        boardingRotationStopFunc = this.onBoardingRotation(() => {
+            void subscribeOnchain();
+        });
+
+        await subscribeOnchain();
 
         if (this.indexerProvider && arkAddress) {
             // Share the ContractWatcher's single subscription instead of
@@ -765,7 +1082,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
 
         const stopFunc = () => {
+            // Flag first so any in-flight (re)subscribe on `onchainChain` tears
+            // its fresh watcher down instead of leaking it.
+            stopped = true;
+            boardingRotationStopFunc?.();
             onchainStopFunc?.();
+            onchainStopFunc = undefined;
             indexerStopFunc?.();
         };
 
@@ -920,7 +1242,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
             });
             const defaultScriptHex = hex.encode(defaultScript.pkScript);
 
-            await manager.createContract({
+            // ensureWalletContract (a thin pass-through to createContract) so a
+            // default baseline whose script collides with an already-persisted
+            // `boarding` row is tolerated FIRST-WINS at the persistence layer
+            // instead of throwing a type mismatch. The default matrix is
+            // persisted before the boarding baseline below, so at index 0 the
+            // `default` row wins. Degenerate guard only: a sound server keeps
+            // the unilateral-exit and boarding-exit delays distinct, so these
+            // scripts never actually collide.
+            await ensureWalletContract(manager, {
                 type: "default",
                 params: {
                     pubKey: hex.encode(defaultScript.options.pubKey),
@@ -957,6 +1287,51 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 });
             }
         }
+
+        // Boarding contract: the wallet's permanent INDEX-0 baseline boarding
+        // script. Bound to the identity's x-only pubkey (`baselinePubkey`) —
+        // NOT `this.boardingTapscript`, which is a *current value* that
+        // per-derivation rotation (plan §6-II) may have advanced to a higher
+        // index. Like the default/delegate matrix above, the baseline boarding
+        // row must stay anchored at index 0 so funds landing on the baseline
+        // address are always visible/spendable, independent of rotation.
+        // Rotated boarding rows are persisted separately (tagged) by the
+        // boarding allocator. The boarding-exit CSV is index-independent, so it
+        // is read from the current `boardingTapscript.options`.
+        //
+        // Created `active` so ContractWatcher monitors the boarding Arkade
+        // address. getBoardingAddress() does not depend on this contract (it
+        // derives from `this.boardingTapscript` directly), keeping the lazy
+        // contract-manager lifecycle intact.
+        //
+        // Create-if-missing via ensureWalletContract (idempotent): contracts
+        // are keyed by script. In the degenerate case where boardingExitDelay
+        // coincides with a baseline `default` timelock (a misconfigured server;
+        // sound servers keep them distinct), the boarding script is
+        // byte-identical to that default contract's script, so we cannot — and
+        // need not — persist a second row: the shared script is already
+        // persisted and watched as the `default` baseline (which was created
+        // first, so first-wins keeps it `default`), so funds landing on it stay
+        // visible/spendable. Re-running initialization is likewise a no-op once
+        // the row exists.
+        const boardingCsvTimelock =
+            this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        const baselineBoarding = new DefaultVtxo.Script({
+            pubKey: baselinePubkey,
+            serverPubKey: this.boardingTapscript.options.serverPubKey,
+            csvTimelock: boardingCsvTimelock,
+        });
+        await ensureWalletContract(manager, {
+            type: "boarding",
+            params: {
+                pubKey: hex.encode(baselineBoarding.options.pubKey),
+                serverPubKey: hex.encode(baselineBoarding.options.serverPubKey),
+                csvTimelock: timelockToSequence(boardingCsvTimelock).toString(),
+            },
+            script: hex.encode(baselineBoarding.pkScript),
+            address: baselineBoarding.address(this.network.hrp, this.arkServerPublicKey).encode(),
+            state: "active",
+        });
 
         return manager;
     }
@@ -1053,6 +1428,84 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      */
     setOffchainTapscriptForRotation(tapscript: DefaultVtxo.Script | DelegateVtxo.Script): void {
         this._offchainTapscript = tapscript;
+    }
+
+    /**
+     * @internal Sole write path for `boardingTapscript` after construction.
+     * Called by {@link Wallet.getNewBoardingAddress} once the rotated
+     * boarding contract has been persisted. External code must treat
+     * `boardingTapscript` as read-only.
+     */
+    setBoardingTapscriptForRotation(tapscript: DefaultVtxo.Script): void {
+        this._boardingTapscript = tapscript;
+        // Let live subscribers (the incoming-funds onchain watcher) widen to
+        // the freshly allocated boarding address. Harmless at boot — the
+        // boot-time restore runs before any subscription exists.
+        this.notifyBoardingRotation();
+    }
+
+    /**
+     * Allocate and return a *fresh* on-chain boarding address, rotating the
+     * wallet's current boarding tapscript to a new HD index.
+     *
+     * This is the explicit boarding allocator — the analogue of dotnet's
+     * `GetNextContract(NextContractPurpose.Boarding)`. Unlike
+     * {@link getBoardingAddress} (a stable read of the current display
+     * address that never burns an index), each call here:
+     *
+     * - allocates the next index from the shared HD stream (so boarding and
+     *   L2 receive interleave on one monotonic index);
+     * - builds the boarding tapscript at that index with the boarding-exit
+     *   CSV;
+     * - persists an `active` `boarding` contract tagged
+     *   {@link WALLET_RECEIVE_SOURCE} (with its `signingDescriptor`) so the
+     *   ContractWatcher monitors it, boot can restore it as the current
+     *   boarding address, and descriptor-aware signing can recover the
+     *   per-index key;
+     * - swaps the wallet's current `boardingTapscript`.
+     *
+     * Gated by `walletMode`: a static / `auto` wallet has no descriptor
+     * provider and keeps a single index-0 boarding address for its lifetime,
+     * so this returns the existing {@link getBoardingAddress} unchanged
+     * (no rotation, no index burned).
+     */
+    async getNewBoardingAddress(): Promise<string> {
+        const provider = this._descriptorProvider;
+        if (!provider) {
+            // Static / `auto`: single fixed boarding address, no rotation.
+            return this.getBoardingAddress();
+        }
+
+        const descriptor = await provider.getNextSigningDescriptor();
+        const pubKey = deriveDescriptorLeafPubKey(descriptor);
+        const newBoarding = new DefaultVtxo.Script({
+            ...this._boardingTapscript.options,
+            pubKey,
+        });
+        const csvTimelock = newBoarding.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
+
+        const manager = await this.getContractManager();
+        // Persist BEFORE swapping the visible tapscript: if registration
+        // throws, the wallet keeps displaying the previous (registered)
+        // boarding address — never an unwatched one (mirrors `rotate()`).
+        await manager.createContract({
+            type: "boarding",
+            params: {
+                pubKey: hex.encode(pubKey),
+                serverPubKey: hex.encode(newBoarding.options.serverPubKey),
+                csvTimelock: timelockToSequence(csvTimelock).toString(),
+            },
+            script: hex.encode(newBoarding.pkScript),
+            address: newBoarding.address(this.network.hrp, this.arkServerPublicKey).encode(),
+            state: "active",
+            metadata: {
+                source: WALLET_RECEIVE_SOURCE,
+                signingDescriptor: descriptor,
+            },
+        });
+
+        this.setBoardingTapscriptForRotation(newBoarding);
+        return newBoarding.onchainAddress(this.network);
     }
 
     /**
@@ -1168,12 +1621,32 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 ? this.offchainTapscript.options.delegatePubKey
                 : undefined;
 
+        // Source the signer axis from a single fresh server-info snapshot so
+        // the current and deprecated signers are mutually consistent (mirrors
+        // NArk's recovery-time snapshot). Deriving the current signer from this
+        // snapshot rather than `this.offchainTapscript.options.serverPubKey`
+        // avoids mixing a stale instance signer with fresh history.
+        const arkInfo = await this.arkProvider.getInfo();
+        const currentSignerPubKey = toXOnlyPubKey(hex.decode(arkInfo.signerPubkey));
+        const deprecatedSignerPubKeys = arkInfo.deprecatedSigners.map((s) =>
+            toXOnlyPubKey(hex.decode(s.pubkey)),
+        );
+
         const deps: DiscoveryDeps = {
             indexerProvider: this.indexerProvider,
             onchainProvider: this.onchainProvider,
             network: { hrp: this.network.hrp },
-            serverPubKey: this.offchainTapscript.options.serverPubKey,
+            // Full network for the boarding on-chain (P2TR) probe — the
+            // `{ hrp }` shape above lacks the `bech32` data
+            // `VtxoScript.onchainAddress` needs (plan §6-I.1).
+            onchainNetwork: this.network,
+            serverPubKey: currentSignerPubKey,
+            deprecatedSignerPubKeys,
             csvTimelocks: this.walletContractTimelocks,
+            // Boarding-exit CSV so the boarding handler can build its
+            // candidate script (distinct from the unilateral-exit matrix).
+            boardingTimelock:
+                this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK,
             delegatePubKey,
         };
 
@@ -1447,6 +1920,25 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             boot?.provider,
         );
 
+        // Boarding boot (plan §6-II.3): when HD/boarding rotation is active (a
+        // provider resolved), restore the most recently allocated boarding
+        // address from the repo so `getBoardingAddress()` survives restarts.
+        // The constructor was handed the index-0 baseline boarding tapscript
+        // (so `InputSignerRouter`'s boarding fallback and the init-time
+        // baseline boarding row both anchor to index 0); we swap the wallet's
+        // *current* boarding tapscript here. Static / `auto` wallets have no
+        // provider and keep the baseline.
+        if (boot?.provider) {
+            const resolvedBoarding = await resolveBoardingBootTapscript(
+                setup.contractRepository,
+                setup.serverPubKey,
+                setup.boardingTapscript,
+            );
+            if (resolvedBoarding !== setup.boardingTapscript) {
+                wallet.setBoardingTapscriptForRotation(resolvedBoarding);
+            }
+        }
+
         await wallet.getVtxoManager();
         return wallet;
     }
@@ -1673,8 +2165,19 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             const vtxos = await this.getVtxos({ withRecoverable: true });
 
+            // Cap the VTXOs per settlement to stay under the server's
+            // intent-size limit (see MAX_VTXOS_PER_SETTLEMENT). Settle the
+            // highest-value VTXOs first so the capped batch carries the most
+            // value. Apply the cap to economically viable VTXOs only: skipping
+            // uneconomic inputs and continuing past the cap avoids an uneconomic
+            // prefix permanently starving valid VTXOs behind it. The boarding
+            // inputs above are added uncapped; the headroom absorbs them. Any
+            // overflow is settled on the next call.
             const filteredVtxos = [];
-            for (const vtxo of vtxos) {
+            for (const vtxo of byValueDescending(vtxos)) {
+                if (filteredVtxos.length >= MAX_VTXOS_PER_SETTLEMENT) {
+                    break;
+                }
                 const inputFee = estimator.evalOffchainInput({
                     amount: BigInt(vtxo.value),
                     type: vtxo.virtualStatus.state === "swept" ? "recoverable" : "vtxo",
@@ -1854,6 +2357,16 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             await this.updateDbAfterSettle(params.inputs, commitmentTxid);
 
+            // Boarding rotation (rotate-on-board): if this settle swept any
+            // boarding (on-chain) UTXO into Arkade, advance the boarding
+            // address to a fresh HD index so the next deposit lands on a new
+            // address. This is the boarding analogue of the L2 receive
+            // rotation that runs on `vtxo_received` — boarding has no on-chain
+            // receival event (ContractWatcher watches only the L2 indexer), so
+            // the board itself is the trigger. Best-effort: it never fails an
+            // already-committed settle.
+            await this.maybeRotateBoardingAfterBoard(params.inputs);
+
             return commitmentTxid;
         } catch (error) {
             // delete the intent to not be stuck in the queue. If deletion fails
@@ -1878,6 +2391,42 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             // (e.g. safeRegisterIntent threw before Batch.join was called).
             abortController.abort();
             await stream?.return?.().catch(() => {});
+        }
+    }
+
+    /**
+     * Rotate the boarding address after a board (rotate-on-board trigger).
+     *
+     * Mirrors {@link WalletReceiveRotator}'s L2 rotation, but driven by a
+     * board instead of a `vtxo_received` event: when a settle consumes at
+     * least one boarding (on-chain) UTXO, the current boarding address has
+     * served its purpose, so we allocate a fresh one via
+     * {@link getNewBoardingAddress}. A settle that consumed only VTXOs (a
+     * renewal / offboard) is not a board and leaves the boarding address
+     * untouched.
+     *
+     * Boarding inputs are the non-VTXO coins (no `virtualStatus`), the same
+     * discriminator {@link handleSettlementFinalizationEvent} uses; the
+     * `typeof` guard skips arknote string inputs before the `in` test.
+     *
+     * No-ops for static / `auto` wallets (no descriptor provider — boarding
+     * stays on its fixed index-0 address). Best-effort and non-fatal: the
+     * settle has already committed and its txid must be returned, so a
+     * rotation failure is logged and swallowed rather than thrown. Funds at
+     * the retired boarding address remain discoverable — the old `boarding`
+     * contract stays active and {@link getBoardingUtxos} fans out over the
+     * full historical boarding set.
+     */
+    private async maybeRotateBoardingAfterBoard(inputs: SettleParams["inputs"]): Promise<void> {
+        if (!this._descriptorProvider) return;
+        const consumedBoarding = inputs.some(
+            (input) => typeof input !== "string" && !("virtualStatus" in input),
+        );
+        if (!consumedBoarding) return;
+        try {
+            await this.getNewBoardingAddress();
+        } catch (e) {
+            console.warn("Failed to rotate boarding address after board", e);
         }
     }
 
@@ -2162,6 +2711,20 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             if (script) jobs.push({ index, lookupScript: script });
         }
         return jobs;
+    }
+
+    /**
+     * @internal Sign an on-chain boarding exit / sweep transaction, routing
+     * each input to the correct key by its `witnessUtxo.script`: the identity
+     * for index-0 / static boarding, the per-index descriptor for a rotated
+     * boarding UTXO (plan §6-III.3). Used by
+     * {@link VtxoManager.sweepExpiredBoardingUtxos}; without it, the
+     * unilateral exit of a rotated boarding UTXO would be signed with the
+     * wrong (index-0) key and rejected.
+     */
+    async signOnchainBoardingTx(tx: Transaction): Promise<Transaction> {
+        const signed = await this._signerRouter.sign(tx, this.inputSigningJobsFromWitnessUtxos(tx));
+        return signed as Transaction;
     }
 
     async safeRegisterIntent(
@@ -2957,11 +3520,14 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         commitmentTxid: string,
     ): Promise<void> {
         try {
-            const boardingAddress = await this.getBoardingAddress();
-
             const spentVtxos: ExtendedVirtualCoin[] = [];
             const inputArkTxIds = new Set<string>();
-            const boardingUtxoToRemove = new Set<string>();
+            // Boarding inputs to remove, grouped by the address they actually
+            // sit on. Under per-derivation rotation a settled boarding UTXO may
+            // have been received at a *previous* boarding address, so the
+            // cleanup must delete from the bucket the UTXO lives in — not just
+            // the current `getBoardingAddress()` bucket (plan §6-III.4).
+            const boardingRemovalsByAddress = new Map<string, Set<string>>();
 
             const isVtxo = (input: ExtendedCoin): input is ExtendedVirtualCoin =>
                 "virtualStatus" in input;
@@ -2987,8 +3553,28 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                         isSpent: true,
                     });
                 } else {
-                    // boarding input = remove it
-                    boardingUtxoToRemove.add(`${input.txid}:${input.vout}`);
+                    // boarding input = remove it from the bucket of the
+                    // address it actually sits on. The source boarding address
+                    // is recoverable from the input's tapTree (its leaves
+                    // determine the tweaked key → on-chain P2TR), so a UTXO
+                    // received at a rotated-away boarding address is cleaned up
+                    // in its own bucket rather than the current one. Fall back
+                    // to the current boarding address if the tapTree can't be
+                    // decoded (defensive — real inputs always carry it).
+                    let sourceAddress: string;
+                    try {
+                        sourceAddress = VtxoScript.decode(input.tapTree).onchainAddress(
+                            this.network,
+                        );
+                    } catch {
+                        sourceAddress = this.boardingTapscript.onchainAddress(this.network);
+                    }
+                    let set = boardingRemovalsByAddress.get(sourceAddress);
+                    if (!set) {
+                        set = new Set();
+                        boardingRemovalsByAddress.set(sourceAddress, set);
+                    }
+                    set.add(`${input.txid}:${input.vout}`);
                 }
             }
 
@@ -3031,15 +3617,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 }
             }
 
-            if (boardingUtxoToRemove.size > 0) {
-                const currentUtxos = await this.walletRepository.getUtxos(boardingAddress);
-                const filtered = currentUtxos.filter(
-                    (u) => !boardingUtxoToRemove.has(`${u.txid}:${u.vout}`),
-                );
-                // Clear and re-save the filtered list
-                await this.walletRepository.deleteUtxos(boardingAddress);
+            for (const [address, toRemove] of boardingRemovalsByAddress) {
+                const currentUtxos = await this.walletRepository.getUtxos(address);
+                const filtered = currentUtxos.filter((u) => !toRemove.has(`${u.txid}:${u.vout}`));
+                // Clear and re-save the filtered list for this address bucket.
+                await this.walletRepository.deleteUtxos(address);
                 if (filtered.length > 0) {
-                    await this.walletRepository.saveUtxos(boardingAddress, filtered);
+                    await this.walletRepository.saveUtxos(address, filtered);
                 }
             }
         } catch (e) {
