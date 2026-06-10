@@ -4398,4 +4398,71 @@ describe("ArkadeSwaps", () => {
             );
         });
     });
+
+    describe("resolveVHTLCForLockup (signer rotation recovery)", () => {
+        const TIMEOUTS = {
+            refund: 1778741659,
+            unilateralClaim: 266752,
+            unilateralRefund: 432128,
+            unilateralRefundWithoutReceiver: 518656,
+        };
+
+        // Two distinct, real x-only server signers: `server` plays the
+        // deprecated (pre-rotation) signer, `fulmine` the current one.
+        const deprecatedServer = mock.pubkeys.server;
+        const currentServer = mock.pubkeys.fulmine;
+
+        const buildAddress = (serverPubkey: Uint8Array) =>
+            swaps.createVHTLCScript({
+                network: "regtest",
+                preimageHash: mockPreimageHash,
+                receiverPubkey: compressedPubkeys.boltz,
+                senderPubkey: compressedPubkeys.alice,
+                serverPubkey: hex.encode(serverPubkey),
+                timeoutBlockHeights: TIMEOUTS,
+            });
+
+        const resolve = (lockupAddress: string) => {
+            const rotatedArkInfo = {
+                ...mockArkInfo,
+                signerPubkey: hex.encode(currentServer),
+                deprecatedSigners: [{ pubkey: hex.encode(deprecatedServer) }],
+            } as ArkInfo;
+            return (swaps as any).resolveVHTLCForLockup({
+                arkInfo: rotatedArkInfo,
+                preimageHash: mockPreimageHash,
+                receiverPubkey: compressedPubkeys.boltz,
+                senderPubkey: compressedPubkeys.alice,
+                timeoutBlockHeights: TIMEOUTS,
+                lockupAddress,
+                swapId: mock.id,
+            }) as { vhtlcScript: VHTLC.Script; serverXOnlyPublicKey: Uint8Array };
+        };
+
+        it("recovers a VHTLC locked under a now-deprecated signer", () => {
+            const deprecated = buildAddress(deprecatedServer);
+            const resolved = resolve(deprecated.vhtlcAddress);
+
+            // matched the deprecated signer, not the current one
+            expect(hex.encode(resolved.serverXOnlyPublicKey)).toBe(hex.encode(deprecatedServer));
+            expect(hex.encode(resolved.vhtlcScript.pkScript)).toBe(
+                hex.encode(deprecated.vhtlcScript.pkScript),
+            );
+        });
+
+        it("uses the current signer on the no-rotation fast path", () => {
+            const current = buildAddress(currentServer);
+            const resolved = resolve(current.vhtlcAddress);
+
+            expect(hex.encode(resolved.serverXOnlyPublicKey)).toBe(hex.encode(currentServer));
+            expect(hex.encode(resolved.vhtlcScript.pkScript)).toBe(
+                hex.encode(current.vhtlcScript.pkScript),
+            );
+        });
+
+        it("throws an address mismatch when no candidate signer matches", () => {
+            const unrelated = buildAddress(mock.pubkeys.alice);
+            expect(() => resolve(unrelated.vhtlcAddress)).toThrow(/VHTLC address mismatch/);
+        });
+    });
 });
