@@ -2122,6 +2122,17 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
         }
 
+        // Resolve the wallet's receive address once and reuse it for every read
+        // below. `WalletReceiveRotator.rotate` mutates `this.offchainTapscript`
+        // without acquiring `_txLock`, so re-calling `getAddress()` later could
+        // observe a rotated script — building the output from one and matching
+        // `findDestinationOutputIndex` against the other, which fails with a
+        // spurious "no output matches". A single read pins the no-params output
+        // below and the asset-routing destination script later to one address.
+        const offchainAddress = await this.getAddress();
+        const offchainPkScript = ArkAddress.decode(offchainAddress).pkScript;
+        const offchainOutputScript = hex.encode(offchainPkScript);
+
         // if no params are provided, use all non-expired boarding inputs and offchain virtual outputs as inputs
         // and send all to the offchain address
         if (!params) {
@@ -2164,9 +2175,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
 
             const vtxos = await this.getVtxos({ withRecoverable: true });
-
-            const offchainAddress = await this.getAddress();
-            const offchainOutputScript = hex.encode(ArkAddress.decode(offchainAddress).pkScript);
 
             // Cap the VTXOs per settlement to stay under the server's
             // intent-size limit (MAX_VTXOS_PER_SETTLEMENT inputs) and its
@@ -2286,8 +2294,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         let outputAssets: Asset[] | undefined;
 
-        const destinationScript = ArkAddress.decode(await this.getAddress()).pkScript;
-        const assetOutputIndex = findDestinationOutputIndex(outputs, destinationScript);
+        const assetOutputIndex = findDestinationOutputIndex(outputs, offchainPkScript);
 
         if (assetInputs.size > 0) {
             if (assetOutputIndex === -1) {

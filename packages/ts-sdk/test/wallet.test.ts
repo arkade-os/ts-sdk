@@ -2027,6 +2027,21 @@ describe("Wallet._settleImpl", () => {
             expect(captured).toHaveLength(1);
             expect(captured[0].value).toBe(10_500);
         });
+
+        it("reads the receive address once so a mid-settle rotation can't desync the output script", async () => {
+            // The output and the asset-routing destination script must come
+            // from one address read; re-reading could observe a
+            // WalletReceiveRotator.rotate() swap (it mutates offchainTapscript
+            // without _txLock) and make findDestinationOutputIndex miss.
+            const vtxos = [makeVtxo(5_000, 0)];
+            const { thisArg, sentinel } = buildThisArg(vtxos, {});
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            expect(thisArg.getAddress).toHaveBeenCalledTimes(1);
+        });
     });
 });
 
