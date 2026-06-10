@@ -9,8 +9,16 @@ import {
     isSubdust,
     Outpoint,
 } from ".";
-import { ArkProvider, SettlementEvent } from "../providers/ark";
+import { ArkInfo, ArkProvider, SettlementEvent } from "../providers/ark";
 import { maybeArkError } from "../providers/errors";
+import type { ExtendedContractVtxo } from "../contracts/types";
+import {
+    classifyAgainstAxis,
+    isCooperativelyMigratable,
+    signerAxisFromInfo,
+    type SignerClassification,
+    type SignerStatus,
+} from "./signerRotation";
 import { hasBoardingTxExpired } from "../utils/arkTransaction";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { hex } from "@scure/base";
@@ -319,6 +327,25 @@ export interface SettlementConfig {
      * @defaultValue `60_000` (1 minute)
      */
     pollIntervalMs?: number;
+
+    /**
+     * Automatically migrate VTXOs minted under a now-deprecated server signer
+     * back to the wallet's active-signer address before their cutoff window
+     * closes (planned arkd key rotation).
+     *
+     * When enabled, each poll cycle cooperatively migrates stale-signer VTXOs
+     * via the normal `settle()` path, applying a mid-session server-signer
+     * rotation first when the wallet's own snapshot signer has been deprecated.
+     * The explicit {@link IVtxoManager.migrateDeprecatedSignerVtxos} method
+     * remains available for manual migration regardless of this flag.
+     *
+     * Setting `settlementConfig: false` disables all background settlement,
+     * including migration. Set this field to `false` to keep renewal/sweep but
+     * skip automatic deprecated-signer migration specifically.
+     *
+     * @defaultValue `true`
+     */
+    deprecatedSignerMigration?: boolean;
 }
 
 /**
@@ -354,6 +381,7 @@ export const DEFAULT_SETTLEMENT_CONFIG: Required<SettlementConfig> = {
     vtxoThreshold: DEFAULT_THRESHOLD_SECONDS,
     boardingUtxoSweep: true,
     pollIntervalMs: 60_000,
+    deprecatedSignerMigration: true,
 };
 
 /**
@@ -509,6 +537,123 @@ export interface RenewVtxosOptions {
 }
 
 /**
+ * Optional arguments for {@link IVtxoManager.migrateDeprecatedSignerVtxos}.
+ */
+export interface MigrateDeprecatedSignerOptions {
+    /** Callback to receive settlement events during the migration intent. */
+    eventCallback?: (event: SettlementEvent) => void;
+}
+
+/**
+ * A single VTXO referenced in a {@link DeprecatedSignerMigrationReport}.
+ */
+export interface MigrationVtxoRef {
+    txid: string;
+    vout: number;
+    value: number;
+    /** The deprecated signer the VTXO was minted under (x-only hex). */
+    signerPubKey: string;
+    /** Absolute cutoff (Unix seconds) when the server advertised one. */
+    cutoffDate?: bigint;
+}
+
+/**
+ * Machine-readable status for a single deprecated signer the wallet holds
+ * funds under (Section 6). Derived at read time from contract params plus a
+ * fresh {@link ArkInfo} snapshot — never persisted.
+ */
+export interface DeprecatedSignerReport {
+    /** Deprecated signer key (x-only hex). */
+    signerPubKey: string;
+    /** One of `migratable` | `dueNow` | `expired` | `unknownSigner`. */
+    status: SignerStatus;
+    /** Absolute cutoff (Unix seconds), present only when advertised. */
+    cutoffDate?: bigint;
+    /** Derived seconds until cutoff; negative once passed. */
+    secondsUntilCutoff?: number;
+    /** Number of spendable VTXOs the wallet holds under this signer. */
+    vtxoCount: number;
+    /** Total value of those VTXOs in satoshis. */
+    totalValue: number;
+}
+
+/**
+ * Reason a migration pass did not submit a cooperative migration intent.
+ */
+export type MigrationSkipReason = "no-deprecated-vtxos" | "unknown-wallet-signer" | "below-dust";
+
+/**
+ * Result of a {@link IVtxoManager.migrateDeprecatedSignerVtxos} pass.
+ */
+export interface DeprecatedSignerMigrationReport {
+    /** Whether a mid-session server-signer rotation was applied first. */
+    rotated: boolean;
+    /** Settlement txid when a cooperative migration intent was submitted. */
+    txid?: string;
+    /** VTXOs cooperatively migrated to the active-signer address. */
+    migrated: MigrationVtxoRef[];
+    /**
+     * Stale VTXOs skipped because their signer cutoff has passed; cooperative
+     * migration is no longer available and a unilateral exit is required.
+     */
+    expired: MigrationVtxoRef[];
+    /** Why no migration intent was submitted, when applicable. */
+    skipped?: MigrationSkipReason;
+    /** Per-deprecated-signer status snapshot (Section 6). */
+    signers: DeprecatedSignerReport[];
+    /** Error message when the migration settle attempt failed. */
+    error?: string;
+}
+
+/**
+ * Extra surface the migration path needs beyond {@link IWallet}: a fresh
+ * server-info source, the wallet's current signer snapshot, and the
+ * mid-session server-signer rotation write path. Implemented by the concrete
+ * `Wallet`; absent on watch-only or mock wallets.
+ */
+interface MigrationCapableWallet {
+    arkProvider: ArkProvider;
+    arkServerPublicKey: Uint8Array;
+    rotateServerSigner(newServerPubKey: Uint8Array): Promise<void>;
+}
+
+/** Return whether a wallet exposes the deprecated-signer migration surface. */
+function isMigrationCapable(wallet: IWallet): wallet is IWallet & MigrationCapableWallet {
+    return (
+        "arkProvider" in wallet &&
+        "arkServerPublicKey" in wallet &&
+        typeof (wallet as Partial<MigrationCapableWallet>).rotateServerSigner === "function"
+    );
+}
+
+/** A deprecated-signer VTXO paired with its signer classification. */
+interface ClassifiedVtxo {
+    vtxo: ExtendedContractVtxo;
+    classification: SignerClassification;
+}
+
+/** Project a {@link ClassifiedVtxo} into the report's {@link MigrationVtxoRef}. */
+function classifiedToRef(c: ClassifiedVtxo): MigrationVtxoRef {
+    return {
+        txid: c.vtxo.txid,
+        vout: c.vtxo.vout,
+        value: c.vtxo.value,
+        signerPubKey: c.classification.signerPubKey,
+        cutoffDate: c.classification.cutoffDate,
+    };
+}
+
+/**
+ * Ordering key for migration urgency: `dueNow` (no advertised cutoff, migrate
+ * immediately) sorts most urgent, then the soonest advertised cutoff. Smaller
+ * is more urgent.
+ */
+function migrationUrgencyKey(c: ClassifiedVtxo): number {
+    if (c.classification.status === "dueNow") return -Infinity;
+    return c.classification.secondsUntilCutoff ?? Infinity;
+}
+
+/**
  * VtxoManager is a unified class for managing virtual output lifecycle operations including
  * recovery of swept/expired virtual outputs and renewal to prevent expiration.
  *
@@ -574,6 +719,33 @@ export interface IVtxoManager {
 
     sweepExpiredBoardingUtxos(): Promise<string>;
 
+    /**
+     * Cooperatively migrate VTXOs minted under a now-deprecated server signer
+     * to the wallet's active-signer address (planned arkd key rotation).
+     *
+     * Applies a mid-session server-signer rotation first when the wallet's own
+     * snapshot signer has been deprecated, so the migration output commits to
+     * the active signer. Selects spendable VTXOs under deprecated-signer
+     * contracts, prioritizing those closest to their cutoff, and settles them
+     * back to the (rotated) Ark address. VTXOs whose cutoff has already passed
+     * are reported as `expired` rather than migrated.
+     *
+     * Available regardless of the `deprecatedSignerMigration` config flag (that
+     * flag only gates the automatic poll-loop pass).
+     *
+     * @returns A report of what was migrated, skipped, expired, or failed.
+     */
+    migrateDeprecatedSignerVtxos(
+        options?: MigrateDeprecatedSignerOptions,
+    ): Promise<DeprecatedSignerMigrationReport>;
+
+    /**
+     * Machine-readable status of every deprecated server signer the wallet
+     * currently holds funds under, without performing any migration. Lets
+     * consumers surface cutoff warnings on their own schedule.
+     */
+    getDeprecatedSignerStatus(): Promise<DeprecatedSignerReport[]>;
+
     dispose(): Promise<void>;
 }
 
@@ -617,6 +789,16 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     private lastVtxoSpentRefreshTimestamp = 0;
     private vtxoSpentRefreshPromise?: Promise<void>;
     private static readonly VTXO_SPENT_REFRESH_COOLDOWN_MS = 30_000;
+
+    // Cooldown/backoff for the automatic deprecated-signer migration pass.
+    // Mirrors the periodic-settle machinery so a server-side migration failure
+    // (e.g. arkd not yet accepting old-key inputs, or a closed cutoff window)
+    // backs off exponentially instead of re-submitting an identical intent on
+    // every poll. The manual migrateDeprecatedSignerVtxos() bypasses this.
+    private lastMigrationTimestamp = 0;
+    private consecutiveMigrationFailures = 0;
+    private static readonly MIGRATION_COOLDOWN_MS = 30_000;
+    private static readonly MIGRATION_MAX_BACKOFF_MS = 5 * 60 * 1000;
 
     constructor(
         readonly wallet: IWallet,
@@ -1192,6 +1374,292 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         return txid;
     }
 
+    // ========== Deprecated-Signer Migration Methods ==========
+
+    /**
+     * Cooperatively migrate VTXOs minted under a now-deprecated server signer
+     * to the wallet's active-signer address. See {@link IVtxoManager}.
+     */
+    async migrateDeprecatedSignerVtxos(
+        options?: MigrateDeprecatedSignerOptions,
+    ): Promise<DeprecatedSignerMigrationReport> {
+        return this.migrateCore(options);
+    }
+
+    /**
+     * Machine-readable status of every deprecated server signer the wallet
+     * currently holds funds under (Section 6), without migrating.
+     */
+    async getDeprecatedSignerStatus(): Promise<DeprecatedSignerReport[]> {
+        const wallet = this.requireMigrationCapableWallet();
+        const info = await wallet.arkProvider.getInfo();
+        const { reports } = await this.classifyDeprecatedSignerContracts(info);
+        return reports;
+    }
+
+    /**
+     * Core migration routine shared by the manual API and the automatic poll
+     * pass. Fetches a fresh {@link ArkInfo}, applies a mid-session signer
+     * rotation when the wallet's own snapshot signer has been deprecated,
+     * selects spendable VTXOs under deprecated-signer contracts (cutoff-first),
+     * and settles them to the active-signer Ark address.
+     */
+    private async migrateCore(
+        options?: MigrateDeprecatedSignerOptions,
+    ): Promise<DeprecatedSignerMigrationReport> {
+        const wallet = this.requireMigrationCapableWallet();
+        const info = await wallet.arkProvider.getInfo();
+        const axis = signerAxisFromInfo(info);
+        const nowSeconds = Math.floor(Date.now() / 1000);
+
+        // Classify the wallet's own construction-time signer snapshot.
+        const walletSignerHex = hex.encode(wallet.arkServerPublicKey);
+        const walletClass = classifyAgainstAxis(walletSignerHex, axis, nowSeconds);
+
+        // Common cheap exit: nothing deprecated advertised and our own snapshot
+        // is current → no contract sweep, no indexer round-trip.
+        if (axis.deprecated.size === 0 && walletClass.status === "current") {
+            return { rotated: false, migrated: [], expired: [], signers: [] };
+        }
+
+        // The wallet's own signer is neither active nor advertised deprecated:
+        // do not rotate or migrate automatically (treat as unknownSigner).
+        if (walletClass.status === "unknownSigner") {
+            const { reports } = await this.classifyDeprecatedSignerContracts(info);
+            return {
+                rotated: false,
+                migrated: [],
+                expired: [],
+                signers: reports,
+                skipped: "unknown-wallet-signer",
+            };
+        }
+
+        // The wallet's own snapshot signer has been deprecated → re-derive the
+        // receive state under the active signer before building the migration
+        // output, otherwise the server would reject an old-signer destination.
+        let rotated = false;
+        if (walletClass.status !== "current") {
+            await wallet.rotateServerSigner(hex.decode(info.signerPubkey));
+            rotated = true;
+        }
+
+        // Collect stale VTXOs AFTER any rotation, so the just-deprecated former
+        // receive contract is included in the migration set.
+        const { reports, migratable, expired } = await this.classifyDeprecatedSignerContracts(info);
+
+        const expiredRefs = expired.map(classifiedToRef);
+
+        if (migratable.length === 0) {
+            return {
+                rotated,
+                migrated: [],
+                expired: expiredRefs,
+                signers: reports,
+                skipped: "no-deprecated-vtxos",
+            };
+        }
+
+        // Order by cutoff urgency (dueNow first, then soonest cutoff), then by
+        // VTXO expiry, then by value — so the most at-risk funds make the cut
+        // when the per-settlement cap defers the rest to a later pass.
+        const ordered = [...migratable].sort((a, b) => {
+            const ck = migrationUrgencyKey(a) - migrationUrgencyKey(b);
+            if (ck !== 0) return ck;
+            const ae = a.vtxo.virtualStatus.batchExpiry ?? Infinity;
+            const be = b.vtxo.virtualStatus.batchExpiry ?? Infinity;
+            if (ae !== be) return ae - be;
+            return b.vtxo.value - a.vtxo.value;
+        });
+        const capped =
+            ordered.length > MAX_VTXOS_PER_SETTLEMENT
+                ? ordered.slice(0, MAX_VTXOS_PER_SETTLEMENT)
+                : ordered;
+
+        // Price each input/output so the migration intent carries the operator's
+        // intent fees (mirrors runPeriodicSettle). Skip inputs whose fee exceeds
+        // their value.
+        const dustAmount = getDustAmount(this.wallet);
+        const estimator = new Estimator(info.fees.intentFee);
+        const inputs: ExtendedContractVtxo[] = [];
+        const migratedRefs: MigrationVtxoRef[] = [];
+        let totalAmount = 0n;
+        for (const c of capped) {
+            const v = c.vtxo;
+            const inputFee = estimator.evalOffchainInput({
+                amount: BigInt(v.value),
+                type: "vtxo",
+                weight: 0,
+                birth: v.createdAt,
+                expiry: v.virtualStatus.batchExpiry
+                    ? new Date(v.virtualStatus.batchExpiry)
+                    : undefined,
+            });
+            if (inputFee.satoshis >= v.value) continue;
+            inputs.push(v);
+            migratedRefs.push(classifiedToRef(c));
+            totalAmount += BigInt(v.value) - BigInt(inputFee.satoshis);
+        }
+
+        if (inputs.length === 0) {
+            return {
+                rotated,
+                migrated: [],
+                expired: expiredRefs,
+                signers: reports,
+                skipped: "below-dust",
+            };
+        }
+
+        const arkAddress = await this.wallet.getAddress();
+        const outputFee = estimator.evalOffchainOutput({
+            amount: totalAmount,
+            script: hex.encode(ArkAddress.decode(arkAddress).pkScript),
+        });
+        totalAmount -= BigInt(outputFee.satoshis);
+
+        if (totalAmount < dustAmount) {
+            return {
+                rotated,
+                migrated: [],
+                expired: expiredRefs,
+                signers: reports,
+                skipped: "below-dust",
+            };
+        }
+
+        try {
+            const txid = await this.wallet.settle(
+                {
+                    inputs,
+                    outputs: [{ address: arkAddress, amount: totalAmount }],
+                },
+                options?.eventCallback,
+            );
+            return {
+                rotated,
+                txid,
+                migrated: migratedRefs,
+                expired: expiredRefs,
+                signers: reports,
+            };
+        } catch (e) {
+            return {
+                rotated,
+                migrated: [],
+                expired: expiredRefs,
+                signers: reports,
+                error: e instanceof Error ? e.message : String(e),
+            };
+        }
+    }
+
+    /**
+     * Enumerate the wallet's `default`/`delegate` contracts, classify each
+     * against the fresh signer axis, and split their spendable VTXOs into
+     * cooperatively-migratable and cutoff-expired sets while building the
+     * per-signer status report. Current-signer contracts are skipped; swept
+     * (recoverable) VTXOs are excluded — those follow the recovery path.
+     */
+    private async classifyDeprecatedSignerContracts(info: ArkInfo): Promise<{
+        reports: DeprecatedSignerReport[];
+        migratable: ClassifiedVtxo[];
+        expired: ClassifiedVtxo[];
+    }> {
+        const cm = await this.wallet.getContractManager();
+        const axis = signerAxisFromInfo(info);
+        const nowSeconds = Math.floor(Date.now() / 1000);
+
+        const contractsWithVtxos = await cm.getContractsWithVtxos({
+            type: ["default", "delegate"],
+        });
+
+        const reportsBySigner = new Map<string, DeprecatedSignerReport>();
+        const migratable: ClassifiedVtxo[] = [];
+        const expired: ClassifiedVtxo[] = [];
+
+        for (const { contract, vtxos } of contractsWithVtxos) {
+            const serverPubKey = contract.params.serverPubKey;
+            if (!serverPubKey) continue;
+
+            const cls = classifyAgainstAxis(serverPubKey, axis, nowSeconds);
+            if (cls.status === "current") continue;
+
+            // Exclude swept (recoverable) VTXOs: those are reclaimed by the
+            // recovery path, not cooperative migration (open point 11).
+            const spendable = vtxos.filter((v) => isSpendable(v) && !isRecoverable(v));
+
+            const value = spendable.reduce((sum, v) => sum + v.value, 0);
+            const existing = reportsBySigner.get(cls.signerPubKey);
+            if (existing) {
+                existing.vtxoCount += spendable.length;
+                existing.totalValue += value;
+            } else {
+                reportsBySigner.set(cls.signerPubKey, {
+                    signerPubKey: cls.signerPubKey,
+                    status: cls.status,
+                    cutoffDate: cls.cutoffDate,
+                    secondsUntilCutoff: cls.secondsUntilCutoff,
+                    vtxoCount: spendable.length,
+                    totalValue: value,
+                });
+            }
+
+            if (isCooperativelyMigratable(cls.status)) {
+                for (const v of spendable) migratable.push({ vtxo: v, classification: cls });
+            } else if (cls.status === "expired") {
+                for (const v of spendable) expired.push({ vtxo: v, classification: cls });
+            }
+            // unknownSigner: reported for visibility, never migrated.
+        }
+
+        return {
+            reports: Array.from(reportsBySigner.values()),
+            migratable,
+            expired,
+        };
+    }
+
+    /**
+     * Automatic migration pass invoked from the poll loop. Self-contained:
+     * respects an exponential cooldown and logs failures rather than throwing,
+     * so a persistently failing migration backs off instead of re-submitting
+     * an identical intent every cycle.
+     */
+    private async runMigrationPass(): Promise<void> {
+        const cooldownMs = Math.min(
+            VtxoManager.MIGRATION_COOLDOWN_MS * Math.pow(2, this.consecutiveMigrationFailures),
+            VtxoManager.MIGRATION_MAX_BACKOFF_MS,
+        );
+        if (Date.now() - this.lastMigrationTimestamp < cooldownMs) return;
+
+        try {
+            const report = await this.migrateCore();
+            if (report.error) {
+                this.consecutiveMigrationFailures++;
+                console.error("Deprecated-signer migration settle failed:", report.error);
+            } else {
+                this.consecutiveMigrationFailures = 0;
+            }
+        } catch (e) {
+            this.consecutiveMigrationFailures++;
+            console.error("Error during deprecated-signer migration:", e);
+        } finally {
+            this.lastMigrationTimestamp = Date.now();
+        }
+    }
+
+    /** Asserts migration capability and returns the typed wallet. */
+    private requireMigrationCapableWallet(): IWallet & MigrationCapableWallet {
+        if (!isMigrationCapable(this.wallet)) {
+            throw new Error(
+                "Deprecated-signer migration requires a Wallet instance with arkProvider, " +
+                    "arkServerPublicKey, and rotateServerSigner",
+            );
+        }
+        return this.wallet;
+    }
+
     // ========== Private Helpers ==========
 
     /** Asserts sweep capability and returns the typed wallet. */
@@ -1513,6 +1981,18 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                             console.error("Error auto-sweeping boarding UTXOs:", e);
                         }
                     }
+                }
+
+                // Migrate VTXOs under a deprecated server signer (planned arkd
+                // key rotation). Gated by the opt-out flag; runMigrationPass is
+                // self-contained (own cooldown/backoff, swallows + logs errors)
+                // so it neither stacks the poll backoff nor retries continuously.
+                const migrationEnabled =
+                    this.settlementConfig !== false &&
+                    (this.settlementConfig?.deprecatedSignerMigration ??
+                        DEFAULT_SETTLEMENT_CONFIG.deprecatedSignerMigration);
+                if (migrationEnabled && isMigrationCapable(this.wallet)) {
+                    await this.runMigrationPass();
                 }
             });
         } catch (e) {

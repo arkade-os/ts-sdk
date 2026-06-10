@@ -36,7 +36,14 @@ import {
 } from "../index";
 import { DelegateInfo } from "../../providers/delegate";
 import { ReadonlyWallet, Wallet } from "../wallet";
-import type { RenewVtxosOptions } from "../vtxo-manager";
+import type {
+    DeprecatedSignerMigrationReport,
+    DeprecatedSignerReport,
+    MigrationSkipReason,
+    MigrationVtxoRef,
+    RenewVtxosOptions,
+} from "../vtxo-manager";
+import type { SignerStatus } from "../signerRotation";
 import { MessageHandler, RequestEnvelope, ResponseEnvelope } from "../../worker/messageBus";
 import { Transaction } from "../../utils/transaction";
 import { buildTransactionHistory } from "../../utils/transactionHistory";
@@ -350,6 +357,10 @@ export type ResponseRenewVtxosEvent = ResponseEnvelope & {
     type: "RENEW_VTXOS_EVENT";
     payload: SettlementEvent;
 };
+export type ResponseMigrateDeprecatedSignerVtxosEvent = ResponseEnvelope & {
+    type: "MIGRATE_DEPRECATED_SIGNER_VTXOS_EVENT";
+    payload: SettlementEvent;
+};
 export type ResponseUtxoUpdate = ResponseEnvelope & {
     broadcast: true;
     type: "UTXO_UPDATE";
@@ -496,6 +507,108 @@ export type ResponseSweepExpiredBoardingUtxos = ResponseEnvelope & {
     payload: { txid: string };
 };
 
+// Deprecated-signer migration. Reports carry `bigint` cutoff dates, which are
+// serialized to strings for transport over the postMessage boundary (mirrors
+// how RECOVERABLE_BALANCE stringifies its bigints) and reconstructed on the
+// page side.
+export type WireMigrationVtxoRef = {
+    txid: string;
+    vout: number;
+    value: number;
+    signerPubKey: string;
+    cutoffDate?: string;
+};
+export type WireDeprecatedSignerReport = {
+    signerPubKey: string;
+    status: SignerStatus;
+    cutoffDate?: string;
+    secondsUntilCutoff?: number;
+    vtxoCount: number;
+    totalValue: number;
+};
+export type WireDeprecatedSignerMigrationReport = {
+    rotated: boolean;
+    txid?: string;
+    migrated: WireMigrationVtxoRef[];
+    expired: WireMigrationVtxoRef[];
+    skipped?: MigrationSkipReason;
+    signers: WireDeprecatedSignerReport[];
+    error?: string;
+};
+
+const serializeMigrationVtxoRef = (ref: MigrationVtxoRef): WireMigrationVtxoRef => ({
+    txid: ref.txid,
+    vout: ref.vout,
+    value: ref.value,
+    signerPubKey: ref.signerPubKey,
+    cutoffDate: ref.cutoffDate?.toString(),
+});
+const deserializeMigrationVtxoRef = (ref: WireMigrationVtxoRef): MigrationVtxoRef => ({
+    txid: ref.txid,
+    vout: ref.vout,
+    value: ref.value,
+    signerPubKey: ref.signerPubKey,
+    cutoffDate: ref.cutoffDate != null ? BigInt(ref.cutoffDate) : undefined,
+});
+export const serializeDeprecatedSignerReport = (
+    report: DeprecatedSignerReport,
+): WireDeprecatedSignerReport => ({
+    signerPubKey: report.signerPubKey,
+    status: report.status,
+    cutoffDate: report.cutoffDate?.toString(),
+    secondsUntilCutoff: report.secondsUntilCutoff,
+    vtxoCount: report.vtxoCount,
+    totalValue: report.totalValue,
+});
+export const deserializeDeprecatedSignerReport = (
+    report: WireDeprecatedSignerReport,
+): DeprecatedSignerReport => ({
+    signerPubKey: report.signerPubKey,
+    status: report.status,
+    cutoffDate: report.cutoffDate != null ? BigInt(report.cutoffDate) : undefined,
+    secondsUntilCutoff: report.secondsUntilCutoff,
+    vtxoCount: report.vtxoCount,
+    totalValue: report.totalValue,
+});
+export const serializeMigrationReport = (
+    report: DeprecatedSignerMigrationReport,
+): WireDeprecatedSignerMigrationReport => ({
+    rotated: report.rotated,
+    txid: report.txid,
+    migrated: report.migrated.map(serializeMigrationVtxoRef),
+    expired: report.expired.map(serializeMigrationVtxoRef),
+    skipped: report.skipped,
+    signers: report.signers.map(serializeDeprecatedSignerReport),
+    error: report.error,
+});
+export const deserializeMigrationReport = (
+    report: WireDeprecatedSignerMigrationReport,
+): DeprecatedSignerMigrationReport => ({
+    rotated: report.rotated,
+    txid: report.txid,
+    migrated: report.migrated.map(deserializeMigrationVtxoRef),
+    expired: report.expired.map(deserializeMigrationVtxoRef),
+    skipped: report.skipped,
+    signers: report.signers.map(deserializeDeprecatedSignerReport),
+    error: report.error,
+});
+
+export type RequestMigrateDeprecatedSignerVtxos = RequestEnvelope & {
+    type: "MIGRATE_DEPRECATED_SIGNER_VTXOS";
+};
+export type ResponseMigrateDeprecatedSignerVtxos = ResponseEnvelope & {
+    type: "MIGRATE_DEPRECATED_SIGNER_VTXOS_SUCCESS";
+    payload: { report: WireDeprecatedSignerMigrationReport };
+};
+
+export type RequestGetDeprecatedSignerStatus = RequestEnvelope & {
+    type: "GET_DEPRECATED_SIGNER_STATUS";
+};
+export type ResponseGetDeprecatedSignerStatus = ResponseEnvelope & {
+    type: "DEPRECATED_SIGNER_STATUS";
+    payload: { signers: WireDeprecatedSignerReport[] };
+};
+
 export type RequestRestoreWallet = RequestEnvelope & {
     type: "RESTORE_WALLET";
     payload: { gapLimit?: number };
@@ -556,6 +669,8 @@ export type WalletUpdaterRequest =
     | RequestRenewVtxos
     | RequestGetExpiredBoardingUtxos
     | RequestSweepExpiredBoardingUtxos
+    | RequestMigrateDeprecatedSignerVtxos
+    | RequestGetDeprecatedSignerStatus
     | RequestRestoreWallet;
 
 export type WalletUpdaterResponse = ResponseEnvelope &
@@ -603,6 +718,9 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseRenewVtxosEvent
         | ResponseGetExpiredBoardingUtxos
         | ResponseSweepExpiredBoardingUtxos
+        | ResponseMigrateDeprecatedSignerVtxos
+        | ResponseMigrateDeprecatedSignerVtxosEvent
+        | ResponseGetDeprecatedSignerStatus
         | ResponseRestoreWallet
     );
 
@@ -712,6 +830,9 @@ export class WalletMessageHandler
             message.type === "SETTLE" ||
             message.type === "RECOVER_VTXOS" ||
             message.type === "RENEW_VTXOS" ||
+            // Migration may apply a server-signer rotation and then run a full
+            // settle, so it streams settlement events like RENEW_VTXOS.
+            message.type === "MIGRATE_DEPRECATED_SIGNER_VTXOS" ||
             // HD restore walks the index range with one indexer round-trip per
             // step until it hits gapLimit consecutive unused indices. The bus
             // deadline must not race the scan; liveness stays covered by PING.
@@ -1081,6 +1202,36 @@ export class WalletMessageHandler
                         id,
                         type: "SWEEP_EXPIRED_BOARDING_UTXOS_SUCCESS",
                         payload: { txid },
+                    });
+                }
+                case "MIGRATE_DEPRECATED_SIGNER_VTXOS": {
+                    const wallet = this.requireWallet();
+                    const vtxoManager = await wallet.getVtxoManager();
+                    const report = await vtxoManager.migrateDeprecatedSignerVtxos({
+                        eventCallback: (e) => {
+                            this.scheduleForNextTick(() =>
+                                this.tagged({
+                                    id,
+                                    type: "MIGRATE_DEPRECATED_SIGNER_VTXOS_EVENT",
+                                    payload: e,
+                                }),
+                            );
+                        },
+                    });
+                    return this.tagged({
+                        id,
+                        type: "MIGRATE_DEPRECATED_SIGNER_VTXOS_SUCCESS",
+                        payload: { report: serializeMigrationReport(report) },
+                    });
+                }
+                case "GET_DEPRECATED_SIGNER_STATUS": {
+                    const wallet = this.requireWallet();
+                    const vtxoManager = await wallet.getVtxoManager();
+                    const signers = await vtxoManager.getDeprecatedSignerStatus();
+                    return this.tagged({
+                        id,
+                        type: "DEPRECATED_SIGNER_STATUS",
+                        payload: { signers: signers.map(serializeDeprecatedSignerReport) },
                     });
                 }
                 case "RESTORE_WALLET": {

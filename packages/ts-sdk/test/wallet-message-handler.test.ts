@@ -954,6 +954,85 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
+    it("handles MIGRATE_DEPRECATED_SIGNER_VTXOS and serializes the report's bigints", async () => {
+        const report = {
+            rotated: true,
+            txid: "migrate-txid",
+            migrated: [
+                { txid: "v1", vout: 0, value: 5000, signerPubKey: "bb", cutoffDate: 1700000000n },
+            ],
+            expired: [{ txid: "v2", vout: 1, value: 9000, signerPubKey: "ff", cutoffDate: 123n }],
+            signers: [
+                {
+                    signerPubKey: "bb",
+                    status: "migratable",
+                    cutoffDate: 1700000000n,
+                    secondsUntilCutoff: 3600,
+                    vtxoCount: 1,
+                    totalValue: 5000,
+                },
+            ],
+        };
+        const vtxoManager = {
+            migrateDeprecatedSignerVtxos: vi.fn().mockResolvedValue(report),
+        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
+        };
+
+        const response = (await updater.handleMessage({
+            ...baseMessage(),
+            type: "MIGRATE_DEPRECATED_SIGNER_VTXOS",
+        } as any)) as any;
+
+        expect(vtxoManager.migrateDeprecatedSignerVtxos).toHaveBeenCalledWith({
+            eventCallback: expect.any(Function),
+        });
+        expect(response.type).toBe("MIGRATE_DEPRECATED_SIGNER_VTXOS_SUCCESS");
+        const wire = response.payload.report;
+        // bigints are serialized to strings for transport.
+        expect(wire.migrated[0].cutoffDate).toBe("1700000000");
+        expect(wire.expired[0].cutoffDate).toBe("123");
+        expect(wire.signers[0].cutoffDate).toBe("1700000000");
+        expect(wire.rotated).toBe(true);
+        expect(wire.txid).toBe("migrate-txid");
+    });
+
+    it("handles GET_DEPRECATED_SIGNER_STATUS and serializes signer cutoffs", async () => {
+        const signers = [
+            {
+                signerPubKey: "bb",
+                status: "dueNow",
+                cutoffDate: undefined,
+                vtxoCount: 2,
+                totalValue: 8000,
+            },
+        ];
+        const vtxoManager = {
+            getDeprecatedSignerStatus: vi.fn().mockResolvedValue(signers),
+        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
+        };
+
+        const response = (await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_DEPRECATED_SIGNER_STATUS",
+        } as any)) as any;
+
+        expect(vtxoManager.getDeprecatedSignerStatus).toHaveBeenCalled();
+        expect(response.type).toBe("DEPRECATED_SIGNER_STATUS");
+        expect(response.payload.signers[0]).toMatchObject({
+            signerPubKey: "bb",
+            status: "dueNow",
+            vtxoCount: 2,
+            totalValue: 8000,
+        });
+        expect(response.payload.signers[0].cutoffDate).toBeUndefined();
+    });
+
     it("handles RESTORE_WALLET messages and forwards gapLimit", async () => {
         const restoreSpy = vi.fn().mockResolvedValue(undefined);
         (updater as any).readonlyWallet = {};

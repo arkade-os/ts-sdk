@@ -2,7 +2,7 @@ import { base64, hex } from "@scure/base";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { Address, OutScript, SigHash, Transaction } from "@scure/btc-signer";
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
-import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
+import { Bytes, equalBytes, sha256 } from "@scure/btc-signer/utils.js";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
 import { DEFAULT_ARKADE_SERVER_URL, getNetwork, Network, NetworkName } from "../networks";
@@ -306,12 +306,24 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     protected _boardingTapscript: DefaultVtxo.Script;
 
+    /**
+     * Backing field for the active server signer (x-only, 32 bytes). Read via
+     * the public {@link arkServerPublicKey} getter; written only by
+     * {@link Wallet.setArkServerPublicKeyForRotation}, the sanctioned
+     * server-signer rotation write path (analogue of `_offchainTapscript`). It
+     * is a *current value*, not a fixed constructor constant, because
+     * mid-session server-signer rotation (plan §4) swaps it when arkd rotates
+     * its active signer. Wallets that never span a rotation keep their
+     * construction-time snapshot for their lifetime.
+     */
+    protected _arkServerPublicKey: Bytes;
+
     protected constructor(
         readonly identity: ReadonlyIdentity,
         readonly network: Network,
         readonly onchainProvider: OnchainProvider,
         readonly indexerProvider: IndexerProvider,
-        readonly arkServerPublicKey: Bytes,
+        arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
         boardingTapscript: DefaultVtxo.Script,
         readonly dustAmount: bigint,
@@ -338,6 +350,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
         this._offchainTapscript = offchainTapscript;
         this._boardingTapscript = boardingTapscript;
+        this._arkServerPublicKey = arkServerPublicKey;
         this.watcherConfig = watcherConfig;
         this._assetManager = new ReadonlyAssetManager(this.indexerProvider);
         // Defensive for direct-construction callers; setupWalletConfig already
@@ -355,6 +368,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     get offchainTapscript(): DefaultVtxo.Script | DelegateVtxo.Script {
         return this._offchainTapscript;
+    }
+
+    /**
+     * The wallet's current active server signer (x-only, 32 bytes). Read-only
+     * from the outside; mutated only via
+     * {@link Wallet.setArkServerPublicKeyForRotation} during mid-session
+     * server-signer rotation (plan §4). Single-valued for wallets that never
+     * span a rotation.
+     */
+    get arkServerPublicKey(): Bytes {
+        return this._arkServerPublicKey;
     }
 
     /**
@@ -1445,6 +1469,25 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     }
 
     /**
+     * @internal Sole write path for `arkServerPublicKey` after construction.
+     * Called by {@link Wallet.rotateServerSigner} once the rotated offchain and
+     * boarding contract rows have been persisted. External code must treat
+     * `arkServerPublicKey` as read-only.
+     */
+    setArkServerPublicKeyForRotation(serverPubKey: Bytes): void {
+        this._arkServerPublicKey = serverPubKey;
+    }
+
+    /**
+     * Serializes {@link rotateServerSigner} for static / non-HD wallets (which
+     * have no {@link WalletReceiveRotator} chain to ride). Coalesces concurrent
+     * migration passes so two callers cannot both rebuild and swap the
+     * tapscripts. HD wallets serialize on the rotator's chain instead, via
+     * {@link WalletReceiveRotator.runExclusive}.
+     */
+    private _serverRotationChain: Promise<void> = Promise.resolve();
+
+    /**
      * Allocate and return a *fresh* on-chain boarding address, rotating the
      * wallet's current boarding tapscript to a new HD index.
      *
@@ -1506,6 +1549,154 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         this.setBoardingTapscriptForRotation(newBoarding);
         return newBoarding.onchainAddress(this.network);
+    }
+
+    /**
+     * Mid-session server-signer rotation (plan §4). When arkd rotates its
+     * active signer mid-session — the case the long-lived service worker and
+     * Expo background processes that own automatic migration must handle — a
+     * wallet constructed before the rotation keeps deriving old-signer receive
+     * addresses. Building a migration output to such an address would produce a
+     * VTXO the server must reject, so the wallet must first re-derive its own
+     * receive state under the new active signer.
+     *
+     * Follows the {@link WalletReceiveRotator.rotate} write-path pattern with
+     * the server key swapped instead of the user key: build the new offchain
+     * and boarding tapscripts locally (preserving every other option),
+     * register the matching `default`/`delegate` and `boarding` contract rows
+     * through {@link ContractManager.createContract}, and only then commit the
+     * new tapscripts and server key to the wallet's visible state. The signing
+     * metadata of the current receive/boarding rows is carried onto the new
+     * rows so a rotated (descriptor-backed) receive pubkey can still sign.
+     *
+     * The old-signer contract rows are intentionally left `active` and watched
+     * — they are exactly the deprecated-signer contracts the migration pass
+     * drains. Idempotent: a no-op when the wallet already tracks `xonly`.
+     *
+     * Serialized against HD receive rotation so the two paths (both of which
+     * rebuild and swap `offchainTapscript`) cannot interleave.
+     *
+     * @internal Invoked by the {@link VtxoManager} migration pass; not part of
+     * the stable public API.
+     */
+    async rotateServerSigner(newServerPubKey: Bytes): Promise<void> {
+        const xonly = toXOnlyPubKey(newServerPubKey);
+        // Fast-path idempotency. The authoritative re-check happens inside
+        // `_doRotateServerSigner` after the serialization barrier, so two
+        // concurrent callers that both observe the old key here still apply the
+        // swap exactly once.
+        if (equalBytes(xonly, this.arkServerPublicKey)) return;
+
+        if (this._receiveRotator) {
+            // Ride the rotator's chain so a concurrent receive rotation can't
+            // interleave with the server-key swap.
+            await this._receiveRotator.runExclusive(() => this._doRotateServerSigner(xonly));
+            return;
+        }
+
+        const run = this._serverRotationChain
+            .catch(() => undefined)
+            .then(() => this._doRotateServerSigner(xonly));
+        this._serverRotationChain = run.then(
+            () => undefined,
+            () => undefined,
+        );
+        return run;
+    }
+
+    private async _doRotateServerSigner(xonly: Bytes): Promise<void> {
+        // Re-check under the serialization barrier: a prior queued rotation may
+        // have already applied this signer.
+        if (equalBytes(xonly, this.arkServerPublicKey)) return;
+
+        const manager = await this.getContractManager();
+
+        // Preserve the signing metadata of the current receive/boarding rows so
+        // a rotated (descriptor-backed) owner pubkey keeps signing after the
+        // server key swaps. For static / index-0 wallets these rows carry no
+        // metadata, so the new rows are plain baseline contracts.
+        const [currentOffchainRow] = await manager.getContracts({
+            script: this.defaultContractScript,
+        });
+        const currentBoardingScript = hex.encode(this._boardingTapscript.pkScript);
+        const [currentBoardingRow] = await manager.getContracts({
+            script: currentBoardingScript,
+        });
+
+        // Build the new tapscripts locally, preserving every option but the
+        // server key (mirrors `rebuildTapscript`, swapping serverPubKey).
+        const newOffchain =
+            this.offchainTapscript instanceof DelegateVtxo.Script
+                ? new DelegateVtxo.Script({
+                      ...this.offchainTapscript.options,
+                      serverPubKey: xonly,
+                  })
+                : new DefaultVtxo.Script({
+                      ...this.offchainTapscript.options,
+                      serverPubKey: xonly,
+                  });
+        const newBoarding = new DefaultVtxo.Script({
+            ...this._boardingTapscript.options,
+            serverPubKey: xonly,
+        });
+
+        // Register the new offchain contract row BEFORE swapping visible state:
+        // if registration throws, the wallet keeps displaying the previous
+        // (registered) address — never an unwatched one (mirrors `rotate()`).
+        const offchainCsv = timelockToSequence(newOffchain.options.csvTimelock).toString();
+        const newOffchainScript = hex.encode(newOffchain.pkScript);
+        const newOffchainAddress = newOffchain.address(this.network.hrp, xonly).encode();
+        if (newOffchain instanceof DelegateVtxo.Script) {
+            await manager.createContract({
+                type: "delegate",
+                params: {
+                    pubKey: hex.encode(newOffchain.options.pubKey),
+                    serverPubKey: hex.encode(xonly),
+                    delegatePubKey: hex.encode(newOffchain.options.delegatePubKey),
+                    csvTimelock: offchainCsv,
+                },
+                script: newOffchainScript,
+                address: newOffchainAddress,
+                state: "active",
+                metadata: currentOffchainRow?.metadata,
+            });
+        } else {
+            await manager.createContract({
+                type: "default",
+                params: {
+                    pubKey: hex.encode(newOffchain.options.pubKey),
+                    serverPubKey: hex.encode(xonly),
+                    csvTimelock: offchainCsv,
+                },
+                script: newOffchainScript,
+                address: newOffchainAddress,
+                state: "active",
+                metadata: currentOffchainRow?.metadata,
+            });
+        }
+
+        const boardingCsv = newBoarding.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        await manager.createContract({
+            type: "boarding",
+            params: {
+                pubKey: hex.encode(newBoarding.options.pubKey),
+                serverPubKey: hex.encode(xonly),
+                csvTimelock: timelockToSequence(boardingCsv).toString(),
+            },
+            script: hex.encode(newBoarding.pkScript),
+            address: newBoarding.address(this.network.hrp, xonly).encode(),
+            state: "active",
+            metadata: currentBoardingRow?.metadata,
+        });
+
+        // Persistence succeeded — commit the new tapscripts and server key to
+        // the wallet's visible state. From here `getAddress()`,
+        // `getBoardingAddress()`, and the receive rotator's next rebuild all
+        // reflect the active signer. The old-signer rows stay watched so the
+        // migration pass can drain them.
+        this.setOffchainTapscriptForRotation(newOffchain);
+        this.setBoardingTapscriptForRotation(newBoarding);
+        this.setArkServerPublicKeyForRotation(xonly);
     }
 
     /**

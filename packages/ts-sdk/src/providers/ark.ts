@@ -123,7 +123,15 @@ export interface PendingTx {
 }
 
 export interface DeprecatedSigner {
-    cutoffDate: bigint;
+    /**
+     * Unix timestamp (seconds) after which the server no longer accepts this
+     * signer's VTXOs as cooperative-migration inputs. Optional: when arkd
+     * omits it, the deprecated signer is due for migration immediately. Absence
+     * is preserved as `undefined` rather than coerced to `0n` so consumers can
+     * distinguish "no schedule advertised" (migrate now) from an explicit
+     * timestamp of 0.
+     */
+    cutoffDate?: bigint;
     pubkey: string;
 }
 
@@ -268,7 +276,10 @@ export class RestArkProvider implements ArkProvider {
             checkpointTapscript: fromServer.checkpointTapscript ?? "",
             deprecatedSigners:
                 fromServer.deprecatedSigners?.map((signer: any) => ({
-                    cutoffDate: BigInt(signer.cutoffDate ?? 0),
+                    // Preserve a missing cutoff as `undefined` ("migrate now"),
+                    // instead of coercing it to 0n which would be
+                    // indistinguishable from an explicit timestamp of 0.
+                    cutoffDate: signer.cutoffDate != null ? BigInt(signer.cutoffDate) : undefined,
                     pubkey: signer.pubkey ?? "",
                 })) ?? [],
             digest: fromServer.digest ?? "",

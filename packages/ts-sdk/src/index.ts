@@ -86,7 +86,24 @@ import { SignerSession, TreeNonces, TreePartialSigs } from "./tree/signingSessio
 import { DustChangeError, Ramps } from "./wallet/ramps";
 import { HDDescriptorProvider } from "./wallet/hdDescriptorProvider";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
-import type { IVtxoManager, RenewVtxosOptions, SettlementConfig } from "./wallet/vtxo-manager";
+import type {
+    IVtxoManager,
+    RenewVtxosOptions,
+    SettlementConfig,
+    MigrateDeprecatedSignerOptions,
+    DeprecatedSignerMigrationReport,
+    DeprecatedSignerReport,
+    MigrationVtxoRef,
+    MigrationSkipReason,
+} from "./wallet/vtxo-manager";
+import {
+    classifyContractSigner,
+    classifyAgainstAxis,
+    signerAxisFromInfo,
+    isCooperativelyMigratable,
+    toXOnlySignerHex,
+} from "./wallet/signerRotation";
+import type { SignerStatus, SignerClassification, SignerAxis } from "./wallet/signerRotation";
 import {
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
@@ -309,6 +326,11 @@ export {
     Ramps,
     DustChangeError,
     VtxoManager,
+    classifyContractSigner,
+    classifyAgainstAxis,
+    signerAxisFromInfo,
+    isCooperativelyMigratable,
+    toXOnlySignerHex,
     HDDescriptorProvider,
     DelegateManagerImpl,
     DelegatorManagerImpl,
@@ -557,6 +579,14 @@ export type {
     SettlementConfig,
     IVtxoManager,
     RenewVtxosOptions,
+    MigrateDeprecatedSignerOptions,
+    DeprecatedSignerMigrationReport,
+    DeprecatedSignerReport,
+    MigrationVtxoRef,
+    MigrationSkipReason,
+    SignerStatus,
+    SignerClassification,
+    SignerAxis,
 
     // Asset types
     IReadonlyAssetManager,
