@@ -999,6 +999,38 @@ describe("WalletMessageHandler handleMessage", () => {
         expect(wire.txid).toBe("migrate-txid");
     });
 
+    it("MIGRATE_DEPRECATED_SIGNER_VTXOS forwards settlement events via tick", async () => {
+        const event = { type: "batch_started", id: "b1" };
+        const report = { rotated: false, migrated: [], expired: [], signers: [] };
+        const vtxoManager = {
+            migrateDeprecatedSignerVtxos: vi.fn().mockImplementation(async (options: any) => {
+                options.eventCallback(event);
+                return report;
+            }),
+        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
+        };
+
+        const response = (await updater.handleMessage({
+            ...baseMessage("m1"),
+            type: "MIGRATE_DEPRECATED_SIGNER_VTXOS",
+        } as any)) as any;
+
+        expect(response.type).toBe("MIGRATE_DEPRECATED_SIGNER_VTXOS_SUCCESS");
+
+        const tickResponses = await updater.tick(Date.now());
+        expect(tickResponses).toEqual([
+            {
+                tag: updater.messageTag,
+                id: "m1",
+                type: "MIGRATE_DEPRECATED_SIGNER_VTXOS_EVENT",
+                payload: event,
+            },
+        ]);
+    });
+
     it("handles GET_DEPRECATED_SIGNER_STATUS and serializes signer cutoffs", async () => {
         const signers = [
             {

@@ -1773,7 +1773,7 @@ export class ArkadeSwaps {
                 message:
                     error instanceof Error
                         ? error.message
-                        : "Unable to claim: invalid VHTLC address",
+                        : "Unable to refund: invalid VHTLC address",
             });
         }
 
@@ -2659,7 +2659,15 @@ export class ArkadeSwaps {
             });
             if (vhtlcAddress !== args.lockupAddress) continue;
             // A returned address match means the script was built (the real
-            // builder throws otherwise), so no extra "script built" sentinel.
+            // builder throws otherwise). Keep one defense-in-depth check here —
+            // replacing the per-call-site guards that used to live at each
+            // caller — so a future VHTLC version that derives a valid address
+            // with no spend leaves fails loud here instead of at signing time.
+            if (!vhtlcScript.claimScript && !vhtlcScript.refundScript) {
+                throw new Error(
+                    `Swap ${args.swapId}: VHTLC address matched but claim/refund script leaves are empty`,
+                );
+            }
             return {
                 vhtlcScript,
                 // The matched (possibly deprecated) key must flow into downstream

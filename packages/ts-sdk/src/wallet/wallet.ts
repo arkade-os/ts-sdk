@@ -2206,12 +2206,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 // the change-VTXO metadata written later by
                 // `updateDbAfterOffchainTx` are bound to the same
                 // tapscript even if `WalletReceiveRotator.rotate` fires
-                // during the offchain round-trip.
+                // during the offchain round-trip. Pin the server key in the
+                // same step so the address derives from one rotation epoch
+                // (`rotateServerSigner` swaps `_arkServerPublicKey` too).
                 const offchainTapscript = this.offchainTapscript;
-                const arkAddress = offchainTapscript.address(
-                    this.network.hrp,
-                    this.arkServerPublicKey,
-                );
+                const serverPubKey = this.arkServerPublicKey;
+                const arkAddress = offchainTapscript.address(this.network.hrp, serverPubKey);
 
                 const selectedVtxoSum = params
                     .selectedVtxos!.map((v) => v.value)
@@ -3230,9 +3230,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // where the change-output pkScript (built from `outputAddress`
         // below) and the change-VTXO metadata (built from the snapshot
         // inside `updateDbAfterOffchainTx`) could come from different
-        // tapscripts. Threading the snapshot pins both reads.
+        // tapscripts. Threading the snapshot pins both reads. Pin the server
+        // key in the same step: `rotateServerSigner` swaps `_arkServerPublicKey`
+        // alongside the tapscript, so the address must derive from one epoch.
         const offchainTapscript = this.offchainTapscript;
-        const outputAddress = offchainTapscript.address(this.network.hrp, this.arkServerPublicKey);
+        const serverPubKey = this.arkServerPublicKey;
+        const outputAddress = offchainTapscript.address(this.network.hrp, serverPubKey);
         const address = outputAddress.encode();
 
         // validate recipients and populate undefined amount with dust amount
