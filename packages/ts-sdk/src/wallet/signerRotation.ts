@@ -23,7 +23,7 @@ export type SignerStatus = "CURRENT" | "MIGRATABLE" | "DUE_NOW" | "EXPIRED" | "U
 
 /**
  * Result of classifying a single contract's server signer against the current
- * {@link ArkInfo} signer axis.
+ * {@link ArkInfo} signer set.
  */
 export interface SignerClassification {
     status: SignerStatus;
@@ -45,9 +45,9 @@ export interface SignerClassification {
 /**
  * The server's signer set, pre-normalized to x-only hex for cheap repeated
  * lookups. Built once per migration/reporting pass from a fresh
- * {@link ArkInfo} snapshot via {@link signerAxisFromInfo}.
+ * {@link ArkInfo} snapshot via {@link signerSetFromInfo}.
  */
-export interface SignerAxis {
+export interface SignerSet {
     /** Active signer, x-only (32-byte) hex. */
     active: string;
     /** Deprecated signers keyed by x-only hex, mapped to their optional cutoff. */
@@ -70,10 +70,10 @@ export function toXOnlySignerHex(pubkeyHex: string): string {
 }
 
 /**
- * Build the {@link SignerAxis} from a server-info snapshot. Deprecated signers
+ * Build the {@link SignerSet} from a server-info snapshot. Deprecated signers
  * with an empty pubkey are skipped.
  */
-export function signerAxisFromInfo(info: ArkInfo): SignerAxis {
+export function signerSetFromInfo(info: ArkInfo): SignerSet {
     const active = toXOnlySignerHex(info.signerPubkey);
     const deprecated = new Map<string, bigint | undefined>();
     for (const signer of info.deprecatedSigners) {
@@ -84,29 +84,29 @@ export function signerAxisFromInfo(info: ArkInfo): SignerAxis {
 }
 
 /**
- * Classify a contract's server signer against a pre-built {@link SignerAxis}.
+ * Classify a contract's server signer against a pre-built {@link SignerSet}.
  *
  * @param contractServerPubKeyHex - the contract's `params.serverPubKey`
- * @param axis - the server's signer set
+ * @param signerSet - the server's signer set
  * @param nowSeconds - current Unix time in seconds (compared against the
  *   advertised cutoff). Defaults to `Math.floor(Date.now() / 1000)`.
  */
-export function classifyAgainstAxis(
+export function classifyAgainstSignerSet(
     contractServerPubKeyHex: string,
-    axis: SignerAxis,
+    signerSet: SignerSet,
     nowSeconds: number = Math.floor(Date.now() / 1000),
 ): SignerClassification {
     const signerPubKey = toXOnlySignerHex(contractServerPubKeyHex);
 
-    if (signerPubKey === axis.active) {
+    if (signerPubKey === signerSet.active) {
         return { status: "CURRENT", signerPubKey };
     }
 
-    if (!axis.deprecated.has(signerPubKey)) {
+    if (!signerSet.deprecated.has(signerPubKey)) {
         return { status: "UNKNOWN_SIGNER", signerPubKey };
     }
 
-    const cutoffDate = axis.deprecated.get(signerPubKey);
+    const cutoffDate = signerSet.deprecated.get(signerPubKey);
     if (cutoffDate === undefined) {
         // Deprecated but no cutoff advertised — due for migration immediately.
         return { status: "DUE_NOW", signerPubKey };
@@ -120,16 +120,16 @@ export function classifyAgainstAxis(
 }
 
 /**
- * Convenience wrapper that builds the axis from {@link ArkInfo} and classifies
- * a single contract signer. Prefer {@link classifyAgainstAxis} with a shared
- * axis when classifying many contracts in one pass.
+ * Convenience wrapper that builds the signer set from {@link ArkInfo} and
+ * classifies a single contract signer. Prefer {@link classifyAgainstSignerSet}
+ * with a shared signer set when classifying many contracts in one pass.
  */
 export function classifyContractSigner(
     contractServerPubKeyHex: string,
     info: ArkInfo,
     nowSeconds: number = Math.floor(Date.now() / 1000),
 ): SignerClassification {
-    return classifyAgainstAxis(contractServerPubKeyHex, signerAxisFromInfo(info), nowSeconds);
+    return classifyAgainstSignerSet(contractServerPubKeyHex, signerSetFromInfo(info), nowSeconds);
 }
 
 /**

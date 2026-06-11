@@ -99,12 +99,12 @@ import type {
 } from "./wallet/vtxo-manager";
 import {
     classifyContractSigner,
-    classifyAgainstAxis,
-    signerAxisFromInfo,
+    classifyAgainstSignerSet,
+    signerSetFromInfo,
     isCooperativelyMigratable,
     toXOnlySignerHex,
 } from "./wallet/signerRotation";
-import type { SignerStatus, SignerClassification, SignerAxis } from "./wallet/signerRotation";
+import type { SignerStatus, SignerClassification, SignerSet } from "./wallet/signerRotation";
 import {
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
@@ -328,8 +328,8 @@ export {
     DustChangeError,
     VtxoManager,
     classifyContractSigner,
-    classifyAgainstAxis,
-    signerAxisFromInfo,
+    classifyAgainstSignerSet,
+    signerSetFromInfo,
     isCooperativelyMigratable,
     toXOnlySignerHex,
     HDDescriptorProvider,
@@ -588,7 +588,7 @@ export type {
     MigrationSkipReason,
     SignerStatus,
     SignerClassification,
-    SignerAxis,
+    SignerSet,
 
     // Asset types
     IReadonlyAssetManager,

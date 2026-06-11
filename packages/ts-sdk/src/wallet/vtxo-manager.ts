@@ -14,9 +14,9 @@ import { maybeArkError } from "../providers/errors";
 import type { BoardingUtxoGroup } from "./wallet";
 import type { ExtendedContractVtxo } from "../contracts/types";
 import {
-    classifyAgainstAxis,
+    classifyAgainstSignerSet,
     isCooperativelyMigratable,
-    signerAxisFromInfo,
+    signerSetFromInfo,
     type SignerClassification,
     type SignerStatus,
 } from "./signerRotation";
@@ -1503,16 +1503,16 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     ): Promise<DeprecatedSignerMigrationReport> {
         const wallet = this.requireMigrationCapableWallet();
         const info = await wallet.arkProvider.getInfo();
-        const axis = signerAxisFromInfo(info);
+        const signerSet = signerSetFromInfo(info);
         const nowSeconds = Math.floor(Date.now() / 1000);
 
         // Classify the wallet's own construction-time signer snapshot.
         const walletSignerHex = hex.encode(wallet.arkServerPublicKey);
-        const walletClass = classifyAgainstAxis(walletSignerHex, axis, nowSeconds);
+        const walletClass = classifyAgainstSignerSet(walletSignerHex, signerSet, nowSeconds);
 
         // Common cheap exit: nothing deprecated advertised and our own snapshot
         // is current → no contract sweep, no indexer round-trip.
-        if (axis.deprecated.size === 0 && walletClass.status === "CURRENT") {
+        if (signerSet.deprecated.size === 0 && walletClass.status === "CURRENT") {
             return { rotated: false, migrated: [], expired: [], signers: [] };
         }
 
@@ -1597,58 +1597,36 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const capped = candidates.slice(0, MAX_VTXOS_PER_SETTLEMENT);
         const deferred = candidates.length - capped.length;
 
-        // Price each input/output so the migration intent carries the operator's
-        // intent fees (mirrors plain settle). VTXOs use the offchain input fee;
-        // boarding UTXOs use the onchain input fee with the same `fee >= value`
-        // skip rule plain settle applies. Skip inputs whose fee exceeds value.
+        // A deprecated-signer migration is mandatory: funds under a stale signer
+        // become unspendable cooperatively once its cutoff passes (only the
+        // unilateral exit remains). So it is fee-exempt — unlike plain settle we
+        // do NOT price inputs/output, nor drop coins whose fee would exceed their
+        // value; every migratable input moves at its full value. (Assumes arkd
+        // accepts a fee-exempt migration intent; server side tracked by arkd#822.)
         const dustAmount = getDustAmount(this.wallet);
-        const estimator = new Estimator(info.fees.intentFee);
         const inputs: ExtendedCoin[] = [];
         const migratedRefs: MigrationVtxoRef[] = [];
         let totalAmount = 0n;
         for (const cand of capped) {
             if (cand.kind === "vtxo") {
                 const v = cand.classified.vtxo;
-                const inputFee = estimator.evalOffchainInput({
-                    amount: BigInt(v.value),
-                    type: "vtxo",
-                    weight: 0,
-                    birth: v.createdAt,
-                    expiry: v.virtualStatus.batchExpiry
-                        ? new Date(v.virtualStatus.batchExpiry)
-                        : undefined,
-                });
-                if (inputFee.satoshis >= v.value) continue;
                 inputs.push(v);
                 migratedRefs.push(classifiedToRef(cand.classified));
-                totalAmount += BigInt(v.value) - BigInt(inputFee.satoshis);
+                totalAmount += BigInt(v.value);
             } else {
                 const coin = cand.classified.coin;
-                const inputFee = estimator.evalOnchainInput({ amount: BigInt(coin.value) });
-                if (inputFee.value >= coin.value) continue;
                 inputs.push(coin);
                 migratedRefs.push(classifiedBoardingToRef(cand.classified));
-                totalAmount += BigInt(coin.value) - BigInt(inputFee.satoshis);
+                totalAmount += BigInt(coin.value);
             }
         }
 
-        if (inputs.length === 0) {
-            return {
-                rotated,
-                migrated: [],
-                expired: expiredRefs,
-                signers: reports,
-                skipped: "below-dust",
-            };
-        }
-
         const arkAddress = await this.wallet.getAddress();
-        const outputFee = estimator.evalOffchainOutput({
-            amount: totalAmount,
-            script: hex.encode(ArkAddress.decode(arkAddress).pkScript),
-        });
-        totalAmount -= BigInt(outputFee.satoshis);
 
+        // The only floor left is the protocol dust limit: an output below dust
+        // cannot be created. In practice the aggregate of all deprecated inputs
+        // clears dust; this guards only the degenerate case where the entire
+        // stale holding sums below dust, which must exit unilaterally instead.
         if (totalAmount < dustAmount) {
             return {
                 rotated,
@@ -1688,7 +1666,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
     /**
      * Enumerate the wallet's `default`/`delegate` contracts, classify each
-     * against the fresh signer axis, and split their spendable VTXOs into
+     * against the fresh signer set, and split their spendable VTXOs into
      * cooperatively-migratable and cutoff-expired sets while building the
      * per-signer status report. Current-signer contracts are skipped; swept
      * (recoverable) VTXOs are excluded — those follow the recovery path.
@@ -1699,7 +1677,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         expired: ClassifiedVtxo[];
     }> {
         const cm = await this.wallet.getContractManager();
-        const axis = signerAxisFromInfo(info);
+        const signerSet = signerSetFromInfo(info);
         const nowSeconds = Math.floor(Date.now() / 1000);
 
         const contractsWithVtxos = await cm.getContractsWithVtxos({
@@ -1714,7 +1692,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             const serverPubKey = contract.params.serverPubKey;
             if (!serverPubKey) continue;
 
-            const cls = classifyAgainstAxis(serverPubKey, axis, nowSeconds);
+            const cls = classifyAgainstSignerSet(serverPubKey, signerSet, nowSeconds);
             if (cls.status === "CURRENT") continue;
 
             // Exclude swept (recoverable) VTXOs: those are reclaimed by the
@@ -1758,7 +1736,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * Boarding sibling of {@link classifyDeprecatedSignerContracts} (Section 7):
      * fan out over the wallet's boarding addresses (current + historical), group
      * the on-chain UTXOs per address, classify each address's signer against the
-     * fresh axis, and split the confirmed boarding coins into cooperatively-
+     * fresh signer set, and split the confirmed boarding coins into cooperatively-
      * migratable and cutoff-expired sets while building the per-signer report.
      *
      * Discovery sees the active signer plus EVERY deprecated key (EXPIRED
@@ -1766,7 +1744,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * eligibility is gated afterwards by {@link isCooperativelyMigratable} and a
      * per-row boarding-output CSV check — never by the fetch. Current-signer
      * coins are classified `CURRENT` and ignored; foreign-ASP rows are excluded
-     * because their keys are not in the axis.
+     * because their keys are not in the signer set.
      */
     private async classifyDeprecatedSignerBoarding(info: ArkInfo): Promise<{
         reports: DeprecatedSignerReport[];
@@ -1774,13 +1752,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         expired: ClassifiedBoarding[];
     }> {
         const wallet = this.requireMigrationCapableWallet();
-        const axis = signerAxisFromInfo(info);
+        const signerSet = signerSetFromInfo(info);
         const nowSeconds = Math.floor(Date.now() / 1000);
 
         // Allowed set = active signer + every deprecated key (EXPIRED included).
         // Discovery MUST see expired-signer coins or they could never be
         // reported; including `active` lets a single fetch cover both.
-        const allowed = new Set<string>([axis.active, ...axis.deprecated.keys()]);
+        const allowed = new Set<string>([signerSet.active, ...signerSet.deprecated.keys()]);
 
         const groups = await wallet.getBoardingUtxosForSigners(allowed);
 
@@ -1798,7 +1776,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const expired: ClassifiedBoarding[] = [];
 
         for (const group of groups) {
-            const cls = classifyAgainstAxis(group.serverPubKey, axis, nowSeconds);
+            const cls = classifyAgainstSignerSet(group.serverPubKey, signerSet, nowSeconds);
             if (cls.status === "CURRENT") continue;
 
             // Only confirmed boarding coins can settle.

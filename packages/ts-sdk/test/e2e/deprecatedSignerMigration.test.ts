@@ -28,13 +28,13 @@ const arkUrl = "http://localhost:7070";
  *   A faithful cooperative migration *settle* round-trip needs arkd to hold
  *   TWO signer keys at once — the deprecated one (to co-sign spending the stale
  *   VTXOs) and the active one (to issue the migrated outputs). regtest arkd has
- *   exactly one signer, and `classifyAgainstAxis` resolves the active signer
- *   first, so a VTXO under the live key is always `current` and never
+ *   exactly one signer, and `classifyAgainstSignerSet` resolves the active
+ *   signer first, so a VTXO under the live key is always `current` and never
  *   migratable. There is therefore no "rotate-to-self" trick that produces an
  *   arkd-accepted migration settle — the settle round-trip is blocked on a
  *   rotation-capable fixture and arkd#822 (docs open point 15).
  *
- * So we fake the *axis* (via a dynamic `getInfo()` override) rather than a real
+ * So we fake the *signer set* (via a dynamic `getInfo()` override) rather than a real
  * rotation: the wallet is built while `getInfo()` still reports the live signer
  * (so its contract commits to the real key and recognizes the funded VTXO),
  * then the override demotes that key to `deprecatedSigners` to drive

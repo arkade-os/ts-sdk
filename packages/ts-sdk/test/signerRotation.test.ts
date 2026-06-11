@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
     classifyContractSigner,
-    classifyAgainstAxis,
-    signerAxisFromInfo,
+    classifyAgainstSignerSet,
+    signerSetFromInfo,
     isCooperativelyMigratable,
     toXOnlySignerHex,
 } from "../src/wallet/signerRotation";
@@ -74,21 +74,21 @@ describe("signerRotation - classification", () => {
         const compressed = "03" + DEPRECATED_A; // 33-byte compressed form
         const info = makeInfo(ACTIVE, [{ pubkey: compressed }]);
         const cls = classifyContractSigner(DEPRECATED_A, info, NOW);
-        // The contract stores the x-only key; the axis must still match it.
+        // The contract stores the x-only key; the signer set must still match it.
         expect(cls.status).toBe("DUE_NOW");
         expect(cls.signerPubKey).toBe(DEPRECATED_A);
     });
 
-    it("builds an axis that dedupes/normalizes and supports multiple deprecated signers", () => {
+    it("builds a signer set that dedupes/normalizes and supports multiple deprecated signers", () => {
         const info = makeInfo("02" + ACTIVE, [
             { pubkey: DEPRECATED_A, cutoffDate: BigInt(NOW + 100) },
             { pubkey: DEPRECATED_B },
         ]);
-        const axis = signerAxisFromInfo(info);
-        expect(axis.active).toBe(ACTIVE);
-        expect(axis.deprecated.size).toBe(2);
-        expect(classifyAgainstAxis(DEPRECATED_A, axis, NOW).status).toBe("MIGRATABLE");
-        expect(classifyAgainstAxis(DEPRECATED_B, axis, NOW).status).toBe("DUE_NOW");
+        const signerSet = signerSetFromInfo(info);
+        expect(signerSet.active).toBe(ACTIVE);
+        expect(signerSet.deprecated.size).toBe(2);
+        expect(classifyAgainstSignerSet(DEPRECATED_A, signerSet, NOW).status).toBe("MIGRATABLE");
+        expect(classifyAgainstSignerSet(DEPRECATED_B, signerSet, NOW).status).toBe("DUE_NOW");
     });
 
     it("exposes a cooperative-migratability predicate", () => {

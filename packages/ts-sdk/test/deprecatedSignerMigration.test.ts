@@ -479,9 +479,10 @@ describe("VtxoManager - deprecated-signer boarding migration (Section 7)", () =>
         expect(settle).not.toHaveBeenCalled();
     });
 
-    it("drops uneconomic boarding coins whose input fee exceeds their value", async () => {
+    it("migrates every boarding coin at full value, fee-exempt (no economic skip)", async () => {
         const { wallet, settle } = createMigrationMockWallet({
-            // Flat 2000-sat onchain input fee.
+            // Even with a flat 2000-sat onchain input fee advertised, a forced
+            // migration is fee-exempt: nothing is dropped or fee-discounted.
             info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }], { onchainInput: "2000.0" }),
             contractsWithVtxos: [],
             boardingGroups: [
@@ -492,9 +493,10 @@ describe("VtxoManager - deprecated-signer boarding migration (Section 7)", () =>
 
         const report = await manager.migrateDeprecatedSignerVtxos();
 
-        // 1500-sat coin: fee 2000 >= 1500 → dropped; 5000-sat coin kept.
-        expect(report.migrated.map((m) => m.value)).toEqual([5000]);
-        expect(settle.mock.calls[0][0].inputs).toHaveLength(1);
+        // Both coins migrate at full value; the output is the gross sum.
+        expect(report.migrated.map((m) => m.value).sort((a, b) => a - b)).toEqual([1500, 5000]);
+        expect(settle.mock.calls[0][0].inputs).toHaveLength(2);
+        expect(settle.mock.calls[0][0].outputs[0].amount).toBe(6500n);
     });
 
     it("defers overflow beyond the combined cap by cutoff urgency", async () => {
