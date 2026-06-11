@@ -28,8 +28,13 @@ import { timelockToSequence } from "../src/utils/timelock";
 import { DEFAULT_ARKADE_SERVER_URL } from "../src/networks";
 
 // Mock fetch
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
+const { mockFetch } = vi.hoisted(() => ({
+    mockFetch: vi.fn(),
+}));
+
+vi.mock("../src/utils/fetch", () => ({
+    fetch: mockFetch,
+}));
 
 vi.stubGlobal("EventSource", MockEventSource);
 

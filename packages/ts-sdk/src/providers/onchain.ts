@@ -1,5 +1,6 @@
 import { DEFAULT_NETWORK_NAME, type NetworkName } from "../networks";
 import { Coin } from "../wallet";
+import { fetch } from "../utils/fetch";
 
 /**
  * The default base URLs for esplora API providers.

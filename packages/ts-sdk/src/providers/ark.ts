@@ -7,6 +7,7 @@ import { maybeArkError } from "./errors";
 import type { IntentFeeConfig } from "../arkfee";
 import { Intent } from "../intent";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
+import { fetch } from "../utils/fetch";
 
 /** Output requested during settlement or transaction submission. */
 export type Output = {

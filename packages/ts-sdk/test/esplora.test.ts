@@ -1,8 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EsploraProvider, Coin } from "../src";
-// Mock fetch
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
+
+const { mockFetch } = vi.hoisted(() => ({
+    mockFetch: vi.fn(),
+}));
+
+vi.mock("../src/utils/fetch", () => ({
+    fetch: mockFetch,
+}));
 
 describe("EsploraProvider", () => {
     beforeEach(() => {
