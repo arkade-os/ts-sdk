@@ -694,3 +694,291 @@ describe("VtxoManager - automatic migration opt-out (Section 5)", () => {
         expect(getContractsWithVtxos).not.toHaveBeenCalled();
     });
 });
+
+// ── Section 6 / post-cutoff: lifecycle reporting + recovery destination ───────
+
+// A settled VTXO carrying an explicit batch expiry (used to assert nextSweepEta).
+function makeVtxoWithExpiry(
+    contractScript: string,
+    value: number,
+    state: "settled" | "swept" | "preconfirmed",
+    batchExpiry: number,
+): ExtendedContractVtxo {
+    return {
+        txid: `txid-${vtxoCounter++}`,
+        vout: 0,
+        value,
+        contractScript,
+        isSpent: false,
+        status: { confirmed: true },
+        createdAt: new Date(),
+        isUnrolled: false,
+        virtualStatus: { state, batchExpiry },
+        forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
+        intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+        tapTree: new Uint8Array(),
+    } as unknown as ExtendedContractVtxo;
+}
+
+// Active-signer Ark address (the rotation/recovery destination) and a distinct
+// deprecated-signer Ark address the wallet's stale snapshot derives. Both are
+// valid bech32m so the periodic-settle output-fee step can decode them.
+const ACTIVE_ADDRESS = ARK_ADDRESS;
+const DEPRECATED_ADDRESS =
+    "tark1qqellv77udfmr20tun8dvju5vgudpf9vxe8jwhthrkn26fz96pawqfdy8nk05rsmrf8h94j26905e7n6sng8y059z8ykn2j5xcuw4xt846qj6x";
+
+interface RecoveryMockOptions {
+    info: ArkInfo;
+    /** x-only hex of the wallet's own construction-time snapshot signer. */
+    walletSigner: string;
+    /** Contracts (with their VTXOs) the wallet holds; also drives getVtxos. */
+    contractsWithVtxos: ContractWithVtxos[];
+}
+
+// A wallet that is both migration-capable and sweep-capable, returns its VTXOs
+// from getVtxos, and whose getAddress reflects the CURRENT snapshot signer — so
+// a rotation to the active signer visibly changes the settle destination.
+function createRecoveryMockWallet(opts: RecoveryMockOptions) {
+    const settle = vi.fn().mockResolvedValue("recover-txid");
+    let arkServerPublicKey = hex.decode(opts.walletSigner);
+    const rotateServerSigner = vi.fn(async (next: Uint8Array) => {
+        arkServerPublicKey = next;
+    });
+    const allVtxos = opts.contractsWithVtxos.flatMap((c) => c.vtxos);
+    const getVtxos = vi.fn().mockResolvedValue(allVtxos);
+    const getContractsWithVtxos = vi.fn().mockResolvedValue(opts.contractsWithVtxos);
+    const getAddress = vi.fn(async () =>
+        hex.encode(arkServerPublicKey) === ACTIVE ? ACTIVE_ADDRESS : DEPRECATED_ADDRESS,
+    );
+
+    const wallet = {
+        get arkServerPublicKey() {
+            return arkServerPublicKey;
+        },
+        arkProvider: { getInfo: vi.fn().mockResolvedValue(opts.info) },
+        rotateServerSigner,
+        getVtxos,
+        getAddress,
+        getDelegateManager: vi.fn().mockResolvedValue(undefined),
+        getContractManager: vi.fn().mockResolvedValue({
+            getContractsWithVtxos,
+            onContractEvent: vi.fn().mockReturnValue(() => {}),
+            refreshOutpoints: vi.fn().mockResolvedValue(undefined),
+        }),
+        settle,
+        dustAmount: 1000n,
+        getBoardingUtxos: vi.fn().mockResolvedValue([]),
+        getBoardingUtxosForSigners: vi.fn().mockResolvedValue([]),
+        getBoardingAddress: vi.fn().mockResolvedValue("bcrt1qtest"),
+        boardingTapscript: {
+            exitScript: boardingExitScript,
+            pkScript: new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]),
+            exit: vi.fn(),
+        },
+        onchainProvider: {
+            getFeeRate: vi.fn().mockResolvedValue(1),
+            broadcastTransaction: vi.fn(),
+            getChainTip: vi.fn().mockResolvedValue({ height: 1000, time: 0, hash: "0".repeat(64) }),
+        },
+        network: { bech32: "bcrt" },
+        signOnchainBoardingTx: vi.fn().mockImplementation((tx: any) => tx),
+    } as unknown as IWallet;
+
+    return { wallet, settle, rotateServerSigner, getAddress, getVtxos, getContractsWithVtxos };
+}
+
+describe("VtxoManager - post-cutoff lifecycle reporting (Section 6)", () => {
+    it("splits an EXPIRED holding into recoverableNow vs awaitingSweep with a nextSweepEta", async () => {
+        const etaFar = Date.now() + 200_000;
+        const etaSoon = Date.now() + 100_000; // soonest among the awaiting set
+        const script = "default-" + DEP_EXPIRED;
+        const { wallet } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_EXPIRED, cutoffDate: BigInt(NOW_S - 100) }]),
+            contractsWithVtxos: [
+                cwv(DEP_EXPIRED, [
+                    makeVtxo(script, 5000, "swept"), // swept → recoverableNow
+                    makeVtxoWithExpiry(script, 3000, "settled", etaFar), // awaitingSweep
+                    makeVtxoWithExpiry(script, 2000, "settled", etaSoon), // awaitingSweep
+                ]),
+            ],
+        });
+
+        const row = (await newManager(wallet).getDeprecatedSignerStatus()).find(
+            (s) => s.signerPubKey === DEP_EXPIRED,
+        )!;
+
+        expect(row.status).toBe("EXPIRED");
+        expect(row.recoverableCount).toBe(1);
+        expect(row.recoverableValue).toBe(5000);
+        expect(row.awaitingSweepCount).toBe(2);
+        expect(row.awaitingSweepValue).toBe(5000);
+        expect(row.nextSweepEta).toBe(etaSoon);
+        // Back-compat: vtxoCount/totalValue stay the not-yet-swept spendable set.
+        expect(row.vtxoCount).toBe(2);
+        expect(row.totalValue).toBe(5000);
+    });
+
+    it("reports zero awaiting (and no ETA) when an EXPIRED holding is fully swept", async () => {
+        const script = "default-" + DEP_EXPIRED;
+        const { wallet } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_EXPIRED, cutoffDate: BigInt(NOW_S - 100) }]),
+            contractsWithVtxos: [
+                cwv(DEP_EXPIRED, [
+                    makeVtxo(script, 4000, "swept"),
+                    makeVtxo(script, 1000, "swept"),
+                ]),
+            ],
+        });
+
+        const row = (await newManager(wallet).getDeprecatedSignerStatus()).find(
+            (s) => s.signerPubKey === DEP_EXPIRED,
+        )!;
+
+        expect(row.recoverableCount).toBe(2);
+        expect(row.recoverableValue).toBe(5000);
+        expect(row.awaitingSweepCount).toBe(0);
+        expect(row.awaitingSweepValue).toBe(0);
+        expect(row.nextSweepEta).toBeUndefined();
+    });
+
+    it("does not populate recover/awaitingSweep fields for a non-EXPIRED (migratable) signer", async () => {
+        const script = "default-" + DEP_A;
+        const { wallet } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 3600) }]),
+            contractsWithVtxos: [
+                cwv(DEP_A, [makeVtxo(script, 5000), makeVtxo(script, 6000, "swept")]),
+            ],
+        });
+
+        const row = (await newManager(wallet).getDeprecatedSignerStatus()).find(
+            (s) => s.signerPubKey === DEP_A,
+        )!;
+
+        expect(row.status).toBe("MIGRATABLE");
+        expect(row.recoverableCount).toBe(0);
+        expect(row.recoverableValue).toBe(0);
+        expect(row.awaitingSweepCount).toBe(0);
+        expect(row.nextSweepEta).toBeUndefined();
+    });
+
+    it("transitions awaitingSweep → recoverableNow on sweep, and recovery drains the swept set", async () => {
+        const script = "default-" + DEP_EXPIRED;
+        const info = makeInfo(ACTIVE, [{ pubkey: DEP_EXPIRED, cutoffDate: BigInt(NOW_S - 100) }]);
+
+        // Before the server sweep: spendable, not yet swept → awaitingSweep.
+        const awaiting = createRecoveryMockWallet({
+            walletSigner: ACTIVE,
+            info,
+            contractsWithVtxos: [
+                cwv(DEP_EXPIRED, [
+                    makeVtxoWithExpiry(script, 5000, "settled", Date.now() + 100_000),
+                ]),
+            ],
+        });
+        let row = (await newManager(awaiting.wallet).getDeprecatedSignerStatus()).find(
+            (s) => s.signerPubKey === DEP_EXPIRED,
+        )!;
+        expect(row.awaitingSweepCount).toBe(1);
+        expect(row.recoverableCount).toBe(0);
+
+        // After the server sweep: state flips to "swept" → recoverableNow.
+        const sweptVtxo = makeVtxo(script, 5000, "swept");
+        const swept = createRecoveryMockWallet({
+            walletSigner: ACTIVE,
+            info,
+            contractsWithVtxos: [cwv(DEP_EXPIRED, [sweptVtxo])],
+        });
+        const manager = newManager(swept.wallet);
+        row = (await manager.getDeprecatedSignerStatus()).find(
+            (s) => s.signerPubKey === DEP_EXPIRED,
+        )!;
+        expect(row.recoverableCount).toBe(1);
+        expect(row.awaitingSweepCount).toBe(0);
+
+        // The recoverableNow set is exactly what the recovery pass drains.
+        await manager.recoverVtxos();
+        const inputs = swept.settle.mock.calls[0][0].inputs as ExtendedContractVtxo[];
+        expect(inputs).toHaveLength(1);
+        expect(`${inputs[0].txid}:${inputs[0].vout}`).toBe(`${sweptVtxo.txid}:${sweptVtxo.vout}`);
+    });
+});
+
+describe("VtxoManager - recovery destination pins the active signer (Section 6)", () => {
+    it("recoverVtxos rotates to the active signer before settling a deprecated-signer recoverable VTXO", async () => {
+        const script = "default-" + DEP_A;
+        const { wallet, settle, rotateServerSigner } = createRecoveryMockWallet({
+            walletSigner: DEP_A, // long-lived pre-rotation snapshot
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 5000) }]),
+            contractsWithVtxos: [cwv(DEP_A, [makeVtxo(script, 5000, "swept")])],
+        });
+
+        await newManager(wallet).recoverVtxos();
+
+        expect(rotateServerSigner).toHaveBeenCalledOnce();
+        expect(hex.encode(rotateServerSigner.mock.calls[0][0])).toBe(ACTIVE);
+        // Destination committed to the ACTIVE signer, not the deprecated snapshot.
+        expect(settle.mock.calls[0][0].outputs[0].address).toBe(ACTIVE_ADDRESS);
+    });
+
+    it("renewVtxos rotates to the active signer before settling a deprecated-signer recoverable VTXO", async () => {
+        const script = "default-" + DEP_A;
+        const { wallet, settle, rotateServerSigner } = createRecoveryMockWallet({
+            walletSigner: DEP_A,
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 5000) }]),
+            contractsWithVtxos: [cwv(DEP_A, [makeVtxo(script, 5000, "swept")])],
+        });
+
+        await newManager(wallet).renewVtxos();
+
+        expect(rotateServerSigner).toHaveBeenCalledOnce();
+        expect(hex.encode(rotateServerSigner.mock.calls[0][0])).toBe(ACTIVE);
+        expect(settle.mock.calls[0][0].outputs[0].address).toBe(ACTIVE_ADDRESS);
+    });
+
+    it("runPeriodicSettle rotates to the active signer before settling a deprecated-signer recoverable VTXO", async () => {
+        const script = "default-" + DEP_A;
+        const { wallet, settle, rotateServerSigner } = createRecoveryMockWallet({
+            walletSigner: DEP_A,
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 5000) }]),
+            contractsWithVtxos: [cwv(DEP_A, [makeVtxo(script, 5000, "swept")])],
+        });
+        // settlementConfig enabled so getExpiringVtxos pulls recoverable VTXOs.
+        const manager = new VtxoManager(wallet, undefined, {});
+
+        await (manager as any).runPeriodicSettle([]);
+        await manager.dispose();
+
+        expect(rotateServerSigner).toHaveBeenCalledOnce();
+        expect(hex.encode(rotateServerSigner.mock.calls[0][0])).toBe(ACTIVE);
+        expect(settle.mock.calls[0][0].outputs[0].address).toBe(ACTIVE_ADDRESS);
+    });
+
+    it("recoverVtxos does NOT rotate on a current-snapshot wallet (guard is a no-op)", async () => {
+        const script = "default-" + ACTIVE;
+        const { wallet, settle, rotateServerSigner } = createRecoveryMockWallet({
+            walletSigner: ACTIVE,
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 5000) }]),
+            contractsWithVtxos: [cwv(ACTIVE, [makeVtxo(script, 5000, "swept")])],
+        });
+
+        await newManager(wallet).recoverVtxos();
+
+        expect(rotateServerSigner).not.toHaveBeenCalled();
+        expect(settle.mock.calls[0][0].outputs[0].address).toBe(ACTIVE_ADDRESS);
+    });
+
+    it("does not eagerly rotate when a pre-rotation instance renews only current-signer inputs", async () => {
+        const script = "default-" + ACTIVE;
+        const { wallet, rotateServerSigner } = createRecoveryMockWallet({
+            // Deprecated snapshot (pre-rotation), but the only recoverable input
+            // is under the CURRENT signer → no deprecated-signer input carried.
+            walletSigner: DEP_A,
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 5000) }]),
+            contractsWithVtxos: [cwv(ACTIVE, [makeVtxo(script, 5000, "swept")])],
+        });
+
+        await newManager(wallet).renewVtxos();
+
+        expect(rotateServerSigner).not.toHaveBeenCalled();
+    });
+});

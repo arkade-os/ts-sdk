@@ -15,7 +15,11 @@ import type { ArkInfo } from "../providers/ark";
  * - `DUE_NOW`: the contract's signer is advertised as deprecated with no cutoff
  *   date, so migration should start immediately.
  * - `EXPIRED`: the contract's signer is deprecated and its cutoff has passed —
- *   cooperative migration is no longer available; a unilateral exit is required.
+ *   cooperative migration is closed. These funds are NOT stranded: the VTXO
+ *   keeps its own batch expiry, the server sweeps that batch at expiry, and the
+ *   swept VTXO then recovers into the active signer through the normal recovery
+ *   settle (no deprecated key, no forfeit, no on-chain exit). Unilateral exit
+ *   remains an opt-in escape hatch, not a requirement (Section 6 / post-cutoff).
  * - `UNKNOWN_SIGNER`: the contract's signer is neither the active signer nor an
  *   advertised deprecated signer. The SDK does not attempt to migrate these.
  */

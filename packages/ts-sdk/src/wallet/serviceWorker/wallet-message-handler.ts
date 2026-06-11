@@ -527,6 +527,11 @@ export type WireDeprecatedSignerReport = {
     totalValue: number;
     boardingCount: number;
     boardingValue: number;
+    recoverableCount: number;
+    recoverableValue: number;
+    awaitingSweepCount: number;
+    awaitingSweepValue: number;
+    nextSweepEta?: number;
 };
 export type WireDeprecatedSignerMigrationReport = {
     rotated: boolean;
@@ -565,6 +570,11 @@ export const serializeDeprecatedSignerReport = (
     totalValue: report.totalValue,
     boardingCount: report.boardingCount,
     boardingValue: report.boardingValue,
+    recoverableCount: report.recoverableCount,
+    recoverableValue: report.recoverableValue,
+    awaitingSweepCount: report.awaitingSweepCount,
+    awaitingSweepValue: report.awaitingSweepValue,
+    nextSweepEta: report.nextSweepEta,
 });
 export const deserializeDeprecatedSignerReport = (
     report: WireDeprecatedSignerReport,
@@ -577,6 +587,11 @@ export const deserializeDeprecatedSignerReport = (
     totalValue: report.totalValue,
     boardingCount: report.boardingCount,
     boardingValue: report.boardingValue,
+    recoverableCount: report.recoverableCount,
+    recoverableValue: report.recoverableValue,
+    awaitingSweepCount: report.awaitingSweepCount,
+    awaitingSweepValue: report.awaitingSweepValue,
+    nextSweepEta: report.nextSweepEta,
 });
 export const serializeMigrationReport = (
     report: DeprecatedSignerMigrationReport,
