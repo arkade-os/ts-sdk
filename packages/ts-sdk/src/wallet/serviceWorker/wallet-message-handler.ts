@@ -536,6 +536,7 @@ export type WireDeprecatedSignerMigrationReport = {
     skipped?: MigrationSkipReason;
     signers: WireDeprecatedSignerReport[];
     deferred?: number;
+    oversized?: WireMigrationVtxoRef[];
     error?: string;
 };
 
@@ -587,6 +588,7 @@ export const serializeMigrationReport = (
     skipped: report.skipped,
     signers: report.signers.map(serializeDeprecatedSignerReport),
     deferred: report.deferred,
+    oversized: report.oversized?.map(serializeMigrationVtxoRef),
     error: report.error,
 });
 export const deserializeMigrationReport = (
@@ -599,6 +601,7 @@ export const deserializeMigrationReport = (
     skipped: report.skipped,
     signers: report.signers.map(deserializeDeprecatedSignerReport),
     deferred: report.deferred,
+    oversized: report.oversized?.map(deserializeMigrationVtxoRef),
     error: report.error,
 });
 

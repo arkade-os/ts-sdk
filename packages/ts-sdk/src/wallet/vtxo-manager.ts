@@ -588,8 +588,15 @@ export interface DeprecatedSignerReport {
 
 /**
  * Reason a migration pass did not submit a cooperative migration intent.
+ * `oversized-only` means every migratable input individually exceeds the
+ * server's per-output ceiling (`vtxoMaxAmount`) — see
+ * {@link DeprecatedSignerMigrationReport.oversized}.
  */
-export type MigrationSkipReason = "no-deprecated-vtxos" | "unknown-wallet-signer" | "below-dust";
+export type MigrationSkipReason =
+    | "no-deprecated-vtxos"
+    | "unknown-wallet-signer"
+    | "below-dust"
+    | "oversized-only";
 
 /**
  * Result of a {@link IVtxoManager.migrateDeprecatedSignerVtxos} pass.
@@ -612,12 +619,22 @@ export interface DeprecatedSignerMigrationReport {
     signers: DeprecatedSignerReport[];
     /**
      * Number of cooperatively-migratable inputs (boarding + VTXO) deferred to a
-     * later pass because the combined per-settlement cap
-     * ({@link MAX_VTXOS_PER_SETTLEMENT}) was reached this pass (Section 7).
-     * Present and non-zero only when the cap actually bound. Makes the
+     * later pass because a per-settlement cap was reached this pass — either the
+     * input count ({@link MAX_VTXOS_PER_SETTLEMENT}) or the per-output amount
+     * ceiling (`vtxoMaxAmount`) (Section 7). Present and non-zero only when a cap
+     * actually bound. These will migrate on a subsequent pass; makes the
      * truncation visible rather than a silent drop.
      */
     deferred?: number;
+    /**
+     * Inputs under a migratable signer that cannot be migrated cooperatively
+     * because their value alone exceeds the server's per-output ceiling
+     * (`vtxoMaxAmount`): a single settle output can never be ≤ the ceiling, so
+     * these require a unilateral exit. Unlike {@link deferred}, they will never
+     * migrate cooperatively. Present only when non-empty; absent when the server
+     * advertises no ceiling (`vtxoMaxAmount < 0`) (Theme B / Section 7).
+     */
+    oversized?: MigrationVtxoRef[];
     /** Error message when the migration settle attempt failed. */
     error?: string;
 }
@@ -692,30 +709,26 @@ function classifiedBoardingToRef(c: ClassifiedBoarding): MigrationVtxoRef {
 }
 
 /**
- * Ordering key for migration urgency: `dueNow` (no advertised cutoff, migrate
- * immediately) sorts most urgent, then the soonest advertised cutoff. Smaller
- * is more urgent.
- */
-function urgencyKey(classification: SignerClassification): number {
-    if (classification.status === "DUE_NOW") return -Infinity;
-    return classification.secondsUntilCutoff ?? Infinity;
-}
-
-/**
  * A cooperatively-migratable input — either a deprecated-signer VTXO or a
- * deprecated-signer boarding UTXO — ranked and fee-priced uniformly so a single
- * settle intent can combine both (Section 7).
+ * deprecated-signer boarding UTXO — carrying its gross `value` so the shared
+ * settlement-sizing helpers ({@link byValueDescending}, {@link capSettlementBatch})
+ * rank and cap a combined boarding+VTXO batch uniformly (Section 7).
  */
-type MigrationCandidate =
+type MigrationCandidate = { value: number } & (
     | { kind: "vtxo"; classified: ClassifiedVtxo }
-    | { kind: "boarding"; classified: ClassifiedBoarding };
+    | { kind: "boarding"; classified: ClassifiedBoarding }
+);
 
-function candidateClassification(c: MigrationCandidate): SignerClassification {
-    return c.classified.classification;
+/** The input coin a {@link MigrationCandidate} settles. */
+function candidateInput(c: MigrationCandidate): ExtendedCoin {
+    return c.kind === "vtxo" ? c.classified.vtxo : c.classified.coin;
 }
 
-function candidateValue(c: MigrationCandidate): number {
-    return c.kind === "vtxo" ? c.classified.vtxo.value : c.classified.coin.value;
+/** Project a {@link MigrationCandidate} into the report's {@link MigrationVtxoRef}. */
+function candidateToRef(c: MigrationCandidate): MigrationVtxoRef {
+    return c.kind === "vtxo"
+        ? classifiedToRef(c.classified)
+        : classifiedBoardingToRef(c.classified);
 }
 
 /**
@@ -1574,66 +1587,86 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             };
         }
 
-        // Rank ALL candidates (boarding + VTXO alike) by cutoff urgency (dueNow
-        // first, then soonest cutoff), then by value — so the most at-risk funds
-        // make the cut when the combined per-settlement cap defers the rest to a
-        // later pass. The cap here is deliberately stricter than plain settle
-        // (which leaves boarding uncapped on top of the VTXO cap): a migration
-        // pass can defer overflow to the next pass, so we prefer a predictable
-        // combined bound over maximizing a single intent.
+        // Combine VTXO + boarding migratable inputs, each tagged with its gross
+        // value so the shared settlement-sizing helpers rank and cap them
+        // uniformly.
         const candidates: MigrationCandidate[] = [
-            ...vtxoMigratable.map((classified) => ({ kind: "vtxo" as const, classified })),
+            ...vtxoMigratable.map((classified) => ({
+                kind: "vtxo" as const,
+                classified,
+                value: classified.vtxo.value,
+            })),
             ...boardingMigratable.map((classified) => ({
                 kind: "boarding" as const,
                 classified,
+                value: classified.coin.value,
             })),
         ];
-        candidates.sort((a, b) => {
-            const ck =
-                urgencyKey(candidateClassification(a)) - urgencyKey(candidateClassification(b));
-            if (ck !== 0) return ck;
-            return candidateValue(b) - candidateValue(a);
-        });
-        const capped = candidates.slice(0, MAX_VTXOS_PER_SETTLEMENT);
-        const deferred = candidates.length - capped.length;
 
-        // A deprecated-signer migration is mandatory: funds under a stale signer
-        // become unspendable cooperatively once its cutoff passes (only the
-        // unilateral exit remains). So it is fee-exempt — unlike plain settle we
-        // do NOT price inputs/output, nor drop coins whose fee would exceed their
-        // value; every migratable input moves at its full value. (Assumes arkd
-        // accepts a fee-exempt migration intent; server side tracked by arkd#822.)
+        // An input whose value alone exceeds the per-output ceiling
+        // (vtxoMaxAmount; < 0 means no limit) can never form a ≤-ceiling settle
+        // output, so it cannot be migrated cooperatively and must exit
+        // unilaterally. Separate these out and surface them (report + warn)
+        // rather than letting capSettlementBatch silently skip them forever.
+        const vtxoMaxAmount = info.vtxoMaxAmount;
+        const oversizedRefs: MigrationVtxoRef[] = [];
+        const sizedCandidates: MigrationCandidate[] = [];
+        for (const c of candidates) {
+            if (vtxoMaxAmount >= 0n && BigInt(c.value) > vtxoMaxAmount) {
+                oversizedRefs.push(candidateToRef(c));
+            } else {
+                sizedCandidates.push(c);
+            }
+        }
+        if (oversizedRefs.length > 0) {
+            console.warn(
+                `Deprecated-signer migration: ${oversizedRefs.length} input(s) exceed the ` +
+                    `per-output limit ${vtxoMaxAmount} and cannot be migrated cooperatively; ` +
+                    `they require a unilateral exit.`,
+            );
+        }
+        const oversizedField = oversizedRefs.length > 0 ? { oversized: oversizedRefs } : {};
+
+        // Cap to a single settlement: highest-value first (clears dust soonest,
+        // fewest passes to drain the bulk), bounded by BOTH the input count
+        // (MAX_VTXOS_PER_SETTLEMENT) AND a gross total within vtxoMaxAmount. The
+        // explicit-inputs settle path applies neither cap itself, so migration
+        // must — and since migration is fee-exempt the gross total IS the
+        // aggregated output amount, keeping it under the server ceiling. Overflow
+        // defers to the next pass.
+        const capped = capSettlementBatch(byValueDescending(sizedCandidates), vtxoMaxAmount);
+        const deferred = sizedCandidates.length - capped.length;
+
+        // A deprecated-signer migration is mandatory and fee-exempt: unlike plain
+        // settle we do NOT price inputs/output, nor drop coins whose fee would
+        // exceed their value; every selected input moves at its full value.
+        // (Assumes arkd accepts a fee-exempt migration intent; server side
+        // tracked by arkd#822.)
         const dustAmount = getDustAmount(this.wallet);
         const inputs: ExtendedCoin[] = [];
         const migratedRefs: MigrationVtxoRef[] = [];
         let totalAmount = 0n;
         for (const cand of capped) {
-            if (cand.kind === "vtxo") {
-                const v = cand.classified.vtxo;
-                inputs.push(v);
-                migratedRefs.push(classifiedToRef(cand.classified));
-                totalAmount += BigInt(v.value);
-            } else {
-                const coin = cand.classified.coin;
-                inputs.push(coin);
-                migratedRefs.push(classifiedBoardingToRef(cand.classified));
-                totalAmount += BigInt(coin.value);
-            }
+            inputs.push(candidateInput(cand));
+            migratedRefs.push(candidateToRef(cand));
+            totalAmount += BigInt(cand.value);
         }
 
         const arkAddress = await this.wallet.getAddress();
 
         // The only floor left is the protocol dust limit: an output below dust
-        // cannot be created. In practice the aggregate of all deprecated inputs
-        // clears dust; this guards only the degenerate case where the entire
-        // stale holding sums below dust, which must exit unilaterally instead.
+        // cannot be created. In practice the aggregate clears dust; this guards
+        // the degenerate cases where every migratable input was oversized
+        // (nothing fits one output) or the entire stale holding sums below dust.
         if (totalAmount < dustAmount) {
+            const onlyOversized = sizedCandidates.length === 0 && oversizedRefs.length > 0;
             return {
                 rotated,
                 migrated: [],
                 expired: expiredRefs,
                 signers: reports,
-                skipped: "below-dust",
+                skipped: onlyOversized ? "oversized-only" : "below-dust",
+                ...oversizedField,
             };
         }
 
@@ -1652,6 +1685,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 expired: expiredRefs,
                 signers: reports,
                 ...(deferred > 0 ? { deferred } : {}),
+                ...oversizedField,
             };
         } catch (e) {
             return {
@@ -1660,6 +1694,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 expired: expiredRefs,
                 signers: reports,
                 error: e instanceof Error ? e.message : String(e),
+                ...oversizedField,
             };
         }
     }

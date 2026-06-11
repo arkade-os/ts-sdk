@@ -70,11 +70,13 @@ function makeInfo(
     signerPubkey: string,
     deprecatedSigners: DeprecatedSigner[] = [],
     intentFee: Record<string, string> = {},
+    vtxoMaxAmount: bigint = -1n, // -1 = no per-output ceiling
 ): ArkInfo {
     return {
         signerPubkey,
         deprecatedSigners,
         fees: { intentFee, txFeeRate: "" },
+        vtxoMaxAmount,
     } as unknown as ArkInfo;
 }
 
@@ -201,12 +203,12 @@ describe("VtxoManager - deprecated-signer migration", () => {
         expect(settleArg.outputs[0].amount).toBe(5000n);
     });
 
-    it("orders migration inputs by cutoff urgency: dueNow, then soonest cutoff", async () => {
+    it("orders migration inputs by value, highest first", async () => {
         const { wallet, settle } = createMigrationMockWallet({
             info: makeInfo(ACTIVE, [
-                { pubkey: DEP_DUE }, // due immediately
-                { pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 100) }, // urgent
-                { pubkey: DEP_B, cutoffDate: BigInt(NOW_S + 10_000) }, // less urgent
+                { pubkey: DEP_DUE },
+                { pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 100) },
+                { pubkey: DEP_B, cutoffDate: BigInt(NOW_S + 10_000) },
             ]),
             contractsWithVtxos: [
                 cwv(DEP_B, [makeVtxo("default-" + DEP_B, 2222)]),
@@ -218,8 +220,9 @@ describe("VtxoManager - deprecated-signer migration", () => {
 
         await manager.migrateDeprecatedSignerVtxos();
 
+        // Value-descending, independent of cutoff (migration is mandatory for all).
         const inputs = settle.mock.calls[0][0].inputs as ExtendedContractVtxo[];
-        expect(inputs.map((v) => v.value)).toEqual([3333, 1111, 2222]);
+        expect(inputs.map((v) => v.value)).toEqual([3333, 2222, 1111]);
     });
 
     it("reports expired-cutoff VTXOs without migrating them", async () => {
@@ -499,29 +502,88 @@ describe("VtxoManager - deprecated-signer boarding migration (Section 7)", () =>
         expect(settle.mock.calls[0][0].outputs[0].amount).toBe(6500n);
     });
 
-    it("defers overflow beyond the combined cap by cutoff urgency", async () => {
-        const dueCoins = Array.from({ length: MAX_VTXOS_PER_SETTLEMENT }, () =>
+    it("defers count-cap overflow by value (lowest-value input deferred)", async () => {
+        const bigCoins = Array.from({ length: MAX_VTXOS_PER_SETTLEMENT }, () =>
             makeBoardingCoin(5000),
         );
         const { wallet } = createMigrationMockWallet({
-            info: makeInfo(ACTIVE, [
-                { pubkey: DEP_DUE }, // dueNow → most urgent
-                { pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 10_000) }, // less urgent
-            ]),
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
+            contractsWithVtxos: [],
+            // 51 candidates; value-descending keeps the 5000s, defers the 1000.
+            boardingGroups: [makeBoardingGroup(DEP_DUE, [...bigCoins, makeBoardingCoin(1000)])],
+        });
+        const manager = newManager(wallet);
+
+        const report = await manager.migrateDeprecatedSignerVtxos();
+
+        expect(report.migrated).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+        expect(report.deferred).toBe(1);
+        expect(report.migrated.map((m) => m.value)).not.toContain(1000);
+    });
+
+    it("caps a migration batch to the per-output ceiling (vtxoMaxAmount), deferring the rest", async () => {
+        const { wallet, settle } = createMigrationMockWallet({
+            // 10_000-sat per-output ceiling.
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }], {}, 10_000n),
             contractsWithVtxos: [],
             boardingGroups: [
-                makeBoardingGroup(DEP_DUE, dueCoins),
-                makeBoardingGroup(DEP_A, [makeBoardingCoin(5000)]),
+                makeBoardingGroup(DEP_DUE, [
+                    makeBoardingCoin(6000),
+                    makeBoardingCoin(5000),
+                    makeBoardingCoin(4000),
+                ]),
             ],
         });
         const manager = newManager(wallet);
 
         const report = await manager.migrateDeprecatedSignerVtxos();
 
-        // 51 candidates, cap 50: the least-urgent DEP_A coin is deferred.
-        expect(report.migrated).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+        // value-desc 6000,5000,4000 under a 10_000 ceiling: take 6000, skip 5000
+        // (would reach 11_000), take 4000 → output exactly 10_000. 5000 deferred.
+        expect(report.migrated.map((m) => m.value).sort((a, b) => a - b)).toEqual([4000, 6000]);
+        expect(settle.mock.calls[0][0].outputs[0].amount).toBe(10_000n);
         expect(report.deferred).toBe(1);
-        expect(report.migrated.every((m) => m.signerPubKey === DEP_DUE)).toBe(true);
+        expect(report.oversized).toBeUndefined();
+    });
+
+    it("reports inputs above vtxoMaxAmount as oversized (cannot migrate cooperatively) and warns", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { wallet } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }], {}, 5000n),
+            contractsWithVtxos: [],
+            boardingGroups: [
+                makeBoardingGroup(DEP_DUE, [makeBoardingCoin(8000), makeBoardingCoin(3000)]),
+            ],
+        });
+        const manager = newManager(wallet);
+
+        const report = await manager.migrateDeprecatedSignerVtxos();
+
+        // 8000 > 5000 ceiling → oversized (unilateral exit); 3000 migrates.
+        expect(report.migrated.map((m) => m.value)).toEqual([3000]);
+        expect(report.oversized?.map((m) => m.value)).toEqual([8000]);
+        expect(warn).toHaveBeenCalledWith(
+            expect.stringContaining("cannot be migrated cooperatively"),
+        );
+        warn.mockRestore();
+    });
+
+    it("migrates nothing but reports oversized when every input exceeds vtxoMaxAmount", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { wallet, settle } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }], {}, 5000n),
+            contractsWithVtxos: [],
+            boardingGroups: [makeBoardingGroup(DEP_DUE, [makeBoardingCoin(8000)])],
+        });
+        const manager = newManager(wallet);
+
+        const report = await manager.migrateDeprecatedSignerVtxos();
+
+        expect(report.migrated).toHaveLength(0);
+        expect(report.skipped).toBe("oversized-only");
+        expect(report.oversized?.map((m) => m.value)).toEqual([8000]);
+        expect(settle).not.toHaveBeenCalled();
+        warn.mockRestore();
     });
 
     it("getDeprecatedSignerStatus reports boarding-only signers and aggregates across addresses", async () => {
