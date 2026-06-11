@@ -1,3 +1,5 @@
+import { fetch, buildVersion } from "../utils/fetch";
+
 /**
  * Dynamically imports expo/fetch with fallback to standard fetch.
  * @returns A fetch function suitable for SSE streaming
@@ -8,7 +10,12 @@ export async function getExpoFetch(options?: { requireExpo?: boolean }): Promise
     try {
         const expoFetchModule = await import("expo/fetch");
         console.debug("Using expo/fetch for streaming");
-        return expoFetchModule.fetch as unknown as typeof fetch;
+        const expoFetchWithHeader = (input: RequestInfo, init?: RequestInit) => {
+            const headers = new Headers(init?.headers);
+            headers.set("X-Build-Version", buildVersion);
+            return expoFetchModule.fetch(input, { ...init, headers });
+        };
+        return expoFetchWithHeader as unknown as typeof fetch;
     } catch (error) {
         if (requireExpo) {
             throw new Error(
