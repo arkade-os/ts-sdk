@@ -8,7 +8,13 @@ import {
     RestArkProvider,
     Wallet,
 } from "../../src";
-import { beforeEachFaucet, createTestIdentity, faucetOffchain } from "./utils";
+import {
+    beforeEachFaucet,
+    createTestIdentity,
+    faucetOffchain,
+    faucetOnchain,
+    waitFor,
+} from "./utils";
 
 const arkUrl = "http://localhost:7070";
 
@@ -164,6 +170,133 @@ describe("deprecated-signer migration (reporting + decision)", () => {
 
                 const balanceAfter = await wallet.getBalance();
                 expect(balanceAfter.available).toBe(balanceBefore.available);
+            } finally {
+                await wallet.dispose();
+            }
+        },
+    );
+
+    it(
+        "classifies a real boarding UTXO against a rotated axis and migrate is a clean no-op (Section 7)",
+        { timeout: 60_000 },
+        async () => {
+            // Same axis-faking strategy as the VTXO test, applied to an on-chain
+            // boarding UTXO. The wallet constructs under the live signer (so its
+            // boarding contract commits to the real key and discovery recognizes
+            // the funded UTXO), then `getInfo()` demotes that key to
+            // `deprecatedSigners` to drive the boarding classification. This
+            // exercises the real `getBoardingUtxosForSigners` fan-out (on-chain
+            // getCoins, per-row CSV decode, real chain-tip fetch) end-to-end; the
+            // cooperative settle round-trip stays blocked on arkd#822, exactly as
+            // for VTXOs above.
+            const realProvider = new RestArkProvider(arkUrl);
+            let infoOverride: Partial<ArkInfo> = {};
+            const arkProvider = new Proxy(realProvider, {
+                get(target, prop, receiver) {
+                    if (prop === "getInfo") {
+                        return async () => ({ ...(await target.getInfo()), ...infoOverride });
+                    }
+                    const value = Reflect.get(target, prop, receiver);
+                    return typeof value === "function" ? value.bind(target) : value;
+                },
+            });
+
+            const wallet = await Wallet.create({
+                identity: createTestIdentity(),
+                arkServerUrl: arkUrl,
+                arkProvider,
+                onchainProvider: new EsploraProvider("http://localhost:3000/api", {
+                    forcePolling: true,
+                    pollingInterval: 2000,
+                }),
+                storage: {
+                    walletRepository: new InMemoryWalletRepository(),
+                    contractRepository: new InMemoryContractRepository(),
+                },
+                settlementConfig: false,
+            });
+
+            try {
+                const arkInfo = await realProvider.getInfo();
+                const liveCompressed = arkInfo.signerPubkey;
+                const liveXOnly = hex.encode(wallet.arkServerPublicKey);
+
+                // Fund a real boarding UTXO under the live signer (faucetOnchain
+                // mines a block, so it confirms) and wait for discovery.
+                const amount = 100_000;
+                faucetOnchain(await wallet.getBoardingAddress(), amount);
+                await waitFor(
+                    async () => {
+                        const u = await wallet.getBoardingUtxos();
+                        return u.length >= 1 && u.every((c) => c.status.confirmed);
+                    },
+                    { timeout: 30_000, interval: 2000 },
+                );
+                const boarding = await wallet.getBoardingUtxos();
+                expect(boarding).toHaveLength(1);
+                expect(boarding[0].value).toBe(amount);
+
+                const vtxoManager = await wallet.getVtxoManager();
+                const fakeActive = await fakeCompressedKey();
+
+                // --- Scenario A: live signer deprecated, future cutoff → the
+                // wallet's real boarding UTXO is reported migratable, with the new
+                // boardingCount/boardingValue fields populated and vtxoCount 0. ---
+                const future = BigInt(Math.floor(Date.now() / 1000) + 86_400);
+                infoOverride = {
+                    signerPubkey: fakeActive,
+                    deprecatedSigners: [{ pubkey: liveCompressed, cutoffDate: future }],
+                };
+                const migratable = await vtxoManager.getDeprecatedSignerStatus();
+                expect(migratable).toHaveLength(1);
+                expect(migratable[0]).toMatchObject({
+                    signerPubKey: liveXOnly,
+                    status: "MIGRATABLE",
+                    vtxoCount: 0,
+                    totalValue: 0,
+                    boardingCount: 1,
+                    boardingValue: amount,
+                });
+                expect(migratable[0].cutoffDate).toBe(future);
+
+                // --- Scenario B: past cutoff → EXPIRED. The boarding UTXO is
+                // still counted (it leaves via the unilateral sweep), never
+                // cooperatively migrated. ---
+                const past = BigInt(Math.floor(Date.now() / 1000) - 86_400);
+                infoOverride = {
+                    signerPubkey: fakeActive,
+                    deprecatedSigners: [{ pubkey: liveCompressed, cutoffDate: past }],
+                };
+                const expired = await vtxoManager.getDeprecatedSignerStatus();
+                expect(expired).toHaveLength(1);
+                expect(expired[0]).toMatchObject({
+                    signerPubKey: liveXOnly,
+                    status: "EXPIRED",
+                    boardingCount: 1,
+                    boardingValue: amount,
+                });
+
+                // --- Scenario C: the wallet's boarding is all under the live
+                // (current) signer; arkd advertises only an unrelated deprecated
+                // signer. The boarding fan-out runs against real state but
+                // classifies CURRENT → excluded, so migrate is a clean no-op and
+                // the current-signer boarding is NOT pulled in (out-of-scope guard
+                // of the plan). ---
+                const unrelated = await fakeCompressedKey();
+                infoOverride = {
+                    deprecatedSigners: [{ pubkey: unrelated, cutoffDate: future }],
+                };
+                const balanceBefore = await wallet.getBalance();
+                const report = await vtxoManager.migrateDeprecatedSignerVtxos();
+                expect(report.rotated).toBe(false);
+                expect(report.migrated).toEqual([]);
+                expect(report.expired).toEqual([]);
+                expect(report.signers).toEqual([]);
+                expect(report.txid).toBeUndefined();
+                expect(report.skipped).toBe("no-deprecated-vtxos");
+
+                const balanceAfter = await wallet.getBalance();
+                expect(balanceAfter.boarding.confirmed).toBe(balanceBefore.boarding.confirmed);
             } finally {
                 await wallet.dispose();
             }
