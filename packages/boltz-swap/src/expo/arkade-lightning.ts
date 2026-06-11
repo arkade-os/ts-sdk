@@ -19,7 +19,6 @@ import type {
     SendLightningPaymentRequest,
     SendLightningPaymentResponse,
     OptimisticSendLightningPaymentResponse,
-    SwapSettlementOptions,
     SubmarineRecoveryInfo,
     SubmarineRecoveryResult,
     SubmarineRefundOutcome,
@@ -249,16 +248,16 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         return this.inner.createLightningInvoice(args);
     }
 
-    sendLightningPayment(args: SendLightningPaymentRequest): Promise<SendLightningPaymentResponse>;
+    sendLightningPayment(
+        args: SendLightningPaymentRequest & { waitFor?: "settled" },
+    ): Promise<SendLightningPaymentResponse>;
     sendLightningPayment(
         args: SendLightningPaymentRequest,
-        options?: SwapSettlementOptions,
     ): Promise<OptimisticSendLightningPaymentResponse>;
     sendLightningPayment(
         args: SendLightningPaymentRequest,
-        options?: SwapSettlementOptions,
     ): Promise<OptimisticSendLightningPaymentResponse> {
-        return this.inner.sendLightningPayment(args, options);
+        return this.inner.sendLightningPayment(args);
     }
 
     createSubmarineSwap(args: SendLightningPaymentRequest): Promise<BoltzSubmarineSwap> {
@@ -297,16 +296,12 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         return this.inner.waitAndClaim(pendingSwap);
     }
 
-    waitForSwapSettlement(pendingSwap: BoltzSubmarineSwap): Promise<{ preimage: string }>;
-    waitForSwapSettlement(
-        pendingSwap: BoltzSubmarineSwap,
-        options?: SwapSettlementOptions,
-    ): Promise<{ preimage?: string }>;
-    waitForSwapSettlement(
-        pendingSwap: BoltzSubmarineSwap,
-        options?: SwapSettlementOptions,
-    ): Promise<{ preimage?: string }> {
-        return this.inner.waitForSwapSettlement(pendingSwap, options);
+    waitForSwapSettlement(pendingSwap: BoltzSubmarineSwap): Promise<{ preimage: string }> {
+        return this.inner.waitForSwapSettlement(pendingSwap);
+    }
+
+    waitForSwapFunded(pendingSwap: BoltzSubmarineSwap): Promise<void> {
+        return this.inner.waitForSwapFunded(pendingSwap);
     }
 
     restoreSwaps(boltzFees?: FeesResponse): Promise<{

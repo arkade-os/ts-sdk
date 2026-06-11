@@ -17,7 +17,6 @@ import {
     SendLightningPaymentRequest,
     SendLightningPaymentResponse,
     OptimisticSendLightningPaymentResponse,
-    SwapSettlementOptions,
     SubmarineRecoveryInfo,
     SubmarineRecoveryResult,
     SubmarineRefundOutcome,
@@ -464,15 +463,13 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
     }
 
     async sendLightningPayment(
-        args: SendLightningPaymentRequest,
+        args: SendLightningPaymentRequest & { waitFor?: "settled" },
     ): Promise<SendLightningPaymentResponse>;
     async sendLightningPayment(
         args: SendLightningPaymentRequest,
-        options?: SwapSettlementOptions,
     ): Promise<OptimisticSendLightningPaymentResponse>;
     async sendLightningPayment(
         args: SendLightningPaymentRequest,
-        options?: SwapSettlementOptions,
     ): Promise<OptimisticSendLightningPaymentResponse> {
         try {
             const res = await this.sendMessage({
@@ -480,7 +477,6 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
                 tag: this.messageTag,
                 type: "SEND_LIGHTNING_PAYMENT",
                 payload: args,
-                options,
             });
             return (res as ResponseSendLightningPayment).payload;
         } catch (e) {
@@ -592,26 +588,30 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         }
     }
 
-    async waitForSwapSettlement(pendingSwap: BoltzSubmarineSwap): Promise<{ preimage: string }>;
-    async waitForSwapSettlement(
-        pendingSwap: BoltzSubmarineSwap,
-        options?: SwapSettlementOptions,
-    ): Promise<{ preimage?: string }>;
-    async waitForSwapSettlement(
-        pendingSwap: BoltzSubmarineSwap,
-        options?: SwapSettlementOptions,
-    ): Promise<{ preimage?: string }> {
+    async waitForSwapSettlement(pendingSwap: BoltzSubmarineSwap): Promise<{ preimage: string }> {
         try {
             const res = await this.sendMessage({
                 id: getRandomId(),
                 tag: this.messageTag,
                 type: "WAIT_FOR_SWAP_SETTLEMENT",
                 payload: pendingSwap,
-                options,
             });
             return (res as ResponseWaitForSwapSettlement).payload;
         } catch (e) {
             throw new Error("Cannot wait for swap settlement", { cause: e });
+        }
+    }
+
+    async waitForSwapFunded(pendingSwap: BoltzSubmarineSwap): Promise<void> {
+        try {
+            await this.sendMessage({
+                id: getRandomId(),
+                tag: this.messageTag,
+                type: "WAIT_FOR_SWAP_FUNDED",
+                payload: pendingSwap,
+            });
+        } catch (e) {
+            throw new Error("Cannot wait for swap funding", { cause: e });
         }
     }
 

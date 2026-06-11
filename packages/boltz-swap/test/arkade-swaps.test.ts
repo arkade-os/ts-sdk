@@ -977,23 +977,21 @@ describe("ArkadeSwaps", () => {
                 expect(result.txid).toBe(mock.txid);
             });
 
-            it("should send a Lightning payment optimistically without waiting for settlement", async () => {
+            it("should send a Lightning payment without waiting for settlement when waitFor is funded", async () => {
                 // arrange
                 const pendingSwap = mockSubmarineSwap;
                 vi.spyOn(wallet, "send").mockResolvedValueOnce(mock.txid);
                 vi.spyOn(swaps, "createSubmarineSwap").mockResolvedValueOnce(pendingSwap);
                 const waitSpy = vi
-                    .spyOn(swaps, "waitForSwapSettlement")
-                    .mockResolvedValueOnce({ preimage: undefined });
+                    .spyOn(swaps, "waitForSwapFunded")
+                    .mockResolvedValueOnce(undefined);
                 // act
-                const result = await swaps.sendLightningPayment(
-                    { invoice: mock.invoice.address },
-                    { optimisticResolveAt: "invoice.pending" },
-                );
-                // assert
-                expect(waitSpy).toHaveBeenCalledWith(pendingSwap, {
-                    optimisticResolveAt: "invoice.pending",
+                const result = await swaps.sendLightningPayment({
+                    invoice: mock.invoice.address,
+                    waitFor: "funded",
                 });
+                // assert
+                expect(waitSpy).toHaveBeenCalledWith(pendingSwap);
                 expect(result.amount).toBe(mock.invoice.amount);
                 expect(result.preimage).toBeUndefined();
                 expect(result.txid).toBe(mock.txid);
@@ -1001,15 +999,16 @@ describe("ArkadeSwaps", () => {
         });
 
         describe("waitForSwapSettlement", () => {
-            it("should resolve with the preimage at transaction.claimed by default", async () => {
+            it("should resolve with the preimage only at transaction.claimed", async () => {
                 // arrange
                 vi.spyOn(swapProvider, "getSwapPreimage").mockResolvedValueOnce({
                     preimage: mock.preimage,
                 });
                 vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
                     async (_swapId, update) => {
-                        setTimeout(() => update("invoice.pending"), 5);
-                        setTimeout(() => update("transaction.claimed"), 10);
+                        setTimeout(() => update("transaction.mempool"), 5);
+                        setTimeout(() => update("invoice.pending"), 10);
+                        setTimeout(() => update("transaction.claimed"), 15);
                     },
                 );
 
@@ -1019,56 +1018,51 @@ describe("ArkadeSwaps", () => {
                 // assert
                 expect(result.preimage).toBe(mock.preimage);
             });
+        });
 
-            it("should resolve optimistically when the optimisticResolveAt status is observed", async () => {
+        describe("waitForSwapFunded", () => {
+            it("should resolve when the lockup transaction is observed", async () => {
                 // arrange
                 const getPreimageSpy = vi.spyOn(swapProvider, "getSwapPreimage");
                 vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
                     async (_swapId, update) => {
-                        setTimeout(() => update("invoice.pending"), 5);
+                        setTimeout(() => update("transaction.mempool"), 5);
                     },
                 );
 
                 // act
-                const result = await swaps.waitForSwapSettlement(mockSubmarineSwap, {
-                    optimisticResolveAt: "invoice.pending",
-                });
+                await swaps.waitForSwapFunded(mockSubmarineSwap);
 
                 // assert
-                expect(result.preimage).toBeUndefined();
                 expect(getPreimageSpy).not.toHaveBeenCalled();
                 // the observed status is persisted before resolving
                 expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
                     expect.objectContaining({
                         id: mockSubmarineSwap.id,
-                        status: "invoice.pending",
+                        status: "transaction.mempool",
                     }),
                 );
             });
 
-            it("should resolve optimistically when a status beyond optimisticResolveAt is observed", async () => {
-                // arrange: "invoice.set" is never reported — the monitor only
-                // sees the current status, which has already moved on
+            it("should resolve when a status beyond transaction.mempool is observed", async () => {
+                // arrange: "transaction.mempool" is never reported — the
+                // monitor only sees the current status, which has already
+                // moved on (e.g. 0-conf accepted, invoice being paid)
                 vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
                     async (_swapId, update) => {
                         setTimeout(() => update("invoice.paid"), 5);
                     },
                 );
 
-                // act
-                const result = await swaps.waitForSwapSettlement(mockSubmarineSwap, {
-                    optimisticResolveAt: "invoice.set",
-                });
-
-                // assert
-                expect(result.preimage).toBeUndefined();
+                // act & assert: resolves instead of hanging
+                await swaps.waitForSwapFunded(mockSubmarineSwap);
             });
 
-            it("should not resolve optimistically on statuses earlier than optimisticResolveAt", async () => {
+            it("should not resolve on statuses earlier than transaction.mempool", async () => {
                 // arrange
-                vi.spyOn(swapProvider, "getSwapPreimage").mockResolvedValueOnce({
-                    preimage: mock.preimage,
-                });
+                const getPreimageSpy = vi
+                    .spyOn(swapProvider, "getSwapPreimage")
+                    .mockResolvedValueOnce({ preimage: mock.preimage });
                 vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
                     async (_swapId, update) => {
                         setTimeout(() => update("invoice.set"), 5);
@@ -1076,17 +1070,15 @@ describe("ArkadeSwaps", () => {
                     },
                 );
 
-                // act: invoice.set is earlier than invoice.paid, so the wait
-                // continues until the swap settles
-                const result = await swaps.waitForSwapSettlement(mockSubmarineSwap, {
-                    optimisticResolveAt: "invoice.paid",
-                });
+                // act: invoice.set precedes funding, so the wait continues
+                // until the swap settles
+                await swaps.waitForSwapFunded(mockSubmarineSwap);
 
-                // assert
-                expect(result.preimage).toBe(mock.preimage);
+                // assert: it resolved via the terminal claimed handler
+                expect(getPreimageSpy).toHaveBeenCalled();
             });
 
-            it("should still reject on failure statuses when optimisticResolveAt is set", async () => {
+            it("should reject on failure statuses observed before funding", async () => {
                 // arrange
                 vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
                     async (_swapId, update) => {
@@ -1095,30 +1087,24 @@ describe("ArkadeSwaps", () => {
                 );
 
                 // act & assert
-                await expect(
-                    swaps.waitForSwapSettlement(mockSubmarineSwap, {
-                        optimisticResolveAt: "invoice.paid",
-                    }),
-                ).rejects.toBeInstanceOf(InvoiceFailedToPayError);
+                await expect(swaps.waitForSwapFunded(mockSubmarineSwap)).rejects.toBeInstanceOf(
+                    InvoiceFailedToPayError,
+                );
             });
 
-            it("should keep persisting a failure that arrives after optimistic resolution", async () => {
+            it("should keep persisting a failure that arrives after funding resolved", async () => {
                 // arrange
                 vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
                     async (_swapId, update) => {
-                        setTimeout(() => update("invoice.pending"), 5);
+                        setTimeout(() => update("transaction.mempool"), 5);
                         setTimeout(() => update("invoice.failedToPay"), 10);
                     },
                 );
 
                 // act
-                const result = await swaps.waitForSwapSettlement(mockSubmarineSwap, {
-                    optimisticResolveAt: "invoice.pending",
-                });
+                await swaps.waitForSwapFunded(mockSubmarineSwap);
 
-                // assert: resolved optimistically...
-                expect(result.preimage).toBeUndefined();
-                // ...and the late failure is still written to the repository
+                // assert: the late failure is still written to the repository
                 // (marked refundable) so SwapManager / restoreSwaps can act on it
                 await vi.waitFor(() => {
                     expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
@@ -1131,26 +1117,22 @@ describe("ArkadeSwaps", () => {
                 });
             });
 
-            it("should persist the preimage when the swap settles after optimistic resolution", async () => {
+            it("should persist the preimage when the swap settles after funding resolved", async () => {
                 // arrange
                 vi.spyOn(swapProvider, "getSwapPreimage").mockResolvedValueOnce({
                     preimage: mock.preimage,
                 });
                 vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
                     async (_swapId, update) => {
-                        setTimeout(() => update("invoice.pending"), 5);
+                        setTimeout(() => update("transaction.mempool"), 5);
                         setTimeout(() => update("transaction.claimed"), 10);
                     },
                 );
 
                 // act
-                const result = await swaps.waitForSwapSettlement(mockSubmarineSwap, {
-                    optimisticResolveAt: "invoice.pending",
-                });
+                await swaps.waitForSwapFunded(mockSubmarineSwap);
 
-                // assert: resolved optimistically without a preimage...
-                expect(result.preimage).toBeUndefined();
-                // ...but the final settlement is still persisted with it
+                // assert: the final settlement is still persisted with the preimage
                 await vi.waitFor(() => {
                     expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
                         expect.objectContaining({
@@ -1162,24 +1144,19 @@ describe("ArkadeSwaps", () => {
                 });
             });
 
-            it("should not be affected by monitor errors after optimistic resolution", async () => {
+            it("should not be affected by monitor errors after funding resolved", async () => {
                 // arrange: the monitor fails (e.g. WebSocket drop) after the
-                // optimistic status was already observed
+                // funding status was already observed
                 vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
                     async (_swapId, update) => {
-                        update("invoice.pending");
+                        update("transaction.mempool");
                         await new Promise((r) => setTimeout(r, 10));
                         throw new Error("websocket dropped");
                     },
                 );
 
-                // act
-                const result = await swaps.waitForSwapSettlement(mockSubmarineSwap, {
-                    optimisticResolveAt: "invoice.pending",
-                });
-
-                // assert: resolves, and the late monitor error is swallowed
-                expect(result.preimage).toBeUndefined();
+                // act & assert: resolves, and the late monitor error is swallowed
+                await swaps.waitForSwapFunded(mockSubmarineSwap);
                 await new Promise((r) => setTimeout(r, 20));
             });
         });

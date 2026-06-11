@@ -74,7 +74,6 @@ export type {
     SendLightningPaymentResponse,
     SendLightningPaymentRequest,
     OptimisticSendLightningPaymentResponse,
-    SwapSettlementOptions,
     IncomingPaymentSubscription,
     ArkadeSwapsConfig,
     ArkadeSwapsCreateConfig,

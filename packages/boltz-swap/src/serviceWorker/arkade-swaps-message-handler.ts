@@ -28,9 +28,7 @@ import {
     BoltzReverseSwap,
     BoltzSubmarineSwap,
     type SendLightningPaymentRequest,
-    SendLightningPaymentResponse,
     type OptimisticSendLightningPaymentResponse,
-    type SwapSettlementOptions,
     type SubmarineRecoveryInfo,
     type SubmarineRecoveryResult,
     type SubmarineRefundOutcome,
@@ -94,12 +92,11 @@ export type ResponseCreateLightningInvoice = ResponseEnvelope & {
 export type RequestSendLightningPayment = RequestEnvelope & {
     type: "SEND_LIGHTNING_PAYMENT";
     payload: SendLightningPaymentRequest;
-    /** Settlement options; absent for clients that predate optimistic resolution. */
-    options?: SwapSettlementOptions;
 };
 export type ResponseSendLightningPayment = ResponseEnvelope & {
     type: "LIGHTNING_PAYMENT_SENT";
-    payload: SendLightningPaymentResponse | OptimisticSendLightningPaymentResponse;
+    /** Strict SendLightningPaymentResponse unless the request used waitFor: "funded". */
+    payload: OptimisticSendLightningPaymentResponse;
 };
 
 export type RequestCreateSubmarineSwap = RequestEnvelope & {
@@ -187,12 +184,18 @@ export type ResponseWaitAndClaim = ResponseEnvelope & {
 export type RequestWaitForSwapSettlement = RequestEnvelope & {
     type: "WAIT_FOR_SWAP_SETTLEMENT";
     payload: BoltzSubmarineSwap;
-    /** Settlement options; absent for clients that predate optimistic resolution. */
-    options?: SwapSettlementOptions;
 };
 export type ResponseWaitForSwapSettlement = ResponseEnvelope & {
     type: "SWAP_SETTLED";
-    payload: { preimage?: string };
+    payload: { preimage: string };
+};
+
+export type RequestWaitForSwapFunded = RequestEnvelope & {
+    type: "WAIT_FOR_SWAP_FUNDED";
+    payload: BoltzSubmarineSwap;
+};
+export type ResponseWaitForSwapFunded = ResponseEnvelope & {
+    type: "SWAP_FUNDED";
 };
 
 export type RequestRestoreSwaps = RequestEnvelope & {
@@ -534,6 +537,7 @@ export type ArkadeSwapsUpdaterRequest =
     | RequestRecoverAllSubmarineFunds
     | RequestWaitAndClaim
     | RequestWaitForSwapSettlement
+    | RequestWaitForSwapFunded
     | RequestRestoreSwaps
     | RequestEnrichReverseSwapPreimage
     | RequestEnrichSubmarineSwapInvoice
@@ -583,6 +587,7 @@ export type ArkadeSwapsUpdaterResponse =
     | ResponseRecoverAllSubmarineFunds
     | ResponseWaitAndClaim
     | ResponseWaitForSwapSettlement
+    | ResponseWaitForSwapFunded
     | ResponseRestoreSwaps
     | ResponseEnrichReverseSwapPreimage
     | ResponseEnrichSubmarineSwapInvoice
@@ -630,6 +635,7 @@ export const LONG_RUNNING_ARKADE_SWAPS_REQUEST_TYPES: ReadonlySet<
     "RECOVER_ALL_SUBMARINE_FUNDS",
     "WAIT_AND_CLAIM",
     "WAIT_FOR_SWAP_SETTLEMENT",
+    "WAIT_FOR_SWAP_FUNDED",
     "RESTORE_SWAPS",
     "WAIT_AND_CLAIM_CHAIN",
     "WAIT_AND_CLAIM_ARK",
@@ -797,10 +803,7 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "SEND_LIGHTNING_PAYMENT": {
-                    const res = await this.handler.sendLightningPayment(
-                        message.payload,
-                        message.options,
-                    );
+                    const res = await this.handler.sendLightningPayment(message.payload);
                     return this.tagged({
                         id,
                         type: "LIGHTNING_PAYMENT_SENT",
@@ -885,15 +888,17 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "WAIT_FOR_SWAP_SETTLEMENT": {
-                    const res = await this.handler.waitForSwapSettlement(
-                        message.payload,
-                        message.options,
-                    );
+                    const res = await this.handler.waitForSwapSettlement(message.payload);
                     return this.tagged({
                         id,
                         type: "SWAP_SETTLED",
                         payload: res,
                     });
+                }
+
+                case "WAIT_FOR_SWAP_FUNDED": {
+                    await this.handler.waitForSwapFunded(message.payload);
+                    return this.tagged({ id, type: "SWAP_FUNDED" });
                 }
 
                 case "RESTORE_SWAPS": {

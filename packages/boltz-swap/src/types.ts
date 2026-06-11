@@ -6,7 +6,6 @@ import {
     CreateReverseSwapRequest,
     CreateSubmarineSwapRequest,
     BoltzSwapStatus,
-    SubmarineProgressionStatus,
     CreateChainSwapRequest,
     CreateChainSwapResponse,
 } from "./boltz-swap-provider";
@@ -89,6 +88,22 @@ export interface CreateLightningInvoiceResponse {
 export interface SendLightningPaymentRequest {
     /** BOLT11-encoded Lightning invoice to pay. */
     invoice: string;
+    /**
+     * When the returned promise resolves (default "settled").
+     *
+     * - "settled": at the terminal "transaction.claimed" status, once Boltz
+     *   has swept the HTLC. The preimage is included in the response.
+     * - "funded": optimistically, as soon as the lockup transaction is
+     *   observed ("transaction.mempool" or any later status — statuses can be
+     *   skipped since subscriptions report only the current one). The sender's
+     *   funds are committed and the swap is refundable from this point, so
+     *   most wallets show the payment as "sent" here. No preimage is available
+     *   yet; monitoring continues in the background and keeps persisting
+     *   status updates until a terminal status, but a late failure no longer
+     *   rejects — keep the SwapManager enabled so refunds are handled
+     *   automatically.
+     */
+    waitFor?: "settled" | "funded";
 }
 
 /** Response after a successful Lightning payment. */
@@ -102,37 +117,17 @@ export interface SendLightningPaymentResponse {
 }
 
 /**
- * Response after a Lightning payment that may have resolved optimistically
- * (see {@link SwapSettlementOptions.optimisticResolveAt}). The swap may not
- * be settled yet, so the preimage may not be available.
+ * Response after a Lightning payment sent with `waitFor: "funded"` — the
+ * payment is in flight but may not be settled yet, so the preimage may not
+ * be available.
  */
 export interface OptimisticSendLightningPaymentResponse {
     /** Amount paid in satoshis. */
     amount: number;
-    /** Payment preimage (hex-encoded). Undefined when the call resolved optimistically before the swap settled. */
+    /** Payment preimage (hex-encoded). Undefined when the call resolved before the swap settled. */
     preimage?: string;
     /** Transaction ID of the Arkade payment. */
     txid: string;
-}
-
-/** Options controlling when waiting for a submarine swap settlement resolves. */
-export interface SwapSettlementOptions {
-    /**
-     * Resolve optimistically once this status — or any later status in the
-     * successful submarine swap lifecycle — is observed, instead of waiting
-     * for the terminal "transaction.claimed" status. Statuses can be skipped
-     * (WebSocket subscriptions report only the current status), so "at or
-     * beyond" semantics avoid waiting forever on a status that was missed.
-     *
-     * Failure statuses (e.g. "swap.expired", "invoice.failedToPay") observed
-     * before the optimistic status still reject as usual. After an optimistic
-     * resolution the monitor stays open until the swap reaches a terminal
-     * status and keeps persisting updates (the preimage on claim, the
-     * refundable flag on failure), but the settled promise no longer rejects:
-     * acting on a late failure (refunding) is the caller's responsibility —
-     * enable the SwapManager to handle this automatically in the background.
-     */
-    optimisticResolveAt?: SubmarineProgressionStatus;
 }
 
 /** Tracks an in-progress reverse swap (Lightning → Arkade). */
