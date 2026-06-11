@@ -14,9 +14,18 @@ const DEPRECATED_A = "bb".repeat(32);
 const DEPRECATED_B = "cc".repeat(32);
 const UNKNOWN = "dd".repeat(32);
 
-// Minimal ArkInfo carrying only the fields the classifier reads.
-function makeInfo(signerPubkey: string, deprecatedSigners: DeprecatedSigner[] = []): ArkInfo {
-    return { signerPubkey, deprecatedSigners } as unknown as ArkInfo;
+// Minimal ArkInfo carrying only the fields the classifier reads. A missing
+// cutoffDate at a call site means "no cutoff" — normalized to the `0n` sentinel
+// arkd advertises (non-nullable field), which classifies DUE_NOW.
+function makeInfo(
+    signerPubkey: string,
+    deprecatedSigners: { pubkey: string; cutoffDate?: bigint }[] = [],
+): ArkInfo {
+    const normalized: DeprecatedSigner[] = deprecatedSigners.map((s) => ({
+        pubkey: s.pubkey,
+        cutoffDate: s.cutoffDate ?? 0n,
+    }));
+    return { signerPubkey, deprecatedSigners: normalized } as unknown as ArkInfo;
 }
 
 const NOW = 1_700_000_000; // fixed reference Unix time (seconds)
@@ -121,7 +130,9 @@ describe("RestArkProvider.getInfo - deprecated signer parsing", () => {
         );
     };
 
-    it("preserves a missing cutoffDate as undefined (not coerced to 0n)", async () => {
+    it("defaults a missing cutoffDate to the 0n sentinel (never undefined)", async () => {
+        // arkd advertises cutoffDate as a non-nullable field, so the SDK models
+        // it as always-present. A genuinely missing field defaults to 0n.
         stubInfo({
             signerPubkey: ACTIVE,
             deprecatedSigners: [{ pubkey: DEPRECATED_A }],
@@ -129,21 +140,33 @@ describe("RestArkProvider.getInfo - deprecated signer parsing", () => {
         const info = await new RestArkProvider("http://localhost:7070").getInfo();
         expect(info.deprecatedSigners).toHaveLength(1);
         expect(info.deprecatedSigners[0].pubkey).toBe(DEPRECATED_A);
-        expect(info.deprecatedSigners[0].cutoffDate).toBeUndefined();
+        expect(info.deprecatedSigners[0].cutoffDate).toBe(0n);
     });
 
-    it("parses an explicit cutoffDate (including 0) as a bigint", async () => {
+    it("parses a real (non-zero) cutoffDate as a bigint", async () => {
         stubInfo({
             signerPubkey: ACTIVE,
-            deprecatedSigners: [
-                { pubkey: DEPRECATED_A, cutoffDate: 1_700_000_000 },
-                { pubkey: DEPRECATED_B, cutoffDate: 0 },
-            ],
+            deprecatedSigners: [{ pubkey: DEPRECATED_A, cutoffDate: 1_700_000_000 }],
         });
         const info = await new RestArkProvider("http://localhost:7070").getInfo();
         expect(info.deprecatedSigners[0].cutoffDate).toBe(1_700_000_000n);
-        // An explicit 0 must survive as 0n, distinct from a missing field.
-        expect(info.deprecatedSigners[1].cutoffDate).toBe(0n);
+    });
+
+    it("parses a zero cutoffDate as 0n and classifies DUE_NOW", async () => {
+        // arkd's grpc-gateway marshals an UNSET cutoff_date as "0" over REST
+        // (EmitUnpopulated), and arkd's "no cutoff" sentinel is 0 too — so a real
+        // rotated server reports `cutoffDate: "0"`. The SDK keeps it as 0n (never
+        // undefined); the classifier maps 0n to DUE_NOW (not EXPIRED at epoch).
+        stubInfo({
+            signerPubkey: ACTIVE,
+            deprecatedSigners: [{ pubkey: DEPRECATED_A, cutoffDate: "0" }],
+        });
+        const info = await new RestArkProvider("http://localhost:7070").getInfo();
+        expect(info.deprecatedSigners[0].cutoffDate).toBe(0n);
+
+        const cls = classifyContractSigner(DEPRECATED_A, info, NOW);
+        expect(cls.status).toBe("DUE_NOW");
+        expect(cls.cutoffDate).toBeUndefined();
     });
 
     it("defaults deprecatedSigners to an empty array when absent", async () => {

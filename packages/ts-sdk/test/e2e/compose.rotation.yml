@@ -1,0 +1,22 @@
+# ts-sdk-local compose override for runtime signer rotation (deprecated-keys e2e).
+#
+# Layered on top of regtest/docker/compose.base.yml + compose.ark.yml ONLY when
+# the rotation helper recreates `arkd-wallet` (see test/e2e/utils.ts
+# `rotateArkdSigner`). It exists for one reason: to DECLARE
+# `ARKD_WALLET_DEPRECATED_SIGNER_KEYS` on the service so docker compose
+# interpolates it from the environment. Compose only substitutes variables that
+# appear in a compose file, and this var appears in neither submodule compose
+# file — keeping the whole rotation change inside ts-sdk, with no edit to the
+# `regtest/` submodule.
+#
+# `ARKD_WALLET_SIGNER_KEY` is already declared (and interpolated) in
+# compose.ark.yml, so switching the active signer needs no declaration here; the
+# helper just sets that var in the recreate subprocess env. It is re-declared
+# below only for locality/readability.
+name: arkade-regtest
+
+services:
+    arkd-wallet:
+        environment:
+            - ARKD_WALLET_SIGNER_KEY=${ARKD_WALLET_SIGNER_KEY:-}
+            - ARKD_WALLET_DEPRECATED_SIGNER_KEYS=${ARKD_WALLET_DEPRECATED_SIGNER_KEYS:-}

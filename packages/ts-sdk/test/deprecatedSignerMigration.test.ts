@@ -68,13 +68,20 @@ const NOW_S = Math.floor(Date.now() / 1000);
 
 function makeInfo(
     signerPubkey: string,
-    deprecatedSigners: DeprecatedSigner[] = [],
+    // A missing cutoffDate at a call site means "no cutoff" — normalized to the
+    // `0n` sentinel arkd advertises (non-nullable field), which classifies
+    // DUE_NOW. Mirrors `RestArkProvider.getInfo`'s `BigInt(cutoffDate ?? 0)`.
+    deprecatedSigners: { pubkey: string; cutoffDate?: bigint }[] = [],
     intentFee: Record<string, string> = {},
     vtxoMaxAmount: bigint = -1n, // -1 = no per-output ceiling
 ): ArkInfo {
+    const normalized: DeprecatedSigner[] = deprecatedSigners.map((s) => ({
+        pubkey: s.pubkey,
+        cutoffDate: s.cutoffDate ?? 0n,
+    }));
     return {
         signerPubkey,
-        deprecatedSigners,
+        deprecatedSigners: normalized,
         fees: { intentFee, txFeeRate: "" },
         vtxoMaxAmount,
     } as unknown as ArkInfo;

@@ -13,7 +13,8 @@ import type { ArkInfo } from "../providers/ark";
  * - `MIGRATABLE`: the contract's signer is advertised as deprecated and its
  *   cutoff has not passed — cooperative migration is still possible.
  * - `DUE_NOW`: the contract's signer is advertised as deprecated with no cutoff
- *   date, so migration should start immediately.
+ *   date (arkd advertises this as a `0n` cutoff), so migration should start
+ *   immediately.
  * - `EXPIRED`: the contract's signer is deprecated and its cutoff has passed —
  *   cooperative migration is closed. These funds are NOT stranded: the VTXO
  *   keeps its own batch expiry, the server sweeps that batch at expiry, and the
@@ -54,8 +55,12 @@ export interface SignerClassification {
 export interface SignerSet {
     /** Active signer, x-only (32-byte) hex. */
     active: string;
-    /** Deprecated signers keyed by x-only hex, mapped to their optional cutoff. */
-    deprecated: Map<string, bigint | undefined>;
+    /**
+     * Deprecated signers keyed by x-only hex, mapped to their cutoff. The cutoff
+     * is always a bigint (arkd advertises it non-nullable); `0n` means "no cutoff
+     * advertised" (→ `DUE_NOW`).
+     */
+    deprecated: Map<string, bigint>;
 }
 
 /**
@@ -79,7 +84,7 @@ export function toXOnlySignerHex(pubkeyHex: string): string {
  */
 export function signerSetFromInfo(info: ArkInfo): SignerSet {
     const active = toXOnlySignerHex(info.signerPubkey);
-    const deprecated = new Map<string, bigint | undefined>();
+    const deprecated = new Map<string, bigint>();
     for (const signer of info.deprecatedSigners) {
         if (!signer.pubkey) continue;
         deprecated.set(toXOnlySignerHex(signer.pubkey), signer.cutoffDate);
@@ -110,9 +115,10 @@ export function classifyAgainstSignerSet(
         return { status: "UNKNOWN_SIGNER", signerPubKey };
     }
 
-    const cutoffDate = signerSet.deprecated.get(signerPubKey);
-    if (cutoffDate === undefined) {
-        // Deprecated but no cutoff advertised — due for migration immediately.
+    // `.has()` above guarantees a value; `0n` is arkd's sentinel for "no cutoff
+    // advertised" → due for migration immediately.
+    const cutoffDate = signerSet.deprecated.get(signerPubKey)!;
+    if (cutoffDate === 0n) {
         return { status: "DUE_NOW", signerPubKey };
     }
 

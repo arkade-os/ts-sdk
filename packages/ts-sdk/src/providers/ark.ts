@@ -125,13 +125,14 @@ export interface PendingTx {
 export interface DeprecatedSigner {
     /**
      * Unix timestamp (seconds) after which the server no longer accepts this
-     * signer's VTXOs as cooperative-migration inputs. Optional: when arkd
-     * omits it, the deprecated signer is due for migration immediately. Absence
-     * is preserved as `undefined` rather than coerced to `0n` so consumers can
-     * distinguish "no schedule advertised" (migrate now) from an explicit
-     * timestamp of 0.
+     * signer's VTXOs as cooperative-migration inputs. arkd advertises this as a
+     * non-nullable field, so it is always present: `0n` is the sentinel for "no
+     * cutoff advertised" — the deprecated signer is due for migration
+     * immediately ({@link classifyContractSigner} maps `0n` to `DUE_NOW`). A
+     * positive value is a real deadline (`MIGRATABLE` until it passes, then
+     * `EXPIRED`).
      */
-    cutoffDate?: bigint;
+    cutoffDate: bigint;
     pubkey: string;
 }
 
@@ -276,10 +277,13 @@ export class RestArkProvider implements ArkProvider {
             checkpointTapscript: fromServer.checkpointTapscript ?? "",
             deprecatedSigners:
                 fromServer.deprecatedSigners?.map((signer: any) => ({
-                    // Preserve a missing cutoff as `undefined` ("migrate now"),
-                    // instead of coercing it to 0n which would be
-                    // indistinguishable from an explicit timestamp of 0.
-                    cutoffDate: signer.cutoffDate != null ? BigInt(signer.cutoffDate) : undefined,
+                    // arkd advertises `cutoffDate` as a non-nullable field, so it
+                    // is always a bigint here — `0n` is the sentinel for "no
+                    // cutoff" (the classifier maps it to DUE_NOW). The grpc-gateway
+                    // marshals with EmitUnpopulated, so an unset `cutoff_date`
+                    // already arrives as `"0"`; a genuinely missing field defaults
+                    // to `0n` too. Never collapse to `undefined`.
+                    cutoffDate: BigInt(signer.cutoffDate ?? 0),
                     pubkey: signer.pubkey ?? "",
                 })) ?? [],
             digest: fromServer.digest ?? "",
