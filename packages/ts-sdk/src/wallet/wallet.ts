@@ -49,6 +49,7 @@ import {
 import { createAssetPacket, selectCoinsWithAsset, selectedCoinsToAssetInputs } from "./asset";
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
+import { toXOnlySignerHex } from "./signerRotation";
 import {
     buildOffchainTx,
     combineTapscriptSigs,
@@ -267,6 +268,25 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
 }
 
 export { DescriptorSigningProviderMissingError, MissingSigningDescriptorError };
+
+/**
+ * Boarding UTXOs grouped by the boarding address they sit on, carrying that
+ * address's signer association explicitly. Returned by
+ * {@link ReadonlyWallet.getBoardingUtxosForSigners} because a flat
+ * {@link ExtendedCoin} cannot carry the signer: it retains only the encoded
+ * leaves/tapTree the spend needs, not the owning `DefaultVtxo.Script` (and so
+ * not its `serverPubKey` or CSV delay). The deprecated-signer boarding
+ * classification reads both back from this group (Section 7).
+ */
+export interface BoardingUtxoGroup {
+    /** Tapscript of the boarding address the coins sit on. */
+    tapscript: DefaultVtxo.Script;
+    /** Server key of that address, normalized x-only hex. */
+    serverPubKey: string;
+    /** CSV exit timelock decoded from THIS tapscript's exit leaf. */
+    csvTimelock: RelativeTimelock;
+    coins: ExtendedCoin[];
+}
 
 export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManager?: ContractManager;
@@ -884,8 +904,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Always includes the index-0 baseline (identity x-only key), which covers
      * the degenerate equal-delay case where the index-0 boarding row is
      * coalesced onto a `default` row and so isn't a `boarding`-typed contract.
+     *
+     * @param allowedSigners - Optional set of x-only-hex server keys whose
+     *   persisted boarding rows are included. Defaults to `{current x-only
+     *   signer}`, preserving today's current-signer-only discovery (and the
+     *   foreign-ASP guard). The deprecated-signer migration path widens this to
+     *   reach old-signer boarding addresses. The index-0 baseline and the
+     *   current display tapscript are always included regardless of the set.
      */
-    protected async getBoardingTapscripts(): Promise<DefaultVtxo.Script[]> {
+    protected async getBoardingTapscripts(
+        allowedSigners?: Set<string>,
+    ): Promise<DefaultVtxo.Script[]> {
         const byScript = new Map<string, DefaultVtxo.Script>();
         const add = (s: DefaultVtxo.Script) => byScript.set(hex.encode(s.pkScript), s);
 
@@ -907,16 +936,20 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // side effect; the boarding rows are persisted by init and the
         // allocator, which run earlier in the wallet lifecycle.
         const serverPubKeyHex = hex.encode(this.boardingTapscript.options.serverPubKey);
+        const allowed = allowedSigners ?? new Set([toXOnlySignerHex(serverPubKeyHex)]);
         const boardingContracts = await this.contractRepository.getContracts({
             type: ["boarding"],
         });
         for (const c of boardingContracts) {
-            // Only this wallet's server. A row left by a previous ASP (e.g. a
-            // repo recovered against a different server) would otherwise emit a
-            // spurious onchain script — and a wasted getCoins/getTransactions
-            // call — on every boarding read. Mirrors the filter in
+            // Only allowed servers. By default this is the wallet's current
+            // signer, so a row left by a previous ASP (e.g. a repo recovered
+            // against a different server) — or, here, an old-signer row outside
+            // the requested set — would otherwise emit a spurious onchain script
+            // and a wasted getCoins/getTransactions call on every boarding read.
+            // Normalize BOTH sides to x-only so a compressed vs x-only mismatch
+            // never silently drops a row. Mirrors the filter in
             // resolveBoardingBootTapscript.
-            if (c.params.serverPubKey !== serverPubKeyHex) continue;
+            if (!allowed.has(toXOnlySignerHex(c.params.serverPubKey))) continue;
             try {
                 add(BoardingContractHandler.createScript(c.params));
             } catch (e) {
@@ -929,15 +962,23 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Fetch and cache onchain inputs (UTXOs) received at the wallet's boarding
-     * addresses — the current address plus any historical rotated boarding
-     * addresses that still hold unspent UTXOs (plan §6-III.1). Each UTXO is
-     * annotated with the tapscript of the address it actually sits on, so the
-     * spending path forfeits / exits it with the correct per-index leaves.
+     * Fetch and cache onchain inputs (UTXOs) received at the boarding addresses
+     * of the given signer set, grouped per boarding address so the caller keeps
+     * the address↔signer association that {@link ExtendedCoin} cannot carry
+     * (it retains only the encoded leaves/tapTree the spend needs, not the
+     * `DefaultVtxo.Script` and its `serverPubKey`/CSV delay).
+     *
+     * Per group it does exactly what {@link getBoardingUtxos} does per tapscript:
+     * `getCoins` → {@link extendCoinWithTapscript} → `saveUtxos`. Offline-first:
+     * it does not call `getInfo()`; the caller supplies the allowed signer set,
+     * so the only network calls are the per-address `getCoins`.
+     *
+     * @param allowedSigners - x-only-hex server keys whose boarding addresses to
+     *   fetch (passed through to {@link getBoardingTapscripts}).
      */
-    async getBoardingUtxos(): Promise<ExtendedCoin[]> {
-        const tapscripts = await this.getBoardingTapscripts();
-        const all: ExtendedCoin[] = [];
+    async getBoardingUtxosForSigners(allowedSigners: Set<string>): Promise<BoardingUtxoGroup[]> {
+        const tapscripts = await this.getBoardingTapscripts(allowedSigners);
+        const groups: BoardingUtxoGroup[] = [];
         for (const tapscript of tapscripts) {
             const address = tapscript.onchainAddress(this.network);
             const coins = await this.onchainProvider.getCoins(address);
@@ -945,9 +986,41 @@ export class ReadonlyWallet implements IReadonlyWallet {
             // Save boarding inputs using unified repository, keyed by the
             // address the UTXOs actually sit on.
             await this.walletRepository.saveUtxos(address, utxos);
-            all.push(...utxos);
+            groups.push({
+                tapscript,
+                // Normalize so the group key matches the axis/contract x-only
+                // form regardless of how the tapscript's key was stored.
+                serverPubKey: toXOnlySignerHex(hex.encode(tapscript.options.serverPubKey)),
+                // Per-row CSV delay decoded from THIS tapscript's exit leaf —
+                // not the wallet's current boarding timelock, which a signer
+                // rotation may have changed.
+                csvTimelock: CSVMultisigTapscript.decode(hex.decode(tapscript.exitScript)).params
+                    .timelock,
+                coins: utxos,
+            });
         }
-        return all;
+        return groups;
+    }
+
+    /**
+     * Fetch and cache onchain inputs (UTXOs) received at the wallet's boarding
+     * addresses — the current address plus any historical rotated boarding
+     * addresses that still hold unspent UTXOs (plan §6-III.1). Each UTXO is
+     * annotated with the tapscript of the address it actually sits on, so the
+     * spending path forfeits / exits it with the correct per-index leaves.
+     *
+     * Current-signer only: a flatten of {@link getBoardingUtxosForSigners} over
+     * the wallet's current signer, so the two paths cannot drift. Old-signer
+     * boarding recovery goes through the deprecated-signer migration API
+     * instead (it would otherwise pull EXPIRED-signer inputs into a plain
+     * `settle()` that the server must reject).
+     */
+    async getBoardingUtxos(): Promise<ExtendedCoin[]> {
+        const currentOnly = new Set([
+            toXOnlySignerHex(hex.encode(this.boardingTapscript.options.serverPubKey)),
+        ]);
+        const groups = await this.getBoardingUtxosForSigners(currentOnly);
+        return groups.flatMap((g) => g.coins);
     }
 
     /**

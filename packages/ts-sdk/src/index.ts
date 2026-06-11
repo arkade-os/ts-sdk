@@ -78,6 +78,7 @@ import {
     ReadonlyWallet,
     waitForIncomingFunds,
     IncomingFunds,
+    BoardingUtxoGroup,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./wallet/wallet";
@@ -576,6 +577,7 @@ export type {
 
     // Wallet types
     GetVtxosFilter,
+    BoardingUtxoGroup,
     SettlementConfig,
     IVtxoManager,
     RenewVtxosOptions,

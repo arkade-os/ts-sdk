@@ -11,6 +11,7 @@ import {
 } from ".";
 import { ArkInfo, ArkProvider, SettlementEvent } from "../providers/ark";
 import { maybeArkError } from "../providers/errors";
+import type { BoardingUtxoGroup } from "./wallet";
 import type { ExtendedContractVtxo } from "../contracts/types";
 import {
     classifyAgainstAxis,
@@ -575,6 +576,14 @@ export interface DeprecatedSignerReport {
     vtxoCount: number;
     /** Total value of those VTXOs in satoshis. */
     totalValue: number;
+    /**
+     * Number of spendable boarding UTXOs the wallet holds under this signer
+     * (Section 7). Counts every confirmed boarding coin, including those whose
+     * own CSV exit window has elapsed (they leave via the unilateral sweep).
+     */
+    boardingCount: number;
+    /** Total value of those boarding UTXOs in satoshis (Section 7). */
+    boardingValue: number;
 }
 
 /**
@@ -601,6 +610,14 @@ export interface DeprecatedSignerMigrationReport {
     skipped?: MigrationSkipReason;
     /** Per-deprecated-signer status snapshot (Section 6). */
     signers: DeprecatedSignerReport[];
+    /**
+     * Number of cooperatively-migratable inputs (boarding + VTXO) deferred to a
+     * later pass because the combined per-settlement cap
+     * ({@link MAX_VTXOS_PER_SETTLEMENT}) was reached this pass (Section 7).
+     * Present and non-zero only when the cap actually bound. Makes the
+     * truncation visible rather than a silent drop.
+     */
+    deferred?: number;
     /** Error message when the migration settle attempt failed. */
     error?: string;
 }
@@ -614,7 +631,15 @@ export interface DeprecatedSignerMigrationReport {
 interface MigrationCapableWallet {
     arkProvider: ArkProvider;
     arkServerPublicKey: Uint8Array;
+    onchainProvider: OnchainProvider;
     rotateServerSigner(newServerPubKey: Uint8Array): Promise<void>;
+    /**
+     * Grouped boarding discovery over a given signer set, returning the
+     * address↔signer association {@link ExtendedCoin} cannot carry. Consumed
+     * in-process by the boarding migration (Section 7); proxy/watch-only
+     * wallets don't implement it, so {@link isMigrationCapable} routes them away.
+     */
+    getBoardingUtxosForSigners(allowedSigners: Set<string>): Promise<BoardingUtxoGroup[]>;
 }
 
 /** Return whether a wallet exposes the deprecated-signer migration surface. */
@@ -622,13 +647,25 @@ function isMigrationCapable(wallet: IWallet): wallet is IWallet & MigrationCapab
     return (
         "arkProvider" in wallet &&
         "arkServerPublicKey" in wallet &&
-        typeof (wallet as Partial<MigrationCapableWallet>).rotateServerSigner === "function"
+        "onchainProvider" in wallet &&
+        typeof (wallet as Partial<MigrationCapableWallet>).rotateServerSigner === "function" &&
+        typeof (wallet as Partial<MigrationCapableWallet>).getBoardingUtxosForSigners === "function"
     );
 }
 
 /** A deprecated-signer VTXO paired with its signer classification. */
 interface ClassifiedVtxo {
     vtxo: ExtendedContractVtxo;
+    classification: SignerClassification;
+}
+
+/**
+ * A deprecated-signer boarding UTXO paired with its signer classification
+ * (Section 7). Mirrors {@link ClassifiedVtxo}, substituting the on-chain
+ * boarding coin for the offchain VTXO.
+ */
+interface ClassifiedBoarding {
+    coin: ExtendedCoin;
     classification: SignerClassification;
 }
 
@@ -643,14 +680,65 @@ function classifiedToRef(c: ClassifiedVtxo): MigrationVtxoRef {
     };
 }
 
+/** Project a {@link ClassifiedBoarding} into the report's {@link MigrationVtxoRef}. */
+function classifiedBoardingToRef(c: ClassifiedBoarding): MigrationVtxoRef {
+    return {
+        txid: c.coin.txid,
+        vout: c.coin.vout,
+        value: c.coin.value,
+        signerPubKey: c.classification.signerPubKey,
+        cutoffDate: c.classification.cutoffDate,
+    };
+}
+
 /**
  * Ordering key for migration urgency: `dueNow` (no advertised cutoff, migrate
  * immediately) sorts most urgent, then the soonest advertised cutoff. Smaller
  * is more urgent.
  */
-function migrationUrgencyKey(c: ClassifiedVtxo): number {
-    if (c.classification.status === "DUE_NOW") return -Infinity;
-    return c.classification.secondsUntilCutoff ?? Infinity;
+function urgencyKey(classification: SignerClassification): number {
+    if (classification.status === "DUE_NOW") return -Infinity;
+    return classification.secondsUntilCutoff ?? Infinity;
+}
+
+/**
+ * A cooperatively-migratable input — either a deprecated-signer VTXO or a
+ * deprecated-signer boarding UTXO — ranked and fee-priced uniformly so a single
+ * settle intent can combine both (Section 7).
+ */
+type MigrationCandidate =
+    | { kind: "vtxo"; classified: ClassifiedVtxo }
+    | { kind: "boarding"; classified: ClassifiedBoarding };
+
+function candidateClassification(c: MigrationCandidate): SignerClassification {
+    return c.classified.classification;
+}
+
+function candidateValue(c: MigrationCandidate): number {
+    return c.kind === "vtxo" ? c.classified.vtxo.value : c.classified.coin.value;
+}
+
+/**
+ * Merge per-signer report rows from several classifiers (VTXO + boarding) into
+ * one row per signer, summing the respective counts/values. A signer that
+ * appears in only one classifier still produces a row (Section 7).
+ */
+function mergeSignerReports(...reportLists: DeprecatedSignerReport[][]): DeprecatedSignerReport[] {
+    const bySigner = new Map<string, DeprecatedSignerReport>();
+    for (const list of reportLists) {
+        for (const r of list) {
+            const existing = bySigner.get(r.signerPubKey);
+            if (existing) {
+                existing.vtxoCount += r.vtxoCount;
+                existing.totalValue += r.totalValue;
+                existing.boardingCount += r.boardingCount;
+                existing.boardingValue += r.boardingValue;
+            } else {
+                bySigner.set(r.signerPubKey, { ...r });
+            }
+        }
+    }
+    return Array.from(bySigner.values());
 }
 
 /**
@@ -1388,13 +1476,19 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
     /**
      * Machine-readable status of every deprecated server signer the wallet
-     * currently holds funds under (Section 6), without migrating.
+     * currently holds funds under (Section 6), without migrating. Covers both
+     * VTXO and boarding holdings (Section 7), merged per signer.
+     *
+     * @remarks This is no longer a pure repository/info read: surfacing boarding
+     * holdings fans out per boarding address (`getCoins` round trips) and
+     * refreshes the UTXO cache via `saveUtxos`.
      */
     async getDeprecatedSignerStatus(): Promise<DeprecatedSignerReport[]> {
         const wallet = this.requireMigrationCapableWallet();
         const info = await wallet.arkProvider.getInfo();
-        const { reports } = await this.classifyDeprecatedSignerContracts(info);
-        return reports;
+        const { reports: vtxoReports } = await this.classifyDeprecatedSignerContracts(info);
+        const { reports: boardingReports } = await this.classifyDeprecatedSignerBoarding(info);
+        return mergeSignerReports(vtxoReports, boardingReports);
     }
 
     /**
@@ -1423,14 +1517,16 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         }
 
         // The wallet's own signer is neither active nor advertised deprecated:
-        // do not rotate or migrate automatically (treat as unknownSigner).
+        // do not rotate or migrate automatically (treat as unknownSigner). Still
+        // surface every holding (VTXO + boarding) under other deprecated signers.
         if (walletClass.status === "UNKNOWN_SIGNER") {
-            const { reports } = await this.classifyDeprecatedSignerContracts(info);
+            const { reports: vtxoReports } = await this.classifyDeprecatedSignerContracts(info);
+            const { reports: boardingReports } = await this.classifyDeprecatedSignerBoarding(info);
             return {
                 rotated: false,
                 migrated: [],
                 expired: [],
-                signers: reports,
+                signers: mergeSignerReports(vtxoReports, boardingReports),
                 skipped: "unknown-wallet-signer",
             };
         }
@@ -1444,13 +1540,31 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             rotated = true;
         }
 
-        // Collect stale VTXOs AFTER any rotation, so the just-deprecated former
-        // receive contract is included in the migration set.
-        const { reports, migratable, expired } = await this.classifyDeprecatedSignerContracts(info);
+        // Collect stale VTXOs AND boarding UTXOs AFTER any rotation, so the
+        // just-deprecated former receive/boarding contracts are included in the
+        // migration set. Both classifiers reuse the same fresh `info` (no second
+        // getInfo round-trip).
+        const {
+            reports: vtxoReports,
+            migratable: vtxoMigratable,
+            expired: vtxoExpired,
+        } = await this.classifyDeprecatedSignerContracts(info);
+        const {
+            reports: boardingReports,
+            migratable: boardingMigratable,
+            expired: boardingExpired,
+        } = await this.classifyDeprecatedSignerBoarding(info);
 
-        const expiredRefs = expired.map(classifiedToRef);
+        const reports = mergeSignerReports(vtxoReports, boardingReports);
 
-        if (migratable.length === 0) {
+        const expiredRefs = [
+            ...vtxoExpired.map(classifiedToRef),
+            ...boardingExpired.map(classifiedBoardingToRef),
+        ];
+
+        // Fire the no-deprecated-vtxos skip only when BOTH migratable sets are
+        // empty, so a boarding-only migration still proceeds.
+        if (vtxoMigratable.length === 0 && boardingMigratable.length === 0) {
             return {
                 rotated,
                 migrated: [],
@@ -1460,45 +1574,62 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             };
         }
 
-        // Order by cutoff urgency (dueNow first, then soonest cutoff), then by
-        // VTXO expiry, then by value — so the most at-risk funds make the cut
-        // when the per-settlement cap defers the rest to a later pass.
-        const ordered = [...migratable].sort((a, b) => {
-            const ck = migrationUrgencyKey(a) - migrationUrgencyKey(b);
+        // Rank ALL candidates (boarding + VTXO alike) by cutoff urgency (dueNow
+        // first, then soonest cutoff), then by value — so the most at-risk funds
+        // make the cut when the combined per-settlement cap defers the rest to a
+        // later pass. The cap here is deliberately stricter than plain settle
+        // (which leaves boarding uncapped on top of the VTXO cap): a migration
+        // pass can defer overflow to the next pass, so we prefer a predictable
+        // combined bound over maximizing a single intent.
+        const candidates: MigrationCandidate[] = [
+            ...vtxoMigratable.map((classified) => ({ kind: "vtxo" as const, classified })),
+            ...boardingMigratable.map((classified) => ({
+                kind: "boarding" as const,
+                classified,
+            })),
+        ];
+        candidates.sort((a, b) => {
+            const ck =
+                urgencyKey(candidateClassification(a)) - urgencyKey(candidateClassification(b));
             if (ck !== 0) return ck;
-            const ae = a.vtxo.virtualStatus.batchExpiry ?? Infinity;
-            const be = b.vtxo.virtualStatus.batchExpiry ?? Infinity;
-            if (ae !== be) return ae - be;
-            return b.vtxo.value - a.vtxo.value;
+            return candidateValue(b) - candidateValue(a);
         });
-        const capped =
-            ordered.length > MAX_VTXOS_PER_SETTLEMENT
-                ? ordered.slice(0, MAX_VTXOS_PER_SETTLEMENT)
-                : ordered;
+        const capped = candidates.slice(0, MAX_VTXOS_PER_SETTLEMENT);
+        const deferred = candidates.length - capped.length;
 
         // Price each input/output so the migration intent carries the operator's
-        // intent fees (mirrors runPeriodicSettle). Skip inputs whose fee exceeds
-        // their value.
+        // intent fees (mirrors plain settle). VTXOs use the offchain input fee;
+        // boarding UTXOs use the onchain input fee with the same `fee >= value`
+        // skip rule plain settle applies. Skip inputs whose fee exceeds value.
         const dustAmount = getDustAmount(this.wallet);
         const estimator = new Estimator(info.fees.intentFee);
-        const inputs: ExtendedContractVtxo[] = [];
+        const inputs: ExtendedCoin[] = [];
         const migratedRefs: MigrationVtxoRef[] = [];
         let totalAmount = 0n;
-        for (const c of capped) {
-            const v = c.vtxo;
-            const inputFee = estimator.evalOffchainInput({
-                amount: BigInt(v.value),
-                type: "vtxo",
-                weight: 0,
-                birth: v.createdAt,
-                expiry: v.virtualStatus.batchExpiry
-                    ? new Date(v.virtualStatus.batchExpiry)
-                    : undefined,
-            });
-            if (inputFee.satoshis >= v.value) continue;
-            inputs.push(v);
-            migratedRefs.push(classifiedToRef(c));
-            totalAmount += BigInt(v.value) - BigInt(inputFee.satoshis);
+        for (const cand of capped) {
+            if (cand.kind === "vtxo") {
+                const v = cand.classified.vtxo;
+                const inputFee = estimator.evalOffchainInput({
+                    amount: BigInt(v.value),
+                    type: "vtxo",
+                    weight: 0,
+                    birth: v.createdAt,
+                    expiry: v.virtualStatus.batchExpiry
+                        ? new Date(v.virtualStatus.batchExpiry)
+                        : undefined,
+                });
+                if (inputFee.satoshis >= v.value) continue;
+                inputs.push(v);
+                migratedRefs.push(classifiedToRef(cand.classified));
+                totalAmount += BigInt(v.value) - BigInt(inputFee.satoshis);
+            } else {
+                const coin = cand.classified.coin;
+                const inputFee = estimator.evalOnchainInput({ amount: BigInt(coin.value) });
+                if (inputFee.value >= coin.value) continue;
+                inputs.push(coin);
+                migratedRefs.push(classifiedBoardingToRef(cand.classified));
+                totalAmount += BigInt(coin.value) - BigInt(inputFee.satoshis);
+            }
         }
 
         if (inputs.length === 0) {
@@ -1542,6 +1673,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 migrated: migratedRefs,
                 expired: expiredRefs,
                 signers: reports,
+                ...(deferred > 0 ? { deferred } : {}),
             };
         } catch (e) {
             return {
@@ -1602,6 +1734,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                     secondsUntilCutoff: cls.secondsUntilCutoff,
                     vtxoCount: spendable.length,
                     totalValue: value,
+                    boardingCount: 0,
+                    boardingValue: 0,
                 });
             }
 
@@ -1611,6 +1745,105 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 for (const v of spendable) expired.push({ vtxo: v, classification: cls });
             }
             // unknownSigner: reported for visibility, never migrated.
+        }
+
+        return {
+            reports: Array.from(reportsBySigner.values()),
+            migratable,
+            expired,
+        };
+    }
+
+    /**
+     * Boarding sibling of {@link classifyDeprecatedSignerContracts} (Section 7):
+     * fan out over the wallet's boarding addresses (current + historical), group
+     * the on-chain UTXOs per address, classify each address's signer against the
+     * fresh axis, and split the confirmed boarding coins into cooperatively-
+     * migratable and cutoff-expired sets while building the per-signer report.
+     *
+     * Discovery sees the active signer plus EVERY deprecated key (EXPIRED
+     * included), so expired-signer boarding is still reported; migration
+     * eligibility is gated afterwards by {@link isCooperativelyMigratable} and a
+     * per-row boarding-output CSV check — never by the fetch. Current-signer
+     * coins are classified `CURRENT` and ignored; foreign-ASP rows are excluded
+     * because their keys are not in the axis.
+     */
+    private async classifyDeprecatedSignerBoarding(info: ArkInfo): Promise<{
+        reports: DeprecatedSignerReport[];
+        migratable: ClassifiedBoarding[];
+        expired: ClassifiedBoarding[];
+    }> {
+        const wallet = this.requireMigrationCapableWallet();
+        const axis = signerAxisFromInfo(info);
+        const nowSeconds = Math.floor(Date.now() / 1000);
+
+        // Allowed set = active signer + every deprecated key (EXPIRED included).
+        // Discovery MUST see expired-signer coins or they could never be
+        // reported; including `active` lets a single fetch cover both.
+        const allowed = new Set<string>([axis.active, ...axis.deprecated.keys()]);
+
+        const groups = await wallet.getBoardingUtxosForSigners(allowed);
+
+        // Boarding-output expiry is PER GROUP (each row persists its own CSV
+        // delay; a rotation may change the boarding exit delay). Fetch the chain
+        // tip once iff any group's timelock is block-typed.
+        let chainTipHeight: number | undefined;
+        if (groups.some((g) => g.csvTimelock.type === "blocks")) {
+            const tip = await wallet.onchainProvider.getChainTip();
+            chainTipHeight = tip.height;
+        }
+
+        const reportsBySigner = new Map<string, DeprecatedSignerReport>();
+        const migratable: ClassifiedBoarding[] = [];
+        const expired: ClassifiedBoarding[] = [];
+
+        for (const group of groups) {
+            const cls = classifyAgainstAxis(group.serverPubKey, axis, nowSeconds);
+            if (cls.status === "CURRENT") continue;
+
+            // Only confirmed boarding coins can settle.
+            const confirmed = group.coins.filter((c) => c.status.confirmed);
+            if (confirmed.length === 0) continue;
+
+            // Report row: count ALL confirmed coins under this signer, including
+            // CSV-expired ones (still holdings; they leave via the unilateral
+            // sweep, not cooperative migration).
+            const value = confirmed.reduce((sum, c) => sum + c.value, 0);
+            const existing = reportsBySigner.get(cls.signerPubKey);
+            if (existing) {
+                existing.boardingCount += confirmed.length;
+                existing.boardingValue += value;
+            } else {
+                reportsBySigner.set(cls.signerPubKey, {
+                    signerPubKey: cls.signerPubKey,
+                    status: cls.status,
+                    cutoffDate: cls.cutoffDate,
+                    secondsUntilCutoff: cls.secondsUntilCutoff,
+                    vtxoCount: 0,
+                    totalValue: 0,
+                    boardingCount: confirmed.length,
+                    boardingValue: value,
+                });
+            }
+
+            for (const coin of confirmed) {
+                // Both gates are independent and both must pass: the signer
+                // cutoff (via classification) AND the boarding-output CSV expiry
+                // judged against THIS row's delay.
+                const boardingExpired = hasBoardingTxExpired(
+                    coin,
+                    group.csvTimelock,
+                    chainTipHeight,
+                );
+                if (isCooperativelyMigratable(cls.status) && !boardingExpired) {
+                    migratable.push({ coin, classification: cls });
+                } else if (cls.status === "EXPIRED") {
+                    expired.push({ coin, classification: cls });
+                }
+                // MIGRATABLE/DUE_NOW but boarding-output CSV expired: reported,
+                // not migrated; it leaves via the unilateral sweep instead.
+                // unknownSigner: reported for visibility, never migrated.
+            }
         }
 
         return {

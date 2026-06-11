@@ -1,10 +1,58 @@
 import { describe, it, expect, vi } from "vitest";
 import { hex } from "@scure/base";
-import { VtxoManager, SettlementConfig } from "../src/wallet/vtxo-manager";
+import {
+    VtxoManager,
+    SettlementConfig,
+    MAX_VTXOS_PER_SETTLEMENT,
+} from "../src/wallet/vtxo-manager";
 import type { IWallet } from "../src/wallet";
+import type { ExtendedCoin } from "../src/wallet";
+import type { BoardingUtxoGroup } from "../src/wallet/wallet";
 import type { ArkInfo, DeprecatedSigner } from "../src/providers/ark";
 import type { Contract, ContractWithVtxos, ExtendedContractVtxo } from "../src/contracts/types";
+import type { RelativeTimelock } from "../src/script/tapscript";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
+
+// Mock chain tip height returned by the wallet's onchainProvider.
+const TIP_HEIGHT = 1_000_000;
+// Block-typed per-row boarding CSV delay (matches DefaultVtxo's default unit).
+const BOARDING_CSV_BLOCKS: RelativeTimelock = { type: "blocks", value: 144n };
+
+let boardingCounter = 0;
+function makeBoardingCoin(
+    value: number,
+    opts: { confirmed?: boolean; blockHeight?: number } = {},
+): ExtendedCoin {
+    // Default a freshly mined coin at the chain tip, so a block-typed CSV delay
+    // is NOT yet satisfied (tip - height = 0 < delay) — i.e. not CSV-expired.
+    const { confirmed = true, blockHeight = TIP_HEIGHT } = opts;
+    return {
+        txid: `boarding-${boardingCounter++}`,
+        vout: 0,
+        value,
+        status: confirmed
+            ? { confirmed: true, block_height: blockHeight, block_time: 1 }
+            : { confirmed: false },
+        forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
+        intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+        tapTree: new Uint8Array(),
+    } as unknown as ExtendedCoin;
+}
+
+function makeBoardingGroup(
+    serverPubKey: string,
+    coins: ExtendedCoin[],
+    csvTimelock: RelativeTimelock = BOARDING_CSV_BLOCKS,
+): BoardingUtxoGroup {
+    return {
+        // The tapscript object is not read by the classifier (it works off
+        // serverPubKey + csvTimelock), so a minimal stub suffices.
+        tapscript: {} as BoardingUtxoGroup["tapscript"],
+        serverPubKey,
+        csvTimelock,
+        coins,
+    };
+}
 
 const ACTIVE = "aa".repeat(32);
 const DEP_A = "bb".repeat(32);
@@ -18,11 +66,15 @@ const ARK_ADDRESS =
 
 const NOW_S = Math.floor(Date.now() / 1000);
 
-function makeInfo(signerPubkey: string, deprecatedSigners: DeprecatedSigner[] = []): ArkInfo {
+function makeInfo(
+    signerPubkey: string,
+    deprecatedSigners: DeprecatedSigner[] = [],
+    intentFee: Record<string, string> = {},
+): ArkInfo {
     return {
         signerPubkey,
         deprecatedSigners,
-        fees: { intentFee: {}, txFeeRate: "" },
+        fees: { intentFee, txFeeRate: "" },
     } as unknown as ArkInfo;
 }
 
@@ -69,6 +121,8 @@ interface MigrationMockOptions {
     contractsWithVtxos: ContractWithVtxos[];
     walletSigner?: string; // x-only hex of the wallet's own snapshot signer
     address?: string;
+    /** Boarding groups returned by `getBoardingUtxosForSigners` (Section 7). */
+    boardingGroups?: BoardingUtxoGroup[];
 }
 
 function createMigrationMockWallet(opts: MigrationMockOptions) {
@@ -78,6 +132,11 @@ function createMigrationMockWallet(opts: MigrationMockOptions) {
         arkServerPublicKey = next;
     });
     const getContractsWithVtxos = vi.fn().mockResolvedValue(opts.contractsWithVtxos);
+    // Filter the supplied boarding groups by the requested signer set, mirroring
+    // the real wallet's allowed-signer discovery.
+    const getBoardingUtxosForSigners = vi.fn(async (allowed: Set<string>) =>
+        (opts.boardingGroups ?? []).filter((g) => allowed.has(g.serverPubKey)),
+    );
     const getInfo = vi.fn().mockResolvedValue(opts.info);
 
     const wallet = {
@@ -96,9 +155,24 @@ function createMigrationMockWallet(opts: MigrationMockOptions) {
         getVtxos: vi.fn().mockResolvedValue([]),
         settle,
         dustAmount: 1000n,
+        // Boarding migration surface (Section 7). Defaults to no boarding
+        // groups; tests that exercise boarding override getBoardingUtxosForSigners.
+        getBoardingUtxosForSigners,
+        onchainProvider: {
+            getChainTip: vi
+                .fn()
+                .mockResolvedValue({ height: TIP_HEIGHT, time: 0, hash: "0".repeat(64) }),
+        },
     } as unknown as IWallet;
 
-    return { wallet, settle, rotateServerSigner, getContractsWithVtxos, getInfo };
+    return {
+        wallet,
+        settle,
+        rotateServerSigner,
+        getContractsWithVtxos,
+        getBoardingUtxosForSigners,
+        getInfo,
+    };
 }
 
 // Disable the background poll so migrateCore is exercised in isolation.
@@ -281,6 +355,204 @@ describe("VtxoManager - deprecated-signer migration", () => {
     });
 });
 
+// ── Section 7: deprecated-signer boarding UTXO recovery ──────────────────────
+
+describe("VtxoManager - deprecated-signer boarding migration (Section 7)", () => {
+    it("migrates a boarding-only deprecated-signer set via settle (no no-deprecated-vtxos skip)", async () => {
+        const { wallet, settle } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
+            contractsWithVtxos: [], // no offchain VTXOs at all
+            boardingGroups: [makeBoardingGroup(DEP_DUE, [makeBoardingCoin(5000)])],
+        });
+        const manager = newManager(wallet);
+
+        const report = await manager.migrateDeprecatedSignerVtxos();
+
+        expect(report.skipped).toBeUndefined();
+        expect(report.txid).toBe("migrate-txid");
+        expect(report.migrated).toHaveLength(1);
+        expect(report.migrated[0].signerPubKey).toBe(DEP_DUE);
+        expect(report.migrated[0].value).toBe(5000);
+        expect(settle).toHaveBeenCalledOnce();
+        expect(settle.mock.calls[0][0].inputs).toHaveLength(1);
+        expect(settle.mock.calls[0][0].outputs[0].address).toBe(ARK_ADDRESS);
+    });
+
+    it("combines old-signer boarding + old-signer VTXOs into one settle to the current address", async () => {
+        const { wallet, settle } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
+            contractsWithVtxos: [cwv(DEP_DUE, [makeVtxo("default-" + DEP_DUE, 4000)])],
+            boardingGroups: [makeBoardingGroup(DEP_DUE, [makeBoardingCoin(6000)])],
+        });
+        const manager = newManager(wallet);
+
+        const report = await manager.migrateDeprecatedSignerVtxos();
+
+        expect(report.migrated).toHaveLength(2);
+        expect(settle.mock.calls[0][0].inputs).toHaveLength(2);
+        expect(settle.mock.calls[0][0].outputs[0].address).toBe(ARK_ADDRESS);
+        const values = report.migrated.map((m) => m.value).sort((a, b) => a - b);
+        expect(values).toEqual([4000, 6000]);
+    });
+
+    it("reports EXPIRED-signer boarding without migrating it", async () => {
+        const { wallet, settle } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [
+                { pubkey: DEP_DUE },
+                { pubkey: DEP_EXPIRED, cutoffDate: BigInt(NOW_S - 100) },
+            ]),
+            contractsWithVtxos: [],
+            boardingGroups: [
+                makeBoardingGroup(DEP_DUE, [makeBoardingCoin(5000)]),
+                makeBoardingGroup(DEP_EXPIRED, [makeBoardingCoin(9000)]),
+            ],
+        });
+        const manager = newManager(wallet);
+
+        const report = await manager.migrateDeprecatedSignerVtxos();
+
+        expect(report.migrated.map((m) => m.signerPubKey)).toEqual([DEP_DUE]);
+        expect(report.expired.map((m) => m.signerPubKey)).toEqual([DEP_EXPIRED]);
+        expect(settle.mock.calls[0][0].inputs).toHaveLength(1);
+        // The expired-signer boarding is still counted in its report row.
+        const expiredRow = report.signers.find((s) => s.signerPubKey === DEP_EXPIRED);
+        expect(expiredRow?.boardingCount).toBe(1);
+        expect(expiredRow?.boardingValue).toBe(9000);
+    });
+
+    it("judges boarding-output CSV expiry against each row's own delay, not a global one", async () => {
+        const { wallet } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 10_000) }]),
+            contractsWithVtxos: [],
+            boardingGroups: [
+                // Same MIGRATABLE signer, two addresses with DIFFERENT per-row CSV
+                // delays. Both coins sit 100 blocks below the tip:
+                //  - 50-block delay  → 100 >= 50  → CSV-expired → NOT migratable
+                //  - 200-block delay → 100 >= 200 → not expired → migratable
+                makeBoardingGroup(
+                    DEP_A,
+                    [makeBoardingCoin(3000, { blockHeight: TIP_HEIGHT - 100 })],
+                    {
+                        type: "blocks",
+                        value: 50n,
+                    },
+                ),
+                makeBoardingGroup(
+                    DEP_A,
+                    [makeBoardingCoin(4000, { blockHeight: TIP_HEIGHT - 100 })],
+                    {
+                        type: "blocks",
+                        value: 200n,
+                    },
+                ),
+            ],
+        });
+        const manager = newManager(wallet);
+
+        const report = await manager.migrateDeprecatedSignerVtxos();
+
+        // Only the coin under the longer (200-block) delay is migratable.
+        expect(report.migrated.map((m) => m.value)).toEqual([4000]);
+        // But BOTH confirmed coins are counted in the signer's report row,
+        // including the CSV-expired one (it leaves via the unilateral sweep).
+        const row = report.signers.find((s) => s.signerPubKey === DEP_A);
+        expect(row?.boardingCount).toBe(2);
+        expect(row?.boardingValue).toBe(7000);
+    });
+
+    it("excludes unconfirmed boarding coins from migration and reporting", async () => {
+        const { wallet, settle } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
+            contractsWithVtxos: [],
+            boardingGroups: [
+                makeBoardingGroup(DEP_DUE, [makeBoardingCoin(5000, { confirmed: false })]),
+            ],
+        });
+        const manager = newManager(wallet);
+
+        const report = await manager.migrateDeprecatedSignerVtxos();
+
+        expect(report.migrated).toHaveLength(0);
+        // No confirmed coins → no report row → both migratable sets empty.
+        expect(report.skipped).toBe("no-deprecated-vtxos");
+        expect(report.signers).toHaveLength(0);
+        expect(settle).not.toHaveBeenCalled();
+    });
+
+    it("drops uneconomic boarding coins whose input fee exceeds their value", async () => {
+        const { wallet, settle } = createMigrationMockWallet({
+            // Flat 2000-sat onchain input fee.
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }], { onchainInput: "2000.0" }),
+            contractsWithVtxos: [],
+            boardingGroups: [
+                makeBoardingGroup(DEP_DUE, [makeBoardingCoin(1500), makeBoardingCoin(5000)]),
+            ],
+        });
+        const manager = newManager(wallet);
+
+        const report = await manager.migrateDeprecatedSignerVtxos();
+
+        // 1500-sat coin: fee 2000 >= 1500 → dropped; 5000-sat coin kept.
+        expect(report.migrated.map((m) => m.value)).toEqual([5000]);
+        expect(settle.mock.calls[0][0].inputs).toHaveLength(1);
+    });
+
+    it("defers overflow beyond the combined cap by cutoff urgency", async () => {
+        const dueCoins = Array.from({ length: MAX_VTXOS_PER_SETTLEMENT }, () =>
+            makeBoardingCoin(5000),
+        );
+        const { wallet } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [
+                { pubkey: DEP_DUE }, // dueNow → most urgent
+                { pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 10_000) }, // less urgent
+            ]),
+            contractsWithVtxos: [],
+            boardingGroups: [
+                makeBoardingGroup(DEP_DUE, dueCoins),
+                makeBoardingGroup(DEP_A, [makeBoardingCoin(5000)]),
+            ],
+        });
+        const manager = newManager(wallet);
+
+        const report = await manager.migrateDeprecatedSignerVtxos();
+
+        // 51 candidates, cap 50: the least-urgent DEP_A coin is deferred.
+        expect(report.migrated).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+        expect(report.deferred).toBe(1);
+        expect(report.migrated.every((m) => m.signerPubKey === DEP_DUE)).toBe(true);
+    });
+
+    it("getDeprecatedSignerStatus reports boarding-only signers and aggregates across addresses", async () => {
+        const { wallet, settle } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [
+                { pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 3600) },
+                { pubkey: DEP_EXPIRED, cutoffDate: BigInt(NOW_S - 5) },
+            ]),
+            contractsWithVtxos: [], // no VTXOs — boarding-only holdings
+            boardingGroups: [
+                // DEP_A spread across two boarding addresses → aggregate.
+                makeBoardingGroup(DEP_A, [makeBoardingCoin(4000)]),
+                makeBoardingGroup(DEP_A, [makeBoardingCoin(1000)]),
+                makeBoardingGroup(DEP_EXPIRED, [makeBoardingCoin(9000)]),
+            ],
+        });
+        const manager = newManager(wallet);
+
+        const signers = await manager.getDeprecatedSignerStatus();
+
+        expect(settle).not.toHaveBeenCalled();
+        const byKey = new Map(signers.map((s) => [s.signerPubKey, s]));
+        expect(byKey.get(DEP_A)?.status).toBe("MIGRATABLE");
+        expect(byKey.get(DEP_A)?.vtxoCount).toBe(0);
+        expect(byKey.get(DEP_A)?.boardingCount).toBe(2);
+        expect(byKey.get(DEP_A)?.boardingValue).toBe(5000);
+        // An EXPIRED-only signer with boarding holdings still produces a row.
+        expect(byKey.get(DEP_EXPIRED)?.status).toBe("EXPIRED");
+        expect(byKey.get(DEP_EXPIRED)?.boardingCount).toBe(1);
+        expect(byKey.get(DEP_EXPIRED)?.boardingValue).toBe(9000);
+    });
+});
+
 // ── Section 5: automatic migration opt-out in the poll loop ──────────────────
 
 // Seconds-based CSV exit script so getBoardingTimelock resolves without a
@@ -316,6 +588,7 @@ function createPollableWallet() {
         settle: vi.fn().mockResolvedValue("txid"),
         dustAmount: 1000n,
         getBoardingUtxos: vi.fn().mockResolvedValue([]),
+        getBoardingUtxosForSigners: vi.fn().mockResolvedValue([]),
         getBoardingAddress: vi.fn().mockResolvedValue("bcrt1qtest"),
         boardingTapscript: {
             exitScript: boardingExitScript,

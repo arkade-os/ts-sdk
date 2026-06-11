@@ -525,6 +525,8 @@ export type WireDeprecatedSignerReport = {
     secondsUntilCutoff?: number;
     vtxoCount: number;
     totalValue: number;
+    boardingCount: number;
+    boardingValue: number;
 };
 export type WireDeprecatedSignerMigrationReport = {
     rotated: boolean;
@@ -533,6 +535,7 @@ export type WireDeprecatedSignerMigrationReport = {
     expired: WireMigrationVtxoRef[];
     skipped?: MigrationSkipReason;
     signers: WireDeprecatedSignerReport[];
+    deferred?: number;
     error?: string;
 };
 
@@ -559,6 +562,8 @@ export const serializeDeprecatedSignerReport = (
     secondsUntilCutoff: report.secondsUntilCutoff,
     vtxoCount: report.vtxoCount,
     totalValue: report.totalValue,
+    boardingCount: report.boardingCount,
+    boardingValue: report.boardingValue,
 });
 export const deserializeDeprecatedSignerReport = (
     report: WireDeprecatedSignerReport,
@@ -569,6 +574,8 @@ export const deserializeDeprecatedSignerReport = (
     secondsUntilCutoff: report.secondsUntilCutoff,
     vtxoCount: report.vtxoCount,
     totalValue: report.totalValue,
+    boardingCount: report.boardingCount,
+    boardingValue: report.boardingValue,
 });
 export const serializeMigrationReport = (
     report: DeprecatedSignerMigrationReport,
@@ -579,6 +586,7 @@ export const serializeMigrationReport = (
     expired: report.expired.map(serializeMigrationVtxoRef),
     skipped: report.skipped,
     signers: report.signers.map(serializeDeprecatedSignerReport),
+    deferred: report.deferred,
     error: report.error,
 });
 export const deserializeMigrationReport = (
@@ -590,6 +598,7 @@ export const deserializeMigrationReport = (
     expired: report.expired.map(deserializeMigrationVtxoRef),
     skipped: report.skipped,
     signers: report.signers.map(deserializeDeprecatedSignerReport),
+    deferred: report.deferred,
     error: report.error,
 });
 

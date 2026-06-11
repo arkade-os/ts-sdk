@@ -5,6 +5,7 @@ import {
     SingleKey,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    toXOnlySignerHex,
 } from "../src";
 
 /**
@@ -348,6 +349,80 @@ describe("Wallet boarding rotation", () => {
             );
 
             warn.mockRestore();
+            await wallet.dispose();
+        });
+    });
+
+    // Grouped boarding discovery for the deprecated-signer migration (Section 7).
+    describe("getBoardingUtxosForSigners (Section 7)", () => {
+        it("returns a group for a deprecated-signer boarding row with its own serverPubKey and csvTimelock", async () => {
+            const contractRepo = new InMemoryContractRepository();
+            const wallet = await makeHdWallet(new InMemoryWalletRepository(), contractRepo);
+
+            const currentSigner = toXOnlySignerHex(
+                hexEncode(wallet.boardingTapscript.options.serverPubKey),
+            );
+            const depSigner = toXOnlySignerHex(FOREIGN_SERVER_PUBKEY_HEX);
+            expect(depSigner).not.toBe(currentSigner);
+
+            // An old-signer boarding row with a DIFFERENT per-row CSV delay (288
+            // blocks) than the wallet's current boarding tapscript (144).
+            await contractRepo.saveContract({
+                type: "boarding",
+                params: {
+                    pubKey: SINGLEKEY_HEX,
+                    serverPubKey: FOREIGN_SERVER_PUBKEY_HEX,
+                    csvTimelock: "288",
+                },
+                script: "cd".repeat(32),
+                address: "tb1pdep-unused",
+                state: "active",
+                createdAt: 1,
+            });
+
+            const groups = await wallet.getBoardingUtxosForSigners(
+                new Set([currentSigner, depSigner]),
+            );
+
+            const depGroup = groups.find((g) => g.serverPubKey === depSigner);
+            expect(depGroup).toBeDefined();
+            // CSV decoded from THIS row's exit leaf — the per-row delay, not the
+            // wallet's current 144.
+            expect(depGroup!.csvTimelock).toEqual({ type: "blocks", value: 288n });
+
+            await wallet.dispose();
+        });
+
+        it("excludes a deprecated-signer row when its key is not in the allowed set (current-only)", async () => {
+            const contractRepo = new InMemoryContractRepository();
+            const wallet = await makeHdWallet(new InMemoryWalletRepository(), contractRepo);
+
+            const currentSigner = toXOnlySignerHex(
+                hexEncode(wallet.boardingTapscript.options.serverPubKey),
+            );
+            const depSigner = toXOnlySignerHex(FOREIGN_SERVER_PUBKEY_HEX);
+
+            await contractRepo.saveContract({
+                type: "boarding",
+                params: {
+                    pubKey: SINGLEKEY_HEX,
+                    serverPubKey: FOREIGN_SERVER_PUBKEY_HEX,
+                    csvTimelock: "288",
+                },
+                script: "cd".repeat(32),
+                address: "tb1pdep-unused",
+                state: "active",
+                createdAt: 1,
+            });
+
+            // Current-signer-only set: the deprecated row must NOT surface.
+            const currentOnly = await wallet.getBoardingUtxosForSigners(new Set([currentSigner]));
+            expect(currentOnly.some((g) => g.serverPubKey === depSigner)).toBe(false);
+
+            // getBoardingUtxos() is the current-signer-only flatten and likewise
+            // never touches the deprecated address (empty onchain stub → []).
+            expect(await wallet.getBoardingUtxos()).toEqual([]);
+
             await wallet.dispose();
         });
     });
