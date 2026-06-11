@@ -4,6 +4,7 @@ import { isFetchTimeoutError } from "./ark";
 import { eventSourceIterator, isEventSourceError } from "./utils";
 import { MetadataList } from "../extension/asset";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
+import { fetch } from "../utils/fetch";
 
 export type PaginationOptions = {
     pageIndex?: number;

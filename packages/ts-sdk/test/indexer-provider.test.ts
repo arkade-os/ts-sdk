@@ -2,8 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RestIndexerProvider } from "../src";
 import { MockEventSource } from "./mocks/eventSource";
 
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
+const { mockFetch } = vi.hoisted(() => ({
+    mockFetch: vi.fn(),
+}));
+
+vi.mock("../src/utils/fetch", () => ({
+    fetch: mockFetch,
+}));
 
 describe("RestIndexerProvider", () => {
     beforeEach(() => {

@@ -1,5 +1,6 @@
 import { Intent } from "../intent";
 import { SignedIntent } from "./ark";
+import { fetch } from "../utils/fetch";
 
 /**
  * Delegate identity and fee information returned by `getDelegateInfo`.
