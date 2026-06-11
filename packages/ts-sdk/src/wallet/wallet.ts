@@ -2122,10 +2122,21 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
         }
 
+        // Resolve the wallet's receive address once and reuse it for every read
+        // below. `WalletReceiveRotator.rotate` mutates `this.offchainTapscript`
+        // without acquiring `_txLock`, so re-calling `getAddress()` later could
+        // observe a rotated script — building the output from one and matching
+        // `findDestinationOutputIndex` against the other, which fails with a
+        // spurious "no output matches". A single read pins the no-params output
+        // below and the asset-routing destination script later to one address.
+        const offchainAddress = await this.getAddress();
+        const offchainPkScript = ArkAddress.decode(offchainAddress).pkScript;
+        const offchainOutputScript = hex.encode(offchainPkScript);
+
         // if no params are provided, use all non-expired boarding inputs and offchain virtual outputs as inputs
         // and send all to the offchain address
         if (!params) {
-            const { fees } = await this.arkProvider.getInfo();
+            const { fees, vtxoMaxAmount } = await this.arkProvider.getInfo();
             const estimator = new Estimator(fees.intentFee);
 
             let amount = 0;
@@ -2166,12 +2177,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             const vtxos = await this.getVtxos({ withRecoverable: true });
 
             // Cap the VTXOs per settlement to stay under the server's
-            // intent-size limit (see MAX_VTXOS_PER_SETTLEMENT). Settle the
+            // intent-size limit (MAX_VTXOS_PER_SETTLEMENT inputs) and its
+            // per-output ceiling (vtxoMaxAmount; -1 means no limit). Settle the
             // highest-value VTXOs first so the capped batch carries the most
             // value. Apply the cap to economically viable VTXOs only: skipping
             // uneconomic inputs and continuing past the cap avoids an uneconomic
             // prefix permanently starving valid VTXOs behind it. The boarding
-            // inputs above are added uncapped; the headroom absorbs them. Any
+            // inputs above are added uncapped; the amount cap accounts for them
+            // via the running total (if boarding alone exceeds vtxoMaxAmount no
+            // VTXO fits and the server rejects the over-limit output). Any
             // overflow is settled on the next call.
             const filteredVtxos = [];
             for (const vtxo of byValueDescending(vtxos)) {
@@ -2192,8 +2206,26 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     continue;
                 }
 
+                const net = vtxo.value - inputFee.satoshis;
+                // Skip (don't stop at) a VTXO that would push the output past
+                // the ceiling; a smaller VTXO behind it can still fit. Compare
+                // against the projected post-fee output (what the server
+                // actually receives) rather than the pre-fee subtotal, so a
+                // VTXO whose output would fit once the output fee is deducted
+                // isn't dropped.
+                if (vtxoMaxAmount >= 0n) {
+                    const projectedAmount = BigInt(amount + net);
+                    const projectedOutputFee = estimator.evalOffchainOutput({
+                        amount: projectedAmount,
+                        script: offchainOutputScript,
+                    });
+                    if (projectedAmount - BigInt(projectedOutputFee.satoshis) > vtxoMaxAmount) {
+                        continue;
+                    }
+                }
+
                 filteredVtxos.push(vtxo);
-                amount += vtxo.value - inputFee.satoshis;
+                amount += net;
             }
 
             const inputs = [...filteredBoardingUtxos, ...filteredVtxos];
@@ -2202,13 +2234,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
 
             const output = {
-                address: await this.getAddress(),
+                address: offchainAddress,
                 amount: BigInt(amount),
             };
 
             const outputFee = estimator.evalOffchainOutput({
                 amount: output.amount,
-                script: hex.encode(ArkAddress.decode(output.address).pkScript),
+                script: offchainOutputScript,
             });
 
             output.amount -= BigInt(outputFee.satoshis);
@@ -2262,8 +2294,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         let outputAssets: Asset[] | undefined;
 
-        const destinationScript = ArkAddress.decode(await this.getAddress()).pkScript;
-        const assetOutputIndex = findDestinationOutputIndex(outputs, destinationScript);
+        const assetOutputIndex = findDestinationOutputIndex(outputs, offchainPkScript);
 
         if (assetInputs.size > 0) {
             if (assetOutputIndex === -1) {

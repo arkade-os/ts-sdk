@@ -1953,6 +1953,95 @@ describe("Wallet._settleImpl", () => {
             expect(captured).toHaveLength(3);
             expect(captured.every((v: any) => v.value === 10_000)).toBe(true);
         });
+
+        it("caps the auto-selected total at the server's vtxoMaxAmount", async () => {
+            const value = 5_000;
+            const vtxos = Array.from({ length: 10 }, (_, i) => makeVtxo(value, i));
+            const { thisArg, sentinel, getCaptured } = buildThisArg(vtxos, {});
+            // No intent fees, so net == value; the 12000 ceiling fits only 2.
+            thisArg.arkProvider.getInfo.mockResolvedValue({
+                fees: { intentFee: {} },
+                vtxoMaxAmount: 12000n,
+            });
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            expect(getCaptured()).toHaveLength(2);
+        });
+
+        it("does not cap the auto-selected total when vtxoMaxAmount is -1", async () => {
+            const value = 5_000;
+            const vtxos = Array.from({ length: 10 }, (_, i) => makeVtxo(value, i));
+            const { thisArg, sentinel, getCaptured } = buildThisArg(vtxos, {});
+            thisArg.arkProvider.getInfo.mockResolvedValue({
+                fees: { intentFee: {} },
+                vtxoMaxAmount: -1n,
+            });
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            expect(getCaptured()).toHaveLength(10);
+        });
+
+        it("skips an oversized VTXO and selects a smaller one within vtxoMaxAmount", async () => {
+            // byValueDescending tries 12000 first (> 10000 ceiling, skipped),
+            // then 5000 fits. A break here would settle nothing.
+            const vtxos = [makeVtxo(12_000, 0), makeVtxo(5_000, 1)];
+            const { thisArg, sentinel, getCaptured } = buildThisArg(vtxos, {});
+            thisArg.arkProvider.getInfo.mockResolvedValue({
+                fees: { intentFee: {} },
+                vtxoMaxAmount: 10_000n,
+            });
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            const captured = getCaptured()!;
+            expect(captured).toHaveLength(1);
+            expect(captured[0].value).toBe(5_000);
+        });
+
+        it("compares vtxoMaxAmount against the projected post-fee output", async () => {
+            // Pre-fee subtotal (10_500) exceeds the 10_000 ceiling, but the
+            // flat 1000-sat output fee brings the registered output down to
+            // 9_500, which fits. The VTXO must be selected, not dropped.
+            const vtxos = [makeVtxo(10_500, 0)];
+            const { thisArg, sentinel, getCaptured } = buildThisArg(vtxos, {
+                offchainOutput: "1000.0",
+            });
+            thisArg.arkProvider.getInfo.mockResolvedValue({
+                fees: { intentFee: { offchainOutput: "1000.0" } },
+                vtxoMaxAmount: 10_000n,
+            });
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            const captured = getCaptured()!;
+            expect(captured).toHaveLength(1);
+            expect(captured[0].value).toBe(10_500);
+        });
+
+        it("reads the receive address once so a mid-settle rotation can't desync the output script", async () => {
+            // The output and the asset-routing destination script must come
+            // from one address read; re-reading could observe a
+            // WalletReceiveRotator.rotate() swap (it mutates offchainTapscript
+            // without _txLock) and make findDestinationOutputIndex miss.
+            const vtxos = [makeVtxo(5_000, 0)];
+            const { thisArg, sentinel } = buildThisArg(vtxos, {});
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            expect(thisArg.getAddress).toHaveBeenCalledTimes(1);
+        });
     });
 });
 
