@@ -1040,6 +1040,37 @@ describe("ArkadeSwaps", () => {
                 // assert
                 expect(result.preimage).toBe(mock.preimage);
             });
+
+            it("should reject instead of hanging when the preimage fetch fails on claim", async () => {
+                // arrange
+                vi.spyOn(swapProvider, "getSwapPreimage").mockRejectedValueOnce(new Error("boom"));
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
+                    async (_swapId, update) => {
+                        setTimeout(() => update("transaction.claimed"), 5);
+                    },
+                );
+
+                // act & assert
+                await expect(swaps.waitForSwapSettlement(mockSubmarineSwap)).rejects.toThrow(
+                    "boom",
+                );
+            });
+
+            it("should still reject with the swap error when persisting the failure fails", async () => {
+                // arrange: the repository write throws — the domain error must
+                // win over the persistence error and the promise must complete
+                mockSwapRepository.saveSwap.mockRejectedValueOnce(new Error("storage down"));
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
+                    async (_swapId, update) => {
+                        setTimeout(() => update("swap.expired"), 5);
+                    },
+                );
+
+                // act & assert
+                await expect(swaps.waitForSwapSettlement(mockSubmarineSwap)).rejects.toThrow(
+                    "The swap has expired",
+                );
+            });
         });
 
         describe("waitForSwapFunded", () => {

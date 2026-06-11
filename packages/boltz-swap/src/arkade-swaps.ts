@@ -1497,13 +1497,23 @@ export class ArkadeSwaps {
             const onStatusUpdate = async (status: BoltzSwapStatus) => {
                 if (isFinal) return;
 
-                const saveStatus = (additionalFields?: Partial<BoltzSubmarineSwap>) =>
-                    updateSubmarineSwapStatus(
-                        pendingSwap,
-                        status,
-                        this.savePendingSubmarineSwap.bind(this),
-                        additionalFields,
-                    );
+                // Persistence must never leave the outer promise pending: a
+                // failed write is logged and the repository self-heals on the
+                // next status update or refreshSwapsStatus.
+                const saveStatus = async (additionalFields?: Partial<BoltzSubmarineSwap>) => {
+                    try {
+                        await updateSubmarineSwapStatus(
+                            pendingSwap,
+                            status,
+                            this.savePendingSubmarineSwap.bind(this),
+                            additionalFields,
+                        );
+                    } catch (error) {
+                        logger.error(
+                            `Swap ${pendingSwap.id}: failed to persist status "${status}": ${error}`,
+                        );
+                    }
+                };
 
                 // After an optimistic resolution, reject/resolve below are
                 // no-ops on the already-settled promise; only persistence
@@ -1543,13 +1553,24 @@ export class ArkadeSwaps {
                         );
                         break;
                     case "transaction.claimed": {
+                        // Flags are set before the awaits so a status arriving
+                        // mid-await isn't double-processed; the try/catch
+                        // guarantees the promise still completes if the
+                        // preimage fetch fails.
                         isFinal = true;
                         isSettled = true;
-                        const { preimage } = await this.swapProvider.getSwapPreimage(
-                            pendingSwap.id,
-                        );
-                        await saveStatus({ preimage });
-                        resolve({ preimage });
+                        try {
+                            const { preimage } = await this.swapProvider.getSwapPreimage(
+                                pendingSwap.id,
+                            );
+                            await saveStatus({ preimage });
+                            resolve({ preimage });
+                        } catch (error) {
+                            logger.error(
+                                `Swap ${pendingSwap.id}: failed to fetch preimage on claim: ${error}`,
+                            );
+                            reject(error);
+                        }
                         break;
                     }
                     default:

@@ -71,8 +71,9 @@ const result = await swaps.sendLightningPayment({
   waitFor: 'funded',
 });
 // Resolves as soon as the lockup transaction is observed: the funds are
-// committed and the swap is refundable from here. result.preimage is
-// undefined since the swap hasn't settled yet. Monitoring continues in the
+// committed and the swap is refundable from here. result.preimage is not
+// reported on this path — the proof of payment is persisted to the stored
+// swap once it settles. Monitoring continues in the
 // background and keeps the stored swap up to date until a terminal status,
 // but a late failure no longer rejects — keep the SwapManager enabled so
 // auto-refunds are handled for you. With the SwapManager disabled, a late
