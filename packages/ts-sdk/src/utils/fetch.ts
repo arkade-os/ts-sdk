@@ -1,4 +1,4 @@
-const digest = "83e847f06e157c8da464824a556098452323158cc34f65d40a72ffd8ff1b90e3";
+const version = "0.9.7";
 
 export function fetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
     if (typeof globalThis.fetch !== "function") {
@@ -7,7 +7,7 @@ export function fetch(input: RequestInfo, init?: RequestInit): Promise<Response>
     if (init) {
         init.headers = {
             ...init.headers,
-            "X-Server-Digest": digest,
+            "X-Build-Version": version,
         };
     }
     return globalThis.fetch(input, init);
