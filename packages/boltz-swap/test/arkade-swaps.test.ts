@@ -1161,6 +1161,92 @@ describe("ArkadeSwaps", () => {
             });
         });
 
+        describe("refreshSwapsStatus", () => {
+            it("should fetch and persist the preimage when a pending submarine swap has settled", async () => {
+                // arrange: a swap left pending (e.g. after a "funded" optimistic
+                // send and an app restart) that has settled on Boltz since
+                const pendingSwap: BoltzSubmarineSwap = {
+                    ...mockSubmarineSwap,
+                    status: "invoice.pending",
+                };
+                mockSwapRepository.getAllSwaps.mockImplementation(async (filter: any) =>
+                    filter?.type === "submarine" ? [pendingSwap] : [],
+                );
+                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                    status: "transaction.claimed",
+                });
+                const getPreimageSpy = vi
+                    .spyOn(swapProvider, "getSwapPreimage")
+                    .mockResolvedValueOnce({ preimage: mock.preimage });
+
+                // act
+                await swaps.refreshSwapsStatus();
+
+                // assert
+                expect(getPreimageSpy).toHaveBeenCalledWith(pendingSwap.id);
+                expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        id: pendingSwap.id,
+                        status: "transaction.claimed",
+                        preimage: mock.preimage,
+                    }),
+                );
+            });
+
+            it("should still persist the settled status when the preimage fetch fails", async () => {
+                // arrange
+                const pendingSwap: BoltzSubmarineSwap = {
+                    ...mockSubmarineSwap,
+                    status: "invoice.pending",
+                };
+                mockSwapRepository.getAllSwaps.mockImplementation(async (filter: any) =>
+                    filter?.type === "submarine" ? [pendingSwap] : [],
+                );
+                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                    status: "transaction.claimed",
+                });
+                vi.spyOn(swapProvider, "getSwapPreimage").mockRejectedValueOnce(new Error("boom"));
+
+                // act
+                await swaps.refreshSwapsStatus();
+
+                // assert
+                expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        id: pendingSwap.id,
+                        status: "transaction.claimed",
+                    }),
+                );
+            });
+
+            it("should not fetch the preimage for swaps that have not settled", async () => {
+                // arrange
+                const pendingSwap: BoltzSubmarineSwap = {
+                    ...mockSubmarineSwap,
+                    status: "invoice.set",
+                };
+                mockSwapRepository.getAllSwaps.mockImplementation(async (filter: any) =>
+                    filter?.type === "submarine" ? [pendingSwap] : [],
+                );
+                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                    status: "invoice.pending",
+                });
+                const getPreimageSpy = vi.spyOn(swapProvider, "getSwapPreimage");
+
+                // act
+                await swaps.refreshSwapsStatus();
+
+                // assert
+                expect(getPreimageSpy).not.toHaveBeenCalled();
+                expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        id: pendingSwap.id,
+                        status: "invoice.pending",
+                    }),
+                );
+            });
+        });
+
         describe("Decoding lightning invoices", () => {
             it("should decode a lightning invoice", async () => {
                 // act

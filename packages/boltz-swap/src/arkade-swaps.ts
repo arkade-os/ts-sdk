@@ -2841,13 +2841,33 @@ export class ArkadeSwaps {
             if (isSubmarineFinalStatus(swap.status)) continue;
             promises.push(
                 this.getSwapStatus(swap.id)
-                    .then(({ status }) =>
-                        updateSubmarineSwapStatus(
+                    .then(async ({ status }) => {
+                        // A swap that settled while no monitor was attached
+                        // (e.g. a "funded" optimistic send followed by an app
+                        // restart) has no stored preimage yet — fetch it so
+                        // the repository carries the proof of payment. Never
+                        // fail the status update over a missing preimage.
+                        let additionalFields: Partial<BoltzSubmarineSwap> | undefined;
+                        if (isSubmarineSuccessStatus(status) && !swap.preimage) {
+                            try {
+                                const { preimage } = await this.swapProvider.getSwapPreimage(
+                                    swap.id,
+                                );
+                                additionalFields = { preimage };
+                            } catch (error) {
+                                logger.warn(
+                                    `Failed to fetch preimage for settled swap ${swap.id}:`,
+                                    error,
+                                );
+                            }
+                        }
+                        await updateSubmarineSwapStatus(
                             swap,
                             status,
                             this.savePendingSubmarineSwap.bind(this),
-                        ),
-                    )
+                            additionalFields,
+                        );
+                    })
                     .catch((error) => {
                         logger.error(`Failed to refresh swap status for ${swap.id}:`, error);
                     }),

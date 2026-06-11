@@ -81,6 +81,12 @@ const result = await swaps.sendLightningPayment({
 The same milestone is exposed for a swap you already hold as
 `waitForSwapFunded(pendingSwap)`, alongside `waitForSwapSettlement(pendingSwap)`.
 
+If the app restarts before the swap settles, the in-process monitoring is gone — call
+`refreshSwapsStatus()` on startup to reconcile: it polls every pending swap and persists
+the latest status, including the preimage for swaps that settled while the app was
+closed. Read the swap back from the repository (e.g. `getSwapHistory()`) to flip a
+pending UI row to "completed".
+
 ### ARK to BTC
 
 ```typescript
