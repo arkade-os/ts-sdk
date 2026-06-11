@@ -337,9 +337,18 @@ function toXOnly(pubkeyHex: string): string {
 }
 
 /**
+ * A deprecated signer to advertise: a bare private-key hex (no cutoff), or a
+ * `{ priv, cutoffDate }` pair. `cutoffDate` is a Unix timestamp in **seconds**;
+ * arkd accepts it appended to the key as `<hexkey>:<unix-seconds>` in
+ * `ARKD_WALLET_DEPRECATED_SIGNER_KEYS` (cutoff `0`/absent = no cutoff → DUE_NOW).
+ */
+export type DeprecatedSignerSpec = string | { priv: string; cutoffDate?: number };
+
+/**
  * Perform a real server-signer rotation: recreate `arkd-wallet` with the given
- * active signer (and optional deprecated signers), then restart `arkd` so it
- * re-reads the signer set. Resolves once `/v1/info` reflects the rotation.
+ * active signer (and optional deprecated signers, each with an optional cutoff
+ * date), then restart `arkd` so it re-reads the signer set. Resolves once
+ * `/v1/info` reflects the rotation.
  *
  * Keys are **private** keys (hex), matching the `ARKD_WALLET_SIGNER_KEY` /
  * `ARKD_WALLET_DEPRECATED_SIGNER_KEYS` fixture env. The fixture must hold the
@@ -348,10 +357,13 @@ function toXOnly(pubkeyHex: string): string {
  */
 export async function rotateArkdSigner(params: {
     activeSignerPriv: string;
-    deprecatedSignerPrivs?: string[];
+    deprecatedSigners?: DeprecatedSignerSpec[];
     arkUrl?: string;
 }): Promise<ServerSignerInfo> {
-    const { activeSignerPriv, deprecatedSignerPrivs = [], arkUrl = ARK_URL } = params;
+    const { activeSignerPriv, arkUrl = ARK_URL } = params;
+    const deprecated = (params.deprecatedSigners ?? []).map((d) =>
+        typeof d === "string" ? { priv: d, cutoffDate: undefined as number | undefined } : d,
+    );
 
     // Build the recreate subprocess env exactly as `regtest.mjs` would: defaults
     // + the package `.env.regtest`, so `ARKD_WALLET_IMAGE` resolves to the
@@ -362,10 +374,13 @@ export async function rotateArkdSigner(params: {
     const { loadEnv } = await import("../../regtest/lib/env.mjs");
     loadEnv("regtest", ".env.regtest");
 
+    // arkd parses each entry as `<hexkey>[:<unix-seconds cutoff>]`.
     const env = {
         ...process.env,
         ARKD_WALLET_SIGNER_KEY: activeSignerPriv,
-        ARKD_WALLET_DEPRECATED_SIGNER_KEYS: deprecatedSignerPrivs.join(","),
+        ARKD_WALLET_DEPRECATED_SIGNER_KEYS: deprecated
+            .map((d) => (d.cutoffDate != null ? `${d.priv}:${d.cutoffDate}` : d.priv))
+            .join(","),
     };
 
     // Recreate ONLY arkd-wallet, reusing the named `ark_wallet_datadir` volume
@@ -405,8 +420,8 @@ export async function rotateArkdSigner(params: {
         hex.encode(await SingleKey.fromHex(activeSignerPriv).xOnlyPublicKey()),
     );
     const expectedDeprecated = await Promise.all(
-        deprecatedSignerPrivs.map(async (p) =>
-            toXOnly(hex.encode(await SingleKey.fromHex(p).xOnlyPublicKey())),
+        deprecated.map(async (d) =>
+            toXOnly(hex.encode(await SingleKey.fromHex(d.priv).xOnlyPublicKey())),
         ),
     );
 
