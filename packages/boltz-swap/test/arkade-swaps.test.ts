@@ -32,6 +32,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import { decodeInvoice } from "../src/utils/decoding";
+import { logger } from "../src/logger";
 import { pubECDSA } from "@scure/btc-signer/utils.js";
 import {
     claimVHTLCwithOffchainTx,
@@ -995,6 +996,27 @@ describe("ArkadeSwaps", () => {
                 expect(result.amount).toBe(mock.invoice.amount);
                 expect(result.preimage).toBeUndefined();
                 expect(result.txid).toBe(mock.txid);
+            });
+
+            it("should warn on waitFor funded when the SwapManager is disabled", async () => {
+                // arrange: `swaps` is constructed with swapManager: false, so a
+                // failure after the optimistic resolution would not be auto-refunded
+                const pendingSwap = mockSubmarineSwap;
+                vi.spyOn(wallet, "send").mockResolvedValueOnce(mock.txid);
+                vi.spyOn(swaps, "createSubmarineSwap").mockResolvedValueOnce(pendingSwap);
+                vi.spyOn(swaps, "waitForSwapFunded").mockResolvedValueOnce(undefined);
+                const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+                // act
+                await swaps.sendLightningPayment({
+                    invoice: mock.invoice.address,
+                    waitFor: "funded",
+                });
+
+                // assert
+                expect(warnSpy).toHaveBeenCalledWith(
+                    expect.stringContaining("SwapManager is disabled"),
+                );
             });
         });
 

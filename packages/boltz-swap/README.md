@@ -75,7 +75,9 @@ const result = await swaps.sendLightningPayment({
 // undefined since the swap hasn't settled yet. Monitoring continues in the
 // background and keeps the stored swap up to date until a terminal status,
 // but a late failure no longer rejects — keep the SwapManager enabled so
-// auto-refunds are handled for you.
+// auto-refunds are handled for you. With the SwapManager disabled, a late
+// failure is only persisted as refundable and the funds stay locked until
+// you recover them via restoreSwaps()/recoverSubmarineFunds().
 ```
 
 The same milestone is exposed for a swap you already hold as

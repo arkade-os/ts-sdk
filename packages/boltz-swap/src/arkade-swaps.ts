@@ -758,6 +758,17 @@ export class ArkadeSwaps {
      * @returns The amount paid, preimage (proof of payment, unless resolved
      * at "funded"), and transaction ID.
      * @throws {TransactionFailedError} If the payment fails (auto-refunds if possible).
+     * @remarks With `waitFor: "funded"`, failures observed *after* the promise
+     * resolves are only persisted to the repository (refundable flag) — the
+     * active auto-refund in this method is no longer reachable. Keep the
+     * SwapManager enabled so late failures are refunded automatically;
+     * without it the caller must recover via {@link restoreSwaps} /
+     * {@link recoverSubmarineFunds}.
+     *
+     * Note on types: the overloads narrow on the `waitFor` literal, so a
+     * request stored in a variable typed as `SendLightningPaymentRequest`
+     * widens the result to {@link OptimisticSendLightningPaymentResponse}
+     * (optional preimage) even on the default settled path.
      */
     async sendLightningPayment(
         args: SendLightningPaymentRequest & { waitFor?: "settled" },
@@ -782,6 +793,14 @@ export class ArkadeSwaps {
 
         try {
             if (args.waitFor === "funded") {
+                if (!this.swapManager) {
+                    logger.warn(
+                        `Swap ${pendingSwap.id}: sendLightningPayment with waitFor "funded" but ` +
+                            `SwapManager is disabled — a failure after this promise resolves is ` +
+                            `only persisted as refundable, not auto-refunded; recover via ` +
+                            `restoreSwaps/recoverSubmarineFunds`,
+                    );
+                }
                 await this.waitForSwapFunded(pendingSwap);
                 return {
                     amount: pendingSwap.response.expectedAmount,
@@ -1564,6 +1583,14 @@ export class ArkadeSwaps {
                         isFinal = true;
                         isSettled = true;
                         reject(error);
+                    } else {
+                        // Already resolved optimistically — stop processing
+                        // updates; the stored swap may go stale until
+                        // SwapManager / restoreSwaps reconciles it.
+                        isFinal = true;
+                        logger.warn(
+                            `Swap ${pendingSwap.id}: monitor failed after settlement: ${error}`,
+                        );
                     }
                 });
         });
