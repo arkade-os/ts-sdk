@@ -66,6 +66,34 @@ vi.mock("../src/utils/vhtlc", async () => {
     };
 });
 
+// Reverse swaps now validate that the Boltz-returned invoice commits to the
+// preimage hash we sent (arkade-swaps.ts). A static mock invoice can't match a
+// freshly-generated random preimage, so we model the real server: when the fake
+// provider returns its canned invoice, make `decodeInvoice` report the payment
+// hash from the request we just sent. The override is opt-in (default
+// undefined → real decode) so the decoding tests below are unaffected.
+const decodeInvoiceOverride = vi.hoisted(() => ({ paymentHash: undefined as string | undefined }));
+vi.mock("../src/utils/decoding", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../src/utils/decoding")>();
+    return {
+        ...actual,
+        decodeInvoice: (invoice: string) => {
+            const decoded = actual.decodeInvoice(invoice);
+            return decodeInvoiceOverride.paymentHash !== undefined
+                ? { ...decoded, paymentHash: decodeInvoiceOverride.paymentHash }
+                : decoded;
+        },
+    };
+});
+
+// Make the fake provider echo an invoice that commits to the request's preimage
+// hash, mirroring real Boltz, so the reverse-swap invoice validation passes.
+const reverseSwapResponseFor =
+    (response: CreateReverseSwapResponse) => async (req: { preimageHash: string }) => {
+        decodeInvoiceOverride.paymentHash = req.preimageHash;
+        return response;
+    };
+
 // Mock WebSocket - this needs to be at the top level
 vi.mock("ws", () => {
     return {
@@ -503,6 +531,7 @@ describe("ArkadeSwaps", () => {
 
     afterEach(() => {
         vi.restoreAllMocks();
+        decodeInvoiceOverride.paymentHash = undefined;
     });
 
     describe("Initialization", () => {
@@ -636,8 +665,8 @@ describe("ArkadeSwaps", () => {
         describe("Reverse Swaps", () => {
             it("should create a reverse swap", async () => {
                 // arrange
-                vi.spyOn(swapProvider, "createReverseSwap").mockResolvedValueOnce(
-                    createReverseSwapResponse,
+                vi.spyOn(swapProvider, "createReverseSwap").mockImplementationOnce(
+                    reverseSwapResponseFor(createReverseSwapResponse),
                 );
 
                 // act
@@ -657,8 +686,8 @@ describe("ArkadeSwaps", () => {
 
             it("should get correct swap status", async () => {
                 // arrange
-                vi.spyOn(swapProvider, "createReverseSwap").mockResolvedValueOnce(
-                    createReverseSwapResponse,
+                vi.spyOn(swapProvider, "createReverseSwap").mockImplementationOnce(
+                    reverseSwapResponseFor(createReverseSwapResponse),
                 );
                 vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValueOnce({
                     status: "swap.created",
@@ -680,7 +709,7 @@ describe("ArkadeSwaps", () => {
                 const testDescription = "Test reverse swap description";
                 const createReverseSwapSpy = vi
                     .spyOn(swapProvider, "createReverseSwap")
-                    .mockResolvedValueOnce(createReverseSwapResponse);
+                    .mockImplementationOnce(reverseSwapResponseFor(createReverseSwapResponse));
 
                 // act
                 await swaps.createReverseSwap({
@@ -2445,8 +2474,8 @@ describe("ArkadeSwaps", () => {
 
             it("should save reverse swap when creating reverse swap", async () => {
                 // arrange
-                vi.spyOn(swapProvider, "createReverseSwap").mockResolvedValueOnce(
-                    createReverseSwapResponse,
+                vi.spyOn(swapProvider, "createReverseSwap").mockImplementationOnce(
+                    reverseSwapResponseFor(createReverseSwapResponse),
                 );
 
                 // act

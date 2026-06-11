@@ -470,6 +470,11 @@ export class ArkadeSwaps {
         // make reverse swap request
         const swapResponse = await this.swapProvider.createReverseSwap(swapRequest);
 
+        const decodedInvoice = decodeInvoice(swapResponse.invoice);
+        if (decodedInvoice.paymentHash !== preimageHash) {
+            throw new SwapError({ message: "Preimage hash does not match invoice payment hash" });
+        }
+
         const pendingSwap: BoltzReverseSwap = {
             id: swapResponse.id,
             type: "reverse",
