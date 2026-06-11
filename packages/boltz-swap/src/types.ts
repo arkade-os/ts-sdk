@@ -6,6 +6,7 @@ import {
     CreateReverseSwapRequest,
     CreateSubmarineSwapRequest,
     BoltzSwapStatus,
+    SubmarineProgressionStatus,
     CreateChainSwapRequest,
     CreateChainSwapResponse,
 } from "./boltz-swap-provider";
@@ -125,11 +126,13 @@ export interface SwapSettlementOptions {
      *
      * Failure statuses (e.g. "swap.expired", "invoice.failedToPay") observed
      * before the optimistic status still reject as usual. After an optimistic
-     * resolution the SDK stops monitoring the swap: tracking final settlement
-     * (and refunding on late failure) is the caller's responsibility — enable
-     * the SwapManager to handle this automatically in the background.
+     * resolution the monitor stays open until the swap reaches a terminal
+     * status and keeps persisting updates (the preimage on claim, the
+     * refundable flag on failure), but the settled promise no longer rejects:
+     * acting on a late failure (refunding) is the caller's responsibility —
+     * enable the SwapManager to handle this automatically in the background.
      */
-    optimisticResolveAt?: BoltzSwapStatus;
+    optimisticResolveAt?: SubmarineProgressionStatus;
 }
 
 /** Tracks an in-progress reverse swap (Lightning → Arkade). */

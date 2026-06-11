@@ -79,10 +79,14 @@ export const isSubmarineRefundableStatus = (status: BoltzSwapStatus): boolean =>
 
 /**
  * Canonical progression of a successful submarine swap, in order. Failure
- * statuses are intentionally absent. Used to decide whether an observed
- * status is at or beyond another status in the lifecycle.
+ * statuses are intentionally absent. This defines relative ordering, NOT a
+ * guaranteed sequence: statuses can be skipped (e.g. "transaction.mempool"
+ * jumps straight to "invoice.pending" when Boltz accepts 0-conf, and a
+ * subscription only ever reports the current status). Consumers must treat
+ * any later status as implying the earlier ones — which is exactly what
+ * hasSubmarineStatusReached does.
  */
-const SUBMARINE_STATUS_PROGRESSION: BoltzSwapStatus[] = [
+const SUBMARINE_STATUS_PROGRESSION = [
     "swap.created",
     "invoice.set",
     "transaction.mempool",
@@ -91,19 +95,26 @@ const SUBMARINE_STATUS_PROGRESSION: BoltzSwapStatus[] = [
     "invoice.paid",
     "transaction.claim.pending",
     "transaction.claimed",
-];
+] as const satisfies readonly BoltzSwapStatus[];
+
+/**
+ * A status in the successful submarine swap progression — the only valid
+ * targets for optimistic settlement resolution.
+ */
+export type SubmarineProgressionStatus = (typeof SUBMARINE_STATUS_PROGRESSION)[number];
 
 /**
  * Returns true if `status` is at or beyond `target` in the successful
- * submarine swap progression. Returns false when either status is not part
- * of the progression (e.g. failure statuses like "swap.expired").
+ * submarine swap progression. Returns false when the observed status is not
+ * part of the progression (e.g. failure statuses like "swap.expired").
  */
 export const hasSubmarineStatusReached = (
     status: BoltzSwapStatus,
-    target: BoltzSwapStatus,
+    target: SubmarineProgressionStatus,
 ): boolean => {
-    const statusIndex = SUBMARINE_STATUS_PROGRESSION.indexOf(status);
-    const targetIndex = SUBMARINE_STATUS_PROGRESSION.indexOf(target);
+    const progression: readonly BoltzSwapStatus[] = SUBMARINE_STATUS_PROGRESSION;
+    const statusIndex = progression.indexOf(status);
+    const targetIndex = progression.indexOf(target);
     return statusIndex >= 0 && targetIndex >= 0 && statusIndex >= targetIndex;
 };
 

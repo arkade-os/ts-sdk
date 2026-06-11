@@ -1416,8 +1416,10 @@ export class ArkadeSwaps {
      * @param options.optimisticResolveAt - Resolve as soon as this status (or a
      * later one in the lifecycle) is observed, instead of waiting for
      * "transaction.claimed". The preimage is undefined when resolving before
-     * settlement; the caller is then responsible for tracking the final
-     * outcome (e.g. via the SwapManager or getSwapStatus).
+     * settlement. Monitoring continues in the background until a terminal
+     * status, persisting updates to the repository, but the settled promise
+     * no longer rejects — acting on a late failure is the caller's
+     * responsibility (e.g. via the SwapManager or getSwapStatus).
      * @returns The preimage from the settled Lightning payment (proof of payment),
      * or no preimage when resolved optimistically before settlement.
      * @throws {SwapExpiredError} If the swap expires.
@@ -1435,10 +1437,17 @@ export class ArkadeSwaps {
     ): Promise<{ preimage?: string }> {
         const optimisticResolveAt = options?.optimisticResolveAt;
         return new Promise<{ preimage?: string }>((resolve, reject) => {
-            let isResolved = false;
+            // A terminal status was processed — stop handling updates. An
+            // optimistic resolution deliberately does NOT set this: the
+            // monitor keeps persisting subsequent statuses (refundable flag
+            // on failure, preimage on claim) so the stored swap doesn't go
+            // stale for SwapManager / restoreSwaps.
+            let isFinal = false;
+            // The promise was resolved or rejected, possibly optimistically.
+            let isSettled = false;
 
             const onStatusUpdate = async (status: BoltzSwapStatus) => {
-                if (isResolved) return;
+                if (isFinal) return;
 
                 const saveStatus = (additionalFields?: Partial<BoltzSubmarineSwap>) =>
                     updateSubmarineSwapStatus(
@@ -1448,9 +1457,13 @@ export class ArkadeSwaps {
                         additionalFields,
                     );
 
+                // After an optimistic resolution, reject/resolve below are
+                // no-ops on the already-settled promise; only persistence
+                // still takes effect.
                 switch (status) {
                     case "swap.expired":
-                        isResolved = true;
+                        isFinal = true;
+                        isSettled = true;
                         await saveStatus({ refundable: true });
                         reject(
                             new SwapExpiredError({
@@ -1460,7 +1473,8 @@ export class ArkadeSwaps {
                         );
                         break;
                     case "invoice.failedToPay":
-                        isResolved = true;
+                        isFinal = true;
+                        isSettled = true;
                         await saveStatus({ refundable: true });
                         reject(
                             new InvoiceFailedToPayError({
@@ -1470,7 +1484,8 @@ export class ArkadeSwaps {
                         );
                         break;
                     case "transaction.lockupFailed":
-                        isResolved = true;
+                        isFinal = true;
+                        isSettled = true;
                         await saveStatus({ refundable: true });
                         reject(
                             new TransactionLockupFailedError({
@@ -1480,7 +1495,8 @@ export class ArkadeSwaps {
                         );
                         break;
                     case "transaction.claimed": {
-                        isResolved = true;
+                        isFinal = true;
+                        isSettled = true;
                         const { preimage } = await this.swapProvider.getSwapPreimage(
                             pendingSwap.id,
                         );
@@ -1499,19 +1515,31 @@ export class ArkadeSwaps {
                             optimisticResolveAt &&
                             hasSubmarineStatusReached(status, optimisticResolveAt)
                         ) {
-                            isResolved = true;
+                            isSettled = true;
                             resolve({ preimage: undefined });
                         }
                         break;
                 }
             };
 
-            this.swapProvider.monitorSwap(pendingSwap.id, onStatusUpdate).catch((error) => {
-                if (!isResolved) {
-                    isResolved = true;
-                    reject(error);
-                }
-            });
+            this.swapProvider
+                .monitorSwap(pendingSwap.id, (status) => {
+                    // monitorSwap doesn't await the callback, so a persistence
+                    // failure here (e.g. after the promise already settled
+                    // optimistically) must not become an unhandled rejection.
+                    onStatusUpdate(status).catch((error) =>
+                        logger.error(
+                            `Swap ${pendingSwap.id}: error handling status "${status}": ${error}`,
+                        ),
+                    );
+                })
+                .catch((error) => {
+                    if (!isSettled) {
+                        isFinal = true;
+                        isSettled = true;
+                        reject(error);
+                    }
+                });
         });
     }
 

@@ -72,8 +72,10 @@ const result = await swaps.sendLightningPayment(
 );
 // Resolves as soon as the status is observed (or any later status in the
 // lifecycle — intermediate statuses can be skipped). result.preimage is
-// undefined when the swap hasn't settled yet; keep the SwapManager enabled
-// so settlement tracking and auto-refunds continue in the background.
+// undefined when the swap hasn't settled yet. Monitoring continues in the
+// background and keeps the stored swap up to date until a terminal status,
+// but a late failure no longer rejects — keep the SwapManager enabled so
+// auto-refunds are handled for you.
 ```
 
 The same option is accepted by `waitForSwapSettlement(pendingSwap, options)`.

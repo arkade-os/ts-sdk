@@ -1,6 +1,6 @@
 export { ArkadeSwaps } from "./arkade-swaps";
 export type { QuoteSwapOptions } from "./arkade-swaps";
-export type { BoltzSwapStatus } from "./boltz-swap-provider";
+export type { BoltzSwapStatus, SubmarineProgressionStatus } from "./boltz-swap-provider";
 export {
     BoltzSwapProvider,
     isChainClaimableStatus,
