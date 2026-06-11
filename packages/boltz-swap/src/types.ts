@@ -100,6 +100,38 @@ export interface SendLightningPaymentResponse {
     txid: string;
 }
 
+/**
+ * Response after a Lightning payment that may have resolved optimistically
+ * (see {@link SwapSettlementOptions.optimisticResolveAt}). The swap may not
+ * be settled yet, so the preimage may not be available.
+ */
+export interface OptimisticSendLightningPaymentResponse {
+    /** Amount paid in satoshis. */
+    amount: number;
+    /** Payment preimage (hex-encoded). Undefined when the call resolved optimistically before the swap settled. */
+    preimage?: string;
+    /** Transaction ID of the Arkade payment. */
+    txid: string;
+}
+
+/** Options controlling when waiting for a submarine swap settlement resolves. */
+export interface SwapSettlementOptions {
+    /**
+     * Resolve optimistically once this status — or any later status in the
+     * successful submarine swap lifecycle — is observed, instead of waiting
+     * for the terminal "transaction.claimed" status. Statuses can be skipped
+     * (WebSocket subscriptions report only the current status), so "at or
+     * beyond" semantics avoid waiting forever on a status that was missed.
+     *
+     * Failure statuses (e.g. "swap.expired", "invoice.failedToPay") observed
+     * before the optimistic status still reject as usual. After an optimistic
+     * resolution the SDK stops monitoring the swap: tracking final settlement
+     * (and refunding on late failure) is the caller's responsibility — enable
+     * the SwapManager to handle this automatically in the background.
+     */
+    optimisticResolveAt?: BoltzSwapStatus;
+}
+
 /** Tracks an in-progress reverse swap (Lightning → Arkade). */
 export interface BoltzReverseSwap {
     /** Unique swap ID from Boltz. */

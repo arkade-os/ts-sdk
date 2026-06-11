@@ -16,6 +16,8 @@ import {
     BoltzSubmarineSwap,
     SendLightningPaymentRequest,
     SendLightningPaymentResponse,
+    OptimisticSendLightningPaymentResponse,
+    SwapSettlementOptions,
     SubmarineRecoveryInfo,
     SubmarineRecoveryResult,
     SubmarineRefundOutcome,
@@ -463,13 +465,22 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
 
     async sendLightningPayment(
         args: SendLightningPaymentRequest,
-    ): Promise<SendLightningPaymentResponse> {
+    ): Promise<SendLightningPaymentResponse>;
+    async sendLightningPayment(
+        args: SendLightningPaymentRequest,
+        options?: SwapSettlementOptions,
+    ): Promise<OptimisticSendLightningPaymentResponse>;
+    async sendLightningPayment(
+        args: SendLightningPaymentRequest,
+        options?: SwapSettlementOptions,
+    ): Promise<OptimisticSendLightningPaymentResponse> {
         try {
             const res = await this.sendMessage({
                 id: getRandomId(),
                 tag: this.messageTag,
                 type: "SEND_LIGHTNING_PAYMENT",
                 payload: args,
+                options,
             });
             return (res as ResponseSendLightningPayment).payload;
         } catch (e) {
@@ -581,13 +592,22 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         }
     }
 
-    async waitForSwapSettlement(pendingSwap: BoltzSubmarineSwap): Promise<{ preimage: string }> {
+    async waitForSwapSettlement(pendingSwap: BoltzSubmarineSwap): Promise<{ preimage: string }>;
+    async waitForSwapSettlement(
+        pendingSwap: BoltzSubmarineSwap,
+        options?: SwapSettlementOptions,
+    ): Promise<{ preimage?: string }>;
+    async waitForSwapSettlement(
+        pendingSwap: BoltzSubmarineSwap,
+        options?: SwapSettlementOptions,
+    ): Promise<{ preimage?: string }> {
         try {
             const res = await this.sendMessage({
                 id: getRandomId(),
                 tag: this.messageTag,
                 type: "WAIT_FOR_SWAP_SETTLEMENT",
                 payload: pendingSwap,
+                options,
             });
             return (res as ResponseWaitForSwapSettlement).payload;
         } catch (e) {

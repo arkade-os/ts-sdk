@@ -27,6 +27,7 @@ export {
     isSubmarineSuccessStatus,
     isSubmarineRefundableStatus,
     isSubmarineSwapRefundable,
+    hasSubmarineStatusReached,
 } from "./boltz-swap-provider";
 export {
     SwapError,
@@ -72,6 +73,8 @@ export type {
     CreateLightningInvoiceRequest,
     SendLightningPaymentResponse,
     SendLightningPaymentRequest,
+    OptimisticSendLightningPaymentResponse,
+    SwapSettlementOptions,
     IncomingPaymentSubscription,
     ArkadeSwapsConfig,
     ArkadeSwapsCreateConfig,

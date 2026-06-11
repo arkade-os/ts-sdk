@@ -61,6 +61,23 @@ console.log('Paid:', result.txid);
 // SwapManager auto-refunds if payment fails
 ```
 
+By default the call resolves only once the swap fully settles (`transaction.claimed`),
+i.e. after Boltz has swept the HTLC. To show an optimistic "sent" state as soon as the
+payment is in flight — like most Lightning wallets — pass `optimisticResolveAt`:
+
+```typescript
+const result = await swaps.sendLightningPayment(
+  { invoice: 'lnbc500u1pj...' },
+  { optimisticResolveAt: 'invoice.pending' },
+);
+// Resolves as soon as the status is observed (or any later status in the
+// lifecycle — intermediate statuses can be skipped). result.preimage is
+// undefined when the swap hasn't settled yet; keep the SwapManager enabled
+// so settlement tracking and auto-refunds continue in the background.
+```
+
+The same option is accepted by `waitForSwapSettlement(pendingSwap, options)`.
+
 ### ARK to BTC
 
 ```typescript

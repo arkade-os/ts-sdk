@@ -77,6 +77,36 @@ export const isSubmarineRefundableStatus = (status: BoltzSwapStatus): boolean =>
     return ["invoice.failedToPay", "transaction.lockupFailed", "swap.expired"].includes(status);
 };
 
+/**
+ * Canonical progression of a successful submarine swap, in order. Failure
+ * statuses are intentionally absent. Used to decide whether an observed
+ * status is at or beyond another status in the lifecycle.
+ */
+const SUBMARINE_STATUS_PROGRESSION: BoltzSwapStatus[] = [
+    "swap.created",
+    "invoice.set",
+    "transaction.mempool",
+    "transaction.confirmed",
+    "invoice.pending",
+    "invoice.paid",
+    "transaction.claim.pending",
+    "transaction.claimed",
+];
+
+/**
+ * Returns true if `status` is at or beyond `target` in the successful
+ * submarine swap progression. Returns false when either status is not part
+ * of the progression (e.g. failure statuses like "swap.expired").
+ */
+export const hasSubmarineStatusReached = (
+    status: BoltzSwapStatus,
+    target: BoltzSwapStatus,
+): boolean => {
+    const statusIndex = SUBMARINE_STATUS_PROGRESSION.indexOf(status);
+    const targetIndex = SUBMARINE_STATUS_PROGRESSION.indexOf(target);
+    return statusIndex >= 0 && targetIndex >= 0 && statusIndex >= targetIndex;
+};
+
 /** Returns true if the submarine swap completed successfully. */
 export const isSubmarineSuccessStatus = (status: BoltzSwapStatus): boolean => {
     return status === "transaction.claimed";

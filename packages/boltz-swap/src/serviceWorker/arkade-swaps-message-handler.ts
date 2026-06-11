@@ -29,6 +29,8 @@ import {
     BoltzSubmarineSwap,
     type SendLightningPaymentRequest,
     SendLightningPaymentResponse,
+    type OptimisticSendLightningPaymentResponse,
+    type SwapSettlementOptions,
     type SubmarineRecoveryInfo,
     type SubmarineRecoveryResult,
     type SubmarineRefundOutcome,
@@ -92,10 +94,12 @@ export type ResponseCreateLightningInvoice = ResponseEnvelope & {
 export type RequestSendLightningPayment = RequestEnvelope & {
     type: "SEND_LIGHTNING_PAYMENT";
     payload: SendLightningPaymentRequest;
+    /** Settlement options; absent for clients that predate optimistic resolution. */
+    options?: SwapSettlementOptions;
 };
 export type ResponseSendLightningPayment = ResponseEnvelope & {
     type: "LIGHTNING_PAYMENT_SENT";
-    payload: SendLightningPaymentResponse;
+    payload: SendLightningPaymentResponse | OptimisticSendLightningPaymentResponse;
 };
 
 export type RequestCreateSubmarineSwap = RequestEnvelope & {
@@ -183,10 +187,12 @@ export type ResponseWaitAndClaim = ResponseEnvelope & {
 export type RequestWaitForSwapSettlement = RequestEnvelope & {
     type: "WAIT_FOR_SWAP_SETTLEMENT";
     payload: BoltzSubmarineSwap;
+    /** Settlement options; absent for clients that predate optimistic resolution. */
+    options?: SwapSettlementOptions;
 };
 export type ResponseWaitForSwapSettlement = ResponseEnvelope & {
     type: "SWAP_SETTLED";
-    payload: { preimage: string };
+    payload: { preimage?: string };
 };
 
 export type RequestRestoreSwaps = RequestEnvelope & {
@@ -791,7 +797,10 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "SEND_LIGHTNING_PAYMENT": {
-                    const res = await this.handler.sendLightningPayment(message.payload);
+                    const res = await this.handler.sendLightningPayment(
+                        message.payload,
+                        message.options,
+                    );
                     return this.tagged({
                         id,
                         type: "LIGHTNING_PAYMENT_SENT",
@@ -876,7 +885,10 @@ export class ArkadeSwapsMessageHandler
                 }
 
                 case "WAIT_FOR_SWAP_SETTLEMENT": {
-                    const res = await this.handler.waitForSwapSettlement(message.payload);
+                    const res = await this.handler.waitForSwapSettlement(
+                        message.payload,
+                        message.options,
+                    );
                     return this.tagged({
                         id,
                         type: "SWAP_SETTLED",

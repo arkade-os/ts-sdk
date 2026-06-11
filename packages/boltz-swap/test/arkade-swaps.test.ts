@@ -38,7 +38,7 @@ import {
     createVHTLCScript as createVHTLCScriptReal,
     refundVHTLCwithOffchainTx,
 } from "../src/utils/vhtlc";
-import { BoltzRefundError, SwapError } from "../src/errors";
+import { BoltzRefundError, InvoiceFailedToPayError, SwapError } from "../src/errors";
 
 // Mock the @arkade-os/sdk modules
 vi.mock("@arkade-os/sdk", async () => {
@@ -975,6 +975,131 @@ describe("ArkadeSwaps", () => {
                 expect(result.amount).toBe(mock.invoice.amount);
                 expect(result.preimage).toBe(mock.preimage);
                 expect(result.txid).toBe(mock.txid);
+            });
+
+            it("should send a Lightning payment optimistically without waiting for settlement", async () => {
+                // arrange
+                const pendingSwap = mockSubmarineSwap;
+                vi.spyOn(wallet, "send").mockResolvedValueOnce(mock.txid);
+                vi.spyOn(swaps, "createSubmarineSwap").mockResolvedValueOnce(pendingSwap);
+                const waitSpy = vi
+                    .spyOn(swaps, "waitForSwapSettlement")
+                    .mockResolvedValueOnce({ preimage: undefined });
+                // act
+                const result = await swaps.sendLightningPayment(
+                    { invoice: mock.invoice.address },
+                    { optimisticResolveAt: "invoice.pending" },
+                );
+                // assert
+                expect(waitSpy).toHaveBeenCalledWith(pendingSwap, {
+                    optimisticResolveAt: "invoice.pending",
+                });
+                expect(result.amount).toBe(mock.invoice.amount);
+                expect(result.preimage).toBeUndefined();
+                expect(result.txid).toBe(mock.txid);
+            });
+        });
+
+        describe("waitForSwapSettlement", () => {
+            it("should resolve with the preimage at transaction.claimed by default", async () => {
+                // arrange
+                vi.spyOn(swapProvider, "getSwapPreimage").mockResolvedValueOnce({
+                    preimage: mock.preimage,
+                });
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
+                    async (_swapId, update) => {
+                        setTimeout(() => update("invoice.pending"), 5);
+                        setTimeout(() => update("transaction.claimed"), 10);
+                    },
+                );
+
+                // act
+                const result = await swaps.waitForSwapSettlement(mockSubmarineSwap);
+
+                // assert
+                expect(result.preimage).toBe(mock.preimage);
+            });
+
+            it("should resolve optimistically when the optimisticResolveAt status is observed", async () => {
+                // arrange
+                const getPreimageSpy = vi.spyOn(swapProvider, "getSwapPreimage");
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
+                    async (_swapId, update) => {
+                        setTimeout(() => update("invoice.pending"), 5);
+                    },
+                );
+
+                // act
+                const result = await swaps.waitForSwapSettlement(mockSubmarineSwap, {
+                    optimisticResolveAt: "invoice.pending",
+                });
+
+                // assert
+                expect(result.preimage).toBeUndefined();
+                expect(getPreimageSpy).not.toHaveBeenCalled();
+                // the observed status is persisted before resolving
+                expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        id: mockSubmarineSwap.id,
+                        status: "invoice.pending",
+                    }),
+                );
+            });
+
+            it("should resolve optimistically when a status beyond optimisticResolveAt is observed", async () => {
+                // arrange: "invoice.set" is never reported — the monitor only
+                // sees the current status, which has already moved on
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
+                    async (_swapId, update) => {
+                        setTimeout(() => update("invoice.paid"), 5);
+                    },
+                );
+
+                // act
+                const result = await swaps.waitForSwapSettlement(mockSubmarineSwap, {
+                    optimisticResolveAt: "invoice.set",
+                });
+
+                // assert
+                expect(result.preimage).toBeUndefined();
+            });
+
+            it("should not resolve optimistically on statuses earlier than optimisticResolveAt", async () => {
+                // arrange
+                vi.spyOn(swapProvider, "getSwapPreimage").mockResolvedValueOnce({
+                    preimage: mock.preimage,
+                });
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
+                    async (_swapId, update) => {
+                        setTimeout(() => update("invoice.set"), 5);
+                        setTimeout(() => update("transaction.claimed"), 10);
+                    },
+                );
+
+                // act: invoice.set is earlier than invoice.paid, so the wait
+                // continues until the swap settles
+                const result = await swaps.waitForSwapSettlement(mockSubmarineSwap, {
+                    optimisticResolveAt: "invoice.paid",
+                });
+
+                // assert
+                expect(result.preimage).toBe(mock.preimage);
+            });
+
+            it("should still reject on failure statuses when optimisticResolveAt is set", async () => {
+                // arrange
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
+                    async (_swapId, update) => {
+                        setTimeout(() => update("invoice.failedToPay"), 5);
+                    },
+                );
+
+                // act & assert
+                await expect(
+                    swaps.waitForSwapSettlement(mockSubmarineSwap, {
+                        optimisticResolveAt: "invoice.paid",
+                    }),
+                ).rejects.toBeInstanceOf(InvoiceFailedToPayError);
             });
         });
 

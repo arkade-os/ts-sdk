@@ -38,6 +38,8 @@ import type {
     CreateLightningInvoiceResponse,
     SendLightningPaymentRequest,
     SendLightningPaymentResponse,
+    OptimisticSendLightningPaymentResponse,
+    SwapSettlementOptions,
     ArkToBtcResponse,
     BtcToArkResponse,
     SubmarineRecoveryInfo,
@@ -54,6 +56,7 @@ import {
     isSubmarineFinalStatus,
     isSubmarineSuccessStatus,
     isSubmarineRefundableStatus,
+    hasSubmarineStatusReached,
     isReverseFinalStatus,
     isChainFinalStatus,
     isRestoredReverseSwap,
@@ -746,12 +749,25 @@ export class ArkadeSwaps {
      * Sends a Lightning payment via a submarine swap (Arkade → Lightning).
      * Creates the swap, sends funds, and waits for settlement. Auto-refunds on failure.
      * @param args.invoice - BOLT11 Lightning invoice to pay.
+     * @param options.optimisticResolveAt - Resolve once this status (or a later
+     * one) is observed instead of waiting for "transaction.claimed". When the
+     * call resolves optimistically the preimage is not yet available and
+     * failures past that point are not auto-refunded here — enable the
+     * SwapManager to track settlement and refund in the background.
      * @returns The amount paid, preimage (proof of payment), and transaction ID.
      * @throws {TransactionFailedError} If the payment fails (auto-refunds if possible).
      */
     async sendLightningPayment(
         args: SendLightningPaymentRequest,
-    ): Promise<SendLightningPaymentResponse> {
+    ): Promise<SendLightningPaymentResponse>;
+    async sendLightningPayment(
+        args: SendLightningPaymentRequest,
+        options?: SwapSettlementOptions,
+    ): Promise<OptimisticSendLightningPaymentResponse>;
+    async sendLightningPayment(
+        args: SendLightningPaymentRequest,
+        options?: SwapSettlementOptions,
+    ): Promise<OptimisticSendLightningPaymentResponse> {
         const pendingSwap = await this.createSubmarineSwap(args);
         if (!pendingSwap.response.address)
             throw new Error(`Swap ${pendingSwap.id}: missing address in submarine swap response`);
@@ -765,7 +781,7 @@ export class ArkadeSwaps {
         });
 
         try {
-            const { preimage } = await this.waitForSwapSettlement(pendingSwap);
+            const { preimage } = await this.waitForSwapSettlement(pendingSwap, options);
             return {
                 amount: pendingSwap.response.expectedAmount,
                 preimage,
@@ -1395,14 +1411,30 @@ export class ArkadeSwaps {
 
     /**
      * Waits for a submarine swap's Lightning payment to settle.
+     * By default resolves only at the terminal "transaction.claimed" status.
      * @param pendingSwap - The submarine swap to monitor.
-     * @returns The preimage from the settled Lightning payment (proof of payment).
+     * @param options.optimisticResolveAt - Resolve as soon as this status (or a
+     * later one in the lifecycle) is observed, instead of waiting for
+     * "transaction.claimed". The preimage is undefined when resolving before
+     * settlement; the caller is then responsible for tracking the final
+     * outcome (e.g. via the SwapManager or getSwapStatus).
+     * @returns The preimage from the settled Lightning payment (proof of payment),
+     * or no preimage when resolved optimistically before settlement.
      * @throws {SwapExpiredError} If the swap expires.
      * @throws {InvoiceFailedToPayError} If Boltz fails to route the payment.
      * @throws {TransactionLockupFailedError} If the lockup transaction fails.
      */
-    async waitForSwapSettlement(pendingSwap: BoltzSubmarineSwap): Promise<{ preimage: string }> {
-        return new Promise<{ preimage: string }>((resolve, reject) => {
+    async waitForSwapSettlement(pendingSwap: BoltzSubmarineSwap): Promise<{ preimage: string }>;
+    async waitForSwapSettlement(
+        pendingSwap: BoltzSubmarineSwap,
+        options?: SwapSettlementOptions,
+    ): Promise<{ preimage?: string }>;
+    async waitForSwapSettlement(
+        pendingSwap: BoltzSubmarineSwap,
+        options?: SwapSettlementOptions,
+    ): Promise<{ preimage?: string }> {
+        const optimisticResolveAt = options?.optimisticResolveAt;
+        return new Promise<{ preimage?: string }>((resolve, reject) => {
             let isResolved = false;
 
             const onStatusUpdate = async (status: BoltzSwapStatus) => {
@@ -1458,6 +1490,18 @@ export class ArkadeSwaps {
                     }
                     default:
                         await saveStatus();
+                        // Optimistic resolution: the swap is not settled yet, but
+                        // the caller opted in to resolve at this point of the
+                        // lifecycle. "At or beyond" because the subscription only
+                        // reports the current status — intermediate statuses can
+                        // be skipped and would otherwise never be observed.
+                        if (
+                            optimisticResolveAt &&
+                            hasSubmarineStatusReached(status, optimisticResolveAt)
+                        ) {
+                            isResolved = true;
+                            resolve({ preimage: undefined });
+                        }
                         break;
                 }
             };
@@ -2959,6 +3003,10 @@ export interface IArkadeSwaps extends AsyncDisposable {
         args: CreateLightningInvoiceRequest,
     ): Promise<CreateLightningInvoiceResponse>;
     sendLightningPayment(args: SendLightningPaymentRequest): Promise<SendLightningPaymentResponse>;
+    sendLightningPayment(
+        args: SendLightningPaymentRequest,
+        options?: SwapSettlementOptions,
+    ): Promise<OptimisticSendLightningPaymentResponse>;
     createSubmarineSwap(args: SendLightningPaymentRequest): Promise<BoltzSubmarineSwap>;
     createReverseSwap(args: CreateLightningInvoiceRequest): Promise<BoltzReverseSwap>;
     claimVHTLC(pendingSwap: BoltzReverseSwap): Promise<void>;
@@ -2969,6 +3017,10 @@ export interface IArkadeSwaps extends AsyncDisposable {
     recoverAllSubmarineFunds(swaps: BoltzSubmarineSwap[]): Promise<SubmarineRecoveryResult[]>;
     waitAndClaim(pendingSwap: BoltzReverseSwap): Promise<{ txid: string }>;
     waitForSwapSettlement(pendingSwap: BoltzSubmarineSwap): Promise<{ preimage: string }>;
+    waitForSwapSettlement(
+        pendingSwap: BoltzSubmarineSwap,
+        options?: SwapSettlementOptions,
+    ): Promise<{ preimage?: string }>;
     restoreSwaps(boltzFees?: FeesResponse): Promise<{
         chainSwaps: BoltzChainSwap[];
         reverseSwaps: BoltzReverseSwap[];
