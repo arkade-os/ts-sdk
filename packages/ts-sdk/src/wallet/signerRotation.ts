@@ -8,18 +8,18 @@ import type { ArkInfo } from "../providers/ark";
  * stale-key metadata: staleness is always derived at read time from the
  * contract's `params.serverPubKey` plus the server's advertised signer set.
  *
- * - `current`: the contract was minted under the server's active signer; no
+ * - `CURRENT`: the contract was minted under the server's active signer; no
  *   migration needed.
- * - `migratable`: the contract's signer is advertised as deprecated and its
+ * - `MIGRATABLE`: the contract's signer is advertised as deprecated and its
  *   cutoff has not passed — cooperative migration is still possible.
- * - `dueNow`: the contract's signer is advertised as deprecated with no cutoff
+ * - `DUE_NOW`: the contract's signer is advertised as deprecated with no cutoff
  *   date, so migration should start immediately.
- * - `expired`: the contract's signer is deprecated and its cutoff has passed —
+ * - `EXPIRED`: the contract's signer is deprecated and its cutoff has passed —
  *   cooperative migration is no longer available; a unilateral exit is required.
- * - `unknownSigner`: the contract's signer is neither the active signer nor an
+ * - `UNKNOWN_SIGNER`: the contract's signer is neither the active signer nor an
  *   advertised deprecated signer. The SDK does not attempt to migrate these.
  */
-export type SignerStatus = "current" | "migratable" | "dueNow" | "expired" | "unknownSigner";
+export type SignerStatus = "CURRENT" | "MIGRATABLE" | "DUE_NOW" | "EXPIRED" | "UNKNOWN_SIGNER";
 
 /**
  * Result of classifying a single contract's server signer against the current
@@ -36,7 +36,7 @@ export interface SignerClassification {
     cutoffDate?: bigint;
     /**
      * Derived seconds until the advertised cutoff (`cutoffDate - now`), present
-     * only for `migratable`/`expired` (i.e. an advertised cutoff exists).
+     * only for `MIGRATABLE`/`EXPIRED` (i.e. an advertised cutoff exists).
      * Negative once the cutoff has passed.
      */
     secondsUntilCutoff?: number;
@@ -99,24 +99,24 @@ export function classifyAgainstAxis(
     const signerPubKey = toXOnlySignerHex(contractServerPubKeyHex);
 
     if (signerPubKey === axis.active) {
-        return { status: "current", signerPubKey };
+        return { status: "CURRENT", signerPubKey };
     }
 
     if (!axis.deprecated.has(signerPubKey)) {
-        return { status: "unknownSigner", signerPubKey };
+        return { status: "UNKNOWN_SIGNER", signerPubKey };
     }
 
     const cutoffDate = axis.deprecated.get(signerPubKey);
     if (cutoffDate === undefined) {
         // Deprecated but no cutoff advertised — due for migration immediately.
-        return { status: "dueNow", signerPubKey };
+        return { status: "DUE_NOW", signerPubKey };
     }
 
     const secondsUntilCutoff = Number(cutoffDate) - nowSeconds;
     if (secondsUntilCutoff <= 0) {
-        return { status: "expired", signerPubKey, cutoffDate, secondsUntilCutoff };
+        return { status: "EXPIRED", signerPubKey, cutoffDate, secondsUntilCutoff };
     }
-    return { status: "migratable", signerPubKey, cutoffDate, secondsUntilCutoff };
+    return { status: "MIGRATABLE", signerPubKey, cutoffDate, secondsUntilCutoff };
 }
 
 /**
@@ -134,9 +134,9 @@ export function classifyContractSigner(
 
 /**
  * Whether a signer status admits cooperative migration (i.e. a `settle()`
- * intent should be built for VTXOs under this signer). True for `migratable`
- * and `dueNow`; false for `current`, `expired`, and `unknownSigner`.
+ * intent should be built for VTXOs under this signer). True for `MIGRATABLE`
+ * and `DUE_NOW`; false for `CURRENT`, `EXPIRED`, and `UNKNOWN_SIGNER`.
  */
 export function isCooperativelyMigratable(status: SignerStatus): boolean {
-    return status === "migratable" || status === "dueNow";
+    return status === "MIGRATABLE" || status === "DUE_NOW";
 }

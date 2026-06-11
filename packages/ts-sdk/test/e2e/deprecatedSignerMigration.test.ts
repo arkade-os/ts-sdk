@@ -119,7 +119,7 @@ describe("deprecated-signer migration (reporting + decision)", () => {
                 expect(migratable).toHaveLength(1);
                 expect(migratable[0]).toMatchObject({
                     signerPubKey: liveXOnly,
-                    status: "migratable",
+                    status: "MIGRATABLE",
                     vtxoCount: 1,
                     totalValue: amount,
                 });
@@ -137,7 +137,7 @@ describe("deprecated-signer migration (reporting + decision)", () => {
                 expect(expired).toHaveLength(1);
                 expect(expired[0]).toMatchObject({
                     signerPubKey: liveXOnly,
-                    status: "expired",
+                    status: "EXPIRED",
                     vtxoCount: 1,
                     totalValue: amount,
                 });

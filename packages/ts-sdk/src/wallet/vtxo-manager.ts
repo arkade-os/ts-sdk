@@ -649,7 +649,7 @@ function classifiedToRef(c: ClassifiedVtxo): MigrationVtxoRef {
  * is more urgent.
  */
 function migrationUrgencyKey(c: ClassifiedVtxo): number {
-    if (c.classification.status === "dueNow") return -Infinity;
+    if (c.classification.status === "DUE_NOW") return -Infinity;
     return c.classification.secondsUntilCutoff ?? Infinity;
 }
 
@@ -1418,13 +1418,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         // Common cheap exit: nothing deprecated advertised and our own snapshot
         // is current → no contract sweep, no indexer round-trip.
-        if (axis.deprecated.size === 0 && walletClass.status === "current") {
+        if (axis.deprecated.size === 0 && walletClass.status === "CURRENT") {
             return { rotated: false, migrated: [], expired: [], signers: [] };
         }
 
         // The wallet's own signer is neither active nor advertised deprecated:
         // do not rotate or migrate automatically (treat as unknownSigner).
-        if (walletClass.status === "unknownSigner") {
+        if (walletClass.status === "UNKNOWN_SIGNER") {
             const { reports } = await this.classifyDeprecatedSignerContracts(info);
             return {
                 rotated: false,
@@ -1439,7 +1439,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // receive state under the active signer before building the migration
         // output, otherwise the server would reject an old-signer destination.
         let rotated = false;
-        if (walletClass.status !== "current") {
+        if (walletClass.status !== "CURRENT") {
             await wallet.rotateServerSigner(hex.decode(info.signerPubkey));
             rotated = true;
         }
@@ -1583,7 +1583,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             if (!serverPubKey) continue;
 
             const cls = classifyAgainstAxis(serverPubKey, axis, nowSeconds);
-            if (cls.status === "current") continue;
+            if (cls.status === "CURRENT") continue;
 
             // Exclude swept (recoverable) VTXOs: those are reclaimed by the
             // recovery path, not cooperative migration (open point 11).
@@ -1607,7 +1607,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
             if (isCooperativelyMigratable(cls.status)) {
                 for (const v of spendable) migratable.push({ vtxo: v, classification: cls });
-            } else if (cls.status === "expired") {
+            } else if (cls.status === "EXPIRED") {
                 for (const v of spendable) expired.push({ vtxo: v, classification: cls });
             }
             // unknownSigner: reported for visibility, never migrated.

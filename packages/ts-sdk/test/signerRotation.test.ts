@@ -25,7 +25,7 @@ describe("signerRotation - classification", () => {
     it("classifies the active signer as current", () => {
         const info = makeInfo(ACTIVE, [{ pubkey: DEPRECATED_A, cutoffDate: BigInt(NOW + 1000) }]);
         const cls = classifyContractSigner(ACTIVE, info, NOW);
-        expect(cls.status).toBe("current");
+        expect(cls.status).toBe("CURRENT");
         expect(cls.signerPubKey).toBe(ACTIVE);
         expect(cls.cutoffDate).toBeUndefined();
     });
@@ -34,7 +34,7 @@ describe("signerRotation - classification", () => {
         const cutoff = BigInt(NOW + 3600);
         const info = makeInfo(ACTIVE, [{ pubkey: DEPRECATED_A, cutoffDate: cutoff }]);
         const cls = classifyContractSigner(DEPRECATED_A, info, NOW);
-        expect(cls.status).toBe("migratable");
+        expect(cls.status).toBe("MIGRATABLE");
         expect(cls.cutoffDate).toBe(cutoff);
         expect(cls.secondsUntilCutoff).toBe(3600);
     });
@@ -42,7 +42,7 @@ describe("signerRotation - classification", () => {
     it("classifies a deprecated signer with no cutoff as dueNow", () => {
         const info = makeInfo(ACTIVE, [{ pubkey: DEPRECATED_A }]);
         const cls = classifyContractSigner(DEPRECATED_A, info, NOW);
-        expect(cls.status).toBe("dueNow");
+        expect(cls.status).toBe("DUE_NOW");
         expect(cls.cutoffDate).toBeUndefined();
         expect(cls.secondsUntilCutoff).toBeUndefined();
     });
@@ -51,7 +51,7 @@ describe("signerRotation - classification", () => {
         const cutoff = BigInt(NOW - 10);
         const info = makeInfo(ACTIVE, [{ pubkey: DEPRECATED_A, cutoffDate: cutoff }]);
         const cls = classifyContractSigner(DEPRECATED_A, info, NOW);
-        expect(cls.status).toBe("expired");
+        expect(cls.status).toBe("EXPIRED");
         expect(cls.secondsUntilCutoff).toBe(-10);
     });
 
@@ -59,14 +59,14 @@ describe("signerRotation - classification", () => {
         const cutoff = BigInt(NOW);
         const info = makeInfo(ACTIVE, [{ pubkey: DEPRECATED_A, cutoffDate: cutoff }]);
         const cls = classifyContractSigner(DEPRECATED_A, info, NOW);
-        expect(cls.status).toBe("expired");
+        expect(cls.status).toBe("EXPIRED");
         expect(cls.secondsUntilCutoff).toBe(0);
     });
 
     it("classifies an unadvertised signer as unknownSigner", () => {
         const info = makeInfo(ACTIVE, [{ pubkey: DEPRECATED_A, cutoffDate: BigInt(NOW + 1) }]);
         const cls = classifyContractSigner(UNKNOWN, info, NOW);
-        expect(cls.status).toBe("unknownSigner");
+        expect(cls.status).toBe("UNKNOWN_SIGNER");
         expect(cls.cutoffDate).toBeUndefined();
     });
 
@@ -75,7 +75,7 @@ describe("signerRotation - classification", () => {
         const info = makeInfo(ACTIVE, [{ pubkey: compressed }]);
         const cls = classifyContractSigner(DEPRECATED_A, info, NOW);
         // The contract stores the x-only key; the axis must still match it.
-        expect(cls.status).toBe("dueNow");
+        expect(cls.status).toBe("DUE_NOW");
         expect(cls.signerPubKey).toBe(DEPRECATED_A);
     });
 
@@ -87,16 +87,16 @@ describe("signerRotation - classification", () => {
         const axis = signerAxisFromInfo(info);
         expect(axis.active).toBe(ACTIVE);
         expect(axis.deprecated.size).toBe(2);
-        expect(classifyAgainstAxis(DEPRECATED_A, axis, NOW).status).toBe("migratable");
-        expect(classifyAgainstAxis(DEPRECATED_B, axis, NOW).status).toBe("dueNow");
+        expect(classifyAgainstAxis(DEPRECATED_A, axis, NOW).status).toBe("MIGRATABLE");
+        expect(classifyAgainstAxis(DEPRECATED_B, axis, NOW).status).toBe("DUE_NOW");
     });
 
     it("exposes a cooperative-migratability predicate", () => {
-        expect(isCooperativelyMigratable("migratable")).toBe(true);
-        expect(isCooperativelyMigratable("dueNow")).toBe(true);
-        expect(isCooperativelyMigratable("expired")).toBe(false);
-        expect(isCooperativelyMigratable("unknownSigner")).toBe(false);
-        expect(isCooperativelyMigratable("current")).toBe(false);
+        expect(isCooperativelyMigratable("MIGRATABLE")).toBe(true);
+        expect(isCooperativelyMigratable("DUE_NOW")).toBe(true);
+        expect(isCooperativelyMigratable("EXPIRED")).toBe(false);
+        expect(isCooperativelyMigratable("UNKNOWN_SIGNER")).toBe(false);
+        expect(isCooperativelyMigratable("CURRENT")).toBe(false);
     });
 
     it("rejects malformed signer key lengths", () => {

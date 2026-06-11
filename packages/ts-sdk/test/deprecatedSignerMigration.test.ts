@@ -274,10 +274,10 @@ describe("VtxoManager - deprecated-signer migration", () => {
         expect(settle).not.toHaveBeenCalled();
         const byKey = new Map(signers.map((s) => [s.signerPubKey, s]));
         expect(byKey.get(ACTIVE)).toBeUndefined();
-        expect(byKey.get(DEP_A)?.status).toBe("migratable");
+        expect(byKey.get(DEP_A)?.status).toBe("MIGRATABLE");
         expect(byKey.get(DEP_A)?.vtxoCount).toBe(2);
         expect(byKey.get(DEP_A)?.totalValue).toBe(5000);
-        expect(byKey.get(DEP_EXPIRED)?.status).toBe("expired");
+        expect(byKey.get(DEP_EXPIRED)?.status).toBe("EXPIRED");
     });
 });
 
