@@ -61,6 +61,35 @@ console.log('Paid:', result.txid);
 // SwapManager auto-refunds if payment fails
 ```
 
+By default the call resolves only once the swap fully settles (`transaction.claimed`),
+i.e. after Boltz has swept the HTLC. To show an optimistic "sent" state as soon as the
+payment is in flight — like most Lightning wallets — pass `waitFor: 'funded'`:
+
+```typescript
+const result = await swaps.sendLightningPayment({
+  invoice: 'lnbc500u1pj...',
+  waitFor: 'funded',
+});
+// Resolves as soon as the lockup transaction is observed: the funds are
+// committed and the swap is refundable from here. result.preimage is not
+// reported on this path — the proof of payment is persisted to the stored
+// swap once it settles. Monitoring continues in the
+// background and keeps the stored swap up to date until a terminal status,
+// but a late failure no longer rejects — keep the SwapManager enabled so
+// auto-refunds are handled for you. With the SwapManager disabled, a late
+// failure is only persisted as refundable and the funds stay locked until
+// you recover them via restoreSwaps()/recoverSubmarineFunds().
+```
+
+The same milestone is exposed for a swap you already hold as
+`waitForSwapFunded(pendingSwap)`, alongside `waitForSwapSettlement(pendingSwap)`.
+
+If the app restarts before the swap settles, the in-process monitoring is gone — call
+`refreshSwapsStatus()` on startup to reconcile: it polls every pending swap and persists
+the latest status, including the preimage for swaps that settled while the app was
+closed. Read the swap back from the repository (e.g. `getSwapHistory()`) to flip a
+pending UI row to "completed".
+
 ### ARK to BTC
 
 ```typescript

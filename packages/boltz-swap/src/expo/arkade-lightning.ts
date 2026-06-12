@@ -18,6 +18,7 @@ import type {
     BoltzSwap,
     SendLightningPaymentRequest,
     SendLightningPaymentResponse,
+    OptimisticSendLightningPaymentResponse,
     SubmarineRecoveryInfo,
     SubmarineRecoveryResult,
     SubmarineRefundOutcome,
@@ -247,7 +248,15 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         return this.inner.createLightningInvoice(args);
     }
 
-    sendLightningPayment(args: SendLightningPaymentRequest): Promise<SendLightningPaymentResponse> {
+    sendLightningPayment(
+        args: SendLightningPaymentRequest & { waitFor?: "settled" },
+    ): Promise<SendLightningPaymentResponse>;
+    sendLightningPayment(
+        args: SendLightningPaymentRequest,
+    ): Promise<OptimisticSendLightningPaymentResponse>;
+    sendLightningPayment(
+        args: SendLightningPaymentRequest,
+    ): Promise<OptimisticSendLightningPaymentResponse> {
         return this.inner.sendLightningPayment(args);
     }
 
@@ -289,6 +298,10 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
 
     waitForSwapSettlement(pendingSwap: BoltzSubmarineSwap): Promise<{ preimage: string }> {
         return this.inner.waitForSwapSettlement(pendingSwap);
+    }
+
+    waitForSwapFunded(pendingSwap: BoltzSubmarineSwap): Promise<void> {
+        return this.inner.waitForSwapFunded(pendingSwap);
     }
 
     restoreSwaps(boltzFees?: FeesResponse): Promise<{
