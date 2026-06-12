@@ -290,69 +290,69 @@ describe("deprecated-signer migration (real rotation)", () => {
     // `INVALID_BOARDING_INPUT_SIG: missing signature for <deprecated-key>`. The
     // cutoff axis does not change this. (Tracked for a follow-up server fix; see
     // plans/arkd-keys-rotation-e2e.md.)
-    it(
-        "discovers a real boarding UTXO (DUE_NOW); settle is server-blocked",
-        { timeout: 240_000 },
-        async () => {
-            const fromX = await xonly(A_PRIV);
-            const toX = await xonly(B_PRIV);
+    it("migrates a real boarding UTXO with no cutoff (DUE_NOW)", { timeout: 240_000 }, async () => {
+        const fromX = await xonly(A_PRIV);
+        const toX = await xonly(B_PRIV);
 
-            const wallet = await makeWallet();
-            try {
-                expect(hex.encode(wallet.arkServerPublicKey)).toBe(fromX);
+        const wallet = await makeWallet();
+        try {
+            expect(hex.encode(wallet.arkServerPublicKey)).toBe(fromX);
 
-                // Fund a real confirmed boarding UTXO under A (no VTXO — a failed
-                // boarding input would otherwise poison a shared settle).
-                const amount = 100_000;
-                faucetOnchain(await wallet.getBoardingAddress(), amount);
-                await waitFor(
-                    async () => {
-                        const u = await wallet.getBoardingUtxos();
-                        return u.length >= 1 && u.every((c) => c.status.confirmed);
-                    },
-                    { timeout: 30_000, interval: 2000 },
-                );
-                const boarding = await wallet.getBoardingUtxos();
-                expect(boarding).toHaveLength(1);
-                expect(boarding[0].value).toBe(amount);
+            // Fund a real confirmed boarding UTXO under A (no VTXO — isolates
+            // the boarding-input migration path from the VTXO one).
+            const amount = 100_000;
+            faucetOnchain(await wallet.getBoardingAddress(), amount);
+            await waitFor(
+                async () => {
+                    const u = await wallet.getBoardingUtxos();
+                    return u.length >= 1 && u.every((c) => c.status.confirmed);
+                },
+                { timeout: 30_000, interval: 2000 },
+            );
+            const boarding = await wallet.getBoardingUtxos();
+            expect(boarding).toHaveLength(1);
+            expect(boarding[0].value).toBe(amount);
 
-                await rotateArkdSigner({ activeSignerPriv: B_PRIV, deprecatedSigners: [A_PRIV] });
+            await rotateArkdSigner({ activeSignerPriv: B_PRIV, deprecatedSigners: [A_PRIV] });
 
-                const vtxoManager = await wallet.getVtxoManager();
+            const vtxoManager = await wallet.getVtxoManager();
 
-                // Discovery (REAL): the stale boarding UTXO under A is DUE_NOW.
-                const status = await vtxoManager.getDeprecatedSignerStatus();
-                expect(status).toHaveLength(1);
-                expect(status[0]).toMatchObject({
-                    signerPubKey: fromX,
-                    status: "DUE_NOW",
-                    vtxoCount: 0,
-                    totalValue: 0,
-                    boardingCount: 1,
-                    boardingValue: amount,
-                });
-                expect(status[0].cutoffDate).toBeUndefined();
+            // Discovery (REAL): the stale boarding UTXO under A is DUE_NOW.
+            const status = await vtxoManager.getDeprecatedSignerStatus();
+            expect(status).toHaveLength(1);
+            expect(status[0]).toMatchObject({
+                signerPubKey: fromX,
+                status: "DUE_NOW",
+                vtxoCount: 0,
+                totalValue: 0,
+                boardingCount: 1,
+                boardingValue: amount,
+            });
+            expect(status[0].cutoffDate).toBeUndefined();
 
-                // The wallet still rotates its receive state to the active signer,
-                // then the cooperative settle is rejected server-side.
-                const report = await vtxoManager.migrateDeprecatedSignerVtxos();
-                expect(report.rotated).toBe(true);
-                expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
-                expect(report.txid).toBeUndefined();
-                expect(report.migrated).toEqual([]);
-                expect(report.error).toContain("INVALID_BOARDING_INPUT_SIG");
+            // Per the arkd reference (TestDeprecatedSignerKey / "boarding"), a
+            // boarding UTXO locked to a not-yet-expired deprecated signer must
+            // still be cooperatively settleable — exactly like a VTXO. The
+            // wallet rotates its receive state to the active signer, then
+            // migrates the boarding input into a fresh VTXO under B.
+            const stale = `${boarding[0].txid}:${boarding[0].vout}`;
+            const report = await vtxoManager.migrateDeprecatedSignerVtxos();
+            expect(report.rotated).toBe(true);
+            expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
+            expect(report.txid).toBeDefined();
+            expect(report.error).toBeUndefined();
+            expect(report.skipped).toBeUndefined();
+            expect(report.expired).toEqual([]);
+            expect(report.migrated.map((m) => `${m.txid}:${m.vout}`)).toContain(stale);
 
-                // The boarding UTXO is untouched on-chain (the settle never landed).
-                // The wallet's receive state moved to B, so `getBoardingUtxos()` (the
-                // active address) no longer lists it; the deprecated-signer discovery
-                // path, which scans the old signer A, still reports it.
-                const postStatus = await vtxoManager.getDeprecatedSignerStatus();
-                expect(
-                    postStatus.some((s) => s.signerPubKey === fromX && s.boardingCount === 1),
-                ).toBe(true);
-            } finally {
-                await wallet.dispose();
-            }
-        },
-    );
+            // The migration settle spends the boarding UTXO on-chain; its
+            // disappearance from deprecated-signer discovery depends on the
+            // commitment tx confirming + being indexed, so we don't assert it
+            // here (the reference only asserts the settle succeeds). The
+            // deterministic post-conditions — receive state moved to B and the
+            // boarding outpoint reported as migrated — are checked above.
+        } finally {
+            await wallet.dispose();
+        }
+    });
 });
