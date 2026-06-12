@@ -315,23 +315,23 @@ export class RestArkProvider implements ArkProvider {
      * `fetch` wrapper for arkd requests that participates in server-info digest
      * negotiation. Sends the cached `X-Digest`; when arkd rejects a request with
      * `DIGEST_MISMATCH`, refreshes {@link getInfo} (updating the digest), fires
-     * {@link onServerInfoChanged}, and retries the request once with the fresh
-     * digest. Dormant until arkd returns the error — then it is the instant,
-     * event-driven signer-rotation trigger. {@link getInfo} itself never routes
-     * through here: it is the refresh path and must not be digest-gated.
+     * {@link onServerInfoChanged}, and THROWS {@link DigestMismatchError} — it
+     * never silently retries, since the in-flight request was built against the
+     * now-stale config. Dormant until arkd returns the error — then it is the
+     * instant, event-driven signer-rotation trigger. {@link getInfo} itself never
+     * routes through here: it is the refresh path and must not be digest-gated.
      */
     private async authedFetch(url: string, init: RequestInit): Promise<Response> {
-        const withDigest = (): RequestInit =>
-            this._digest
-                ? {
-                      ...init,
-                      headers: {
-                          ...(init.headers as Record<string, string> | undefined),
-                          "X-Digest": this._digest,
-                      },
-                  }
-                : init;
-        const response = await fetch(url, withDigest());
+        // Read the cached digest once, in the method body where `this` is
+        // unambiguously the provider, and build the header set imperatively. A
+        // prior nested-arrow form (`() => this._digest ? ... : init`) read
+        // `this._digest` as empty on some CI runners and dropped the header.
+        const digest = this._digest;
+        const headers: Record<string, string> = {
+            ...(init.headers as Record<string, string> | undefined),
+        };
+        if (digest) headers["X-Digest"] = digest;
+        const response = await fetch(url, { ...init, headers });
         if (response.ok) return response;
         let body: string;
         try {
