@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { hex } from "@scure/base";
 import {
     installRestoreHarness,
     teardownRestoreHarness,
     makeStaticWalletForTest,
+    mockArkInfo,
 } from "./helpers/restoreWallet";
 
 const NEW_SERVER = "ab".repeat(32);
@@ -72,6 +73,65 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
             const compressed = hex.decode("02" + hex.encode(wallet.arkServerPublicKey));
             await wallet.rotateServerSigner(compressed);
             expect(await wallet.getAddress()).toBe(before);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+});
+
+describe("Boarding watch path across server-signer rotation", () => {
+    beforeEach(() => installRestoreHarness());
+    afterEach(() => teardownRestoreHarness());
+
+    // The operator's PREVIOUS signer (compressed, as arkd advertises it in
+    // deprecatedSigners); its x-only form is what a boarding row minted under
+    // that signer carries in params.serverPubKey.
+    const PREV_SERVER = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+    const PREV_SERVER_XONLY = PREV_SERVER.slice(2);
+
+    it("getBoardingAddresses includes a boarding row under a now-deprecated signer", async () => {
+        // Advertise PREV as a deprecated signer so the wallet caches it at setup.
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockImplementation((url: string) => {
+                const reply = (b: unknown) =>
+                    Promise.resolve({ ok: true, json: () => Promise.resolve(b) });
+                if (url.includes("/info"))
+                    return reply({
+                        ...mockArkInfo,
+                        deprecatedSigners: [{ pubkey: PREV_SERVER, cutoffDate: 9_999_999_999 }],
+                    });
+                if (url.includes("subscribe") || url.includes("subscriptions"))
+                    return reply({ subscriptionId: "sub-1" });
+                return reply([]);
+            }),
+        );
+
+        const { wallet, contractRepository } = await makeStaticWalletForTest();
+        try {
+            const before = new Set(await wallet.getBoardingAddresses());
+
+            // A boarding row this wallet minted while PREV was the active signer
+            // — still active, still potentially funded after the rotation.
+            await contractRepository.saveContract({
+                type: "boarding",
+                params: {
+                    pubKey: "ab".repeat(32),
+                    serverPubKey: PREV_SERVER_XONLY,
+                    csvTimelock: "144",
+                },
+                script: "cd".repeat(32),
+                address: "tb1pdeprecated-unused",
+                state: "active",
+                createdAt: 1,
+            });
+
+            const after = new Set(await wallet.getBoardingAddresses());
+            // The watch/read path fans out over current ∪ deprecated, so the
+            // deprecated-signer boarding address is now watched (it wasn't
+            // before), and no previously-watched address is dropped.
+            expect(after.size).toBe(before.size + 1);
+            for (const a of before) expect(after.has(a)).toBe(true);
         } finally {
             await wallet.dispose();
         }

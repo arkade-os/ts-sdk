@@ -381,6 +381,51 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
+     * x-only hex of the operator's deprecated signer keys (from
+     * `ArkInfo.deprecatedSigners`), cached for the OFFLINE read/watch paths.
+     * The boarding watch/history surfaces ({@link getBoardingAddresses},
+     * {@link getBoardingTxs}) fan out over {current} ∪ this set so a deposit at
+     * a boarding address minted under a now-rotated operator signer keeps being
+     * watched. Refreshed from the server-info snapshot at construction (via the
+     * create() factories) and on a detected signer change. Deliberately NOT
+     * consulted by the spend path — {@link getBoardingUtxos} stays
+     * current-signer-only (a deprecated-signer input in a plain settle() is
+     * rejected; old-signer recovery goes through the migration API).
+     */
+    protected _deprecatedSignerHexes: Set<string> = new Set();
+
+    /**
+     * Refresh the cached deprecated-signer set from a fresh server-info
+     * snapshot. Called by the create() factories at construction and by the
+     * server-info-change handler mid-session. Lenient: a malformed deprecated
+     * entry is skipped, never fatal to wallet creation.
+     */
+    refreshDeprecatedSigners(info: { deprecatedSigners?: readonly { pubkey?: string }[] }): void {
+        const set = new Set<string>();
+        for (const s of info.deprecatedSigners ?? []) {
+            if (!s.pubkey) continue;
+            try {
+                set.add(toXOnlySignerHex(s.pubkey));
+            } catch (e) {
+                console.warn("Skipping malformed deprecated signer pubkey", s.pubkey, e);
+            }
+        }
+        this._deprecatedSignerHexes = set;
+    }
+
+    /**
+     * The signer set the boarding WATCH/HISTORY paths fan out over: the wallet's
+     * current signer plus every cached deprecated signer. Distinct from the
+     * spend path, which is current-signer-only.
+     */
+    protected watchedBoardingSigners(): Set<string> {
+        return new Set([
+            toXOnlySignerHex(hex.encode(this.boardingTapscript.options.serverPubKey)),
+            ...this._deprecatedSignerHexes,
+        ]);
+    }
+
+    /**
      * Currently-active receive tapscript. Read-only from the outside;
      * mutated only via {@link Wallet.setOffchainTapscriptForRotation}
      * by {@link WalletReceiveRotator.rotate}.
@@ -629,7 +674,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const setup = await ReadonlyWallet.setupWalletConfig(config, pubkey);
 
-        return new ReadonlyWallet(
+        const wallet = new ReadonlyWallet(
             config.identity,
             setup.network,
             setup.onchainProvider,
@@ -644,6 +689,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
             config.watcherConfig,
             setup.walletContractTimelocks,
         );
+        wallet.refreshDeprecatedSigners(setup.info);
+        return wallet;
     }
 
     get arkAddress(): ArkAddress {
@@ -795,7 +842,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * surfaced (plan §6-IV); {@link getBoardingAddress} stays single-valued.
      */
     async getBoardingAddresses(): Promise<string[]> {
-        const tapscripts = await this.getBoardingTapscripts();
+        const tapscripts = await this.getBoardingTapscripts(this.watchedBoardingSigners());
         return tapscripts.map((t) => t.onchainAddress(this.network));
     }
 
@@ -809,7 +856,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }> {
         const utxos: VirtualCoin[] = [];
         const commitmentsToIgnore = new Set<string>();
-        const tapscripts = await this.getBoardingTapscripts();
+        const tapscripts = await this.getBoardingTapscripts(this.watchedBoardingSigners());
 
         const outspendCache = new Map<
             string,
@@ -2182,6 +2229,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             boot?.rotator,
             boot?.provider,
         );
+        wallet.refreshDeprecatedSigners(setup.info);
 
         // Boarding boot (plan §6-II.3): when HD/boarding rotation is active (a
         // provider resolved), restore the most recently allocated boarding
@@ -2229,7 +2277,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             ? await this.identity.toReadonly()
             : this.identity; // Identity extends ReadonlyIdentity, so this is safe
 
-        return new ReadonlyWallet(
+        const readonly = new ReadonlyWallet(
             readonlyIdentity,
             this.network,
             this.onchainProvider,
@@ -2244,6 +2292,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.watcherConfig,
             this.walletContractTimelocks,
         );
+        // Carry the cached deprecated-signer set so the clone's boarding watch
+        // path stays as wide as the source wallet's (same operator/info).
+        (readonly as unknown as { _deprecatedSignerHexes: Set<string> })._deprecatedSignerHexes =
+            new Set(this._deprecatedSignerHexes);
+        return readonly;
     }
 
     /** Returns the delegate manager when delegation support is configured. */
