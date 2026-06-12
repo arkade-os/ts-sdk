@@ -70,7 +70,7 @@ import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
-import { extendCoin, extendCoinWithTapscript, validateRecipients } from "./utils";
+import { extendCoinWithTapscript, validateRecipients } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
@@ -293,7 +293,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
     private readonly _assetManager: IReadonlyAssetManager;
-    private _syncVtxosInflight?: Promise<void>;
     readonly walletContractTimelocks: RelativeTimelock[];
     // Outpoints ("txid:vout") committed to an in-flight settle/send. Filtered
     // from getVtxos() so concurrent callers (UI, VtxoManager auto-renewal,

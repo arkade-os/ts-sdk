@@ -1,4 +1,4 @@
-import { AssetGroup, AssetId, AssetRef, AssetInput, AssetOutput, Packet } from "../extension/asset";
+import { AssetGroup, AssetId, AssetInput, AssetOutput, Packet } from "../extension/asset";
 import { Asset, ExtendedVirtualCoin, Recipient, VirtualCoin } from "./index";
 
 /**

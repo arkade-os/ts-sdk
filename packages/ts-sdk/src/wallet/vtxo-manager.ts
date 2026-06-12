@@ -890,7 +890,6 @@ export interface IVtxoManager {
 
 export class VtxoManager implements AsyncDisposable, IVtxoManager {
     readonly settlementConfig: SettlementConfig | false;
-    private contractEventsSubscription?: () => void;
     private readonly contractEventsSubscriptionReady: Promise<(() => void) | undefined>;
     private disposePromise?: Promise<void>;
     private pollTimeoutId?: ReturnType<typeof setTimeout>;
@@ -962,12 +961,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             this.settlementConfig = { ...DEFAULT_SETTLEMENT_CONFIG };
         }
 
-        this.contractEventsSubscriptionReady = this.initializeSubscription().then(
-            (subscription) => {
-                this.contractEventsSubscription = subscription;
-                return subscription;
-            },
-        );
+        this.contractEventsSubscriptionReady = this.initializeSubscription();
     }
 
     // ========== Recovery Methods ==========
@@ -2720,7 +2714,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 clearTimeout(timer!);
             }
             const subscription = await this.contractEventsSubscriptionReady;
-            this.contractEventsSubscription = undefined;
             subscription?.();
         })();
 

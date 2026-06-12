@@ -4,7 +4,7 @@ import { extendVirtualCoinForContract } from "../wallet/utils";
 import { WalletRepository } from "../repositories/walletRepository";
 import { Contract, ContractVtxo, ContractEventCallback, ContractEvent } from "./types";
 import { isEventSourceError } from "../providers/utils";
-import { filterVtxosForScript, getVtxosForContract } from "./vtxoOwnership";
+import { getVtxosForContract } from "./vtxoOwnership";
 
 /**
  * Configuration for the ContractWatcher.
