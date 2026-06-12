@@ -22,40 +22,47 @@ function errBody(marker: string) {
     return { ok: false, clone: () => ({ text: async () => body }), text: async () => body };
 }
 
+function digestOf(provider: RestArkProvider): string {
+    return (provider as unknown as { _digest: string })._digest;
+}
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe("RestArkProvider server-info digest negotiation", () => {
     it("getInfo caches the server digest", async () => {
         const provider = new RestArkProvider("http://ark.test");
-        vi.stubGlobal("fetch", vi.fn(okInfoFetch("dX")));
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => okInfo("dX")),
+        );
 
         await provider.getInfo();
 
-        expect((provider as unknown as { _digest: string })._digest).toBe("dX");
+        expect(digestOf(provider)).toBe("dX");
     });
 
     it("sends the cached X-Digest header on outgoing requests", async () => {
         const provider = new RestArkProvider("http://ark.test");
-        // Capture the header VALUE at call time (decoupled from any object
-        // reference) so the assertion can't be perturbed by later mutation.
-        let sentXDigest: string | undefined;
+        // Snapshot the provider's digest AND the header that actually went out, at
+        // the moment the request is sent. Asserting the whole object means a CI
+        // failure message reveals the real state (digest set? header attached?).
+        let snapshot: { digestAtSend: string; xDigest: string | undefined } | undefined;
         vi.stubGlobal(
             "fetch",
             vi.fn(async (url: string, init?: RequestInit) => {
                 if (url.includes("/info")) return okInfo("d2");
-                sentXDigest = (init?.headers as Record<string, string> | undefined)?.["X-Digest"];
+                snapshot = {
+                    digestAtSend: digestOf(provider),
+                    xDigest: (init?.headers as Record<string, string> | undefined)?.["X-Digest"],
+                };
                 return okSubmit();
             }),
         );
 
         await provider.getInfo(); // caches digest "d2"
-        // Pinpoint: confirm the cache is seeded right before the request, so a
-        // failure here vs. on `sentXDigest` localizes seed-vs-send.
-        expect((provider as unknown as { _digest: string })._digest).toBe("d2");
-
         await provider.submitTx("rawtx", []); // routed through authedFetch
 
-        expect(sentXDigest).toBe("d2");
+        expect(snapshot).toEqual({ digestAtSend: "d2", xDigest: "d2" });
     });
 
     it("on DIGEST_MISMATCH refreshes + emits onServerInfoChanged + throws (no silent retry)", async () => {
@@ -78,7 +85,6 @@ describe("RestArkProvider server-info digest negotiation", () => {
         // request that was built against the now-stale server config.
         await expect(provider.submitTx("rawtx", [])).rejects.toBeInstanceOf(DigestMismatchError);
 
-        // Detection fired (refreshed info emitted once) and there was no retry.
         expect(seen).toHaveLength(1);
         expect(seen[0].signerPubkey).toBe(SIGNER);
         expect(submitAttempts).toBe(1);
@@ -105,8 +111,3 @@ describe("RestArkProvider server-info digest negotiation", () => {
         expect(submitAttempts).toBe(1);
     });
 });
-
-/** A fetch impl that always answers /v1/info with the given digest. */
-function okInfoFetch(digest: string) {
-    return async () => okInfo(digest);
-}
