@@ -38,6 +38,39 @@ export async function waitForArkServer({
 }
 
 /**
+ * Poll the emulator until `signerPubkey` is set, then return the parsed
+ * `/v1/info` response. Throws after `maxRetries` failed attempts.
+ */
+export async function waitForEmulator({
+    url = "http://localhost:7073/v1/info",
+    maxRetries = 30,
+    retryDelay = 2000,
+} = {}) {
+    console.log("Waiting for emulator to be ready...");
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            const response = execSync(`curl -sf ${url}`, {
+                stdio: "pipe",
+                encoding: "utf8",
+            });
+            const info = JSON.parse(response);
+            if (info.signerPubkey) {
+                console.log("  ✔ Emulator ready");
+                return info;
+            }
+        } catch {
+            // Ignore and retry
+        }
+
+        if (i < maxRetries - 1) {
+            console.log(`  Waiting... (${i + 1}/${maxRetries})`);
+            await sleep(retryDelay);
+        }
+    }
+    throw new Error("emulator failed to be ready after maximum retries");
+}
+
+/**
  * Poll Boltz until the ARK/BTC submarine pair appears in the API response.
  */
 export async function waitForBoltzPairs({

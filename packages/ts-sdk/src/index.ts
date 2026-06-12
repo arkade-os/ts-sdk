@@ -78,9 +78,11 @@ import {
     ReadonlyWallet,
     waitForIncomingFunds,
     IncomingFunds,
+    selectVirtualCoins,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./wallet/wallet";
+import { createAssetPacket, selectCoinsWithAsset } from "./wallet/asset";
 import { TxTree, TxTreeNode } from "./tree/txTree";
 import { SignerSession, TreeNonces, TreePartialSigs } from "./tree/signingSession";
 import { DustChangeError, Ramps } from "./wallet/ramps";
@@ -164,6 +166,8 @@ import { getRandomId } from "./wallet/utils";
 import {
     VtxoTaprootTree,
     ConditionWitness,
+    PrevArkTxField,
+    PrevoutTxField,
     getArkPsbtFields,
     setArkPsbtField,
     ArkPsbtFieldCoder,
@@ -194,6 +198,13 @@ import {
     SubscriptionHeartbeat,
     SubscriptionEvent,
 } from "./providers/indexer";
+import {
+    RestEmulatorProvider,
+    type EmulatorProvider,
+    type EmulatorInfo,
+    type ConnectorTreeNode,
+} from "./providers/emulator";
+import type { ArkadeExtendedCoin } from "./arkade/batch";
 import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
@@ -226,7 +237,10 @@ import {
 } from "./wallet/delegate";
 
 export * from "./arkfee";
+export * from "./extension";
 export * as asset from "./extension/asset";
+export * as arkade from "./arkade";
+export * from "./extension/emulator";
 
 // Contracts
 // Side-effect import: registers the built-in handlers with `contractHandlers`.
@@ -324,6 +338,7 @@ export {
     WsElectrumChainSource,
     RestArkProvider,
     RestIndexerProvider,
+    RestEmulatorProvider,
 
     // Script-related
     ArkAddress,
@@ -372,7 +387,8 @@ export {
     VtxoTreeExpiry,
     VtxoTaprootTree,
     ConditionWitness,
-
+    PrevArkTxField,
+    PrevoutTxField,
     // Utils
     buildOffchainTx,
     verifyTapscriptSignatures,
@@ -382,6 +398,11 @@ export {
     isVtxoExpiringSoon,
     isValidArkAddress,
     getRandomId,
+
+    // Asset utilities
+    createAssetPacket,
+    selectCoinsWithAsset,
+    selectVirtualCoins,
 
     // Arknote
     ArkNote,
@@ -510,6 +531,11 @@ export type {
     VtxoChain,
     Tx,
 
+    // Emulator types
+    EmulatorProvider,
+    EmulatorInfo,
+    ConnectorTreeNode,
+
     // Provider types
     OnchainProvider,
     ArkProvider,
@@ -622,6 +648,9 @@ export type {
     ResponseEnvelope,
     MessageTimeouts,
     ServiceWorkerWalletMode,
+
+    // Arkade types
+    ArkadeExtendedCoin,
 
     // Delegate types (Delegator* aliases deprecated)
     IDelegateManager,

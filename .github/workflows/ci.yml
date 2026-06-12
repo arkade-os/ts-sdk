@@ -102,6 +102,7 @@ jobs:
         run: |
           docker logs arkd 2>&1 || true
           docker logs arkd-wallet 2>&1 || true
+          docker logs emulator 2>&1 || true
           docker logs boltz 2>&1 || true
           docker logs boltz-lnd 2>&1 || true
           docker logs boltz-fulmine 2>&1 || true

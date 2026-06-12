@@ -1,3 +1,4 @@
+import { hex } from "@scure/base";
 import { expect, describe, it, beforeEach } from "vitest";
 import {
     faucetOffchain,
@@ -14,7 +15,6 @@ import {
     TxTreeNode,
     ChainTxType,
 } from "../../src";
-import { hex } from "@scure/base";
 import { vi } from "vitest";
 import { afterEach } from "vitest";
 
