@@ -8,6 +8,21 @@ import type { IntentFeeConfig } from "../arkfee";
 import { Intent } from "../intent";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 
+/**
+ * Thrown by {@link RestArkProvider} when arkd rejects a request with
+ * `DIGEST_MISMATCH` — the client's cached server info was stale (e.g. an
+ * operator signer rotation). By the time this surfaces the provider has already
+ * refreshed its info and fired `onServerInfoChanged`; the caller should rebuild
+ * the request under the fresh server info and retry. Mirrors NArk's
+ * `DigestMismatchException` (dotnet-sdk #131): the SDK never silently retries.
+ */
+export class DigestMismatchError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "DigestMismatchError";
+    }
+}
+
 /** Output requested during settlement or transaction submission. */
 export type Output = {
     /** Destination address, either onchain or Arkade (offchain). */
@@ -325,9 +340,19 @@ export class RestArkProvider implements ArkProvider {
             return response;
         }
         if (!body.includes("DIGEST_MISMATCH")) return response;
+        // arkd rejected this request because our cached server info is stale
+        // (e.g. the operator rotated its signer). Mirror NArk's BuildVersionHandler
+        // (dotnet-sdk #131): clear the digest, refetch info, fire onServerInfoChanged
+        // so the wallet re-derives signer-dependent state, then THROW. The SDK does
+        // NOT silently retry — the in-flight request was built against the old config,
+        // so the caller must rebuild and retry it under the refreshed server info.
+        this._digest = "";
         const info = await this.getInfo();
         this.emitServerInfoChanged(info);
-        return fetch(url, withDigest());
+        throw new DigestMismatchError(
+            "Arkade server reported a configuration digest mismatch; server info was " +
+                "refreshed. Rebuild and retry the request under the new server info.",
+        );
     }
 
     async getInfo(): Promise<ArkInfo> {
