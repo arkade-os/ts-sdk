@@ -45,7 +45,7 @@ export interface TestArkWallet {
 
 export interface TestOnchainWallet {
     wallet: OnchainWallet;
-    identity: SingleKey;
+    identity: Identity;
 }
 
 export function execCommand(command: string): string {
@@ -61,7 +61,13 @@ export function execCommand(command: string): string {
     return result;
 }
 
-export function createTestIdentity(): SingleKey {
+export function createTestIdentity(useMnemonic = false): Identity {
+    if (useMnemonic) {
+        const mnemonic = generateMnemonic(wordlist);
+        return MnemonicIdentity.fromMnemonic(mnemonic, {
+            isMainnet: false,
+        });
+    }
     return SingleKey.fromRandomBytes();
 }
 

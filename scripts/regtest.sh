@@ -20,9 +20,10 @@ REGTEST_DIR="$ROOT_DIR/regtest"
 
 PKG="${1:-}"
 CMD="${2:-}"
+TFN="${3:-}"
 
 usage() {
-  echo "Usage: $0 <ts-sdk|boltz-swap> <up|down|reset|setup|test|cycle>" >&2
+  echo "Usage: $0 <ts-sdk|boltz-swap> <up|down|reset|setup|test|cycle> [test file name]" >&2
   exit 1
 }
 
@@ -70,10 +71,10 @@ cmd_setup() {
 cmd_test() {
   case "$PKG" in
     ts-sdk)
-      ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/ts-sdk" run test:integration
+      ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/ts-sdk" run test:integration "$TFN"
       ;;
     boltz-swap)
-      pnpm -C "$ROOT_DIR/packages/boltz-swap" run test:integration
+      pnpm -C "$ROOT_DIR/packages/boltz-swap" run test:integration "$TFN"
       ;;
   esac
 }
