@@ -264,6 +264,72 @@ export interface ArkProvider {
 export class RestArkProvider implements ArkProvider {
     constructor(public serverUrl: string = DEFAULT_ARKADE_SERVER_URL) {}
 
+    /**
+     * Last server-info digest seen (from {@link getInfo}). Sent as `X-Digest`
+     * on outgoing requests so arkd can reject a client whose cached info is
+     * stale. Empty until the first {@link getInfo}.
+     */
+    private _digest = "";
+
+    private _serverInfoListeners = new Set<(info: ArkInfo) => void>();
+
+    /**
+     * Subscribe to server-info changes. Fired when a request is rejected with
+     * `DIGEST_MISMATCH` and fresh info is re-fetched, so consumers (the wallet)
+     * can re-derive signer-dependent state mid-session without polling. Returns
+     * an unsubscribe function.
+     */
+    onServerInfoChanged(listener: (info: ArkInfo) => void): () => void {
+        this._serverInfoListeners.add(listener);
+        return () => {
+            this._serverInfoListeners.delete(listener);
+        };
+    }
+
+    private emitServerInfoChanged(info: ArkInfo): void {
+        for (const listener of this._serverInfoListeners) {
+            try {
+                listener(info);
+            } catch (e) {
+                console.warn("onServerInfoChanged listener threw", e);
+            }
+        }
+    }
+
+    /**
+     * `fetch` wrapper for arkd requests that participates in server-info digest
+     * negotiation. Sends the cached `X-Digest`; when arkd rejects a request with
+     * `DIGEST_MISMATCH`, refreshes {@link getInfo} (updating the digest), fires
+     * {@link onServerInfoChanged}, and retries the request once with the fresh
+     * digest. Dormant until arkd returns the error — then it is the instant,
+     * event-driven signer-rotation trigger. {@link getInfo} itself never routes
+     * through here: it is the refresh path and must not be digest-gated.
+     */
+    private async authedFetch(url: string, init: RequestInit): Promise<Response> {
+        const withDigest = (): RequestInit =>
+            this._digest
+                ? {
+                      ...init,
+                      headers: {
+                          ...(init.headers as Record<string, string> | undefined),
+                          "X-Digest": this._digest,
+                      },
+                  }
+                : init;
+        const response = await fetch(url, withDigest());
+        if (response.ok) return response;
+        let body: string;
+        try {
+            body = await response.clone().text();
+        } catch {
+            return response;
+        }
+        if (!body.includes("DIGEST_MISMATCH")) return response;
+        const info = await this.getInfo();
+        this.emitServerInfoChanged(info);
+        return fetch(url, withDigest());
+    }
+
     async getInfo(): Promise<ArkInfo> {
         const url = `${this.serverUrl}/v1/info`;
         const response = await fetch(url);
@@ -272,7 +338,7 @@ export class RestArkProvider implements ArkProvider {
             handleError(errorText, `Failed to get server info: ${response.statusText}`);
         }
         const fromServer = await response.json();
-        return {
+        const info: ArkInfo = {
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
             checkpointTapscript: fromServer.checkpointTapscript ?? "",
             deprecatedSigners:
@@ -315,6 +381,8 @@ export class RestArkProvider implements ArkProvider {
             vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
             vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
         };
+        this._digest = info.digest;
+        return info;
     }
 
     async submitTx(
@@ -326,7 +394,7 @@ export class RestArkProvider implements ArkProvider {
         signedCheckpointTxs: string[];
     }> {
         const url = `${this.serverUrl}/v1/tx/submit`;
-        const response = await fetch(url, {
+        const response = await this.authedFetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -352,7 +420,7 @@ export class RestArkProvider implements ArkProvider {
 
     async finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void> {
         const url = `${this.serverUrl}/v1/tx/finalize`;
-        const response = await fetch(url, {
+        const response = await this.authedFetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -371,7 +439,7 @@ export class RestArkProvider implements ArkProvider {
 
     async registerIntent(intent: SignedIntent<Intent.RegisterMessage>): Promise<string> {
         const url = `${this.serverUrl}/v1/batch/registerIntent`;
-        const response = await fetch(url, {
+        const response = await this.authedFetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -395,7 +463,7 @@ export class RestArkProvider implements ArkProvider {
 
     async deleteIntent(intent: SignedIntent<Intent.DeleteMessage>): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/deleteIntent`;
-        const response = await fetch(url, {
+        const response = await this.authedFetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -416,7 +484,7 @@ export class RestArkProvider implements ArkProvider {
 
     async confirmRegistration(intentId: string): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/ack`;
-        const response = await fetch(url, {
+        const response = await this.authedFetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -434,7 +502,7 @@ export class RestArkProvider implements ArkProvider {
 
     async submitTreeNonces(batchId: string, pubkey: string, nonces: TreeNonces): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/tree/submitNonces`;
-        const response = await fetch(url, {
+        const response = await this.authedFetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -458,7 +526,7 @@ export class RestArkProvider implements ArkProvider {
         signatures: TreePartialSigs,
     ): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/tree/submitSignatures`;
-        const response = await fetch(url, {
+        const response = await this.authedFetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -481,7 +549,7 @@ export class RestArkProvider implements ArkProvider {
         signedCommitmentTx?: string,
     ): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/submitForfeitTxs`;
-        const response = await fetch(url, {
+        const response = await this.authedFetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -655,7 +723,7 @@ export class RestArkProvider implements ArkProvider {
 
     async getPendingTxs(intent: SignedIntent<Intent.GetPendingTxMessage>): Promise<PendingTx[]> {
         const url = `${this.serverUrl}/v1/tx/pending`;
-        const response = await fetch(url, {
+        const response = await this.authedFetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",

@@ -1550,6 +1550,38 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * the contract manager is up first.
      */
     private _receiveRotator?: WalletReceiveRotator;
+
+    /**
+     * Unsubscribe handle for the arkProvider's `onServerInfoChanged` stream
+     * (mid-session signer-rotation detection). Torn down in {@link dispose}.
+     */
+    private _serverInfoUnsub?: () => void;
+
+    /**
+     * React to a mid-session server-info change (driven by the arkProvider's
+     * `DIGEST_MISMATCH` detection). First refresh the cached deprecated-signer
+     * set so the boarding WATCH path immediately widens to the just-deprecated
+     * signer, then — only if the active signer actually changed — rotate the
+     * wallet onto it via {@link rotateServerSigner} (re-deriving the offchain +
+     * boarding display tapscripts and registering the current-signer rows).
+     * Old-signer rows stay active, so existing funds remain watched. Failures
+     * are logged, never thrown back into the provider's emit loop.
+     */
+    private async handleServerInfoChanged(info: {
+        signerPubkey: string;
+        deprecatedSigners?: readonly { pubkey?: string }[];
+    }): Promise<void> {
+        this.refreshDeprecatedSigners(info);
+        try {
+            const newActive = toXOnlySignerHex(info.signerPubkey);
+            const current = toXOnlySignerHex(hex.encode(this.arkServerPublicKey));
+            if (newActive !== current) {
+                await this.rotateServerSigner(hex.decode(info.signerPubkey));
+            }
+        } catch (e) {
+            console.warn("server-signer rotation on info change failed", e);
+        }
+    }
     private _receiveRotatorInstalled = false;
 
     /**
@@ -2125,6 +2157,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // dispose(), so awaiting it here is deadlock-free.
         await this._restoreInFlight?.catch(() => undefined);
 
+        // Stop reacting to server-info changes before teardown.
+        this._serverInfoUnsub?.();
+        this._serverInfoUnsub = undefined;
+
         // Tear down the rotation subscription + drain in-flight rotations
         // first so no late `vtxo_received` event can queue work on a
         // disposing wallet, and so any in-flight `createContract` call
@@ -2230,6 +2266,24 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             boot?.provider,
         );
         wallet.refreshDeprecatedSigners(setup.info);
+        // Mid-session signer-rotation detection: when the arkProvider detects a
+        // stale-info DIGEST_MISMATCH and refetches info, re-derive the wallet's
+        // signer-dependent state. Duck-typed: only RestArkProvider implements it.
+        {
+            const ap = setup.arkProvider as Partial<{
+                onServerInfoChanged(
+                    cb: (info: {
+                        signerPubkey: string;
+                        deprecatedSigners?: readonly { pubkey?: string }[];
+                    }) => void,
+                ): () => void;
+            }>;
+            if (typeof ap.onServerInfoChanged === "function") {
+                wallet._serverInfoUnsub = ap.onServerInfoChanged((info) => {
+                    void wallet.handleServerInfoChanged(info);
+                });
+            }
+        }
 
         // Boarding boot (plan §6-II.3): when HD/boarding rotation is active (a
         // provider resolved), restore the most recently allocated boarding

@@ -6,6 +6,7 @@ import {
     makeStaticWalletForTest,
     mockArkInfo,
 } from "./helpers/restoreWallet";
+import { BoardingContractHandler } from "../src/contracts/handlers/boarding";
 
 const NEW_SERVER = "ab".repeat(32);
 
@@ -120,7 +121,7 @@ describe("Boarding watch path across server-signer rotation", () => {
                     serverPubKey: PREV_SERVER_XONLY,
                     csvTimelock: "144",
                 },
-                script: "cd".repeat(32),
+                script: "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
                 address: "tb1pdeprecated-unused",
                 state: "active",
                 createdAt: 1,
@@ -132,6 +133,57 @@ describe("Boarding watch path across server-signer rotation", () => {
             // before), and no previously-watched address is dropped.
             expect(after.size).toBe(before.size + 1);
             for (const a of before) expect(after.has(a)).toBe(true);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("handleServerInfoChanged rotates onto the new signer and keeps watching the old one", async () => {
+        const { wallet, contractRepository } = await makeStaticWalletForTest();
+        try {
+            const oldSigner = hex.encode(wallet.arkServerPublicKey);
+            const NEW = "ab".repeat(32);
+
+            // A boarding row minted under the (soon-to-be deprecated) signer.
+            await contractRepository.saveContract({
+                type: "boarding",
+                params: {
+                    pubKey: "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+                    serverPubKey: oldSigner,
+                    csvTimelock: "144",
+                },
+                script: "ef".repeat(32),
+                address: "tb1pold-unused",
+                state: "active",
+                createdAt: 1,
+            });
+            const oldBoardingAddr = BoardingContractHandler.createScript({
+                pubKey: "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+                serverPubKey: oldSigner,
+                csvTimelock: "144",
+            }).onchainAddress(wallet.network);
+
+            // Watched now, because it sits under the wallet's current signer.
+            expect(new Set(await wallet.getBoardingAddresses()).has(oldBoardingAddr)).toBe(true);
+
+            // arkd rotated to NEW and now advertises the old signer as deprecated.
+            await (
+                wallet as unknown as {
+                    handleServerInfoChanged(info: {
+                        signerPubkey: string;
+                        deprecatedSigners?: { pubkey: string }[];
+                    }): Promise<void>;
+                }
+            ).handleServerInfoChanged({
+                signerPubkey: NEW,
+                deprecatedSigners: [{ pubkey: oldSigner }],
+            });
+
+            // Rotated onto NEW…
+            expect(hex.encode(wallet.arkServerPublicKey)).toBe(NEW);
+            // …and the old-signer boarding address is STILL watched (now via the
+            // cached deprecated set), not dropped by the rotation.
+            expect(new Set(await wallet.getBoardingAddresses()).has(oldBoardingAddr)).toBe(true);
         } finally {
             await wallet.dispose();
         }
