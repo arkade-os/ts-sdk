@@ -25,6 +25,11 @@ const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f
 // `BoardingContractHandler.createScript` would succeed on it absent the filter.
 const FOREIGN_SERVER_PUBKEY_HEX =
     "9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b";
+// The operator's PREVIOUS signer key (compressed, as arkd advertises it in
+// `deprecatedSigners`). Its x-only form is what a boarding row registered while
+// this key was current would carry in `params.serverPubKey`.
+const PREV_SERVER_PUBKEY_HEX = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+const PREV_SERVER_PUBKEY_XONLY = PREV_SERVER_PUBKEY_HEX.slice(2);
 
 const mockArkInfo = {
     signerPubkey: SERVER_PUBKEY_HEX,
@@ -354,6 +359,60 @@ describe("Wallet boarding rotation", () => {
             );
 
             warn.mockRestore();
+            await wallet.dispose();
+        });
+    });
+
+    describe("boarding-address discovery (deprecated signer rotation)", () => {
+        it("keeps watching a boarding row registered under a now-deprecated operator signer", async () => {
+            // The operator has rotated its signer key: the current key is
+            // SERVER_PUBKEY_HEX and the previous one is advertised in
+            // `deprecatedSigners`. A boarding address funded while the previous
+            // key was current still holds coins, so it MUST stay monitored.
+            mockFetch.mockImplementation((url: string) => {
+                const reply = (body: unknown) =>
+                    Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+                if (url.includes("/info"))
+                    return reply({
+                        ...mockArkInfo,
+                        deprecatedSigners: [
+                            { pubkey: PREV_SERVER_PUBKEY_HEX, cutoffDate: 9999999999 },
+                        ],
+                    });
+                if (url.includes("subscribe") || url.includes("subscriptions"))
+                    return reply({ subscriptionId: "sub-1" });
+                if (url.includes("vtxo") || url.includes("scripts")) return reply({ vtxos: [] });
+                return reply([]);
+            });
+
+            const contractRepo = new InMemoryContractRepository();
+            const wallet = await makeHdWallet(new InMemoryWalletRepository(), contractRepo);
+
+            const ownAddresses = new Set(await wallet.getBoardingAddresses());
+
+            // A boarding row this wallet derived while the operator's signer was
+            // the now-deprecated PREV key. Params are valid, so its on-chain
+            // address is real and still potentially funded.
+            await contractRepo.saveContract({
+                type: "boarding",
+                params: {
+                    pubKey: SINGLEKEY_HEX,
+                    serverPubKey: PREV_SERVER_PUBKEY_XONLY,
+                    csvTimelock: "144",
+                },
+                script: "cd".repeat(32), // not consulted by getBoardingTapscripts
+                address: "tb1pdeprecated-unused",
+                state: "active",
+                createdAt: 1,
+            });
+
+            const withDeprecated = new Set(await wallet.getBoardingAddresses());
+            // The deprecated-signer row contributes exactly one new boarding
+            // address (PREV is in the operator's deprecatedSigners, so it is
+            // recognized as ours), and no previously-watched address is dropped.
+            expect(withDeprecated.size).toBe(ownAddresses.size + 1);
+            for (const a of ownAddresses) expect(withDeprecated.has(a)).toBe(true);
+
             await wallet.dispose();
         });
     });

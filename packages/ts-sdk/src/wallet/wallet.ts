@@ -306,6 +306,18 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     protected _boardingTapscript: DefaultVtxo.Script;
 
+    /**
+     * x-only hex of the operator's deprecated signer keys (from
+     * {@link ArkInfo.deprecatedSigners}). {@link getBoardingTapscripts} keeps a
+     * persisted boarding row whose `serverPubKey` is the current signer OR a
+     * member of this set, so funds at a boarding address derived under a
+     * now-rotated operator signer stay watched — while a row from a genuinely
+     * different operator is still excluded. Captured once at setup from the
+     * server-info snapshot so the hot boarding read path stays repo-only
+     * (offline-first).
+     */
+    protected readonly _deprecatedSignerHexes: ReadonlySet<string>;
+
     protected constructor(
         readonly identity: ReadonlyIdentity,
         readonly network: Network,
@@ -320,6 +332,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly delegateProvider?: DelegateProvider,
         watcherConfig?: ReadonlyWalletConfig["watcherConfig"],
         walletContractTimelocks?: RelativeTimelock[],
+        deprecatedSignerPubKeys: Bytes[] = [],
     ) {
         // Guard: detect identity/server network mismatch for descriptor-based identities.
         // This duplicates the check in setupWalletConfig() so that subclasses
@@ -338,6 +351,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
         this._offchainTapscript = offchainTapscript;
         this._boardingTapscript = boardingTapscript;
+        this._deprecatedSignerHexes = new Set(deprecatedSignerPubKeys.map((k) => hex.encode(k)));
         this.watcherConfig = watcherConfig;
         this._assetManager = new ReadonlyAssetManager(this.indexerProvider);
         // Defensive for direct-construction callers; setupWalletConfig already
@@ -552,6 +566,22 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const contractRepository =
             config.storage?.contractRepository ?? new IndexedDBContractRepository();
 
+        // The operator's previous signer keys (x-only). A boarding address
+        // derived while one of these was the current signer can still hold coins
+        // after the operator rotates its signer, so the runtime boarding monitor
+        // ({@link getBoardingTapscripts}) treats such rows as this wallet's own —
+        // mirroring how restore() consults deprecatedSigners. Parsed leniently
+        // from the info snapshot already fetched above (no extra round-trip); a
+        // malformed entry is skipped rather than aborting wallet creation.
+        const deprecatedSignerPubKeys: Bytes[] = [];
+        for (const s of info.deprecatedSigners ?? []) {
+            try {
+                deprecatedSignerPubKeys.push(toXOnlyPubKey(hex.decode(s.pubkey)));
+            } catch (e) {
+                console.warn("Skipping malformed deprecated signer pubkey", s.pubkey, e);
+            }
+        }
+
         return {
             arkProvider,
             indexerProvider,
@@ -565,6 +595,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             walletRepository,
             contractRepository,
             info,
+            deprecatedSignerPubKeys,
             delegateProvider: config.delegateProvider || config.delegatorProvider,
             /** @deprecated alias for `delegateProvider` */
             delegatorProvider: config.delegateProvider || config.delegatorProvider,
@@ -600,6 +631,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             setup.delegateProvider || setup.delegatorProvider,
             config.watcherConfig,
             setup.walletContractTimelocks,
+            setup.deprecatedSignerPubKeys,
         );
     }
 
@@ -887,12 +919,22 @@ export class ReadonlyWallet implements IReadonlyWallet {
             type: ["boarding"],
         });
         for (const c of boardingContracts) {
-            // Only this wallet's server. A row left by a previous ASP (e.g. a
-            // repo recovered against a different server) would otherwise emit a
-            // spurious onchain script — and a wasted getCoins/getTransactions
-            // call — on every boarding read. Mirrors the filter in
-            // resolveBoardingBootTapscript.
-            if (c.params.serverPubKey !== serverPubKeyHex) continue;
+            // Keep a row when its server key is the operator's CURRENT signer or
+            // one of its DEPRECATED signers (server-key rotation): a boarding
+            // address funded under a previous signer still holds coins, so it
+            // must stay watched/spendable across the rotation. A row from a
+            // genuinely different operator — neither current nor deprecated — is
+            // still excluded, so a repo recovered against another server emits no
+            // spurious onchain script or wasted getCoins/getTransactions call.
+            // Unlike resolveBoardingBootTapscript (which resolves the single
+            // DISPLAY address and so stays pinned to the current signer), this is
+            // the fan-out monitoring set and must include deprecated signers.
+            if (
+                c.params.serverPubKey !== serverPubKeyHex &&
+                !this._deprecatedSignerHexes.has(c.params.serverPubKey)
+            ) {
+                continue;
+            }
             try {
                 add(BoardingContractHandler.createScript(c.params));
             } catch (e) {
@@ -1707,6 +1749,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         walletContractTimelocks?: RelativeTimelock[],
         receiveRotator?: WalletReceiveRotator,
         descriptorProvider?: DescriptorProvider,
+        deprecatedSignerPubKeys: Bytes[] = [],
     ) {
         super(
             identity,
@@ -1722,6 +1765,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             delegateProvider,
             watcherConfig,
             walletContractTimelocks,
+            deprecatedSignerPubKeys,
         );
         this.identity = identity;
 
@@ -1918,6 +1962,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             setup.walletContractTimelocks,
             boot?.rotator,
             boot?.provider,
+            setup.deprecatedSignerPubKeys,
         );
 
         // Boarding boot (plan §6-II.3): when HD/boarding rotation is active (a
@@ -1980,6 +2025,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.delegateProvider,
             this.watcherConfig,
             this.walletContractTimelocks,
+            Array.from(this._deprecatedSignerHexes, (h) => hex.decode(h)),
         );
     }
 
