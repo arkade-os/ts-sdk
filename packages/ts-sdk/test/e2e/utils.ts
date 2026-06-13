@@ -480,6 +480,13 @@ export async function createTestArkWalletWithDelegateAndOverride(opts: {
     const realProvider = new RestArkProvider(arkServerUrl);
     const arkProvider = createOverrideInfoArkProvider(realProvider, {
         unilateralExitDelay: opts.unilateralExitDelay,
+        // This fixture exercises the current-signer exit-delay change only. Pin a
+        // clean (no-deprecated) signer set so a deprecated signer left advertised
+        // by an earlier e2e (e.g. the migration suite, run on the shared regtest
+        // arkd) can't add deprecated-signer baseline contracts and skew the exact
+        // contract counts asserted below. The baseline matrix now fans over
+        // current ∪ deprecated signers, so the test must control that axis.
+        deprecatedSigners: [],
     });
 
     const wallet = await Wallet.create({
