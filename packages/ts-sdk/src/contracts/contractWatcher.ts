@@ -7,6 +7,30 @@ import { isEventSourceError } from "../providers/utils";
 import { filterVtxosForScript, getVtxosForContract } from "./vtxoOwnership";
 
 /**
+ * Exponential reconnect backoff: `baseMs * 2^(attempt-1)`, capped at `maxMs`.
+ * The cap is kept low (see {@link DEFAULT_CONTRACT_WATCHER_CONFIG}) so the
+ * wallet re-tracks state promptly after a brief server restart — e.g. an
+ * operator signer rotation momentarily drops the SSE subscription.
+ */
+export function computeReconnectDelay(attempt: number, baseMs: number, maxMs: number): number {
+    return Math.min(baseMs * Math.pow(2, attempt - 1), maxMs);
+}
+
+/**
+ * Default tunables for {@link ContractWatcher}. Recovery-oriented: the reconnect
+ * backoff caps at 5s and the failsafe re-poll runs every 20s, so a wallet
+ * re-syncs quickly after its subscription is disrupted (a server restart),
+ * rather than sitting idle for the tens of seconds the previous 30s/60s
+ * defaults allowed.
+ */
+export const DEFAULT_CONTRACT_WATCHER_CONFIG = {
+    failsafePollIntervalMs: 20_000,
+    reconnectDelayMs: 1_000,
+    maxReconnectDelayMs: 5_000,
+    maxReconnectAttempts: 0, // unlimited
+};
+
+/**
  * Configuration for the ContractWatcher.
  *
  * @see ContractWatcher
@@ -124,10 +148,7 @@ export class ContractWatcher {
      */
     constructor(config: ContractWatcherConfig) {
         this.config = {
-            failsafePollIntervalMs: 60_000, // 1 minute
-            reconnectDelayMs: 1000, // 1 second
-            maxReconnectDelayMs: 30_000, // 30 seconds
-            maxReconnectAttempts: 0, // unlimited
+            ...DEFAULT_CONTRACT_WATCHER_CONFIG,
             ...config,
         };
     }
@@ -436,9 +457,10 @@ export class ContractWatcher {
         this.connectionState = "reconnecting";
         this.reconnectAttempts++;
 
-        // Calculate delay with exponential backoff
-        const delay = Math.min(
-            this.config.reconnectDelayMs * Math.pow(2, this.reconnectAttempts - 1),
+        // Calculate delay with exponential backoff (capped low for prompt recovery)
+        const delay = computeReconnectDelay(
+            this.reconnectAttempts,
+            this.config.reconnectDelayMs,
             this.config.maxReconnectDelayMs,
         );
 
