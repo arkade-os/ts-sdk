@@ -1516,22 +1516,38 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // the row exists.
         const boardingCsvTimelock =
             this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
-        const baselineBoarding = new DefaultVtxo.Script({
-            pubKey: baselinePubkey,
-            serverPubKey: this.boardingTapscript.options.serverPubKey,
-            csvTimelock: boardingCsvTimelock,
-        });
-        await ensureWalletContract(manager, {
-            type: "boarding",
-            params: {
-                pubKey: hex.encode(baselineBoarding.options.pubKey),
-                serverPubKey: hex.encode(baselineBoarding.options.serverPubKey),
-                csvTimelock: timelockToSequence(boardingCsvTimelock).toString(),
-            },
-            script: hex.encode(baselineBoarding.pkScript),
-            address: baselineBoarding.address(this.network.hrp, this.arkServerPublicKey).encode(),
-            state: "active",
-        });
+        // Register the baseline boarding contract under the current signer AND
+        // every deprecated signer — the same signer axis as the default/delegate
+        // matrix above — so a wallet loaded with boarding funds minted under a
+        // now-rotated signer restores (and watches) that boarding contract at
+        // boot, not only via the boarding WATCH/history path. Boarding-exit CSV
+        // is a single server-wide delay, so only the signer axis fans here.
+        // Deduped against the offchain matrix's scripts (shared
+        // `seenBaselineScripts`): a boarding script that coincides with an
+        // already-registered default/delegate one stays first-wins as that type
+        // (degenerate boardingExitDelay == a baseline timelock; sound servers
+        // keep them distinct).
+        for (const serverPubKey of baselineSigners) {
+            const baselineBoarding = new DefaultVtxo.Script({
+                pubKey: baselinePubkey,
+                serverPubKey,
+                csvTimelock: boardingCsvTimelock,
+            });
+            const boardingScriptHex = hex.encode(baselineBoarding.pkScript);
+            if (seenBaselineScripts.has(boardingScriptHex)) continue;
+            seenBaselineScripts.add(boardingScriptHex);
+            await ensureWalletContract(manager, {
+                type: "boarding",
+                params: {
+                    pubKey: hex.encode(baselineBoarding.options.pubKey),
+                    serverPubKey: hex.encode(serverPubKey),
+                    csvTimelock: timelockToSequence(boardingCsvTimelock).toString(),
+                },
+                script: boardingScriptHex,
+                address: baselineBoarding.address(this.network.hrp, serverPubKey).encode(),
+                state: "active",
+            });
+        }
 
         return manager;
     }

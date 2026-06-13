@@ -286,7 +286,7 @@ describe("Offchain baseline matrix across server-signer rotation", () => {
     const PREV_SERVER = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
     const PREV_SERVER_XONLY = PREV_SERVER.slice(2);
 
-    it("registers a baseline default contract under a deprecated signer at boot", async () => {
+    it("registers baseline default + boarding contracts under a deprecated signer at boot", async () => {
         // Advertise PREV as deprecated so the wallet caches it at setup, before
         // the contract manager builds its index-0 baseline matrix.
         vi.stubGlobal(
@@ -297,6 +297,11 @@ describe("Offchain baseline matrix across server-signer rotation", () => {
                 if (url.includes("/info"))
                     return reply({
                         ...mockArkInfo,
+                        // Distinct from unilateralExitDelay (mockArkInfo: 144) so the
+                        // boarding baseline is a SEPARATE contract, not a first-wins
+                        // script collision with the default baseline. Production keeps
+                        // these delays distinct; the shared mock happens to equate them.
+                        boardingExitDelay: 288,
                         deprecatedSigners: [{ pubkey: PREV_SERVER, cutoffDate: 9_999_999_999 }],
                     });
                 if (url.includes("subscribe") || url.includes("subscriptions"))
@@ -313,13 +318,16 @@ describe("Offchain baseline matrix across server-signer rotation", () => {
             ).getContractManager();
 
             const contracts = await contractRepository.getContracts({});
-            const underPrev = contracts.filter(
-                (c) => c.type === "default" && c.params.serverPubKey === PREV_SERVER_XONLY,
-            );
-            // The deprecated signer's baseline default contract must be registered
-            // at boot so funds minted under the now-rotated signer are watched
-            // without an explicit restore().
-            expect(underPrev.length).toBeGreaterThan(0);
+            const underPrev = (type: string) =>
+                contracts.filter(
+                    (c) => c.type === type && c.params.serverPubKey === PREV_SERVER_XONLY,
+                );
+            // Both the default and boarding baseline contracts under the deprecated
+            // signer must be registered at boot, so offchain VTXOs AND boarding
+            // UTXOs minted under the now-rotated signer are watched without an
+            // explicit restore().
+            expect(underPrev("default").length).toBeGreaterThan(0);
+            expect(underPrev("boarding").length).toBeGreaterThan(0);
         } finally {
             await wallet.dispose();
         }
