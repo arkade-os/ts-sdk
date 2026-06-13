@@ -398,6 +398,22 @@ describe("ElectrumOnchainProvider", () => {
             });
         });
 
+        it("returns confirmed=false when the not-in-block error is RPCError-wrapped (text in .str)", async () => {
+            // ws-electrumx-client wraps JSON-RPC errors whose payload carries a
+            // numeric "code" as an RPCError: the human-readable server text moves
+            // to a non-standard `.str` field while `.message` becomes a generic
+            // "<code-name> (code: N)". The not-in-block classifier must still
+            // recognize it — otherwise get_merkle's index-lag race escapes
+            // getTxStatus intermittently (the CI flake this fixes).
+            const wrapped = Object.assign(new Error("server error (code: 2)"), {
+                str: "No confirmed transaction matching the requested hash was found",
+            });
+            wsMock.request.mockRejectedValueOnce(wrapped);
+            expect(await provider.getTxStatus("abc")).toEqual({
+                confirmed: false,
+            });
+        });
+
         it("returns confirmed=false when transaction.get_merkle reports block_height <= 0", async () => {
             wsMock.request.mockResolvedValueOnce({ block_height: 0 });
             expect(await provider.getTxStatus("abc")).toEqual({

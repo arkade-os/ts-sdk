@@ -41,7 +41,14 @@ const mockArkInfo = {
         "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
 };
 
-const mockFetch = vi.fn();
+const { mockFetch } = vi.hoisted(() => ({
+    mockFetch: vi.fn(),
+}));
+
+vi.mock("../src/utils/fetch", () => ({
+    fetch: mockFetch,
+}));
+
 const MockEventSource = vi.fn().mockImplementation((url: string) => ({
     url,
     onmessage: null,
@@ -50,7 +57,6 @@ const MockEventSource = vi.fn().mockImplementation((url: string) => ({
 }));
 
 beforeEach(() => {
-    vi.stubGlobal("fetch", mockFetch);
     vi.stubGlobal("EventSource", MockEventSource);
     mockFetch.mockReset();
     mockFetch.mockImplementation((url: string) => {

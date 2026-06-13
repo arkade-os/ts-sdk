@@ -45,8 +45,15 @@ const mockArkInfo = {
         "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
 };
 
-// Shared mocks - reset between each test
-const mockFetch = vi.fn();
+// Mock fetch
+const { mockFetch } = vi.hoisted(() => ({
+    mockFetch: vi.fn(),
+}));
+
+vi.mock("../src/utils/fetch", () => ({
+    fetch: mockFetch,
+}));
+
 const MockEventSource = vi.fn().mockImplementation((url: string) => ({
     url,
     onmessage: null,
@@ -55,7 +62,6 @@ const MockEventSource = vi.fn().mockImplementation((url: string) => ({
 }));
 
 beforeEach(() => {
-    vi.stubGlobal("fetch", mockFetch);
     vi.stubGlobal("EventSource", MockEventSource);
     mockFetch.mockReset();
     // Route by URL so test ordering doesn't depend on exact fetch counts.
