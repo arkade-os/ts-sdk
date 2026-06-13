@@ -3,6 +3,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
     DEFAULT_MESSAGE_TAG,
     WalletMessageHandler,
+    serializeMigrationReport,
+    deserializeMigrationReport,
 } from "../src/wallet/serviceWorker/wallet-message-handler";
 import { InMemoryWalletRepository } from "../src";
 import {
@@ -954,27 +956,44 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
-    it("handles MIGRATE_DEPRECATED_SIGNER_VTXOS and serializes the report's bigints", async () => {
-        const report = {
-            rotated: true,
-            txid: "migrate-txid",
+    // A per-leg migration report (send VTXO leg + settle boarding leg) carrying
+    // bigint cutoff dates at every nesting level the wire envelope must reach.
+    const perLegReport = {
+        rotated: true,
+        vtxos: {
+            txid: "vtxo-send-txid",
             migrated: [
                 { txid: "v1", vout: 0, value: 5000, signerPubKey: "bb", cutoffDate: 1700000000n },
             ],
-            expired: [{ txid: "v2", vout: 1, value: 9000, signerPubKey: "ff", cutoffDate: 123n }],
-            signers: [
-                {
-                    signerPubKey: "bb",
-                    status: "migratable",
-                    cutoffDate: 1700000000n,
-                    secondsUntilCutoff: 3600,
-                    vtxoCount: 1,
-                    totalValue: 5000,
-                },
-            ],
-        };
+            deferred: 2,
+        },
+        boarding: {
+            txid: "boarding-settle-txid",
+            migrated: [{ txid: "b1", vout: 0, value: 6000, signerPubKey: "bb" }],
+            oversized: [{ txid: "b2", vout: 1, value: 99999, signerPubKey: "bb" }],
+        },
+        expired: [{ txid: "v2", vout: 1, value: 9000, signerPubKey: "ff", cutoffDate: 123n }],
+        signers: [
+            {
+                signerPubKey: "bb",
+                status: "migratable",
+                cutoffDate: 1700000000n,
+                secondsUntilCutoff: 3600,
+                vtxoCount: 1,
+                totalValue: 5000,
+                boardingCount: 1,
+                boardingValue: 6000,
+                recoverableCount: 0,
+                recoverableValue: 0,
+                awaitingSweepCount: 0,
+                awaitingSweepValue: 0,
+            },
+        ],
+    };
+
+    it("handles MIGRATE_DEPRECATED_SIGNER_VTXOS and serializes the per-leg report's bigints", async () => {
         const vtxoManager = {
-            migrateDeprecatedSignerVtxos: vi.fn().mockResolvedValue(report),
+            migrateDeprecatedSignerVtxos: vi.fn().mockResolvedValue(perLegReport),
         };
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
@@ -991,17 +1010,25 @@ describe("WalletMessageHandler handleMessage", () => {
         });
         expect(response.type).toBe("MIGRATE_DEPRECATED_SIGNER_VTXOS_SUCCESS");
         const wire = response.payload.report;
-        // bigints are serialized to strings for transport.
-        expect(wire.migrated[0].cutoffDate).toBe("1700000000");
+        // Per-leg shape mirrors one-to-one; bigints stringified for transport.
+        expect(wire.rotated).toBe(true);
+        expect(wire.vtxos.txid).toBe("vtxo-send-txid");
+        expect(wire.vtxos.migrated[0].cutoffDate).toBe("1700000000");
+        expect(wire.vtxos.deferred).toBe(2);
+        expect(wire.boarding.txid).toBe("boarding-settle-txid");
+        expect(wire.boarding.oversized[0].value).toBe(99999);
         expect(wire.expired[0].cutoffDate).toBe("123");
         expect(wire.signers[0].cutoffDate).toBe("1700000000");
-        expect(wire.rotated).toBe(true);
-        expect(wire.txid).toBe("migrate-txid");
+    });
+
+    it("round-trips the nested per-leg report through serialize/deserialize", () => {
+        const restored = deserializeMigrationReport(serializeMigrationReport(perLegReport as any));
+        expect(restored).toEqual(perLegReport);
     });
 
     it("MIGRATE_DEPRECATED_SIGNER_VTXOS forwards settlement events via tick", async () => {
         const event = { type: "batch_started", id: "b1" };
-        const report = { rotated: false, migrated: [], expired: [], signers: [] };
+        const report = { rotated: false, expired: [], signers: [] };
         const vtxoManager = {
             migrateDeprecatedSignerVtxos: vi.fn().mockImplementation(async (options: any) => {
                 options.eventCallback(event);

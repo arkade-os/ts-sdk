@@ -39,7 +39,9 @@ import { ReadonlyWallet, Wallet } from "../wallet";
 import type {
     DeprecatedSignerMigrationReport,
     DeprecatedSignerReport,
-    MigrationSkipReason,
+    MigrationGlobalSkipReason,
+    MigrationLegReport,
+    MigrationLegSkipReason,
     MigrationVtxoRef,
     RenewVtxosOptions,
 } from "../vtxo-manager";
@@ -533,16 +535,21 @@ export type WireDeprecatedSignerReport = {
     awaitingSweepValue: number;
     nextSweepEta?: number;
 };
-export type WireDeprecatedSignerMigrationReport = {
-    rotated: boolean;
+export type WireMigrationLegReport = {
     txid?: string;
     migrated: WireMigrationVtxoRef[];
-    expired: WireMigrationVtxoRef[];
-    skipped?: MigrationSkipReason;
-    signers: WireDeprecatedSignerReport[];
+    skipped?: MigrationLegSkipReason;
     deferred?: number;
     oversized?: WireMigrationVtxoRef[];
     error?: string;
+};
+export type WireDeprecatedSignerMigrationReport = {
+    rotated: boolean;
+    skipped?: MigrationGlobalSkipReason;
+    vtxos?: WireMigrationLegReport;
+    boarding?: WireMigrationLegReport;
+    expired: WireMigrationVtxoRef[];
+    signers: WireDeprecatedSignerReport[];
 };
 
 const serializeMigrationVtxoRef = (ref: MigrationVtxoRef): WireMigrationVtxoRef => ({
@@ -593,31 +600,41 @@ export const deserializeDeprecatedSignerReport = (
     awaitingSweepValue: report.awaitingSweepValue,
     nextSweepEta: report.nextSweepEta,
 });
+const serializeMigrationLegReport = (leg: MigrationLegReport): WireMigrationLegReport => ({
+    txid: leg.txid,
+    migrated: leg.migrated.map(serializeMigrationVtxoRef),
+    skipped: leg.skipped,
+    deferred: leg.deferred,
+    oversized: leg.oversized?.map(serializeMigrationVtxoRef),
+    error: leg.error,
+});
+const deserializeMigrationLegReport = (leg: WireMigrationLegReport): MigrationLegReport => ({
+    txid: leg.txid,
+    migrated: leg.migrated.map(deserializeMigrationVtxoRef),
+    skipped: leg.skipped,
+    deferred: leg.deferred,
+    oversized: leg.oversized?.map(deserializeMigrationVtxoRef),
+    error: leg.error,
+});
 export const serializeMigrationReport = (
     report: DeprecatedSignerMigrationReport,
 ): WireDeprecatedSignerMigrationReport => ({
     rotated: report.rotated,
-    txid: report.txid,
-    migrated: report.migrated.map(serializeMigrationVtxoRef),
-    expired: report.expired.map(serializeMigrationVtxoRef),
     skipped: report.skipped,
+    vtxos: report.vtxos ? serializeMigrationLegReport(report.vtxos) : undefined,
+    boarding: report.boarding ? serializeMigrationLegReport(report.boarding) : undefined,
+    expired: report.expired.map(serializeMigrationVtxoRef),
     signers: report.signers.map(serializeDeprecatedSignerReport),
-    deferred: report.deferred,
-    oversized: report.oversized?.map(serializeMigrationVtxoRef),
-    error: report.error,
 });
 export const deserializeMigrationReport = (
     report: WireDeprecatedSignerMigrationReport,
 ): DeprecatedSignerMigrationReport => ({
     rotated: report.rotated,
-    txid: report.txid,
-    migrated: report.migrated.map(deserializeMigrationVtxoRef),
-    expired: report.expired.map(deserializeMigrationVtxoRef),
     skipped: report.skipped,
+    vtxos: report.vtxos ? deserializeMigrationLegReport(report.vtxos) : undefined,
+    boarding: report.boarding ? deserializeMigrationLegReport(report.boarding) : undefined,
+    expired: report.expired.map(deserializeMigrationVtxoRef),
     signers: report.signers.map(deserializeDeprecatedSignerReport),
-    deferred: report.deferred,
-    oversized: report.oversized?.map(deserializeMigrationVtxoRef),
-    error: report.error,
 });
 
 export type RequestMigrateDeprecatedSignerVtxos = RequestEnvelope & {

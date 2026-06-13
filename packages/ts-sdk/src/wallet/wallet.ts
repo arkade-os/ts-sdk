@@ -1569,6 +1569,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      */
     private async handleServerInfoChanged(info: {
         signerPubkey: string;
+        checkpointTapscript: string;
         deprecatedSigners?: readonly { pubkey?: string }[];
     }): Promise<void> {
         this.refreshDeprecatedSigners(info);
@@ -1576,7 +1577,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             const newActive = toXOnlySignerHex(info.signerPubkey);
             const current = toXOnlySignerHex(hex.encode(this.arkServerPublicKey));
             if (newActive !== current) {
-                await this.rotateServerSigner(hex.decode(info.signerPubkey));
+                // `onServerInfoChanged` delivers the full refreshed `ArkInfo`, so
+                // the new epoch's checkpoint script is in hand — thread it
+                // through so the rotated wallet builds checkpoints against the
+                // new server signer. A bad/empty value throws here and is caught
+                // below: the wallet stays on its previous consistent epoch.
+                await this.rotateServerSigner(
+                    hex.decode(info.signerPubkey),
+                    info.checkpointTapscript,
+                );
             }
         } catch (e) {
             console.warn("server-signer rotation on info change failed", e);
@@ -1627,6 +1636,30 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      */
     setArkServerPublicKeyForRotation(serverPubKey: Bytes): void {
         this._arkServerPublicKey = serverPubKey;
+    }
+
+    /**
+     * Output script for checkpoint transactions, decoded from the server's
+     * `checkpointTapscript`. Server-controlled state: pinned at construction
+     * and re-sourced from a fresh `ArkInfo` on server-signer rotation. Read it
+     * through {@link serverUnrollScript}; write it only through
+     * {@link setServerUnrollScriptForRotation}.
+     */
+    protected _serverUnrollScript: CSVMultisigTapscript.Type;
+
+    get serverUnrollScript(): CSVMultisigTapscript.Type {
+        return this._serverUnrollScript;
+    }
+
+    /**
+     * @internal Sole write path for `serverUnrollScript` after construction.
+     * Called by {@link Wallet._doRotateServerSigner} with the checkpoint script
+     * sourced from the fresh `ArkInfo` that triggered the rotation, so the send
+     * path builds checkpoints against the new server epoch. External code must
+     * treat `serverUnrollScript` as read-only.
+     */
+    setServerUnrollScriptForRotation(script: CSVMultisigTapscript.Type): void {
+        this._serverUnrollScript = script;
     }
 
     /**
@@ -1730,8 +1763,24 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * @internal Invoked by the {@link VtxoManager} migration pass; not part of
      * the stable public API.
      */
-    async rotateServerSigner(newServerPubKey: Bytes): Promise<void> {
+    async rotateServerSigner(newServerPubKey: Bytes, checkpointTapscript: string): Promise<void> {
         const xonly = toXOnlyPubKey(newServerPubKey);
+
+        // Decode the new epoch's checkpoint script FIRST, before any
+        // persistence. The checkpoint script is server-controlled state the
+        // send path builds its checkpoint outputs from; a missing/empty/
+        // undecodable value (the provider defaults it to "" when the server
+        // omits it) fails the rotation up front — mirroring `Wallet.create` —
+        // so a bad rotation is side-effect-free and the wallet keeps operating
+        // against its previous consistent epoch (old key + tapscripts + unroll
+        // script).
+        let newServerUnrollScript: CSVMultisigTapscript.Type;
+        try {
+            newServerUnrollScript = CSVMultisigTapscript.decode(hex.decode(checkpointTapscript));
+        } catch (e) {
+            throw new Error("Invalid checkpointTapscript from server");
+        }
+
         // Fast-path idempotency. The authoritative re-check happens inside
         // `_doRotateServerSigner` after the serialization barrier, so two
         // concurrent callers that both observe the old key here still apply the
@@ -1741,13 +1790,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         if (this._receiveRotator) {
             // Ride the rotator's chain so a concurrent receive rotation can't
             // interleave with the server-key swap.
-            await this._receiveRotator.runExclusive(() => this._doRotateServerSigner(xonly));
+            await this._receiveRotator.runExclusive(() =>
+                this._doRotateServerSigner(xonly, newServerUnrollScript),
+            );
             return;
         }
 
         const run = this._serverRotationChain
             .catch(() => undefined)
-            .then(() => this._doRotateServerSigner(xonly));
+            .then(() => this._doRotateServerSigner(xonly, newServerUnrollScript));
         this._serverRotationChain = run.then(
             () => undefined,
             () => undefined,
@@ -1755,7 +1806,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         return run;
     }
 
-    private async _doRotateServerSigner(xonly: Bytes): Promise<void> {
+    private async _doRotateServerSigner(
+        xonly: Bytes,
+        newServerUnrollScript: CSVMultisigTapscript.Type,
+    ): Promise<void> {
         // Re-check under the serialization barrier: a prior queued rotation may
         // have already applied this signer.
         if (equalBytes(xonly, this.arkServerPublicKey)) return;
@@ -1848,6 +1902,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         this.setOffchainTapscriptForRotation(newOffchain);
         this.setBoardingTapscriptForRotation(newBoarding);
         this.setArkServerPublicKeyForRotation(xonly);
+        // Re-source the checkpoint script from the new server epoch so the send
+        // path's checkpoint outputs match the rotated signer (decoded up front
+        // in `rotateServerSigner`, so this commit cannot fail mid-rotation).
+        this.setServerUnrollScriptForRotation(newServerUnrollScript);
     }
 
     /**
@@ -2035,7 +2093,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
         boardingTapscript: DefaultVtxo.Script,
-        readonly serverUnrollScript: CSVMultisigTapscript.Type,
+        serverUnrollScript: CSVMultisigTapscript.Type,
         readonly forfeitOutputScript: Bytes,
         readonly forfeitPubkey: Bytes,
         dustAmount: bigint,
@@ -2093,6 +2151,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         this._delegateManager = delegateProvider
             ? new DelegateManagerImpl(delegateProvider, arkProvider, identity)
             : undefined;
+        this._serverUnrollScript = serverUnrollScript;
         this._receiveRotator = receiveRotator;
         this._descriptorProvider = descriptorProvider;
         this._signerRouter = new InputSignerRouter({
@@ -2274,6 +2333,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 onServerInfoChanged(
                     cb: (info: {
                         signerPubkey: string;
+                        checkpointTapscript: string;
                         deprecatedSigners?: readonly { pubkey?: string }[];
                     }) => void,
                 ): () => void;
@@ -2388,8 +2448,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 // during the offchain round-trip. Pin the server key in the
                 // same step so the address derives from one rotation epoch
                 // (`rotateServerSigner` swaps `_arkServerPublicKey` too).
+                // Snapshot the checkpoint unroll script too: rotation also
+                // swaps `_serverUnrollScript`, which `buildAndSubmitOffchainTx`
+                // would otherwise read live when building checkpoint outputs.
                 const offchainTapscript = this.offchainTapscript;
                 const serverPubKey = this.arkServerPublicKey;
+                const serverUnrollScript = this.serverUnrollScript;
                 const arkAddress = offchainTapscript.address(this.network.hrp, serverPubKey);
 
                 const selectedVtxoSum = params
@@ -2431,27 +2495,14 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     });
                 }
 
-                this._addPendingSpends(selected.inputs);
-                try {
-                    const { arkTxid, signedCheckpointTxs } = await this.buildAndSubmitOffchainTx(
-                        selected.inputs,
-                        outputs,
-                    );
-
-                    await this.updateDbAfterOffchainTx(
-                        selected.inputs,
-                        arkTxid,
-                        signedCheckpointTxs,
-                        params.amount,
-                        selected.changeAmount,
-                        selected.changeAmount > 0n ? outputs.length - 1 : 0,
-                        offchainTapscript,
-                    );
-
-                    return arkTxid;
-                } finally {
-                    this._removePendingSpends(selected.inputs);
-                }
+                return this._submitOffchainSpend(selected.inputs, outputs, {
+                    sentAmount: params.amount,
+                    changeAmount: selected.changeAmount,
+                    changeVout: selected.changeAmount > 0n ? outputs.length - 1 : 0,
+                    offchainTapscript,
+                    serverPubKey,
+                    serverUnrollScript,
+                });
             });
         }
 
@@ -3412,8 +3463,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // tapscripts. Threading the snapshot pins both reads. Pin the server
         // key in the same step: `rotateServerSigner` swaps `_arkServerPublicKey`
         // alongside the tapscript, so the address must derive from one epoch.
+        // Snapshot the checkpoint unroll script too: `rotateServerSigner` also
+        // swaps `_serverUnrollScript`, and `buildAndSubmitOffchainTx` would
+        // otherwise build checkpoint outputs from a rotated live value.
         const offchainTapscript = this.offchainTapscript;
         const serverPubKey = this.arkServerPublicKey;
+        const serverUnrollScript = this.serverUnrollScript;
         const outputAddress = offchainTapscript.address(this.network.hrp, serverPubKey);
         const address = outputAddress.encode();
 
@@ -3583,30 +3638,157 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         const sentAmount = recipients.reduce((sum, r) => sum + r.amount, 0);
 
-        // Optimistically hide selected coins from concurrent getVtxos() while
-        // the offchain tx is in flight.
-        this._addPendingSpends(selectedCoins);
+        return this._submitOffchainSpend(selectedCoins, outputs, {
+            sentAmount,
+            changeAmount: BigInt(changeAmount),
+            changeVout: changeReceiver ? changeIndex : 0,
+            offchainTapscript,
+            serverPubKey,
+            serverUnrollScript,
+            changeAssets: changeReceiver?.assets,
+        });
+    }
+
+    /**
+     * Shared tail of every Ark-transaction spend path (`send`, selected-VTXO
+     * `sendBitcoin`, and {@link sendSelectedVtxosToSelf}): hide the inputs from
+     * concurrent `getVtxos()`, build+submit the offchain tx, persist the spent
+     * inputs and any wallet-owned (change / self) output, then release the
+     * pending-spend hold. Callers own coin selection, output construction, and
+     * the synchronous epoch snapshot; this owns the submit/persist sequence.
+     */
+    private async _submitOffchainSpend(
+        inputs: ExtendedVirtualCoin[],
+        outputs: TransactionOutput[],
+        persist: {
+            sentAmount: number;
+            changeAmount: bigint;
+            changeVout: number;
+            offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script;
+            serverPubKey: Bytes;
+            serverUnrollScript: CSVMultisigTapscript.Type;
+            changeAssets?: Asset[];
+            recordSentHistory?: boolean;
+        },
+    ): Promise<string> {
+        this._addPendingSpends(inputs);
         try {
             const { arkTxid, signedCheckpointTxs } = await this.buildAndSubmitOffchainTx(
-                selectedCoins,
+                inputs,
                 outputs,
+                persist.serverUnrollScript,
             );
 
             await this.updateDbAfterOffchainTx(
-                selectedCoins,
+                inputs,
                 arkTxid,
                 signedCheckpointTxs,
-                sentAmount,
-                BigInt(changeAmount),
-                changeReceiver ? changeIndex : 0,
-                offchainTapscript,
-                changeReceiver?.assets,
+                persist.sentAmount,
+                persist.changeAmount,
+                persist.changeVout,
+                persist.offchainTapscript,
+                persist.serverPubKey,
+                persist.changeAssets,
+                persist.recordSentHistory ?? true,
             );
 
             return arkTxid;
         } finally {
-            this._removePendingSpends(selectedCoins);
+            this._removePendingSpends(inputs);
         }
+    }
+
+    /**
+     * @internal Migration primitive (deprecated-signer plan, step 1). Spend an
+     * explicit set of the wallet's own deprecated-signer VTXOs into a single
+     * full-value output on the wallet's *active* signer, through the Ark send
+     * path (not `settle`) so arkd builds checkpoints against the active server
+     * epoch. Consumed in-process by {@link VtxoManager}'s migration pass; not
+     * part of the public `IWallet` API and never accepts boarding `ExtendedCoin`
+     * inputs.
+     *
+     * The caller (`migrateCore`) must have already moved the wallet onto the
+     * active signer (`ensureReceiveOnActiveSigner`) and sized the batch (caps +
+     * dust floor); this method validates the inputs, preserves all input assets
+     * on the self output, and persists the new active-signer VTXO even though
+     * there is no separate change output. It records no `TxSent` history — the
+     * funds never leave the wallet.
+     */
+    async sendSelectedVtxosToSelf(inputs: ExtendedVirtualCoin[]): Promise<string> {
+        if (inputs.length === 0) {
+            throw new Error("sendSelectedVtxosToSelf: no inputs");
+        }
+        return this._withTxLock(async () => {
+            // Snapshot the signer epoch synchronously before any `await`: a
+            // concurrent `rotateServerSigner` swaps the receive tapscript, the
+            // server key, AND the unroll script together, so the self-output
+            // address, the checkpoint unroll script, and the persisted-VTXO
+            // metadata must all derive from one epoch.
+            const offchainTapscript = this.offchainTapscript;
+            const serverPubKey = this.arkServerPublicKey;
+            const serverUnrollScript = this.serverUnrollScript;
+            const arkAddress = offchainTapscript.address(this.network.hrp, serverPubKey);
+
+            // Only spendable, non-recoverable, batch-expiry-bearing VTXOs migrate
+            // cooperatively: recoverable/swept inputs follow the recovery settle
+            // path, and the DB-update path only persists a wallet-owned output
+            // when an input batch expiry exists (unrolled inputs carry none).
+            for (const input of inputs) {
+                if (!isSpendable(input) || isRecoverable(input)) {
+                    throw new Error(
+                        `sendSelectedVtxosToSelf: input ${input.txid}:${input.vout} is not cooperatively spendable`,
+                    );
+                }
+                if (!input.virtualStatus.batchExpiry) {
+                    throw new Error(
+                        `sendSelectedVtxosToSelf: input ${input.txid}:${input.vout} has no batchExpiry`,
+                    );
+                }
+            }
+
+            const total = inputs.reduce((sum, c) => sum + BigInt(c.value), 0n);
+
+            const outputs: TransactionOutput[] = [
+                {
+                    script:
+                        total < this.dustAmount ? arkAddress.subdustPkScript : arkAddress.pkScript,
+                    amount: total,
+                },
+            ];
+
+            // Preserve every input asset on the single self output (output index
+            // 0). With no asset-bearing recipients, all input asset amounts route
+            // to the self receiver.
+            const assetInputs = selectedCoinsToAssetInputs(inputs);
+            let selfAssets: Asset[] | undefined;
+            if (assetInputs.size > 0) {
+                const totals = new Map<string, bigint>();
+                for (const [, assets] of assetInputs) {
+                    for (const a of assets) {
+                        totals.set(a.assetId, (totals.get(a.assetId) ?? 0n) + a.amount);
+                    }
+                }
+                selfAssets = [...totals].map(([assetId, amount]) => ({ assetId, amount }));
+                const selfReceiver: Recipient = {
+                    address: arkAddress.encode(),
+                    amount: Number(total),
+                    assets: selfAssets,
+                };
+                const packet = createAssetPacket(assetInputs, [], selfReceiver);
+                outputs.push(Extension.create([packet]).txOut());
+            }
+
+            return this._submitOffchainSpend(inputs, outputs, {
+                sentAmount: 0,
+                changeAmount: total,
+                changeVout: 0,
+                offchainTapscript,
+                serverPubKey,
+                changeAssets: selfAssets,
+                recordSentHistory: false,
+                serverUnrollScript,
+            });
+        });
     }
 
     /**
@@ -3617,6 +3799,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     async buildAndSubmitOffchainTx(
         inputs: ExtendedVirtualCoin[],
         outputs: TransactionOutput[],
+        serverUnrollScript: CSVMultisigTapscript.Type = this.serverUnrollScript,
     ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
         const offchainTx = buildOffchainTx(
             inputs.map((input) => {
@@ -3626,7 +3809,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 };
             }),
             outputs,
-            this.serverUnrollScript,
+            serverUnrollScript,
         );
 
         // arkTx inputs spend checkpoint outputs, so each input's
@@ -3733,12 +3916,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     }
 
     // mark virtual outputs as spent, save change outputs if any.
-    // `offchainTapscript` is the snapshot the caller captured under
-    // `_txLock` before any `await`; deriving both the change-VTXO
-    // metadata and `primaryAddress` from it here guarantees the local
-    // record matches the pkScript the server saw on the inbound
-    // transaction, even if `WalletReceiveRotator.rotate` swaps
-    // `this.offchainTapscript` mid-flight.
+    // `offchainTapscript` and `serverPubKey` are the epoch snapshot the
+    // caller captured under `_txLock` before any `await`; deriving both the
+    // change-VTXO metadata and `primaryAddress` from them here guarantees the
+    // local record matches the address/pkScript the server saw on the inbound
+    // transaction, even if `rotateServerSigner` swaps `this.offchainTapscript`
+    // / `this.arkServerPublicKey` mid-flight.
     private async updateDbAfterOffchainTx(
         inputs: VirtualCoin[],
         arkTxid: string,
@@ -3747,11 +3930,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         changeAmount: bigint,
         changeVout: number,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
+        serverPubKey: Bytes,
         changeAssets?: Asset[],
+        // Self-transfer migrations (a full-value send to the wallet's own active
+        // signer) move no funds out of the wallet, so they suppress the `TxSent`
+        // history row — recording one would show a phantom outflow against an
+        // unchanged balance, the same way the settle path records no history.
+        recordSentHistory: boolean = true,
     ): Promise<void> {
-        const primaryAddress = offchainTapscript
-            .address(this.network.hrp, this.arkServerPublicKey)
-            .encode();
+        const primaryAddress = offchainTapscript.address(this.network.hrp, serverPubKey).encode();
 
         try {
             const spentVtxos: ExtendedVirtualCoin[] = [];
@@ -3880,19 +4067,21 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 );
             }
 
-            await this.walletRepository.saveTransactions(primaryAddress, [
-                {
-                    key: {
-                        boardingTxid: "",
-                        commitmentTxid: "",
-                        arkTxid: arkTxid,
+            if (recordSentHistory) {
+                await this.walletRepository.saveTransactions(primaryAddress, [
+                    {
+                        key: {
+                            boardingTxid: "",
+                            commitmentTxid: "",
+                            arkTxid: arkTxid,
+                        },
+                        amount: sentAmount,
+                        type: TxType.TxSent,
+                        settled: false,
+                        createdAt,
                     },
-                    amount: sentAmount,
-                    type: TxType.TxSent,
-                    settled: false,
-                    createdAt,
-                },
-            ]);
+                ]);
+            }
         } catch (e) {
             console.warn("error saving offchain tx to repository", e);
             throw e;

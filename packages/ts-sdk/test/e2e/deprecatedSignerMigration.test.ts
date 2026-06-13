@@ -36,11 +36,10 @@ const arkUrl = "http://localhost:7070";
  * classifies `DUE_NOW`; a future cutoff classifies `MIGRATABLE`; a past cutoff
  * classifies `EXPIRED` (cooperative migration closed).
  *
- * Known server-side gap: cooperative migration of **boarding** UTXOs under a
- * deprecated signer is rejected (`INVALID_BOARDING_INPUT_SIG`) — arkd only
- * co-signs boarding inputs with the active signer. So the boarding test asserts
- * real discovery + that block; the cutoff axis does not change it. (VTXO
- * migration co-signs the forfeit with the deprecated key and works for real.)
+ * Boarding migration is also real on the pinned images: a pre-rotation boarding
+ * UTXO under a deprecated signer is discovered, settled cooperatively, and
+ * reported in the migration result. (VTXO migration co-signs the forfeit with the
+ * deprecated key; boarding migration co-signs the collaborative boarding leaf.)
  *
  * Each test funds under signer `A`, then rotates `A` → `B` (with `A` deprecated)
  * and migrates. `A` is the key the regtest stack — and the shared `ark` CLI
@@ -196,10 +195,16 @@ describe("deprecated-signer migration (real rotation)", () => {
                     const balanceBefore = await wallet.getBalance();
                     const report = await vtxoManager.migrateDeprecatedSignerVtxos();
                     expect(report.rotated).toBe(true);
-                    expect(report.txid).toBeDefined();
+                    // VTXO leg ran through the send path; `txid` is the Ark
+                    // transaction id from send, NOT a settle commitment txid.
+                    expect(report.vtxos?.txid).toBeDefined();
+                    expect(report.vtxos?.error).toBeUndefined();
+                    expect(report.boarding).toBeUndefined();
                     expect(report.skipped).toBeUndefined();
                     expect(report.expired).toEqual([]);
-                    expect(report.migrated.map((m) => `${m.txid}:${m.vout}`)).toContain(stale);
+                    expect(report.vtxos?.migrated.map((m) => `${m.txid}:${m.vout}`)).toContain(
+                        stale,
+                    );
 
                     // Wallet re-derived onto the active (B) signer; nothing left under A.
                     expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
@@ -267,12 +272,17 @@ describe("deprecated-signer migration (real rotation)", () => {
                     const balanceBefore = await wallet.getBalance();
                     const report = await vtxoManager.migrateDeprecatedSignerVtxos();
                     expect(report.rotated).toBe(true);
-                    expect(report.txid).toBeDefined();
+                    // VTXO leg send id (not a settle commitment txid).
+                    expect(report.vtxos?.txid).toBeDefined();
+                    expect(report.vtxos?.error).toBeUndefined();
+                    expect(report.boarding).toBeUndefined();
                     expect(report.skipped).toBeUndefined();
                     expect(report.expired).toEqual([]);
-                    expect(report.migrated.map((m) => `${m.txid}:${m.vout}`)).toContain(stale);
+                    expect(report.vtxos?.migrated.map((m) => `${m.txid}:${m.vout}`)).toContain(
+                        stale,
+                    );
                     // The migrated ref carries the advertised cutoff.
-                    expect(report.migrated[0].cutoffDate).toBe(BigInt(cutoff));
+                    expect(report.vtxos?.migrated[0].cutoffDate).toBe(BigInt(cutoff));
 
                     expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
                     const postStatus = await vtxoManager.getDeprecatedSignerStatus();
@@ -342,8 +352,9 @@ describe("deprecated-signer migration (real rotation)", () => {
                     const report = await vtxoManager.migrateDeprecatedSignerVtxos();
                     expect(report.rotated).toBe(true);
                     expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
-                    expect(report.txid).toBeUndefined();
-                    expect(report.migrated).toEqual([]);
+                    // Past cutoff: no migratable inputs → neither leg, global skip.
+                    expect(report.vtxos).toBeUndefined();
+                    expect(report.boarding).toBeUndefined();
                     expect(report.skipped).toBe("no-deprecated-vtxos");
                     expect(report.expired.map((m) => `${m.txid}:${m.vout}`)).toContain(stale);
 
@@ -361,16 +372,13 @@ describe("deprecated-signer migration (real rotation)", () => {
         );
     }
 
-    // ── 5. Boarding discovery is real; cooperative settle is server-blocked ──
+    // ── 5. Boarding UTXO, no cutoff → DUE_NOW → cooperative migration ───────
     //
     // Discovery + classification of a real pre-rotation boarding UTXO is REAL and
-    // asserted here. The cooperative SETTLE is blocked on the current arkd image:
-    // a boarding input carries a tapscript multisig leaf that needs the SERVER's
-    // signature, and arkd only ever co-signs boarding inputs with the ACTIVE
-    // signer — never a deprecated one — so it fails verification with
-    // `INVALID_BOARDING_INPUT_SIG: missing signature for <deprecated-key>`. The
-    // cutoff axis does not change this. (Tracked for a follow-up server fix; see
-    // plans/arkd-keys-rotation-e2e.md.)
+    // the cooperative SETTLE is expected to succeed on the pinned arkd images. A
+    // boarding input carries a tapscript multisig leaf that needs the SERVER's
+    // deprecated-key signature; this test proves the fixture supplies it and that
+    // the SDK threads the old input script into a migration output under B.
     for (const useMnemonic of [false, true]) {
         it(
             "migrates a real boarding UTXO with no cutoff (DUE_NOW)",
@@ -436,11 +444,17 @@ describe("deprecated-signer migration (real rotation)", () => {
                     const report = await vtxoManager.migrateDeprecatedSignerVtxos();
                     expect(report.rotated).toBe(true);
                     expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
-                    expect(report.txid).toBeDefined();
-                    expect(report.error).toBeUndefined();
+                    // Boarding migrates through its OWN settle leg (separate from
+                    // the send-based VTXO leg); its txid is a settle commitment.
+                    expect(report.vtxos).toBeUndefined();
+                    expect(report.boarding?.txid).toBeDefined();
+                    expect(report.boarding?.error).toBeUndefined();
+                    expect(report.boarding?.skipped).toBeUndefined();
                     expect(report.skipped).toBeUndefined();
                     expect(report.expired).toEqual([]);
-                    expect(report.migrated.map((m) => `${m.txid}:${m.vout}`)).toContain(stale);
+                    expect(report.boarding?.migrated.map((m) => `${m.txid}:${m.vout}`)).toContain(
+                        stale,
+                    );
 
                     // The migration settle spends the boarding UTXO on-chain; its
                     // disappearance from deprecated-signer discovery depends on the

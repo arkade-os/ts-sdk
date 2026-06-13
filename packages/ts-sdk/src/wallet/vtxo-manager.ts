@@ -609,75 +609,102 @@ export interface DeprecatedSignerReport {
 }
 
 /**
- * Reason a migration pass did not submit a cooperative migration intent.
- * `oversized-only` means every migratable input individually exceeds the
- * server's per-output ceiling (`vtxoMaxAmount`) — see
- * {@link DeprecatedSignerMigrationReport.oversized}.
+ * Why a single migration leg (VTXO send or boarding settle) submitted nothing.
+ * `oversized-only` means every migratable input in that leg individually
+ * exceeds the server's per-output ceiling (`vtxoMaxAmount`) — see
+ * {@link MigrationLegReport.oversized}.
  */
-export type MigrationSkipReason =
-    | "no-deprecated-vtxos"
-    | "unknown-wallet-signer"
-    | "below-dust"
-    | "oversized-only";
+export type MigrationLegSkipReason = "below-dust" | "oversized-only";
 
 /**
- * Result of a {@link IVtxoManager.migrateDeprecatedSignerVtxos} pass.
+ * Why the whole pass submitted nothing, before either leg was built.
+ * `no-deprecated-vtxos` means BOTH migratable sets (VTXO and boarding) were
+ * empty; `unknown-wallet-signer` means the wallet's own snapshot signer is
+ * neither active nor advertised deprecated, so the pass refuses to rotate.
  */
-export interface DeprecatedSignerMigrationReport {
-    /** Whether a mid-session server-signer rotation was applied first. */
-    rotated: boolean;
-    /** Settlement txid when a cooperative migration intent was submitted. */
+export type MigrationGlobalSkipReason = "no-deprecated-vtxos" | "unknown-wallet-signer";
+
+/**
+ * Outcome of one migration leg. The VTXO leg migrates through the Ark send path
+ * ({@link Wallet.sendSelectedVtxosToSelf}); the boarding leg keeps its
+ * settle-backed migration (boarding coins are on-chain inputs with no send
+ * path). Each leg owns its full sizing pipeline (oversized filtering, count +
+ * amount caps, its own dust floor) and reports independently — a failure or skip
+ * in one leg never suppresses the other.
+ */
+export interface MigrationLegReport {
+    /** VTXO leg: Ark transaction id from send. Boarding leg: settle commitment txid. */
     txid?: string;
-    /** VTXOs cooperatively migrated to the active-signer address. */
+    /** Inputs submitted and accepted in this leg's transaction; empty on error/skip. */
     migrated: MigrationVtxoRef[];
+    /** Why this leg submitted nothing (every candidate below dust or oversized). */
+    skipped?: MigrationLegSkipReason;
     /**
-     * Stale VTXOs skipped because their signer cutoff has passed: cooperative
-     * migration is closed for them. They are NOT pushed to a unilateral exit —
-     * each keeps its own batch expiry, the server sweeps it at expiry, and the
-     * recovery path then re-mints it under the active signer. Unilateral exit is
-     * an opt-in alternative, not a requirement (Section 6 / post-cutoff). The
-     * per-signer sweep/recovery lifecycle is surfaced on {@link signers}
-     * ({@link DeprecatedSignerReport.recoverableCount} /
-     * {@link DeprecatedSignerReport.awaitingSweepCount}).
-     */
-    expired: MigrationVtxoRef[];
-    /** Why no migration intent was submitted, when applicable. */
-    skipped?: MigrationSkipReason;
-    /** Per-deprecated-signer status snapshot (Section 6). */
-    signers: DeprecatedSignerReport[];
-    /**
-     * Number of cooperatively-migratable inputs (boarding + VTXO) deferred to a
-     * later pass because a per-settlement cap was reached this pass — either the
-     * input count ({@link MAX_VTXOS_PER_SETTLEMENT}) or the per-output amount
-     * ceiling (`vtxoMaxAmount`) (Section 7). Present and non-zero only when a cap
-     * actually bound. These will migrate on a subsequent pass; makes the
-     * truncation visible rather than a silent drop.
+     * Migratable inputs deferred to a later pass by this leg's own caps (the
+     * input count {@link MAX_VTXOS_PER_SETTLEMENT} or the per-output amount
+     * ceiling `vtxoMaxAmount`). Present and non-zero only when a cap bound and
+     * the leg actually submitted; makes the truncation visible.
      */
     deferred?: number;
     /**
-     * Inputs under a migratable signer that cannot be migrated cooperatively
-     * because their value alone exceeds the server's per-output ceiling
-     * (`vtxoMaxAmount`): a single settle output can never be ≤ the ceiling, so
-     * these require a unilateral exit. Unlike {@link deferred}, they will never
-     * migrate cooperatively. Present only when non-empty; absent when the server
-     * advertises no ceiling (`vtxoMaxAmount < 0`) (Theme B / Section 7).
+     * Inputs whose value alone exceeds the per-output ceiling (`vtxoMaxAmount`):
+     * a single ≤-ceiling output can never hold them, so they never migrate
+     * cooperatively and require a unilateral exit. Present only when non-empty;
+     * absent when the server advertises no ceiling (`vtxoMaxAmount < 0`).
      */
     oversized?: MigrationVtxoRef[];
-    /** Error message when the migration settle attempt failed. */
+    /** Error message when this leg's submission failed; the other leg still runs. */
     error?: string;
 }
 
 /**
+ * Result of a {@link IVtxoManager.migrateDeprecatedSignerVtxos} pass, split into
+ * two symmetric legs: VTXOs migrate through the send path, boarding UTXOs keep a
+ * separate settle-backed migration. They are never combined into one intent.
+ */
+export interface DeprecatedSignerMigrationReport {
+    /** Whether a mid-session server-signer rotation was applied first. */
+    rotated: boolean;
+    /** Global skip; when set, neither leg is present. */
+    skipped?: MigrationGlobalSkipReason;
+    /** Send leg. Present iff ≥1 cooperatively-migratable VTXO existed this pass. */
+    vtxos?: MigrationLegReport;
+    /** Settle leg. Present iff ≥1 cooperatively-migratable boarding UTXO existed this pass. */
+    boarding?: MigrationLegReport;
+    /**
+     * Cutoff-expired inputs of both kinds (a classification outcome, not a leg
+     * outcome). Skipped because their signer cutoff has passed: cooperative
+     * migration is closed for them. They are NOT pushed to a unilateral exit —
+     * each keeps its own batch expiry, the server sweeps it at expiry, and the
+     * recovery path then re-mints it under the active signer. The per-signer
+     * sweep/recovery lifecycle is surfaced on {@link signers}
+     * ({@link DeprecatedSignerReport.recoverableCount} /
+     * {@link DeprecatedSignerReport.awaitingSweepCount}).
+     */
+    expired: MigrationVtxoRef[];
+    /** Per-deprecated-signer status snapshot (Section 6). */
+    signers: DeprecatedSignerReport[];
+}
+
+/**
  * Extra surface the migration path needs beyond {@link IWallet}: a fresh
- * server-info source, the wallet's current signer snapshot, and the
- * mid-session server-signer rotation write path. Implemented by the concrete
+ * server-info source, the wallet's current signer snapshot, the mid-session
+ * server-signer rotation write path, and the selected-input self-send primitive
+ * that migrates VTXOs through the Ark send path. Implemented by the concrete
  * `Wallet`; absent on watch-only or mock wallets.
  */
 interface MigrationCapableWallet {
     arkProvider: ArkProvider;
     arkServerPublicKey: Uint8Array;
     onchainProvider: OnchainProvider;
-    rotateServerSigner(newServerPubKey: Uint8Array): Promise<void>;
+    rotateServerSigner(newServerPubKey: Uint8Array, checkpointTapscript: string): Promise<void>;
+    /**
+     * Spend an explicit set of the wallet's own deprecated-signer VTXOs into a
+     * single full-value active-signer output through the Ark send path (not
+     * `settle`), preserving input assets. The pre-cutoff VTXO migration primitive
+     * (plan step 1); never accepts boarding inputs.
+     */
+    sendSelectedVtxosToSelf(inputs: ExtendedVirtualCoin[]): Promise<string>;
     /**
      * Grouped boarding discovery over a given signer set, returning the
      * address↔signer association {@link ExtendedCoin} cannot carry. Consumed
@@ -694,6 +721,7 @@ function isMigrationCapable(wallet: IWallet): wallet is IWallet & MigrationCapab
         "arkServerPublicKey" in wallet &&
         "onchainProvider" in wallet &&
         typeof (wallet as Partial<MigrationCapableWallet>).rotateServerSigner === "function" &&
+        typeof (wallet as Partial<MigrationCapableWallet>).sendSelectedVtxosToSelf === "function" &&
         typeof (wallet as Partial<MigrationCapableWallet>).getBoardingUtxosForSigners === "function"
     );
 }
@@ -734,29 +762,6 @@ function classifiedBoardingToRef(c: ClassifiedBoarding): MigrationVtxoRef {
         signerPubKey: c.classification.signerPubKey,
         cutoffDate: c.classification.cutoffDate,
     };
-}
-
-/**
- * A cooperatively-migratable input — either a deprecated-signer VTXO or a
- * deprecated-signer boarding UTXO — carrying its gross `value` so the shared
- * settlement-sizing helpers ({@link byValueDescending}, {@link capSettlementBatch})
- * rank and cap a combined boarding+VTXO batch uniformly (Section 7).
- */
-type MigrationCandidate = { value: number } & (
-    | { kind: "vtxo"; classified: ClassifiedVtxo }
-    | { kind: "boarding"; classified: ClassifiedBoarding }
-);
-
-/** The input coin a {@link MigrationCandidate} settles. */
-function candidateInput(c: MigrationCandidate): ExtendedCoin {
-    return c.kind === "vtxo" ? c.classified.vtxo : c.classified.coin;
-}
-
-/** Project a {@link MigrationCandidate} into the report's {@link MigrationVtxoRef}. */
-function candidateToRef(c: MigrationCandidate): MigrationVtxoRef {
-    return c.kind === "vtxo"
-        ? classifiedToRef(c.classified)
-        : classifiedBoardingToRef(c.classified);
 }
 
 /**
@@ -1583,7 +1588,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // Common cheap exit: nothing deprecated advertised and our own snapshot
         // is current → no contract sweep, no indexer round-trip.
         if (signerSet.deprecated.size === 0 && walletClass.status === "CURRENT") {
-            return { rotated: false, migrated: [], expired: [], signers: [] };
+            return { rotated: false, expired: [], signers: [] };
         }
 
         // The wallet's own signer is neither active nor advertised deprecated:
@@ -1594,7 +1599,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             const { reports: boardingReports } = await this.classifyDeprecatedSignerBoarding(info);
             return {
                 rotated: false,
-                migrated: [],
                 expired: [],
                 signers: mergeSignerReports(vtxoReports, boardingReports),
                 skipped: "unknown-wallet-signer",
@@ -1636,119 +1640,137 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         if (vtxoMigratable.length === 0 && boardingMigratable.length === 0) {
             return {
                 rotated,
-                migrated: [],
                 expired: expiredRefs,
                 signers: reports,
                 skipped: "no-deprecated-vtxos",
             };
         }
 
-        // Combine VTXO + boarding migratable inputs, each tagged with its gross
-        // value so the shared settlement-sizing helpers rank and cap them
-        // uniformly.
-        const candidates: MigrationCandidate[] = [
-            ...vtxoMigratable.map((classified) => ({
-                kind: "vtxo" as const,
-                classified,
-                value: classified.vtxo.value,
-            })),
-            ...boardingMigratable.map((classified) => ({
-                kind: "boarding" as const,
-                classified,
-                value: classified.coin.value,
-            })),
-        ];
-
-        // An input whose value alone exceeds the per-output ceiling
-        // (vtxoMaxAmount; < 0 means no limit) can never form a ≤-ceiling settle
-        // output, so it cannot be migrated cooperatively and must exit
-        // unilaterally. Separate these out and surface them (report + warn)
-        // rather than letting capSettlementBatch silently skip them forever.
         const vtxoMaxAmount = info.vtxoMaxAmount;
+        const dustAmount = getDustAmount(this.wallet);
+
+        const report: DeprecatedSignerMigrationReport = {
+            rotated,
+            expired: expiredRefs,
+            signers: reports,
+        };
+
+        // Two independent legs, run sequentially (each acquires the wallet tx
+        // lock itself): VTXOs migrate through the Ark send path; boarding UTXOs
+        // keep a SEPARATE settle-backed migration — they are on-chain inputs
+        // with no send path. They are never combined into one intent, each owns
+        // its full sizing pipeline (oversized + caps + its own dust floor), and a
+        // failure/skip in one never suppresses the other. A leg is present iff it
+        // had ≥1 cooperatively-migratable candidate before sizing.
+
+        // VTXO leg — send to the active-signer self output. No settlement events.
+        if (vtxoMigratable.length > 0) {
+            report.vtxos = await this.runMigrationLeg(
+                vtxoMigratable,
+                (c) => c.vtxo.value,
+                classifiedToRef,
+                vtxoMaxAmount,
+                dustAmount,
+                "VTXO",
+                (capped) => wallet.sendSelectedVtxosToSelf(capped.map((c) => c.vtxo)),
+            );
+        }
+
+        // Boarding leg — separate settle. Keeps firing settlement events. Its
+        // single output is the active-signer Ark address (post any rotation).
+        if (boardingMigratable.length > 0) {
+            report.boarding = await this.runMigrationLeg(
+                boardingMigratable,
+                (c) => c.coin.value,
+                classifiedBoardingToRef,
+                vtxoMaxAmount,
+                dustAmount,
+                "boarding",
+                async (capped) => {
+                    const arkAddress = await this.wallet.getAddress();
+                    const totalAmount = capped.reduce((sum, c) => sum + BigInt(c.coin.value), 0n);
+                    return this.wallet.settle(
+                        {
+                            inputs: capped.map((c) => c.coin),
+                            outputs: [{ address: arkAddress, amount: totalAmount }],
+                        },
+                        options?.eventCallback,
+                    );
+                },
+            );
+        }
+
+        return report;
+    }
+
+    /**
+     * Size and submit one migration leg. Filters inputs whose value alone
+     * exceeds the per-output ceiling (`vtxoMaxAmount`; `< 0` means no limit) —
+     * those can never form a ≤-ceiling output and must exit unilaterally — then
+     * caps the rest (highest-value first; bounded by {@link MAX_VTXOS_PER_SETTLEMENT}
+     * AND a gross total within `vtxoMaxAmount`), applies the protocol dust floor,
+     * and submits the capped batch through `submit`. A throw from `submit` lands
+     * in `error`; the caller's other leg still runs.
+     *
+     * Migration is mandatory and fee-exempt: every selected input moves at its
+     * full value, so the gross total IS the aggregated output amount (kept under
+     * the server ceiling by the cap). The dust floor guards the degenerate cases
+     * where every input was oversized or the whole holding sums below dust.
+     */
+    private async runMigrationLeg<C>(
+        candidates: C[],
+        valueOf: (c: C) => number,
+        toRef: (c: C) => MigrationVtxoRef,
+        vtxoMaxAmount: bigint,
+        dustAmount: bigint,
+        legName: string,
+        submit: (capped: C[]) => Promise<string>,
+    ): Promise<MigrationLegReport> {
         const oversizedRefs: MigrationVtxoRef[] = [];
-        const sizedCandidates: MigrationCandidate[] = [];
+        const sized: C[] = [];
         for (const c of candidates) {
-            if (vtxoMaxAmount >= 0n && BigInt(c.value) > vtxoMaxAmount) {
-                oversizedRefs.push(candidateToRef(c));
+            if (vtxoMaxAmount >= 0n && BigInt(valueOf(c)) > vtxoMaxAmount) {
+                oversizedRefs.push(toRef(c));
             } else {
-                sizedCandidates.push(c);
+                sized.push(c);
             }
         }
         if (oversizedRefs.length > 0) {
             console.warn(
-                `Deprecated-signer migration: ${oversizedRefs.length} input(s) exceed the ` +
-                    `per-output limit ${vtxoMaxAmount} and cannot be migrated cooperatively; ` +
-                    `they require a unilateral exit.`,
+                `Deprecated-signer migration (${legName}): ${oversizedRefs.length} input(s) ` +
+                    `exceed the per-output limit ${vtxoMaxAmount} and cannot be migrated ` +
+                    `cooperatively; they require a unilateral exit.`,
             );
         }
         const oversizedField = oversizedRefs.length > 0 ? { oversized: oversizedRefs } : {};
 
-        // Cap to a single settlement: highest-value first (clears dust soonest,
-        // fewest passes to drain the bulk), bounded by BOTH the input count
-        // (MAX_VTXOS_PER_SETTLEMENT) AND a gross total within vtxoMaxAmount. The
-        // explicit-inputs settle path applies neither cap itself, so migration
-        // must — and since migration is fee-exempt the gross total IS the
-        // aggregated output amount, keeping it under the server ceiling. Overflow
-        // defers to the next pass.
-        const capped = capSettlementBatch(byValueDescending(sizedCandidates), vtxoMaxAmount);
-        const deferred = sizedCandidates.length - capped.length;
+        const capped = capSettlementBatch(
+            byValueDescending(sized.map((c) => ({ value: valueOf(c), c }))),
+            vtxoMaxAmount,
+        ).map((w) => w.c);
+        const deferred = sized.length - capped.length;
+        const totalAmount = capped.reduce((sum, c) => sum + BigInt(valueOf(c)), 0n);
 
-        // A deprecated-signer migration is mandatory and fee-exempt: unlike plain
-        // settle we do NOT price inputs/output, nor drop coins whose fee would
-        // exceed their value; every selected input moves at its full value.
-        // (Assumes arkd accepts a fee-exempt migration intent; server side
-        // tracked by arkd#822.)
-        const dustAmount = getDustAmount(this.wallet);
-        const inputs: ExtendedCoin[] = [];
-        const migratedRefs: MigrationVtxoRef[] = [];
-        let totalAmount = 0n;
-        for (const cand of capped) {
-            inputs.push(candidateInput(cand));
-            migratedRefs.push(candidateToRef(cand));
-            totalAmount += BigInt(cand.value);
-        }
-
-        const arkAddress = await this.wallet.getAddress();
-
-        // The only floor left is the protocol dust limit: an output below dust
-        // cannot be created. In practice the aggregate clears dust; this guards
-        // the degenerate cases where every migratable input was oversized
-        // (nothing fits one output) or the entire stale holding sums below dust.
         if (totalAmount < dustAmount) {
-            const onlyOversized = sizedCandidates.length === 0 && oversizedRefs.length > 0;
+            const onlyOversized = sized.length === 0 && oversizedRefs.length > 0;
             return {
-                rotated,
                 migrated: [],
-                expired: expiredRefs,
-                signers: reports,
                 skipped: onlyOversized ? "oversized-only" : "below-dust",
                 ...oversizedField,
             };
         }
 
         try {
-            const txid = await this.wallet.settle(
-                {
-                    inputs,
-                    outputs: [{ address: arkAddress, amount: totalAmount }],
-                },
-                options?.eventCallback,
-            );
+            const txid = await submit(capped);
             return {
-                rotated,
                 txid,
-                migrated: migratedRefs,
-                expired: expiredRefs,
-                signers: reports,
+                migrated: capped.map(toRef),
                 ...(deferred > 0 ? { deferred } : {}),
                 ...oversizedField,
             };
         } catch (e) {
             return {
-                rotated,
                 migrated: [],
-                expired: expiredRefs,
-                signers: reports,
                 error: e instanceof Error ? e.message : String(e),
                 ...oversizedField,
             };
@@ -1854,7 +1876,17 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             }
 
             if (isCooperativelyMigratable(cls.status)) {
-                for (const v of spendable) migratable.push({ vtxo: v, classification: cls });
+                for (const v of spendable) {
+                    // Send migration requires a batch expiry: sendSelectedVtxosToSelf
+                    // rejects no-expiry inputs (the DB-update path only persists a
+                    // wallet-owned output when one exists), and a single unrolled/
+                    // settled input here would otherwise throw and fail the whole
+                    // VTXO leg. Such holdings stay counted in the per-signer report
+                    // above; they exit via on-chain/recovery paths, not cooperative
+                    // send.
+                    if (!v.virtualStatus.batchExpiry) continue;
+                    migratable.push({ vtxo: v, classification: cls });
+                }
             } else if (cls.status === "EXPIRED") {
                 for (const v of spendable) expired.push({ vtxo: v, classification: cls });
             }
@@ -1989,9 +2021,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         try {
             const report = await this.migrateCore();
-            if (report.error) {
+            // Either leg reporting an error fails the whole pass (shared cooldown
+            // + backoff); the legs themselves never throw out of migrateCore.
+            const legError = report.vtxos?.error ?? report.boarding?.error;
+            if (legError) {
                 this.consecutiveMigrationFailures++;
-                console.error("Deprecated-signer migration settle failed:", report.error);
+                console.error("Deprecated-signer migration leg failed:", legError);
             } else {
                 this.consecutiveMigrationFailures = 0;
             }
@@ -2041,7 +2076,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         if (walletClass.status === "CURRENT" || walletClass.status === "UNKNOWN_SIGNER") {
             return false;
         }
-        await wallet.rotateServerSigner(hex.decode(info.signerPubkey));
+        // Thread the fresh epoch's checkpoint script through so the rotated
+        // wallet builds send-path checkpoints against the active server signer.
+        await wallet.rotateServerSigner(hex.decode(info.signerPubkey), info.checkpointTapscript);
         return true;
     }
 

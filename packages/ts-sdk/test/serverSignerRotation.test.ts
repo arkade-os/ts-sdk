@@ -7,6 +7,7 @@ import {
     mockArkInfo,
 } from "./helpers/restoreWallet";
 import { BoardingContractHandler } from "../src/contracts/handlers/boarding";
+import { CSVMultisigTapscript } from "../src/script/tapscript";
 
 const NEW_SERVER = "ab".repeat(32);
 
@@ -21,7 +22,10 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
             const oldAddress = await wallet.getAddress();
             const oldBoardingAddress = await wallet.getBoardingAddress();
 
-            await wallet.rotateServerSigner(hex.decode(NEW_SERVER));
+            await wallet.rotateServerSigner(
+                hex.decode(NEW_SERVER),
+                mockArkInfo.checkpointTapscript,
+            );
 
             // Server key + both tapscripts now commit to the new signer.
             expect(hex.encode(wallet.arkServerPublicKey)).toBe(NEW_SERVER);
@@ -53,7 +57,10 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
         try {
             const oldServerHex = hex.encode(wallet.arkServerPublicKey);
 
-            await wallet.rotateServerSigner(hex.decode(NEW_SERVER));
+            await wallet.rotateServerSigner(
+                hex.decode(NEW_SERVER),
+                mockArkInfo.checkpointTapscript,
+            );
 
             const all = await contractRepository.getContracts({});
             const oldRows = all.filter((c) => c.params.serverPubKey === oldServerHex);
@@ -68,12 +75,63 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
         const { wallet } = await makeStaticWalletForTest();
         try {
             const before = await wallet.getAddress();
-            await wallet.rotateServerSigner(wallet.arkServerPublicKey);
+            await wallet.rotateServerSigner(
+                wallet.arkServerPublicKey,
+                mockArkInfo.checkpointTapscript,
+            );
             expect(await wallet.getAddress()).toBe(before);
             // A 33-byte compressed form of the same key is also a no-op.
             const compressed = hex.decode("02" + hex.encode(wallet.arkServerPublicKey));
-            await wallet.rotateServerSigner(compressed);
+            await wallet.rotateServerSigner(compressed, mockArkInfo.checkpointTapscript);
             expect(await wallet.getAddress()).toBe(before);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("re-sources serverUnrollScript from the supplied checkpointTapscript", async () => {
+        const { wallet } = await makeStaticWalletForTest();
+        try {
+            const before = hex.encode(wallet.serverUnrollScript.script);
+            // A distinct, valid checkpoint script for the new server epoch.
+            const newCheckpoint = hex.encode(
+                CSVMultisigTapscript.encode({
+                    timelock: { type: "blocks", value: 200 },
+                    pubkeys: [hex.decode(NEW_SERVER)],
+                }).script,
+            );
+            expect(newCheckpoint).not.toBe(before);
+
+            await wallet.rotateServerSigner(hex.decode(NEW_SERVER), newCheckpoint);
+
+            // The send path's checkpoint outputs now build against the new
+            // epoch, not the pinned construction-time script.
+            expect(hex.encode(wallet.serverUnrollScript.script)).toBe(newCheckpoint);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("rejects a missing/empty checkpointTapscript without any side effect", async () => {
+        const { wallet, contractRepository } = await makeStaticWalletForTest();
+        try {
+            const beforeKey = hex.encode(wallet.arkServerPublicKey);
+            const beforeOffchain = hex.encode(wallet.offchainTapscript.options.serverPubKey);
+            const beforeBoarding = hex.encode(wallet.boardingTapscript.options.serverPubKey);
+            const beforeUnroll = hex.encode(wallet.serverUnrollScript.script);
+            const beforeRows = (await contractRepository.getContracts({})).length;
+
+            await expect(wallet.rotateServerSigner(hex.decode(NEW_SERVER), "")).rejects.toThrow(
+                "Invalid checkpointTapscript from server",
+            );
+
+            // The wallet stays on its previous consistent epoch: key, both
+            // tapscripts, the unroll script, and the contract rows are unchanged.
+            expect(hex.encode(wallet.arkServerPublicKey)).toBe(beforeKey);
+            expect(hex.encode(wallet.offchainTapscript.options.serverPubKey)).toBe(beforeOffchain);
+            expect(hex.encode(wallet.boardingTapscript.options.serverPubKey)).toBe(beforeBoarding);
+            expect(hex.encode(wallet.serverUnrollScript.script)).toBe(beforeUnroll);
+            expect((await contractRepository.getContracts({})).length).toBe(beforeRows);
         } finally {
             await wallet.dispose();
         }
@@ -171,11 +229,13 @@ describe("Boarding watch path across server-signer rotation", () => {
                 wallet as unknown as {
                     handleServerInfoChanged(info: {
                         signerPubkey: string;
+                        checkpointTapscript: string;
                         deprecatedSigners?: { pubkey: string }[];
                     }): Promise<void>;
                 }
             ).handleServerInfoChanged({
                 signerPubkey: NEW,
+                checkpointTapscript: mockArkInfo.checkpointTapscript,
                 deprecatedSigners: [{ pubkey: oldSigner }],
             });
 

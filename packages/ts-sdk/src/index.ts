@@ -95,7 +95,9 @@ import type {
     DeprecatedSignerMigrationReport,
     DeprecatedSignerReport,
     MigrationVtxoRef,
-    MigrationSkipReason,
+    MigrationLegReport,
+    MigrationLegSkipReason,
+    MigrationGlobalSkipReason,
 } from "./wallet/vtxo-manager";
 import {
     classifyContractSigner,
@@ -585,7 +587,9 @@ export type {
     DeprecatedSignerMigrationReport,
     DeprecatedSignerReport,
     MigrationVtxoRef,
-    MigrationSkipReason,
+    MigrationLegReport,
+    MigrationLegSkipReason,
+    MigrationGlobalSkipReason,
     SignerStatus,
     SignerClassification,
     SignerSet,

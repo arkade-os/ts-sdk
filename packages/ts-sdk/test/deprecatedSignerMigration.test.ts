@@ -88,6 +88,11 @@ function makeInfo(
 }
 
 let vtxoCounter = 0;
+// Settled/preconfirmed VTXOs always carry a batch expiry; only unrolled coins
+// lack one. The send-based migration leg requires it (sendSelectedVtxosToSelf
+// rejects no-expiry inputs), so the default fixture must have it too.
+const DEFAULT_BATCH_EXPIRY = Date.now() + 365 * 24 * 3600 * 1000;
+
 function makeVtxo(
     contractScript: string,
     value: number,
@@ -103,7 +108,7 @@ function makeVtxo(
         status: { confirmed: true },
         createdAt: new Date(),
         isUnrolled: false,
-        virtualStatus: { state },
+        virtualStatus: { state, batchExpiry: DEFAULT_BATCH_EXPIRY },
         forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
         intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
         tapTree: new Uint8Array(),
@@ -136,6 +141,9 @@ interface MigrationMockOptions {
 
 function createMigrationMockWallet(opts: MigrationMockOptions) {
     const settle = vi.fn().mockResolvedValue("migrate-txid");
+    // The VTXO leg migrates through the Ark send path; the boarding leg keeps
+    // settle. Distinct return so tests can tell the two legs' txids apart.
+    const sendSelectedVtxosToSelf = vi.fn().mockResolvedValue("vtxo-send-txid");
     let arkServerPublicKey = hex.decode(opts.walletSigner ?? ACTIVE);
     const rotateServerSigner = vi.fn(async (next: Uint8Array) => {
         arkServerPublicKey = next;
@@ -163,6 +171,7 @@ function createMigrationMockWallet(opts: MigrationMockOptions) {
         getDelegateManager: vi.fn().mockResolvedValue(undefined),
         getVtxos: vi.fn().mockResolvedValue([]),
         settle,
+        sendSelectedVtxosToSelf,
         dustAmount: 1000n,
         // Boarding migration surface (Section 7). Defaults to no boarding
         // groups; tests that exercise boarding override getBoardingUtxosForSigners.
@@ -177,6 +186,7 @@ function createMigrationMockWallet(opts: MigrationMockOptions) {
     return {
         wallet,
         settle,
+        sendSelectedVtxosToSelf,
         rotateServerSigner,
         getContractsWithVtxos,
         getBoardingUtxosForSigners,
@@ -188,8 +198,8 @@ function createMigrationMockWallet(opts: MigrationMockOptions) {
 const newManager = (wallet: IWallet) => new VtxoManager(wallet, undefined, false);
 
 describe("VtxoManager - deprecated-signer migration", () => {
-    it("migrates dueNow (no cutoff) VTXOs immediately via settle", async () => {
-        const { wallet, settle } = createMigrationMockWallet({
+    it("migrates dueNow (no cutoff) VTXOs immediately via send (not settle)", async () => {
+        const { wallet, settle, sendSelectedVtxosToSelf } = createMigrationMockWallet({
             info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
             contractsWithVtxos: [cwv(DEP_DUE, [makeVtxo("default-" + DEP_DUE, 5000)])],
         });
@@ -198,20 +208,22 @@ describe("VtxoManager - deprecated-signer migration", () => {
         const report = await manager.migrateDeprecatedSignerVtxos();
 
         expect(report.rotated).toBe(false);
-        expect(report.txid).toBe("migrate-txid");
-        expect(report.migrated).toHaveLength(1);
-        expect(report.migrated[0].signerPubKey).toBe(DEP_DUE);
+        // VTXO leg ran through the send path; boarding leg absent (no boarding).
+        expect(report.vtxos?.txid).toBe("vtxo-send-txid");
+        expect(report.vtxos?.migrated).toHaveLength(1);
+        expect(report.vtxos?.migrated[0].signerPubKey).toBe(DEP_DUE);
+        expect(report.boarding).toBeUndefined();
         expect(report.expired).toHaveLength(0);
-        expect(settle).toHaveBeenCalledOnce();
-        const settleArg = settle.mock.calls[0][0];
-        expect(settleArg.inputs).toHaveLength(1);
-        expect(settleArg.outputs[0].address).toBe(ARK_ADDRESS);
-        // No intent fees configured → output equals the input value.
-        expect(settleArg.outputs[0].amount).toBe(5000n);
+        // The deprecated VTXO migrated through send, never settle.
+        expect(settle).not.toHaveBeenCalled();
+        expect(sendSelectedVtxosToSelf).toHaveBeenCalledOnce();
+        const sentInputs = sendSelectedVtxosToSelf.mock.calls[0][0] as ExtendedContractVtxo[];
+        expect(sentInputs).toHaveLength(1);
+        expect(sentInputs[0].value).toBe(5000);
     });
 
     it("orders migration inputs by value, highest first", async () => {
-        const { wallet, settle } = createMigrationMockWallet({
+        const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
             info: makeInfo(ACTIVE, [
                 { pubkey: DEP_DUE },
                 { pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 100) },
@@ -228,12 +240,12 @@ describe("VtxoManager - deprecated-signer migration", () => {
         await manager.migrateDeprecatedSignerVtxos();
 
         // Value-descending, independent of cutoff (migration is mandatory for all).
-        const inputs = settle.mock.calls[0][0].inputs as ExtendedContractVtxo[];
+        const inputs = sendSelectedVtxosToSelf.mock.calls[0][0] as ExtendedContractVtxo[];
         expect(inputs.map((v) => v.value)).toEqual([3333, 2222, 1111]);
     });
 
     it("reports expired-cutoff VTXOs without migrating them", async () => {
-        const { wallet, settle } = createMigrationMockWallet({
+        const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
             info: makeInfo(ACTIVE, [
                 { pubkey: DEP_DUE },
                 { pubkey: DEP_EXPIRED, cutoffDate: BigInt(NOW_S - 100) },
@@ -247,15 +259,15 @@ describe("VtxoManager - deprecated-signer migration", () => {
 
         const report = await manager.migrateDeprecatedSignerVtxos();
 
-        expect(report.migrated.map((m) => m.signerPubKey)).toEqual([DEP_DUE]);
+        expect(report.vtxos?.migrated.map((m) => m.signerPubKey)).toEqual([DEP_DUE]);
         expect(report.expired.map((m) => m.signerPubKey)).toEqual([DEP_EXPIRED]);
-        const inputs = settle.mock.calls[0][0].inputs as ExtendedContractVtxo[];
+        const inputs = sendSelectedVtxosToSelf.mock.calls[0][0] as ExtendedContractVtxo[];
         expect(inputs).toHaveLength(1);
     });
 
     it("excludes swept (recoverable) and spent VTXOs from migration", async () => {
         const script = "default-" + DEP_DUE;
-        const { wallet, settle } = createMigrationMockWallet({
+        const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
             info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
             contractsWithVtxos: [
                 cwv(DEP_DUE, [
@@ -269,12 +281,36 @@ describe("VtxoManager - deprecated-signer migration", () => {
 
         const report = await manager.migrateDeprecatedSignerVtxos();
 
-        expect(report.migrated).toHaveLength(1);
-        expect(settle.mock.calls[0][0].inputs).toHaveLength(1);
+        expect(report.vtxos?.migrated).toHaveLength(1);
+        expect(sendSelectedVtxosToSelf.mock.calls[0][0]).toHaveLength(1);
+    });
+
+    it("excludes deprecated-signer VTXOs without a batchExpiry and still migrates the rest", async () => {
+        // An unrolled (or otherwise no-expiry) input cannot go through the send
+        // leg — sendSelectedVtxosToSelf would throw and fail the whole leg — so
+        // classification must leave it out while still migrating the valid ones.
+        const script = "default-" + DEP_DUE;
+        const noExpiry = makeVtxo(script, 4000);
+        (noExpiry.virtualStatus as { batchExpiry?: number }).batchExpiry = undefined;
+        const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
+            contractsWithVtxos: [cwv(DEP_DUE, [makeVtxo(script, 5000), noExpiry])],
+        });
+        const manager = newManager(wallet);
+
+        const report = await manager.migrateDeprecatedSignerVtxos();
+
+        expect(report.vtxos?.error).toBeUndefined();
+        expect(report.vtxos?.migrated).toHaveLength(1);
+        const inputs = sendSelectedVtxosToSelf.mock.calls[0][0] as ExtendedContractVtxo[];
+        expect(inputs).toHaveLength(1);
+        expect(inputs[0].value).toBe(5000);
+        // The skipped no-expiry coin is still reported as a deprecated holding.
+        expect(report.signers.find((s) => s.signerPubKey === DEP_DUE)?.vtxoCount).toBe(2);
     });
 
     it("applies a mid-session rotation first when the wallet's own signer is deprecated", async () => {
-        const { wallet, rotateServerSigner, settle } = createMigrationMockWallet({
+        const { wallet, rotateServerSigner, sendSelectedVtxosToSelf } = createMigrationMockWallet({
             walletSigner: DEP_A, // wallet was built before the rotation
             info: makeInfo(ACTIVE, [{ pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 5000) }]),
             contractsWithVtxos: [cwv(DEP_A, [makeVtxo("default-" + DEP_A, 8000)])],
@@ -286,54 +322,82 @@ describe("VtxoManager - deprecated-signer migration", () => {
         expect(rotateServerSigner).toHaveBeenCalledOnce();
         expect(hex.encode(rotateServerSigner.mock.calls[0][0])).toBe(ACTIVE);
         expect(report.rotated).toBe(true);
-        expect(report.migrated).toHaveLength(1);
-        expect(settle).toHaveBeenCalledOnce();
+        expect(report.vtxos?.migrated).toHaveLength(1);
+        expect(sendSelectedVtxosToSelf).toHaveBeenCalledOnce();
     });
 
     it("does not rotate or migrate when the wallet's own signer is unknown", async () => {
-        const { wallet, rotateServerSigner, settle } = createMigrationMockWallet({
-            walletSigner: UNKNOWN,
-            info: makeInfo(ACTIVE, [{ pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 5000) }]),
-            contractsWithVtxos: [cwv(DEP_A, [makeVtxo("default-" + DEP_A, 8000)])],
-        });
+        const { wallet, rotateServerSigner, settle, sendSelectedVtxosToSelf } =
+            createMigrationMockWallet({
+                walletSigner: UNKNOWN,
+                info: makeInfo(ACTIVE, [{ pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 5000) }]),
+                contractsWithVtxos: [cwv(DEP_A, [makeVtxo("default-" + DEP_A, 8000)])],
+            });
         const manager = newManager(wallet);
 
         const report = await manager.migrateDeprecatedSignerVtxos();
 
         expect(report.skipped).toBe("unknown-wallet-signer");
         expect(report.rotated).toBe(false);
+        expect(report.vtxos).toBeUndefined();
+        expect(report.boarding).toBeUndefined();
         expect(rotateServerSigner).not.toHaveBeenCalled();
         expect(settle).not.toHaveBeenCalled();
+        expect(sendSelectedVtxosToSelf).not.toHaveBeenCalled();
     });
 
     it("short-circuits without an indexer sweep when nothing is deprecated", async () => {
-        const { wallet, getContractsWithVtxos, settle } = createMigrationMockWallet({
-            info: makeInfo(ACTIVE, []),
-            contractsWithVtxos: [],
-        });
+        const { wallet, getContractsWithVtxos, settle, sendSelectedVtxosToSelf } =
+            createMigrationMockWallet({
+                info: makeInfo(ACTIVE, []),
+                contractsWithVtxos: [],
+            });
         const manager = newManager(wallet);
 
         const report = await manager.migrateDeprecatedSignerVtxos();
 
-        expect(report.migrated).toHaveLength(0);
+        expect(report.vtxos).toBeUndefined();
+        expect(report.boarding).toBeUndefined();
         expect(report.signers).toHaveLength(0);
         expect(report.skipped).toBeUndefined();
         expect(getContractsWithVtxos).not.toHaveBeenCalled();
         expect(settle).not.toHaveBeenCalled();
+        expect(sendSelectedVtxosToSelf).not.toHaveBeenCalled();
     });
 
-    it("returns a settle error in the report without throwing", async () => {
-        const { wallet, settle } = createMigrationMockWallet({
+    it("returns a send error in the vtxos leg without throwing", async () => {
+        const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
             info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
             contractsWithVtxos: [cwv(DEP_DUE, [makeVtxo("default-" + DEP_DUE, 5000)])],
         });
-        settle.mockRejectedValueOnce(new Error("server rejected old-key input"));
+        sendSelectedVtxosToSelf.mockRejectedValueOnce(new Error("server rejected old-key input"));
         const manager = newManager(wallet);
 
         const report = await manager.migrateDeprecatedSignerVtxos();
 
-        expect(report.error).toContain("server rejected old-key input");
-        expect(report.migrated).toHaveLength(0);
+        expect(report.vtxos?.error).toContain("server rejected old-key input");
+        expect(report.vtxos?.migrated).toHaveLength(0);
+        expect(report.vtxos?.txid).toBeUndefined();
+    });
+
+    it("surfaces a rotation throw as a failed pass: manual API rejects, automatic pass does not crash", async () => {
+        const { wallet, rotateServerSigner } = createMigrationMockWallet({
+            walletSigner: DEP_A, // deprecated snapshot → ensureReceiveOnActiveSigner rotates
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 5000) }]),
+            contractsWithVtxos: [cwv(DEP_A, [makeVtxo("default-" + DEP_A, 8000)])],
+        });
+        // A missing/invalid checkpointTapscript fails the rotation up front.
+        rotateServerSigner.mockRejectedValue(new Error("Invalid checkpointTapscript from server"));
+        const manager = newManager(wallet);
+
+        // Manual API: the throw propagates as a rejection.
+        await expect(manager.migrateDeprecatedSignerVtxos()).rejects.toThrow(
+            "Invalid checkpointTapscript from server",
+        );
+
+        // Automatic pass: caught into backoff, never a crash.
+        await expect((manager as any).runMigrationPass()).resolves.toBeUndefined();
+        expect((manager as any).consecutiveMigrationFailures).toBeGreaterThan(0);
     });
 
     it("getDeprecatedSignerStatus aggregates per-signer status without migrating", async () => {
@@ -379,17 +443,19 @@ describe("VtxoManager - deprecated-signer boarding migration (Section 7)", () =>
         const report = await manager.migrateDeprecatedSignerVtxos();
 
         expect(report.skipped).toBeUndefined();
-        expect(report.txid).toBe("migrate-txid");
-        expect(report.migrated).toHaveLength(1);
-        expect(report.migrated[0].signerPubKey).toBe(DEP_DUE);
-        expect(report.migrated[0].value).toBe(5000);
+        // Boarding migrates through its own settle leg; no VTXO leg here.
+        expect(report.vtxos).toBeUndefined();
+        expect(report.boarding?.txid).toBe("migrate-txid");
+        expect(report.boarding?.migrated).toHaveLength(1);
+        expect(report.boarding?.migrated[0].signerPubKey).toBe(DEP_DUE);
+        expect(report.boarding?.migrated[0].value).toBe(5000);
         expect(settle).toHaveBeenCalledOnce();
         expect(settle.mock.calls[0][0].inputs).toHaveLength(1);
         expect(settle.mock.calls[0][0].outputs[0].address).toBe(ARK_ADDRESS);
     });
 
-    it("combines old-signer boarding + old-signer VTXOs into one settle to the current address", async () => {
-        const { wallet, settle } = createMigrationMockWallet({
+    it("migrates old-signer boarding + VTXOs in SEPARATE legs (send + settle), never one settle", async () => {
+        const { wallet, settle, sendSelectedVtxosToSelf } = createMigrationMockWallet({
             info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
             contractsWithVtxos: [cwv(DEP_DUE, [makeVtxo("default-" + DEP_DUE, 4000)])],
             boardingGroups: [makeBoardingGroup(DEP_DUE, [makeBoardingCoin(6000)])],
@@ -398,11 +464,20 @@ describe("VtxoManager - deprecated-signer boarding migration (Section 7)", () =>
 
         const report = await manager.migrateDeprecatedSignerVtxos();
 
-        expect(report.migrated).toHaveLength(2);
-        expect(settle.mock.calls[0][0].inputs).toHaveLength(2);
+        // VTXO leg: send the 4000 VTXO. Boarding leg: a SEPARATE settle of the
+        // 6000 boarding coin — never one combined settle of both.
+        expect(sendSelectedVtxosToSelf).toHaveBeenCalledOnce();
+        expect(settle).toHaveBeenCalledOnce();
+        const sentInputs = sendSelectedVtxosToSelf.mock.calls[0][0] as ExtendedContractVtxo[];
+        expect(sentInputs.map((v) => v.value)).toEqual([4000]);
+        expect(settle.mock.calls[0][0].inputs).toHaveLength(1);
+        expect(settle.mock.calls[0][0].inputs[0].value).toBe(6000);
         expect(settle.mock.calls[0][0].outputs[0].address).toBe(ARK_ADDRESS);
-        const values = report.migrated.map((m) => m.value).sort((a, b) => a - b);
-        expect(values).toEqual([4000, 6000]);
+
+        expect(report.vtxos?.txid).toBe("vtxo-send-txid");
+        expect(report.vtxos?.migrated.map((m) => m.value)).toEqual([4000]);
+        expect(report.boarding?.txid).toBe("migrate-txid");
+        expect(report.boarding?.migrated.map((m) => m.value)).toEqual([6000]);
     });
 
     it("reports EXPIRED-signer boarding without migrating it", async () => {
@@ -421,7 +496,7 @@ describe("VtxoManager - deprecated-signer boarding migration (Section 7)", () =>
 
         const report = await manager.migrateDeprecatedSignerVtxos();
 
-        expect(report.migrated.map((m) => m.signerPubKey)).toEqual([DEP_DUE]);
+        expect(report.boarding?.migrated.map((m) => m.signerPubKey)).toEqual([DEP_DUE]);
         expect(report.expired.map((m) => m.signerPubKey)).toEqual([DEP_EXPIRED]);
         expect(settle.mock.calls[0][0].inputs).toHaveLength(1);
         // The expired-signer boarding is still counted in its report row.
@@ -462,7 +537,7 @@ describe("VtxoManager - deprecated-signer boarding migration (Section 7)", () =>
         const report = await manager.migrateDeprecatedSignerVtxos();
 
         // Only the coin under the longer (200-block) delay is migratable.
-        expect(report.migrated.map((m) => m.value)).toEqual([4000]);
+        expect(report.boarding?.migrated.map((m) => m.value)).toEqual([4000]);
         // But BOTH confirmed coins are counted in the signer's report row,
         // including the CSV-expired one (it leaves via the unilateral sweep).
         const row = report.signers.find((s) => s.signerPubKey === DEP_A);
@@ -482,7 +557,8 @@ describe("VtxoManager - deprecated-signer boarding migration (Section 7)", () =>
 
         const report = await manager.migrateDeprecatedSignerVtxos();
 
-        expect(report.migrated).toHaveLength(0);
+        expect(report.boarding).toBeUndefined();
+        expect(report.vtxos).toBeUndefined();
         // No confirmed coins → no report row → both migratable sets empty.
         expect(report.skipped).toBe("no-deprecated-vtxos");
         expect(report.signers).toHaveLength(0);
@@ -504,7 +580,9 @@ describe("VtxoManager - deprecated-signer boarding migration (Section 7)", () =>
         const report = await manager.migrateDeprecatedSignerVtxos();
 
         // Both coins migrate at full value; the output is the gross sum.
-        expect(report.migrated.map((m) => m.value).sort((a, b) => a - b)).toEqual([1500, 5000]);
+        expect(report.boarding?.migrated.map((m) => m.value).sort((a, b) => a - b)).toEqual([
+            1500, 5000,
+        ]);
         expect(settle.mock.calls[0][0].inputs).toHaveLength(2);
         expect(settle.mock.calls[0][0].outputs[0].amount).toBe(6500n);
     });
@@ -523,9 +601,9 @@ describe("VtxoManager - deprecated-signer boarding migration (Section 7)", () =>
 
         const report = await manager.migrateDeprecatedSignerVtxos();
 
-        expect(report.migrated).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
-        expect(report.deferred).toBe(1);
-        expect(report.migrated.map((m) => m.value)).not.toContain(1000);
+        expect(report.boarding?.migrated).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+        expect(report.boarding?.deferred).toBe(1);
+        expect(report.boarding?.migrated.map((m) => m.value)).not.toContain(1000);
     });
 
     it("caps a migration batch to the per-output ceiling (vtxoMaxAmount), deferring the rest", async () => {
@@ -547,10 +625,12 @@ describe("VtxoManager - deprecated-signer boarding migration (Section 7)", () =>
 
         // value-desc 6000,5000,4000 under a 10_000 ceiling: take 6000, skip 5000
         // (would reach 11_000), take 4000 → output exactly 10_000. 5000 deferred.
-        expect(report.migrated.map((m) => m.value).sort((a, b) => a - b)).toEqual([4000, 6000]);
+        expect(report.boarding?.migrated.map((m) => m.value).sort((a, b) => a - b)).toEqual([
+            4000, 6000,
+        ]);
         expect(settle.mock.calls[0][0].outputs[0].amount).toBe(10_000n);
-        expect(report.deferred).toBe(1);
-        expect(report.oversized).toBeUndefined();
+        expect(report.boarding?.deferred).toBe(1);
+        expect(report.boarding?.oversized).toBeUndefined();
     });
 
     it("reports inputs above vtxoMaxAmount as oversized (cannot migrate cooperatively) and warns", async () => {
@@ -567,8 +647,8 @@ describe("VtxoManager - deprecated-signer boarding migration (Section 7)", () =>
         const report = await manager.migrateDeprecatedSignerVtxos();
 
         // 8000 > 5000 ceiling → oversized (unilateral exit); 3000 migrates.
-        expect(report.migrated.map((m) => m.value)).toEqual([3000]);
-        expect(report.oversized?.map((m) => m.value)).toEqual([8000]);
+        expect(report.boarding?.migrated.map((m) => m.value)).toEqual([3000]);
+        expect(report.boarding?.oversized?.map((m) => m.value)).toEqual([8000]);
         expect(warn).toHaveBeenCalledWith(
             expect.stringContaining("cannot be migrated cooperatively"),
         );
@@ -586,11 +666,38 @@ describe("VtxoManager - deprecated-signer boarding migration (Section 7)", () =>
 
         const report = await manager.migrateDeprecatedSignerVtxos();
 
-        expect(report.migrated).toHaveLength(0);
-        expect(report.skipped).toBe("oversized-only");
-        expect(report.oversized?.map((m) => m.value)).toEqual([8000]);
+        // All boarding inputs oversized → boarding leg present but skipped.
+        expect(report.boarding?.migrated).toHaveLength(0);
+        expect(report.boarding?.skipped).toBe("oversized-only");
+        expect(report.boarding?.oversized?.map((m) => m.value)).toEqual([8000]);
+        expect(report.skipped).toBeUndefined();
         expect(settle).not.toHaveBeenCalled();
         warn.mockRestore();
+    });
+
+    it("applies dust floors per leg: a below-dust VTXO leg is skipped while boarding still settles", async () => {
+        const { wallet, settle, sendSelectedVtxosToSelf } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
+            // A 500-sat VTXO is below the 1000-sat dust floor on its own; the
+            // 5000-sat boarding coin clears its own floor. The old combined dust
+            // guard would have summed them and let the VTXO ride; per-leg floors
+            // skip the VTXO leg without suppressing the boarding leg.
+            contractsWithVtxos: [cwv(DEP_DUE, [makeVtxo("default-" + DEP_DUE, 500)])],
+            boardingGroups: [makeBoardingGroup(DEP_DUE, [makeBoardingCoin(5000)])],
+        });
+        const manager = newManager(wallet);
+
+        const report = await manager.migrateDeprecatedSignerVtxos();
+
+        expect(report.vtxos?.skipped).toBe("below-dust");
+        expect(report.vtxos?.migrated).toHaveLength(0);
+        expect(sendSelectedVtxosToSelf).not.toHaveBeenCalled();
+        // The boarding leg settles independently of the skipped VTXO leg.
+        expect(report.boarding?.txid).toBe("migrate-txid");
+        expect(report.boarding?.migrated.map((m) => m.value)).toEqual([5000]);
+        expect(settle).toHaveBeenCalledOnce();
+        // Per-leg skips never bubble up to the global skip.
+        expect(report.skipped).toBeUndefined();
     });
 
     it("getDeprecatedSignerStatus reports boarding-only signers and aggregates across addresses", async () => {
@@ -657,6 +764,7 @@ function createPollableWallet() {
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         }),
         settle: vi.fn().mockResolvedValue("txid"),
+        sendSelectedVtxosToSelf: vi.fn().mockResolvedValue("vtxo-send-txid"),
         dustAmount: 1000n,
         getBoardingUtxos: vi.fn().mockResolvedValue([]),
         getBoardingUtxosForSigners: vi.fn().mockResolvedValue([]),
@@ -773,6 +881,7 @@ function createRecoveryMockWallet(opts: RecoveryMockOptions) {
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         }),
         settle,
+        sendSelectedVtxosToSelf: vi.fn().mockResolvedValue("vtxo-send-txid"),
         dustAmount: 1000n,
         getBoardingUtxos: vi.fn().mockResolvedValue([]),
         getBoardingUtxosForSigners: vi.fn().mockResolvedValue([]),
