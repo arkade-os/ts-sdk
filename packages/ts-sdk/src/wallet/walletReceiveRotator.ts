@@ -485,6 +485,23 @@ export class WalletReceiveRotator {
     }
 
     /**
+     * Run `fn` on the rotator's serialization chain, so it cannot interleave
+     * with a receive `rotate()`. Used by {@link Wallet.rotateServerSigner} to
+     * serialize server-signer rotation against HD receive rotation: both
+     * rebuild and swap `offchainTapscript`, so running them concurrently could
+     * tear the wallet's visible receive state. The chain keeps advancing even
+     * if `fn` rejects (its own caller still sees the rejection).
+     */
+    runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+        const run = this.chain.catch(() => undefined).then(fn);
+        this.chain = run.then(
+            () => undefined,
+            () => undefined,
+        );
+        return run;
+    }
+
+    /**
      * Tear down the subscription first so no late `vtxo_received` event
      * can queue work on a disposing wallet, then drain any in-flight
      * rotation so its `createContract` finishes before the contract

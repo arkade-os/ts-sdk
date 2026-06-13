@@ -93,6 +93,7 @@ import { IndexedDbSwapRepository } from "./repositories/IndexedDb/swap-repositor
 import { SwapRepository } from "./repositories/swap-repository";
 import { claimVHTLCIdentity } from "./utils/identity";
 import {
+    candidateServerPubkeys,
     claimVHTLCwithOffchainTx,
     createVHTLCScript,
     joinBatch,
@@ -469,6 +470,11 @@ export class ArkadeSwaps {
         // make reverse swap request
         const swapResponse = await this.swapProvider.createReverseSwap(swapRequest);
 
+        const decodedInvoice = decodeInvoice(swapResponse.invoice);
+        if (decodedInvoice.paymentHash !== preimageHash) {
+            throw new SwapError({ message: "Preimage hash does not match invoice payment hash" });
+        }
+
         const pendingSwap: BoltzReverseSwap = {
             id: swapResponse.id,
             type: "reverse",
@@ -524,30 +530,19 @@ export class ArkadeSwaps {
             pendingSwap.id,
         );
 
-        const serverXOnly = normalizeToXOnlyKey(
-            hex.decode(arkInfo.signerPubkey),
-            "server",
-            pendingSwap.id,
-        );
-
-        // build expected VHTLC script
-        const { vhtlcScript, vhtlcAddress } = this.createVHTLCScript({
-            network: arkInfo.network,
+        // Reconstruct the VHTLC across the current and deprecated server signers
+        // and match the stored lockup address, so a swap created before a planned
+        // server-signer rotation still resolves — and we recover the original
+        // signer (`serverXOnly`) to use downstream for the claim leaf.
+        const { vhtlcScript, serverXOnlyPublicKey: serverXOnly } = this.resolveVHTLCForLockup({
+            arkInfo,
             preimageHash: sha256(preimage),
             receiverPubkey: hex.encode(receiverXOnly),
             senderPubkey: hex.encode(senderXOnly),
-            serverPubkey: hex.encode(serverXOnly),
             timeoutBlockHeights: vhtlcTimeouts,
+            lockupAddress,
+            swapId: pendingSwap.id,
         });
-
-        if (!vhtlcScript.claimScript)
-            throw new Error(
-                `Swap ${pendingSwap.id}: failed to create VHTLC script for reverse swap`,
-            );
-        if (vhtlcAddress !== lockupAddress)
-            throw new Error(
-                `Swap ${pendingSwap.id}: VHTLC address mismatch. Expected ${lockupAddress}, got ${vhtlcAddress}`,
-            );
 
         // Retry while waiting for an *actionable* (unspent) VTXO to appear at
         // the VHTLC script. A spent VTXO showing up early must not abort the
@@ -856,12 +851,6 @@ export class ArkadeSwaps {
             "our",
             swap.id,
         );
-        const serverXOnlyPublicKey = normalizeToXOnlyKey(
-            hex.decode(resolvedArkInfo.signerPubkey),
-            "server",
-            swap.id,
-        );
-
         const { claimPublicKey, timeoutBlockHeights: vhtlcTimeouts } = swap.response;
         if (!claimPublicKey || !vhtlcTimeouts)
             throw new Error(`Swap ${swap.id}: incomplete submarine swap response`);
@@ -872,23 +861,23 @@ export class ArkadeSwaps {
             swap.id,
         );
 
-        const { vhtlcScript, vhtlcAddress } = this.createVHTLCScript({
-            network: resolvedArkInfo.network,
+        const lockupAddress = swap.response.address;
+        if (!lockupAddress)
+            throw new Error(`Swap ${swap.id}: missing lockup address in submarine swap response`);
+
+        // Match the stored lockup address across current + deprecated signers so
+        // a swap that straddles a server-signer rotation still resolves to its
+        // original VHTLC (and the original signer threaded downstream).
+        const { vhtlcScript, serverXOnlyPublicKey } = this.resolveVHTLCForLockup({
+            arkInfo: resolvedArkInfo,
             preimageHash: hex.decode(preimageHash),
             receiverPubkey: hex.encode(boltzXOnlyPublicKey),
             senderPubkey: hex.encode(ourXOnlyPublicKey),
-            serverPubkey: hex.encode(serverXOnlyPublicKey),
             timeoutBlockHeights: vhtlcTimeouts,
+            lockupAddress,
+            swapId: swap.id,
         });
-
-        if (!vhtlcScript.claimScript)
-            throw new Error(`Swap ${swap.id}: failed to create VHTLC script for submarine swap`);
-
-        if (vhtlcAddress !== swap.response.address)
-            throw new Error(
-                `VHTLC address mismatch for swap ${swap.id}: ` +
-                    `expected ${swap.response.address}, got ${vhtlcAddress}`,
-            );
+        const vhtlcAddress = lockupAddress;
 
         // Use the locally-reconstructed script, not the Boltz response
         // address. The VHTLC script is unique per swap, so every refundable
@@ -1763,33 +1752,33 @@ export class ArkadeSwaps {
             pendingSwap.id,
         );
 
-        const serverXOnlyPublicKey = normalizeToXOnlyKey(
-            hex.decode(arkInfo.signerPubkey),
-            "server",
-            pendingSwap.id,
-        );
-
         const boltzXOnlyPublicKey = normalizeToXOnlyKey(
             hex.decode(pendingSwap.response.lockupDetails.serverPublicKey),
             "boltz",
             pendingSwap.id,
         );
 
-        const { vhtlcAddress, vhtlcScript } = this.createVHTLCScript({
-            network: arkInfo.network,
-            preimageHash: hex.decode(pendingSwap.request.preimageHash),
-            serverPubkey: hex.encode(serverXOnlyPublicKey),
-            senderPubkey: hex.encode(ourXOnlyPublicKey),
-            receiverPubkey: hex.encode(boltzXOnlyPublicKey),
-            timeoutBlockHeights: pendingSwap.response.lockupDetails.timeouts!,
-        });
-
-        if (!vhtlcScript.refundScript)
-            throw new Error(`Swap ${pendingSwap.id}: failed to create VHTLC script for chain swap`);
-
-        if (pendingSwap.response.lockupDetails.lockupAddress !== vhtlcAddress) {
+        // Resolve across current + deprecated signers so a swap locked under a
+        // now-rotated signer still refunds; preserve the SwapError contract on a
+        // total mismatch.
+        let vhtlcScript: VHTLC.Script;
+        let serverXOnlyPublicKey: Uint8Array;
+        try {
+            ({ vhtlcScript, serverXOnlyPublicKey } = this.resolveVHTLCForLockup({
+                arkInfo,
+                preimageHash: hex.decode(pendingSwap.request.preimageHash),
+                senderPubkey: hex.encode(ourXOnlyPublicKey),
+                receiverPubkey: hex.encode(boltzXOnlyPublicKey),
+                timeoutBlockHeights: pendingSwap.response.lockupDetails.timeouts!,
+                lockupAddress: pendingSwap.response.lockupDetails.lockupAddress,
+                swapId: pendingSwap.id,
+            }));
+        } catch (error) {
             throw new SwapError({
-                message: "Unable to claim: invalid VHTLC address",
+                message:
+                    error instanceof Error
+                        ? error.message
+                        : "Unable to refund: invalid VHTLC address",
             });
         }
 
@@ -2107,23 +2096,27 @@ export class ArkadeSwaps {
             "sender",
         );
 
-        const serverXOnlyPublicKey = normalizeToXOnlyKey(arkInfo.signerPubkey, "server");
-
-        const { vhtlcAddress, vhtlcScript } = this.createVHTLCScript({
-            network: arkInfo.network,
-            preimageHash: hex.decode(pendingSwap.request.preimageHash),
-            serverPubkey: hex.encode(serverXOnlyPublicKey),
-            senderPubkey: hex.encode(senderXOnlyPublicKey),
-            receiverPubkey: hex.encode(receiverXOnlyPublicKey),
-            timeoutBlockHeights: pendingSwap.response.claimDetails.timeouts!,
-        });
-
-        if (!vhtlcScript.claimScript)
-            throw new Error(`Swap ${pendingSwap.id}: failed to create VHTLC script for chain swap`);
-
-        if (pendingSwap.response.claimDetails.lockupAddress !== vhtlcAddress) {
+        // Resolve across current + deprecated signers so a chain swap locked
+        // under a now-rotated signer still claims; preserve the SwapError
+        // contract on a total mismatch.
+        let vhtlcScript: VHTLC.Script;
+        let serverXOnlyPublicKey: Uint8Array;
+        try {
+            ({ vhtlcScript, serverXOnlyPublicKey } = this.resolveVHTLCForLockup({
+                arkInfo,
+                preimageHash: hex.decode(pendingSwap.request.preimageHash),
+                senderPubkey: hex.encode(senderXOnlyPublicKey),
+                receiverPubkey: hex.encode(receiverXOnlyPublicKey),
+                timeoutBlockHeights: pendingSwap.response.claimDetails.timeouts!,
+                lockupAddress: pendingSwap.response.claimDetails.lockupAddress,
+                swapId: pendingSwap.id,
+            }));
+        } catch (error) {
             throw new SwapError({
-                message: "Unable to claim: invalid VHTLC address",
+                message:
+                    error instanceof Error
+                        ? error.message
+                        : "Unable to claim: invalid VHTLC address",
             });
         }
 
@@ -2628,6 +2621,75 @@ export class ArkadeSwaps {
         timeoutBlockHeights: VhtlcTimeouts;
     }): { vhtlcScript: VHTLC.Script; vhtlcAddress: string } {
         return createVHTLCScript(args);
+    }
+
+    /**
+     * Reconstruct a swap's VHTLC by matching the persisted `lockupAddress`
+     * against the current and deprecated server signers, returning the matched
+     * script together with the server key it was minted under.
+     *
+     * Recovery paths (claim/refund/lookup) must use this instead of building the
+     * VHTLC from the current signer alone: a swap created before a planned arkd
+     * signer rotation is locked to a now-deprecated signer, so the current key
+     * would yield the wrong address and strand the funds. The returned
+     * `serverXOnlyPublicKey` is the original (possibly deprecated) key and MUST
+     * be threaded into downstream signing/verification.
+     *
+     * Throws a descriptive mismatch error when no candidate reproduces the
+     * lockup address (e.g. the swap predates an already-pruned deprecated
+     * signer) — replacing the previous current-signer-only equality check.
+     */
+    private resolveVHTLCForLockup(args: {
+        arkInfo: ArkInfo;
+        preimageHash: Uint8Array;
+        receiverPubkey: string;
+        senderPubkey: string;
+        timeoutBlockHeights: VhtlcTimeouts;
+        lockupAddress: string;
+        swapId: string;
+    }): { vhtlcScript: VHTLC.Script; serverXOnlyPublicKey: Uint8Array } {
+        // Probe the current signer first (the no-rotation fast path, so an
+        // un-rotated swap reconstructs in a single build), then each deprecated
+        // signer, returning the first whose address reproduces the stored
+        // lockup address.
+        const candidates = candidateServerPubkeys(args.arkInfo);
+        for (const serverPubkey of candidates) {
+            const { vhtlcScript, vhtlcAddress } = this.createVHTLCScript({
+                network: args.arkInfo.network,
+                preimageHash: args.preimageHash,
+                receiverPubkey: args.receiverPubkey,
+                senderPubkey: args.senderPubkey,
+                serverPubkey,
+                timeoutBlockHeights: args.timeoutBlockHeights,
+            });
+            if (vhtlcAddress !== args.lockupAddress) continue;
+            // A returned address match means the script was built (the real
+            // builder throws otherwise). Keep one defense-in-depth check here —
+            // replacing the per-call-site guards that used to live at each
+            // caller — so a future VHTLC version that derives a valid address
+            // with no spend leaves fails loud here instead of at signing time.
+            if (!vhtlcScript.claimScript && !vhtlcScript.refundScript) {
+                throw new Error(
+                    `Swap ${args.swapId}: VHTLC address matched but claim/refund script leaves are empty`,
+                );
+            }
+            return {
+                vhtlcScript,
+                // The matched (possibly deprecated) key must flow into downstream
+                // signing/verification: arkd signs a deprecated-signer input with
+                // the deprecated key, so the claim/refund leaf checks use it.
+                serverXOnlyPublicKey: normalizeToXOnlyKey(
+                    hex.decode(serverPubkey),
+                    "server",
+                    args.swapId,
+                ),
+            };
+        }
+        throw new Error(
+            `Swap ${args.swapId}: VHTLC address mismatch. Expected ${args.lockupAddress}; ` +
+                `no current or deprecated server signer (${candidates.length} candidate(s) tried) ` +
+                `reproduced it`,
+        );
     }
 
     // =========================================================================

@@ -17,6 +17,7 @@ import {
     RestDelegateProvider,
 } from "../../src";
 import { execSync } from "child_process";
+import { hex } from "@scure/base";
 import { generateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 
@@ -44,7 +45,7 @@ export interface TestArkWallet {
 
 export interface TestOnchainWallet {
     wallet: OnchainWallet;
-    identity: SingleKey;
+    identity: Identity;
 }
 
 export function execCommand(command: string): string {
@@ -60,7 +61,13 @@ export function execCommand(command: string): string {
     return result;
 }
 
-export function createTestIdentity(): SingleKey {
+export function createTestIdentity(useMnemonic = false): Identity {
+    if (useMnemonic) {
+        const mnemonic = generateMnemonic(wordlist);
+        return MnemonicIdentity.fromMnemonic(mnemonic, {
+            isMainnet: false,
+        });
+    }
     return SingleKey.fromRandomBytes();
 }
 
@@ -202,6 +209,10 @@ export function faucetOnchain(address: string, amount: number): void {
     execCommand(`node regtest/regtest.mjs faucet ${address} ${btc} --confirm`);
 }
 
+export function mineBlocks(n: number = 1): void {
+    execCommand(`node regtest/regtest.mjs mine ${n}`);
+}
+
 export async function createVtxo(alice: TestArkWallet, amount: number): Promise<string> {
     const address = await alice.wallet.getAddress();
     if (!address) throw new Error("Offchain address not defined.");
@@ -293,6 +304,156 @@ export function createOverrideInfoArkProvider(
     });
 }
 
+// ─── Server-signer rotation fixture (deprecated-keys e2e) ───────────────────
+//
+// Drives a REAL signer rotation on the running regtest arkd at test time,
+// without editing the `regtest/` submodule. Ported from the proven Go e2e
+// (`recreateArkdWallet` / `restartArkd` in
+// ../arkd/internal/test/e2e/utils_test.go), adapted to this repo's two-file,
+// profiled compose project (`arkade-regtest`) launched by `regtest.mjs`.
+
+const ARK_URL = "http://localhost:7070";
+
+export interface ServerSignerInfo {
+    /** Active signer pubkey, hex exactly as arkd's `/v1/info` returns it. */
+    signerPubkey: string;
+    deprecatedSigners: { pubkey: string; cutoffDate?: string }[];
+}
+
+/** Read the current active + deprecated signer set from `GET /v1/info`. */
+export async function getServerInfo(arkUrl: string = ARK_URL): Promise<ServerSignerInfo> {
+    const res = await fetch(`${arkUrl}/v1/info`);
+    if (!res.ok) {
+        throw new Error(`getServerInfo: ${res.status} ${res.statusText}`);
+    }
+    const j: any = await res.json();
+    return {
+        signerPubkey: j.signerPubkey ?? "",
+        deprecatedSigners: (j.deprecatedSigners ?? []).map((s: any) => ({
+            pubkey: s.pubkey ?? "",
+            cutoffDate: s.cutoffDate,
+        })),
+    };
+}
+
+/** Normalize a signer pubkey hex to lowercase x-only (drop a compressed prefix). */
+function toXOnly(pubkeyHex: string): string {
+    const s = pubkeyHex.toLowerCase();
+    return s.length === 66 ? s.slice(2) : s;
+}
+
+/**
+ * A deprecated signer to advertise: a bare private-key hex (no cutoff), or a
+ * `{ priv, cutoffDate }` pair. `cutoffDate` is a Unix timestamp in **seconds**;
+ * arkd accepts it appended to the key as `<hexkey>:<unix-seconds>` in
+ * `ARKD_WALLET_DEPRECATED_SIGNER_KEYS` (cutoff `0`/absent = no cutoff → DUE_NOW).
+ */
+export type DeprecatedSignerSpec = string | { priv: string; cutoffDate?: number };
+
+/**
+ * Perform a real server-signer rotation: recreate `arkd-wallet` with the given
+ * active signer (and optional deprecated signers, each with an optional cutoff
+ * date), then restart `arkd` so it re-reads the signer set. Resolves once
+ * `/v1/info` reflects the rotation.
+ *
+ * Keys are **private** keys (hex), matching the `ARKD_WALLET_SIGNER_KEY` /
+ * `ARKD_WALLET_DEPRECATED_SIGNER_KEYS` fixture env. The fixture must hold the
+ * deprecated private key so arkd can co-sign the cooperative migration of
+ * pre-rotation funds.
+ */
+export async function rotateArkdSigner(params: {
+    activeSignerPriv: string;
+    deprecatedSigners?: DeprecatedSignerSpec[];
+    arkUrl?: string;
+}): Promise<ServerSignerInfo> {
+    const { activeSignerPriv, arkUrl = ARK_URL } = params;
+    const deprecated = (params.deprecatedSigners ?? []).map((d) =>
+        typeof d === "string" ? { priv: d, cutoffDate: undefined as number | undefined } : d,
+    );
+
+    // Build the recreate subprocess env exactly as `regtest.mjs` would: defaults
+    // + the package `.env.regtest`, so `ARKD_WALLET_IMAGE` resolves to the
+    // rotation-capable local image and ports match. A bare vitest process does
+    // not have this env, and the compose default image has no rotation support.
+    // `regtest` is symlinked into the package dir by scripts/regtest.sh, so this
+    // path resolves at e2e runtime.
+    const { loadEnv } = await import("../../regtest/lib/env.mjs");
+    loadEnv("regtest", ".env.regtest");
+
+    // arkd parses each entry as `<hexkey>[:<unix-seconds cutoff>]`.
+    const env = {
+        ...process.env,
+        ARKD_WALLET_SIGNER_KEY: activeSignerPriv,
+        ARKD_WALLET_DEPRECATED_SIGNER_KEYS: deprecated
+            .map((d) => (d.cutoffDate != null ? `${d.priv}:${d.cutoffDate}` : d.priv))
+            .join(","),
+    };
+
+    // Recreate ONLY arkd-wallet, reusing the named `ark_wallet_datadir` volume
+    // so the on-chain wallet seed/state survive (never pass --volumes). The
+    // three-file, profiled, project-named form matches the running stack
+    // (regtest/lib/compose.mjs); the Go reference's single-file/profile-less
+    // form would target the wrong compose project. Both `base` and `ark`
+    // profiles must be enabled: `--no-deps` keeps arkd-wallet's dependencies
+    // (bitcoin, nbxplorer — both `base`-gated) from being recreated, but they
+    // must still be DEFINED in the project or compose rejects arkd-wallet's
+    // `depends_on` as an "undefined service".
+    execSync(
+        [
+            "docker compose",
+            "-p arkade-regtest",
+            "-f regtest/docker/compose.base.yml",
+            "-f regtest/docker/compose.ark.yml",
+            "-f test/e2e/compose.rotation.yml",
+            "--profile base --profile ark",
+            "up -d --force-recreate --no-deps arkd-wallet",
+        ].join(" "),
+        { stdio: "pipe", env },
+    );
+
+    // arkd caches the signer pubkey set at startup, so it must restart to pick
+    // up the rotated wallet. On this stack arkd auto-unlocks the recreated
+    // wallet via its env unlocker (ARKD_UNLOCKER_TYPE=env) on restart, so no
+    // admin unlock call is needed (unlike the Go reference's stack).
+    execSync("docker container stop arkd", { stdio: "pipe" });
+    await new Promise((r) => setTimeout(r, 5000));
+    execSync("docker container start arkd", { stdio: "pipe", env });
+
+    // Wait for arkd readiness AND for the rotation to be observable: RPCs racing
+    // the restart get "server not ready", so poll until `/v1/info` both succeeds
+    // and reports the new active signer + the full deprecated set.
+    const expectedActive = toXOnly(
+        hex.encode(await SingleKey.fromHex(activeSignerPriv).xOnlyPublicKey()),
+    );
+    const expectedDeprecated = await Promise.all(
+        deprecated.map(async (d) =>
+            toXOnly(hex.encode(await SingleKey.fromHex(d.priv).xOnlyPublicKey())),
+        ),
+    );
+
+    const deadline = Date.now() + 90_000;
+    let lastInfo: ServerSignerInfo | undefined;
+    while (Date.now() < deadline) {
+        try {
+            lastInfo = await getServerInfo(arkUrl);
+            const activeOk = toXOnly(lastInfo.signerPubkey) === expectedActive;
+            const advertised = new Set(lastInfo.deprecatedSigners.map((s) => toXOnly(s.pubkey)));
+            const deprecatedOk = expectedDeprecated.every((p) => advertised.has(p));
+            if (activeOk && deprecatedOk) return lastInfo;
+        } catch {
+            // arkd not ready yet — keep polling.
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+    }
+
+    throw new Error(
+        `rotateArkdSigner: timed out waiting for arkd to advertise active signer ` +
+            `${expectedActive} with deprecated [${expectedDeprecated.join(", ")}]. ` +
+            `The pinned arkd-wallet image may not support ARKD_WALLET_DEPRECATED_SIGNER_KEYS ` +
+            `(signer rotation). Last /v1/info: ${JSON.stringify(lastInfo)}`,
+    );
+}
+
 export interface SharedRepos {
     walletRepository: WalletRepository;
     contractRepository: ContractRepository;
@@ -319,6 +480,13 @@ export async function createTestArkWalletWithDelegateAndOverride(opts: {
     const realProvider = new RestArkProvider(arkServerUrl);
     const arkProvider = createOverrideInfoArkProvider(realProvider, {
         unilateralExitDelay: opts.unilateralExitDelay,
+        // This fixture exercises the current-signer exit-delay change only. Pin a
+        // clean (no-deprecated) signer set so a deprecated signer left advertised
+        // by an earlier e2e (e.g. the migration suite, run on the shared regtest
+        // arkd) can't add deprecated-signer baseline contracts and skew the exact
+        // contract counts asserted below. The baseline matrix now fans over
+        // current ∪ deprecated signers, so the test must control that axis.
+        deprecatedSigners: [],
     });
 
     const wallet = await Wallet.create({

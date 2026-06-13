@@ -34,6 +34,7 @@ const { mockFetch } = vi.hoisted(() => ({
 
 vi.mock("../src/utils/fetch", () => ({
     fetch: mockFetch,
+    baseFetch: mockFetch,
 }));
 
 vi.stubGlobal("EventSource", MockEventSource);
@@ -2281,18 +2282,19 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         expect(saveVtxos).not.toHaveBeenCalled();
     });
 
-    it("binds the change VTXO metadata to the snapshot, not to this.offchainTapscript", async () => {
+    it("binds the change VTXO metadata to the snapshot, not to this.offchainTapscript / this.arkServerPublicKey", async () => {
         // PR #489 review #1 contract test: the change output's pkScript
         // is captured under `_txLock` BEFORE the offchain round-trip,
         // but the change-VTXO metadata (`forfeitTapLeafScript`,
         // `tapTree`, `script`, `primaryAddress`) is written AFTER the
-        // round-trip — `WalletReceiveRotator.rotate` could swap
-        // `this.offchainTapscript` in between. The fix threads the
-        // pre-round-trip snapshot down as a parameter and derives all
-        // four fields from it. A regression that re-reads
-        // `this.offchainTapscript` inside the function would bind the
-        // change to the post-rotation tapscript while the server's
-        // VTXO is locked to the pre-rotation pkScript — the exact P1
+        // round-trip — `rotateServerSigner` could swap
+        // `this.offchainTapscript` AND `this.arkServerPublicKey` in
+        // between. The fix threads the pre-round-trip snapshot (tapscript
+        // + server key) down as parameters and derives all fields from
+        // them. A regression that re-reads `this.offchainTapscript` or
+        // `this.arkServerPublicKey` inside the function would bind the
+        // change/primaryAddress to the post-rotation epoch while the
+        // server's VTXO is locked to the pre-rotation one — the exact P1
         // race we're guarding against.
         //
         // Two real `DefaultVtxo.Script` instances with distinct
@@ -2354,7 +2356,10 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
 
         const thisArg = {
             network: { hrp: "ark" },
-            arkServerPublicKey: TEST_SERVER_PUB_KEY,
+            // Deliberately the WRONG server key on `this`. A regression that
+            // re-reads `this.arkServerPublicKey` would derive `primaryAddress`
+            // from this instead of the snapshot below.
+            arkServerPublicKey: TEST_PUB_KEY,
             // Deliberately the WRONG tapscript on `this`. A regression
             // that re-reads `this.offchainTapscript` inside the
             // function would bind the change to this instead of the
@@ -2373,7 +2378,8 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
             1_000,
             4_000n,
             1,
-            tapscriptNew, // the snapshot
+            tapscriptNew, // the tapscript snapshot
+            TEST_SERVER_PUB_KEY, // the server-key snapshot
         );
 
         // Find the change-row save (the one keyed by CHANGE_ADDR).
@@ -2397,7 +2403,10 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         expect(hex.encode(changeVtxo.intentTapLeafScript[1])).toBe(hex.encode(expectedForfeit[1]));
 
         // `primaryAddress` (the address `saveTransactions` is keyed by)
-        // also derives from the snapshot, not from `this.arkAddress`.
+        // also derives from the snapshot tapscript + server key, not from
+        // `this.offchainTapscript` / `this.arkServerPublicKey`. With the wrong
+        // server key on `this`, a regression would key it by neither CHANGE_ADDR
+        // nor SPEND_ADDR.
         expect(saveTransactions).toHaveBeenCalledTimes(1);
         expect(saveTransactions.mock.calls[0][0]).toBe(CHANGE_ADDR);
         expect(saveTransactions.mock.calls[0][0]).not.toBe(SPEND_ADDR);

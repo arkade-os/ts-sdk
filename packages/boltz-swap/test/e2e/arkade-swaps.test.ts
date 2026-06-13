@@ -22,6 +22,7 @@ import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { decodeInvoice } from "../../src/utils/decoding";
 import { pubECDSA, sha256 } from "@scure/btc-signer/utils.js";
+import { candidateServerPubkeys } from "../../src/utils/vhtlc";
 import { exec } from "child_process";
 import { promisify } from "util";
 
@@ -1521,5 +1522,137 @@ describe("ArkadeSwaps", () => {
                 }
             },
         );
+    });
+
+    describe("Deprecated-signer VHTLC reconstruction", () => {
+        // Exercises the reconstruction path this PR adds — `candidateServerPubkeys`
+        // + the real (private) `ArkadeSwaps.resolveVHTLCForLockup` — against a
+        // VHTLC actually funded on regtest. A swap created before an arkd signer
+        // rotation commits its VHTLC to a now-deprecated signer; rebuilding it
+        // from the current `signerPubkey` alone yields the wrong address. We fund
+        // a VHTLC under the *live* signer, then point reconstruction at a faked
+        // post-rotation `getInfo()` (live key demoted to `deprecatedSigners`, a
+        // fresh fake key as current) and assert the lockup is recovered from the
+        // deprecated key and is byte-identical to the on-chain VTXO.
+        //
+        // NOTE: a faithful end-to-end rotation (mint under A, arkd rotates to B,
+        // cooperative claim/refund with A's key) is blocked on a rotation-capable
+        // regtest fixture and arkd#822 — regtest arkd never actually rotates. So
+        // the cooperative spend across rotation is out of scope here; unilateral
+        // spendability of the reconstructed script is already covered by ts-sdk's
+        // vhtlc e2e (same VHTLC.Script class).
+
+        const waitForVhtlcVtxo = async (script: string, timeout = 15_000) => {
+            const deadline = Date.now() + timeout;
+            while (Date.now() < deadline) {
+                const { vtxos } = await indexerProvider.getVtxos({
+                    scripts: [script],
+                    spendableOnly: true,
+                });
+                if (vtxos.length > 0) return vtxos;
+                await sleep(500);
+            }
+            throw new Error("Timed out waiting for VHTLC VTXO to appear");
+        };
+
+        it("recovers a lockup committed to a deprecated signer and matches the on-chain VTXO", async () => {
+            const arkInfo = await arkProvider.getInfo();
+            const liveServerPubkey = arkInfo.signerPubkey;
+            const liveServerXOnly = hex.encode(hex.decode(liveServerPubkey).slice(1));
+
+            // VHTLC participants. Concrete values are irrelevant to
+            // reconstruction as long as funding and reconstruction agree —
+            // both go through the same `createVHTLCScript`.
+            const preimage = new TextEncoder().encode("deprecated-signer-recon");
+            const preimageHash = sha256(preimage);
+            const senderPubkey = aliceCompressedPubKey;
+            const receiverPubkey = hex.encode(pubECDSA(schnorr.utils.randomSecretKey(), true));
+            const timeoutBlockHeights = {
+                refund: 2_000_000_000, // CLTV absolute timestamp (BIP65 >= 5e8)
+                unilateralClaim: 50,
+                unilateralRefund: 50,
+                unilateralRefundWithoutReceiver: 50,
+            };
+
+            // Build the VHTLC under the LIVE signer (pre-rotation state).
+            const { vhtlcScript, vhtlcAddress } = swaps.createVHTLCScript({
+                network: arkInfo.network,
+                preimageHash,
+                receiverPubkey,
+                senderPubkey,
+                serverPubkey: liveServerPubkey,
+                timeoutBlockHeights,
+            });
+            const lockupScript = hex.encode(vhtlcScript.pkScript);
+
+            // Fund it with a fresh arknote settled straight to the VHTLC, so
+            // the test is self-contained and doesn't depend on the shared
+            // funded wallet's residual balance.
+            const fundAmount = 5_000;
+            const { stdout: arknote } = await execAsync(
+                `docker exec -t arkd arkd note --amount ${fundAmount}`,
+            );
+            await fundedWallet.settle({
+                inputs: [ArkNote.fromString(arknote.trim())],
+                outputs: [{ address: vhtlcAddress, amount: BigInt(fundAmount) }],
+            });
+
+            const vtxos = await waitForVhtlcVtxo(lockupScript);
+            expect(vtxos).toHaveLength(1);
+            expect(vtxos[0].value).toBe(fundAmount);
+
+            // Simulate a post-rotation server: live key now deprecated, a
+            // fresh key is current.
+            const newServerPubkey = hex.encode(pubECDSA(schnorr.utils.randomSecretKey(), true));
+            const newServerXOnly = hex.encode(hex.decode(newServerPubkey).slice(1));
+            const rotatedArkInfo = {
+                ...arkInfo,
+                signerPubkey: newServerPubkey,
+                deprecatedSigners: [{ pubkey: liveServerPubkey, cutoffDate: 2_000_000_000n }],
+            };
+
+            // Candidate ordering: current-first, then the deprecated set.
+            expect(candidateServerPubkeys(rotatedArkInfo)).toEqual([
+                newServerXOnly,
+                liveServerXOnly,
+            ]);
+
+            // Real reconstruction — the same private method refundArk/claim
+            // flows call.
+            const { vhtlcScript: recovered, serverXOnlyPublicKey } = (
+                swaps as any
+            ).resolveVHTLCForLockup({
+                arkInfo: rotatedArkInfo,
+                preimageHash,
+                receiverPubkey,
+                senderPubkey,
+                timeoutBlockHeights,
+                lockupAddress: vhtlcAddress,
+                swapId: "deprecated-signer-recon",
+            });
+
+            // Recovered from the DEPRECATED (live) key, not the current one,
+            // and byte-identical to the funded, indexer-confirmed lockup.
+            expect(hex.encode(serverXOnlyPublicKey)).toBe(liveServerXOnly);
+            expect(hex.encode(recovered.pkScript)).toBe(lockupScript);
+
+            // Without the deprecated signer, reconstruction can't reproduce
+            // the lockup and must fail loud rather than return a wrong script.
+            expect(() =>
+                (swaps as any).resolveVHTLCForLockup({
+                    arkInfo: {
+                        ...arkInfo,
+                        signerPubkey: newServerPubkey,
+                        deprecatedSigners: [],
+                    },
+                    preimageHash,
+                    receiverPubkey,
+                    senderPubkey,
+                    timeoutBlockHeights,
+                    lockupAddress: vhtlcAddress,
+                    swapId: "deprecated-signer-recon-neg",
+                }),
+            ).toThrow(/VHTLC address mismatch/);
+        }, 60_000);
     });
 });

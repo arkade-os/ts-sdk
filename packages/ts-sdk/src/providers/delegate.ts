@@ -1,6 +1,6 @@
 import { Intent } from "../intent";
 import { SignedIntent } from "./ark";
-import { fetch } from "../utils/fetch";
+import { baseFetch } from "../utils/fetch";
 
 /**
  * Delegate identity and fee information returned by `getDelegateInfo`.
@@ -89,7 +89,7 @@ export class RestDelegateProvider implements DelegateProvider {
         options?: DelegateOptions,
     ): Promise<void> {
         const url = `${this.url}/v1/delegate`;
-        const response = await fetch(url, {
+        const response = await baseFetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -119,7 +119,7 @@ export class RestDelegateProvider implements DelegateProvider {
     async getDelegateInfo(): Promise<DelegateInfo> {
         /** TODO: Update later once Fulmine URL changed */
         const url = `${this.url}/v1/delegator/info`;
-        const response = await fetch(url);
+        const response = await baseFetch(url);
 
         if (!response.ok) {
             const errorText = await response.text();
