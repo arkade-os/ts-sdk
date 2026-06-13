@@ -1413,58 +1413,78 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // "index-0 baseline" guarantee and turn every rotation into a
         // multi-timelock matrix expansion on every boot.
         const baselinePubkey = await this.identity.xOnlyPublicKey();
-        for (const csvTimelock of this.walletContractTimelocks) {
-            const csvTimelockStr = timelockToSequence(csvTimelock).toString();
-            const defaultScript = new DefaultVtxo.Script({
-                pubKey: baselinePubkey,
-                serverPubKey: this.offchainTapscript.options.serverPubKey,
-                csvTimelock,
-            });
-            const defaultScriptHex = hex.encode(defaultScript.pkScript);
-
-            // ensureWalletContract (a thin pass-through to createContract) so a
-            // default baseline whose script collides with an already-persisted
-            // `boarding` row is tolerated FIRST-WINS at the persistence layer
-            // instead of throwing a type mismatch. The default matrix is
-            // persisted before the boarding baseline below, so at index 0 the
-            // `default` row wins. Degenerate guard only: a sound server keeps
-            // the unilateral-exit and boarding-exit delays distinct, so these
-            // scripts never actually collide.
-            await ensureWalletContract(manager, {
-                type: "default",
-                params: {
-                    pubKey: hex.encode(defaultScript.options.pubKey),
-                    serverPubKey: hex.encode(defaultScript.options.serverPubKey),
-                    csvTimelock: csvTimelockStr,
-                },
-                script: defaultScriptHex,
-                address: defaultScript.address(this.network.hrp, this.arkServerPublicKey).encode(),
-                state: "active",
-            });
-
-            if (this.offchainTapscript instanceof DelegateVtxo.Script) {
-                const delegateScript = new DelegateVtxo.Script({
+        // The baseline matrix covers the current server signer AND every cached
+        // deprecated signer, so a wallet loaded with funds on a now-rotated-signer
+        // contract registers (hence watches + surfaces) it at boot — not only
+        // after an explicit restore(). Deduped by scriptHex: a deprecated signer
+        // that produced no rotation yields the current signer's scripts. This fans
+        // the SERVER-signer axis; the index-0 note above is about the USER pubkey.
+        const delegatePubKey =
+            this.offchainTapscript instanceof DelegateVtxo.Script
+                ? this.offchainTapscript.options.delegatePubKey
+                : undefined;
+        const baselineSigners = [
+            this.offchainTapscript.options.serverPubKey,
+            ...[...this._deprecatedSigners.keys()].map((h) => hex.decode(h)),
+        ];
+        const seenBaselineScripts = new Set<string>();
+        for (const serverPubKey of baselineSigners) {
+            for (const csvTimelock of this.walletContractTimelocks) {
+                const csvTimelockStr = timelockToSequence(csvTimelock).toString();
+                const defaultScript = new DefaultVtxo.Script({
                     pubKey: baselinePubkey,
-                    serverPubKey: this.offchainTapscript.options.serverPubKey,
-                    delegatePubKey: this.offchainTapscript.options.delegatePubKey,
+                    serverPubKey,
                     csvTimelock,
                 });
-                const delegateScriptHex = hex.encode(delegateScript.pkScript);
+                const defaultScriptHex = hex.encode(defaultScript.pkScript);
 
-                await manager.createContract({
-                    type: "delegate",
-                    params: {
-                        pubKey: hex.encode(delegateScript.options.pubKey),
-                        serverPubKey: hex.encode(delegateScript.options.serverPubKey),
-                        delegatePubKey: hex.encode(delegateScript.options.delegatePubKey),
-                        csvTimelock: csvTimelockStr,
-                    },
-                    script: delegateScriptHex,
-                    address: delegateScript
-                        .address(this.network.hrp, this.arkServerPublicKey)
-                        .encode(),
-                    state: "active",
-                });
+                if (!seenBaselineScripts.has(defaultScriptHex)) {
+                    seenBaselineScripts.add(defaultScriptHex);
+                    // ensureWalletContract (a thin pass-through to createContract) so a
+                    // default baseline whose script collides with an already-persisted
+                    // `boarding` row is tolerated FIRST-WINS at the persistence layer
+                    // instead of throwing a type mismatch. The default matrix is
+                    // persisted before the boarding baseline below, so at index 0 the
+                    // `default` row wins. Degenerate guard only: a sound server keeps
+                    // the unilateral-exit and boarding-exit delays distinct, so these
+                    // scripts never actually collide.
+                    await ensureWalletContract(manager, {
+                        type: "default",
+                        params: {
+                            pubKey: hex.encode(defaultScript.options.pubKey),
+                            serverPubKey: hex.encode(serverPubKey),
+                            csvTimelock: csvTimelockStr,
+                        },
+                        script: defaultScriptHex,
+                        address: defaultScript.address(this.network.hrp, serverPubKey).encode(),
+                        state: "active",
+                    });
+                }
+
+                if (delegatePubKey) {
+                    const delegateScript = new DelegateVtxo.Script({
+                        pubKey: baselinePubkey,
+                        serverPubKey,
+                        delegatePubKey,
+                        csvTimelock,
+                    });
+                    const delegateScriptHex = hex.encode(delegateScript.pkScript);
+
+                    if (seenBaselineScripts.has(delegateScriptHex)) continue;
+                    seenBaselineScripts.add(delegateScriptHex);
+                    await manager.createContract({
+                        type: "delegate",
+                        params: {
+                            pubKey: hex.encode(delegateScript.options.pubKey),
+                            serverPubKey: hex.encode(serverPubKey),
+                            delegatePubKey: hex.encode(delegateScript.options.delegatePubKey),
+                            csvTimelock: csvTimelockStr,
+                        },
+                        script: delegateScriptHex,
+                        address: delegateScript.address(this.network.hrp, serverPubKey).encode(),
+                        state: "active",
+                    });
+                }
             }
         }
 

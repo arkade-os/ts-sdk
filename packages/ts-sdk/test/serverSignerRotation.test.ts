@@ -276,3 +276,52 @@ describe("Boarding watch path across server-signer rotation", () => {
         }
     });
 });
+
+describe("Offchain baseline matrix across server-signer rotation", () => {
+    beforeEach(() => installRestoreHarness());
+    afterEach(() => teardownRestoreHarness());
+
+    // arkd advertises the previous signer (compressed) in deprecatedSigners; its
+    // x-only form is what a contract minted under it carries in params.serverPubKey.
+    const PREV_SERVER = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+    const PREV_SERVER_XONLY = PREV_SERVER.slice(2);
+
+    it("registers a baseline default contract under a deprecated signer at boot", async () => {
+        // Advertise PREV as deprecated so the wallet caches it at setup, before
+        // the contract manager builds its index-0 baseline matrix.
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockImplementation((url: string) => {
+                const reply = (b: unknown) =>
+                    Promise.resolve({ ok: true, json: () => Promise.resolve(b) });
+                if (url.includes("/info"))
+                    return reply({
+                        ...mockArkInfo,
+                        deprecatedSigners: [{ pubkey: PREV_SERVER, cutoffDate: 9_999_999_999 }],
+                    });
+                if (url.includes("subscribe") || url.includes("subscriptions"))
+                    return reply({ subscriptionId: "sub-1" });
+                return reply([]);
+            }),
+        );
+
+        const { wallet, contractRepository } = await makeStaticWalletForTest();
+        try {
+            // Ensure the baseline matrix is built (initializeContractManager).
+            await (
+                wallet as unknown as { getContractManager(): Promise<unknown> }
+            ).getContractManager();
+
+            const contracts = await contractRepository.getContracts({});
+            const underPrev = contracts.filter(
+                (c) => c.type === "default" && c.params.serverPubKey === PREV_SERVER_XONLY,
+            );
+            // The deprecated signer's baseline default contract must be registered
+            // at boot so funds minted under the now-rotated signer are watched
+            // without an explicit restore().
+            expect(underPrev.length).toBeGreaterThan(0);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+});
