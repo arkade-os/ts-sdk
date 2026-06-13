@@ -351,10 +351,11 @@ function toXOnly(pubkeyHex: string): string {
 export type DeprecatedSignerSpec = string | { priv: string; cutoffDate?: number };
 
 /**
- * Perform a real server-signer rotation: recreate `arkd-wallet` with the given
- * active signer (and optional deprecated signers, each with an optional cutoff
- * date), then restart `arkd` so it re-reads the signer set. Resolves once
- * `/v1/info` reflects the rotation.
+ * Perform a real server-signer rotation by delegating to the regtest CLI's
+ * `set-signers`: it recreates `arkd-wallet` with the given active signer (and
+ * optional deprecated signers, each with an optional cutoff date), unlocks it,
+ * and restarts `arkd` so it re-reads the signer set. Resolves once `/v1/info`
+ * reflects the exact rotation.
  *
  * Keys are **private** keys (hex), matching the `ARKD_WALLET_SIGNER_KEY` /
  * `ARKD_WALLET_DEPRECATED_SIGNER_KEYS` fixture env. The fixture must hold the
@@ -371,57 +372,32 @@ export async function rotateArkdSigner(params: {
         typeof d === "string" ? { priv: d, cutoffDate: undefined as number | undefined } : d,
     );
 
-    // Build the recreate subprocess env exactly as `regtest.mjs` would: defaults
-    // + the package `.env.regtest`, so `ARKD_WALLET_IMAGE` resolves to the
-    // rotation-capable local image and ports match. A bare vitest process does
-    // not have this env, and the compose default image has no rotation support.
-    // `regtest` is symlinked into the package dir by scripts/regtest.sh, so this
-    // path resolves at e2e runtime.
-    const { loadEnv } = await import("../../regtest/lib/env.mjs");
-    loadEnv("regtest", ".env.regtest");
+    // Delegate the rotation to the regtest CLI's `set-signers`, which owns the
+    // recreate → unlock → restart-arkd → readiness mechanism (and the env/compose
+    // plumbing). `regtest` is symlinked into the package dir by scripts/regtest.sh;
+    // `--env .env.regtest` makes the CLI use THIS package's regtest env (image,
+    // ports) — the same override the stack was started with — so the recreated
+    // arkd-wallet matches the running stack. arkd parses each deprecated entry as
+    // `<hexkey>[:<unix-seconds cutoff>]`.
+    const deprecatedArg = deprecated
+        .map((d) => (d.cutoffDate != null ? `${d.priv}:${d.cutoffDate}` : d.priv))
+        .join(",");
+    try {
+        execSync(
+            `node regtest/regtest.mjs set-signers --env .env.regtest --active ${activeSignerPriv}` +
+                (deprecatedArg ? ` --deprecated ${deprecatedArg}` : ""),
+            { stdio: "pipe" },
+        );
+    } catch (err) {
+        const e = err as { stderr?: Buffer; stdout?: Buffer; message?: string };
+        throw new Error(
+            `rotateArkdSigner: set-signers failed: ${e.stderr?.toString() || e.stdout?.toString() || e.message}`,
+        );
+    }
 
-    // arkd parses each entry as `<hexkey>[:<unix-seconds cutoff>]`.
-    const env = {
-        ...process.env,
-        ARKD_WALLET_SIGNER_KEY: activeSignerPriv,
-        ARKD_WALLET_DEPRECATED_SIGNER_KEYS: deprecated
-            .map((d) => (d.cutoffDate != null ? `${d.priv}:${d.cutoffDate}` : d.priv))
-            .join(","),
-    };
-
-    // Recreate ONLY arkd-wallet, reusing the named `ark_wallet_datadir` volume
-    // so the on-chain wallet seed/state survive (never pass --volumes). The
-    // three-file, profiled, project-named form matches the running stack
-    // (regtest/lib/compose.mjs); the Go reference's single-file/profile-less
-    // form would target the wrong compose project. Both `base` and `ark`
-    // profiles must be enabled: `--no-deps` keeps arkd-wallet's dependencies
-    // (bitcoin, nbxplorer — both `base`-gated) from being recreated, but they
-    // must still be DEFINED in the project or compose rejects arkd-wallet's
-    // `depends_on` as an "undefined service".
-    execSync(
-        [
-            "docker compose",
-            "-p arkade-regtest",
-            "-f regtest/docker/compose.base.yml",
-            "-f regtest/docker/compose.ark.yml",
-            "-f test/e2e/compose.rotation.yml",
-            "--profile base --profile ark",
-            "up -d --force-recreate --no-deps arkd-wallet",
-        ].join(" "),
-        { stdio: "pipe", env },
-    );
-
-    // arkd caches the signer pubkey set at startup, so it must restart to pick
-    // up the rotated wallet. On this stack arkd auto-unlocks the recreated
-    // wallet via its env unlocker (ARKD_UNLOCKER_TYPE=env) on restart, so no
-    // admin unlock call is needed (unlike the Go reference's stack).
-    execSync("docker container stop arkd", { stdio: "pipe" });
-    await new Promise((r) => setTimeout(r, 5000));
-    execSync("docker container start arkd", { stdio: "pipe", env });
-
-    // Wait for arkd readiness AND for the rotation to be observable: RPCs racing
-    // the restart get "server not ready", so poll until `/v1/info` both succeeds
-    // and reports the new active signer + the full deprecated set.
+    // The CLI already waited for arkd to re-sync and verified the deprecated
+    // COUNT; assert the EXACT pubkeys here (identity, not just count) and return
+    // the resulting info. Poll briefly in case `/v1/info` is still settling.
     const expectedActive = toXOnly(
         hex.encode(await SingleKey.fromHex(activeSignerPriv).xOnlyPublicKey()),
     );
