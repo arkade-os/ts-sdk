@@ -14,11 +14,32 @@ function errBody(marker: string) {
     return { ok: false, clone: () => ({ text: async () => body }), text: async () => body };
 }
 
+/**
+ * A rejected non-/info response whose *clone* body read fails (e.g. the
+ * connection dropped mid-body) but whose direct `text()` still resolves — the
+ * shape `authedFetch` hits when it cannot inspect the body for DIGEST_MISMATCH.
+ */
+function errUnreadableClone(marker: string) {
+    const body = `{"message":"${marker}"}`;
+    return {
+        ok: false,
+        clone: () => ({
+            text: async () => {
+                throw new Error("connection reset mid-body");
+            },
+        }),
+        text: async () => body,
+    };
+}
+
 function digestOf(provider: RestArkProvider): string {
     return (provider as unknown as { _digest: string })._digest;
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+});
 
 // Note: arkd requests carry the cached `X-Digest` header (added by
 // `authedFetch`). That outgoing-header send is forward-compat — dormant until
@@ -84,5 +105,44 @@ describe("RestArkProvider server-info digest negotiation", () => {
         await expect(provider.submitTx("rawtx", [])).rejects.toThrow();
         expect(seen).toHaveLength(0);
         expect(submitAttempts).toBe(1);
+    });
+
+    it("surfaces (does not silently swallow) a body-read failure during digest detection", async () => {
+        const provider = new RestArkProvider("http://ark.test");
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (url: string) => {
+                if (url.includes("/info")) return okInfo("d2");
+                return errUnreadableClone("SERVER_ERROR");
+            }),
+        );
+        await provider.getInfo();
+
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const seen: unknown[] = [];
+        provider.onServerInfoChanged((info) => seen.push(info));
+
+        let caught: unknown;
+        try {
+            await provider.submitTx("rawtx", []);
+        } catch (e) {
+            caught = e;
+        }
+
+        // An unreadable body can't be classified, so it is NOT treated as a
+        // digest mismatch: no refresh, no emit, digest preserved, and the caller
+        // still sees the underlying HTTP error (not DigestMismatchError)...
+        expect(caught).toBeDefined();
+        expect(caught).not.toBeInstanceOf(DigestMismatchError);
+        expect(seen).toHaveLength(0);
+        expect(digestOf(provider)).toBe("d2");
+        // ...but the read failure is surfaced rather than swallowed silently.
+        expect(warn).toHaveBeenCalled();
+    });
+
+    it("exposes DigestMismatchError from the package entry point", async () => {
+        const pkg = await import("../src");
+        expect(pkg.DigestMismatchError).toBe(DigestMismatchError);
+        expect(new pkg.DigestMismatchError("x")).toBeInstanceOf(Error);
     });
 });

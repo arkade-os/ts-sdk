@@ -337,7 +337,12 @@ export class RestArkProvider implements ArkProvider {
         let body: string;
         try {
             body = await response.clone().text();
-        } catch {
+        } catch (e) {
+            // Couldn't read the body to classify it (e.g. the connection dropped
+            // mid-body). Detection is only deferred to the next getInfo(), not
+            // lost — but surface it rather than swallowing silently. Return the
+            // original response so the caller still sees the underlying error.
+            console.warn("authedFetch could not read response body for digest check", e);
             return response;
         }
         if (!body.includes("DIGEST_MISMATCH")) return response;

@@ -134,6 +134,7 @@ import type {
 } from "./providers/electrum";
 import {
     RestArkProvider,
+    DigestMismatchError,
     ArkProvider,
     SettlementEvent,
     SettlementEventType,
@@ -348,6 +349,7 @@ export {
     ElectrumOnchainProvider,
     WsElectrumChainSource,
     RestArkProvider,
+    DigestMismatchError,
     RestIndexerProvider,
 
     // Script-related
