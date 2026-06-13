@@ -345,7 +345,12 @@ export class RestArkProvider implements ArkProvider {
             console.warn("authedFetch could not read response body for digest check", e);
             return response;
         }
-        if (!body.includes("DIGEST_MISMATCH")) return response;
+        // Only arkd's *structured* digest error counts: a grpc-gateway
+        // ErrorDetails whose name is DIGEST_MISMATCH (arkd's X-Digest guard,
+        // v0.9.9-rc.1 #1104), parsed via the shared maybeArkError. A raw
+        // substring match would let an unrelated error body that merely mentions
+        // the token trigger a spurious refresh + signer rotation.
+        if (maybeArkError(new Error(body))?.name !== "DIGEST_MISMATCH") return response;
         // arkd rejected this request because our cached server info is stale
         // (e.g. the operator rotated its signer). Mirror NArk's BuildVersionHandler
         // (dotnet-sdk #131): clear the digest, refetch info, fire onServerInfoChanged

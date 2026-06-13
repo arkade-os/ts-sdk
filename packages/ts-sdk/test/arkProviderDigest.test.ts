@@ -32,6 +32,32 @@ function errUnreadableClone(marker: string) {
     };
 }
 
+/** A rejected non-/info response carrying a verbatim JSON error body. */
+function errResponse(body: string) {
+    return { ok: false, clone: () => ({ text: async () => body }), text: async () => body };
+}
+
+/**
+ * The REST body arkd returns for a DIGEST_MISMATCH rejection: a grpc-gateway
+ * status whose `details` carry an `ark.v1.ErrorDetails` with name DIGEST_MISMATCH
+ * (mirrors arkd's error_converter + the X-Digest guard added in v0.9.9-rc.1 #1104).
+ */
+function digestMismatchBody() {
+    return JSON.stringify({
+        code: 9,
+        message: "invalid digest header",
+        details: [
+            {
+                "@type": "type.googleapis.com/ark.v1.ErrorDetails",
+                code: 1019,
+                name: "DIGEST_MISMATCH",
+                message: "invalid digest header",
+                metadata: { expectedDigest: "d3", gotDigest: "d-stale" },
+            },
+        ],
+    });
+}
+
 function digestOf(provider: RestArkProvider): string {
     return (provider as unknown as { _digest: string })._digest;
 }
@@ -42,11 +68,12 @@ afterEach(() => {
 });
 
 // Note: arkd requests carry the cached `X-Digest` header (added by
-// `authedFetch`). That outgoing-header send is forward-compat — dormant until
-// arkd reads it (#131) — and is best verified by integration on the real
-// transport; a unit assertion that captured the header off a mocked fetch
-// proved non-deterministic on CI runners, so the behavior below is what we lock
-// in: digest caching, and the DIGEST_MISMATCH detection contract.
+// `authedFetch`). arkd v0.9.9-rc.1 reads it behind an opt-in guard
+// (`digest_header_required`, #1104); the outgoing-header send is best verified by
+// integration on the real transport (a unit assertion that captured the header
+// off a mocked fetch proved non-deterministic on CI runners), so the behavior
+// below is what we lock in: digest caching and the DIGEST_MISMATCH detection
+// contract — keyed on arkd's structured ErrorDetails name, not a raw substring.
 describe("RestArkProvider server-info digest negotiation", () => {
     it("getInfo caches the server digest", async () => {
         const provider = new RestArkProvider("http://ark.test");
@@ -68,7 +95,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
             vi.fn(async (url: string) => {
                 if (url.includes("/info")) return okInfo("d3");
                 submitAttempts++;
-                return errBody("DIGEST_MISMATCH");
+                return errResponse(digestMismatchBody());
             }),
         );
         await provider.getInfo();
@@ -83,6 +110,40 @@ describe("RestArkProvider server-info digest negotiation", () => {
         // Detection fired (refreshed info emitted once) and there was no retry.
         expect(seen).toHaveLength(1);
         expect(seen[0].signerPubkey).toBe(SIGNER);
+        expect(submitAttempts).toBe(1);
+    });
+
+    it("ignores a body that only contains the DIGEST_MISMATCH token (not a structured arkd error)", async () => {
+        const provider = new RestArkProvider("http://ark.test");
+        let submitAttempts = 0;
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (url: string) => {
+                if (url.includes("/info")) return okInfo("d2");
+                submitAttempts++;
+                // The literal token appears, but not as a structured
+                // ark.v1.ErrorDetails.name — so it must NOT be treated as a mismatch.
+                return errResponse(`{"message":"unrelated failure mentioning DIGEST_MISMATCH"}`);
+            }),
+        );
+        await provider.getInfo();
+
+        const seen: unknown[] = [];
+        provider.onServerInfoChanged((info) => seen.push(info));
+
+        let caught: unknown;
+        try {
+            await provider.submitTx("rawtx", []);
+        } catch (e) {
+            caught = e;
+        }
+
+        // No refresh, no emit, digest preserved, and not surfaced as a
+        // DigestMismatchError — the substring alone is not enough.
+        expect(caught).toBeDefined();
+        expect(caught).not.toBeInstanceOf(DigestMismatchError);
+        expect(seen).toHaveLength(0);
+        expect(digestOf(provider)).toBe("d2");
         expect(submitAttempts).toBe(1);
     });
 
