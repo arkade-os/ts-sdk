@@ -136,6 +136,33 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
             await wallet.dispose();
         }
     });
+
+    it("dispose() drains an in-flight onServerInfoChanged handler before teardown", async () => {
+        const { wallet } = await makeStaticWalletForTest();
+
+        // Stand in for a handleServerInfoChanged still mid-flight (rotation /
+        // createContract not yet settled) at the moment dispose() is called.
+        let releaseHandler!: () => void;
+        (wallet as unknown as { _serverInfoInFlight: Promise<void> })._serverInfoInFlight =
+            new Promise<void>((resolve) => {
+                releaseHandler = resolve;
+            });
+
+        const disposing = wallet.dispose();
+        const raced = await Promise.race([
+            disposing.then(() => "disposed"),
+            new Promise<string>((resolve) =>
+                setTimeout(() => resolve("handler-still-running"), 50),
+            ),
+        ]);
+
+        // dispose() must still be blocked on the in-flight handler, so its
+        // rotation finishes before the contract manager is torn down under it.
+        expect(raced).toBe("handler-still-running");
+
+        releaseHandler();
+        await disposing;
+    });
 });
 
 describe("Boarding watch path across server-signer rotation", () => {

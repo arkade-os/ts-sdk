@@ -1558,6 +1558,14 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     private _serverInfoUnsub?: () => void;
 
     /**
+     * Tail of the serialized {@link handleServerInfoChanged} chain. Each
+     * `onServerInfoChanged` event chains onto it so handlers run one at a time,
+     * and {@link dispose} awaits it so an in-flight re-derive/rotation settles
+     * before the contract manager is torn down underneath it.
+     */
+    private _serverInfoInFlight: Promise<void> = Promise.resolve();
+
+    /**
      * React to a mid-session server-info change (driven by the arkProvider's
      * `DIGEST_MISMATCH` detection). First refresh the cached deprecated-signer
      * set so the boarding WATCH path immediately widens to the just-deprecated
@@ -2216,9 +2224,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // dispose(), so awaiting it here is deadlock-free.
         await this._restoreInFlight?.catch(() => undefined);
 
-        // Stop reacting to server-info changes before teardown.
+        // Stop reacting to server-info changes before teardown, then drain a
+        // handler already in flight so its re-derive/rotation settles before we
+        // dispose the contract manager underneath it.
         this._serverInfoUnsub?.();
         this._serverInfoUnsub = undefined;
+        await this._serverInfoInFlight?.catch(() => undefined);
 
         // Tear down the rotation subscription + drain in-flight rotations
         // first so no late `vtxo_received` event can queue work on a
@@ -2340,7 +2351,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }>;
             if (typeof ap.onServerInfoChanged === "function") {
                 wallet._serverInfoUnsub = ap.onServerInfoChanged((info) => {
-                    void wallet.handleServerInfoChanged(info);
+                    // Serialize handlers and keep the tail so dispose() can
+                    // drain an in-flight re-derive/rotation before teardown.
+                    wallet._serverInfoInFlight = wallet._serverInfoInFlight
+                        .then(() => wallet.handleServerInfoChanged(info))
+                        .catch(() => undefined);
                 });
             }
         }
