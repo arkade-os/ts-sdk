@@ -63,6 +63,7 @@ import {
     MAX_VTXOS_PER_SETTLEMENT,
     SettlementConfig,
     VtxoManager,
+    selectPendingRecoveryOutpoints,
 } from "./vtxo-manager";
 import { ArkNote } from "../arknote";
 import { Intent } from "../intent";
@@ -392,7 +393,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * current-signer-only (a deprecated-signer input in a plain settle() is
      * rejected; old-signer recovery goes through the migration API).
      */
-    protected _deprecatedSignerHexes: Set<string> = new Set();
+    protected _deprecatedSigners: Map<string, bigint> = new Map();
 
     /**
      * Refresh the cached deprecated-signer set from a fresh server-info
@@ -400,17 +401,22 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * server-info-change handler mid-session. Lenient: a malformed deprecated
      * entry is skipped, never fatal to wallet creation.
      */
-    refreshDeprecatedSigners(info: { deprecatedSigners?: readonly { pubkey?: string }[] }): void {
-        const set = new Set<string>();
+    refreshDeprecatedSigners(info: {
+        deprecatedSigners?: readonly { pubkey?: string; cutoffDate?: bigint }[];
+    }): void {
+        const next = new Map<string, bigint>();
         for (const s of info.deprecatedSigners ?? []) {
             if (!s.pubkey) continue;
             try {
-                set.add(toXOnlySignerHex(s.pubkey));
+                // `0n` is arkd's sentinel for "no cutoff advertised" (→ DUE_NOW);
+                // a positive cutoff that has already passed is EXPIRED. The
+                // spendability split in getBalance / coin selection reads this.
+                next.set(toXOnlySignerHex(s.pubkey), s.cutoffDate ?? 0n);
             } catch (e) {
                 console.warn("Skipping malformed deprecated signer pubkey", s.pubkey, e);
             }
         }
-        this._deprecatedSignerHexes = set;
+        this._deprecatedSigners = next;
     }
 
     /**
@@ -421,7 +427,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     protected watchedBoardingSigners(): Set<string> {
         return new Set([
             toXOnlySignerHex(hex.encode(this.boardingTapscript.options.serverPubKey)),
-            ...this._deprecatedSignerHexes,
+            ...this._deprecatedSigners.keys(),
         ]);
     }
 
@@ -719,10 +725,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Return the wallet's combined onchain and offchain balances.
      */
     async getBalance(): Promise<WalletBalance> {
-        const [boardingUtxos, vtxos] = await Promise.all([
+        const [boardingUtxos, vtxos, pendingOutpoints] = await Promise.all([
             this.getBoardingUtxos(),
             this.getVtxos(),
+            this.pendingRecoveryOutpoints(),
         ]);
+        const isPendingRecovery = (coin: ExtendedVirtualCoin) =>
+            pendingOutpoints.has(`${coin.txid}:${coin.vout}`);
 
         // boarding
         let confirmed = 0;
@@ -739,18 +748,27 @@ export class ReadonlyWallet implements IReadonlyWallet {
         let settled = 0;
         let preconfirmed = 0;
         let recoverable = 0;
+        let pendingRecovery = 0;
+        // Funds under a past-cutoff (EXPIRED) deprecated signer that are not yet
+        // swept are NOT spendable — excluded from settled/preconfirmed/available
+        // and surfaced under `pendingRecovery` (they still count toward `total`).
         settled = vtxos
-            .filter((coin) => coin.virtualStatus.state === "settled")
+            .filter((coin) => coin.virtualStatus.state === "settled" && !isPendingRecovery(coin))
             .reduce((sum, coin) => sum + coin.value, 0);
         preconfirmed = vtxos
-            .filter((coin) => coin.virtualStatus.state === "preconfirmed")
+            .filter(
+                (coin) => coin.virtualStatus.state === "preconfirmed" && !isPendingRecovery(coin),
+            )
             .reduce((sum, coin) => sum + coin.value, 0);
         recoverable = vtxos
             .filter((coin) => isSpendable(coin) && coin.virtualStatus.state === "swept")
             .reduce((sum, coin) => sum + coin.value, 0);
+        pendingRecovery = vtxos
+            .filter(isPendingRecovery)
+            .reduce((sum, coin) => sum + coin.value, 0);
 
         const totalBoarding = confirmed + unconfirmed;
-        const totalOffchain = settled + preconfirmed + recoverable;
+        const totalOffchain = settled + preconfirmed + recoverable + pendingRecovery;
 
         // aggregate asset balances from spendable virtual outputs
         const assetBalances = new Map<string, bigint>();
@@ -778,6 +796,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             preconfirmed,
             available: settled + preconfirmed,
             recoverable,
+            pendingRecovery,
             total: totalBoarding + totalOffchain,
             assets,
         };
@@ -807,6 +826,24 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 }
                 return !!(f.withUnrolled && vtxo.isUnrolled);
             });
+    }
+
+    /**
+     * Outpoints of VTXOs whose deprecated signer is past its cutoff (EXPIRED) and
+     * which have not yet been swept — unspendable until they recover. Offline:
+     * classifies the repo's contracts against the cached signer set (active +
+     * {@link _deprecatedSigners}, cutoffs included). Empty fast-path when no
+     * signer is deprecated. Consumed by {@link getBalance} (the `pendingRecovery`
+     * bucket) and the send coin-selection path so neither counts nor spends them.
+     */
+    async pendingRecoveryOutpoints(): Promise<Set<string>> {
+        if (this._deprecatedSigners.size === 0) return new Set();
+        const contractManager = await this.getContractManager();
+        const contractsWithVtxos = await contractManager.getContractsWithVtxos();
+        return selectPendingRecoveryOutpoints(contractsWithVtxos, {
+            active: toXOnlySignerHex(hex.encode(this.offchainTapscript.options.serverPubKey)),
+            deprecated: this._deprecatedSigners,
+        });
     }
 
     /**
@@ -2421,10 +2458,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.watcherConfig,
             this.walletContractTimelocks,
         );
-        // Carry the cached deprecated-signer set so the clone's boarding watch
-        // path stays as wide as the source wallet's (same operator/info).
-        (readonly as unknown as { _deprecatedSignerHexes: Set<string> })._deprecatedSignerHexes =
-            new Set(this._deprecatedSignerHexes);
+        // Carry the cached deprecated-signer set (with cutoffs) so the clone's
+        // boarding watch path and spendability split match the source wallet's.
+        (readonly as unknown as { _deprecatedSigners: Map<string, bigint> })._deprecatedSigners =
+            new Map(this._deprecatedSigners);
         return readonly;
     }
 
@@ -3490,9 +3527,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // validate recipients and populate undefined amount with dust amount
         const recipients = validateRecipients(args, Number(this.dustAmount));
 
-        const virtualCoins = await this.getVtxos({
+        const allVirtualCoins = await this.getVtxos({
             withRecoverable: false,
         });
+        // Drop funds under a past-cutoff (EXPIRED) deprecated signer: the operator
+        // will not co-sign a spend of them, so selecting one would fail at submit.
+        const pendingRecovery = await this.pendingRecoveryOutpoints();
+        const virtualCoins = pendingRecovery.size
+            ? allVirtualCoins.filter((c) => !pendingRecovery.has(`${c.txid}:${c.vout}`))
+            : allVirtualCoins;
 
         // keep track of asset changes
         const assetChanges = new Map<string, bigint>();

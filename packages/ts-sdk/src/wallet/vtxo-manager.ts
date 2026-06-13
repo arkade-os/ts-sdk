@@ -8,6 +8,7 @@ import {
     isSpendable,
     isSubdust,
     Outpoint,
+    VirtualCoin,
 } from ".";
 import { ArkInfo, ArkProvider, SettlementEvent } from "../providers/ark";
 import { maybeArkError } from "../providers/errors";
@@ -33,6 +34,41 @@ import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 import type { DefaultVtxo } from "../script/default";
 import { getDustAmount } from "./utils";
+
+/**
+ * Outpoints (`txid:vout`) of VTXOs that are NOT cooperatively spendable because
+ * their contract's signer is past its cutoff (`EXPIRED`) and the VTXO has not
+ * yet been swept by the server. Such funds are unspendable until they recover
+ * (the server sweeps the batch at expiry, then the swept output re-settles under
+ * the active signer), so `getBalance` buckets them under `pendingRecovery` and
+ * coin selection skips them — otherwise a send would pick a VTXO the operator
+ * will not co-sign and fail at submit.
+ *
+ * Pure + offline: classification uses a cached {@link SignerSet}, never a fresh
+ * GetInfo. `MIGRATABLE` / `DUE_NOW` (still cooperatively spendable), already-
+ * swept (recoverable), `CURRENT`, and `UNKNOWN_SIGNER` rows are all left alone.
+ */
+export function selectPendingRecoveryOutpoints(
+    contractsWithVtxos: ReadonlyArray<{
+        contract: { params: { serverPubKey?: string } };
+        vtxos: ReadonlyArray<VirtualCoin>;
+    }>,
+    signerSet: SignerSet,
+    nowSeconds: number = Math.floor(Date.now() / 1000),
+): Set<string> {
+    const out = new Set<string>();
+    for (const { contract, vtxos } of contractsWithVtxos) {
+        const serverPubKey = contract.params.serverPubKey;
+        if (!serverPubKey) continue;
+        if (classifyAgainstSignerSet(serverPubKey, signerSet, nowSeconds).status !== "EXPIRED") {
+            continue;
+        }
+        for (const v of vtxos) {
+            if (isSpendable(v) && !isRecoverable(v)) out.add(`${v.txid}:${v.vout}`);
+        }
+    }
+    return out;
+}
 
 /**
  * Extended wallet interface for boarding input sweep operations.

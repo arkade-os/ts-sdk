@@ -1389,6 +1389,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 commitmentsToIgnore: new Set(),
             }),
             dustAmount: 546n,
+            pendingRecoveryOutpoints: vi.fn().mockResolvedValue(new Set<string>()),
             getContractManager: vi.fn().mockResolvedValue({
                 getContracts: vi.fn().mockResolvedValue(contracts),
                 onContractEvent: vi.fn().mockReturnValue(vi.fn()),
@@ -1486,6 +1487,43 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 settled: 100000,
                 preconfirmed: 50000,
                 available: 150000,
+            },
+        });
+    });
+
+    it("GET_BALANCE excludes pending-recovery (past-cutoff) VTXOs from available", async () => {
+        setupHandler();
+        const settled = createMockExtendedVtxo({
+            txid: "aa".repeat(32),
+            value: 100000,
+            virtualStatus: { state: "settled" },
+        });
+        const pendingExpired = createMockExtendedVtxo({
+            txid: "cc".repeat(32),
+            value: 70000,
+            virtualStatus: { state: "settled" },
+        });
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, pendingExpired]);
+
+        // The wallet reports the past-cutoff (EXPIRED) VTXO as pending recovery.
+        (updater as any).readonlyWallet.pendingRecoveryOutpoints = vi
+            .fn()
+            .mockResolvedValue(new Set([`${pendingExpired.txid}:${pendingExpired.vout}`]));
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_BALANCE",
+        } as any);
+
+        // Excluded from the spendable buckets, surfaced under pendingRecovery,
+        // still counted in total.
+        expect(response).toMatchObject({
+            type: "BALANCE",
+            payload: {
+                settled: 100000,
+                available: 100000,
+                pendingRecovery: 70000,
+                total: 170000,
             },
         });
     });

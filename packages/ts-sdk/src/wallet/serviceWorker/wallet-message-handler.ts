@@ -1317,9 +1317,12 @@ export class WalletMessageHandler
     }
 
     private async handleGetBalance() {
-        const [boardingUtxos, allVtxos] = await Promise.all([
+        const [boardingUtxos, allVtxos, pendingOutpoints] = await Promise.all([
             this.getAllBoardingUtxos(),
             this.getVtxosFromRepo(),
+            this.readonlyWallet
+                ? this.readonlyWallet.pendingRecoveryOutpoints()
+                : Promise.resolve(new Set<string>()),
         ]);
 
         // boarding
@@ -1340,8 +1343,13 @@ export class WalletMessageHandler
         let settled = 0;
         let preconfirmed = 0;
         let recoverable = 0;
+        let pendingRecovery = 0;
+        // Past-cutoff (EXPIRED) deprecated-signer funds not yet swept are NOT
+        // spendable — bucket them under pendingRecovery, out of settled/preconfirmed.
         for (const vtxo of spendableVtxos) {
-            if (vtxo.virtualStatus.state === "settled") {
+            if (pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
+                pendingRecovery += vtxo.value;
+            } else if (vtxo.virtualStatus.state === "settled") {
                 settled += vtxo.value;
             } else if (vtxo.virtualStatus.state === "preconfirmed") {
                 preconfirmed += vtxo.value;
@@ -1354,7 +1362,7 @@ export class WalletMessageHandler
         }
 
         const totalBoarding = confirmed + unconfirmed;
-        const totalOffchain = settled + preconfirmed + recoverable;
+        const totalOffchain = settled + preconfirmed + recoverable + pendingRecovery;
 
         // aggregate asset balances from spendable virtual outputs
         const assetBalances = new Map<string, bigint>();
@@ -1381,6 +1389,7 @@ export class WalletMessageHandler
             preconfirmed,
             available: settled + preconfirmed,
             recoverable,
+            pendingRecovery,
             total: totalBoarding + totalOffchain,
             assets,
         };
