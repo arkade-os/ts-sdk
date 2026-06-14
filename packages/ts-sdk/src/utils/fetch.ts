@@ -1,4 +1,4 @@
-export const buildVersion = "0.9.7";
+export const buildVersion = "0.9.9";
 
 /**
  * Guarded passthrough to the platform `fetch` with no Arkade-specific headers.
