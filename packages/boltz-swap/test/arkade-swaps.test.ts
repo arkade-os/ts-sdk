@@ -66,6 +66,34 @@ vi.mock("../src/utils/vhtlc", async () => {
     };
 });
 
+// Reverse swaps now validate that the Boltz-returned invoice commits to the
+// preimage hash we sent (arkade-swaps.ts). A static mock invoice can't match a
+// freshly-generated random preimage, so we model the real server: when the fake
+// provider returns its canned invoice, make `decodeInvoice` report the payment
+// hash from the request we just sent. The override is opt-in (default
+// undefined → real decode) so the decoding tests below are unaffected.
+const decodeInvoiceOverride = vi.hoisted(() => ({ paymentHash: undefined as string | undefined }));
+vi.mock("../src/utils/decoding", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../src/utils/decoding")>();
+    return {
+        ...actual,
+        decodeInvoice: (invoice: string) => {
+            const decoded = actual.decodeInvoice(invoice);
+            return decodeInvoiceOverride.paymentHash !== undefined
+                ? { ...decoded, paymentHash: decodeInvoiceOverride.paymentHash }
+                : decoded;
+        },
+    };
+});
+
+// Make the fake provider echo an invoice that commits to the request's preimage
+// hash, mirroring real Boltz, so the reverse-swap invoice validation passes.
+const reverseSwapResponseFor =
+    (response: CreateReverseSwapResponse) => async (req: { preimageHash: string }) => {
+        decodeInvoiceOverride.paymentHash = req.preimageHash;
+        return response;
+    };
+
 // Mock WebSocket - this needs to be at the top level
 vi.mock("ws", () => {
     return {
@@ -503,6 +531,7 @@ describe("ArkadeSwaps", () => {
 
     afterEach(() => {
         vi.restoreAllMocks();
+        decodeInvoiceOverride.paymentHash = undefined;
     });
 
     describe("Initialization", () => {
@@ -636,8 +665,8 @@ describe("ArkadeSwaps", () => {
         describe("Reverse Swaps", () => {
             it("should create a reverse swap", async () => {
                 // arrange
-                vi.spyOn(swapProvider, "createReverseSwap").mockResolvedValueOnce(
-                    createReverseSwapResponse,
+                vi.spyOn(swapProvider, "createReverseSwap").mockImplementationOnce(
+                    reverseSwapResponseFor(createReverseSwapResponse),
                 );
 
                 // act
@@ -657,8 +686,8 @@ describe("ArkadeSwaps", () => {
 
             it("should get correct swap status", async () => {
                 // arrange
-                vi.spyOn(swapProvider, "createReverseSwap").mockResolvedValueOnce(
-                    createReverseSwapResponse,
+                vi.spyOn(swapProvider, "createReverseSwap").mockImplementationOnce(
+                    reverseSwapResponseFor(createReverseSwapResponse),
                 );
                 vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValueOnce({
                     status: "swap.created",
@@ -680,7 +709,7 @@ describe("ArkadeSwaps", () => {
                 const testDescription = "Test reverse swap description";
                 const createReverseSwapSpy = vi
                     .spyOn(swapProvider, "createReverseSwap")
-                    .mockResolvedValueOnce(createReverseSwapResponse);
+                    .mockImplementationOnce(reverseSwapResponseFor(createReverseSwapResponse));
 
                 // act
                 await swaps.createReverseSwap({
@@ -2445,8 +2474,8 @@ describe("ArkadeSwaps", () => {
 
             it("should save reverse swap when creating reverse swap", async () => {
                 // arrange
-                vi.spyOn(swapProvider, "createReverseSwap").mockResolvedValueOnce(
-                    createReverseSwapResponse,
+                vi.spyOn(swapProvider, "createReverseSwap").mockImplementationOnce(
+                    reverseSwapResponseFor(createReverseSwapResponse),
                 );
 
                 // act
@@ -4396,6 +4425,73 @@ describe("ArkadeSwaps", () => {
             await expect(swaps.refundArk(buildSwap(pastRefund()))).rejects.toThrow(
                 /VHTLC is already spent/,
             );
+        });
+    });
+
+    describe("resolveVHTLCForLockup (signer rotation recovery)", () => {
+        const TIMEOUTS = {
+            refund: 1778741659,
+            unilateralClaim: 266752,
+            unilateralRefund: 432128,
+            unilateralRefundWithoutReceiver: 518656,
+        };
+
+        // Two distinct, real x-only server signers: `server` plays the
+        // deprecated (pre-rotation) signer, `fulmine` the current one.
+        const deprecatedServer = mock.pubkeys.server;
+        const currentServer = mock.pubkeys.fulmine;
+
+        const buildAddress = (serverPubkey: Uint8Array) =>
+            swaps.createVHTLCScript({
+                network: "regtest",
+                preimageHash: mockPreimageHash,
+                receiverPubkey: compressedPubkeys.boltz,
+                senderPubkey: compressedPubkeys.alice,
+                serverPubkey: hex.encode(serverPubkey),
+                timeoutBlockHeights: TIMEOUTS,
+            });
+
+        const resolve = (lockupAddress: string) => {
+            const rotatedArkInfo = {
+                ...mockArkInfo,
+                signerPubkey: hex.encode(currentServer),
+                deprecatedSigners: [{ pubkey: hex.encode(deprecatedServer) }],
+            } as ArkInfo;
+            return (swaps as any).resolveVHTLCForLockup({
+                arkInfo: rotatedArkInfo,
+                preimageHash: mockPreimageHash,
+                receiverPubkey: compressedPubkeys.boltz,
+                senderPubkey: compressedPubkeys.alice,
+                timeoutBlockHeights: TIMEOUTS,
+                lockupAddress,
+                swapId: mock.id,
+            }) as { vhtlcScript: VHTLC.Script; serverXOnlyPublicKey: Uint8Array };
+        };
+
+        it("recovers a VHTLC locked under a now-deprecated signer", () => {
+            const deprecated = buildAddress(deprecatedServer);
+            const resolved = resolve(deprecated.vhtlcAddress);
+
+            // matched the deprecated signer, not the current one
+            expect(hex.encode(resolved.serverXOnlyPublicKey)).toBe(hex.encode(deprecatedServer));
+            expect(hex.encode(resolved.vhtlcScript.pkScript)).toBe(
+                hex.encode(deprecated.vhtlcScript.pkScript),
+            );
+        });
+
+        it("uses the current signer on the no-rotation fast path", () => {
+            const current = buildAddress(currentServer);
+            const resolved = resolve(current.vhtlcAddress);
+
+            expect(hex.encode(resolved.serverXOnlyPublicKey)).toBe(hex.encode(currentServer));
+            expect(hex.encode(resolved.vhtlcScript.pkScript)).toBe(
+                hex.encode(current.vhtlcScript.pkScript),
+            );
+        });
+
+        it("throws an address mismatch when no candidate signer matches", () => {
+            const unrelated = buildAddress(mock.pubkeys.alice);
+            expect(() => resolve(unrelated.vhtlcAddress)).toThrow(/VHTLC address mismatch/);
         });
     });
 });

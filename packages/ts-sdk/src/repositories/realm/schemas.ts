@@ -151,7 +151,7 @@ export const ARK_REALM_SCHEMA_VERSION = 2;
  * Arkade v1→v2 script backfill when the row has never been populated.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function runArkRealmMigrations(oldRealm: any, newRealm: any): void {
+export function runArkRealmMigrations(_oldRealm: any, newRealm: any): void {
     const newVtxos = newRealm.objects("ArkVtxo");
     for (let i = 0; i < newVtxos.length; i++) {
         const newVtxo = newVtxos[i];

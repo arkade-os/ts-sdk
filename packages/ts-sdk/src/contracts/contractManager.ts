@@ -6,7 +6,6 @@ import {
     ContractEvent,
     ContractEventCallback,
     ContractState,
-    ContractVtxo,
     ContractWithVtxos,
     DiscoveryDeps,
     GetContractsFilter,
@@ -27,7 +26,6 @@ import {
     getSyncCursor,
 } from "../utils/syncCursors";
 import {
-    filterVtxosForScript,
     getVtxosForContract,
     saveVtxosForContract,
     warnAndFilterVtxosForScript,

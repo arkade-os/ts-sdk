@@ -78,6 +78,7 @@ import {
     ReadonlyWallet,
     waitForIncomingFunds,
     IncomingFunds,
+    BoardingUtxoGroup,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./wallet/wallet";
@@ -86,7 +87,26 @@ import { SignerSession, TreeNonces, TreePartialSigs } from "./tree/signingSessio
 import { DustChangeError, Ramps } from "./wallet/ramps";
 import { HDDescriptorProvider } from "./wallet/hdDescriptorProvider";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
-import type { IVtxoManager, RenewVtxosOptions, SettlementConfig } from "./wallet/vtxo-manager";
+import type {
+    IVtxoManager,
+    RenewVtxosOptions,
+    SettlementConfig,
+    MigrateDeprecatedSignerOptions,
+    DeprecatedSignerMigrationReport,
+    DeprecatedSignerReport,
+    MigrationVtxoRef,
+    MigrationLegReport,
+    MigrationLegSkipReason,
+    MigrationGlobalSkipReason,
+} from "./wallet/vtxo-manager";
+import {
+    classifyContractSigner,
+    classifyAgainstSignerSet,
+    signerSetFromInfo,
+    isCooperativelyMigratable,
+    toXOnlySignerHex,
+} from "./wallet/signerRotation";
+import type { SignerStatus, SignerClassification, SignerSet } from "./wallet/signerRotation";
 import {
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
@@ -114,6 +134,7 @@ import type {
 } from "./providers/electrum";
 import {
     RestArkProvider,
+    DigestMismatchError,
     ArkProvider,
     SettlementEvent,
     SettlementEventType,
@@ -309,6 +330,11 @@ export {
     Ramps,
     DustChangeError,
     VtxoManager,
+    classifyContractSigner,
+    classifyAgainstSignerSet,
+    signerSetFromInfo,
+    isCooperativelyMigratable,
+    toXOnlySignerHex,
     HDDescriptorProvider,
     DelegateManagerImpl,
     DelegatorManagerImpl,
@@ -323,6 +349,7 @@ export {
     ElectrumOnchainProvider,
     WsElectrumChainSource,
     RestArkProvider,
+    DigestMismatchError,
     RestIndexerProvider,
 
     // Script-related
@@ -554,9 +581,20 @@ export type {
 
     // Wallet types
     GetVtxosFilter,
+    BoardingUtxoGroup,
     SettlementConfig,
     IVtxoManager,
     RenewVtxosOptions,
+    MigrateDeprecatedSignerOptions,
+    DeprecatedSignerMigrationReport,
+    DeprecatedSignerReport,
+    MigrationVtxoRef,
+    MigrationLegReport,
+    MigrationLegSkipReason,
+    MigrationGlobalSkipReason,
+    SignerStatus,
+    SignerClassification,
+    SignerSet,
 
     // Asset types
     IReadonlyAssetManager,

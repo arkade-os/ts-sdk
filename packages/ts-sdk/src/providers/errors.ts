@@ -19,32 +19,42 @@ export function maybeArkError(error: any): ArkError | undefined {
         if (!(error instanceof Error)) return undefined;
         const decoded = JSON.parse(error.message);
 
-        if (!("details" in decoded)) return undefined;
-        if (!Array.isArray(decoded.details)) return undefined;
+        // Preferred: the structured ErrorDetails the server attaches in details[].
+        if (Array.isArray(decoded.details)) {
+            for (const details of decoded.details) {
+                if (!("@type" in details)) continue;
+                const type = details["@type"];
+                if (type !== "type.googleapis.com/ark.v1.ErrorDetails") continue;
 
-        // search for a valid details object with the correct type
-        for (const details of decoded.details) {
-            if (!("@type" in details)) continue;
-            const type = details["@type"];
-            if (type !== "type.googleapis.com/ark.v1.ErrorDetails") continue;
+                if (!("code" in details)) continue;
 
-            if (!("code" in details)) continue;
+                const code = details.code;
 
-            const code = details.code;
+                if (!("message" in details)) continue;
+                const message = details.message;
 
-            if (!("message" in details)) continue;
-            const message = details.message;
+                if (!("name" in details)) continue;
+                const name = details.name;
 
-            if (!("name" in details)) continue;
-            const name = details.name;
+                let metadata: Record<string, string> | undefined;
+                if ("metadata" in details && isMetadata(details.metadata)) {
+                    metadata = details.metadata;
+                }
 
-            let metadata: Record<string, string> | undefined;
-            if ("metadata" in details && isMetadata(details.metadata)) {
-                metadata = details.metadata;
+                return new ArkError(code, message, name, metadata);
             }
-
-            return new ArkError(code, message, name, metadata);
         }
+
+        // Fallback: arkd's guard interceptors (build-version, digest) run outside
+        // the error-detail converter, so their REST errors arrive with an empty
+        // `details[]` and the structured name only in the top-level message, as
+        // "NAME (code): human message". Recover the name and code so callers can
+        // still branch on the error name (metadata is unavailable on this path).
+        if (typeof decoded.message === "string") {
+            const m = decoded.message.match(/^([A-Z][A-Z0-9_]*) \((\d+)\): ([\s\S]*)$/);
+            if (m) return new ArkError(Number(m[2]), m[3], m[1]);
+        }
+
         return undefined;
     } catch (e) {
         return undefined;

@@ -261,7 +261,15 @@ export interface WalletBalance {
     /** Recoverable balance from subdust or expired (swept) virtual outputs. */
     recoverable: number;
 
-    /** Total balance across offchain, recoverable, and boarding funds. */
+    /**
+     * Funds under a now-deprecated signer past its cutoff (EXPIRED) that have not
+     * yet been swept by the server. NOT spendable until they recover, so excluded
+     * from `available`/`settled`/`preconfirmed` and from coin selection — but
+     * still the wallet's funds, so counted in `total`.
+     */
+    pendingRecovery: number;
+
+    /** Total balance across offchain, recoverable, pending-recovery, and boarding funds. */
     total: number;
 
     /** Asset balance entries (`assetId` & `amount`) */

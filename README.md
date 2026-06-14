@@ -24,11 +24,11 @@ pnpm install
 ## Commands
 
 ```bash
-pnpm run build          # Build all packages (ts-sdk first, then boltz-swap)
-pnpm test               # Run all unit and integration tests
-pnpm run test:unit      # Run unit tests across packages
+pnpm run build            # Build all packages (ts-sdk first, then boltz-swap)
+pnpm test                 # Run all unit and integration tests
+pnpm run test:unit        # Run unit tests across packages
 pnpm run test:integration # Run integration tests across packages against regtest
-pnpm run lint           # Check formatting (prettier)
+pnpm run lint             # Check formatting (prettier)
 ```
 
 ### Running a single test

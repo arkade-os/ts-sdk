@@ -4,7 +4,7 @@ import { isFetchTimeoutError } from "./ark";
 import { eventSourceIterator, isEventSourceError } from "./utils";
 import { MetadataList } from "../extension/asset";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
-import { fetch } from "../utils/fetch";
+import { baseFetch } from "../utils/fetch";
 
 export type PaginationOptions = {
     pageIndex?: number;
@@ -314,7 +314,7 @@ export class RestIndexerProvider implements IndexerProvider {
         if (params.toString()) {
             url += "?" + params.toString();
         }
-        const res = await fetch(url);
+        const res = await baseFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch vtxo tree: ${res.statusText}`);
         }
@@ -345,7 +345,7 @@ export class RestIndexerProvider implements IndexerProvider {
         if (params.toString()) {
             url += "?" + params.toString();
         }
-        const res = await fetch(url);
+        const res = await baseFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch vtxo tree leaves: ${res.statusText}`);
         }
@@ -358,7 +358,7 @@ export class RestIndexerProvider implements IndexerProvider {
 
     async getBatchSweepTransactions(batchOutpoint: Outpoint): Promise<{ sweptBy: string[] }> {
         const url = `${this.serverUrl}/v1/indexer/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/sweepTxs`;
-        const res = await fetch(url);
+        const res = await baseFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch batch sweep transactions: ${res.statusText}`);
         }
@@ -371,7 +371,7 @@ export class RestIndexerProvider implements IndexerProvider {
 
     async getCommitmentTx(txid: string): Promise<CommitmentTx> {
         const url = `${this.serverUrl}/v1/indexer/commitmentTx/${txid}`;
-        const res = await fetch(url);
+        const res = await baseFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch commitment tx: ${res.statusText}`);
         }
@@ -397,7 +397,7 @@ export class RestIndexerProvider implements IndexerProvider {
         if (params.toString()) {
             url += "?" + params.toString();
         }
-        const res = await fetch(url);
+        const res = await baseFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch commitment tx connectors: ${res.statusText}`);
         }
@@ -428,7 +428,7 @@ export class RestIndexerProvider implements IndexerProvider {
         if (params.toString()) {
             url += "?" + params.toString();
         }
-        const res = await fetch(url);
+        const res = await baseFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch commitment tx forfeitTxs: ${res.statusText}`);
         }
@@ -532,7 +532,7 @@ export class RestIndexerProvider implements IndexerProvider {
         if (params.toString()) {
             url += "?" + params.toString();
         }
-        const res = await fetch(url);
+        const res = await baseFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch virtual txs: ${res.statusText}`);
         }
@@ -554,7 +554,7 @@ export class RestIndexerProvider implements IndexerProvider {
         if (params.toString()) {
             url += "?" + params.toString();
         }
-        const res = await fetch(url);
+        const res = await baseFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch vtxo chain: ${res.statusText}`);
         }
@@ -631,7 +631,7 @@ export class RestIndexerProvider implements IndexerProvider {
         if (params.toString()) {
             url += "?" + params.toString();
         }
-        const res = await fetch(url);
+        const res = await baseFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch vtxos: ${res.statusText}`);
         }
@@ -647,7 +647,7 @@ export class RestIndexerProvider implements IndexerProvider {
 
     async getAssetDetails(assetId: string): Promise<AssetDetails> {
         const url = `${this.serverUrl}/v1/indexer/asset/${encodeURIComponent(assetId)}`;
-        const res = await fetch(url);
+        const res = await baseFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch asset details: ${res.statusText}`);
         }
@@ -666,7 +666,7 @@ export class RestIndexerProvider implements IndexerProvider {
 
     async subscribeForScripts(scripts: string[], subscriptionId?: string): Promise<string> {
         const url = `${this.serverUrl}/v1/indexer/script/subscribe`;
-        const res = await fetch(url, {
+        const res = await baseFetch(url, {
             headers: {
                 "Content-Type": "application/json",
             },
@@ -684,7 +684,7 @@ export class RestIndexerProvider implements IndexerProvider {
 
     async unsubscribeForScripts(subscriptionId: string, scripts?: string[]): Promise<void> {
         const url = `${this.serverUrl}/v1/indexer/script/unsubscribe`;
-        const res = await fetch(url, {
+        const res = await baseFetch(url, {
             headers: {
                 "Content-Type": "application/json",
             },

@@ -8,6 +8,7 @@ const { mockFetch } = vi.hoisted(() => ({
 
 vi.mock("../src/utils/fetch", () => ({
     fetch: mockFetch,
+    baseFetch: mockFetch,
 }));
 
 describe("RestIndexerProvider", () => {

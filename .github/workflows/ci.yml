@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches: [master, next]
+  # Run on all pull requests (not just those targeting master/next) so stacked
+  # PRs onto feature branches get CI checks too.
   pull_request:
-    branches: [master, next]
 
 jobs:
   check:
