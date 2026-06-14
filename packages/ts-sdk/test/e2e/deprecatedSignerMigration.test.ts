@@ -142,6 +142,16 @@ describe("deprecated-signer migration (real rotation)", () => {
 
         await rotateArkdSigner({ activeSignerPriv: B_SEC, deprecatedSigners: [deprecatedSpec] });
 
+        // arkd's restart drops the wallet's SSE subscription. Wait for it to
+        // reconnect and re-track the deprecated signer's funds before returning,
+        // so the it-block migrates on fresh state instead of racing the reconnect.
+        // (The ContractWatcher reconnect fix resolves this in ~5s; if reconnect
+        // regresses, this poll times out and the test fails deterministically.)
+        await poll(async () => {
+            const s = await vtxoManager.getDeprecatedSignerStatus();
+            return s.some((x) => x.vtxoCount > 0 || x.boardingCount > 0) ? s : null;
+        });
+
         return { wallet, vtxoManager, contractManager, amount, stale, fromX, toX };
     };
 
@@ -421,6 +431,14 @@ describe("deprecated-signer migration (real rotation)", () => {
                     });
 
                     const vtxoManager = await wallet.getVtxoManager();
+
+                    // Wait for the wallet to re-track the boarding UTXO after arkd's
+                    // restart (its SSE subscription reconnects) before discovery /
+                    // migration, so this doesn't race the reconnect.
+                    await poll(async () => {
+                        const s = await vtxoManager.getDeprecatedSignerStatus();
+                        return s.some((x) => x.vtxoCount > 0 || x.boardingCount > 0) ? s : null;
+                    });
 
                     // Discovery (REAL): the stale boarding UTXO under A is DUE_NOW.
                     const status = await vtxoManager.getDeprecatedSignerStatus();
