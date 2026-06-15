@@ -28,8 +28,14 @@ import { timelockToSequence } from "../src/utils/timelock";
 import { DEFAULT_ARKADE_SERVER_URL } from "../src/networks";
 
 // Mock fetch
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
+const { mockFetch } = vi.hoisted(() => ({
+    mockFetch: vi.fn(),
+}));
+
+vi.mock("../src/utils/fetch", () => ({
+    fetch: mockFetch,
+    baseFetch: mockFetch,
+}));
 
 vi.stubGlobal("EventSource", MockEventSource);
 
@@ -1953,6 +1959,95 @@ describe("Wallet._settleImpl", () => {
             expect(captured).toHaveLength(3);
             expect(captured.every((v: any) => v.value === 10_000)).toBe(true);
         });
+
+        it("caps the auto-selected total at the server's vtxoMaxAmount", async () => {
+            const value = 5_000;
+            const vtxos = Array.from({ length: 10 }, (_, i) => makeVtxo(value, i));
+            const { thisArg, sentinel, getCaptured } = buildThisArg(vtxos, {});
+            // No intent fees, so net == value; the 12000 ceiling fits only 2.
+            thisArg.arkProvider.getInfo.mockResolvedValue({
+                fees: { intentFee: {} },
+                vtxoMaxAmount: 12000n,
+            });
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            expect(getCaptured()).toHaveLength(2);
+        });
+
+        it("does not cap the auto-selected total when vtxoMaxAmount is -1", async () => {
+            const value = 5_000;
+            const vtxos = Array.from({ length: 10 }, (_, i) => makeVtxo(value, i));
+            const { thisArg, sentinel, getCaptured } = buildThisArg(vtxos, {});
+            thisArg.arkProvider.getInfo.mockResolvedValue({
+                fees: { intentFee: {} },
+                vtxoMaxAmount: -1n,
+            });
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            expect(getCaptured()).toHaveLength(10);
+        });
+
+        it("skips an oversized VTXO and selects a smaller one within vtxoMaxAmount", async () => {
+            // byValueDescending tries 12000 first (> 10000 ceiling, skipped),
+            // then 5000 fits. A break here would settle nothing.
+            const vtxos = [makeVtxo(12_000, 0), makeVtxo(5_000, 1)];
+            const { thisArg, sentinel, getCaptured } = buildThisArg(vtxos, {});
+            thisArg.arkProvider.getInfo.mockResolvedValue({
+                fees: { intentFee: {} },
+                vtxoMaxAmount: 10_000n,
+            });
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            const captured = getCaptured()!;
+            expect(captured).toHaveLength(1);
+            expect(captured[0].value).toBe(5_000);
+        });
+
+        it("compares vtxoMaxAmount against the projected post-fee output", async () => {
+            // Pre-fee subtotal (10_500) exceeds the 10_000 ceiling, but the
+            // flat 1000-sat output fee brings the registered output down to
+            // 9_500, which fits. The VTXO must be selected, not dropped.
+            const vtxos = [makeVtxo(10_500, 0)];
+            const { thisArg, sentinel, getCaptured } = buildThisArg(vtxos, {
+                offchainOutput: "1000.0",
+            });
+            thisArg.arkProvider.getInfo.mockResolvedValue({
+                fees: { intentFee: { offchainOutput: "1000.0" } },
+                vtxoMaxAmount: 10_000n,
+            });
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            const captured = getCaptured()!;
+            expect(captured).toHaveLength(1);
+            expect(captured[0].value).toBe(10_500);
+        });
+
+        it("reads the receive address once so a mid-settle rotation can't desync the output script", async () => {
+            // The output and the asset-routing destination script must come
+            // from one address read; re-reading could observe a
+            // WalletReceiveRotator.rotate() swap (it mutates offchainTapscript
+            // without _txLock) and make findDestinationOutputIndex miss.
+            const vtxos = [makeVtxo(5_000, 0)];
+            const { thisArg, sentinel } = buildThisArg(vtxos, {});
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            expect(thisArg.getAddress).toHaveBeenCalledTimes(1);
+        });
     });
 });
 
@@ -2187,18 +2282,19 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         expect(saveVtxos).not.toHaveBeenCalled();
     });
 
-    it("binds the change VTXO metadata to the snapshot, not to this.offchainTapscript", async () => {
+    it("binds the change VTXO metadata to the snapshot, not to this.offchainTapscript / this.arkServerPublicKey", async () => {
         // PR #489 review #1 contract test: the change output's pkScript
         // is captured under `_txLock` BEFORE the offchain round-trip,
         // but the change-VTXO metadata (`forfeitTapLeafScript`,
         // `tapTree`, `script`, `primaryAddress`) is written AFTER the
-        // round-trip — `WalletReceiveRotator.rotate` could swap
-        // `this.offchainTapscript` in between. The fix threads the
-        // pre-round-trip snapshot down as a parameter and derives all
-        // four fields from it. A regression that re-reads
-        // `this.offchainTapscript` inside the function would bind the
-        // change to the post-rotation tapscript while the server's
-        // VTXO is locked to the pre-rotation pkScript — the exact P1
+        // round-trip — `rotateServerSigner` could swap
+        // `this.offchainTapscript` AND `this.arkServerPublicKey` in
+        // between. The fix threads the pre-round-trip snapshot (tapscript
+        // + server key) down as parameters and derives all fields from
+        // them. A regression that re-reads `this.offchainTapscript` or
+        // `this.arkServerPublicKey` inside the function would bind the
+        // change/primaryAddress to the post-rotation epoch while the
+        // server's VTXO is locked to the pre-rotation one — the exact P1
         // race we're guarding against.
         //
         // Two real `DefaultVtxo.Script` instances with distinct
@@ -2260,7 +2356,10 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
 
         const thisArg = {
             network: { hrp: "ark" },
-            arkServerPublicKey: TEST_SERVER_PUB_KEY,
+            // Deliberately the WRONG server key on `this`. A regression that
+            // re-reads `this.arkServerPublicKey` would derive `primaryAddress`
+            // from this instead of the snapshot below.
+            arkServerPublicKey: TEST_PUB_KEY,
             // Deliberately the WRONG tapscript on `this`. A regression
             // that re-reads `this.offchainTapscript` inside the
             // function would bind the change to this instead of the
@@ -2279,7 +2378,8 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
             1_000,
             4_000n,
             1,
-            tapscriptNew, // the snapshot
+            tapscriptNew, // the tapscript snapshot
+            TEST_SERVER_PUB_KEY, // the server-key snapshot
         );
 
         // Find the change-row save (the one keyed by CHANGE_ADDR).
@@ -2303,7 +2403,10 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         expect(hex.encode(changeVtxo.intentTapLeafScript[1])).toBe(hex.encode(expectedForfeit[1]));
 
         // `primaryAddress` (the address `saveTransactions` is keyed by)
-        // also derives from the snapshot, not from `this.arkAddress`.
+        // also derives from the snapshot tapscript + server key, not from
+        // `this.offchainTapscript` / `this.arkServerPublicKey`. With the wrong
+        // server key on `this`, a regression would key it by neither CHANGE_ADDR
+        // nor SPEND_ADDR.
         expect(saveTransactions).toHaveBeenCalledTimes(1);
         expect(saveTransactions.mock.calls[0][0]).toBe(CHANGE_ADDR);
         expect(saveTransactions.mock.calls[0][0]).not.toBe(SPEND_ADDR);

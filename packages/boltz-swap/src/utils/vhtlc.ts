@@ -117,6 +117,33 @@ export const createVHTLCScript = (args: {
 };
 
 /**
+ * Build the candidate Arkade server-signer set for VHTLC reconstruction,
+ * ordered current-signer-first then deprecated signers, as x-only hex.
+ *
+ * A swap created before a planned arkd signer rotation has a VHTLC committing
+ * to a now-deprecated signer; reconstructing it from the *current*
+ * `signerPubkey` alone yields the wrong script/address. The deprecated keys
+ * arkd advertises in `ArkInfo.deprecatedSigners` are exactly the historical
+ * signers a stale swap may be locked to, so probing the current key first
+ * (the no-rotation fast path) and then the deprecated set lets
+ * {@link resolveVHTLCScript} recover the original lockup. Mirrors how
+ * `Wallet.restore()` scans current + deprecated signers for stale VTXOs.
+ */
+export const candidateServerPubkeys = (arkInfo: ArkInfo): string[] => {
+    const current = hex.encode(normalizeToXOnlyKey(hex.decode(arkInfo.signerPubkey), "server"));
+    const seen = new Set([current]);
+    const candidates = [current];
+    for (const deprecated of arkInfo.deprecatedSigners ?? []) {
+        if (!deprecated.pubkey) continue;
+        const key = hex.encode(normalizeToXOnlyKey(hex.decode(deprecated.pubkey), "server"));
+        if (seen.has(key)) continue;
+        seen.add(key);
+        candidates.push(key);
+    }
+    return candidates;
+};
+
+/**
  * Joins a batch to spend the vtxo via commitment transaction
  * @param identity - The identity to use for signing the forfeit transaction.
  * @param input - The input vtxo.

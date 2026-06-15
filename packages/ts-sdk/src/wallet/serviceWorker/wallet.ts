@@ -106,6 +106,13 @@ import {
     ResponseGetExpiredBoardingUtxos,
     RequestSweepExpiredBoardingUtxos,
     ResponseSweepExpiredBoardingUtxos,
+    RequestMigrateDeprecatedSignerVtxos,
+    ResponseMigrateDeprecatedSignerVtxos,
+    ResponseMigrateDeprecatedSignerVtxosEvent,
+    RequestGetDeprecatedSignerStatus,
+    ResponseGetDeprecatedSignerStatus,
+    deserializeMigrationReport,
+    deserializeDeprecatedSignerReport,
     RequestRestoreWallet,
     DEFAULT_MESSAGE_TAG,
     deserializeAggregateError,
@@ -128,7 +135,14 @@ import type {
 } from "../../contracts/contractManager";
 import type { ContractState } from "../../contracts/types";
 import type { IDelegateManager } from "../delegate";
-import type { IVtxoManager, RenewVtxosOptions, SettlementConfig } from "../vtxo-manager";
+import type {
+    IVtxoManager,
+    MigrateDeprecatedSignerOptions,
+    DeprecatedSignerMigrationReport,
+    DeprecatedSignerReport,
+    RenewVtxosOptions,
+    SettlementConfig,
+} from "../vtxo-manager";
 import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegate";
 import { getRandomId } from "../utils";
@@ -171,6 +185,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     GET_EXPIRING_VTXOS: 20_000,
     GET_EXPIRED_BOARDING_UTXOS: 20_000,
     GET_RECOVERABLE_BALANCE: 20_000,
+    GET_DEPRECATED_SIGNER_STATUS: 20_000,
     RELOAD_WALLET: 20_000,
 
     // Transactions — need more headroom.
@@ -187,6 +202,9 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     RECOVER_VTXOS: 50_000,
     RENEW_VTXOS: 50_000,
     SWEEP_EXPIRED_BOARDING_UTXOS: 50_000,
+    // Streaming/long-running like RENEW_VTXOS (rotation + settle); the value is
+    // kept for type completeness and is never enforced as an inactivity deadline.
+    MIGRATE_DEPRECATED_SIGNER_VTXOS: 50_000,
     // RESTORE_WALLET is a streaming/long-running path (sendMessageWithEvents)
     // like SETTLE; the value here is kept for type completeness and is never
     // enforced as an inactivity deadline.
@@ -214,6 +232,7 @@ const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "GET_DELEGATE_INFO",
     "GET_RECOVERABLE_BALANCE",
     "GET_EXPIRED_BOARDING_UTXOS",
+    "GET_DEPRECATED_SIGNER_STATUS",
     "GET_VTXOS",
     "GET_CONTRACTS",
     "GET_CONTRACTS_WITH_VTXOS",
@@ -1706,6 +1725,47 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
                     return (response as ResponseSweepExpiredBoardingUtxos).payload.txid;
                 } catch (e) {
                     throw new Error(`Failed to sweep expired boarding utxos: ${e}`);
+                }
+            },
+
+            async migrateDeprecatedSignerVtxos(
+                options?: MigrateDeprecatedSignerOptions,
+            ): Promise<DeprecatedSignerMigrationReport> {
+                const message: RequestMigrateDeprecatedSignerVtxos = {
+                    tag: messageTag,
+                    type: "MIGRATE_DEPRECATED_SIGNER_VTXOS",
+                    id: getRandomId(),
+                };
+                try {
+                    const response = await wallet.sendMessageWithEvents(
+                        message,
+                        (resp) =>
+                            options?.eventCallback?.(
+                                (resp as ResponseMigrateDeprecatedSignerVtxosEvent).payload,
+                            ),
+                        (resp) => resp.type === "MIGRATE_DEPRECATED_SIGNER_VTXOS_SUCCESS",
+                    );
+                    return deserializeMigrationReport(
+                        (response as ResponseMigrateDeprecatedSignerVtxos).payload.report,
+                    );
+                } catch (e) {
+                    throw new Error(`Failed to migrate deprecated-signer vtxos: ${e}`);
+                }
+            },
+
+            async getDeprecatedSignerStatus(): Promise<DeprecatedSignerReport[]> {
+                const message: RequestGetDeprecatedSignerStatus = {
+                    tag: messageTag,
+                    type: "GET_DEPRECATED_SIGNER_STATUS",
+                    id: getRandomId(),
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    return (response as ResponseGetDeprecatedSignerStatus).payload.signers.map(
+                        deserializeDeprecatedSignerReport,
+                    );
+                } catch (e) {
+                    throw new Error(`Failed to get deprecated-signer status: ${e}`);
                 }
             },
 

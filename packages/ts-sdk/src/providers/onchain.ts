@@ -1,5 +1,6 @@
 import { DEFAULT_NETWORK_NAME, type NetworkName } from "../networks";
 import { Coin } from "../wallet";
+import { baseFetch } from "../utils/fetch";
 
 /**
  * The default base URLs for esplora API providers.
@@ -143,7 +144,7 @@ export class EsploraProvider implements OnchainProvider {
     }
 
     async getCoins(address: string): Promise<Coin[]> {
-        const response = await fetch(`${this.baseUrl}/address/${address}/utxo`);
+        const response = await baseFetch(`${this.baseUrl}/address/${address}/utxo`);
         if (!response.ok) {
             throw new Error(`Failed to fetch UTXOs: ${response.statusText}`);
         }
@@ -151,7 +152,7 @@ export class EsploraProvider implements OnchainProvider {
     }
 
     async getFeeRate(): Promise<number | undefined> {
-        const response = await fetch(`${this.baseUrl}/fee-estimates`);
+        const response = await baseFetch(`${this.baseUrl}/fee-estimates`);
         // Not every Esplora backend serves /fee-estimates — mempool returns 404
         // on regtest, where it has no fee history. Every caller falls back to
         // MIN_FEE_RATE when this is undefined, so degrade gracefully on a missing
@@ -179,7 +180,7 @@ export class EsploraProvider implements OnchainProvider {
     }
 
     async getTxOutspends(txid: string): Promise<{ spent: boolean; txid: string }[]> {
-        const response = await fetch(`${this.baseUrl}/tx/${txid}/outspends`);
+        const response = await baseFetch(`${this.baseUrl}/tx/${txid}/outspends`);
         if (!response.ok) {
             const error = await response.text();
             throw new Error(`Failed to get transaction outspends: ${error}`);
@@ -189,7 +190,7 @@ export class EsploraProvider implements OnchainProvider {
     }
 
     async getTransactions(address: string): Promise<ExplorerTransaction[]> {
-        const response = await fetch(`${this.baseUrl}/address/${address}/txs`);
+        const response = await baseFetch(`${this.baseUrl}/address/${address}/txs`);
         if (!response.ok) {
             const error = await response.text();
             throw new Error(`Failed to get transactions: ${error}`);
@@ -209,7 +210,7 @@ export class EsploraProvider implements OnchainProvider {
           }
     > {
         // make sure tx exists in mempool or in block
-        const txresponse = await fetch(`${this.baseUrl}/tx/${txid}`);
+        const txresponse = await baseFetch(`${this.baseUrl}/tx/${txid}`);
         if (!txresponse.ok) {
             throw new Error(txresponse.statusText);
         }
@@ -219,7 +220,7 @@ export class EsploraProvider implements OnchainProvider {
             return { confirmed: false };
         }
 
-        const response = await fetch(`${this.baseUrl}/tx/${txid}/status`);
+        const response = await baseFetch(`${this.baseUrl}/tx/${txid}/status`);
         if (!response.ok) {
             throw new Error(`Failed to get transaction status: ${response.statusText}`);
         }
@@ -346,7 +347,7 @@ export class EsploraProvider implements OnchainProvider {
         // spec — electrs happens to serve it as an alias for `/blocks`, but a
         // strict backend like mempool returns an empty array, which surfaced here
         // as "No chain tip found". `/blocks` works across every Esplora backend.
-        const tipBlocks = await fetch(`${this.baseUrl}/blocks`);
+        const tipBlocks = await baseFetch(`${this.baseUrl}/blocks`);
         if (!tipBlocks.ok) {
             throw new Error(`Failed to get chain tip: ${tipBlocks.statusText}`);
         }
@@ -369,7 +370,7 @@ export class EsploraProvider implements OnchainProvider {
     }
 
     private async broadcastPackage(parent: string, child: string): Promise<string> {
-        const response = await fetch(`${this.baseUrl}/txs/package`, {
+        const response = await baseFetch(`${this.baseUrl}/txs/package`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -386,7 +387,7 @@ export class EsploraProvider implements OnchainProvider {
     }
 
     private async broadcastTx(tx: string): Promise<string> {
-        const response = await fetch(`${this.baseUrl}/tx`, {
+        const response = await baseFetch(`${this.baseUrl}/tx`, {
             method: "POST",
             headers: {
                 "Content-Type": "text/plain",

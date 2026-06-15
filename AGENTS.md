@@ -98,7 +98,11 @@ Key layers:
 - **Wallet** (`src/wallet/`) — `Wallet` (signing), `ReadonlyWallet` (watch-only), `OnchainWallet` (on-chain UTXOs). Service worker variants communicate via `MessageBus`.
 - **Providers** (`src/providers/`) — `ArkProvider` (Ark server/SSE), `IndexerProvider` (VTXO queries), `OnchainProvider` (Esplora). Each has REST and Expo-compatible implementations.
 - **Repositories** (`src/repositories/`) — `WalletRepository` and `ContractRepository` interfaces with IndexedDB, InMemory, FileSystem, AsyncStorage, SQLite, and Realm backends. Interfaces carry `readonly version: N` to force compile-time updates on schema changes.
-- **Contracts** (`src/contracts/`) — Event-driven: ContractWatcher detects changes → ContractManager handles events/updates repos → Wallet reads repos (offline-first).
+- **Contracts** (`src/contracts/`) — Event-driven pipeline with strict ownership rules:
+  - `ContractWatcher` is event-only: emits `vtxo_received`/`vtxo_spent`, never writes to repositories, never reads VTXO state from `IndexerProvider`.
+  - `ContractManager` owns orchestration: subscribes to watcher events, fetches fresh VTXO data from `IndexerProvider`, and is the **only** component that writes VTXO/contract state to repositories.
+  - `Wallet`/`ReadonlyWallet` read balance and VTXO state from repositories only (offline-first); any indexer synchronization is delegated to `ContractManager`.
+  - Repositories are the system of record and are mutated exclusively by `ContractManager`.
 - **Service Worker** (`src/worker/`) — `MessageBus` orchestrator with pluggable `MessageHandler`s and tick-based scheduling.
 - **Bitcoin primitives** — `src/script/` (tapscript, VHTLC, Ark addresses), `src/musig2/` (MuSig2), `src/tree/` (transaction trees), `src/forfeit.ts` (unilateral exit).
 

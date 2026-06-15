@@ -2,7 +2,7 @@ import { base64, hex } from "@scure/base";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { Address, OutScript, SigHash, Transaction } from "@scure/btc-signer";
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
-import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
+import { Bytes, equalBytes, sha256 } from "@scure/btc-signer/utils.js";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
 import { DEFAULT_ARKADE_SERVER_URL, getNetwork, Network, NetworkName } from "../networks";
@@ -49,6 +49,7 @@ import {
 import { createAssetPacket, selectCoinsWithAsset, selectedCoinsToAssetInputs } from "./asset";
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
+import { toXOnlySignerHex } from "./signerRotation";
 import {
     buildOffchainTx,
     combineTapscriptSigs,
@@ -62,6 +63,7 @@ import {
     MAX_VTXOS_PER_SETTLEMENT,
     SettlementConfig,
     VtxoManager,
+    selectPendingRecoveryOutpoints,
 } from "./vtxo-manager";
 import { ArkNote } from "../arknote";
 import { Intent } from "../intent";
@@ -69,7 +71,7 @@ import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
-import { extendCoin, extendCoinWithTapscript, validateRecipients } from "./utils";
+import { extendCoinWithTapscript, validateRecipients } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
@@ -268,12 +270,30 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
 
 export { DescriptorSigningProviderMissingError, MissingSigningDescriptorError };
 
+/**
+ * Boarding UTXOs grouped by the boarding address they sit on, carrying that
+ * address's signer association explicitly. Returned by
+ * {@link ReadonlyWallet.getBoardingUtxosForSigners} because a flat
+ * {@link ExtendedCoin} cannot carry the signer: it retains only the encoded
+ * leaves/tapTree the spend needs, not the owning `DefaultVtxo.Script` (and so
+ * not its `serverPubKey` or CSV delay). The deprecated-signer boarding
+ * classification reads both back from this group (Section 7).
+ */
+export interface BoardingUtxoGroup {
+    /** Tapscript of the boarding address the coins sit on. */
+    tapscript: DefaultVtxo.Script;
+    /** Server key of that address, normalized x-only hex. */
+    serverPubKey: string;
+    /** CSV exit timelock decoded from THIS tapscript's exit leaf. */
+    csvTimelock: RelativeTimelock;
+    coins: ExtendedCoin[];
+}
+
 export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManager?: ContractManager;
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
     private readonly _assetManager: IReadonlyAssetManager;
-    private _syncVtxosInflight?: Promise<void>;
     readonly walletContractTimelocks: RelativeTimelock[];
     // Outpoints ("txid:vout") committed to an in-flight settle/send. Filtered
     // from getVtxos() so concurrent callers (UI, VtxoManager auto-renewal,
@@ -306,12 +326,24 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     protected _boardingTapscript: DefaultVtxo.Script;
 
+    /**
+     * Backing field for the active server signer (x-only, 32 bytes). Read via
+     * the public {@link arkServerPublicKey} getter; written only by
+     * {@link Wallet.setArkServerPublicKeyForRotation}, the sanctioned
+     * server-signer rotation write path (analogue of `_offchainTapscript`). It
+     * is a *current value*, not a fixed constructor constant, because
+     * mid-session server-signer rotation (plan §4) swaps it when arkd rotates
+     * its active signer. Wallets that never span a rotation keep their
+     * construction-time snapshot for their lifetime.
+     */
+    protected _arkServerPublicKey: Bytes;
+
     protected constructor(
         readonly identity: ReadonlyIdentity,
         readonly network: Network,
         readonly onchainProvider: OnchainProvider,
         readonly indexerProvider: IndexerProvider,
-        readonly arkServerPublicKey: Bytes,
+        arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
         boardingTapscript: DefaultVtxo.Script,
         readonly dustAmount: bigint,
@@ -338,6 +370,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
         this._offchainTapscript = offchainTapscript;
         this._boardingTapscript = boardingTapscript;
+        this._arkServerPublicKey = arkServerPublicKey;
         this.watcherConfig = watcherConfig;
         this._assetManager = new ReadonlyAssetManager(this.indexerProvider);
         // Defensive for direct-construction callers; setupWalletConfig already
@@ -349,12 +382,73 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
+     * x-only hex of the operator's deprecated signer keys (from
+     * `ArkInfo.deprecatedSigners`), cached for the OFFLINE read/watch paths.
+     * The boarding watch/history surfaces ({@link getBoardingAddresses},
+     * {@link getBoardingTxs}) fan out over {current} ∪ this set so a deposit at
+     * a boarding address minted under a now-rotated operator signer keeps being
+     * watched. Refreshed from the server-info snapshot at construction (via the
+     * create() factories) and on a detected signer change. Deliberately NOT
+     * consulted by the spend path — {@link getBoardingUtxos} stays
+     * current-signer-only (a deprecated-signer input in a plain settle() is
+     * rejected; old-signer recovery goes through the migration API).
+     */
+    protected _deprecatedSigners: Map<string, bigint> = new Map();
+
+    /**
+     * Refresh the cached deprecated-signer set from a fresh server-info
+     * snapshot. Called by the create() factories at construction and by the
+     * server-info-change handler mid-session. Lenient: a malformed deprecated
+     * entry is skipped, never fatal to wallet creation.
+     */
+    refreshDeprecatedSigners(info: {
+        deprecatedSigners?: readonly { pubkey?: string; cutoffDate?: bigint }[];
+    }): void {
+        const next = new Map<string, bigint>();
+        for (const s of info.deprecatedSigners ?? []) {
+            if (!s.pubkey) continue;
+            try {
+                // `0n` is arkd's sentinel for "no cutoff advertised" (→ DUE_NOW);
+                // a positive cutoff that has already passed is EXPIRED. The
+                // spendability split in getBalance / coin selection reads this.
+                next.set(toXOnlySignerHex(s.pubkey), s.cutoffDate ?? 0n);
+            } catch (e) {
+                console.warn("Skipping malformed deprecated signer pubkey", s.pubkey, e);
+            }
+        }
+        this._deprecatedSigners = next;
+    }
+
+    /**
+     * The signer set the boarding WATCH/HISTORY paths fan out over: the wallet's
+     * current signer plus every cached deprecated signer. Distinct from the
+     * spend path, which is current-signer-only.
+     */
+    protected watchedBoardingSigners(): Set<string> {
+        return new Set([
+            toXOnlySignerHex(hex.encode(this.boardingTapscript.options.serverPubKey)),
+            ...this._deprecatedSigners.keys(),
+        ]);
+    }
+
+    /**
      * Currently-active receive tapscript. Read-only from the outside;
      * mutated only via {@link Wallet.setOffchainTapscriptForRotation}
      * by {@link WalletReceiveRotator.rotate}.
      */
     get offchainTapscript(): DefaultVtxo.Script | DelegateVtxo.Script {
         return this._offchainTapscript;
+    }
+
+    /**
+     * The wallet's current active server signer (x-only, 32 bytes). Read-only
+     * from the outside; mutated only via
+     * {@link Wallet.setArkServerPublicKeyForRotation} during mid-session
+     * server-signer rotation (plan §4). Single-valued for wallets that never
+     * span a rotation.
+     */
+    get arkServerPublicKey(): Bytes {
+        return this._arkServerPublicKey;
     }
 
     /**
@@ -586,7 +680,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const setup = await ReadonlyWallet.setupWalletConfig(config, pubkey);
 
-        return new ReadonlyWallet(
+        const wallet = new ReadonlyWallet(
             config.identity,
             setup.network,
             setup.onchainProvider,
@@ -601,6 +695,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
             config.watcherConfig,
             setup.walletContractTimelocks,
         );
+        wallet.refreshDeprecatedSigners(setup.info);
+        return wallet;
     }
 
     get arkAddress(): ArkAddress {
@@ -629,10 +725,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Return the wallet's combined onchain and offchain balances.
      */
     async getBalance(): Promise<WalletBalance> {
-        const [boardingUtxos, vtxos] = await Promise.all([
+        const [boardingUtxos, vtxos, pendingOutpoints] = await Promise.all([
             this.getBoardingUtxos(),
             this.getVtxos(),
+            this.pendingRecoveryOutpoints(),
         ]);
+        const isPendingRecovery = (coin: ExtendedVirtualCoin) =>
+            pendingOutpoints.has(`${coin.txid}:${coin.vout}`);
 
         // boarding
         let confirmed = 0;
@@ -649,18 +748,27 @@ export class ReadonlyWallet implements IReadonlyWallet {
         let settled = 0;
         let preconfirmed = 0;
         let recoverable = 0;
+        let pendingRecovery = 0;
+        // Funds under a past-cutoff (EXPIRED) deprecated signer that are not yet
+        // swept are NOT spendable — excluded from settled/preconfirmed/available
+        // and surfaced under `pendingRecovery` (they still count toward `total`).
         settled = vtxos
-            .filter((coin) => coin.virtualStatus.state === "settled")
+            .filter((coin) => coin.virtualStatus.state === "settled" && !isPendingRecovery(coin))
             .reduce((sum, coin) => sum + coin.value, 0);
         preconfirmed = vtxos
-            .filter((coin) => coin.virtualStatus.state === "preconfirmed")
+            .filter(
+                (coin) => coin.virtualStatus.state === "preconfirmed" && !isPendingRecovery(coin),
+            )
             .reduce((sum, coin) => sum + coin.value, 0);
         recoverable = vtxos
             .filter((coin) => isSpendable(coin) && coin.virtualStatus.state === "swept")
             .reduce((sum, coin) => sum + coin.value, 0);
+        pendingRecovery = vtxos
+            .filter(isPendingRecovery)
+            .reduce((sum, coin) => sum + coin.value, 0);
 
         const totalBoarding = confirmed + unconfirmed;
-        const totalOffchain = settled + preconfirmed + recoverable;
+        const totalOffchain = settled + preconfirmed + recoverable + pendingRecovery;
 
         // aggregate asset balances from spendable virtual outputs
         const assetBalances = new Map<string, bigint>();
@@ -688,6 +796,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             preconfirmed,
             available: settled + preconfirmed,
             recoverable,
+            pendingRecovery,
             total: totalBoarding + totalOffchain,
             assets,
         };
@@ -717,6 +826,24 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 }
                 return !!(f.withUnrolled && vtxo.isUnrolled);
             });
+    }
+
+    /**
+     * Outpoints of VTXOs whose deprecated signer is past its cutoff (EXPIRED) and
+     * which have not yet been swept — unspendable until they recover. Offline:
+     * classifies the repo's contracts against the cached signer set (active +
+     * {@link _deprecatedSigners}, cutoffs included). Empty fast-path when no
+     * signer is deprecated. Consumed by {@link getBalance} (the `pendingRecovery`
+     * bucket) and the send coin-selection path so neither counts nor spends them.
+     */
+    async pendingRecoveryOutpoints(): Promise<Set<string>> {
+        if (this._deprecatedSigners.size === 0) return new Set();
+        const contractManager = await this.getContractManager();
+        const contractsWithVtxos = await contractManager.getContractsWithVtxos();
+        return selectPendingRecoveryOutpoints(contractsWithVtxos, {
+            active: toXOnlySignerHex(hex.encode(this.offchainTapscript.options.serverPubKey)),
+            deprecated: this._deprecatedSigners,
+        });
     }
 
     /**
@@ -752,7 +879,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * surfaced (plan §6-IV); {@link getBoardingAddress} stays single-valued.
      */
     async getBoardingAddresses(): Promise<string[]> {
-        const tapscripts = await this.getBoardingTapscripts();
+        const tapscripts = await this.getBoardingTapscripts(this.watchedBoardingSigners());
         return tapscripts.map((t) => t.onchainAddress(this.network));
     }
 
@@ -766,7 +893,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }> {
         const utxos: VirtualCoin[] = [];
         const commitmentsToIgnore = new Set<string>();
-        const tapscripts = await this.getBoardingTapscripts();
+        const tapscripts = await this.getBoardingTapscripts(this.watchedBoardingSigners());
 
         const outspendCache = new Map<
             string,
@@ -860,8 +987,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Always includes the index-0 baseline (identity x-only key), which covers
      * the degenerate equal-delay case where the index-0 boarding row is
      * coalesced onto a `default` row and so isn't a `boarding`-typed contract.
+     *
+     * @param allowedSigners - Optional set of x-only-hex server keys whose
+     *   persisted boarding rows are included. Defaults to `{current x-only
+     *   signer}`, preserving today's current-signer-only discovery (and the
+     *   foreign-ASP guard). The deprecated-signer migration path widens this to
+     *   reach old-signer boarding addresses. The index-0 baseline and the
+     *   current display tapscript are always included regardless of the set.
      */
-    protected async getBoardingTapscripts(): Promise<DefaultVtxo.Script[]> {
+    protected async getBoardingTapscripts(
+        allowedSigners?: Set<string>,
+    ): Promise<DefaultVtxo.Script[]> {
         const byScript = new Map<string, DefaultVtxo.Script>();
         const add = (s: DefaultVtxo.Script) => byScript.set(hex.encode(s.pkScript), s);
 
@@ -883,16 +1019,20 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // side effect; the boarding rows are persisted by init and the
         // allocator, which run earlier in the wallet lifecycle.
         const serverPubKeyHex = hex.encode(this.boardingTapscript.options.serverPubKey);
+        const allowed = allowedSigners ?? new Set([toXOnlySignerHex(serverPubKeyHex)]);
         const boardingContracts = await this.contractRepository.getContracts({
             type: ["boarding"],
         });
         for (const c of boardingContracts) {
-            // Only this wallet's server. A row left by a previous ASP (e.g. a
-            // repo recovered against a different server) would otherwise emit a
-            // spurious onchain script — and a wasted getCoins/getTransactions
-            // call — on every boarding read. Mirrors the filter in
+            // Only allowed servers. By default this is the wallet's current
+            // signer, so a row left by a previous ASP (e.g. a repo recovered
+            // against a different server) — or, here, an old-signer row outside
+            // the requested set — would otherwise emit a spurious onchain script
+            // and a wasted getCoins/getTransactions call on every boarding read.
+            // Normalize BOTH sides to x-only so a compressed vs x-only mismatch
+            // never silently drops a row. Mirrors the filter in
             // resolveBoardingBootTapscript.
-            if (c.params.serverPubKey !== serverPubKeyHex) continue;
+            if (!allowed.has(toXOnlySignerHex(c.params.serverPubKey))) continue;
             try {
                 add(BoardingContractHandler.createScript(c.params));
             } catch (e) {
@@ -905,15 +1045,23 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Fetch and cache onchain inputs (UTXOs) received at the wallet's boarding
-     * addresses — the current address plus any historical rotated boarding
-     * addresses that still hold unspent UTXOs (plan §6-III.1). Each UTXO is
-     * annotated with the tapscript of the address it actually sits on, so the
-     * spending path forfeits / exits it with the correct per-index leaves.
+     * Fetch and cache onchain inputs (UTXOs) received at the boarding addresses
+     * of the given signer set, grouped per boarding address so the caller keeps
+     * the address↔signer association that {@link ExtendedCoin} cannot carry
+     * (it retains only the encoded leaves/tapTree the spend needs, not the
+     * `DefaultVtxo.Script` and its `serverPubKey`/CSV delay).
+     *
+     * Per group it does exactly what {@link getBoardingUtxos} does per tapscript:
+     * `getCoins` → {@link extendCoinWithTapscript} → `saveUtxos`. Offline-first:
+     * it does not call `getInfo()`; the caller supplies the allowed signer set,
+     * so the only network calls are the per-address `getCoins`.
+     *
+     * @param allowedSigners - x-only-hex server keys whose boarding addresses to
+     *   fetch (passed through to {@link getBoardingTapscripts}).
      */
-    async getBoardingUtxos(): Promise<ExtendedCoin[]> {
-        const tapscripts = await this.getBoardingTapscripts();
-        const all: ExtendedCoin[] = [];
+    async getBoardingUtxosForSigners(allowedSigners: Set<string>): Promise<BoardingUtxoGroup[]> {
+        const tapscripts = await this.getBoardingTapscripts(allowedSigners);
+        const groups: BoardingUtxoGroup[] = [];
         for (const tapscript of tapscripts) {
             const address = tapscript.onchainAddress(this.network);
             const coins = await this.onchainProvider.getCoins(address);
@@ -921,9 +1069,41 @@ export class ReadonlyWallet implements IReadonlyWallet {
             // Save boarding inputs using unified repository, keyed by the
             // address the UTXOs actually sit on.
             await this.walletRepository.saveUtxos(address, utxos);
-            all.push(...utxos);
+            groups.push({
+                tapscript,
+                // Normalize so the group key matches the axis/contract x-only
+                // form regardless of how the tapscript's key was stored.
+                serverPubKey: toXOnlySignerHex(hex.encode(tapscript.options.serverPubKey)),
+                // Per-row CSV delay decoded from THIS tapscript's exit leaf —
+                // not the wallet's current boarding timelock, which a signer
+                // rotation may have changed.
+                csvTimelock: CSVMultisigTapscript.decode(hex.decode(tapscript.exitScript)).params
+                    .timelock,
+                coins: utxos,
+            });
         }
-        return all;
+        return groups;
+    }
+
+    /**
+     * Fetch and cache onchain inputs (UTXOs) received at the wallet's boarding
+     * addresses — the current address plus any historical rotated boarding
+     * addresses that still hold unspent UTXOs (plan §6-III.1). Each UTXO is
+     * annotated with the tapscript of the address it actually sits on, so the
+     * spending path forfeits / exits it with the correct per-index leaves.
+     *
+     * Current-signer only: a flatten of {@link getBoardingUtxosForSigners} over
+     * the wallet's current signer, so the two paths cannot drift. Old-signer
+     * boarding recovery goes through the deprecated-signer migration API
+     * instead (it would otherwise pull EXPIRED-signer inputs into a plain
+     * `settle()` that the server must reject).
+     */
+    async getBoardingUtxos(): Promise<ExtendedCoin[]> {
+        const currentOnly = new Set([
+            toXOnlySignerHex(hex.encode(this.boardingTapscript.options.serverPubKey)),
+        ]);
+        const groups = await this.getBoardingUtxosForSigners(currentOnly);
+        return groups.flatMap((g) => g.coins);
     }
 
     /**
@@ -1233,58 +1413,78 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // "index-0 baseline" guarantee and turn every rotation into a
         // multi-timelock matrix expansion on every boot.
         const baselinePubkey = await this.identity.xOnlyPublicKey();
-        for (const csvTimelock of this.walletContractTimelocks) {
-            const csvTimelockStr = timelockToSequence(csvTimelock).toString();
-            const defaultScript = new DefaultVtxo.Script({
-                pubKey: baselinePubkey,
-                serverPubKey: this.offchainTapscript.options.serverPubKey,
-                csvTimelock,
-            });
-            const defaultScriptHex = hex.encode(defaultScript.pkScript);
-
-            // ensureWalletContract (a thin pass-through to createContract) so a
-            // default baseline whose script collides with an already-persisted
-            // `boarding` row is tolerated FIRST-WINS at the persistence layer
-            // instead of throwing a type mismatch. The default matrix is
-            // persisted before the boarding baseline below, so at index 0 the
-            // `default` row wins. Degenerate guard only: a sound server keeps
-            // the unilateral-exit and boarding-exit delays distinct, so these
-            // scripts never actually collide.
-            await ensureWalletContract(manager, {
-                type: "default",
-                params: {
-                    pubKey: hex.encode(defaultScript.options.pubKey),
-                    serverPubKey: hex.encode(defaultScript.options.serverPubKey),
-                    csvTimelock: csvTimelockStr,
-                },
-                script: defaultScriptHex,
-                address: defaultScript.address(this.network.hrp, this.arkServerPublicKey).encode(),
-                state: "active",
-            });
-
-            if (this.offchainTapscript instanceof DelegateVtxo.Script) {
-                const delegateScript = new DelegateVtxo.Script({
+        // The baseline matrix covers the current server signer AND every cached
+        // deprecated signer, so a wallet loaded with funds on a now-rotated-signer
+        // contract registers (hence watches + surfaces) it at boot — not only
+        // after an explicit restore(). Deduped by scriptHex: a deprecated signer
+        // that produced no rotation yields the current signer's scripts. This fans
+        // the SERVER-signer axis; the index-0 note above is about the USER pubkey.
+        const delegatePubKey =
+            this.offchainTapscript instanceof DelegateVtxo.Script
+                ? this.offchainTapscript.options.delegatePubKey
+                : undefined;
+        const baselineSigners = [
+            this.offchainTapscript.options.serverPubKey,
+            ...[...this._deprecatedSigners.keys()].map((h) => hex.decode(h)),
+        ];
+        const seenBaselineScripts = new Set<string>();
+        for (const serverPubKey of baselineSigners) {
+            for (const csvTimelock of this.walletContractTimelocks) {
+                const csvTimelockStr = timelockToSequence(csvTimelock).toString();
+                const defaultScript = new DefaultVtxo.Script({
                     pubKey: baselinePubkey,
-                    serverPubKey: this.offchainTapscript.options.serverPubKey,
-                    delegatePubKey: this.offchainTapscript.options.delegatePubKey,
+                    serverPubKey,
                     csvTimelock,
                 });
-                const delegateScriptHex = hex.encode(delegateScript.pkScript);
+                const defaultScriptHex = hex.encode(defaultScript.pkScript);
 
-                await manager.createContract({
-                    type: "delegate",
-                    params: {
-                        pubKey: hex.encode(delegateScript.options.pubKey),
-                        serverPubKey: hex.encode(delegateScript.options.serverPubKey),
-                        delegatePubKey: hex.encode(delegateScript.options.delegatePubKey),
-                        csvTimelock: csvTimelockStr,
-                    },
-                    script: delegateScriptHex,
-                    address: delegateScript
-                        .address(this.network.hrp, this.arkServerPublicKey)
-                        .encode(),
-                    state: "active",
-                });
+                if (!seenBaselineScripts.has(defaultScriptHex)) {
+                    seenBaselineScripts.add(defaultScriptHex);
+                    // ensureWalletContract (a thin pass-through to createContract) so a
+                    // default baseline whose script collides with an already-persisted
+                    // `boarding` row is tolerated FIRST-WINS at the persistence layer
+                    // instead of throwing a type mismatch. The default matrix is
+                    // persisted before the boarding baseline below, so at index 0 the
+                    // `default` row wins. Degenerate guard only: a sound server keeps
+                    // the unilateral-exit and boarding-exit delays distinct, so these
+                    // scripts never actually collide.
+                    await ensureWalletContract(manager, {
+                        type: "default",
+                        params: {
+                            pubKey: hex.encode(defaultScript.options.pubKey),
+                            serverPubKey: hex.encode(serverPubKey),
+                            csvTimelock: csvTimelockStr,
+                        },
+                        script: defaultScriptHex,
+                        address: defaultScript.address(this.network.hrp, serverPubKey).encode(),
+                        state: "active",
+                    });
+                }
+
+                if (delegatePubKey) {
+                    const delegateScript = new DelegateVtxo.Script({
+                        pubKey: baselinePubkey,
+                        serverPubKey,
+                        delegatePubKey,
+                        csvTimelock,
+                    });
+                    const delegateScriptHex = hex.encode(delegateScript.pkScript);
+
+                    if (seenBaselineScripts.has(delegateScriptHex)) continue;
+                    seenBaselineScripts.add(delegateScriptHex);
+                    await manager.createContract({
+                        type: "delegate",
+                        params: {
+                            pubKey: hex.encode(delegateScript.options.pubKey),
+                            serverPubKey: hex.encode(serverPubKey),
+                            delegatePubKey: hex.encode(delegateScript.options.delegatePubKey),
+                            csvTimelock: csvTimelockStr,
+                        },
+                        script: delegateScriptHex,
+                        address: delegateScript.address(this.network.hrp, serverPubKey).encode(),
+                        state: "active",
+                    });
+                }
             }
         }
 
@@ -1316,22 +1516,38 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // the row exists.
         const boardingCsvTimelock =
             this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
-        const baselineBoarding = new DefaultVtxo.Script({
-            pubKey: baselinePubkey,
-            serverPubKey: this.boardingTapscript.options.serverPubKey,
-            csvTimelock: boardingCsvTimelock,
-        });
-        await ensureWalletContract(manager, {
-            type: "boarding",
-            params: {
-                pubKey: hex.encode(baselineBoarding.options.pubKey),
-                serverPubKey: hex.encode(baselineBoarding.options.serverPubKey),
-                csvTimelock: timelockToSequence(boardingCsvTimelock).toString(),
-            },
-            script: hex.encode(baselineBoarding.pkScript),
-            address: baselineBoarding.address(this.network.hrp, this.arkServerPublicKey).encode(),
-            state: "active",
-        });
+        // Register the baseline boarding contract under the current signer AND
+        // every deprecated signer — the same signer axis as the default/delegate
+        // matrix above — so a wallet loaded with boarding funds minted under a
+        // now-rotated signer restores (and watches) that boarding contract at
+        // boot, not only via the boarding WATCH/history path. Boarding-exit CSV
+        // is a single server-wide delay, so only the signer axis fans here.
+        // Deduped against the offchain matrix's scripts (shared
+        // `seenBaselineScripts`): a boarding script that coincides with an
+        // already-registered default/delegate one stays first-wins as that type
+        // (degenerate boardingExitDelay == a baseline timelock; sound servers
+        // keep them distinct).
+        for (const serverPubKey of baselineSigners) {
+            const baselineBoarding = new DefaultVtxo.Script({
+                pubKey: baselinePubkey,
+                serverPubKey,
+                csvTimelock: boardingCsvTimelock,
+            });
+            const boardingScriptHex = hex.encode(baselineBoarding.pkScript);
+            if (seenBaselineScripts.has(boardingScriptHex)) continue;
+            seenBaselineScripts.add(boardingScriptHex);
+            await ensureWalletContract(manager, {
+                type: "boarding",
+                params: {
+                    pubKey: hex.encode(baselineBoarding.options.pubKey),
+                    serverPubKey: hex.encode(serverPubKey),
+                    csvTimelock: timelockToSequence(boardingCsvTimelock).toString(),
+                },
+                script: boardingScriptHex,
+                address: baselineBoarding.address(this.network.hrp, serverPubKey).encode(),
+                state: "active",
+            });
+        }
 
         return manager;
     }
@@ -1407,6 +1623,55 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * the contract manager is up first.
      */
     private _receiveRotator?: WalletReceiveRotator;
+
+    /**
+     * Unsubscribe handle for the arkProvider's `onServerInfoChanged` stream
+     * (mid-session signer-rotation detection). Torn down in {@link dispose}.
+     */
+    private _serverInfoUnsub?: () => void;
+
+    /**
+     * Tail of the serialized {@link handleServerInfoChanged} chain. Each
+     * `onServerInfoChanged` event chains onto it so handlers run one at a time,
+     * and {@link dispose} awaits it so an in-flight re-derive/rotation settles
+     * before the contract manager is torn down underneath it.
+     */
+    private _serverInfoInFlight: Promise<void> = Promise.resolve();
+
+    /**
+     * React to a mid-session server-info change (driven by the arkProvider's
+     * `DIGEST_MISMATCH` detection). First refresh the cached deprecated-signer
+     * set so the boarding WATCH path immediately widens to the just-deprecated
+     * signer, then — only if the active signer actually changed — rotate the
+     * wallet onto it via {@link rotateServerSigner} (re-deriving the offchain +
+     * boarding display tapscripts and registering the current-signer rows).
+     * Old-signer rows stay active, so existing funds remain watched. Failures
+     * are logged, never thrown back into the provider's emit loop.
+     */
+    private async handleServerInfoChanged(info: {
+        signerPubkey: string;
+        checkpointTapscript: string;
+        deprecatedSigners?: readonly { pubkey?: string }[];
+    }): Promise<void> {
+        this.refreshDeprecatedSigners(info);
+        try {
+            const newActive = toXOnlySignerHex(info.signerPubkey);
+            const current = toXOnlySignerHex(hex.encode(this.arkServerPublicKey));
+            if (newActive !== current) {
+                // `onServerInfoChanged` delivers the full refreshed `ArkInfo`, so
+                // the new epoch's checkpoint script is in hand — thread it
+                // through so the rotated wallet builds checkpoints against the
+                // new server signer. A bad/empty value throws here and is caught
+                // below: the wallet stays on its previous consistent epoch.
+                await this.rotateServerSigner(
+                    hex.decode(info.signerPubkey),
+                    info.checkpointTapscript,
+                );
+            }
+        } catch (e) {
+            console.warn("server-signer rotation on info change failed", e);
+        }
+    }
     private _receiveRotatorInstalled = false;
 
     /**
@@ -1443,6 +1708,49 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // boot-time restore runs before any subscription exists.
         this.notifyBoardingRotation();
     }
+
+    /**
+     * @internal Sole write path for `arkServerPublicKey` after construction.
+     * Called by {@link Wallet.rotateServerSigner} once the rotated offchain and
+     * boarding contract rows have been persisted. External code must treat
+     * `arkServerPublicKey` as read-only.
+     */
+    setArkServerPublicKeyForRotation(serverPubKey: Bytes): void {
+        this._arkServerPublicKey = serverPubKey;
+    }
+
+    /**
+     * Output script for checkpoint transactions, decoded from the server's
+     * `checkpointTapscript`. Server-controlled state: pinned at construction
+     * and re-sourced from a fresh `ArkInfo` on server-signer rotation. Read it
+     * through {@link serverUnrollScript}; write it only through
+     * {@link setServerUnrollScriptForRotation}.
+     */
+    protected _serverUnrollScript: CSVMultisigTapscript.Type;
+
+    get serverUnrollScript(): CSVMultisigTapscript.Type {
+        return this._serverUnrollScript;
+    }
+
+    /**
+     * @internal Sole write path for `serverUnrollScript` after construction.
+     * Called by {@link Wallet._doRotateServerSigner} with the checkpoint script
+     * sourced from the fresh `ArkInfo` that triggered the rotation, so the send
+     * path builds checkpoints against the new server epoch. External code must
+     * treat `serverUnrollScript` as read-only.
+     */
+    setServerUnrollScriptForRotation(script: CSVMultisigTapscript.Type): void {
+        this._serverUnrollScript = script;
+    }
+
+    /**
+     * Serializes {@link rotateServerSigner} for static / non-HD wallets (which
+     * have no {@link WalletReceiveRotator} chain to ride). Coalesces concurrent
+     * migration passes so two callers cannot both rebuild and swap the
+     * tapscripts. HD wallets serialize on the rotator's chain instead, via
+     * {@link WalletReceiveRotator.runExclusive}.
+     */
+    private _serverRotationChain: Promise<void> = Promise.resolve();
 
     /**
      * Allocate and return a *fresh* on-chain boarding address, rotating the
@@ -1506,6 +1814,179 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         this.setBoardingTapscriptForRotation(newBoarding);
         return newBoarding.onchainAddress(this.network);
+    }
+
+    /**
+     * Mid-session server-signer rotation (plan §4). When arkd rotates its
+     * active signer mid-session — the case the long-lived service worker and
+     * Expo background processes that own automatic migration must handle — a
+     * wallet constructed before the rotation keeps deriving old-signer receive
+     * addresses. Building a migration output to such an address would produce a
+     * VTXO the server must reject, so the wallet must first re-derive its own
+     * receive state under the new active signer.
+     *
+     * Follows the {@link WalletReceiveRotator.rotate} write-path pattern with
+     * the server key swapped instead of the user key: build the new offchain
+     * and boarding tapscripts locally (preserving every other option),
+     * register the matching `default`/`delegate` and `boarding` contract rows
+     * through {@link ContractManager.createContract}, and only then commit the
+     * new tapscripts and server key to the wallet's visible state. The signing
+     * metadata of the current receive/boarding rows is carried onto the new
+     * rows so a rotated (descriptor-backed) receive pubkey can still sign.
+     *
+     * The old-signer contract rows are intentionally left `active` and watched
+     * — they are exactly the deprecated-signer contracts the migration pass
+     * drains. Idempotent: a no-op when the wallet already tracks `xonly`.
+     *
+     * Serialized against HD receive rotation so the two paths (both of which
+     * rebuild and swap `offchainTapscript`) cannot interleave.
+     *
+     * @internal Invoked by the {@link VtxoManager} migration pass; not part of
+     * the stable public API.
+     */
+    async rotateServerSigner(newServerPubKey: Bytes, checkpointTapscript: string): Promise<void> {
+        const xonly = toXOnlyPubKey(newServerPubKey);
+
+        // Decode the new epoch's checkpoint script FIRST, before any
+        // persistence. The checkpoint script is server-controlled state the
+        // send path builds its checkpoint outputs from; a missing/empty/
+        // undecodable value (the provider defaults it to "" when the server
+        // omits it) fails the rotation up front — mirroring `Wallet.create` —
+        // so a bad rotation is side-effect-free and the wallet keeps operating
+        // against its previous consistent epoch (old key + tapscripts + unroll
+        // script).
+        let newServerUnrollScript: CSVMultisigTapscript.Type;
+        try {
+            newServerUnrollScript = CSVMultisigTapscript.decode(hex.decode(checkpointTapscript));
+        } catch (e) {
+            throw new Error("Invalid checkpointTapscript from server");
+        }
+
+        // Fast-path idempotency. The authoritative re-check happens inside
+        // `_doRotateServerSigner` after the serialization barrier, so two
+        // concurrent callers that both observe the old key here still apply the
+        // swap exactly once.
+        if (equalBytes(xonly, this.arkServerPublicKey)) return;
+
+        if (this._receiveRotator) {
+            // Ride the rotator's chain so a concurrent receive rotation can't
+            // interleave with the server-key swap.
+            await this._receiveRotator.runExclusive(() =>
+                this._doRotateServerSigner(xonly, newServerUnrollScript),
+            );
+            return;
+        }
+
+        const run = this._serverRotationChain
+            .catch(() => undefined)
+            .then(() => this._doRotateServerSigner(xonly, newServerUnrollScript));
+        this._serverRotationChain = run.then(
+            () => undefined,
+            () => undefined,
+        );
+        return run;
+    }
+
+    private async _doRotateServerSigner(
+        xonly: Bytes,
+        newServerUnrollScript: CSVMultisigTapscript.Type,
+    ): Promise<void> {
+        // Re-check under the serialization barrier: a prior queued rotation may
+        // have already applied this signer.
+        if (equalBytes(xonly, this.arkServerPublicKey)) return;
+
+        const manager = await this.getContractManager();
+
+        // Preserve the signing metadata of the current receive/boarding rows so
+        // a rotated (descriptor-backed) owner pubkey keeps signing after the
+        // server key swaps. For static / index-0 wallets these rows carry no
+        // metadata, so the new rows are plain baseline contracts.
+        const [currentOffchainRow] = await manager.getContracts({
+            script: this.defaultContractScript,
+        });
+        const currentBoardingScript = hex.encode(this._boardingTapscript.pkScript);
+        const [currentBoardingRow] = await manager.getContracts({
+            script: currentBoardingScript,
+        });
+
+        // Build the new tapscripts locally, preserving every option but the
+        // server key (mirrors `rebuildTapscript`, swapping serverPubKey).
+        const newOffchain =
+            this.offchainTapscript instanceof DelegateVtxo.Script
+                ? new DelegateVtxo.Script({
+                      ...this.offchainTapscript.options,
+                      serverPubKey: xonly,
+                  })
+                : new DefaultVtxo.Script({
+                      ...this.offchainTapscript.options,
+                      serverPubKey: xonly,
+                  });
+        const newBoarding = new DefaultVtxo.Script({
+            ...this._boardingTapscript.options,
+            serverPubKey: xonly,
+        });
+
+        // Register the new offchain contract row BEFORE swapping visible state:
+        // if registration throws, the wallet keeps displaying the previous
+        // (registered) address — never an unwatched one (mirrors `rotate()`).
+        const offchainCsv = timelockToSequence(newOffchain.options.csvTimelock).toString();
+        const newOffchainScript = hex.encode(newOffchain.pkScript);
+        const newOffchainAddress = newOffchain.address(this.network.hrp, xonly).encode();
+        if (newOffchain instanceof DelegateVtxo.Script) {
+            await manager.createContract({
+                type: "delegate",
+                params: {
+                    pubKey: hex.encode(newOffchain.options.pubKey),
+                    serverPubKey: hex.encode(xonly),
+                    delegatePubKey: hex.encode(newOffchain.options.delegatePubKey),
+                    csvTimelock: offchainCsv,
+                },
+                script: newOffchainScript,
+                address: newOffchainAddress,
+                state: "active",
+                metadata: currentOffchainRow?.metadata,
+            });
+        } else {
+            await manager.createContract({
+                type: "default",
+                params: {
+                    pubKey: hex.encode(newOffchain.options.pubKey),
+                    serverPubKey: hex.encode(xonly),
+                    csvTimelock: offchainCsv,
+                },
+                script: newOffchainScript,
+                address: newOffchainAddress,
+                state: "active",
+                metadata: currentOffchainRow?.metadata,
+            });
+        }
+
+        const boardingCsv = newBoarding.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        await manager.createContract({
+            type: "boarding",
+            params: {
+                pubKey: hex.encode(newBoarding.options.pubKey),
+                serverPubKey: hex.encode(xonly),
+                csvTimelock: timelockToSequence(boardingCsv).toString(),
+            },
+            script: hex.encode(newBoarding.pkScript),
+            address: newBoarding.address(this.network.hrp, xonly).encode(),
+            state: "active",
+            metadata: currentBoardingRow?.metadata,
+        });
+
+        // Persistence succeeded — commit the new tapscripts and server key to
+        // the wallet's visible state. From here `getAddress()`,
+        // `getBoardingAddress()`, and the receive rotator's next rebuild all
+        // reflect the active signer. The old-signer rows stay watched so the
+        // migration pass can drain them.
+        this.setOffchainTapscriptForRotation(newOffchain);
+        this.setBoardingTapscriptForRotation(newBoarding);
+        this.setArkServerPublicKeyForRotation(xonly);
+        // Re-source the checkpoint script from the new server epoch so the send
+        // path's checkpoint outputs match the rotated signer (decoded up front
+        // in `rotateServerSigner`, so this commit cannot fail mid-rotation).
+        this.setServerUnrollScriptForRotation(newServerUnrollScript);
     }
 
     /**
@@ -1693,7 +2174,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
         boardingTapscript: DefaultVtxo.Script,
-        readonly serverUnrollScript: CSVMultisigTapscript.Type,
+        serverUnrollScript: CSVMultisigTapscript.Type,
         readonly forfeitOutputScript: Bytes,
         readonly forfeitPubkey: Bytes,
         dustAmount: bigint,
@@ -1751,6 +2232,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         this._delegateManager = delegateProvider
             ? new DelegateManagerImpl(delegateProvider, arkProvider, identity)
             : undefined;
+        this._serverUnrollScript = serverUnrollScript;
         this._receiveRotator = receiveRotator;
         this._descriptorProvider = descriptorProvider;
         this._signerRouter = new InputSignerRouter({
@@ -1814,6 +2296,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // manager if we proceeded concurrently. _runRestore never calls
         // dispose(), so awaiting it here is deadlock-free.
         await this._restoreInFlight?.catch(() => undefined);
+
+        // Stop reacting to server-info changes before teardown, then drain a
+        // handler already in flight so its re-derive/rotation settles before we
+        // dispose the contract manager underneath it.
+        this._serverInfoUnsub?.();
+        this._serverInfoUnsub = undefined;
+        await this._serverInfoInFlight?.catch(() => undefined);
 
         // Tear down the rotation subscription + drain in-flight rotations
         // first so no late `vtxo_received` event can queue work on a
@@ -1919,6 +2408,30 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             boot?.rotator,
             boot?.provider,
         );
+        wallet.refreshDeprecatedSigners(setup.info);
+        // Mid-session signer-rotation detection: when the arkProvider detects a
+        // stale-info DIGEST_MISMATCH and refetches info, re-derive the wallet's
+        // signer-dependent state. Duck-typed: only RestArkProvider implements it.
+        {
+            const ap = setup.arkProvider as Partial<{
+                onServerInfoChanged(
+                    cb: (info: {
+                        signerPubkey: string;
+                        checkpointTapscript: string;
+                        deprecatedSigners?: readonly { pubkey?: string }[];
+                    }) => void,
+                ): () => void;
+            }>;
+            if (typeof ap.onServerInfoChanged === "function") {
+                wallet._serverInfoUnsub = ap.onServerInfoChanged((info) => {
+                    // Serialize handlers and keep the tail so dispose() can
+                    // drain an in-flight re-derive/rotation before teardown.
+                    wallet._serverInfoInFlight = wallet._serverInfoInFlight
+                        .then(() => wallet.handleServerInfoChanged(info))
+                        .catch(() => undefined);
+                });
+            }
+        }
 
         // Boarding boot (plan §6-II.3): when HD/boarding rotation is active (a
         // provider resolved), restore the most recently allocated boarding
@@ -1966,7 +2479,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             ? await this.identity.toReadonly()
             : this.identity; // Identity extends ReadonlyIdentity, so this is safe
 
-        return new ReadonlyWallet(
+        const readonly = new ReadonlyWallet(
             readonlyIdentity,
             this.network,
             this.onchainProvider,
@@ -1981,6 +2494,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.watcherConfig,
             this.walletContractTimelocks,
         );
+        // Carry the cached deprecated-signer set (with cutoffs) so the clone's
+        // boarding watch path and spendability split match the source wallet's.
+        (readonly as unknown as { _deprecatedSigners: Map<string, bigint> })._deprecatedSigners =
+            new Map(this._deprecatedSigners);
+        return readonly;
     }
 
     /** Returns the delegate manager when delegation support is configured. */
@@ -2015,12 +2533,16 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 // the change-VTXO metadata written later by
                 // `updateDbAfterOffchainTx` are bound to the same
                 // tapscript even if `WalletReceiveRotator.rotate` fires
-                // during the offchain round-trip.
+                // during the offchain round-trip. Pin the server key in the
+                // same step so the address derives from one rotation epoch
+                // (`rotateServerSigner` swaps `_arkServerPublicKey` too).
+                // Snapshot the checkpoint unroll script too: rotation also
+                // swaps `_serverUnrollScript`, which `buildAndSubmitOffchainTx`
+                // would otherwise read live when building checkpoint outputs.
                 const offchainTapscript = this.offchainTapscript;
-                const arkAddress = offchainTapscript.address(
-                    this.network.hrp,
-                    this.arkServerPublicKey,
-                );
+                const serverPubKey = this.arkServerPublicKey;
+                const serverUnrollScript = this.serverUnrollScript;
+                const arkAddress = offchainTapscript.address(this.network.hrp, serverPubKey);
 
                 const selectedVtxoSum = params
                     .selectedVtxos!.map((v) => v.value)
@@ -2061,27 +2583,14 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     });
                 }
 
-                this._addPendingSpends(selected.inputs);
-                try {
-                    const { arkTxid, signedCheckpointTxs } = await this.buildAndSubmitOffchainTx(
-                        selected.inputs,
-                        outputs,
-                    );
-
-                    await this.updateDbAfterOffchainTx(
-                        selected.inputs,
-                        arkTxid,
-                        signedCheckpointTxs,
-                        params.amount,
-                        selected.changeAmount,
-                        selected.changeAmount > 0n ? outputs.length - 1 : 0,
-                        offchainTapscript,
-                    );
-
-                    return arkTxid;
-                } finally {
-                    this._removePendingSpends(selected.inputs);
-                }
+                return this._submitOffchainSpend(selected.inputs, outputs, {
+                    sentAmount: params.amount,
+                    changeAmount: selected.changeAmount,
+                    changeVout: selected.changeAmount > 0n ? outputs.length - 1 : 0,
+                    offchainTapscript,
+                    serverPubKey,
+                    serverUnrollScript,
+                });
             });
         }
 
@@ -2122,10 +2631,21 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
         }
 
+        // Resolve the wallet's receive address once and reuse it for every read
+        // below. `WalletReceiveRotator.rotate` mutates `this.offchainTapscript`
+        // without acquiring `_txLock`, so re-calling `getAddress()` later could
+        // observe a rotated script — building the output from one and matching
+        // `findDestinationOutputIndex` against the other, which fails with a
+        // spurious "no output matches". A single read pins the no-params output
+        // below and the asset-routing destination script later to one address.
+        const offchainAddress = await this.getAddress();
+        const offchainPkScript = ArkAddress.decode(offchainAddress).pkScript;
+        const offchainOutputScript = hex.encode(offchainPkScript);
+
         // if no params are provided, use all non-expired boarding inputs and offchain virtual outputs as inputs
         // and send all to the offchain address
         if (!params) {
-            const { fees } = await this.arkProvider.getInfo();
+            const { fees, vtxoMaxAmount } = await this.arkProvider.getInfo();
             const estimator = new Estimator(fees.intentFee);
 
             let amount = 0;
@@ -2166,12 +2686,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             const vtxos = await this.getVtxos({ withRecoverable: true });
 
             // Cap the VTXOs per settlement to stay under the server's
-            // intent-size limit (see MAX_VTXOS_PER_SETTLEMENT). Settle the
+            // intent-size limit (MAX_VTXOS_PER_SETTLEMENT inputs) and its
+            // per-output ceiling (vtxoMaxAmount; -1 means no limit). Settle the
             // highest-value VTXOs first so the capped batch carries the most
             // value. Apply the cap to economically viable VTXOs only: skipping
             // uneconomic inputs and continuing past the cap avoids an uneconomic
             // prefix permanently starving valid VTXOs behind it. The boarding
-            // inputs above are added uncapped; the headroom absorbs them. Any
+            // inputs above are added uncapped; the amount cap accounts for them
+            // via the running total (if boarding alone exceeds vtxoMaxAmount no
+            // VTXO fits and the server rejects the over-limit output). Any
             // overflow is settled on the next call.
             const filteredVtxos = [];
             for (const vtxo of byValueDescending(vtxos)) {
@@ -2192,8 +2715,26 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     continue;
                 }
 
+                const net = vtxo.value - inputFee.satoshis;
+                // Skip (don't stop at) a VTXO that would push the output past
+                // the ceiling; a smaller VTXO behind it can still fit. Compare
+                // against the projected post-fee output (what the server
+                // actually receives) rather than the pre-fee subtotal, so a
+                // VTXO whose output would fit once the output fee is deducted
+                // isn't dropped.
+                if (vtxoMaxAmount >= 0n) {
+                    const projectedAmount = BigInt(amount + net);
+                    const projectedOutputFee = estimator.evalOffchainOutput({
+                        amount: projectedAmount,
+                        script: offchainOutputScript,
+                    });
+                    if (projectedAmount - BigInt(projectedOutputFee.satoshis) > vtxoMaxAmount) {
+                        continue;
+                    }
+                }
+
                 filteredVtxos.push(vtxo);
-                amount += vtxo.value - inputFee.satoshis;
+                amount += net;
             }
 
             const inputs = [...filteredBoardingUtxos, ...filteredVtxos];
@@ -2202,13 +2743,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
 
             const output = {
-                address: await this.getAddress(),
+                address: offchainAddress,
                 amount: BigInt(amount),
             };
 
             const outputFee = estimator.evalOffchainOutput({
                 amount: output.amount,
-                script: hex.encode(ArkAddress.decode(output.address).pkScript),
+                script: offchainOutputScript,
             });
 
             output.amount -= BigInt(outputFee.satoshis);
@@ -2262,8 +2803,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         let outputAssets: Asset[] | undefined;
 
-        const destinationScript = ArkAddress.decode(await this.getAddress()).pkScript;
-        const assetOutputIndex = findDestinationOutputIndex(outputs, destinationScript);
+        const assetOutputIndex = findDestinationOutputIndex(outputs, offchainPkScript);
 
         if (assetInputs.size > 0) {
             if (assetOutputIndex === -1) {
@@ -3008,17 +3548,30 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // where the change-output pkScript (built from `outputAddress`
         // below) and the change-VTXO metadata (built from the snapshot
         // inside `updateDbAfterOffchainTx`) could come from different
-        // tapscripts. Threading the snapshot pins both reads.
+        // tapscripts. Threading the snapshot pins both reads. Pin the server
+        // key in the same step: `rotateServerSigner` swaps `_arkServerPublicKey`
+        // alongside the tapscript, so the address must derive from one epoch.
+        // Snapshot the checkpoint unroll script too: `rotateServerSigner` also
+        // swaps `_serverUnrollScript`, and `buildAndSubmitOffchainTx` would
+        // otherwise build checkpoint outputs from a rotated live value.
         const offchainTapscript = this.offchainTapscript;
-        const outputAddress = offchainTapscript.address(this.network.hrp, this.arkServerPublicKey);
+        const serverPubKey = this.arkServerPublicKey;
+        const serverUnrollScript = this.serverUnrollScript;
+        const outputAddress = offchainTapscript.address(this.network.hrp, serverPubKey);
         const address = outputAddress.encode();
 
         // validate recipients and populate undefined amount with dust amount
         const recipients = validateRecipients(args, Number(this.dustAmount));
 
-        const virtualCoins = await this.getVtxos({
+        const allVirtualCoins = await this.getVtxos({
             withRecoverable: false,
         });
+        // Drop funds under a past-cutoff (EXPIRED) deprecated signer: the operator
+        // will not co-sign a spend of them, so selecting one would fail at submit.
+        const pendingRecovery = await this.pendingRecoveryOutpoints();
+        const virtualCoins = pendingRecovery.size
+            ? allVirtualCoins.filter((c) => !pendingRecovery.has(`${c.txid}:${c.vout}`))
+            : allVirtualCoins;
 
         // keep track of asset changes
         const assetChanges = new Map<string, bigint>();
@@ -3198,30 +3751,157 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         const sentAmount = recipients.reduce((sum, r) => sum + r.amount, 0);
 
-        // Optimistically hide selected coins from concurrent getVtxos() while
-        // the offchain tx is in flight.
-        this._addPendingSpends(selectedCoins);
+        return this._submitOffchainSpend(selectedCoins, outputs, {
+            sentAmount,
+            changeAmount: BigInt(changeAmount),
+            changeVout: changeReceiver ? changeIndex : 0,
+            offchainTapscript,
+            serverPubKey,
+            serverUnrollScript,
+            changeAssets: changeReceiver?.assets,
+        });
+    }
+
+    /**
+     * Shared tail of every Ark-transaction spend path (`send`, selected-VTXO
+     * `sendBitcoin`, and {@link sendSelectedVtxosToSelf}): hide the inputs from
+     * concurrent `getVtxos()`, build+submit the offchain tx, persist the spent
+     * inputs and any wallet-owned (change / self) output, then release the
+     * pending-spend hold. Callers own coin selection, output construction, and
+     * the synchronous epoch snapshot; this owns the submit/persist sequence.
+     */
+    private async _submitOffchainSpend(
+        inputs: ExtendedVirtualCoin[],
+        outputs: TransactionOutput[],
+        persist: {
+            sentAmount: number;
+            changeAmount: bigint;
+            changeVout: number;
+            offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script;
+            serverPubKey: Bytes;
+            serverUnrollScript: CSVMultisigTapscript.Type;
+            changeAssets?: Asset[];
+            recordSentHistory?: boolean;
+        },
+    ): Promise<string> {
+        this._addPendingSpends(inputs);
         try {
             const { arkTxid, signedCheckpointTxs } = await this.buildAndSubmitOffchainTx(
-                selectedCoins,
+                inputs,
                 outputs,
+                persist.serverUnrollScript,
             );
 
             await this.updateDbAfterOffchainTx(
-                selectedCoins,
+                inputs,
                 arkTxid,
                 signedCheckpointTxs,
-                sentAmount,
-                BigInt(changeAmount),
-                changeReceiver ? changeIndex : 0,
-                offchainTapscript,
-                changeReceiver?.assets,
+                persist.sentAmount,
+                persist.changeAmount,
+                persist.changeVout,
+                persist.offchainTapscript,
+                persist.serverPubKey,
+                persist.changeAssets,
+                persist.recordSentHistory ?? true,
             );
 
             return arkTxid;
         } finally {
-            this._removePendingSpends(selectedCoins);
+            this._removePendingSpends(inputs);
         }
+    }
+
+    /**
+     * @internal Migration primitive (deprecated-signer plan, step 1). Spend an
+     * explicit set of the wallet's own deprecated-signer VTXOs into a single
+     * full-value output on the wallet's *active* signer, through the Ark send
+     * path (not `settle`) so arkd builds checkpoints against the active server
+     * epoch. Consumed in-process by {@link VtxoManager}'s migration pass; not
+     * part of the public `IWallet` API and never accepts boarding `ExtendedCoin`
+     * inputs.
+     *
+     * The caller (`migrateCore`) must have already moved the wallet onto the
+     * active signer (`ensureReceiveOnActiveSigner`) and sized the batch (caps +
+     * dust floor); this method validates the inputs, preserves all input assets
+     * on the self output, and persists the new active-signer VTXO even though
+     * there is no separate change output. It records no `TxSent` history — the
+     * funds never leave the wallet.
+     */
+    async sendSelectedVtxosToSelf(inputs: ExtendedVirtualCoin[]): Promise<string> {
+        if (inputs.length === 0) {
+            throw new Error("sendSelectedVtxosToSelf: no inputs");
+        }
+        return this._withTxLock(async () => {
+            // Snapshot the signer epoch synchronously before any `await`: a
+            // concurrent `rotateServerSigner` swaps the receive tapscript, the
+            // server key, AND the unroll script together, so the self-output
+            // address, the checkpoint unroll script, and the persisted-VTXO
+            // metadata must all derive from one epoch.
+            const offchainTapscript = this.offchainTapscript;
+            const serverPubKey = this.arkServerPublicKey;
+            const serverUnrollScript = this.serverUnrollScript;
+            const arkAddress = offchainTapscript.address(this.network.hrp, serverPubKey);
+
+            // Only spendable, non-recoverable, batch-expiry-bearing VTXOs migrate
+            // cooperatively: recoverable/swept inputs follow the recovery settle
+            // path, and the DB-update path only persists a wallet-owned output
+            // when an input batch expiry exists (unrolled inputs carry none).
+            for (const input of inputs) {
+                if (!isSpendable(input) || isRecoverable(input)) {
+                    throw new Error(
+                        `sendSelectedVtxosToSelf: input ${input.txid}:${input.vout} is not cooperatively spendable`,
+                    );
+                }
+                if (!input.virtualStatus.batchExpiry) {
+                    throw new Error(
+                        `sendSelectedVtxosToSelf: input ${input.txid}:${input.vout} has no batchExpiry`,
+                    );
+                }
+            }
+
+            const total = inputs.reduce((sum, c) => sum + BigInt(c.value), 0n);
+
+            const outputs: TransactionOutput[] = [
+                {
+                    script:
+                        total < this.dustAmount ? arkAddress.subdustPkScript : arkAddress.pkScript,
+                    amount: total,
+                },
+            ];
+
+            // Preserve every input asset on the single self output (output index
+            // 0). With no asset-bearing recipients, all input asset amounts route
+            // to the self receiver.
+            const assetInputs = selectedCoinsToAssetInputs(inputs);
+            let selfAssets: Asset[] | undefined;
+            if (assetInputs.size > 0) {
+                const totals = new Map<string, bigint>();
+                for (const [, assets] of assetInputs) {
+                    for (const a of assets) {
+                        totals.set(a.assetId, (totals.get(a.assetId) ?? 0n) + a.amount);
+                    }
+                }
+                selfAssets = [...totals].map(([assetId, amount]) => ({ assetId, amount }));
+                const selfReceiver: Recipient = {
+                    address: arkAddress.encode(),
+                    amount: Number(total),
+                    assets: selfAssets,
+                };
+                const packet = createAssetPacket(assetInputs, [], selfReceiver);
+                outputs.push(Extension.create([packet]).txOut());
+            }
+
+            return this._submitOffchainSpend(inputs, outputs, {
+                sentAmount: 0,
+                changeAmount: total,
+                changeVout: 0,
+                offchainTapscript,
+                serverPubKey,
+                changeAssets: selfAssets,
+                recordSentHistory: false,
+                serverUnrollScript,
+            });
+        });
     }
 
     /**
@@ -3232,6 +3912,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     async buildAndSubmitOffchainTx(
         inputs: ExtendedVirtualCoin[],
         outputs: TransactionOutput[],
+        serverUnrollScript: CSVMultisigTapscript.Type = this.serverUnrollScript,
     ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
         const offchainTx = buildOffchainTx(
             inputs.map((input) => {
@@ -3241,7 +3922,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 };
             }),
             outputs,
-            this.serverUnrollScript,
+            serverUnrollScript,
         );
 
         // arkTx inputs spend checkpoint outputs, so each input's
@@ -3348,12 +4029,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     }
 
     // mark virtual outputs as spent, save change outputs if any.
-    // `offchainTapscript` is the snapshot the caller captured under
-    // `_txLock` before any `await`; deriving both the change-VTXO
-    // metadata and `primaryAddress` from it here guarantees the local
-    // record matches the pkScript the server saw on the inbound
-    // transaction, even if `WalletReceiveRotator.rotate` swaps
-    // `this.offchainTapscript` mid-flight.
+    // `offchainTapscript` and `serverPubKey` are the epoch snapshot the
+    // caller captured under `_txLock` before any `await`; deriving both the
+    // change-VTXO metadata and `primaryAddress` from them here guarantees the
+    // local record matches the address/pkScript the server saw on the inbound
+    // transaction, even if `rotateServerSigner` swaps `this.offchainTapscript`
+    // / `this.arkServerPublicKey` mid-flight.
     private async updateDbAfterOffchainTx(
         inputs: VirtualCoin[],
         arkTxid: string,
@@ -3362,11 +4043,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         changeAmount: bigint,
         changeVout: number,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
+        serverPubKey: Bytes,
         changeAssets?: Asset[],
+        // Self-transfer migrations (a full-value send to the wallet's own active
+        // signer) move no funds out of the wallet, so they suppress the `TxSent`
+        // history row — recording one would show a phantom outflow against an
+        // unchanged balance, the same way the settle path records no history.
+        recordSentHistory: boolean = true,
     ): Promise<void> {
-        const primaryAddress = offchainTapscript
-            .address(this.network.hrp, this.arkServerPublicKey)
-            .encode();
+        const primaryAddress = offchainTapscript.address(this.network.hrp, serverPubKey).encode();
 
         try {
             const spentVtxos: ExtendedVirtualCoin[] = [];
@@ -3495,19 +4180,21 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 );
             }
 
-            await this.walletRepository.saveTransactions(primaryAddress, [
-                {
-                    key: {
-                        boardingTxid: "",
-                        commitmentTxid: "",
-                        arkTxid: arkTxid,
+            if (recordSentHistory) {
+                await this.walletRepository.saveTransactions(primaryAddress, [
+                    {
+                        key: {
+                            boardingTxid: "",
+                            commitmentTxid: "",
+                            arkTxid: arkTxid,
+                        },
+                        amount: sentAmount,
+                        type: TxType.TxSent,
+                        settled: false,
+                        createdAt,
                     },
-                    amount: sentAmount,
-                    type: TxType.TxSent,
-                    settled: false,
-                    createdAt,
-                },
-            ]);
+                ]);
+            }
         } catch (e) {
             console.warn("error saving offchain tx to repository", e);
             throw e;

@@ -45,8 +45,16 @@ const mockArkInfo = {
         "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
 };
 
-// Shared mocks - reset between each test
-const mockFetch = vi.fn();
+// Mock fetch
+const { mockFetch } = vi.hoisted(() => ({
+    mockFetch: vi.fn(),
+}));
+
+vi.mock("../src/utils/fetch", () => ({
+    fetch: mockFetch,
+    baseFetch: mockFetch,
+}));
+
 const MockEventSource = vi.fn().mockImplementation((url: string) => ({
     url,
     onmessage: null,
@@ -55,7 +63,6 @@ const MockEventSource = vi.fn().mockImplementation((url: string) => ({
 }));
 
 beforeEach(() => {
-    vi.stubGlobal("fetch", mockFetch);
     vi.stubGlobal("EventSource", MockEventSource);
     mockFetch.mockReset();
     // Route by URL so test ordering doesn't depend on exact fetch counts.
@@ -1698,6 +1705,111 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
 
         getPendingSpy.mockRestore();
         finalizeSpy.mockRestore();
+        await wallet.dispose();
+    });
+
+    // ── sendSelectedVtxosToSelf: the deprecated-signer VTXO migration primitive ──
+
+    // A spendable, batch-expiry-bearing baseline coin: the migration primitive
+    // rejects inputs without a batch expiry (the DB-update path only persists a
+    // wallet-owned output when one exists).
+    function makeMigratableCoin(
+        wallet: Awaited<ReturnType<typeof makeStaticBatchWallet>>["wallet"],
+        extra: Partial<ExtendedVirtualCoin> = {},
+    ): ExtendedVirtualCoin {
+        const base = makeBaselineCoin(wallet);
+        return {
+            ...base,
+            // A real (post-2025) ms timestamp so isExpired treats it as live.
+            virtualStatus: { state: "settled", batchExpiry: Date.now() + 7 * 24 * 3600 * 1000 },
+            ...extra,
+        };
+    }
+
+    // Drive a successful send round-trip (server signs checkpoints, finalize
+    // resolves) and return the arkTxid the wallet recorded against.
+    function stubSendRoundTrip(
+        wallet: Awaited<ReturnType<typeof makeStaticBatchWallet>>["wallet"],
+    ) {
+        const arkTxid = "ab".repeat(32);
+        const submitSpy = vi
+            .spyOn(wallet.arkProvider, "submitTx")
+            .mockImplementation(async (arkTxB64, checkpointsB64) => ({
+                arkTxid,
+                finalArkTx: arkTxB64,
+                signedCheckpointTxs: await Promise.all(
+                    checkpointsB64.map((c) => serverSignCheckpoint(c)),
+                ),
+            }));
+        const finalizeSpy = vi.spyOn(wallet.arkProvider, "finalizeTx").mockResolvedValue(undefined);
+        return { arkTxid, submitSpy, finalizeSpy };
+    }
+
+    it("sendSelectedVtxosToSelf persists the full-value self output when there is no change", async () => {
+        const { wallet } = await makeStaticBatchWallet();
+        const coin = makeMigratableCoin(wallet);
+        const { arkTxid } = stubSendRoundTrip(wallet);
+
+        const returned = await wallet.sendSelectedVtxosToSelf([coin]);
+        expect(returned).toBe(arkTxid);
+
+        // The self output (output index 0) is persisted at the FULL input value
+        // even though there is no separate change output, on the wallet's own
+        // primary (active-signer) address.
+        const primaryAddress = await wallet.getAddress();
+        const persisted = await (wallet as any).walletRepository.getVtxos(primaryAddress);
+        const self = persisted.filter((v: ExtendedVirtualCoin) => v.txid === arkTxid && !v.isSpent);
+        expect(self).toHaveLength(1);
+        expect(self[0].vout).toBe(0);
+        expect(self[0].value).toBe(coin.value);
+        // The migrated input is now recorded as spent.
+        const spentInput = persisted.find(
+            (v: ExtendedVirtualCoin) => v.txid === coin.txid && v.vout === coin.vout,
+        );
+        expect(spentInput?.isSpent).toBe(true);
+
+        await wallet.dispose();
+    });
+
+    it("sendSelectedVtxosToSelf preserves all input assets on the self output", async () => {
+        const { wallet } = await makeStaticBatchWallet();
+        // Asset ids are 34 bytes (68 hex chars).
+        const assetA = "dd".repeat(34);
+        const assetB = "ee".repeat(34);
+        // Two assets across the (single) stale input — both must land on the
+        // active-signer self output via the asset packet.
+        const coin = makeMigratableCoin(wallet, {
+            assets: [
+                { assetId: assetA, amount: 42n },
+                { assetId: assetB, amount: 7n },
+            ],
+        });
+        const { arkTxid } = stubSendRoundTrip(wallet);
+
+        await wallet.sendSelectedVtxosToSelf([coin]);
+
+        const primaryAddress = await wallet.getAddress();
+        const persisted = await (wallet as any).walletRepository.getVtxos(primaryAddress);
+        const self = persisted.find((v: ExtendedVirtualCoin) => v.txid === arkTxid && !v.isSpent)!;
+        expect(self.assets).toEqual([
+            { assetId: assetA, amount: 42n },
+            { assetId: assetB, amount: 7n },
+        ]);
+
+        await wallet.dispose();
+    });
+
+    it("sendSelectedVtxosToSelf rejects an input without a batch expiry", async () => {
+        const { wallet } = await makeStaticBatchWallet();
+        // A settled coin with no batchExpiry (unrolled-style) — not cooperatively
+        // migratable, and the DB-update path can't persist its self output.
+        const coin = makeBaselineCoin(wallet);
+        const { submitSpy } = stubSendRoundTrip(wallet);
+
+        await expect(wallet.sendSelectedVtxosToSelf([coin])).rejects.toThrow(/batchExpiry/);
+        // Validation happens before any submission.
+        expect(submitSpy).not.toHaveBeenCalled();
+
         await wallet.dispose();
     });
 });
