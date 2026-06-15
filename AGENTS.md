@@ -69,6 +69,10 @@ pnpm run release:cleanup                      # Auto-detect dirty release artifa
 
 Tags are `@arkade-os/sdk/<version>` and `@arkade-os/boltz-swap/<version>` (no `v<version>`). Releasing SDK implies a dependent boltz-swap release because boltz-swap depends on SDK via `workspace:*`; override with `--boltz-bump <bump-or-version>`. The script runs tests, builds, commits, tags, publishes to npm (requires local npm credentials), and pushes commit + tags to `origin`.
 
+## Local Environment Notes
+
+- In this workspace, the sandbox wrapper can intermittently fail with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`, including through `apply_patch` and occasionally read-only commands. Once that exact failure is observed in a turn, do not keep retrying the same sandbox/escalation path. For local text edits, use a precise Node.js exact-replacement script and verify with `git diff`; for read-only scans, retry with careful quoting or escalation only when needed.
+
 ## Code Style
 
 - **Prettier**: double quotes, semicolons, trailing commas (all), 100 char width, 4-space indent
