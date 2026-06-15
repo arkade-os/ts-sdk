@@ -1,4 +1,4 @@
-import { fetch, buildVersion } from "../utils/fetch";
+import { fetch, buildVersion, sdkVersion } from "../utils/fetch";
 
 /**
  * Dynamically imports expo/fetch with fallback to standard fetch.
@@ -13,6 +13,7 @@ export async function getExpoFetch(options?: { requireExpo?: boolean }): Promise
         const expoFetchWithHeader = (input: RequestInfo, init?: RequestInit) => {
             const headers = new Headers(init?.headers);
             headers.set("X-Build-Version", buildVersion);
+            headers.set("X-SDK-VERSION", sdkVersion);
             return expoFetchModule.fetch(input, { ...init, headers });
         };
         return expoFetchWithHeader as unknown as typeof fetch;
