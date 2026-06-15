@@ -90,20 +90,23 @@ const MinimalScriptNum = ScriptNum(undefined, true);
 export type AsmToken = string | number | bigint | Uint8Array;
 
 /** A constructor argument or resolved value. */
-export type ParamValue = Uint8Array | bigint | number;
+export type ArkadeParamValue = Uint8Array | bigint | number;
 
 /** A function call argument (function input). */
-export type ArgValue = Uint8Array | bigint | number;
+export type ArkadeArgValue = Uint8Array | bigint | number;
 
 /**
  * The declared type of a function input, used to derive the static TS type of
  * the corresponding `functions.<name>(...)` argument. Byte-like types map to
  * `Uint8Array`; `int` maps to `bigint | number`.
  */
-export type ArgType = "bytes" | "pubkey" | "sig" | "hash" | "int";
+export type ArkadeArgType = "bytes" | "pubkey" | "sig" | "hash" | "int";
 
-/** Maps an {@link ArgType} to its TypeScript argument type. */
-export interface ArgTypeToTs {
+/**
+ * Maps an {@link ArkadeArgType} to its TypeScript argument type.
+ * @internal
+ */
+interface ArkadeValueType {
     bytes: Uint8Array;
     pubkey: Uint8Array;
     sig: Uint8Array;
@@ -111,16 +114,16 @@ export interface ArgTypeToTs {
     int: bigint | number;
 }
 
-/** A typed function input: a name plus its {@link ArgType}. */
+/** A typed function input: a name plus its {@link ArkadeArgType}. */
 export interface InputDef {
     name: string;
-    type: ArgType;
+    type: ArkadeArgType;
 }
 
 /**
  * A function input declaration: either a typed descriptor `{ name, type }` (the
  * argument is statically typed) or a bare name string (the argument falls back
- * to the loose {@link ArgValue}).
+ * to the loose {@link ArkadeArgValue}).
  */
 export type InputRef = string | InputDef;
 
@@ -158,7 +161,7 @@ export interface ArkadeFunction {
      * The function ABI: an ordered list of call arguments. Each entry is a typed
      * descriptor `{ name, type }` (which gives the matching `functions.<name>`
      * argument a precise static type) or a bare name string (loose
-     * {@link ArgValue}). Absent for nullary paths (e.g. exit/cancel).
+     * {@link ArkadeArgValue}). Absent for nullary paths (e.g. exit/cancel).
      */
     inputs?: readonly InputRef[];
     tapscript: TapscriptSegment;
@@ -176,7 +179,7 @@ export interface Program {
 // --- Static typing of contract functions -----------------------------------
 
 /** The TS type of a single call argument, derived from its {@link InputRef}. */
-type ArgTsType<R> = R extends InputDef ? ArgTypeToTs[R["type"]] : ArgValue;
+type ArgTsType<R> = R extends InputDef ? ArkadeValueType[R["type"]] : ArkadeArgValue;
 
 /** The argument tuple of a function, derived from its declared `inputs`. */
 type ArgsTuple<I extends readonly InputRef[]> = { [K in keyof I]: ArgTsType<I[K]> };
@@ -241,7 +244,10 @@ export interface ArkadeSpendResult {
 }
 
 /** The callable spending paths of a contract. */
-export type CallableFunctions = Record<string, (...args: ArgValue[]) => ArkadeTransactionBuilder>;
+export type CallableFunctions = Record<
+    string,
+    (...args: ArkadeArgValue[]) => ArkadeTransactionBuilder
+>;
 
 // --- Arkade client ---------------------------------------------------------
 
@@ -371,7 +377,7 @@ export class Arkade {
      */
     contract<const P extends Program>(
         program: P,
-        args: Record<string, ParamValue> = {},
+        args: Record<string, ArkadeParamValue> = {},
     ): ArkadeContract<P> {
         return new ArkadeContract(this, program, args);
     }
@@ -407,7 +413,7 @@ export class ArkadeContract<P extends Program = Program> {
     constructor(
         readonly client: Arkade,
         readonly program: P,
-        readonly args: Record<string, ParamValue>,
+        readonly args: Record<string, ArkadeParamValue>,
     ) {
         const functions: Record<string, ArkadeFunction> = program.functions;
         const names = Object.keys(functions);
@@ -480,7 +486,7 @@ export class ArkadeContract<P extends Program = Program> {
     get functions(): ContractFunctions<P> {
         const out: CallableFunctions = {};
         for (const fn of this.compiled) {
-            out[fn.name] = (...callArgs: ArgValue[]) =>
+            out[fn.name] = (...callArgs: ArkadeArgValue[]) =>
                 new ArkadeTransactionBuilder(this, fn, bindInputs(fn, callArgs));
         }
         return out as unknown as ContractFunctions<P>;
@@ -560,7 +566,7 @@ export class ArkadeTransactionBuilder {
         // and the concrete `P` would otherwise make `this` unassignable here.
         private readonly contract: ArkadeContract<any>,
         private readonly fn: CompiledFunction,
-        private readonly args: Record<string, ArgValue>,
+        private readonly args: Record<string, ArkadeArgValue>,
     ) {}
 
     /** Spend a specific contract coin. Defaults to auto-selecting one from the contract. */
@@ -819,18 +825,21 @@ function inputName(ref: InputRef): string {
 }
 
 /** Bind positional call arguments to a function's declared input names. */
-function bindInputs(fn: CompiledFunction, callArgs: ArgValue[]): Record<string, ArgValue> {
+function bindInputs(
+    fn: CompiledFunction,
+    callArgs: ArkadeArgValue[],
+): Record<string, ArkadeArgValue> {
     const names = (fn.def.inputs ?? []).map(inputName);
     if (callArgs.length !== names.length) {
         throw new Error(`${fn.name}: expected ${names.length} argument(s), got ${callArgs.length}`);
     }
-    const bound: Record<string, ArgValue> = {};
+    const bound: Record<string, ArkadeArgValue> = {};
     names.forEach((n, i) => (bound[n] = callArgs[i]));
     return bound;
 }
 
 /** Look up a `$param` / function-input value in a bind map; throws when unbound. */
-function bindValue(bind: Record<string, ParamValue>, name: string): ParamValue {
+function bindValue(bind: Record<string, ArkadeParamValue>, name: string): ArkadeParamValue {
     const v = bind[name];
     if (v === undefined) throw new Error(`unbound parameter '${name}'`);
     return v;
@@ -842,7 +851,7 @@ function bindValue(bind: Record<string, ParamValue>, name: string): ParamValue {
  * Arkade script encoder. The SDK does not interpret opcodes — this is pure
  * substitution + encoding.
  */
-export function resolveAsm(asm: AsmToken[], bind: Record<string, ParamValue>): Uint8Array {
+export function resolveAsm(asm: AsmToken[], bind: Record<string, ArkadeParamValue>): Uint8Array {
     const tokens = asm.map((t) => {
         if (typeof t === "string" && t.startsWith("$")) {
             return bindValue(bind, t.slice(1));
