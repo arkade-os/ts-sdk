@@ -199,7 +199,7 @@ describe("vhtlc", () => {
         const vtxo = spendableVtxosResponse.vtxos[0];
         const onchainBob = await OnchainWallet.create(bob, "regtest");
 
-        execSync(`nigiri faucet ${onchainBob.address} 0.001`);
+        execSync(`node regtest/regtest.mjs faucet ${onchainBob.address} 0.001 --confirm`);
 
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
@@ -214,9 +214,9 @@ describe("vhtlc", () => {
             switch (done.type) {
                 case Unroll.StepType.WAIT:
                 case Unroll.StepType.UNROLL:
-                    execSync(`nigiri rpc --generate 1`);
+                    execSync(`node regtest/regtest.mjs mine 1`);
                     await new Promise((resolve) => setTimeout(resolve, 2000)); // give time for the checkpoint to be created
-                    execSync(`nigiri rpc --generate 1`);
+                    execSync(`node regtest/regtest.mjs mine 1`);
                     break;
             }
         }
@@ -245,7 +245,7 @@ describe("vhtlc", () => {
         await expect(onchainBob.provider.broadcastTransaction(signedTx.hex)).rejects.toThrow();
 
         // generate 10 blocks to make the exit path available
-        execSync(`nigiri rpc --generate 10`);
+        execSync(`node regtest/regtest.mjs mine 10`);
 
         const txid = await onchainBob.provider.broadcastTransaction(signedTx.hex);
         expect(txid).toBeDefined();

@@ -1,6 +1,5 @@
 import { expect, describe, it, beforeEach } from "vitest";
 import { base64, hex } from "@scure/base";
-import { execSync } from "child_process";
 
 import {
     arkade,
@@ -17,8 +16,14 @@ import {
     Extension,
     EmulatorPacket,
 } from "../../src";
-import { beforeEachFaucet, createTestArkWallet, createTestIdentity, faucetOffchain } from "./utils";
 import type { Identity } from "../../src/identity";
+import {
+    beforeEachFaucet,
+    createTestArkWallet,
+    createTestIdentity,
+    faucetOffchain,
+    faucetOnchain,
+} from "./utils";
 
 /**
  * Creates an Extension OP_RETURN output containing an EmulatorPacket.
@@ -358,9 +363,8 @@ describe("arkade", () => {
         });
 
         // Fund on-chain via faucet
-        const fundAmountBtc = 0.0001; // 10000 sats
         const fundAmount = 10000;
-        execSync(`nigiri faucet ${btcAddress} ${fundAmountBtc.toFixed(8)}`);
+        faucetOnchain(btcAddress, fundAmount);
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
         // Create tree signer session
@@ -369,7 +373,8 @@ describe("arkade", () => {
 
         // We need to find the funded UTXO on-chain
         // Use esplora to find the tx
-        const utxoResp = await fetch(`http://localhost:3000/address/${btcAddress}/utxo`);
+        // mempool serves the Esplora REST API under `/api` (root path is the HTML UI).
+        const utxoResp = await fetch(`http://localhost:3000/api/address/${btcAddress}/utxo`);
         const utxos = await utxoResp.json();
         expect(utxos.length).toBeGreaterThan(0);
         const utxo = utxos[0];

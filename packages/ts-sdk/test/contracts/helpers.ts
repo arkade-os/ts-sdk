@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { vi } from "vitest";
 
 import {
     ContractVtxo,
@@ -64,6 +64,7 @@ export const createDelegateContractParams = () =>
 export const testDefaultScript = new DefaultVtxo.Script({
     pubKey: TEST_PUB_KEY,
     serverPubKey: TEST_SERVER_PUB_KEY,
+    csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
 });
 export const TEST_DEFAULT_SCRIPT = hex.encode(testDefaultScript.pkScript);
 // Real Arkade address whose pkScript decodes to TEST_DEFAULT_SCRIPT. Use this
@@ -78,6 +79,7 @@ export const testDelegateScript = new DelegateVtxo.Script({
     pubKey: TEST_PUB_KEY,
     serverPubKey: TEST_SERVER_PUB_KEY,
     delegatePubKey: TEST_DELEGATE_PUB_KEY,
+    csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
 });
 export const TEST_DELEGATE_SCRIPT = hex.encode(testDelegateScript.pkScript);
 

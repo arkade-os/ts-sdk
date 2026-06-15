@@ -7,6 +7,8 @@ import {
     DEFAULT_THRESHOLD_SECONDS,
     getExpiringAndRecoverableVtxos,
     DEFAULT_THRESHOLD_MS,
+    MAX_VTXOS_PER_SETTLEMENT,
+    capSettlementBatch,
     SettlementConfig,
 } from "../src/wallet/vtxo-manager";
 import { IWallet, ExtendedCoin, ExtendedVirtualCoin } from "../src/wallet";
@@ -22,6 +24,11 @@ type MockWalletOptions = {
     delegateManager?: {
         delegate: ReturnType<typeof vi.fn>;
     };
+    /**
+     * Server per-output ceiling surfaced via `arkProvider.getInfo()`. Defaults
+     * to `-1n` ("no limit") so existing recovery/renewal tests are unaffected.
+     */
+    vtxoMaxAmount?: bigint;
 };
 
 // Mock wallet implementation
@@ -50,6 +57,15 @@ const createMockWallet = (
         getContractManager: vi.fn().mockResolvedValue(contractManager),
         settle: vi.fn().mockResolvedValue("mock-txid"),
         dustAmount: 1000n,
+        // Recovery/renewal read `vtxoMaxAmount` from here (without requiring full
+        // sweep capability). Only `arkProvider` is set, so the wallet stays
+        // non-sweep-capable and the boarding-poll paths are untouched.
+        arkProvider: {
+            getInfo: vi.fn().mockResolvedValue({
+                fees: { intentFee: {} },
+                vtxoMaxAmount: options.vtxoMaxAmount ?? -1n,
+            }),
+        },
     } as any;
 };
 
@@ -84,6 +100,67 @@ const createMockVtxo = (
         tapTree: new Uint8Array(),
     } as any;
 };
+
+describe("capSettlementBatch", () => {
+    const make = (values: number[]) => values.map((value, i) => ({ value, id: i }));
+
+    it("caps by count, keeping the sorted prefix", () => {
+        const sorted = make(Array.from({ length: MAX_VTXOS_PER_SETTLEMENT + 10 }, () => 100));
+        const batch = capSettlementBatch(sorted, -1n);
+        expect(batch).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+        expect(batch).toEqual(sorted.slice(0, MAX_VTXOS_PER_SETTLEMENT));
+    });
+
+    it("caps by cumulative amount, stopping before the limit is breached", () => {
+        // 5000 + 5000 = 10000 (ok), + 5000 = 15000 (> 12000) → stop at 2.
+        const batch = capSettlementBatch(make([5000, 5000, 5000, 5000]), 12000n);
+        expect(batch).toHaveLength(2);
+        expect(batch.reduce((s, v) => s + BigInt(v.value), 0n)).toBe(10000n);
+    });
+
+    it("includes a batch whose total equals the limit (server rejects only > max)", () => {
+        const batch = capSettlementBatch(make([6000, 6000, 6000]), 12000n);
+        expect(batch).toHaveLength(2);
+        expect(batch.reduce((s, v) => s + BigInt(v.value), 0n)).toBe(12000n);
+    });
+
+    it("applies whichever cap binds first (count and amount together)", () => {
+        const sorted = make(Array.from({ length: MAX_VTXOS_PER_SETTLEMENT + 10 }, () => 100));
+        // Amount cap (250) bites at 3 inputs (300 > 250) before the count cap.
+        const batch = capSettlementBatch(sorted, 250n);
+        expect(batch).toHaveLength(2);
+    });
+
+    it("treats a negative limit as no amount bound", () => {
+        const sorted = make([10_000, 10_000, 10_000]);
+        expect(capSettlementBatch(sorted, -1n)).toHaveLength(3);
+    });
+
+    it("returns an empty batch for empty input", () => {
+        expect(capSettlementBatch(make([]), 5000n)).toEqual([]);
+    });
+
+    it("skips an oversized leading candidate and still takes a smaller one that fits", () => {
+        // max 10000, [12000, 5000] → [5000]: a leading VTXO above the limit must
+        // not strand the smaller ones behind it.
+        const batch = capSettlementBatch(make([12_000, 5_000]), 10_000n);
+        expect(batch.map((v) => v.value)).toEqual([5_000]);
+    });
+
+    it("skips an awkwardly-sized candidate to pack a smaller one within budget", () => {
+        // max 10000, [9000, 4000, 1000] → [9000, 1000] = 10000, not [9000]:
+        // 4000 would overflow but 1000 still fits the remaining budget.
+        const batch = capSettlementBatch(make([9_000, 4_000, 1_000]), 10_000n);
+        expect(batch.map((v) => v.value)).toEqual([9_000, 1_000]);
+        expect(batch.reduce((s, v) => s + BigInt(v.value), 0n)).toBe(10_000n);
+    });
+
+    it("returns an empty batch only when no candidate fits the limit", () => {
+        // Every candidate alone exceeds the ceiling — only reachable if the
+        // server lowered it below all existing VTXOs.
+        expect(capSettlementBatch(make([9000, 8000]), 5000n)).toEqual([]);
+    });
+});
 
 describe("VtxoManager - Recovery", () => {
     describe("getRecoverableBalance", () => {
@@ -236,6 +313,116 @@ describe("VtxoManager - Recovery", () => {
                 },
                 undefined,
             );
+        });
+
+        const makeRecoverable = (count: number, value: number, prefix: string) =>
+            Array.from(
+                { length: count },
+                (_, i) =>
+                    ({
+                        txid: `${prefix}-${i}`,
+                        vout: 0,
+                        value,
+                        virtualStatus: { state: "swept" },
+                        isSpent: false,
+                        status: { confirmed: true },
+                        createdAt: new Date(),
+                        isUnrolled: false,
+                        forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
+                        intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+                        tapTree: new Uint8Array(),
+                    }) as any,
+            );
+
+        it("should cap the number of recovered VTXOs per settlement", async () => {
+            const value = 5000;
+            const vtxos = makeRecoverable(MAX_VTXOS_PER_SETTLEMENT + 10, value, "swept");
+            const wallet = createMockWallet(vtxos, "arkade1myaddress");
+            const manager = new VtxoManager(wallet);
+
+            const txid = await manager.recoverVtxos();
+
+            expect(txid).toBe("mock-txid");
+            const settleArgs = (wallet.settle as any).mock.calls[0][0];
+            expect(settleArgs.inputs).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+            // Output amount is recomputed from the capped set, not the full list.
+            expect(settleArgs.outputs[0].amount).toBe(BigInt(MAX_VTXOS_PER_SETTLEMENT * value));
+        });
+
+        it("should cap the recovery batch to the server's vtxoMaxAmount", async () => {
+            const value = 5000;
+            // 10 recoverable VTXOs = 50000 total, but the server caps a single
+            // virtual output at 12000: only the highest-value subset that stays
+            // within the limit (2 * 5000 = 10000) is recovered this cycle.
+            const vtxos = makeRecoverable(10, value, "swept");
+            const wallet = createMockWallet(vtxos, "arkade1myaddress", {
+                vtxoMaxAmount: 12000n,
+            });
+            const manager = new VtxoManager(wallet);
+
+            const txid = await manager.recoverVtxos();
+
+            expect(txid).toBe("mock-txid");
+            const settleArgs = (wallet.settle as any).mock.calls[0][0];
+            expect(settleArgs.inputs).toHaveLength(2);
+            expect(settleArgs.outputs[0].amount).toBe(10000n);
+            expect(settleArgs.outputs[0].amount).toBeLessThanOrEqual(12000n);
+        });
+
+        it("should not cap the recovery batch when vtxoMaxAmount is -1 (no limit)", async () => {
+            const value = 5000;
+            const vtxos = makeRecoverable(10, value, "swept");
+            const wallet = createMockWallet(vtxos, "arkade1myaddress", {
+                vtxoMaxAmount: -1n,
+            });
+            const manager = new VtxoManager(wallet);
+
+            await manager.recoverVtxos();
+
+            const settleArgs = (wallet.settle as any).mock.calls[0][0];
+            expect(settleArgs.inputs).toHaveLength(10);
+            expect(settleArgs.outputs[0].amount).toBe(BigInt(10 * value));
+        });
+
+        it("should recover by value so a subdust prefix doesn't starve regulars", async () => {
+            // Subdust (below dust) listed before regular VTXOs. The reference
+            // SDKs impose no selection order, so we sort by value before
+            // capping: the 10 regulars are rescued ahead of the subdust prefix
+            // and the capped batch clears dust instead of being rejected.
+            const subdust = makeRecoverable(MAX_VTXOS_PER_SETTLEMENT, 18, "subdust");
+            const regular = makeRecoverable(10, 5000, "regular");
+            const wallet = createMockWallet([...subdust, ...regular], "arkade1myaddress");
+            const manager = new VtxoManager(wallet);
+
+            const txid = await manager.recoverVtxos();
+
+            expect(txid).toBe("mock-txid");
+            const settleArgs = (wallet.settle as any).mock.calls[0][0];
+            // Capped to 50: 10 regulars (value first) + 40 subdust filling the rest.
+            expect(settleArgs.inputs).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+            const inputTxids = settleArgs.inputs.map((v: any) => v.txid);
+            for (let i = 0; i < 10; i++) {
+                expect(inputTxids).toContain(`regular-${i}`);
+            }
+            // Output amount = 10 * 5000 + 40 * 18, recomputed from the capped set.
+            expect(settleArgs.outputs[0].amount).toBe(BigInt(10 * 5000 + 40 * 18));
+        });
+
+        it("should not submit a below-dust batch when no valid capped subset exists", async () => {
+            // 60 subdust VTXOs are viable as a full set (1080 >= dust) but no
+            // <=50 subset reaches dust (50 * 18 = 900) — and since they are all
+            // equal value, sorting can't rescue it either. Rather than submit a
+            // doomed batch that the server rejects every cycle, recovery throws.
+            const subdust = makeRecoverable(60, 18, "subdust");
+            const wallet = createMockWallet(subdust, "arkade1myaddress");
+            const manager = new VtxoManager(wallet);
+
+            // Distinct from the genuine "no recoverable VTXOs" message: this
+            // wallet IS funded, the capped batch just can't reach dust yet.
+            await expect(manager.recoverVtxos()).rejects.toThrow(
+                /Capped recovery batch .* is below the dust threshold/,
+            );
+            expect((wallet.settle as any).mock.calls).toHaveLength(0);
         });
 
         it("should include subdust when combined value exceeds dust threshold", async () => {
@@ -821,6 +1008,204 @@ describe("VtxoManager - Renewal", () => {
             expect(txid).toBe("mock-txid");
         });
 
+        it("should cap the number of renewed VTXOs per settlement", async () => {
+            const now = Date.now();
+            const createdAt = new Date(now - 100_000);
+            const count = MAX_VTXOS_PER_SETTLEMENT + 10;
+            const value = 5000;
+            const vtxos = Array.from(
+                { length: count },
+                (_, i) =>
+                    ({
+                        txid: `tx-${i}`,
+                        vout: 0,
+                        value,
+                        createdAt,
+                        virtualStatus: {
+                            state: "settled",
+                            batchExpiry: now + 5000, // expiring soon
+                        },
+                        status: { confirmed: true },
+                        isUnrolled: false,
+                        isSpent: false,
+                    }) as any,
+            );
+            const wallet = createMockWallet(vtxos, "arkade1myaddress");
+            const manager = new VtxoManager(wallet, undefined, {});
+
+            const txid = await manager.renewVtxos();
+
+            expect(txid).toBe("mock-txid");
+            const settleArgs = (wallet.settle as any).mock.calls[0][0];
+            expect(settleArgs.inputs).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+            // Output amount is summed from the capped set, not the full list.
+            expect(settleArgs.outputs[0].amount).toBe(BigInt(MAX_VTXOS_PER_SETTLEMENT * value));
+        });
+
+        it("should cap the renewal batch to the server's vtxoMaxAmount", async () => {
+            const now = Date.now();
+            const createdAt = new Date(now - 100_000);
+            const value = 5000;
+            // 10 expiring VTXOs = 50000 total, but the server caps a single
+            // virtual output at 12000: only 2 * 5000 = 10000 is renewed now, the
+            // rest on the next cycle.
+            const vtxos = Array.from(
+                { length: 10 },
+                (_, i) =>
+                    ({
+                        txid: `tx-${i}`,
+                        vout: 0,
+                        value,
+                        createdAt,
+                        virtualStatus: { state: "settled", batchExpiry: now + 5000 },
+                        status: { confirmed: true },
+                        isUnrolled: false,
+                        isSpent: false,
+                    }) as any,
+            );
+            const wallet = createMockWallet(vtxos, "arkade1myaddress", {
+                vtxoMaxAmount: 12000n,
+            });
+            const manager = new VtxoManager(wallet, undefined, {});
+
+            const txid = await manager.renewVtxos();
+
+            expect(txid).toBe("mock-txid");
+            const settleArgs = (wallet.settle as any).mock.calls[0][0];
+            expect(settleArgs.inputs).toHaveLength(2);
+            expect(settleArgs.outputs[0].amount).toBe(10000n);
+            expect(settleArgs.outputs[0].amount).toBeLessThanOrEqual(12000n);
+        });
+
+        it("warns when an oversized VTXO cannot be renewed within vtxoMaxAmount", async () => {
+            const now = Date.now();
+            const createdAt = new Date(now - 100_000);
+            // The soonest-expiring VTXO (12000) alone exceeds the 10000 ceiling,
+            // so it is skipped and drifts toward a unilateral exit while the
+            // smaller 5000 one renews. The skip must be surfaced, not silent.
+            const vtxos = [
+                {
+                    txid: "oversized",
+                    vout: 0,
+                    value: 12_000,
+                    createdAt,
+                    virtualStatus: { state: "settled", batchExpiry: now + 1_000 },
+                    status: { confirmed: true },
+                    isUnrolled: false,
+                    isSpent: false,
+                } as any,
+                {
+                    txid: "fits",
+                    vout: 0,
+                    value: 5_000,
+                    createdAt,
+                    virtualStatus: { state: "settled", batchExpiry: now + 5_000 },
+                    status: { confirmed: true },
+                    isUnrolled: false,
+                    isSpent: false,
+                } as any,
+            ];
+            const wallet = createMockWallet(vtxos, "arkade1myaddress", {
+                vtxoMaxAmount: 10_000n,
+            });
+            const manager = new VtxoManager(wallet, undefined, {});
+            const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+            try {
+                const txid = await manager.renewVtxos();
+
+                expect(txid).toBe("mock-txid");
+                const settleArgs = (wallet.settle as any).mock.calls[0][0];
+                expect(settleArgs.inputs).toHaveLength(1);
+                expect(settleArgs.inputs[0].txid).toBe("fits");
+                expect(warnSpy).toHaveBeenCalledWith(
+                    expect.stringContaining("exceed the per-output limit 10000"),
+                );
+            } finally {
+                warnSpy.mockRestore();
+            }
+        });
+
+        it("should renew the soonest-expiring VTXOs first when capping", async () => {
+            // The 10 most urgent VTXOs are listed AFTER 50 less-urgent ones.
+            // Sorting by expiry before the cap must rescue them so they don't
+            // miss their renewal window and get forced into a unilateral exit.
+            const now = Date.now();
+            const createdAt = new Date(now - 100_000);
+            const value = 5000;
+            const makeExpiring = (count: number, expiry: number, prefix: string) =>
+                Array.from(
+                    { length: count },
+                    (_, i) =>
+                        ({
+                            txid: `${prefix}-${i}`,
+                            vout: 0,
+                            value,
+                            createdAt,
+                            virtualStatus: { state: "settled", batchExpiry: expiry },
+                            status: { confirmed: true },
+                            isUnrolled: false,
+                            isSpent: false,
+                        }) as any,
+                );
+            const lessUrgent = makeExpiring(MAX_VTXOS_PER_SETTLEMENT, now + 200_000, "far");
+            const urgent = makeExpiring(10, now + 1_000, "urgent");
+            const wallet = createMockWallet([...lessUrgent, ...urgent], "arkade1myaddress");
+            const manager = new VtxoManager(wallet, undefined, {});
+
+            const txid = await manager.renewVtxos();
+
+            expect(txid).toBe("mock-txid");
+            const settleArgs = (wallet.settle as any).mock.calls[0][0];
+            expect(settleArgs.inputs).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+            const inputTxids = settleArgs.inputs.map((v: any) => v.txid);
+            for (let i = 0; i < 10; i++) {
+                expect(inputTxids).toContain(`urgent-${i}`);
+            }
+        });
+
+        it("should prioritize swept recoverable VTXOs without batch expiry when capping", async () => {
+            const now = Date.now();
+            const createdAt = new Date(now - 100_000);
+            const value = 5000;
+            const makeVtxo = (
+                count: number,
+                prefix: string,
+                state: "settled" | "swept",
+                batchExpiry?: number,
+            ) =>
+                Array.from(
+                    { length: count },
+                    (_, i) =>
+                        ({
+                            txid: `${prefix}-${i}`,
+                            vout: 0,
+                            value,
+                            createdAt,
+                            virtualStatus:
+                                batchExpiry === undefined ? { state } : { state, batchExpiry },
+                            status: { confirmed: true },
+                            isUnrolled: false,
+                            isSpent: false,
+                        }) as any,
+                );
+
+            const future = makeVtxo(MAX_VTXOS_PER_SETTLEMENT, "future", "settled", now + 200_000);
+            const swept = makeVtxo(10, "swept", "swept");
+            const wallet = createMockWallet([...future, ...swept], "arkade1myaddress");
+            const manager = new VtxoManager(wallet, undefined, {});
+
+            const txid = await manager.renewVtxos();
+
+            expect(txid).toBe("mock-txid");
+            const settleArgs = (wallet.settle as any).mock.calls[0][0];
+            expect(settleArgs.inputs).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+            const inputTxids = settleArgs.inputs.map((v: any) => v.txid);
+            for (let i = 0; i < 10; i++) {
+                expect(inputTxids).toContain(`swept-${i}`);
+            }
+        });
+
         it("should throw error when total amount is below dust threshold", async () => {
             const vtxos = [
                 {
@@ -1264,6 +1649,10 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                 sign: vi.fn().mockImplementation((tx: any) => tx),
                 xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
             },
+            // Descriptor-aware on-chain boarding signer (plan §6-III.3). The
+            // mock mirrors the old identity-sign behaviour (returns the tx
+            // unchanged) so sweep tests still finalize a "signed" tx.
+            signOnchainBoardingTx: vi.fn().mockImplementation((tx: any) => tx),
         } as any;
     };
 
@@ -1491,6 +1880,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                     sign: vi.fn().mockImplementation((tx: any) => tx),
                     xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
                 },
+                signOnchainBoardingTx: vi.fn().mockImplementation((tx: any) => tx),
             } as any;
         };
 
@@ -1796,6 +2186,10 @@ describe("VtxoManager - Periodic settle cooldown", () => {
                 sign: vi.fn().mockImplementation((tx: any) => tx),
                 xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
             },
+            // Descriptor-aware on-chain boarding signer (plan §6-III.3). The
+            // mock mirrors the old identity-sign behaviour (returns the tx
+            // unchanged) so sweep tests still finalize a "signed" tx.
+            signOnchainBoardingTx: vi.fn().mockImplementation((tx: any) => tx),
         } as any;
     };
 
@@ -2074,6 +2468,10 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
                 sign: vi.fn().mockImplementation((tx: any) => tx),
                 xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
             },
+            // Descriptor-aware on-chain boarding signer (plan §6-III.3). The
+            // mock mirrors the old identity-sign behaviour (returns the tx
+            // unchanged) so sweep tests still finalize a "signed" tx.
+            signOnchainBoardingTx: vi.fn().mockImplementation((tx: any) => tx),
         } as any;
     };
 
@@ -2089,14 +2487,18 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
         }) as ExtendedCoin;
 
     // VTXO expiring within 1 hour (well inside the default 3-day threshold).
-    const makeExpiringVtxo = (value: number, vout = 0): ExtendedVirtualCoin =>
+    const makeExpiringVtxo = (
+        value: number,
+        vout = 0,
+        batchExpiry = Date.now() + 60 * 60 * 1000,
+    ): ExtendedVirtualCoin =>
         ({
             txid: `vtxo-txid-${value}-${vout}`,
             vout,
             value,
             virtualStatus: {
                 state: "settled",
-                batchExpiry: Date.now() + 60 * 60 * 1000,
+                batchExpiry,
             },
             isSpent: false,
             status: { confirmed: true },
@@ -2199,6 +2601,158 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
         const call = (wallet.settle as any).mock.calls[0][0];
         expect(call.inputs).toEqual([vtxo]);
         expect(call.outputs[0].amount).toBe(5_000n);
+    });
+
+    it("caps viable VTXOs, not an uneconomic prefix", async () => {
+        // 50 uneconomic VTXOs ahead of 3 viable ones. The cap must apply to
+        // economically viable inputs only — otherwise the uneconomic prefix
+        // fills the cap and the viable VTXOs behind it are starved every cycle.
+        const tiny = Array.from({ length: MAX_VTXOS_PER_SETTLEMENT }, (_, i) =>
+            makeExpiringVtxo(100, i),
+        );
+        const normal = Array.from({ length: 3 }, (_, i) => makeExpiringVtxo(10_000, 100 + i));
+        const wallet = buildWallet([], [...tiny, ...normal]);
+        // Flat 200-sat fee per offchain input makes the 100-sat VTXOs uneconomic.
+        (wallet.arkProvider.getInfo as any).mockResolvedValue({
+            fees: { intentFee: { offchainInput: "200.0" } },
+        });
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle([]);
+
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+        const call = (wallet.settle as any).mock.calls[0][0];
+        expect(call.inputs).toHaveLength(3);
+        expect(call.inputs.every((v: any) => v.value === 10_000)).toBe(true);
+        expect(call.outputs[0].amount).toBe(BigInt(3 * (10_000 - 200)));
+    });
+
+    it("caps the number of VTXOs per periodic settle", async () => {
+        const value = 5_000;
+        const vtxos = Array.from({ length: MAX_VTXOS_PER_SETTLEMENT + 5 }, (_, i) =>
+            makeExpiringVtxo(value, i),
+        );
+        const wallet = buildWallet([], vtxos);
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle([]);
+
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+        const call = (wallet.settle as any).mock.calls[0][0];
+        expect(call.inputs).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+        expect(call.outputs[0].amount).toBe(BigInt(MAX_VTXOS_PER_SETTLEMENT * value));
+    });
+
+    it("settles the soonest-expiring VTXOs first during periodic cap", async () => {
+        const now = Date.now();
+        const value = 5_000;
+        const lessUrgent = Array.from({ length: MAX_VTXOS_PER_SETTLEMENT }, (_, i) =>
+            makeExpiringVtxo(value, i, now + 200_000),
+        );
+        const urgent = Array.from({ length: 10 }, (_, i) =>
+            makeExpiringVtxo(value, 1_000 + i, now + 1_000),
+        );
+        const wallet = buildWallet([], [...lessUrgent, ...urgent]);
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle([]);
+
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+        const call = (wallet.settle as any).mock.calls[0][0];
+        expect(call.inputs).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+        const inputTxids = call.inputs.map((v: any) => v.txid);
+        for (let i = 0; i < 10; i++) {
+            expect(inputTxids).toContain(`vtxo-txid-${value}-${1_000 + i}`);
+        }
+    });
+
+    it("caps periodic VTXOs without capping boarding inputs", async () => {
+        const boarding = [makeUnexpiredUtxo(10_000), makeUnexpiredUtxo(12_000, 1)];
+        const value = 5_000;
+        const vtxos = Array.from({ length: MAX_VTXOS_PER_SETTLEMENT + 5 }, (_, i) =>
+            makeExpiringVtxo(value, i),
+        );
+        const wallet = buildWallet(boarding, vtxos);
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle(boarding);
+
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+        const call = (wallet.settle as any).mock.calls[0][0];
+        expect(call.inputs).toHaveLength(boarding.length + MAX_VTXOS_PER_SETTLEMENT);
+        expect(call.inputs.slice(0, boarding.length)).toEqual(boarding);
+        expect(call.inputs.slice(boarding.length)).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+    });
+
+    it("caps periodic VTXOs to the server's vtxoMaxAmount", async () => {
+        const value = 5_000;
+        const vtxos = Array.from({ length: 10 }, (_, i) => makeExpiringVtxo(value, i));
+        const wallet = buildWallet([], vtxos);
+        // No intent fees, so net == value; the 12000 ceiling fits only 2 VTXOs.
+        (wallet.arkProvider.getInfo as any).mockResolvedValue({
+            fees: { intentFee: {} },
+            vtxoMaxAmount: 12000n,
+        });
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle([]);
+
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+        const call = (wallet.settle as any).mock.calls[0][0];
+        expect(call.inputs).toHaveLength(2);
+        expect(call.outputs[0].amount).toBe(10000n);
+        expect(call.outputs[0].amount).toBeLessThanOrEqual(12000n);
+    });
+
+    it("skips an oversized VTXO during periodic settle and takes a smaller one", async () => {
+        const expiry = Date.now() + 60 * 60 * 1000;
+        // Soonest-expiring 12000 exceeds the 10000 ceiling and is skipped; the
+        // 5000 behind it still settles. A break would settle nothing.
+        const vtxos = [makeExpiringVtxo(12_000, 0, expiry), makeExpiringVtxo(5_000, 1, expiry)];
+        const wallet = buildWallet([], vtxos);
+        (wallet.arkProvider.getInfo as any).mockResolvedValue({
+            fees: { intentFee: {} },
+            vtxoMaxAmount: 10_000n,
+        });
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle([]);
+
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+        const call = (wallet.settle as any).mock.calls[0][0];
+        expect(call.inputs).toHaveLength(1);
+        expect(call.inputs[0].value).toBe(5_000);
+        expect(call.outputs[0].amount).toBe(5000n);
     });
 
     it("skips VTXO collection while an event-driven renewal is in flight", async () => {
@@ -2334,6 +2888,10 @@ describe("VtxoManager - Cross-instance poll guard", () => {
                 sign: vi.fn().mockImplementation((tx: any) => tx),
                 xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
             },
+            // Descriptor-aware on-chain boarding signer (plan §6-III.3). The
+            // mock mirrors the old identity-sign behaviour (returns the tx
+            // unchanged) so sweep tests still finalize a "signed" tx.
+            signOnchainBoardingTx: vi.fn().mockImplementation((tx: any) => tx),
         } as any;
     };
 
@@ -2469,6 +3027,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
                     sign: vi.fn().mockImplementation((tx: any) => tx),
                     xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
                 },
+                signOnchainBoardingTx: vi.fn().mockImplementation((tx: any) => tx),
             } as any,
             contractManager,
         };

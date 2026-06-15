@@ -36,8 +36,16 @@ import {
 } from "../index";
 import { DelegateInfo } from "../../providers/delegate";
 import { ReadonlyWallet, Wallet } from "../wallet";
-import type { RenewVtxosOptions } from "../vtxo-manager";
-import { extendCoin } from "../utils";
+import type {
+    DeprecatedSignerMigrationReport,
+    DeprecatedSignerReport,
+    MigrationGlobalSkipReason,
+    MigrationLegReport,
+    MigrationLegSkipReason,
+    MigrationVtxoRef,
+    RenewVtxosOptions,
+} from "../vtxo-manager";
+import type { SignerStatus } from "../signerRotation";
 import { MessageHandler, RequestEnvelope, ResponseEnvelope } from "../../worker/messageBus";
 import { Transaction } from "../../utils/transaction";
 import { buildTransactionHistory } from "../../utils/transactionHistory";
@@ -351,6 +359,10 @@ export type ResponseRenewVtxosEvent = ResponseEnvelope & {
     type: "RENEW_VTXOS_EVENT";
     payload: SettlementEvent;
 };
+export type ResponseMigrateDeprecatedSignerVtxosEvent = ResponseEnvelope & {
+    type: "MIGRATE_DEPRECATED_SIGNER_VTXOS_EVENT";
+    payload: SettlementEvent;
+};
 export type ResponseUtxoUpdate = ResponseEnvelope & {
     broadcast: true;
     type: "UTXO_UPDATE";
@@ -497,6 +509,150 @@ export type ResponseSweepExpiredBoardingUtxos = ResponseEnvelope & {
     payload: { txid: string };
 };
 
+// Deprecated-signer migration. Reports carry `bigint` cutoff dates, which are
+// serialized to strings for transport over the postMessage boundary (mirrors
+// how RECOVERABLE_BALANCE stringifies its bigints) and reconstructed on the
+// page side.
+export type WireMigrationVtxoRef = {
+    txid: string;
+    vout: number;
+    value: number;
+    signerPubKey: string;
+    cutoffDate?: string;
+};
+export type WireDeprecatedSignerReport = {
+    signerPubKey: string;
+    status: SignerStatus;
+    cutoffDate?: string;
+    secondsUntilCutoff?: number;
+    vtxoCount: number;
+    totalValue: number;
+    boardingCount: number;
+    boardingValue: number;
+    recoverableCount: number;
+    recoverableValue: number;
+    awaitingSweepCount: number;
+    awaitingSweepValue: number;
+    nextSweepEta?: number;
+};
+export type WireMigrationLegReport = {
+    txid?: string;
+    migrated: WireMigrationVtxoRef[];
+    skipped?: MigrationLegSkipReason;
+    deferred?: number;
+    oversized?: WireMigrationVtxoRef[];
+    error?: string;
+};
+export type WireDeprecatedSignerMigrationReport = {
+    rotated: boolean;
+    skipped?: MigrationGlobalSkipReason;
+    vtxos?: WireMigrationLegReport;
+    boarding?: WireMigrationLegReport;
+    expired: WireMigrationVtxoRef[];
+    signers: WireDeprecatedSignerReport[];
+};
+
+const serializeMigrationVtxoRef = (ref: MigrationVtxoRef): WireMigrationVtxoRef => ({
+    txid: ref.txid,
+    vout: ref.vout,
+    value: ref.value,
+    signerPubKey: ref.signerPubKey,
+    cutoffDate: ref.cutoffDate?.toString(),
+});
+const deserializeMigrationVtxoRef = (ref: WireMigrationVtxoRef): MigrationVtxoRef => ({
+    txid: ref.txid,
+    vout: ref.vout,
+    value: ref.value,
+    signerPubKey: ref.signerPubKey,
+    cutoffDate: ref.cutoffDate != null ? BigInt(ref.cutoffDate) : undefined,
+});
+export const serializeDeprecatedSignerReport = (
+    report: DeprecatedSignerReport,
+): WireDeprecatedSignerReport => ({
+    signerPubKey: report.signerPubKey,
+    status: report.status,
+    cutoffDate: report.cutoffDate?.toString(),
+    secondsUntilCutoff: report.secondsUntilCutoff,
+    vtxoCount: report.vtxoCount,
+    totalValue: report.totalValue,
+    boardingCount: report.boardingCount,
+    boardingValue: report.boardingValue,
+    recoverableCount: report.recoverableCount,
+    recoverableValue: report.recoverableValue,
+    awaitingSweepCount: report.awaitingSweepCount,
+    awaitingSweepValue: report.awaitingSweepValue,
+    nextSweepEta: report.nextSweepEta,
+});
+export const deserializeDeprecatedSignerReport = (
+    report: WireDeprecatedSignerReport,
+): DeprecatedSignerReport => ({
+    signerPubKey: report.signerPubKey,
+    status: report.status,
+    cutoffDate: report.cutoffDate != null ? BigInt(report.cutoffDate) : undefined,
+    secondsUntilCutoff: report.secondsUntilCutoff,
+    vtxoCount: report.vtxoCount,
+    totalValue: report.totalValue,
+    boardingCount: report.boardingCount,
+    boardingValue: report.boardingValue,
+    recoverableCount: report.recoverableCount,
+    recoverableValue: report.recoverableValue,
+    awaitingSweepCount: report.awaitingSweepCount,
+    awaitingSweepValue: report.awaitingSweepValue,
+    nextSweepEta: report.nextSweepEta,
+});
+const serializeMigrationLegReport = (leg: MigrationLegReport): WireMigrationLegReport => ({
+    txid: leg.txid,
+    migrated: leg.migrated.map(serializeMigrationVtxoRef),
+    skipped: leg.skipped,
+    deferred: leg.deferred,
+    oversized: leg.oversized?.map(serializeMigrationVtxoRef),
+    error: leg.error,
+});
+const deserializeMigrationLegReport = (leg: WireMigrationLegReport): MigrationLegReport => ({
+    txid: leg.txid,
+    migrated: leg.migrated.map(deserializeMigrationVtxoRef),
+    skipped: leg.skipped,
+    deferred: leg.deferred,
+    oversized: leg.oversized?.map(deserializeMigrationVtxoRef),
+    error: leg.error,
+});
+export const serializeMigrationReport = (
+    report: DeprecatedSignerMigrationReport,
+): WireDeprecatedSignerMigrationReport => ({
+    rotated: report.rotated,
+    skipped: report.skipped,
+    vtxos: report.vtxos ? serializeMigrationLegReport(report.vtxos) : undefined,
+    boarding: report.boarding ? serializeMigrationLegReport(report.boarding) : undefined,
+    expired: report.expired.map(serializeMigrationVtxoRef),
+    signers: report.signers.map(serializeDeprecatedSignerReport),
+});
+export const deserializeMigrationReport = (
+    report: WireDeprecatedSignerMigrationReport,
+): DeprecatedSignerMigrationReport => ({
+    rotated: report.rotated,
+    skipped: report.skipped,
+    vtxos: report.vtxos ? deserializeMigrationLegReport(report.vtxos) : undefined,
+    boarding: report.boarding ? deserializeMigrationLegReport(report.boarding) : undefined,
+    expired: report.expired.map(deserializeMigrationVtxoRef),
+    signers: report.signers.map(deserializeDeprecatedSignerReport),
+});
+
+export type RequestMigrateDeprecatedSignerVtxos = RequestEnvelope & {
+    type: "MIGRATE_DEPRECATED_SIGNER_VTXOS";
+};
+export type ResponseMigrateDeprecatedSignerVtxos = ResponseEnvelope & {
+    type: "MIGRATE_DEPRECATED_SIGNER_VTXOS_SUCCESS";
+    payload: { report: WireDeprecatedSignerMigrationReport };
+};
+
+export type RequestGetDeprecatedSignerStatus = RequestEnvelope & {
+    type: "GET_DEPRECATED_SIGNER_STATUS";
+};
+export type ResponseGetDeprecatedSignerStatus = ResponseEnvelope & {
+    type: "DEPRECATED_SIGNER_STATUS";
+    payload: { signers: WireDeprecatedSignerReport[] };
+};
+
 export type RequestRestoreWallet = RequestEnvelope & {
     type: "RESTORE_WALLET";
     payload: { gapLimit?: number };
@@ -557,6 +713,8 @@ export type WalletUpdaterRequest =
     | RequestRenewVtxos
     | RequestGetExpiredBoardingUtxos
     | RequestSweepExpiredBoardingUtxos
+    | RequestMigrateDeprecatedSignerVtxos
+    | RequestGetDeprecatedSignerStatus
     | RequestRestoreWallet;
 
 export type WalletUpdaterResponse = ResponseEnvelope &
@@ -604,6 +762,9 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseRenewVtxosEvent
         | ResponseGetExpiredBoardingUtxos
         | ResponseSweepExpiredBoardingUtxos
+        | ResponseMigrateDeprecatedSignerVtxos
+        | ResponseMigrateDeprecatedSignerVtxosEvent
+        | ResponseGetDeprecatedSignerStatus
         | ResponseRestoreWallet
     );
 
@@ -713,6 +874,9 @@ export class WalletMessageHandler
             message.type === "SETTLE" ||
             message.type === "RECOVER_VTXOS" ||
             message.type === "RENEW_VTXOS" ||
+            // Migration may apply a server-signer rotation and then run a full
+            // settle, so it streams settlement events like RENEW_VTXOS.
+            message.type === "MIGRATE_DEPRECATED_SIGNER_VTXOS" ||
             // HD restore walks the index range with one indexer round-trip per
             // step until it hits gapLimit consecutive unused indices. The bus
             // deadline must not race the scan; liveness stays covered by PING.
@@ -1084,6 +1248,36 @@ export class WalletMessageHandler
                         payload: { txid },
                     });
                 }
+                case "MIGRATE_DEPRECATED_SIGNER_VTXOS": {
+                    const wallet = this.requireWallet();
+                    const vtxoManager = await wallet.getVtxoManager();
+                    const report = await vtxoManager.migrateDeprecatedSignerVtxos({
+                        eventCallback: (e) => {
+                            this.scheduleForNextTick(() =>
+                                this.tagged({
+                                    id,
+                                    type: "MIGRATE_DEPRECATED_SIGNER_VTXOS_EVENT",
+                                    payload: e,
+                                }),
+                            );
+                        },
+                    });
+                    return this.tagged({
+                        id,
+                        type: "MIGRATE_DEPRECATED_SIGNER_VTXOS_SUCCESS",
+                        payload: { report: serializeMigrationReport(report) },
+                    });
+                }
+                case "GET_DEPRECATED_SIGNER_STATUS": {
+                    const wallet = this.requireWallet();
+                    const vtxoManager = await wallet.getVtxoManager();
+                    const signers = await vtxoManager.getDeprecatedSignerStatus();
+                    return this.tagged({
+                        id,
+                        type: "DEPRECATED_SIGNER_STATUS",
+                        payload: { signers: signers.map(serializeDeprecatedSignerReport) },
+                    });
+                }
                 case "RESTORE_WALLET": {
                     const wallet = this.requireWallet();
                     try {
@@ -1123,9 +1317,12 @@ export class WalletMessageHandler
     }
 
     private async handleGetBalance() {
-        const [boardingUtxos, allVtxos] = await Promise.all([
+        const [boardingUtxos, allVtxos, pendingOutpoints] = await Promise.all([
             this.getAllBoardingUtxos(),
             this.getVtxosFromRepo(),
+            this.readonlyWallet
+                ? this.readonlyWallet.pendingRecoveryOutpoints()
+                : Promise.resolve(new Set<string>()),
         ]);
 
         // boarding
@@ -1146,8 +1343,13 @@ export class WalletMessageHandler
         let settled = 0;
         let preconfirmed = 0;
         let recoverable = 0;
+        let pendingRecovery = 0;
+        // Past-cutoff (EXPIRED) deprecated-signer funds not yet swept are NOT
+        // spendable — bucket them under pendingRecovery, out of settled/preconfirmed.
         for (const vtxo of spendableVtxos) {
-            if (vtxo.virtualStatus.state === "settled") {
+            if (pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
+                pendingRecovery += vtxo.value;
+            } else if (vtxo.virtualStatus.state === "settled") {
                 settled += vtxo.value;
             } else if (vtxo.virtualStatus.state === "preconfirmed") {
                 preconfirmed += vtxo.value;
@@ -1160,7 +1362,7 @@ export class WalletMessageHandler
         }
 
         const totalBoarding = confirmed + unconfirmed;
-        const totalOffchain = settled + preconfirmed + recoverable;
+        const totalOffchain = settled + preconfirmed + recoverable + pendingRecovery;
 
         // aggregate asset balances from spendable virtual outputs
         const assetBalances = new Map<string, bigint>();
@@ -1187,6 +1389,7 @@ export class WalletMessageHandler
             preconfirmed,
             available: settled + preconfirmed,
             recoverable,
+            pendingRecovery,
             total: totalBoarding + totalOffchain,
             assets,
         };
@@ -1316,12 +1519,14 @@ export class WalletMessageHandler
                     );
                 }
                 if (funds.type === "utxo") {
-                    const utxos = funds.coins.map((utxo) => extendCoin(this.readonlyWallet!, utxo));
-                    const boardingAddress = await this.readonlyWallet!.getBoardingAddress();
-                    // save boarding inputs using unified repository
-                    // TODO: remove UTXOs by address
-                    //  await this.walletRepository.clearUtxos(boardingAddress);
-                    await this.walletRepository?.saveUtxos(boardingAddress, utxos);
+                    // A deposit may land on the current OR a previous boarding
+                    // address (per-derivation rotation, plan §6-IV.2). The
+                    // notified `coins` carry no address, so re-fetch + re-cache
+                    // the full boarding-address set via getBoardingUtxos, which
+                    // buckets each UTXO under the address it sits on with the
+                    // correct per-UTXO tapscript — instead of assuming the
+                    // current boarding address.
+                    const utxos = await this.readonlyWallet!.getBoardingUtxos();
 
                     // notify all clients about the boarding input state update
                     this.scheduleForNextTick(() =>
@@ -1360,14 +1565,23 @@ export class WalletMessageHandler
         // Read virtual outputs from repository (now populated by contract manager)
         const vtxos = await this.getVtxosFromRepo();
 
-        // Fetch boarding inputs and save using unified repository
-        const boardingAddress = await this.readonlyWallet.getBoardingAddress();
-        const coins = await this.readonlyWallet.onchainProvider.getCoins(boardingAddress);
-        await this.walletRepository.deleteUtxos(boardingAddress);
-        await this.walletRepository.saveUtxos(
-            boardingAddress,
-            coins.map((utxo) => extendCoin(this.readonlyWallet!, utxo)),
-        );
+        // Fetch boarding inputs across the full boarding-address set (current +
+        // historical rotated; plan §6-IV.2). Fetch FIRST: getBoardingUtxos
+        // re-fetches each boarding address from the onchain provider and saves
+        // it, so a transient failure throws here before we touch the cache and
+        // the previous snapshot survives (offline-first). saveUtxos merges, so
+        // only once the fetch succeeds do we prune spent coins the merge would
+        // otherwise keep — per address, mirroring updateDbAfterSettle.
+        const boardingAddresses = await this.readonlyWallet.getBoardingAddresses();
+        const fresh = await this.readonlyWallet.getBoardingUtxos();
+        const freshKeys = new Set(fresh.map((u) => `${u.txid}:${u.vout}`));
+        for (const addr of boardingAddresses) {
+            const cached = await this.walletRepository.getUtxos(addr);
+            const kept = cached.filter((u) => freshKeys.has(`${u.txid}:${u.vout}`));
+            if (kept.length === cached.length) continue; // nothing stale
+            await this.walletRepository.deleteUtxos(addr);
+            if (kept.length > 0) await this.walletRepository.saveUtxos(addr, kept);
+        }
 
         // Build transaction history from cached virtual outputs (no indexer call)
         const address = await this.readonlyWallet.getAddress();

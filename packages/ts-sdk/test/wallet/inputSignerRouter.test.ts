@@ -309,6 +309,81 @@ describe("InputSignerRouter", async () => {
         expect(signSpy).toHaveBeenCalledWith(tx, [0]);
     });
 
+    it("routes baseline-owner boarding contract to identity (index-0 / static boarding unchanged)", async () => {
+        const contractRepo = new InMemoryContractRepository();
+        const script = taprootScript(BASELINE_REUSE_PUBKEY);
+        await contractRepo.saveContract(
+            makeContract({
+                script: hex.encode(script),
+                type: "boarding",
+                params: { pubKey: baselinePubKey },
+            }),
+        );
+
+        const signSpy = vi.fn().mockImplementation((tx) => tx);
+        const mockIdentity = {
+            xOnlyPublicKey: () => Promise.resolve(hex.decode(baselinePubKey)),
+            sign: signSpy,
+        };
+        const router = createRouter({
+            identity: mockIdentity,
+            contractRepository: contractRepo,
+        });
+
+        const tx = stubTxWithInputs(1);
+        await router.sign(tx, [{ index: 0, lookupScript: script }]);
+
+        expect(signSpy).toHaveBeenCalledWith(tx, [0]);
+    });
+
+    it("routes rotated boarding contract with descriptor to descriptor provider (plan §6-III.3)", async () => {
+        const contractRepo = new InMemoryContractRepository();
+        const script = taprootScript(ROTATED_A_PUBKEY);
+        const descriptor = "tr(rotated-boarding)";
+        await contractRepo.saveContract(
+            makeContract({
+                script: hex.encode(script),
+                type: "boarding",
+                params: { pubKey: ROTATED_A_PUBKEY },
+                metadata: { signingDescriptor: descriptor },
+            }),
+        );
+
+        const signWithDescriptor = vi.fn().mockImplementation((reqs) => [reqs[0].tx]);
+        const router = createRouter({
+            contractRepository: contractRepo,
+            descriptorProvider: { signWithDescriptor },
+        });
+
+        const tx = stubTxWithInputs(1);
+        await router.sign(tx, [{ index: 0, lookupScript: script }]);
+
+        expect(signWithDescriptor).toHaveBeenCalledWith([{ tx, descriptor, inputIndexes: [0] }]);
+    });
+
+    it("throws MissingSigningDescriptorError (contractType 'boarding') for a rotated boarding contract missing its descriptor", async () => {
+        const contractRepo = new InMemoryContractRepository();
+        const script = taprootScript(ROTATED_A_PUBKEY);
+        await contractRepo.saveContract(
+            makeContract({
+                script: hex.encode(script),
+                type: "boarding",
+                params: { pubKey: ROTATED_A_PUBKEY },
+                metadata: {},
+            }),
+        );
+
+        const router = createRouter({ contractRepository: contractRepo });
+        const tx = stubTxWithInputs(1);
+
+        const err = await router.sign(tx, [{ index: 0, lookupScript: script }]).then(
+            () => undefined,
+            (e) => e,
+        );
+        expect(err).toBeInstanceOf(MissingSigningDescriptorError);
+        expect((err as MissingSigningDescriptorError).contractType).toBe("boarding");
+    });
+
     it("threads identity and descriptor jobs through one accumulated transaction in sorted descriptor order", async () => {
         const contractRepo = new InMemoryContractRepository();
 

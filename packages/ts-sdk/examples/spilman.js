@@ -43,7 +43,7 @@ async function main() {
     console.log("\nInitializing Bob's wallet...");
     const bobWallet = await Wallet.create({
         identity: bob,
-        esploraUrl: "http://localhost:3000",
+        esploraUrl: "http://localhost:3000/api",
         arkServerUrl: "http://localhost:7070",
         storage: {
             walletRepository: new InMemoryWalletRepository(),
@@ -53,7 +53,7 @@ async function main() {
 
     const aliceWallet = await Wallet.create({
         identity: alice,
-        esploraUrl: "http://localhost:3000",
+        esploraUrl: "http://localhost:3000/api",
         arkServerUrl: "http://localhost:7070",
         storage: {
             walletRepository: new InMemoryWalletRepository(),
@@ -62,7 +62,7 @@ async function main() {
     });
 
     console.log("Fetching current chain tip...");
-    const chainTip = await fetch("http://localhost:3000/blocks/tip/height").then((res) =>
+    const chainTip = await fetch("http://localhost:3000/api/blocks/tip/height").then((res) =>
         res.json(),
     );
     console.log("Chain tip:", chainTip);
@@ -242,7 +242,7 @@ async function main() {
         console.log("Final amount sent to Bob:", 1500, "sats");
         console.log("Number of state updates:", bobChannelStates.length);
     } else {
-        execSync(`nigiri rpc --generate 200`);
+        execSync(`node regtest/regtest.mjs mine 200`);
 
         console.log("\nRefunding channel...");
         // after 10 blocks, Alice can spend without Bob's signature

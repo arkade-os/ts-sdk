@@ -17,7 +17,9 @@ import {
     DelegateProvider,
 } from "../src";
 import { TEST_PUB_KEY, TEST_DELEGATE_PUB_KEY, TEST_SERVER_PUB_KEY } from "./contracts/helpers";
-import type { ExtendedCoin } from "../src/wallet";
+import type { ExtendedCoin, ExtendedVirtualCoin } from "../src/wallet";
+import { CSVMultisigTapscript } from "../src/script/tapscript";
+import { MAX_VTXOS_PER_SETTLEMENT } from "../src/wallet/vtxo-manager";
 import { ReadonlySingleKey } from "../src/identity/singleKey";
 import { IndexedDBWalletRepository, IndexedDBContractRepository } from "../src/repositories";
 import type { Coin, VirtualCoin } from "../src/wallet";
@@ -26,8 +28,14 @@ import { timelockToSequence } from "../src/utils/timelock";
 import { DEFAULT_ARKADE_SERVER_URL } from "../src/networks";
 
 // Mock fetch
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
+const { mockFetch } = vi.hoisted(() => ({
+    mockFetch: vi.fn(),
+}));
+
+vi.mock("../src/utils/fetch", () => ({
+    fetch: mockFetch,
+    baseFetch: mockFetch,
+}));
 
 vi.stubGlobal("EventSource", MockEventSource);
 
@@ -117,6 +125,13 @@ describe("Wallet", () => {
             //    the wallet's default contract (includeSpent=true)
             // 4. ContractWatcher.subscribeForScripts for the wallet's script
             // 5. getContractsWithVtxos -> syncContracts delta fetch
+            //
+            // boardingExitDelay equals unilateralExitDelay here, so the
+            // boarding script is byte-identical to the default baseline
+            // contract's script. Contract-manager init creates the boarding
+            // contract create-if-missing, so it is skipped (the script is
+            // already persisted/watched via the default contract) and the
+            // fetch sequence above is unchanged.
 
             mockFetch
                 .mockResolvedValueOnce({
@@ -127,6 +142,7 @@ describe("Wallet", () => {
                             forfeitPubkey: mockServerKeyHex,
                             batchExpiry: BigInt(144),
                             unilateralExitDelay: BigInt(144),
+                            boardingExitDelay: BigInt(144),
                             roundInterval: BigInt(144),
                             network: "mutinynet",
                             forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
@@ -1703,6 +1719,7 @@ describe("Wallet._settleImpl", () => {
             safeRegisterIntent,
             createBatchHandler,
             updateDbAfterSettle,
+            maybeRotateBoardingAfterBoard: vi.fn().mockResolvedValue(undefined),
         };
 
         const result = await (Wallet.prototype as any)._settleImpl.call(thisArg, {
@@ -1722,6 +1739,9 @@ describe("Wallet._settleImpl", () => {
         expect(stream.return).toHaveBeenCalledTimes(1);
         expect(createBatchHandler).toHaveBeenCalledWith("intent-id", [input], [], undefined);
         expect(updateDbAfterSettle).toHaveBeenCalledWith([input], "commitment-txid");
+        // A successful settle feeds its resolved inputs to the rotate-on-board
+        // hook (which decides whether a boarding UTXO was consumed).
+        expect(thisArg.maybeRotateBoardingAfterBoard).toHaveBeenCalledWith([input]);
         batchJoinSpy.mockRestore();
     });
 
@@ -1786,6 +1806,248 @@ describe("Wallet._settleImpl", () => {
         expect(deleteIntent).toHaveBeenCalledTimes(1);
         expect(batchJoinSpy).not.toHaveBeenCalled();
         batchJoinSpy.mockRestore();
+    });
+
+    // Regression coverage for the no-params (auto-select) settle branch, which
+    // selects all spendable inputs itself and applies MAX_VTXOS_PER_SETTLEMENT.
+    describe("no-params auto-select cap", () => {
+        const exitScriptHex = hex.encode(
+            CSVMultisigTapscript.encode({
+                timelock: { type: "seconds", value: 604_672n },
+                pubkeys: [new Uint8Array(32).fill(0x01)],
+            }).script,
+        );
+
+        const makeVtxo = (value: number, i: number): ExtendedVirtualCoin =>
+            ({
+                txid: `vtxo-${value}-${i}`,
+                vout: 0,
+                value,
+                virtualStatus: {
+                    state: "settled",
+                    batchExpiry: Date.now() + 60 * 60 * 1000,
+                },
+                isSpent: false,
+                status: { confirmed: true },
+                createdAt: new Date(),
+                isUnrolled: false,
+                forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
+                intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+                tapTree: new Uint8Array(),
+            }) as any;
+
+        const makeBoardingUtxo = (value: number, vout = 0): ExtendedCoin =>
+            ({
+                txid: `boarding-${value}-${vout}`,
+                vout,
+                value,
+                status: {
+                    confirmed: true,
+                    block_time: Math.floor(Date.now() / 1000) - 60,
+                },
+            }) as ExtendedCoin;
+
+        // Build a `this` for _settleImpl that runs the auto-select branch and
+        // short-circuits at makeRegisterIntentSignature, capturing the final
+        // selected inputs (which is what gets registered with the server).
+        const buildThisArg = (
+            vtxos: ExtendedVirtualCoin[],
+            intentFee: Record<string, string>,
+            boardingUtxos: ExtendedCoin[] = [],
+        ) => {
+            let capturedInputs: ExtendedCoin[] | undefined;
+            const sentinel = new Error("stop-after-selection");
+            const thisArg: any = {
+                network: "mutinynet",
+                dustAmount: 330n,
+                arkProvider: {
+                    getInfo: vi.fn().mockResolvedValue({ fees: { intentFee } }),
+                },
+                onchainProvider: {
+                    getChainTip: vi.fn().mockResolvedValue({ height: 1000 }),
+                },
+                boardingTapscript: { exitScript: exitScriptHex },
+                getBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
+                getVtxos: vi.fn().mockResolvedValue(vtxos),
+                getAddress: vi.fn().mockResolvedValue(walletAddress),
+                identity: {
+                    signerSession: () => ({
+                        getPublicKey: async () => new Uint8Array(32),
+                    }),
+                },
+                makeRegisterIntentSignature: vi.fn(async (coins: ExtendedCoin[]) => {
+                    capturedInputs = coins;
+                    throw sentinel;
+                }),
+                makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+                    proof: "delete-proof",
+                    message: { type: "delete", expire_at: 0 },
+                }),
+                _addPendingSpends: vi.fn(),
+            };
+            return { thisArg, sentinel, getCaptured: () => capturedInputs };
+        };
+
+        it("caps the number of auto-selected VTXOs at MAX_VTXOS_PER_SETTLEMENT", async () => {
+            const value = 5_000;
+            const vtxos = Array.from({ length: MAX_VTXOS_PER_SETTLEMENT + 5 }, (_, i) =>
+                makeVtxo(value, i),
+            );
+            const { thisArg, sentinel, getCaptured } = buildThisArg(vtxos, {});
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            expect(getCaptured()).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+        });
+
+        it("keeps boarding inputs in addition to capped auto-selected VTXOs", async () => {
+            const boarding = [makeBoardingUtxo(10_000), makeBoardingUtxo(12_000, 1)];
+            const value = 5_000;
+            const vtxos = Array.from({ length: MAX_VTXOS_PER_SETTLEMENT + 5 }, (_, i) =>
+                makeVtxo(value, i),
+            );
+            const { thisArg, sentinel, getCaptured } = buildThisArg(vtxos, {}, boarding);
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            const captured = getCaptured()!;
+            expect(captured).toHaveLength(boarding.length + MAX_VTXOS_PER_SETTLEMENT);
+            expect(captured.slice(0, boarding.length)).toEqual(boarding);
+            expect(captured.slice(boarding.length)).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+        });
+
+        it("settles the highest-value VTXOs first when capping", async () => {
+            // 10 large VTXOs listed AFTER 50 small ones. Sorting by value
+            // before the cap must rescue the large ones so the capped batch
+            // carries the most value (overflow settles on the next call).
+            const small = Array.from({ length: MAX_VTXOS_PER_SETTLEMENT }, (_, i) =>
+                makeVtxo(1_000, i),
+            );
+            const large = Array.from({ length: 10 }, (_, i) => makeVtxo(10_000, 1_000 + i));
+            const { thisArg, sentinel, getCaptured } = buildThisArg([...small, ...large], {});
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            const captured = getCaptured()!;
+            expect(captured).toHaveLength(MAX_VTXOS_PER_SETTLEMENT);
+            expect(captured.filter((v: any) => v.value === 10_000)).toHaveLength(10);
+        });
+
+        it("caps viable VTXOs, not an uneconomic prefix", async () => {
+            // 50 uneconomic VTXOs ahead of 3 viable ones, with a flat 200-sat
+            // offchain input fee. The cap must count viable inputs only, so the
+            // 3 VTXOs behind the uneconomic prefix are still selected.
+            const tiny = Array.from({ length: MAX_VTXOS_PER_SETTLEMENT }, (_, i) =>
+                makeVtxo(100, i),
+            );
+            const normal = Array.from({ length: 3 }, (_, i) => makeVtxo(10_000, 1_000 + i));
+            const { thisArg, sentinel, getCaptured } = buildThisArg([...tiny, ...normal], {
+                offchainInput: "200.0",
+            });
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            const captured = getCaptured()!;
+            expect(captured).toHaveLength(3);
+            expect(captured.every((v: any) => v.value === 10_000)).toBe(true);
+        });
+
+        it("caps the auto-selected total at the server's vtxoMaxAmount", async () => {
+            const value = 5_000;
+            const vtxos = Array.from({ length: 10 }, (_, i) => makeVtxo(value, i));
+            const { thisArg, sentinel, getCaptured } = buildThisArg(vtxos, {});
+            // No intent fees, so net == value; the 12000 ceiling fits only 2.
+            thisArg.arkProvider.getInfo.mockResolvedValue({
+                fees: { intentFee: {} },
+                vtxoMaxAmount: 12000n,
+            });
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            expect(getCaptured()).toHaveLength(2);
+        });
+
+        it("does not cap the auto-selected total when vtxoMaxAmount is -1", async () => {
+            const value = 5_000;
+            const vtxos = Array.from({ length: 10 }, (_, i) => makeVtxo(value, i));
+            const { thisArg, sentinel, getCaptured } = buildThisArg(vtxos, {});
+            thisArg.arkProvider.getInfo.mockResolvedValue({
+                fees: { intentFee: {} },
+                vtxoMaxAmount: -1n,
+            });
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            expect(getCaptured()).toHaveLength(10);
+        });
+
+        it("skips an oversized VTXO and selects a smaller one within vtxoMaxAmount", async () => {
+            // byValueDescending tries 12000 first (> 10000 ceiling, skipped),
+            // then 5000 fits. A break here would settle nothing.
+            const vtxos = [makeVtxo(12_000, 0), makeVtxo(5_000, 1)];
+            const { thisArg, sentinel, getCaptured } = buildThisArg(vtxos, {});
+            thisArg.arkProvider.getInfo.mockResolvedValue({
+                fees: { intentFee: {} },
+                vtxoMaxAmount: 10_000n,
+            });
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            const captured = getCaptured()!;
+            expect(captured).toHaveLength(1);
+            expect(captured[0].value).toBe(5_000);
+        });
+
+        it("compares vtxoMaxAmount against the projected post-fee output", async () => {
+            // Pre-fee subtotal (10_500) exceeds the 10_000 ceiling, but the
+            // flat 1000-sat output fee brings the registered output down to
+            // 9_500, which fits. The VTXO must be selected, not dropped.
+            const vtxos = [makeVtxo(10_500, 0)];
+            const { thisArg, sentinel, getCaptured } = buildThisArg(vtxos, {
+                offchainOutput: "1000.0",
+            });
+            thisArg.arkProvider.getInfo.mockResolvedValue({
+                fees: { intentFee: { offchainOutput: "1000.0" } },
+                vtxoMaxAmount: 10_000n,
+            });
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            const captured = getCaptured()!;
+            expect(captured).toHaveLength(1);
+            expect(captured[0].value).toBe(10_500);
+        });
+
+        it("reads the receive address once so a mid-settle rotation can't desync the output script", async () => {
+            // The output and the asset-routing destination script must come
+            // from one address read; re-reading could observe a
+            // WalletReceiveRotator.rotate() swap (it mutates offchainTapscript
+            // without _txLock) and make findDestinationOutputIndex miss.
+            const vtxos = [makeVtxo(5_000, 0)];
+            const { thisArg, sentinel } = buildThisArg(vtxos, {});
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            expect(thisArg.getAddress).toHaveBeenCalledTimes(1);
+        });
     });
 });
 
@@ -2020,18 +2282,19 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         expect(saveVtxos).not.toHaveBeenCalled();
     });
 
-    it("binds the change VTXO metadata to the snapshot, not to this.offchainTapscript", async () => {
+    it("binds the change VTXO metadata to the snapshot, not to this.offchainTapscript / this.arkServerPublicKey", async () => {
         // PR #489 review #1 contract test: the change output's pkScript
         // is captured under `_txLock` BEFORE the offchain round-trip,
         // but the change-VTXO metadata (`forfeitTapLeafScript`,
         // `tapTree`, `script`, `primaryAddress`) is written AFTER the
-        // round-trip — `WalletReceiveRotator.rotate` could swap
-        // `this.offchainTapscript` in between. The fix threads the
-        // pre-round-trip snapshot down as a parameter and derives all
-        // four fields from it. A regression that re-reads
-        // `this.offchainTapscript` inside the function would bind the
-        // change to the post-rotation tapscript while the server's
-        // VTXO is locked to the pre-rotation pkScript — the exact P1
+        // round-trip — `rotateServerSigner` could swap
+        // `this.offchainTapscript` AND `this.arkServerPublicKey` in
+        // between. The fix threads the pre-round-trip snapshot (tapscript
+        // + server key) down as parameters and derives all fields from
+        // them. A regression that re-reads `this.offchainTapscript` or
+        // `this.arkServerPublicKey` inside the function would bind the
+        // change/primaryAddress to the post-rotation epoch while the
+        // server's VTXO is locked to the pre-rotation one — the exact P1
         // race we're guarding against.
         //
         // Two real `DefaultVtxo.Script` instances with distinct
@@ -2042,10 +2305,12 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         const tapscriptOld = new DefaultVtxo.Script({
             pubKey: TEST_PUB_KEY,
             serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
         });
         const tapscriptNew = new DefaultVtxo.Script({
             pubKey: TEST_DELEGATE_PUB_KEY,
             serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
         });
         // Sanity: the two tapscripts produce distinguishable outputs.
         // Without this, any assertion below would be vacuously true.
@@ -2091,7 +2356,10 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
 
         const thisArg = {
             network: { hrp: "ark" },
-            arkServerPublicKey: TEST_SERVER_PUB_KEY,
+            // Deliberately the WRONG server key on `this`. A regression that
+            // re-reads `this.arkServerPublicKey` would derive `primaryAddress`
+            // from this instead of the snapshot below.
+            arkServerPublicKey: TEST_PUB_KEY,
             // Deliberately the WRONG tapscript on `this`. A regression
             // that re-reads `this.offchainTapscript` inside the
             // function would bind the change to this instead of the
@@ -2110,7 +2378,8 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
             1_000,
             4_000n,
             1,
-            tapscriptNew, // the snapshot
+            tapscriptNew, // the tapscript snapshot
+            TEST_SERVER_PUB_KEY, // the server-key snapshot
         );
 
         // Find the change-row save (the one keyed by CHANGE_ADDR).
@@ -2134,7 +2403,10 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         expect(hex.encode(changeVtxo.intentTapLeafScript[1])).toBe(hex.encode(expectedForfeit[1]));
 
         // `primaryAddress` (the address `saveTransactions` is keyed by)
-        // also derives from the snapshot, not from `this.arkAddress`.
+        // also derives from the snapshot tapscript + server key, not from
+        // `this.offchainTapscript` / `this.arkServerPublicKey`. With the wrong
+        // server key on `this`, a regression would key it by neither CHANGE_ADDR
+        // nor SPEND_ADDR.
         expect(saveTransactions).toHaveBeenCalledTimes(1);
         expect(saveTransactions.mock.calls[0][0]).toBe(CHANGE_ADDR);
         expect(saveTransactions.mock.calls[0][0]).not.toBe(SPEND_ADDR);
@@ -2148,15 +2420,26 @@ describe("Wallet.updateDbAfterSettle", () => {
     const DELEGATE_ADDR = "ark1delegateaddress";
     const BOARDING_ADDR = "bc1boardingaddr";
 
+    // Per-address boarding-UTXO buckets keyed by address. `updateDbAfterSettle`
+    // resolves the source address of each boarding input from its tapTree, so
+    // the mock must return the right bucket per address (not a single global
+    // list) to exercise the address-aware cleanup (plan §6-III.4).
     const makeThisArg = (overrides: {
         annotateVtxos: ReturnType<typeof vi.fn>;
         contracts: { script: string; address: string }[];
         currentBoardingUtxos?: any[];
+        boardingUtxosByAddress?: Record<string, any[]>;
+        network?: any;
     }) => {
         const saveVtxos = vi.fn().mockResolvedValue(undefined);
         const saveUtxos = vi.fn().mockResolvedValue(undefined);
         const deleteUtxos = vi.fn().mockResolvedValue(undefined);
-        const getUtxos = vi.fn().mockResolvedValue(overrides.currentBoardingUtxos ?? []);
+        const byAddress = overrides.boardingUtxosByAddress;
+        const getUtxos = vi
+            .fn()
+            .mockImplementation(async (address: string) =>
+                byAddress ? (byAddress[address] ?? []) : (overrides.currentBoardingUtxos ?? []),
+            );
         const getContracts = vi.fn().mockResolvedValue(overrides.contracts);
         const getContractManager = vi.fn().mockResolvedValue({
             annotateVtxos: overrides.annotateVtxos,
@@ -2172,6 +2455,7 @@ describe("Wallet.updateDbAfterSettle", () => {
                 },
                 getContractManager,
                 getBoardingAddress: vi.fn().mockResolvedValue(BOARDING_ADDR),
+                network: overrides.network ?? { bech32: "bcrt", hrp: "tark" },
             } as any,
             saveVtxos,
             saveUtxos,
@@ -2179,6 +2463,23 @@ describe("Wallet.updateDbAfterSettle", () => {
             getUtxos,
         };
     };
+
+    // A boarding ExtendedCoin carrying a real per-UTXO tapTree, so
+    // `updateDbAfterSettle` can resolve its on-chain source address.
+    const makeBoardingCoin = (
+        tapscript: DefaultVtxo.Script,
+        txidChar: string,
+        value = 10_000,
+    ): ExtendedCoin =>
+        ({
+            txid: txidChar.repeat(64).slice(0, 64),
+            vout: 0,
+            value,
+            status: { confirmed: true },
+            forfeitTapLeafScript: tapscript.forfeit(),
+            intentTapLeafScript: tapscript.forfeit(),
+            tapTree: tapscript.encode(),
+        }) as ExtendedCoin;
 
     const makeVtxoInput = (script: string, suffix: string): ExtendedCoin =>
         ({
@@ -2194,14 +2495,6 @@ describe("Wallet.updateDbAfterSettle", () => {
             forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
             intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
             tapTree: new Uint8Array(64),
-        }) as ExtendedCoin;
-
-    const makeBoardingInput = (suffix: string): ExtendedCoin =>
-        ({
-            txid: suffix.repeat(64).slice(0, 64),
-            vout: 0,
-            value: 10_000,
-            status: { confirmed: true },
         }) as ExtendedCoin;
 
     it("saves single-contract settle rows under the primary bucket", async () => {
@@ -2249,8 +2542,15 @@ describe("Wallet.updateDbAfterSettle", () => {
         expect(calls.get(DELEGATE_ADDR)[0].script).toBe(DELEGATE_SCRIPT);
     });
 
-    it("removes settled boarding inputs even when no vtxo rows are settled", async () => {
-        const boardingInput = makeBoardingInput("b");
+    it("removes a settled boarding input from the bucket of the address it sits on", async () => {
+        const network = { bech32: "bcrt", hrp: "tark" } as any;
+        const boardingScript = new DefaultVtxo.Script({
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+        });
+        const boardingAddr = boardingScript.onchainAddress(network);
+        const boardingInput = makeBoardingCoin(boardingScript, "b");
         const otherUtxo = {
             txid: "c".repeat(64),
             vout: 0,
@@ -2261,7 +2561,10 @@ describe("Wallet.updateDbAfterSettle", () => {
         const { thisArg, saveVtxos, deleteUtxos, saveUtxos, getUtxos } = makeThisArg({
             annotateVtxos,
             contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
-            currentBoardingUtxos: [{ txid: boardingInput.txid, vout: 0, value: 10_000 }, otherUtxo],
+            network,
+            boardingUtxosByAddress: {
+                [boardingAddr]: [{ txid: boardingInput.txid, vout: 0, value: 10_000 }, otherUtxo],
+            },
         });
 
         await (Wallet.prototype as any).updateDbAfterSettle.call(
@@ -2271,9 +2574,71 @@ describe("Wallet.updateDbAfterSettle", () => {
         );
 
         expect(saveVtxos).not.toHaveBeenCalled();
-        expect(getUtxos).toHaveBeenCalledWith(BOARDING_ADDR);
-        expect(deleteUtxos).toHaveBeenCalledWith(BOARDING_ADDR);
-        expect(saveUtxos).toHaveBeenCalledWith(BOARDING_ADDR, [otherUtxo]);
+        // Cleanup targets the bucket of the address the UTXO actually sits on.
+        expect(getUtxos).toHaveBeenCalledWith(boardingAddr);
+        expect(deleteUtxos).toHaveBeenCalledWith(boardingAddr);
+        expect(saveUtxos).toHaveBeenCalledWith(boardingAddr, [otherUtxo]);
+    });
+
+    it("settling a boarding UTXO from a PREVIOUS boarding address cleans up that historical bucket only (plan §6-III.4)", async () => {
+        const network = { bech32: "bcrt", hrp: "tark" } as any;
+        // Two distinct boarding addresses (different owner pubkeys) — a current
+        // and a rotated-away "previous" one.
+        const currentScript = new DefaultVtxo.Script({
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+        });
+        const previousScript = new DefaultVtxo.Script({
+            pubKey: hex.decode("c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"),
+            serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+        });
+        const currentAddr = currentScript.onchainAddress(network);
+        const previousAddr = previousScript.onchainAddress(network);
+        expect(previousAddr).not.toBe(currentAddr);
+
+        // Settle a UTXO received at the PREVIOUS boarding address.
+        const previousInput = makeBoardingCoin(previousScript, "d");
+        const leftoverAtPrevious = {
+            txid: "e".repeat(64),
+            vout: 0,
+            value: 2000,
+            status: { confirmed: true },
+        };
+        const untouchedAtCurrent = {
+            txid: "f".repeat(64),
+            vout: 0,
+            value: 3000,
+            status: { confirmed: true },
+        };
+
+        const annotateVtxos = vi.fn().mockResolvedValue([]);
+        const { thisArg, deleteUtxos, saveUtxos, getUtxos } = makeThisArg({
+            annotateVtxos,
+            contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
+            network,
+            boardingUtxosByAddress: {
+                [previousAddr]: [
+                    { txid: previousInput.txid, vout: 0, value: 10_000 },
+                    leftoverAtPrevious,
+                ],
+                [currentAddr]: [untouchedAtCurrent],
+            },
+        });
+
+        await (Wallet.prototype as any).updateDbAfterSettle.call(
+            thisArg,
+            [previousInput],
+            "commitment-tx",
+        );
+
+        // Only the previous bucket is rewritten; the current bucket is untouched.
+        expect(getUtxos).toHaveBeenCalledWith(previousAddr);
+        expect(getUtxos).not.toHaveBeenCalledWith(currentAddr);
+        expect(deleteUtxos).toHaveBeenCalledWith(previousAddr);
+        expect(deleteUtxos).not.toHaveBeenCalledWith(currentAddr);
+        expect(saveUtxos).toHaveBeenCalledWith(previousAddr, [leftoverAtPrevious]);
     });
 
     it("rethrows when a settled VTXO has no script", async () => {

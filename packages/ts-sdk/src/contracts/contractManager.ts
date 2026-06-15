@@ -6,9 +6,7 @@ import {
     ContractEvent,
     ContractEventCallback,
     ContractState,
-    ContractVtxo,
     ContractWithVtxos,
-    DiscoveredContract,
     DiscoveryDeps,
     GetContractsFilter,
     PathContext,
@@ -28,13 +26,39 @@ import {
     getSyncCursor,
 } from "../utils/syncCursors";
 import {
-    filterVtxosForScript,
     getVtxosForContract,
     saveVtxosForContract,
     warnAndFilterVtxosForScript,
 } from "./vtxoOwnership";
+import { DEFAULT_PAGE_SIZE } from "./constants";
 
-const DEFAULT_PAGE_SIZE = 500;
+/**
+ * Whether two *different* contract types may legitimately share a single
+ * repository row when their derived scripts collide (byte-identical pkScript).
+ *
+ * Contracts are keyed by their pkScript (`script` is the unique identity), so a
+ * given script can own exactly one row. `default` and `boarding` are both built
+ * from the same `DefaultVtxo.Script` shape and differ only by CSV-timelock
+ * value; when the server's offchain unilateral-exit delay and its boarding-exit
+ * delay coincide (a degenerate / misconfigured server — a sound server keeps
+ * them distinct), the two derive a byte-identical script and must share a
+ * single row. {@link ContractManager.upsertContract} resolves such a collision
+ * first-wins (keep the existing row, don't throw). Every other distinct pairing
+ * (e.g. `default` ↔ `vhtlc`, or a `delegate` script — which carries an extra
+ * leaf and cannot collide under sound semantics) signals a real script/params
+ * mismatch and still throws.
+ *
+ * This is a pure *type-pair* rule with no notion of HD index or "baseline":
+ * `upsertContract` sees only the two type strings, so a `default` ↔ `boarding`
+ * collision coalesces at ANY index, including rotated ones — exactly what
+ * equal-delay restore needs (see
+ * docs/hd-wallets_onchain_rotation_collision_fix.md §5.1).
+ *
+ * @internal Exported for unit tests; not part of the public API surface.
+ */
+export function areCoalescibleContractTypes(a: string, b: string): boolean {
+    return (a === "default" && b === "boarding") || (a === "boarding" && b === "default");
+}
 
 /**
  * Hard upper bound on the HD index range probed by {@link scanContracts}.
@@ -45,6 +69,17 @@ const DEFAULT_PAGE_SIZE = 500;
  * failure rather than a normal scan completion.
  */
 const SCAN_MAX_INDEX = 10_000;
+
+/**
+ * Default number of HD indices probed concurrently per {@link scanContracts}
+ * window. The gap loop is still gap-limit bounded and its discovered set is
+ * identical to a one-index-at-a-time scan (see the over-scan-discard rule in
+ * `scanContracts`); the window only overlaps the per-index network round-trips
+ * so an empty wallet closes its `gapLimit` window in `ceil(gapLimit / batch)`
+ * rounds instead of `gapLimit` serial ones. 10 keeps the worst-case over-scan
+ * (indices probed but discarded past the gap-close point) under one window.
+ */
+const DEFAULT_SCAN_BATCH = 10;
 
 export type RefreshVtxosOptions = {
     scripts?: string[];
@@ -98,6 +133,14 @@ export interface ScanResult {
 export interface ScanContractsOptions {
     /** Default 20. A non-positive / non-integer value throws. */
     gapLimit?: number;
+    /**
+     * Number of HD indices probed concurrently per window (default
+     * {@link DEFAULT_SCAN_BATCH}). Pure latency knob: the gap loop stays
+     * gap-limit bounded and the discovered set is identical regardless of
+     * batch size. A non-positive / non-integer value throws. Ignored when
+     * `hd` is false (the static pass probes only index 0).
+     */
+    batchSize?: number;
     /** HD mode → unbounded gap loop guided by the gap counter; false → probe only index 0 (single static pass). */
     hd: boolean;
     /**
@@ -501,12 +544,31 @@ export class ContractManager implements IContractManager {
             );
         }
 
-        // Check if contract already exists and verify it's the same type to avoid silent mismatches
+        // A script is its own unique identity, so at most one row per script.
         const [existing] = await this.getContracts({ script: params.script });
         if (existing) {
+            // Same type → idempotent no-op (re-registering is a no-op).
             if (existing.type === params.type) return { contract: existing, persisted: false };
+            // Degenerate equal-delay collision: a `default` and a `boarding`
+            // script are byte-identical when the server's unilateral-exit and
+            // boarding-exit delays coincide. Tolerate it FIRST-WINS — keep the
+            // existing row exactly as-is (no overwrite, no type promotion, no
+            // throw) and report it was not (re)persisted. This mirrors NArk's
+            // script-keyed dedup (one row per script) and is the single source
+            // of truth for the collision, covering both `createContract` (init)
+            // and `persistAndWatchContract` (the restore scan). Because it never
+            // mutates the row it also preserves the watcher invariant: the
+            // winning row was registered with the watcher when first persisted,
+            // so event callbacks always see the authoritative type — there is no
+            // promote-then-forget-the-watcher gap. See
+            // docs/hd-wallets_onchain_rotation_collision_fix.md §5.1.
+            if (areCoalescibleContractTypes(existing.type, params.type)) {
+                return { contract: existing, persisted: false };
+            }
+            // Any other same-script/different-type collision is a real bug or
+            // hash anomaly — surface it loudly.
             throw new Error(
-                `Contract with script ${params.script} already exists with with type ${existing.type}.`,
+                `Contract with script ${params.script} already exists with type ${existing.type}.`,
             );
         }
 
@@ -538,6 +600,19 @@ export class ContractManager implements IContractManager {
      *   other handler hit it).
      * - `persistAndWatchContract` rejecting is operational/fatal and
      *   propagates (only `discoverAt` is guarded).
+     * - Within an index the handler probes run concurrently (independent
+     *   network reads); their hits are persisted sequentially in
+     *   `discoverables` order to preserve the first-wins collision tie-break.
+     * - Indices are probed `batchSize` at a time (a second concurrency layer
+     *   over the per-index probes), but each window is CAPPED to
+     *   `gapLimit - unused` indices — the most a serial scan could still reach
+     *   before the gap window is guaranteed to close. So every index probed in
+     *   a window is one a one-index-at-a-time scan would also reach: nothing is
+     *   over-scanned, nothing is discarded, and `materialize`/`discoverAt` are
+     *   invoked on exactly the same index set. The window's hits are still
+     *   processed strictly in ascending index order, so the discovered set,
+     *   persisted rows, `lastIndexUsed`, and `handlerErrors` are byte-for-byte
+     *   identical to the serial path — only the wall-clock differs.
      */
     async scanContracts(opts: ScanContractsOptions): Promise<ScanResult> {
         const gapLimit = opts.gapLimit ?? 20;
@@ -546,10 +621,35 @@ export class ContractManager implements IContractManager {
                 `scanContracts: gapLimit must be a positive integer (got ${String(opts.gapLimit)})`,
             );
         }
-        const discoverables = contractHandlers
+        const batchSize = opts.batchSize ?? DEFAULT_SCAN_BATCH;
+        if (!Number.isInteger(batchSize) || batchSize <= 0) {
+            throw new Error(
+                `scanContracts: batchSize must be a positive integer (got ${String(opts.batchSize)})`,
+            );
+        }
+        const registered = contractHandlers
             .getRegisteredTypes()
             .map((t) => contractHandlers.get(t))
             .filter(isDiscoverable);
+
+        // Probe `boarding` before `default`/`delegate`. This ordering is
+        // LOAD-BEARING, not cosmetic: within each index the probes run
+        // concurrently, but their hits are persisted in THIS order and
+        // `upsertContract` resolves a same-script collision FIRST-WINS, so this
+        // order IS the persistence tie-break. In the degenerate equal-delay case
+        // a rotated index can carry BOTH an on-chain boarding UTXO and an L2
+        // VTXO at the same (byte-identical) script; probing boarding first
+        // resolves that collision to a `boarding` row, which keeps the on-chain
+        // UTXO visible to the type-gated `getBoardingUtxos` while the VTXO stays
+        // visible via the type-agnostic `getVtxos`. Resolving to `default` would
+        // hide the on-chain boarding UTXO (the original Finding #1 bug). The
+        // stable partition preserves the relative order of all non-boarding
+        // handlers. A future reorder must not regress this; a unit test pins it.
+        // See docs/hd-wallets_onchain_rotation_collision_fix.md §5.2.
+        const discoverables = [
+            ...registered.filter((h) => h.type === "boarding"),
+            ...registered.filter((h) => h.type !== "boarding"),
+        ];
 
         const maxIdx = opts.hd ? SCAN_MAX_INDEX : 0;
         const handlerErrors: HandlerError[] = [];
@@ -557,30 +657,76 @@ export class ContractManager implements IContractManager {
         let unused = 0;
         let i = 0;
 
+        // Probe one index's discoverable handlers CONCURRENTLY: they are
+        // independent network reads (indexer / on-chain explorer), so
+        // overlapping them cuts per-index latency. Each probe's try/catch
+        // mirrors the former serial guard, capturing a discoverAt rejection
+        // (or synchronous throw) instead of propagating it, so one failing
+        // handler never aborts the others. Materialization failure is
+        // fatal/structural — it is NOT guarded and propagates.
+        const probeIndex = async (index: number) => {
+            const descriptor = opts.materialize(index);
+            return Promise.all(
+                discoverables.map(async (h) => {
+                    try {
+                        return {
+                            ok: true as const,
+                            found: await h.discoverAt(index, descriptor, opts.deps),
+                        };
+                    } catch (error) {
+                        return { ok: false as const, error };
+                    }
+                }),
+            );
+        };
+
         while (i <= maxIdx && unused < gapLimit) {
-            // Materialization failure is fatal/structural — let it propagate.
-            const descriptor = opts.materialize(i);
-            let hitAtThisIndex = false;
-            for (const h of discoverables) {
-                let found: DiscoveredContract[];
-                try {
-                    found = await h.discoverAt(i, descriptor, opts.deps);
-                } catch (error) {
-                    handlerErrors.push({ handler: h.type, index: i, error });
-                    continue;
+            // Probe a WINDOW of indices concurrently (a second concurrency
+            // layer over the per-index probes). The window is capped to
+            // `gapLimit - unused` indices: the most a serial scan could still
+            // reach before the gap window is guaranteed to close. So every
+            // index probed here is one a one-index-at-a-time scan would also
+            // reach — nothing is over-scanned or discarded, and the discovered
+            // set stays byte-for-byte identical to the serial path.
+            const windowEnd = Math.min(maxIdx, i + Math.min(batchSize, gapLimit - unused) - 1);
+            const windowIndices: number[] = [];
+            for (let idx = i; idx <= windowEnd; idx++) windowIndices.push(idx);
+            const windowProbes = await Promise.all(windowIndices.map(probeIndex));
+
+            // Process the window strictly in ASCENDING index order, and within
+            // each index persist in the original `discoverables` order — that
+            // order is the FIRST-WINS collision tie-break (boarding before
+            // default/delegate), so it must not be reordered. Only the I/O
+            // above overlapped. A persistAndWatchContract rejection stays
+            // operational/fatal (unguarded), matching the materialize contract.
+            for (let w = 0; w < windowIndices.length; w++) {
+                const index = windowIndices[w];
+                const probes = windowProbes[w];
+                let hitAtThisIndex = false;
+                for (let h = 0; h < discoverables.length; h++) {
+                    const probe = probes[h];
+                    if (!probe.ok) {
+                        handlerErrors.push({
+                            handler: discoverables[h].type,
+                            index,
+                            error: probe.error,
+                        });
+                        continue;
+                    }
+                    for (const c of probe.found) {
+                        await this.persistAndWatchContract(c); // idempotent (script-keyed)
+                        hitAtThisIndex = true;
+                    }
                 }
-                for (const c of found) {
-                    await this.persistAndWatchContract(c); // idempotent (script-keyed)
-                    hitAtThisIndex = true;
+
+                if (hitAtThisIndex) {
+                    lastIndexUsed = index;
+                    unused = 0;
+                } else {
+                    unused += 1;
                 }
             }
-            if (hitAtThisIndex) {
-                lastIndexUsed = i;
-                unused = 0;
-            } else {
-                unused += 1;
-            }
-            i += 1;
+            i = windowEnd + 1;
         }
 
         // Hit the safety ceiling without the gap window closing — the

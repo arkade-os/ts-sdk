@@ -1,6 +1,6 @@
 /**
- * Thrown when a rotated contract (default or delegate) is missing the
- * metadata.signingDescriptor required to route it to a descriptor-aware
+ * Thrown when a rotated contract (default, delegate, or boarding) is missing
+ * the metadata.signingDescriptor required to route it to a descriptor-aware
  * signer.
  */
 export class MissingSigningDescriptorError extends Error {
@@ -8,7 +8,7 @@ export class MissingSigningDescriptorError extends Error {
 
     constructor(
         readonly contractScript: string,
-        readonly contractType: "default" | "delegate",
+        readonly contractType: "default" | "delegate" | "boarding",
     ) {
         super(
             `Cannot sign input for ${contractType} contract ${contractScript}: ` +

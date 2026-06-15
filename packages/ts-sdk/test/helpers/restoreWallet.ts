@@ -29,7 +29,7 @@ const SINGLEKEY_HEX = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60
 
 const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
-const mockArkInfo = {
+export const mockArkInfo = {
     signerPubkey: SERVER_PUBKEY_HEX,
     forfeitPubkey: SERVER_PUBKEY_HEX,
     batchExpiry: BigInt(144),
@@ -192,11 +192,25 @@ function makeMockIndexer(usedScripts: Set<string>): MockIndexer {
     return indexer;
 }
 
-/** Mock onchain provider — the wallet has no boarding funds in these tests. */
-function makeMockOnchain(): OnchainProvider {
+/**
+ * Mock onchain provider. `fundedOnchain` is the set of on-chain (P2TR)
+ * addresses the provider reports as holding an unspent coin — the single
+ * signal the boarding discovery probe (`OnchainProvider.getCoins`) reads.
+ * Empty by default (no boarding funds), so existing restore tests are
+ * unaffected.
+ */
+function makeMockOnchain(fundedOnchain: Set<string> = new Set()): OnchainProvider {
     return {
-        async getCoins() {
-            return [];
+        async getCoins(address: string) {
+            if (!fundedOnchain.has(address)) return [];
+            return [
+                {
+                    txid: uniqueTxid(address),
+                    vout: 0,
+                    value: 25_000,
+                    status: { confirmed: true },
+                },
+            ];
         },
         async getTxOutspends() {
             return [];
@@ -224,6 +238,8 @@ function makeMockOnchain(): OnchainProvider {
 export interface RestoreWalletHandle {
     wallet: Wallet;
     indexer: MockIndexer;
+    /** On-chain (P2TR) addresses the mock onchain provider reports as funded. */
+    fundedOnchain: Set<string>;
     walletRepository: InMemoryWalletRepository;
     contractRepository: InMemoryContractRepository;
 }
@@ -236,6 +252,7 @@ export interface RestoreWalletHandle {
  */
 export async function makeStaticWalletForTest(
     usedScripts: Set<string> = new Set(),
+    fundedOnchain: Set<string> = new Set(),
 ): Promise<RestoreWalletHandle> {
     const indexer = makeMockIndexer(usedScripts);
     const walletRepository = new InMemoryWalletRepository();
@@ -245,10 +262,10 @@ export async function makeStaticWalletForTest(
         walletMode: "static",
         arkServerUrl: "http://localhost:7070",
         indexerProvider: indexer,
-        onchainProvider: makeMockOnchain(),
+        onchainProvider: makeMockOnchain(fundedOnchain),
         storage: { walletRepository, contractRepository },
     });
-    return { wallet, indexer, walletRepository, contractRepository };
+    return { wallet, indexer, fundedOnchain, walletRepository, contractRepository };
 }
 
 export interface HdRestoreWalletHandle extends RestoreWalletHandle {
@@ -264,6 +281,7 @@ export interface HdRestoreWalletHandle extends RestoreWalletHandle {
  */
 export async function makeHdWalletForTest(
     usedScripts: Set<string> = new Set(),
+    fundedOnchain: Set<string> = new Set(),
 ): Promise<HdRestoreWalletHandle> {
     const indexer = makeMockIndexer(usedScripts);
     const walletRepository = new InMemoryWalletRepository();
@@ -275,7 +293,7 @@ export async function makeHdWalletForTest(
         walletMode: "hd",
         arkServerUrl: "http://localhost:7070",
         indexerProvider: indexer,
-        onchainProvider: makeMockOnchain(),
+        onchainProvider: makeMockOnchain(fundedOnchain),
         storage: { walletRepository, contractRepository },
     });
     const resolved = (wallet as unknown as { _descriptorProvider?: unknown })._descriptorProvider;
@@ -294,6 +312,7 @@ export async function makeHdWalletForTest(
     return {
         wallet,
         indexer,
+        fundedOnchain,
         walletRepository,
         contractRepository,
         hdProvider,

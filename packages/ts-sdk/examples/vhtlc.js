@@ -37,7 +37,7 @@ const arkdExec = process.argv[3] || "docker exec -t arkd";
 if (!action || !["claim", "refund", "unilateralRefund"].includes(action)) {
     console.error("Usage: node examples/vhtlc.js <action> [arkdExec]");
     console.error("action: claim | refund | unilateralRefund");
-    console.error("arkdExec: docker exec -t arkd | nigiri");
+    console.error("arkdExec: docker exec -t arkd");
     process.exit(1);
 }
 
@@ -51,7 +51,7 @@ const secret = Uint8Array.from("I'm bob secret");
 const preimageHash = hash160(secret);
 
 async function main() {
-    const chainTip = await fetch("http://localhost:3000/blocks/tip/height").then((res) =>
+    const chainTip = await fetch("http://localhost:3000/api/blocks/tip/height").then((res) =>
         res.json(),
     );
 
@@ -232,7 +232,7 @@ async function main() {
         }
         case "unilateralRefund": {
             // Generate 200 blocks to ensure the locktime period has passed
-            execSync(`nigiri rpc --generate 200`);
+            execSync(`node regtest/regtest.mjs mine 200`);
 
             // Create and sign the unilateral refund transaction
             const { arkTx, checkpoints } = buildOffchainTx(

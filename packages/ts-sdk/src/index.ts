@@ -30,6 +30,7 @@ import {
     TapTreeCoder,
     getSequence,
 } from "./script/base";
+import { assembleBtcdTaprootTree } from "./script/taprootTree";
 import {
     TxType,
     IWallet,
@@ -78,6 +79,7 @@ import {
     waitForIncomingFunds,
     IncomingFunds,
     selectVirtualCoins,
+    BoardingUtxoGroup,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./wallet/wallet";
@@ -87,7 +89,26 @@ import { SignerSession, TreeNonces, TreePartialSigs } from "./tree/signingSessio
 import { DustChangeError, Ramps } from "./wallet/ramps";
 import { HDDescriptorProvider } from "./wallet/hdDescriptorProvider";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
-import type { IVtxoManager, RenewVtxosOptions, SettlementConfig } from "./wallet/vtxo-manager";
+import type {
+    IVtxoManager,
+    RenewVtxosOptions,
+    SettlementConfig,
+    MigrateDeprecatedSignerOptions,
+    DeprecatedSignerMigrationReport,
+    DeprecatedSignerReport,
+    MigrationVtxoRef,
+    MigrationLegReport,
+    MigrationLegSkipReason,
+    MigrationGlobalSkipReason,
+} from "./wallet/vtxo-manager";
+import {
+    classifyContractSigner,
+    classifyAgainstSignerSet,
+    signerSetFromInfo,
+    isCooperativelyMigratable,
+    toXOnlySignerHex,
+} from "./wallet/signerRotation";
+import type { SignerStatus, SignerClassification, SignerSet } from "./wallet/signerRotation";
 import {
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
@@ -115,6 +136,7 @@ import type {
 } from "./providers/electrum";
 import {
     RestArkProvider,
+    DigestMismatchError,
     ArkProvider,
     SettlementEvent,
     SettlementEventType,
@@ -263,6 +285,9 @@ import { DelegateContractHandler } from "./contracts/handlers/delegate";
 import type { DelegateContractParams } from "./contracts/handlers/delegate";
 import { VHTLCContractHandler } from "./contracts/handlers/vhtlc";
 import type { VHTLCContractParams } from "./contracts/handlers/vhtlc";
+import { isCsvSpendable, isCltvSatisfied } from "./contracts/handlers/helpers";
+import { BoardingContractHandler } from "./contracts/handlers/boarding";
+import type { BoardingContractParams } from "./contracts/handlers/boarding";
 import {
     encodeArkContract,
     decodeArkContract,
@@ -319,6 +344,11 @@ export {
     Ramps,
     DustChangeError,
     VtxoManager,
+    classifyContractSigner,
+    classifyAgainstSignerSet,
+    signerSetFromInfo,
+    isCooperativelyMigratable,
+    toXOnlySignerHex,
     HDDescriptorProvider,
     DelegateManagerImpl,
     DelegatorManagerImpl,
@@ -333,6 +363,7 @@ export {
     ElectrumOnchainProvider,
     WsElectrumChainSource,
     RestArkProvider,
+    DigestMismatchError,
     RestIndexerProvider,
     RestEmulatorProvider,
 
@@ -342,6 +373,7 @@ export {
     DelegateVtxo,
     VtxoScript,
     VHTLC,
+    assembleBtcdTaprootTree,
 
     // Enums
     TxType,
@@ -463,12 +495,16 @@ export {
     DefaultContractHandler,
     DelegateContractHandler,
     VHTLCContractHandler,
+    BoardingContractHandler,
     encodeArkContract,
     decodeArkContract,
     contractFromArkContract,
     contractFromArkContractWithAddress,
     isArkContract,
     isDiscoverable,
+    // Contract handler authoring helpers (spending-path selection)
+    isCsvSpendable,
+    isCltvSatisfied,
 
     // Assets
     ReadonlyAssetManager,
@@ -571,9 +607,20 @@ export type {
 
     // Wallet types
     GetVtxosFilter,
+    BoardingUtxoGroup,
     SettlementConfig,
     IVtxoManager,
     RenewVtxosOptions,
+    MigrateDeprecatedSignerOptions,
+    DeprecatedSignerMigrationReport,
+    DeprecatedSignerReport,
+    MigrationVtxoRef,
+    MigrationLegReport,
+    MigrationLegSkipReason,
+    MigrationGlobalSkipReason,
+    SignerStatus,
+    SignerClassification,
+    SignerSet,
 
     // Asset types
     IReadonlyAssetManager,
@@ -625,6 +672,7 @@ export type {
     DefaultContractParams,
     DelegateContractParams,
     VHTLCContractParams,
+    BoardingContractParams,
     Discoverable,
     DiscoveryDeps,
     DiscoveredContract,
