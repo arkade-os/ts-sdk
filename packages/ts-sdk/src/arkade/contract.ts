@@ -423,7 +423,7 @@ export class ArkadeContract<P extends Program = Program> {
         const defs = names.map((n) => functions[n]);
 
         // Covenant functions need the emulator's co-signer key for the tweak.
-        const covenant = names.find((n, i) => defs[i].arkadeScript);
+        const covenant = names.find((_, i) => defs[i].arkadeScript);
         if (covenant && !client.emulatorKey) {
             throw new Error(
                 `ArkadeContract: function '${covenant}' has an arkadeScript but no emulator is configured — pass an \`emulator\` to Arkade.connect`,
