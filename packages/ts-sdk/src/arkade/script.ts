@@ -9,7 +9,7 @@
  */
 
 import * as P from "micro-packed";
-import { Script, ScriptNum, type ScriptType, OP } from "@scure/btc-signer";
+import { Script, type ScriptType, OP } from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import { ARKADE_OP } from "./opcodes";
 import * as BigNum from "./bignum";
