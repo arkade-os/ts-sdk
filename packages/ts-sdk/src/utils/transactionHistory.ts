@@ -171,15 +171,24 @@ export async function buildTransactionHistory(
                 }
 
                 const assets = subtractAssets(allSpent, changes);
-                sent.push({
-                    key: { ...txKey, arkTxid: vtxo.arkTxId },
-                    tag: "offchain",
-                    type: TxType.TxSent,
-                    amount: txAmount,
-                    settled: true,
-                    createdAt: txTime,
-                    ...(assets && { assets }),
-                });
+
+                // A pure self-transfer returns the full spent amount as change and moves
+                // no assets, so nothing actually leaves the wallet. This happens when all
+                // VTXOs are spent to a self address (e.g. migrating to a new signer after a
+                // server key rotation). Don't record a ghost zero-amount sent transaction.
+                // Note: zero-amount sends that do move assets (issuance/reissuance/burn)
+                // are kept because `assets` is set in those cases.
+                if (txAmount !== 0 || assets) {
+                    sent.push({
+                        key: { ...txKey, arkTxid: vtxo.arkTxId },
+                        tag: "offchain",
+                        type: TxType.TxSent,
+                        amount: txAmount,
+                        settled: true,
+                        createdAt: txTime,
+                        ...(assets && { assets }),
+                    });
+                }
             }
 
             // If the virtual output is forfeited in a batch and the total sum of forfeited virtual outputs is bigger than the sum of new virtual outputs,

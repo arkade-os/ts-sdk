@@ -162,6 +162,50 @@ describe("buildTransactionHistory", () => {
             // The result vtxos should not show as received either (they're change from our own spend)
             expect(receivedTxs).toHaveLength(0);
         });
+
+        it("should not record a ghost zero-amount sent for a signer-rotation migration", async () => {
+            // Migrating all VTXOs to a new signer spends old-signer VTXOs to a single
+            // self output of the full amount. spentAmount === changeAmount, so the net
+            // sent amount is 0 and no assets move: it must not appear in the history.
+            const arkTxId = "migration-ark-tx";
+            const baseDate = new Date("2026-06-15T07:45:58Z");
+
+            const oldSignerVtxos: VirtualCoin[] = [1000, 2471, 173875, 7529].map((value, i) => ({
+                txid: `old-signer-vtxo-${i}`,
+                vout: 0,
+                value,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: new Date(baseDate.getTime() - 1000),
+                isUnrolled: false,
+                isSpent: true,
+                arkTxId,
+            }));
+
+            // Single new-signer output holding the full migrated amount (self change).
+            const newSignerOutput: VirtualCoin = {
+                txid: arkTxId,
+                vout: 0,
+                value: 184875,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: baseDate,
+                isUnrolled: false,
+                isSpent: false,
+            };
+
+            const txs = await buildTransactionHistory(
+                [...oldSignerVtxos, newSignerOutput],
+                [],
+                new Set<string>(),
+            );
+
+            // No sent tx at all, and nothing keyed by the migration tx (the ghost).
+            expect(txs.filter((t) => t.type === TxType.TxSent)).toHaveLength(0);
+            expect(txs.some((t) => t.key.arkTxid === arkTxId)).toBe(false);
+            // The new-signer self output is change, not a receive.
+            expect(txs.some((t) => t.amount === 184875)).toBe(false);
+        });
     });
 
     describe("Receive transactions", () => {
