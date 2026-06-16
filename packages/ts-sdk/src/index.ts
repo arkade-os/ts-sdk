@@ -301,6 +301,7 @@ import type {
 } from "./contracts/types";
 import type { ScanResult, ScanContractsOptions, HandlerError } from "./contracts/contractManager";
 import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
+import { buildVersion, sdkVersion } from "./utils/fetch";
 import { closeDatabase, openDatabase } from "./repositories/indexedDB/manager";
 import {
     WalletMessageHandler,
@@ -409,6 +410,8 @@ export {
     isVtxoExpiringSoon,
     isValidArkAddress,
     getRandomId,
+    buildVersion,
+    sdkVersion,
 
     // Arknote
     ArkNote,
