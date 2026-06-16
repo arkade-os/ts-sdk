@@ -71,8 +71,8 @@ export class InputSignerRouter {
      * here) so the routing rules never live in two places.
      *
      * Throws {@link MissingSigningDescriptorError} for a non-baseline
-     * default/delegate contract whose `metadata.signingDescriptor` is
-     * missing — the same condition that would later abort signing. Failing
+     * default/delegate/boarding contract whose `metadata.signingDescriptor`
+     * is missing — the same condition that would later abort signing. Failing
      * here moves the failure earlier, before any PSBT is mutated.
      */
     async classify(jobs: InputSigningJob[]): Promise<InputRoutingPlan> {
@@ -130,6 +130,8 @@ export class InputSignerRouter {
                 throw new MissingSigningDescriptorError(
                     contract.script,
                     contract.type as "default" | "delegate" | "boarding",
+                    ownerPubKeyHex,
+                    baselinePubKeyHex,
                 );
             }
 
