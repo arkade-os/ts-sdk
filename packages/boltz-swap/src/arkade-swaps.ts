@@ -38,6 +38,7 @@ import type {
     CreateLightningInvoiceResponse,
     SendLightningPaymentRequest,
     SendLightningPaymentResponse,
+    OptimisticSendLightningPaymentResponse,
     ArkToBtcResponse,
     BtcToArkResponse,
     SubmarineRecoveryInfo,
@@ -54,6 +55,8 @@ import {
     isSubmarineFinalStatus,
     isSubmarineSuccessStatus,
     isSubmarineRefundableStatus,
+    hasSubmarineStatusReached,
+    type SubmarineProgressionStatus,
     isReverseFinalStatus,
     isChainFinalStatus,
     isRestoredReverseSwap,
@@ -739,14 +742,38 @@ export class ArkadeSwaps {
 
     /**
      * Sends a Lightning payment via a submarine swap (Arkade → Lightning).
-     * Creates the swap, sends funds, and waits for settlement. Auto-refunds on failure.
+     * Creates the swap, sends funds, and waits for settlement (or, with
+     * `waitFor: "funded"`, only until the lockup transaction is observed —
+     * see {@link SendLightningPaymentRequest.waitFor}). Auto-refunds on
+     * failures observed before the promise resolves.
      * @param args.invoice - BOLT11 Lightning invoice to pay.
-     * @returns The amount paid, preimage (proof of payment), and transaction ID.
+     * @param args.waitFor - "settled" (default) resolves with the preimage at
+     * "transaction.claimed"; "funded" resolves without a preimage as soon as
+     * the payment is in flight.
+     * @returns The amount paid, preimage (proof of payment, unless resolved
+     * at "funded"), and transaction ID.
      * @throws {TransactionFailedError} If the payment fails (auto-refunds if possible).
+     * @remarks With `waitFor: "funded"`, failures observed *after* the promise
+     * resolves are only persisted to the repository (refundable flag) — the
+     * active auto-refund in this method is no longer reachable. Keep the
+     * SwapManager enabled so late failures are refunded automatically;
+     * without it the caller must recover via {@link restoreSwaps} /
+     * {@link recoverSubmarineFunds}.
+     *
+     * Note on types: the overloads narrow on the `waitFor` literal, so a
+     * request stored in a variable typed as `SendLightningPaymentRequest`
+     * widens the result to {@link OptimisticSendLightningPaymentResponse}
+     * (optional preimage) even on the default settled path.
      */
     async sendLightningPayment(
+        args: SendLightningPaymentRequest & { waitFor?: "settled" },
+    ): Promise<SendLightningPaymentResponse>;
+    async sendLightningPayment(
         args: SendLightningPaymentRequest,
-    ): Promise<SendLightningPaymentResponse> {
+    ): Promise<OptimisticSendLightningPaymentResponse>;
+    async sendLightningPayment(
+        args: SendLightningPaymentRequest,
+    ): Promise<OptimisticSendLightningPaymentResponse> {
         const pendingSwap = await this.createSubmarineSwap(args);
         if (!pendingSwap.response.address)
             throw new Error(`Swap ${pendingSwap.id}: missing address in submarine swap response`);
@@ -760,6 +787,21 @@ export class ArkadeSwaps {
         });
 
         try {
+            if (args.waitFor === "funded") {
+                if (!this.swapManager) {
+                    logger.warn(
+                        `Swap ${pendingSwap.id}: sendLightningPayment with waitFor "funded" but ` +
+                            `SwapManager is disabled — a failure after this promise resolves is ` +
+                            `only persisted as refundable, not auto-refunded; recover via ` +
+                            `restoreSwaps/recoverSubmarineFunds`,
+                    );
+                }
+                await this.waitForSwapFunded(pendingSwap);
+                return {
+                    amount: pendingSwap.response.expectedAmount,
+                    txid,
+                };
+            }
             const { preimage } = await this.waitForSwapSettlement(pendingSwap);
             return {
                 amount: pendingSwap.response.expectedAmount,
@@ -1384,6 +1426,9 @@ export class ArkadeSwaps {
 
     /**
      * Waits for a submarine swap's Lightning payment to settle.
+     * Resolves only at the terminal "transaction.claimed" status, once Boltz
+     * has swept the HTLC. To resolve as soon as the payment is in flight, use
+     * {@link waitForSwapFunded} instead.
      * @param pendingSwap - The submarine swap to monitor.
      * @returns The preimage from the settled Lightning payment (proof of payment).
      * @throws {SwapExpiredError} If the swap expires.
@@ -1391,23 +1436,81 @@ export class ArkadeSwaps {
      * @throws {TransactionLockupFailedError} If the lockup transaction fails.
      */
     async waitForSwapSettlement(pendingSwap: BoltzSubmarineSwap): Promise<{ preimage: string }> {
-        return new Promise<{ preimage: string }>((resolve, reject) => {
-            let isResolved = false;
+        // Without a funded-target the internal wait only resolves at
+        // "transaction.claimed", where the preimage is always present.
+        return this.waitForSubmarineSwap(pendingSwap) as Promise<{ preimage: string }>;
+    }
+
+    /**
+     * Waits until a submarine swap is funded: resolves as soon as the lockup
+     * transaction is observed ("transaction.mempool" or any later status in
+     * the lifecycle — statuses can be skipped since subscriptions report only
+     * the current one). The sender's funds are committed and the swap is
+     * refundable from this point, which is when most Lightning wallets show
+     * a payment as "sent".
+     *
+     * Monitoring continues in the background until the swap reaches a
+     * terminal status, persisting updates to the repository (the preimage on
+     * claim, the refundable flag on failure), but this promise no longer
+     * rejects once resolved — acting on a late failure is the caller's
+     * responsibility (the SwapManager handles it automatically when enabled).
+     * @param pendingSwap - The submarine swap to monitor.
+     * @throws {SwapExpiredError} If the swap expires before funding.
+     * @throws {InvoiceFailedToPayError} If Boltz fails to route the payment.
+     * @throws {TransactionLockupFailedError} If the lockup transaction fails.
+     */
+    async waitForSwapFunded(pendingSwap: BoltzSubmarineSwap): Promise<void> {
+        await this.waitForSubmarineSwap(pendingSwap, "transaction.mempool");
+    }
+
+    /**
+     * Shared wait machinery: monitors the swap and resolves at the terminal
+     * "transaction.claimed" status (with the preimage) or, when `resolveAt`
+     * is given, as soon as that status — or any later one in the successful
+     * progression — is observed (without a preimage).
+     */
+    private async waitForSubmarineSwap(
+        pendingSwap: BoltzSubmarineSwap,
+        resolveAt?: SubmarineProgressionStatus,
+    ): Promise<{ preimage?: string }> {
+        return new Promise<{ preimage?: string }>((resolve, reject) => {
+            // A terminal status was processed — stop handling updates. An
+            // optimistic resolution deliberately does NOT set this: the
+            // monitor keeps persisting subsequent statuses (refundable flag
+            // on failure, preimage on claim) so the stored swap doesn't go
+            // stale for SwapManager / restoreSwaps.
+            let isFinal = false;
+            // The promise was resolved or rejected, possibly optimistically.
+            let isSettled = false;
 
             const onStatusUpdate = async (status: BoltzSwapStatus) => {
-                if (isResolved) return;
+                if (isFinal) return;
 
-                const saveStatus = (additionalFields?: Partial<BoltzSubmarineSwap>) =>
-                    updateSubmarineSwapStatus(
-                        pendingSwap,
-                        status,
-                        this.savePendingSubmarineSwap.bind(this),
-                        additionalFields,
-                    );
+                // Persistence must never leave the outer promise pending: a
+                // failed write is logged and the repository self-heals on the
+                // next status update or refreshSwapsStatus.
+                const saveStatus = async (additionalFields?: Partial<BoltzSubmarineSwap>) => {
+                    try {
+                        await updateSubmarineSwapStatus(
+                            pendingSwap,
+                            status,
+                            this.savePendingSubmarineSwap.bind(this),
+                            additionalFields,
+                        );
+                    } catch (error) {
+                        logger.error(
+                            `Swap ${pendingSwap.id}: failed to persist status "${status}": ${error}`,
+                        );
+                    }
+                };
 
+                // After an optimistic resolution, reject/resolve below are
+                // no-ops on the already-settled promise; only persistence
+                // still takes effect.
                 switch (status) {
                     case "swap.expired":
-                        isResolved = true;
+                        isFinal = true;
+                        isSettled = true;
                         await saveStatus({ refundable: true });
                         reject(
                             new SwapExpiredError({
@@ -1417,7 +1520,8 @@ export class ArkadeSwaps {
                         );
                         break;
                     case "invoice.failedToPay":
-                        isResolved = true;
+                        isFinal = true;
+                        isSettled = true;
                         await saveStatus({ refundable: true });
                         reject(
                             new InvoiceFailedToPayError({
@@ -1427,7 +1531,8 @@ export class ArkadeSwaps {
                         );
                         break;
                     case "transaction.lockupFailed":
-                        isResolved = true;
+                        isFinal = true;
+                        isSettled = true;
                         await saveStatus({ refundable: true });
                         reject(
                             new TransactionLockupFailedError({
@@ -1437,26 +1542,67 @@ export class ArkadeSwaps {
                         );
                         break;
                     case "transaction.claimed": {
-                        isResolved = true;
-                        const { preimage } = await this.swapProvider.getSwapPreimage(
-                            pendingSwap.id,
-                        );
-                        await saveStatus({ preimage });
-                        resolve({ preimage });
+                        // Flags are set before the awaits so a status arriving
+                        // mid-await isn't double-processed; the try/catch
+                        // guarantees the promise still completes if the
+                        // preimage fetch fails.
+                        isFinal = true;
+                        isSettled = true;
+                        try {
+                            const { preimage } = await this.swapProvider.getSwapPreimage(
+                                pendingSwap.id,
+                            );
+                            await saveStatus({ preimage });
+                            resolve({ preimage });
+                        } catch (error) {
+                            logger.error(
+                                `Swap ${pendingSwap.id}: failed to fetch preimage on claim: ${error}`,
+                            );
+                            reject(error);
+                        }
                         break;
                     }
                     default:
                         await saveStatus();
+                        // Optimistic resolution: the swap is not settled yet, but
+                        // the caller opted in to resolve at this point of the
+                        // lifecycle. "At or beyond" because the subscription only
+                        // reports the current status — intermediate statuses can
+                        // be skipped and would otherwise never be observed.
+                        if (resolveAt && hasSubmarineStatusReached(status, resolveAt)) {
+                            isSettled = true;
+                            resolve({ preimage: undefined });
+                        }
                         break;
                 }
             };
 
-            this.swapProvider.monitorSwap(pendingSwap.id, onStatusUpdate).catch((error) => {
-                if (!isResolved) {
-                    isResolved = true;
-                    reject(error);
-                }
-            });
+            this.swapProvider
+                .monitorSwap(pendingSwap.id, (status) => {
+                    // monitorSwap doesn't await the callback, so a persistence
+                    // failure here (e.g. after the promise already settled
+                    // optimistically) must not become an unhandled rejection.
+                    onStatusUpdate(status).catch((error) =>
+                        logger.error(
+                            `Swap ${pendingSwap.id}: error handling status "${status}": ${error}`,
+                        ),
+                    );
+                })
+                .catch((error) => {
+                    if (!isSettled) {
+                        isFinal = true;
+                        isSettled = true;
+                        reject(error);
+                    } else {
+                        // Already resolved optimistically — stop processing
+                        // updates; the stored swap may go stale until
+                        // SwapManager / restoreSwaps reconciles it.
+                        isFinal = true;
+                        logger.warn(
+                            `Swap ${pendingSwap.id}: monitor failed after settlement: ${error}`,
+                        );
+                    }
+                });
         });
     }
 
@@ -2805,13 +2951,33 @@ export class ArkadeSwaps {
             if (isSubmarineFinalStatus(swap.status)) continue;
             promises.push(
                 this.getSwapStatus(swap.id)
-                    .then(({ status }) =>
-                        updateSubmarineSwapStatus(
+                    .then(async ({ status }) => {
+                        // A swap that settled while no monitor was attached
+                        // (e.g. a "funded" optimistic send followed by an app
+                        // restart) has no stored preimage yet — fetch it so
+                        // the repository carries the proof of payment. Never
+                        // fail the status update over a missing preimage.
+                        let additionalFields: Partial<BoltzSubmarineSwap> | undefined;
+                        if (isSubmarineSuccessStatus(status) && !swap.preimage) {
+                            try {
+                                const { preimage } = await this.swapProvider.getSwapPreimage(
+                                    swap.id,
+                                );
+                                additionalFields = { preimage };
+                            } catch (error) {
+                                logger.warn(
+                                    `Failed to fetch preimage for settled swap ${swap.id}:`,
+                                    error,
+                                );
+                            }
+                        }
+                        await updateSubmarineSwapStatus(
                             swap,
                             status,
                             this.savePendingSubmarineSwap.bind(this),
-                        ),
-                    )
+                            additionalFields,
+                        );
+                    })
                     .catch((error) => {
                         logger.error(`Failed to refresh swap status for ${swap.id}:`, error);
                     }),
@@ -3020,7 +3186,12 @@ export interface IArkadeSwaps extends AsyncDisposable {
     createLightningInvoice(
         args: CreateLightningInvoiceRequest,
     ): Promise<CreateLightningInvoiceResponse>;
-    sendLightningPayment(args: SendLightningPaymentRequest): Promise<SendLightningPaymentResponse>;
+    sendLightningPayment(
+        args: SendLightningPaymentRequest & { waitFor?: "settled" },
+    ): Promise<SendLightningPaymentResponse>;
+    sendLightningPayment(
+        args: SendLightningPaymentRequest,
+    ): Promise<OptimisticSendLightningPaymentResponse>;
     createSubmarineSwap(args: SendLightningPaymentRequest): Promise<BoltzSubmarineSwap>;
     createReverseSwap(args: CreateLightningInvoiceRequest): Promise<BoltzReverseSwap>;
     claimVHTLC(pendingSwap: BoltzReverseSwap): Promise<void>;
@@ -3031,6 +3202,7 @@ export interface IArkadeSwaps extends AsyncDisposable {
     recoverAllSubmarineFunds(swaps: BoltzSubmarineSwap[]): Promise<SubmarineRecoveryResult[]>;
     waitAndClaim(pendingSwap: BoltzReverseSwap): Promise<{ txid: string }>;
     waitForSwapSettlement(pendingSwap: BoltzSubmarineSwap): Promise<{ preimage: string }>;
+    waitForSwapFunded(pendingSwap: BoltzSubmarineSwap): Promise<void>;
     restoreSwaps(boltzFees?: FeesResponse): Promise<{
         chainSwaps: BoltzChainSwap[];
         reverseSwaps: BoltzReverseSwap[];

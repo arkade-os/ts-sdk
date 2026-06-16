@@ -1,6 +1,6 @@
 export { ArkadeSwaps } from "./arkade-swaps";
 export type { QuoteSwapOptions } from "./arkade-swaps";
-export type { BoltzSwapStatus } from "./boltz-swap-provider";
+export type { BoltzSwapStatus, SubmarineProgressionStatus } from "./boltz-swap-provider";
 export {
     BoltzSwapProvider,
     isChainClaimableStatus,
@@ -27,6 +27,7 @@ export {
     isSubmarineSuccessStatus,
     isSubmarineRefundableStatus,
     isSubmarineSwapRefundable,
+    hasSubmarineStatusReached,
 } from "./boltz-swap-provider";
 export {
     SwapError,
@@ -72,6 +73,7 @@ export type {
     CreateLightningInvoiceRequest,
     SendLightningPaymentResponse,
     SendLightningPaymentRequest,
+    OptimisticSendLightningPaymentResponse,
     IncomingPaymentSubscription,
     ArkadeSwapsConfig,
     ArkadeSwapsCreateConfig,
