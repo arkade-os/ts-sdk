@@ -4,7 +4,6 @@ import { p2tr, SigHash } from "@scure/btc-signer";
 import {
     arkade,
     EsploraProvider,
-    MultisigTapscript,
     networks,
     PrevoutTxField,
     RestArkProvider,
@@ -14,7 +13,7 @@ import {
     VtxoScript,
 } from "../../src";
 import { Transaction } from "../../src/utils/transaction";
-import { addEmulatorPacket, enforcePayTo, faucetOnchain, waitForUtxo } from "./utils";
+import { addEmulatorPacket, faucetOnchain, waitForUtxo } from "./utils";
 
 const EMULATOR_URL = "http://localhost:7073";
 const ARK_SERVER_URL = "http://localhost:7070";
@@ -24,6 +23,32 @@ const FUNDING_SATS = 1_000_000;
 const FUNDING_AMOUNT = 1_000_000n;
 const FEE_AMOUNT = 500n;
 const SPEND_AMOUNT = FUNDING_AMOUNT - FEE_AMOUNT;
+
+// Arkade covenant body (token form of `enforcePayTo`): force output 0 to pay
+// `$amount` to `$receiver`. The leading DUP consumes the witness's `[0]`.
+const payTo = [
+    "DUP",
+    "INSPECTOUTPUTSCRIPTPUBKEY",
+    1,
+    "EQUALVERIFY",
+    "$receiver",
+    "EQUALVERIFY",
+    "INSPECTOUTPUTVALUE",
+    "$amount",
+    "EQUAL",
+] satisfies arkade.AsmToken[];
+
+// On-chain spend contract: a 3-of-3 multisig [$bob, $alice, arkade-tweaked
+// emulator] guarding the pay-to covenant. The last "arkd pubkey" test reuses
+// this program with `alice` bound to arkd's key.
+const spendProgram = {
+    functions: {
+        spend: {
+            tapscript: { signers: ["$bob", "$alice"] },
+            arkadeScript: { asm: payTo },
+        },
+    },
+} satisfies arkade.Program;
 
 async function fetchTxHex(txid: string): Promise<string> {
     const resp = await fetch(`${ESPLORA_URL}/tx/${txid}/hex`);
@@ -38,10 +63,16 @@ describe("arkade SubmitOnchainTx", () => {
     const arkProvider = new RestArkProvider(ARK_SERVER_URL);
     const explorer = new EsploraProvider(ESPLORA_URL);
 
-    let emulatorPubkey: Uint8Array;
+    let ark: arkade.Arkade;
 
     beforeAll(async () => {
-        emulatorPubkey = hex.decode((await emulator.getInfo()).signerPubkey);
+        // No identity: every signer is a `$param`, so the contract is used purely
+        // to derive scripts/addresses; bob/alice sign the PSBTs directly.
+        ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            network: networks.regtest,
+        });
     });
 
     /**
@@ -102,20 +133,17 @@ describe("arkade SubmitOnchainTx", () => {
         const bobX = await bob.xOnlyPublicKey();
         const aliceX = await alice.xOnlyPublicKey();
         const bobP2TR = p2tr(bobX, undefined, networks.regtest).script;
+        const receiver = bobP2TR.slice(2);
 
-        const arkadeScript = enforcePayTo(bobP2TR, SPEND_AMOUNT);
-        const tweakedIntro = arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScript);
-
-        const vtxoScript = new VtxoScript([
-            MultisigTapscript.encode({
-                pubkeys: [bobX, aliceX, tweakedIntro],
-            }).script,
-        ]);
-
-        const arkadeLeafScript = MultisigTapscript.encode({
-            pubkeys: [bobX, aliceX, tweakedIntro],
+        const contract = ark.contract(spendProgram, {
+            bob: bobX,
+            alice: aliceX,
+            receiver,
+            amount: SPEND_AMOUNT,
         });
-        const tapLeafScript = vtxoScript.findLeaf(hex.encode(arkadeLeafScript.script));
+        const arkadeScript = arkade.resolveAsm(payTo, { receiver, amount: SPEND_AMOUNT });
+        const vtxoScript = contract.vtxoScript;
+        const tapLeafScript = contract.leafScript(0);
 
         const contractAddress = vtxoScript.onchainAddress(networks.regtest);
 
@@ -243,27 +271,19 @@ describe("arkade SubmitOnchainTx", () => {
         const bob = SingleKey.fromRandomBytes();
         const bobX = await bob.xOnlyPublicKey();
         const bobP2TR = p2tr(bobX, undefined, networks.regtest).script;
-        const arkadeScript = enforcePayTo(bobP2TR, SPEND_AMOUNT);
+        const receiver = bobP2TR.slice(2);
 
-        const vtxoScript = new VtxoScript([
-            MultisigTapscript.encode({
-                // arkd as a cosigner — must be rejected
-                pubkeys: [
-                    bobX,
-                    arkdX,
-                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScript),
-                ],
-            }).script,
-        ]);
-
-        const arkadeLeaf = MultisigTapscript.encode({
-            pubkeys: [
-                bobX,
-                arkdX,
-                arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScript),
-            ],
+        // Reuse the spend contract with `alice` bound to arkd's signer key — the
+        // emulator must reject a tapscript that cosigns with arkd.
+        const contract = ark.contract(spendProgram, {
+            bob: bobX,
+            alice: arkdX,
+            receiver,
+            amount: SPEND_AMOUNT,
         });
-        const tapLeafScript = vtxoScript.findLeaf(hex.encode(arkadeLeaf.script));
+        const arkadeScript = arkade.resolveAsm(payTo, { receiver, amount: SPEND_AMOUNT });
+        const vtxoScript = contract.vtxoScript;
+        const tapLeafScript = contract.leafScript(0);
 
         // The emulator's rejection check runs before script execution,
         // so the funding txid / prevout tx contents don't matter here.

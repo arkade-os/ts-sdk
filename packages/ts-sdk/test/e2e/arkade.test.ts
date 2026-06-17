@@ -1,12 +1,10 @@
-import { expect, describe, it, beforeEach, beforeAll } from "vitest";
+import { expect, describe, it, beforeEach } from "vitest";
 import { base64, hex } from "@scure/base";
 
 import {
     arkade,
     asset,
     buildOffchainTx,
-    MultisigTapscript,
-    CSVMultisigTapscript,
     ArkAddress,
     networks,
     RestArkProvider,
@@ -17,8 +15,8 @@ import {
     RestEmulatorProvider,
     Extension,
     EmulatorPacket,
-    VtxoScript,
 } from "../../src";
+import type { Identity } from "../../src/identity";
 import {
     beforeEachFaucet,
     createTestArkWallet,
@@ -45,43 +43,117 @@ function makeEmulatorExtensionOutput(
 const EMULATOR_URL = "http://localhost:7073";
 const ARK_SERVER_URL = "http://localhost:7070";
 
+// =========================================================================
+// Arkade contract programs (mirror the hand-built VtxoScript trees)
+// =========================================================================
+
+// Arkade script: check output 0's scriptPubKey is taproot (v1) and equals
+// `$receiver` (the 32-byte witness program). The index 0 is pushed by the
+// script itself, so the arkade witness stack is empty.
+const checkOutputToReceiver = [
+    0,
+    "INSPECTOUTPUTSCRIPTPUBKEY",
+    1,
+    "EQUALVERIFY",
+    "$receiver",
+    "EQUAL",
+] satisfies arkade.AsmToken[];
+
+// Same, plus asset-group introspection: exactly one group whose output sum
+// equals `$assetAmount`.
+const checkOutputWithAsset = [
+    0,
+    "INSPECTOUTPUTSCRIPTPUBKEY",
+    1,
+    "EQUALVERIFY",
+    "$receiver",
+    "EQUALVERIFY",
+    "INSPECTNUMASSETGROUPS",
+    1,
+    "EQUALVERIFY",
+    0, // group index
+    1, // source = outputs
+    "INSPECTASSETGROUPSUM",
+    "$assetAmount",
+    "EQUAL",
+] satisfies arkade.AsmToken[];
+
+// Plain offchain covenant: user + server + arkade-tweaked emulator.
+const offchainProgram = {
+    functions: {
+        send: {
+            tapscript: { signers: ["user", "server"] },
+            arkadeScript: { asm: checkOutputToReceiver },
+        },
+    },
+} satisfies arkade.Program;
+
+// Offchain covenant with asset introspection.
+const assetOffchainProgram = {
+    functions: {
+        send: {
+            tapscript: { signers: ["user", "server"] },
+            arkadeScript: { asm: checkOutputWithAsset },
+        },
+    },
+} satisfies arkade.Program;
+
+// Settlement contract: arkade covenant + a server+user CSV exit leaf.
+const settlementProgram = {
+    functions: {
+        settle: {
+            tapscript: { signers: ["user", "server"] },
+            arkadeScript: { asm: checkOutputToReceiver },
+        },
+        exit: {
+            tapscript: { signers: ["user", "server"], csv: { type: "blocks", value: 5120n } },
+        },
+    },
+} satisfies arkade.Program;
+
+// Settle/mint contracts with asset introspection (used by TestSettlementWithAsset).
+const settleAssetProgram = {
+    functions: {
+        settle: {
+            tapscript: { signers: ["user", "server"] },
+            arkadeScript: { asm: checkOutputWithAsset },
+        },
+        exit: {
+            tapscript: { signers: ["user", "server"], csv: { type: "blocks", value: 5120n } },
+        },
+    },
+} satisfies arkade.Program;
+
+const mintAssetProgram = {
+    functions: {
+        mint: {
+            tapscript: { signers: ["user", "server"] },
+            arkadeScript: { asm: checkOutputWithAsset },
+        },
+    },
+} satisfies arkade.Program;
+
 describe("arkade", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
     const arkProvider = new RestArkProvider(ARK_SERVER_URL);
     const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
 
-    let serverXOnlyPubkey: Uint8Array;
-    let emulatorPubkey: Uint8Array; // full compressed (33 bytes with 02/03 prefix)
-    let checkpointUnrollClosure: CSVMultisigTapscript.Type;
-
-    beforeAll(async () => {
-        const arkInfo = await arkProvider.getInfo();
-        serverXOnlyPubkey = hex.decode(arkInfo.signerPubkey).slice(1);
-        checkpointUnrollClosure = CSVMultisigTapscript.decode(
-            hex.decode(arkInfo.checkpointTapscript),
-        );
-
-        const introInfo = await emulator.getInfo();
-        emulatorPubkey = hex.decode(introInfo.signerPubkey);
-    });
+    /** Connect an Arkade client bound to the given signing identity. */
+    function connect(identity: Identity): Promise<arkade.Arkade> {
+        return arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer: indexerProvider,
+            identity,
+            network: networks.regtest,
+        });
+    }
 
     beforeEach(beforeEachFaucet, 20000);
 
     // =========================================================================
     // Helpers
     // =========================================================================
-
-    /** Build arkade script: check output `index` scriptPubKey == witnessProgram (taproot v1) */
-    function buildCheckOutputScript(outputIndex: number, witnessProgram: Uint8Array): Uint8Array {
-        return arkade.ArkadeScript.encode([
-            outputIndex, // push output index
-            "INSPECTOUTPUTSCRIPTPUBKEY", // → [witnessProgram, version]
-            1, // push 1 (taproot version)
-            "EQUALVERIFY", // check version == 1
-            witnessProgram, // push expected witness program
-            "EQUAL", // check witness program matches
-        ]);
-    }
 
     /** Get witness program (32-byte x-only pubkey) from an ark address */
     function getWitnessProgram(address: string): Uint8Array {
@@ -108,128 +180,55 @@ describe("arkade", () => {
     it("TestOffchain", { timeout: 60000 }, async () => {
         const alice = await createTestArkWallet();
         const bob = createTestIdentity();
-        const bobPubkey = await bob.xOnlyPublicKey();
+        const ark = await connect(bob);
 
         const aliceAddress = await alice.wallet.getAddress();
-        const aliceWitnessProgram = getWitnessProgram(aliceAddress);
+        const aliceWP = getWitnessProgram(aliceAddress);
 
-        // Build arkade script: check output 0 goes to Alice
-        const arkadeScriptBytes = buildCheckOutputScript(0, aliceWitnessProgram);
+        // The covenant forces output 0 to pay Alice.
+        const contract = ark.contract(offchainProgram, { receiver: aliceWP });
 
-        // Create VtxoScript with arkade multisig
-        const vtxoScript = new VtxoScript([
-            MultisigTapscript.encode({
-                pubkeys: [
-                    bobPubkey,
-                    serverXOnlyPubkey,
-                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScriptBytes),
-                ],
-            }).script,
-        ]);
-        const contractAddress = vtxoScript
-            .address(networks.regtest.hrp, serverXOnlyPubkey)
-            .encode();
-
-        // Fund the contract
+        // Fund the contract.
         const fundAmount = 10000;
-        faucetOffchain(contractAddress, fundAmount);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        faucetOffchain(contract.address, fundAmount);
+        await waitForVtxo(contract.pkScript);
 
-        // Get the VTXO
-        const vtxos = await waitForVtxo(vtxoScript.pkScript);
-        expect(vtxos).toHaveLength(1);
-        const vtxo = vtxos[0];
-
-        // Find the arkade multisig leaf
-        const multisig = MultisigTapscript.encode({
-            pubkeys: [
-                bobPubkey,
-                serverXOnlyPubkey,
-                arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScriptBytes),
-            ],
-        });
-        const tapLeafScript = vtxoScript.findLeaf(hex.encode(multisig.script));
-        const tapTree = vtxoScript.encode();
-
-        // Build offchain tx: output goes to Alice
+        // Spend through the high-level builder: Bob (user) signs the ark tx and
+        // checkpoint inputs, and the emulator — last non-arkd signer — signs with
+        // its tweaked key and finalizes with arkd internally.
         const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
-        const { arkTx, checkpoints } = buildOffchainTx(
-            [{ ...vtxo, tapLeafScript, tapTree }],
-            [
-                { script: alicePkScript, amount: BigInt(fundAmount) },
-                makeEmulatorExtensionOutput(0, arkadeScriptBytes),
-            ],
-            checkpointUnrollClosure,
-        );
-
-        // Bob signs the arkTx and the checkpoints. In v0.0.1 the emulator
-        // becomes the finalizer when it is the last non-arkd signer, and it
-        // verifies all non-arkd signatures on checkpoints before forwarding to
-        // arkd — so Bob's checkpoint sigs must be present BEFORE submitTx.
-        const bobSignedArkTx = await bob.sign(arkTx);
-        const bobSignedCheckpoints = await Promise.all(checkpoints.map((c) => bob.sign(c)));
-
-        // Submit to emulator. It signs with the tweaked key, then
-        // (because it is the last non-arkd signer) calls arkd internally to
-        // submit + finalize. No follow-up arkProvider.submitTx is needed.
-        const introResult = await emulator.submitTx(
-            base64.encode(bobSignedArkTx.toPSBT()),
-            bobSignedCheckpoints.map((c) => base64.encode(c.toPSBT())),
-        );
-        expect(introResult.signedArkTx).toBeTruthy();
+        const { signedArkTx } = await contract.functions
+            .send()
+            .to(alicePkScript, BigInt(fundAmount))
+            .send();
+        expect(signedArkTx).toBeTruthy();
     });
 
     // Settlement flow via intent + batch session (using arkade script)
     it("TestSettlement", { timeout: 120000 }, async () => {
         const alice = await createTestArkWallet();
         const bob = createTestIdentity();
-        const bobPubkey = await bob.xOnlyPublicKey();
+        const ark = await connect(bob);
 
         const aliceAddress = await alice.wallet.getAddress();
         const aliceWP = getWitnessProgram(aliceAddress);
         const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
 
-        // Build arkade script: check output 0 goes to Alice
-        const arkadeScriptBytes = buildCheckOutputScript(0, aliceWP);
-
-        // Create VtxoScript with arkade closure + CSV exit
-        const vtxoScript = new VtxoScript([
-            MultisigTapscript.encode({
-                pubkeys: [
-                    bobPubkey,
-                    serverXOnlyPubkey,
-                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScriptBytes),
-                ],
-            }).script,
-            CSVMultisigTapscript.encode({
-                timelock: { type: "blocks", value: BigInt(5120) },
-                pubkeys: [bobPubkey, serverXOnlyPubkey],
-            }).script,
-        ]);
-        const contractAddress = vtxoScript
-            .address(networks.regtest.hrp, serverXOnlyPubkey)
-            .encode();
+        // Derive the contract (arkade covenant + CSV exit) from the program.
+        const contract = ark.contract(settlementProgram, { receiver: aliceWP });
+        const arkadeScriptBytes = arkade.resolveAsm(checkOutputToReceiver, { receiver: aliceWP });
+        const arkadeLeaf = contract.leafScript(0); // the arkade covenant leaf
+        const tapTree = contract.tapTree;
 
         // Fund the contract
         const fundAmount = 10000;
-        faucetOffchain(contractAddress, fundAmount);
+        faucetOffchain(contract.address, fundAmount);
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
         // Get the VTXO
-        const vtxos = await waitForVtxo(vtxoScript.pkScript);
+        const vtxos = await waitForVtxo(contract.pkScript);
         expect(vtxos).toHaveLength(1);
         const vtxo = vtxos[0];
-
-        // Get the arkade closure leaf
-        const multisig = MultisigTapscript.encode({
-            pubkeys: [
-                bobPubkey,
-                serverXOnlyPubkey,
-                arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScriptBytes),
-            ],
-        });
-        const arkadeLeaf = vtxoScript.findLeaf(hex.encode(multisig.script));
-        const tapTree = vtxoScript.encode();
 
         // Create tree signer session
         const session = bob.signerSession();
@@ -320,7 +319,7 @@ describe("arkade", () => {
     it("TestBoarding", { timeout: 120000 }, async () => {
         const alice = await createTestArkWallet();
         const bob = createTestIdentity();
-        const bobPubkey = await bob.xOnlyPublicKey();
+        const ark = await connect(bob);
 
         const aliceAddress = await alice.wallet.getAddress();
         const aliceWP = getWitnessProgram(aliceAddress);
@@ -329,26 +328,28 @@ describe("arkade", () => {
         const arkInfo = await arkProvider.getInfo();
         const boardingExitDelay = Number(arkInfo.boardingExitDelay);
 
-        // Build arkade script
-        const arkadeScriptBytes = buildCheckOutputScript(0, aliceWP);
-
-        // Create boarding VtxoScript: arkade closure + bob-only CSV exit
-        const vtxoScript = new VtxoScript([
-            MultisigTapscript.encode({
-                pubkeys: [
-                    bobPubkey,
-                    serverXOnlyPubkey,
-                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScriptBytes),
-                ],
-            }).script,
-            CSVMultisigTapscript.encode({
-                timelock: {
-                    type: "blocks",
-                    value: BigInt(boardingExitDelay),
+        // Boarding contract: arkade covenant + a bob-only CSV exit. The exit
+        // delay is the server-provided boarding delay, so the program is built
+        // inline rather than as a module constant.
+        const boardingProgram = {
+            functions: {
+                board: {
+                    tapscript: { signers: ["user", "server"] },
+                    arkadeScript: { asm: checkOutputToReceiver },
                 },
-                pubkeys: [bobPubkey],
-            }).script,
-        ]);
+                exit: {
+                    tapscript: {
+                        signers: ["user"],
+                        csv: { type: "blocks", value: BigInt(boardingExitDelay) },
+                    },
+                },
+            },
+        } satisfies arkade.Program;
+
+        const contract = ark.contract(boardingProgram, { receiver: aliceWP });
+        const arkadeScriptBytes = arkade.resolveAsm(checkOutputToReceiver, { receiver: aliceWP });
+        const arkadeLeaf = contract.leafScript(0);
+        const tapTree = contract.tapTree;
 
         // Get onchain taproot address (regtest uses bcrt1 prefix)
         const btcSigner = await import("@scure/btc-signer");
@@ -358,24 +359,13 @@ describe("arkade", () => {
         };
         const btcAddress = btcSigner.Address(regtestNetwork).encode({
             type: "tr",
-            pubkey: vtxoScript.tweakedPublicKey,
+            pubkey: contract.vtxoScript.tweakedPublicKey,
         });
 
         // Fund on-chain via faucet
         const fundAmount = 10000;
         faucetOnchain(btcAddress, fundAmount);
         await new Promise((resolve) => setTimeout(resolve, 5000));
-
-        // Get the arkade closure leaf
-        const multisig = MultisigTapscript.encode({
-            pubkeys: [
-                bobPubkey,
-                serverXOnlyPubkey,
-                arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScriptBytes),
-            ],
-        });
-        const arkadeLeaf = vtxoScript.findLeaf(hex.encode(multisig.script));
-        const tapTree = vtxoScript.encode();
 
         // Create tree signer session
         const session = bob.signerSession();
@@ -475,7 +465,7 @@ describe("arkade", () => {
     it("TestOffchainTxWithAsset", { timeout: 60000 }, async () => {
         const alice = await createTestArkWallet();
         const bob = createTestIdentity();
-        const bobPubkey = await bob.xOnlyPublicKey();
+        const ark = await connect(bob);
 
         const aliceAddress = await alice.wallet.getAddress();
         const aliceWP = getWitnessProgram(aliceAddress);
@@ -483,59 +473,25 @@ describe("arkade", () => {
 
         const assetAmount = 1000;
 
-        // Build arkade script with asset introspection
-        const scriptOps: arkade.ArkadeScriptType = [
-            // Check output 0 address == Alice
-            0,
-            "INSPECTOUTPUTSCRIPTPUBKEY",
-            1,
-            "EQUALVERIFY",
-            aliceWP,
-            "EQUALVERIFY",
-            // Check: 1 asset group
-            "INSPECTNUMASSETGROUPS",
-            1,
-            "EQUALVERIFY",
-            // Check: sum of outputs for group 0 equals assetAmount
-            0, // group index
-            1, // source = outputs
-            "INSPECTASSETGROUPSUM",
+        // Derive the asset covenant contract. The issuance asset packet (assetId
+        // = null) is not expressible via the builder's `.withAsset()`, so the
+        // offchain tx is assembled manually from the contract's script.
+        const contract = ark.contract(assetOffchainProgram, { receiver: aliceWP, assetAmount });
+        const arkadeScriptBytes = arkade.resolveAsm(checkOutputWithAsset, {
+            receiver: aliceWP,
             assetAmount,
-            "EQUAL",
-        ];
-        const arkadeScriptBytes = arkade.ArkadeScript.encode(scriptOps);
-
-        const vtxoScript = new VtxoScript([
-            MultisigTapscript.encode({
-                pubkeys: [
-                    bobPubkey,
-                    serverXOnlyPubkey,
-                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScriptBytes),
-                ],
-            }).script,
-        ]);
-        const contractAddress = vtxoScript
-            .address(networks.regtest.hrp, serverXOnlyPubkey)
-            .encode();
+        });
+        const tapLeafScript = contract.leafScript(0);
+        const tapTree = contract.tapTree;
 
         // Fund the contract
         const fundAmount = 10000;
-        faucetOffchain(contractAddress, fundAmount);
+        faucetOffchain(contract.address, fundAmount);
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
-        const vtxos = await waitForVtxo(vtxoScript.pkScript);
+        const vtxos = await waitForVtxo(contract.pkScript);
         expect(vtxos).toHaveLength(1);
         const vtxo = vtxos[0];
-
-        const multisig = MultisigTapscript.encode({
-            pubkeys: [
-                bobPubkey,
-                serverXOnlyPubkey,
-                arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScriptBytes),
-            ],
-        });
-        const tapLeafScript = vtxoScript.findLeaf(hex.encode(multisig.script));
-        const tapTree = vtxoScript.encode();
 
         // Create issuance asset packet
         const assetPacket = asset.Packet.create([
@@ -557,7 +513,7 @@ describe("arkade", () => {
         const { arkTx, checkpoints } = buildOffchainTx(
             [{ ...vtxo, tapLeafScript, tapTree }],
             outputs,
-            checkpointUnrollClosure,
+            ark.checkpoint,
         );
 
         // Bob signs the arkTx and checkpoints; emulator auto-finalizes via
@@ -576,7 +532,7 @@ describe("arkade", () => {
     it("TestSettlementWithAsset", { timeout: 180000 }, async () => {
         const alice = await createTestArkWallet();
         const bob = createTestIdentity();
-        const bobPubkey = await bob.xOnlyPublicKey();
+        const ark = await connect(bob);
 
         const aliceAddress = await alice.wallet.getAddress();
         const aliceWP = getWitnessProgram(aliceAddress);
@@ -587,95 +543,32 @@ describe("arkade", () => {
 
         // === Phase 1: Mint ===
 
-        // Settle contract script: checks output goes to Alice + 1 asset group + sum
-        const settleScriptOps: arkade.ArkadeScriptType = [
-            0,
-            "INSPECTOUTPUTSCRIPTPUBKEY",
-            1,
-            "EQUALVERIFY",
-            aliceWP,
-            "EQUALVERIFY",
-            "INSPECTNUMASSETGROUPS",
-            1,
-            "EQUALVERIFY",
-            0,
-            1,
-            "INSPECTASSETGROUPSUM",
+        // Settle contract: forces the spend to Alice + 1 asset group summing to
+        // assetAmount; plus a server+user CSV exit.
+        const settleContract = ark.contract(settleAssetProgram, { receiver: aliceWP, assetAmount });
+        const settleArkadeScript = arkade.resolveAsm(checkOutputWithAsset, {
+            receiver: aliceWP,
             assetAmount,
-            "EQUAL",
-        ];
-        const settleArkadeScript = arkade.ArkadeScript.encode(settleScriptOps);
+        });
+        const settleWP = getWitnessProgram(settleContract.address);
 
-        // Create settle contract VtxoScript with CSV exit
-        const settleVtxoScript = new VtxoScript([
-            MultisigTapscript.encode({
-                pubkeys: [
-                    bobPubkey,
-                    serverXOnlyPubkey,
-                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, settleArkadeScript),
-                ],
-            }).script,
-            CSVMultisigTapscript.encode({
-                timelock: { type: "blocks", value: BigInt(5120) },
-                pubkeys: [bobPubkey, serverXOnlyPubkey],
-            }).script,
-        ]);
-        const settleContractAddress = settleVtxoScript
-            .address(networks.regtest.hrp, serverXOnlyPubkey)
-            .encode();
-        const settleWP = getWitnessProgram(settleContractAddress);
-
-        // Mint contract script: checks output goes to settle contract + 1 asset group + sum
-        const mintScriptOps: arkade.ArkadeScriptType = [
-            0,
-            "INSPECTOUTPUTSCRIPTPUBKEY",
-            1,
-            "EQUALVERIFY",
-            settleWP,
-            "EQUALVERIFY",
-            "INSPECTNUMASSETGROUPS",
-            1,
-            "EQUALVERIFY",
-            0,
-            1,
-            "INSPECTASSETGROUPSUM",
+        // Mint contract: forces the spend to the settle contract + 1 asset group.
+        const mintContract = ark.contract(mintAssetProgram, { receiver: settleWP, assetAmount });
+        const mintArkadeScript = arkade.resolveAsm(checkOutputWithAsset, {
+            receiver: settleWP,
             assetAmount,
-            "EQUAL",
-        ];
-        const mintArkadeScript = arkade.ArkadeScript.encode(mintScriptOps);
-
-        const mintVtxoScript = new VtxoScript([
-            MultisigTapscript.encode({
-                pubkeys: [
-                    bobPubkey,
-                    serverXOnlyPubkey,
-                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, mintArkadeScript),
-                ],
-            }).script,
-        ]);
-        const mintContractAddress = mintVtxoScript
-            .address(networks.regtest.hrp, serverXOnlyPubkey)
-            .encode();
+        });
 
         // Fund the mint contract
-        faucetOffchain(mintContractAddress, fundAmount);
+        faucetOffchain(mintContract.address, fundAmount);
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
-        const mintVtxos = await waitForVtxo(mintVtxoScript.pkScript);
+        const mintVtxos = await waitForVtxo(mintContract.pkScript);
         expect(mintVtxos).toHaveLength(1);
         const mintVtxo = mintVtxos[0];
 
-        // Build offchain tx: mint VTXO → settle contract
-        const mintMultisig = MultisigTapscript.encode({
-            pubkeys: [
-                bobPubkey,
-                serverXOnlyPubkey,
-                arkade.computeArkadeScriptPublicKey(emulatorPubkey, mintArkadeScript),
-            ],
-        });
-        const mintTapLeaf = mintVtxoScript.findLeaf(hex.encode(mintMultisig.script));
-
-        const settleContractPkScript = ArkAddress.decode(settleContractAddress).pkScript;
+        const mintTapLeaf = mintContract.leafScript(0);
+        const settleContractPkScript = settleContract.pkScript;
 
         // Create issuance asset packet
         const issuancePacket = asset.Packet.create([
@@ -687,7 +580,7 @@ describe("arkade", () => {
                 {
                     ...mintVtxo,
                     tapLeafScript: mintTapLeaf,
-                    tapTree: mintVtxoScript.encode(),
+                    tapTree: mintContract.tapTree,
                 },
             ],
             [
@@ -697,7 +590,7 @@ describe("arkade", () => {
                 },
                 makeEmulatorExtensionOutput(0, mintArkadeScript, issuancePacket),
             ],
-            checkpointUnrollClosure,
+            ark.checkpoint,
         );
 
         // Bob signs the mint tx and checkpoints; emulator auto-finalizes via
@@ -718,19 +611,12 @@ describe("arkade", () => {
         await new Promise((resolve) => setTimeout(resolve, 2000));
 
         // Get the settle VTXO
-        const settleVtxos = await waitForVtxo(settleVtxoScript.pkScript);
+        const settleVtxos = await waitForVtxo(settleContract.pkScript);
         expect(settleVtxos).toHaveLength(1);
         const settleVtxo = settleVtxos[0];
 
-        const settleMultisig = MultisigTapscript.encode({
-            pubkeys: [
-                bobPubkey,
-                serverXOnlyPubkey,
-                arkade.computeArkadeScriptPublicKey(emulatorPubkey, settleArkadeScript),
-            ],
-        });
-        const settleArkadeLeaf = settleVtxoScript.findLeaf(hex.encode(settleMultisig.script));
-        const settleTapTree = settleVtxoScript.encode();
+        const settleArkadeLeaf = settleContract.leafScript(0);
+        const settleTapTree = settleContract.tapTree;
 
         // Create tree signer session
         const session = bob.signerSession();

@@ -1,31 +1,13 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { base64, hex } from "@scure/base";
-import { Script } from "@scure/btc-signer";
+import { hex } from "@scure/base";
 import {
     arkade,
-    ArkAddress,
-    buildOffchainTx,
-    CLTVMultisigTapscript,
-    ConditionMultisigTapscript,
-    CSVMultisigTapscript,
-    MultisigTapscript,
     networks,
     RestArkProvider,
     RestIndexerProvider,
     RestEmulatorProvider,
-    setArkPsbtField,
-    ConditionWitness,
-    Transaction,
-    VtxoScript,
 } from "../../src";
-import {
-    addEmulatorPacket,
-    beforeEachFaucet,
-    createTestArkWallet,
-    enforcePayTo,
-    faucetOffchain,
-    randomP2TR,
-} from "./utils";
+import { beforeEachFaucet, createTestArkWallet, faucetOffchain, randomP2TR } from "./utils";
 
 const EMULATOR_URL = "http://localhost:7073";
 const ARK_SERVER_URL = "http://localhost:7070";
@@ -35,24 +17,64 @@ const HTLC_PREIMAGE = new Uint8Array(32).fill(0x42);
 const HTLC_PREIMAGE_HASH = hex.decode("8739f40ec4dbf569dcb38134c6e7310908566981");
 const CONTRACT_AMOUNT = 10_000n;
 
+// Arkade-script covenant body: enforce that output 0 pays exactly `$amount` to
+// `$receiver` (the 32-byte taproot witness program). Mirrors the `enforcePayTo`
+// helper — the leading DUP consumes the output index pushed by the witness `[0]`.
+const payTo = [
+    "DUP",
+    "INSPECTOUTPUTSCRIPTPUBKEY",
+    1,
+    "EQUALVERIFY",
+    "$receiver",
+    "EQUALVERIFY",
+    "INSPECTOUTPUTVALUE",
+    "$amount",
+    "EQUAL",
+] satisfies arkade.AsmToken[];
+
+// HTLC claim: server + arkade-tweaked emulator multisig, gated by a HASH160
+// preimage condition; the covenant forces the pay-to-receiver output.
+const claimProgram = {
+    params: ["hash", "receiver", "amount"],
+    functions: {
+        claim: {
+            inputs: [{ name: "preimage", type: "bytes" }] as const,
+            tapscript: {
+                signers: ["server"],
+                asm: ["HASH160", "$hash", "EQUAL"],
+                witness: ["preimage"],
+            },
+            arkadeScript: { asm: payTo, witness: [0] },
+        },
+    },
+} satisfies arkade.Program;
+
+// HTLC refund: same covenant, gated by an absolute (CLTV) timelock instead of a
+// preimage; no call arguments.
+const refundProgram = {
+    params: ["receiver", "amount"],
+    functions: {
+        refund: {
+            tapscript: { signers: ["server"], cltv: 500_000_000n }, // genesis-relative, always satisfied
+            arkadeScript: { asm: payTo, witness: [0] },
+        },
+    },
+} satisfies arkade.Program;
+
 describe("arkade HTLC (covenant)", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
     const arkProvider = new RestArkProvider(ARK_SERVER_URL);
     const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
 
-    let serverXOnlyPubkey: Uint8Array;
-    let emulatorPubkey: Uint8Array;
-    let checkpointUnrollClosure: CSVMultisigTapscript.Type;
+    let ark: arkade.Arkade;
 
     beforeAll(async () => {
-        const arkInfo = await arkProvider.getInfo();
-        serverXOnlyPubkey = hex.decode(arkInfo.signerPubkey).slice(1);
-        checkpointUnrollClosure = CSVMultisigTapscript.decode(
-            hex.decode(arkInfo.checkpointTapscript),
-        );
-
-        const introInfo = await emulator.getInfo();
-        emulatorPubkey = hex.decode(introInfo.signerPubkey);
+        ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer: indexerProvider,
+            network: networks.regtest,
+        });
     });
 
     beforeEach(beforeEachFaucet, 20000);
@@ -78,112 +100,45 @@ describe("arkade HTLC (covenant)", () => {
             await createTestArkWallet();
 
             const receiverPkScript = randomP2TR();
-            const arkadeScript = enforcePayTo(receiverPkScript, CONTRACT_AMOUNT);
-
-            const preimageCondition = Script.encode(["HASH160", HTLC_PREIMAGE_HASH, "EQUAL"]);
-
-            const vtxoScript = new VtxoScript([
-                ConditionMultisigTapscript.encode({
-                    conditionScript: preimageCondition,
-                    pubkeys: [
-                        serverXOnlyPubkey,
-                        arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScript),
-                    ],
-                }).script,
-            ]);
-
-            const contractAddress = vtxoScript
-                .address(networks.regtest.hrp, serverXOnlyPubkey)
-                .encode();
-
-            // Fund.
-            faucetOffchain(contractAddress, Number(CONTRACT_AMOUNT));
-            const [vtxo] = await waitForVtxo(vtxoScript.pkScript);
-
-            // Find the multisig (with arkade-tweaked emulator) leaf.
-            const arkadeLeaf = ConditionMultisigTapscript.encode({
-                conditionScript: preimageCondition,
-                pubkeys: [
-                    serverXOnlyPubkey,
-                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScript),
-                ],
+            const contract = ark.contract(claimProgram, {
+                hash: HTLC_PREIMAGE_HASH,
+                receiver: receiverPkScript.slice(2), // 32-byte witness program
+                amount: CONTRACT_AMOUNT,
             });
-            const tapLeafScript = vtxoScript.findLeaf(hex.encode(arkadeLeaf.script));
-            const tapTree = vtxoScript.encode();
 
-            // enforcePayTo starts with DUP INSPECTOUTPUTSCRIPTPUBKEY — DUP
-            // duplicates the top stack item (output_index). So the witness
-            // must push 0 (output index 0). Empty bytes encode as OP_0 in
-            // Bitcoin script. Serialized witness: varint(1) element,
-            // each element length-prefixed: [0x01, 0x00] means 1 element of
-            // length 0 (empty bytes = 0 in script numeric context).
-            const arkadeWitnessBytes = new Uint8Array([0x01, 0x00]);
+            // Fund and wait for the contract VTXO.
+            faucetOffchain(contract.address, Number(CONTRACT_AMOUNT));
+            await waitForVtxo(contract.pkScript);
 
-            const buildClaim = (outputs: { script: Uint8Array; amount: bigint }[]) => {
-                const { arkTx, checkpoints } = buildOffchainTx(
-                    [{ ...vtxo, tapLeafScript, tapTree }],
-                    outputs,
-                    checkpointUnrollClosure,
-                );
-                // ConditionWitness: pass preimage on ark tx input 0 and each
-                // checkpoint input 0.
-                setArkPsbtField(arkTx, 0, ConditionWitness, [HTLC_PREIMAGE]);
-                for (const cp of checkpoints) {
-                    setArkPsbtField(cp, 0, ConditionWitness, [HTLC_PREIMAGE]);
-                }
-                // Arkade emulator packet: output_index=0 pushed as empty
-                // bytes (OP_0) for the DUP in enforcePayTo.
-                addEmulatorPacket(arkTx, [
-                    {
-                        vin: 0,
-                        script: arkadeScript,
-                        witness: arkadeWitnessBytes,
-                    },
-                ]);
-                return { arkTx, checkpoints };
-            };
+            // `preimage` is statically typed Uint8Array (see claimProgram inputs).
 
-            const submitAndExpectFailure = async (
-                outputs: { script: Uint8Array; amount: bigint }[],
-            ) => {
-                const { arkTx, checkpoints } = buildClaim(outputs);
-                await expect(
-                    emulator.submitTx(
-                        base64.encode(arkTx.toPSBT()),
-                        checkpoints.map((c) => base64.encode(c.toPSBT())),
-                    ),
-                ).rejects.toThrow();
-            };
-
-            // Negative case 1: wrong output script (OP_RETURN).
-            await submitAndExpectFailure([
-                { script: new Uint8Array([0x6a]), amount: CONTRACT_AMOUNT },
-            ]);
+            // Negative case 1: wrong output script (OP_RETURN) — covenant rejects.
+            await expect(
+                contract.functions
+                    .claim(HTLC_PREIMAGE)
+                    .to(new Uint8Array([0x6a]), CONTRACT_AMOUNT)
+                    .send(),
+            ).rejects.toThrow();
 
             // Negative case 2: right script but wrong amount (split outputs).
-            await submitAndExpectFailure([
-                { script: receiverPkScript, amount: CONTRACT_AMOUNT - 1n },
-                { script: randomP2TR(), amount: 1n },
-            ]);
+            await expect(
+                contract.functions
+                    .claim(HTLC_PREIMAGE)
+                    .to([
+                        { script: receiverPkScript, amount: CONTRACT_AMOUNT - 1n },
+                        { script: randomP2TR(), amount: 1n },
+                    ])
+                    .send(),
+            ).rejects.toThrow();
 
-            // Valid: right output and amount.
-            const { arkTx: validTx, checkpoints: validCps } = buildClaim([
-                { script: receiverPkScript, amount: CONTRACT_AMOUNT },
-            ]);
-            const introResult = await emulator.submitTx(
-                base64.encode(validTx.toPSBT()),
-                validCps.map((c) => base64.encode(c.toPSBT())),
-            );
-
-            // In this HTLC closure the emulator is the last (non-arkd)
-            // signer, so it acts as finalizer and internally submits + finalizes
-            // with arkd before returning. We must NOT call arkProvider.submitTx
-            // again — that would produce "duplicated offchain tx".
-            //
-            // Verify success by extracting the txid from the returned ark tx.
-            const finalTx = Transaction.fromPSBT(base64.decode(introResult.signedArkTx));
-            const arkTxid = finalTx.id;
-            expect(arkTxid).toBeTruthy();
+            // Valid: right output and amount. The emulator is the last non-arkd
+            // signer, so it finalizes with arkd internally — `send()` returns the
+            // finalized txid.
+            const { txid } = await contract.functions
+                .claim(HTLC_PREIMAGE)
+                .to(receiverPkScript, CONTRACT_AMOUNT)
+                .send();
+            expect(txid).toBeTruthy();
         },
     );
 
@@ -191,97 +146,41 @@ describe("arkade HTLC (covenant)", () => {
         "refund: emulator signs only when CLTV satisfied + arkade script passes",
         { timeout: 60000 },
         async () => {
-            const _alice = await createTestArkWallet();
+            await createTestArkWallet();
 
             const senderPkScript = randomP2TR();
-            const arkadeScript = enforcePayTo(senderPkScript, CONTRACT_AMOUNT);
-
-            const REFUND_LOCKTIME = 500_000_000n; // genesis-relative, always satisfied
-
-            const vtxoScript = new VtxoScript([
-                CLTVMultisigTapscript.encode({
-                    absoluteTimelock: REFUND_LOCKTIME,
-                    pubkeys: [
-                        serverXOnlyPubkey,
-                        arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScript),
-                    ],
-                }).script,
-            ]);
-            const contractAddress = vtxoScript
-                .address(networks.regtest.hrp, serverXOnlyPubkey)
-                .encode();
-
-            faucetOffchain(contractAddress, Number(CONTRACT_AMOUNT));
-            const [vtxo] = await waitForVtxo(vtxoScript.pkScript);
-
-            // Find the leaf with the emulator's tweaked key.
-            const arkadeLeaf = CLTVMultisigTapscript.encode({
-                absoluteTimelock: REFUND_LOCKTIME,
-                pubkeys: [
-                    serverXOnlyPubkey,
-                    arkade.computeArkadeScriptPublicKey(emulatorPubkey, arkadeScript),
-                ],
+            const contract = ark.contract(refundProgram, {
+                receiver: senderPkScript.slice(2),
+                amount: CONTRACT_AMOUNT,
             });
-            const tapLeafScript = vtxoScript.findLeaf(hex.encode(arkadeLeaf.script));
-            const tapTree = vtxoScript.encode();
 
-            // Same witness encoding as the claim test: a 1-element witness pushing
-            // empty bytes (= 0). enforcePayTo's first opcode DUP requires
-            // output_index already on the stack.
-            const emulatorWitness = new Uint8Array([0x01, 0x00]);
-
-            const buildRefund = (outputs: { script: Uint8Array; amount: bigint }[]) => {
-                const { arkTx, checkpoints } = buildOffchainTx(
-                    [{ ...vtxo, tapLeafScript, tapTree }],
-                    outputs,
-                    checkpointUnrollClosure,
-                );
-                addEmulatorPacket(arkTx, [
-                    {
-                        vin: 0,
-                        script: arkadeScript,
-                        witness: emulatorWitness,
-                    },
-                ]);
-                return { arkTx, checkpoints };
-            };
-
-            const submitAndExpectFailure = async (
-                outputs: { script: Uint8Array; amount: bigint }[],
-            ) => {
-                const { arkTx, checkpoints } = buildRefund(outputs);
-                await expect(
-                    emulator.submitTx(
-                        base64.encode(arkTx.toPSBT()),
-                        checkpoints.map((c) => base64.encode(c.toPSBT())),
-                    ),
-                ).rejects.toThrow();
-            };
+            faucetOffchain(contract.address, Number(CONTRACT_AMOUNT));
+            await waitForVtxo(contract.pkScript);
 
             // Negative: wrong destination.
-            await submitAndExpectFailure([
-                { script: new Uint8Array([0x6a]), amount: CONTRACT_AMOUNT },
-            ]);
+            await expect(
+                contract.functions
+                    .refund()
+                    .to(new Uint8Array([0x6a]), CONTRACT_AMOUNT)
+                    .send(),
+            ).rejects.toThrow();
             // Negative: wrong amount.
-            await submitAndExpectFailure([
-                { script: senderPkScript, amount: CONTRACT_AMOUNT - 1n },
-                { script: randomP2TR(), amount: 1n },
-            ]);
+            await expect(
+                contract.functions
+                    .refund()
+                    .to([
+                        { script: senderPkScript, amount: CONTRACT_AMOUNT - 1n },
+                        { script: randomP2TR(), amount: 1n },
+                    ])
+                    .send(),
+            ).rejects.toThrow();
 
             // Valid: right output and amount.
-            const { arkTx, checkpoints } = buildRefund([
-                { script: senderPkScript, amount: CONTRACT_AMOUNT },
-            ]);
-            const result = await emulator.submitTx(
-                base64.encode(arkTx.toPSBT()),
-                checkpoints.map((c) => base64.encode(c.toPSBT())),
-            );
-
-            // Emulator is the last non-arkd signer (multisig is [server,
-            // emulator_tweaked], no user), so it auto-finalizes via arkd.
-            // Do NOT call arkProvider.submitTx again — it would error with
-            // "duplicated offchain tx".
-            expect(result.signedArkTx).toBeTruthy();
+            const { txid } = await contract.functions
+                .refund()
+                .to(senderPkScript, CONTRACT_AMOUNT)
+                .send();
+            expect(txid).toBeTruthy();
         },
     );
 });
