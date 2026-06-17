@@ -6,7 +6,13 @@ import {
     RequestEnvelope,
     ResponseEnvelope,
 } from "../../src/worker/messageBus";
-import { ServiceWorkerTimeoutError } from "../../src/worker/errors";
+import {
+    MESSAGE_BUS_INITIALIZING,
+    MESSAGE_BUS_NOT_INITIALIZED,
+    MessageBusInitializingError,
+    MessageBusNotInitializedError,
+    ServiceWorkerTimeoutError,
+} from "../../src/worker/errors";
 
 type StubbedSelf = {
     addEventListener: ReturnType<typeof vi.fn>;
@@ -869,5 +875,268 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
         expect(bResponse.payload).toEqual({ ok: true });
 
         await bus.stop();
+    });
+});
+
+describe("MessageBus init serialization (Iteration 1)", () => {
+    beforeEach(() => {
+        installSelfStub();
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.useRealTimers();
+    });
+
+    function deferred<T>() {
+        let resolve!: (value: T) => void;
+        let reject!: (reason?: unknown) => void;
+        const promise = new Promise<T>((res, rej) => {
+            resolve = res;
+            reject = rej;
+        });
+        return { promise, resolve, reject };
+    }
+
+    // Drain the microtask queue (and any chained continuations) by crossing a
+    // macrotask boundary. These tests use real timers.
+    const flush = () => new Promise<void>((r) => setTimeout(r, 0));
+
+    const initConfig = {
+        wallet: { publicKey: "00".repeat(33) },
+        arkServer: { url: "http://localhost" },
+    };
+
+    function sendInit(id: string, source: { postMessage: (m: unknown) => void }) {
+        return messageHandler({
+            data: {
+                type: "INITIALIZE_MESSAGE_BUS",
+                id,
+                tag: "INITIALIZE_MESSAGE_BUS",
+                config: initConfig,
+            } as never,
+            source: source as never,
+            waitUntil: (p: Promise<unknown>) => p,
+        });
+    }
+
+    function sendMessage(id: string, tag: string, source: { postMessage: (m: unknown) => void }) {
+        return messageHandler({
+            data: { id, tag },
+            source: source as never,
+            waitUntil: (p: Promise<unknown>) => p,
+        });
+    }
+
+    function makeBus(
+        handlers: MessageHandler[],
+        buildServices: () => Promise<unknown>,
+    ): MessageBus {
+        return new MessageBus(new InMemoryWalletRepository(), new InMemoryContractRepository(), {
+            messageHandlers: handlers,
+            buildServices: buildServices as never,
+        });
+    }
+
+    it("runs concurrent inits FIFO: B does not build until A settles, and acks only after its handlers start", async () => {
+        const handler = new TestHandler();
+        const buildCalls: string[] = [];
+        const gates = [deferred<unknown>(), deferred<unknown>()];
+        let n = 0;
+        const bus = makeBus([handler], () => {
+            const i = n++;
+            buildCalls.push(`build${i}`);
+            return gates[i].promise;
+        });
+        await bus.start();
+
+        const srcA = { postMessage: vi.fn() };
+        const srcB = { postMessage: vi.fn() };
+        const pA = sendInit("A", srcA);
+        const pB = sendInit("B", srcB);
+
+        // Only A's buildServices is running; B is queued behind it.
+        await flush();
+        expect(buildCalls).toEqual(["build0"]);
+        expect(handler.start).not.toHaveBeenCalled();
+
+        // A's build completes → A starts handlers and acks; only now B builds.
+        gates[0].resolve({});
+        await pA;
+        await flush();
+        expect(srcA.postMessage).toHaveBeenCalledWith({ id: "A", tag: "INITIALIZE_MESSAGE_BUS" });
+        expect(buildCalls).toEqual(["build0", "build1"]);
+        // B has not acked while its build is still pending.
+        expect(srcB.postMessage).not.toHaveBeenCalled();
+
+        gates[1].resolve({});
+        await pB;
+        expect(srcB.postMessage).toHaveBeenCalledWith({ id: "B", tag: "INITIALIZE_MESSAGE_BUS" });
+        // B's handlers were started (re-init stop + start) before its ack.
+        expect(handler.start).toHaveBeenCalledTimes(2);
+
+        await bus.stop();
+    });
+
+    it("rejects ordinary wallet messages with MessageBusInitializingError while an init is pending", async () => {
+        const handler = new TestHandler();
+        const gates = [deferred<unknown>(), deferred<unknown>()];
+        let n = 0;
+        const bus = makeBus([handler], () => gates[n++].promise);
+        await bus.start();
+
+        const pA = sendInit("A", { postMessage: vi.fn() });
+        gates[0].resolve({});
+        await pA;
+
+        // Begin B but leave its build pending: the bus is now unavailable.
+        const pB = sendInit("B", { postMessage: vi.fn() });
+        await flush();
+
+        const srcM = { postMessage: vi.fn() };
+        await sendMessage("m1", handler.messageTag, srcM);
+
+        expect(handler.handleMessage).not.toHaveBeenCalled();
+        const sent = srcM.postMessage.mock.calls[0][0] as ResponseEnvelope;
+        expect(sent.id).toBe("m1");
+        expect(sent.error).toBeInstanceOf(MessageBusInitializingError);
+
+        gates[1].resolve({});
+        await pB;
+        await bus.stop();
+    });
+
+    it("stops existing handlers before starting new ones on re-init", async () => {
+        const order: string[] = [];
+        const handler = new TestHandler();
+        handler.start.mockImplementation(async () => {
+            order.push("start");
+        });
+        handler.stop.mockImplementation(async () => {
+            order.push("stop");
+        });
+        const bus = makeBus([handler], async () => ({}));
+        await bus.start();
+
+        await sendInit("A", { postMessage: vi.fn() });
+        await sendInit("B", { postMessage: vi.fn() });
+
+        expect(order).toEqual(["start", "stop", "start"]);
+        await bus.stop();
+    });
+
+    it("a failed init delivers an error and does not poison the next queued init", async () => {
+        const handler = new TestHandler();
+        let call = 0;
+        const bus = makeBus([handler], async () => {
+            if (call++ === 0) throw new Error("build boom");
+            return {};
+        });
+        await bus.start();
+
+        const srcA = { postMessage: vi.fn() };
+        await sendInit("A", srcA);
+        const aResp = srcA.postMessage.mock.calls[0][0] as ResponseEnvelope;
+        expect(aResp.id).toBe("A");
+        expect(aResp.error?.message).toBe("build boom");
+
+        const srcB = { postMessage: vi.fn() };
+        await sendInit("B", srcB);
+        expect(srcB.postMessage).toHaveBeenCalledWith({ id: "B", tag: "INITIALIZE_MESSAGE_BUS" });
+
+        // The bus is usable after the recovered init.
+        handler.handleMessage.mockResolvedValueOnce({
+            id: "m",
+            tag: handler.messageTag,
+            payload: { ok: true },
+        } as ResponseEnvelope);
+        const srcM = { postMessage: vi.fn() };
+        await sendMessage("m", handler.messageTag, srcM);
+        expect(srcM.postMessage.mock.calls[0][0]).toMatchObject({ payload: { ok: true } });
+
+        await bus.stop();
+    });
+
+    it("after a successful init, a failed re-init rejects and wallet messages then report not-initialized", async () => {
+        const handler = new TestHandler();
+        let call = 0;
+        const bus = makeBus([handler], async () => {
+            if (call++ === 1) throw new Error("reinit boom");
+            return {};
+        });
+        await bus.start();
+
+        await sendInit("A", { postMessage: vi.fn() });
+        const srcB = { postMessage: vi.fn() };
+        await sendInit("B", srcB);
+        expect((srcB.postMessage.mock.calls[0][0] as ResponseEnvelope).error?.message).toBe(
+            "reinit boom",
+        );
+
+        const srcM = { postMessage: vi.fn() };
+        await sendMessage("m", handler.messageTag, srcM);
+        const sent = srcM.postMessage.mock.calls[0][0] as ResponseEnvelope;
+        expect(sent.error).toBeInstanceOf(MessageBusNotInitializedError);
+        expect(sent.error).not.toBeInstanceOf(MessageBusInitializingError);
+
+        await bus.stop();
+    });
+
+    it("rolls back started handlers and stays unavailable when a later handler fails to start", async () => {
+        const h1 = new TestHandler("H1");
+        const h2 = new TestHandler("H2");
+        h2.start.mockRejectedValueOnce(new Error("start boom"));
+        const bus = makeBus([h1, h2], async () => ({}));
+        await bus.start();
+
+        const srcA = { postMessage: vi.fn() };
+        await sendInit("A", srcA);
+
+        // h1 started, h2 failed → h1 rolled back, init reported as failed.
+        expect(h1.start).toHaveBeenCalledTimes(1);
+        expect(h1.stop).toHaveBeenCalledTimes(1);
+        expect((srcA.postMessage.mock.calls[0][0] as ResponseEnvelope).error?.message).toBe(
+            "start boom",
+        );
+
+        // pendingInitCount returned to 0, so the bus reports not-initialized.
+        const srcM = { postMessage: vi.fn() };
+        await sendMessage("m", "H1", srcM);
+        expect((srcM.postMessage.mock.calls[0][0] as ResponseEnvelope).error).toBeInstanceOf(
+            MessageBusNotInitializedError,
+        );
+
+        await bus.stop();
+    });
+
+    it("delivers an init failure exactly once and resolves the init message (no unhandled throw)", async () => {
+        const handler = new TestHandler();
+        const bus = makeBus([handler], async () => {
+            throw new Error("boom");
+        });
+        await bus.start();
+
+        const src = { postMessage: vi.fn() };
+        await expect(sendInit("X", src)).resolves.toBeUndefined();
+
+        expect(src.postMessage).toHaveBeenCalledTimes(1);
+        const sent = src.postMessage.mock.calls[0][0] as ResponseEnvelope;
+        expect(sent).toMatchObject({ id: "X", tag: "INITIALIZE_MESSAGE_BUS" });
+        expect(sent.error?.message).toBe("boom");
+
+        await bus.stop();
+    });
+
+    it("MessageBusInitializingError is a not-initialized error with a superset message", () => {
+        const e = new MessageBusInitializingError();
+        // Backward compatibility: instanceof and the substring detector both
+        // still classify the pending variant as not-initialized.
+        expect(e).toBeInstanceOf(MessageBusNotInitializedError);
+        expect(e.message.includes(MESSAGE_BUS_NOT_INITIALIZED)).toBe(true);
+        // The more specific marker distinguishes it for opt-in callers.
+        expect(e.message.includes(MESSAGE_BUS_INITIALIZING)).toBe(true);
+        expect(new MessageBusNotInitializedError().message.includes(MESSAGE_BUS_INITIALIZING)).toBe(
+            false,
+        );
     });
 });

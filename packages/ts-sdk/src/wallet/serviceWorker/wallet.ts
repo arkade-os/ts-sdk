@@ -147,7 +147,11 @@ import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegate";
 import { getRandomId } from "../utils";
 import type { VirtualCoin } from "..";
-import { MESSAGE_BUS_NOT_INITIALIZED, ServiceWorkerTimeoutError } from "../../worker/errors";
+import {
+    MESSAGE_BUS_INITIALIZING,
+    MESSAGE_BUS_NOT_INITIALIZED,
+    ServiceWorkerTimeoutError,
+} from "../../worker/errors";
 import { getArkadeServerUrl } from "../wallet";
 
 // Check by error message content instead of instanceof because postMessage uses the
@@ -156,6 +160,24 @@ import { getArkadeServerUrl } from "../wallet";
 function isMessageBusNotInitializedError(error: unknown): boolean {
     return error instanceof Error && error.message.includes(MESSAGE_BUS_NOT_INITIALIZED);
 }
+
+// The "initializing" message is a superset of MESSAGE_BUS_NOT_INITIALIZED, so
+// isMessageBusNotInitializedError is also true for it — callers must check this
+// more specific predicate FIRST. It signals an init is already in flight in the
+// worker; the right reaction is to wait and retry the same message rather than
+// enqueue a redundant re-init.
+function isMessageBusInitializingError(error: unknown): boolean {
+    return error instanceof Error && error.message.includes(MESSAGE_BUS_INITIALIZING);
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// Bounded backoff for waiting out an in-flight init: ~100ms, 200ms, … capped at
+// 2s, so a stuck init still surfaces an error instead of hanging the caller.
+const INIT_WAIT_BACKOFF_CAP_MS = 2_000;
+const MAX_INIT_WAITS = 8;
+const initWaitBackoffMs = (attempt: number) =>
+    Math.min(100 * 2 ** attempt, INIT_WAIT_BACKOFF_CAP_MS);
 
 type RequestType = WalletUpdaterRequest["type"];
 
@@ -627,6 +649,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
         wallet.messageTimeouts = messageTimeouts;
 
+        // Refuse to return a wallet bound to a different identity than the
+        // worker ended up with (e.g. a stale/queued init rebinding it).
+        await wallet.assertWorkerIdentityMatches();
+
         return wallet;
     }
 
@@ -807,10 +833,19 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         const timeoutMs = this.getTimeoutForRequest(request);
         const maxRetries = 2;
-        for (let attempt = 0; ; attempt++) {
+        for (let attempt = 0, initWaits = 0; ; attempt++) {
             try {
                 return await this.sendMessageDirect(request, timeoutMs);
             } catch (error: any) {
+                // An init is already in flight in the worker. Wait for it to
+                // settle and retry the same message; do not enqueue a redundant
+                // re-init behind it. A wait does not consume the re-init budget.
+                if (isMessageBusInitializingError(error)) {
+                    if (initWaits >= MAX_INIT_WAITS) throw error;
+                    await sleep(initWaitBackoffMs(initWaits++));
+                    attempt--;
+                    continue;
+                }
                 if (!isMessageBusNotInitializedError(error) || attempt >= maxRetries) {
                     throw error;
                 }
@@ -836,10 +871,19 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         }
 
         const maxRetries = 2;
-        for (let attempt = 0; ; attempt++) {
+        for (let attempt = 0, initWaits = 0; ; attempt++) {
             try {
                 return await this.sendMessageStreaming(request, onEvent, isComplete);
             } catch (error: any) {
+                // An init is already in flight in the worker. Wait for it to
+                // settle and retry the same message; do not enqueue a redundant
+                // re-init behind it. A wait does not consume the re-init budget.
+                if (isMessageBusInitializingError(error)) {
+                    if (initWaits >= MAX_INIT_WAITS) throw error;
+                    await sleep(initWaitBackoffMs(initWaits++));
+                    attempt--;
+                    continue;
+                }
                 if (!isMessageBusNotInitializedError(error) || attempt >= maxRetries) {
                     throw error;
                 }
@@ -921,11 +965,55 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             };
 
             await this.sendMessageDirect(initMessage, this.getTimeoutForRequest(initMessage));
+            await this.assertWorkerIdentityMatches();
         })().finally(() => {
             this.reinitPromise = null;
         });
 
         return this.reinitPromise;
+    }
+
+    /**
+     * Verify the worker is bound to this wallet's identity before the SDK hands
+     * back (or recovers) a usable wallet object.
+     *
+     * A completed `INITIALIZE_MESSAGE_BUS` only proves that *an* init ran; with
+     * FIFO-serialized inits a later or stale/retried init can still rebind the
+     * worker to a different identity. `GET_STATUS` reports the worker's live
+     * x-only pubkey, so comparing it against this identity catches a
+     * wrong-identity binding before `getAddress()` / `getBoardingAddress()` can
+     * return another wallet's address — a loss-of-funds path.
+     *
+     * Compares the stable baseline identity key (`identity.xOnlyPublicKey()`),
+     * not the current rotated receive/boarding key, so HD wallets keep matching
+     * after rotation. Sent via `sendMessageDirect` (no ping/retry/reinit) so it
+     * cannot recurse into `reinitialize()` when called from within it.
+     */
+    protected async assertWorkerIdentityMatches(): Promise<void> {
+        const expected = hex.encode(await this.identity.xOnlyPublicKey());
+
+        const message: RequestGetStatus = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_STATUS",
+        };
+        const response = (await this.sendMessageDirect(
+            message,
+            this.getTimeoutForRequest(message),
+        )) as ResponseGetStatus;
+
+        const workerKey = response.payload.xOnlyPublicKey;
+        // A worker that cannot prove its identity must not be trusted to serve
+        // addresses.
+        if (!workerKey) {
+            throw new Error("Service worker identity mismatch: worker did not report an identity");
+        }
+        const actual = hex.encode(workerKey);
+        if (actual !== expected) {
+            throw new Error(
+                `Service worker identity mismatch: expected ${expected}, got ${actual}`,
+            );
+        }
     }
 
     /** Clear cached wallet state from both the page and service worker storage. */
@@ -1439,6 +1527,10 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
         wallet.initWalletPayload = initWalletPayload;
         wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
         wallet.messageTimeouts = messageTimeouts;
+
+        // Refuse to return a wallet bound to a different identity than the
+        // worker ended up with (e.g. a stale/queued init rebinding it).
+        await wallet.assertWorkerIdentityMatches();
 
         return wallet;
     }

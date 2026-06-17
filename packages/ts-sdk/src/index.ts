@@ -310,7 +310,9 @@ import {
     DelegatorNotConfiguredError,
 } from "./wallet/serviceWorker/wallet-message-handler";
 import {
+    MESSAGE_BUS_INITIALIZING,
     MESSAGE_BUS_NOT_INITIALIZED,
+    MessageBusInitializingError,
     MessageBusNotInitializedError,
     ServiceWorkerTimeoutError,
 } from "./worker/errors";
@@ -374,7 +376,9 @@ export {
     ReadonlyWalletError,
     DelegateNotConfiguredError,
     DelegatorNotConfiguredError,
+    MESSAGE_BUS_INITIALIZING,
     MESSAGE_BUS_NOT_INITIALIZED,
+    MessageBusInitializingError,
     MessageBusNotInitializedError,
     ServiceWorkerTimeoutError,
     ServiceWorkerWallet,
