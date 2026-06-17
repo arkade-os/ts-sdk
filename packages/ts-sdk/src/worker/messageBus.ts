@@ -268,11 +268,20 @@ export class MessageBus {
     private async runTick() {
         if (!this.running) return;
         if (this.tickInProgress) return;
-        this.tickInProgress = true;
+
+        // The fired timer has elapsed; drop its handle first so an early
+        // return below cannot leave a stale handle that wedges scheduleNextTick().
         if (this.tickTimeout !== null) {
             self.clearTimeout(this.tickTimeout);
             this.tickTimeout = null;
         }
+
+        // Never tick while an init is queued or running: doInit() stops and
+        // rebuilds handlers, so ticking them would touch stale/half-reset
+        // state. doInit() re-arms the scheduler once it completes.
+        if (this.pendingInitCount > 0) return;
+
+        this.tickInProgress = true;
 
         try {
             const now = Date.now();
@@ -344,6 +353,14 @@ export class MessageBus {
     }
 
     private async doInit(config: Initialize["config"]) {
+        // Cancel any tick scheduled by a previous init so it cannot fire while
+        // handlers are stopped or rebuilt below (the awaits in this method
+        // yield to the event loop). scheduleNextTick() re-arms after a
+        // successful start.
+        if (this.tickTimeout !== null) {
+            self.clearTimeout(this.tickTimeout);
+            this.tickTimeout = null;
+        }
         if (this.initialized) {
             // Stop existing handlers before re-initializing.
             // This handles the case where CLEAR was called, which nullifies

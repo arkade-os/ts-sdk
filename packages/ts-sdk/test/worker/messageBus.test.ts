@@ -1127,6 +1127,41 @@ describe("MessageBus init serialization (Iteration 1)", () => {
         await bus.stop();
     });
 
+    it("does not tick handlers while a re-init is in flight (stale-tick guard)", async () => {
+        const handler = new TestHandler();
+        const gates = [deferred<unknown>(), deferred<unknown>()];
+        let n = 0;
+        const bus = makeBus([handler], () => gates[n++].promise);
+        await bus.start();
+
+        // Init A completes and schedules a tick.
+        const pA = sendInit("A", { postMessage: vi.fn() });
+        gates[0].resolve({});
+        await pA;
+        expect((bus as any).tickTimeout).not.toBeNull();
+
+        // Begin a re-init (B) but leave its buildServices pending.
+        const pB = sendInit("B", { postMessage: vi.fn() });
+        await flush();
+
+        // doInit cancelled the tick scheduled by the previous init (part 1) ...
+        expect((bus as any).tickTimeout).toBeNull();
+
+        // ... and a tick firing during the in-flight init is a no-op (part 2):
+        // handlers are stopped / mid-rebuild and must not be ticked.
+        handler.tick.mockClear();
+        await (bus as any).runTick();
+        expect(handler.tick).not.toHaveBeenCalled();
+
+        // Once the re-init settles, ticking resumes against the new handlers.
+        gates[1].resolve({});
+        await pB;
+        await (bus as any).runTick();
+        expect(handler.tick).toHaveBeenCalled();
+
+        await bus.stop();
+    });
+
     it("MessageBusInitializingError is a not-initialized error with a superset message", () => {
         const e = new MessageBusInitializingError();
         // Backward compatibility: instanceof and the substring detector both
