@@ -16,6 +16,7 @@ import {
     BoltzSubmarineSwap,
     SendLightningPaymentRequest,
     SendLightningPaymentResponse,
+    OptimisticSendLightningPaymentResponse,
     SubmarineRecoveryInfo,
     SubmarineRecoveryResult,
     SubmarineRefundOutcome,
@@ -462,8 +463,14 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
     }
 
     async sendLightningPayment(
+        args: SendLightningPaymentRequest & { waitFor?: "settled" },
+    ): Promise<SendLightningPaymentResponse>;
+    async sendLightningPayment(
         args: SendLightningPaymentRequest,
-    ): Promise<SendLightningPaymentResponse> {
+    ): Promise<OptimisticSendLightningPaymentResponse>;
+    async sendLightningPayment(
+        args: SendLightningPaymentRequest,
+    ): Promise<OptimisticSendLightningPaymentResponse> {
         try {
             const res = await this.sendMessage({
                 id: getRandomId(),
@@ -592,6 +599,19 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             return (res as ResponseWaitForSwapSettlement).payload;
         } catch (e) {
             throw new Error("Cannot wait for swap settlement", { cause: e });
+        }
+    }
+
+    async waitForSwapFunded(pendingSwap: BoltzSubmarineSwap): Promise<void> {
+        try {
+            await this.sendMessage({
+                id: getRandomId(),
+                tag: this.messageTag,
+                type: "WAIT_FOR_SWAP_FUNDED",
+                payload: pendingSwap,
+            });
+        } catch (e) {
+            throw new Error("Cannot wait for swap funding", { cause: e });
         }
     }
 

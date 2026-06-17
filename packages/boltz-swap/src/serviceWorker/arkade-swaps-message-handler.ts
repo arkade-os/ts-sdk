@@ -28,7 +28,7 @@ import {
     BoltzReverseSwap,
     BoltzSubmarineSwap,
     type SendLightningPaymentRequest,
-    SendLightningPaymentResponse,
+    type OptimisticSendLightningPaymentResponse,
     type SubmarineRecoveryInfo,
     type SubmarineRecoveryResult,
     type SubmarineRefundOutcome,
@@ -95,7 +95,8 @@ export type RequestSendLightningPayment = RequestEnvelope & {
 };
 export type ResponseSendLightningPayment = ResponseEnvelope & {
     type: "LIGHTNING_PAYMENT_SENT";
-    payload: SendLightningPaymentResponse;
+    /** Strict SendLightningPaymentResponse unless the request used waitFor: "funded". */
+    payload: OptimisticSendLightningPaymentResponse;
 };
 
 export type RequestCreateSubmarineSwap = RequestEnvelope & {
@@ -187,6 +188,14 @@ export type RequestWaitForSwapSettlement = RequestEnvelope & {
 export type ResponseWaitForSwapSettlement = ResponseEnvelope & {
     type: "SWAP_SETTLED";
     payload: { preimage: string };
+};
+
+export type RequestWaitForSwapFunded = RequestEnvelope & {
+    type: "WAIT_FOR_SWAP_FUNDED";
+    payload: BoltzSubmarineSwap;
+};
+export type ResponseWaitForSwapFunded = ResponseEnvelope & {
+    type: "SWAP_FUNDED";
 };
 
 export type RequestRestoreSwaps = RequestEnvelope & {
@@ -528,6 +537,7 @@ export type ArkadeSwapsUpdaterRequest =
     | RequestRecoverAllSubmarineFunds
     | RequestWaitAndClaim
     | RequestWaitForSwapSettlement
+    | RequestWaitForSwapFunded
     | RequestRestoreSwaps
     | RequestEnrichReverseSwapPreimage
     | RequestEnrichSubmarineSwapInvoice
@@ -577,6 +587,7 @@ export type ArkadeSwapsUpdaterResponse =
     | ResponseRecoverAllSubmarineFunds
     | ResponseWaitAndClaim
     | ResponseWaitForSwapSettlement
+    | ResponseWaitForSwapFunded
     | ResponseRestoreSwaps
     | ResponseEnrichReverseSwapPreimage
     | ResponseEnrichSubmarineSwapInvoice
@@ -624,6 +635,7 @@ export const LONG_RUNNING_ARKADE_SWAPS_REQUEST_TYPES: ReadonlySet<
     "RECOVER_ALL_SUBMARINE_FUNDS",
     "WAIT_AND_CLAIM",
     "WAIT_FOR_SWAP_SETTLEMENT",
+    "WAIT_FOR_SWAP_FUNDED",
     "RESTORE_SWAPS",
     "WAIT_AND_CLAIM_CHAIN",
     "WAIT_AND_CLAIM_ARK",
@@ -882,6 +894,11 @@ export class ArkadeSwapsMessageHandler
                         type: "SWAP_SETTLED",
                         payload: res,
                     });
+                }
+
+                case "WAIT_FOR_SWAP_FUNDED": {
+                    await this.handler.waitForSwapFunded(message.payload);
+                    return this.tagged({ id, type: "SWAP_FUNDED" });
                 }
 
                 case "RESTORE_SWAPS": {
