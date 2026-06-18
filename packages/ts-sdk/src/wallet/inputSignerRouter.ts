@@ -71,9 +71,8 @@ export class InputSignerRouter {
      * here) so the routing rules never live in two places.
      *
      * Throws {@link MissingSigningDescriptorError} for a non-baseline
-     * default/delegate contract whose `metadata.signingDescriptor` is
-     * missing — the same condition that would later abort signing. Failing
-     * here moves the failure earlier, before any PSBT is mutated.
+     * default/delegate/boarding contract whose `metadata.signingDescriptor` is
+     * missing.
      */
     async classify(jobs: InputSigningJob[]): Promise<InputRoutingPlan> {
         const identityIndexes: number[] = [];
@@ -114,11 +113,8 @@ export class InputSignerRouter {
                 continue;
             }
 
-            // `baselinePubKeyHex` is freshly produced by `hex.encode`,
-            // so it is already lowercase. `contract.params.pubKey` is
-            // persisted data: a migration or custom repository adapter
-            // could legitimately store it uppercase, so canonicalize
-            // before comparing to match the legacy router behaviour.
+            // this is persisted data: a migration or custom repository adapter
+            // could legitimately store it uppercase
             const ownerPubKeyHex = contract.params.pubKey?.toLowerCase();
             if (ownerPubKeyHex && ownerPubKeyHex === baselinePubKeyHex) {
                 identityIndexes.push(job.index);
