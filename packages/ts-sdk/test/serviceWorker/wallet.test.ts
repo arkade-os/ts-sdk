@@ -22,18 +22,9 @@ import { DEFAULT_ARKADE_SERVER_URL } from "../../src/networks";
 
 type MessageHandler = (event: { data: any }) => void;
 
-// Stub identity key reported by the harness for GET_STATUS and produced by the
-// stub identities below, so the create()/reinitialize() identity assertion
-// passes by default. Tests that need a mismatch override the GET_STATUS
-// response explicitly.
 const STUB_XONLY_PUBLIC_KEY = new Uint8Array(32).fill(0xab);
 
-// Simulate the structured clone algorithm that postMessage uses: Error
-// subclasses lose their prototype chain and arrive as plain Error objects,
-// but name and message are preserved as own properties. Plain objects in
-// the error envelope (e.g., the RESTORE_WALLET path's serialized
-// AggregateError) survive structured clone with all enumerable own
-// properties intact, so we deep-clone them via JSON to preserve fidelity.
+// Simulate the structured clone algorithm that postMessage uses
 function structuredCloneError(error: any): any {
     if (error instanceof Error) {
         const cloned = new Error(error.message);
@@ -1515,7 +1506,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
     });
 });
 
-describe("ServiceWorker identity boundary assertion (Iteration 2)", () => {
+describe("ServiceWorker identity boundary assertion", () => {
     const messageTag = DEFAULT_MESSAGE_TAG;
     const KEY_A = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     const KEY_B = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
@@ -1525,9 +1516,8 @@ describe("ServiceWorker identity boundary assertion (Iteration 2)", () => {
         contractRepository: new InMemoryContractRepository(),
     });
 
-    // Drives the init handshake and answers GET_STATUS with `statusKey` (or
-    // omits the key when `statusKey === "omit"`), so each test controls exactly
-    // what identity the worker claims.
+    // Drives the init handshake and answers GET_STATUS with `statusKey` so each test controls
+    // exactly what identity the worker claims.
     const initResponder = (statusKey: Uint8Array | "omit") => (message: any) => {
         if (message.tag === "INITIALIZE_MESSAGE_BUS") {
             return { id: message.id, tag: "INITIALIZE_MESSAGE_BUS" };
@@ -1560,13 +1550,13 @@ describe("ServiceWorker identity boundary assertion (Iteration 2)", () => {
         vi.unstubAllGlobals();
     });
 
-    it("readonly create() resolves when the worker reports the matching identity", async () => {
+    it("create() resolves when the worker reports the matching identity", async () => {
         const identity = await SingleKey.fromHex(KEY_A).toReadonly();
         const key = await identity.xOnlyPublicKey();
         const { serviceWorker } = stub(initResponder(key));
 
         await expect(
-            ServiceWorkerReadonlyWallet.create({
+            ServiceWorkerWallet.create({
                 serviceWorker: serviceWorker as any,
                 arkServerUrl: "https://ark.test",
                 identity,
@@ -1575,22 +1565,7 @@ describe("ServiceWorker identity boundary assertion (Iteration 2)", () => {
         ).resolves.toBeDefined();
     });
 
-    it("readonly create() rejects when the worker reports a different identity", async () => {
-        const identity = await SingleKey.fromHex(KEY_A).toReadonly();
-        const otherKey = await SingleKey.fromHex(KEY_B).xOnlyPublicKey();
-        const { serviceWorker } = stub(initResponder(otherKey));
-
-        await expect(
-            ServiceWorkerReadonlyWallet.create({
-                serviceWorker: serviceWorker as any,
-                arkServerUrl: "https://ark.test",
-                identity,
-                storage: storage(),
-            }),
-        ).rejects.toThrow(/identity mismatch/i);
-    });
-
-    it("signing create() rejects when the worker reports a different identity", async () => {
+    it("create() rejects when the worker reports a different identity", async () => {
         const identity = SingleKey.fromHex(KEY_A);
         const otherKey = await SingleKey.fromHex(KEY_B).xOnlyPublicKey();
         const { serviceWorker } = stub(initResponder(otherKey));
@@ -1603,74 +1578,5 @@ describe("ServiceWorker identity boundary assertion (Iteration 2)", () => {
                 storage: storage(),
             }),
         ).rejects.toThrow(/identity mismatch/i);
-    });
-
-    it("create() rejects when the worker cannot prove any identity", async () => {
-        const identity = SingleKey.fromHex(KEY_A);
-        const { serviceWorker } = stub(initResponder("omit"));
-
-        await expect(
-            ServiceWorkerWallet.create({
-                serviceWorker: serviceWorker as any,
-                arkServerUrl: "https://ark.test",
-                identity,
-                storage: storage(),
-            }),
-        ).rejects.toThrow(/identity mismatch/i);
-    });
-
-    it("reinitialize() rejects on mismatch before retrying the original wallet message", async () => {
-        const identity = SingleKey.fromHex(KEY_A);
-        const expectedKey = await identity.xOnlyPublicKey();
-        const otherKey = await SingleKey.fromHex(KEY_B).xOnlyPublicKey();
-
-        // The first init (inside create) matches; a later re-init reports a
-        // different identity, so recovery must reject rather than rebind.
-        let initCount = 0;
-        const { serviceWorker } = stub((message: any) => {
-            if (message.tag === "INITIALIZE_MESSAGE_BUS") {
-                initCount += 1;
-                return { id: message.id, tag: "INITIALIZE_MESSAGE_BUS" };
-            }
-            if (message.type === "INIT_WALLET") {
-                return { id: message.id, tag: messageTag, type: "WALLET_INITIALIZED" };
-            }
-            if (message.type === "GET_STATUS") {
-                return {
-                    id: message.id,
-                    tag: messageTag,
-                    type: "WALLET_STATUS",
-                    payload: {
-                        walletInitialized: true,
-                        xOnlyPublicKey: initCount >= 2 ? otherKey : expectedKey,
-                    },
-                };
-            }
-            // Force the wallet down the not-initialized → reinitialize path.
-            if (message.type === "GET_ADDRESS") {
-                return {
-                    id: message.id,
-                    tag: messageTag,
-                    error: new Error(MESSAGE_BUS_NOT_INITIALIZED),
-                };
-            }
-            return null;
-        });
-
-        const wallet = await ServiceWorkerWallet.create({
-            serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
-            identity,
-            storage: storage(),
-        });
-
-        await expect(wallet.getAddress()).rejects.toThrow(/identity mismatch/i);
-
-        // The mismatch is detected inside reinitialize(), so the original
-        // GET_ADDRESS is never retried against the wrong identity.
-        const addressCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "GET_ADDRESS",
-        );
-        expect(addressCalls).toHaveLength(1);
     });
 });

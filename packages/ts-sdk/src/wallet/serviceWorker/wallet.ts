@@ -154,18 +154,10 @@ import {
 } from "../../worker/errors";
 import { getArkadeServerUrl } from "../wallet";
 
-// Check by error message content instead of instanceof because postMessage uses the
-// structured clone algorithm which strips the prototype chain — the page
-// receives a plain Error, not the original MessageBusNotInitializedError.
 function isMessageBusNotInitializedError(error: unknown): boolean {
     return error instanceof Error && error.message.includes(MESSAGE_BUS_NOT_INITIALIZED);
 }
 
-// The "initializing" message is a superset of MESSAGE_BUS_NOT_INITIALIZED, so
-// isMessageBusNotInitializedError is also true for it — callers must check this
-// more specific predicate FIRST. It signals an init is already in flight in the
-// worker; the right reaction is to wait and retry the same message rather than
-// enqueue a redundant re-init.
 function isMessageBusInitializingError(error: unknown): boolean {
     return error instanceof Error && error.message.includes(MESSAGE_BUS_INITIALIZING);
 }
@@ -818,11 +810,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
     // send a message, retrying up to 2 times if the service worker was
     // killed and restarted by the OS (mobile browsers do this aggressively)
-    private async sendMessageWithRetry(
+    protected async sendMessageWithRetry(
         request: WalletUpdaterRequest,
+        withEvents?: {
+            onEvent: (response: WalletUpdaterResponse) => void;
+            isComplete: (response: WalletUpdaterResponse) => boolean;
+        },
     ): Promise<WalletUpdaterResponse> {
-        // Skip the preflight ping during the initial INIT_WALLET call:
-        // create() hasn't set initConfig yet, so reinitialize() would throw.
         if (this.initConfig) {
             try {
                 await this.pingServiceWorker();
@@ -835,49 +829,16 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         const maxRetries = 2;
         for (let attempt = 0, initWaits = 0; ; attempt++) {
             try {
+                if (withEvents) {
+                    return await this.sendMessageStreaming(
+                        request,
+                        withEvents.onEvent,
+                        withEvents.isComplete,
+                    );
+                }
                 return await this.sendMessageDirect(request, timeoutMs);
             } catch (error: any) {
-                // An init is already in flight in the worker. Wait for it to
-                // settle and retry the same message; do not enqueue a redundant
-                // re-init behind it. A wait does not consume the re-init budget.
-                if (isMessageBusInitializingError(error)) {
-                    if (initWaits >= MAX_INIT_WAITS) throw error;
-                    await sleep(initWaitBackoffMs(initWaits++));
-                    attempt--;
-                    continue;
-                }
-                if (!isMessageBusNotInitializedError(error) || attempt >= maxRetries) {
-                    throw error;
-                }
-
-                await this.reinitialize();
-            }
-        }
-    }
-
-    // Like sendMessage but for streaming responses — retries with
-    // reinitialize when the service worker has been killed/restarted.
-    protected async sendMessageWithEvents(
-        request: WalletUpdaterRequest,
-        onEvent: (response: WalletUpdaterResponse) => void,
-        isComplete: (response: WalletUpdaterResponse) => boolean,
-    ): Promise<WalletUpdaterResponse> {
-        if (this.initConfig) {
-            try {
-                await this.pingServiceWorker();
-            } catch {
-                await this.reinitialize();
-            }
-        }
-
-        const maxRetries = 2;
-        for (let attempt = 0, initWaits = 0; ; attempt++) {
-            try {
-                return await this.sendMessageStreaming(request, onEvent, isComplete);
-            } catch (error: any) {
-                // An init is already in flight in the worker. Wait for it to
-                // settle and retry the same message; do not enqueue a redundant
-                // re-init behind it. A wait does not consume the re-init budget.
+                // If init is already in flight in the worker, wait for it
                 if (isMessageBusInitializingError(error)) {
                     if (initWaits >= MAX_INIT_WAITS) throw error;
                     await sleep(initWaitBackoffMs(initWaits++));
@@ -977,17 +938,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
      * Verify the worker is bound to this wallet's identity before the SDK hands
      * back (or recovers) a usable wallet object.
      *
-     * A completed `INITIALIZE_MESSAGE_BUS` only proves that *an* init ran; with
-     * FIFO-serialized inits a later or stale/retried init can still rebind the
-     * worker to a different identity. `GET_STATUS` reports the worker's live
-     * x-only pubkey, so comparing it against this identity catches a
-     * wrong-identity binding before `getAddress()` / `getBoardingAddress()` can
-     * return another wallet's address — a loss-of-funds path.
-     *
-     * Compares the stable baseline identity key (`identity.xOnlyPublicKey()`),
-     * not the current rotated receive/boarding key, so HD wallets keep matching
-     * after rotation. Sent via `sendMessageDirect` (no ping/retry/reinit) so it
-     * cannot recurse into `reinitialize()` when called from within it.
+     * Compares the stable baseline identity key (`identity.xOnlyPublicKey()`) to the one reported
+     * by the worker via GET_STATUS.
      */
     protected async assertWorkerIdentityMatches(): Promise<void> {
         const expected = hex.encode(await this.identity.xOnlyPublicKey());
@@ -1003,8 +955,6 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         )) as ResponseGetStatus;
 
         const workerKey = response.payload.xOnlyPublicKey;
-        // A worker that cannot prove its identity must not be trusted to serve
-        // addresses.
         if (!workerKey) {
             throw new Error("Service worker identity mismatch: worker did not report an identity");
         }
@@ -1590,11 +1540,10 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
         };
 
         try {
-            const response = await this.sendMessageWithEvents(
-                message,
-                (resp) => callback?.((resp as ResponseSettleEvent).payload),
-                (resp) => resp.type === "SETTLE_SUCCESS",
-            );
+            const response = await this.sendMessageWithRetry(message, {
+                onEvent: (resp) => callback?.((resp as ResponseSettleEvent).payload),
+                isComplete: (resp) => resp.type === "SETTLE_SUCCESS",
+            });
             return (response as ResponseSettle).payload.txid;
         } catch (error) {
             throw new Error(`Settlement failed: ${error}`);
@@ -1621,11 +1570,10 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
         };
 
         try {
-            await this.sendMessageWithEvents(
-                message,
-                () => {},
-                (resp) => resp.type === "RESTORE_WALLET_SUCCESS",
-            );
+            await this.sendMessageWithRetry(message, {
+                onEvent: () => {},
+                isComplete: (resp) => resp.type === "RESTORE_WALLET_SUCCESS",
+            });
         } catch (error: unknown) {
             if (isSerializedAggregateError(error)) {
                 throw deserializeAggregateError(error);
@@ -1724,11 +1672,11 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
                     id: getRandomId(),
                 };
                 try {
-                    const response = await wallet.sendMessageWithEvents(
-                        message,
-                        (resp) => eventCallback?.((resp as ResponseRecoverVtxosEvent).payload),
-                        (resp) => resp.type === "RECOVER_VTXOS_SUCCESS",
-                    );
+                    const response = await wallet.sendMessageWithRetry(message, {
+                        onEvent: (resp) =>
+                            eventCallback?.((resp as ResponseRecoverVtxosEvent).payload),
+                        isComplete: (resp) => resp.type === "RECOVER_VTXOS_SUCCESS",
+                    });
                     return (response as ResponseRecoverVtxos).payload.txid;
                 } catch (e) {
                     throw new Error(`Failed to recover vtxos: ${e}`);
@@ -1781,11 +1729,11 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
                     payload: options,
                 };
                 try {
-                    const response = await wallet.sendMessageWithEvents(
-                        message,
-                        (resp) => eventCallback?.((resp as ResponseRenewVtxosEvent).payload),
-                        (resp) => resp.type === "RENEW_VTXOS_SUCCESS",
-                    );
+                    const response = await wallet.sendMessageWithRetry(message, {
+                        onEvent: (resp) =>
+                            eventCallback?.((resp as ResponseRenewVtxosEvent).payload),
+                        isComplete: (resp) => resp.type === "RENEW_VTXOS_SUCCESS",
+                    });
                     return (response as ResponseRenewVtxos).payload.txid;
                 } catch (e) {
                     throw new Error(`Failed to renew vtxos: ${e}`);
@@ -1829,14 +1777,14 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
                     id: getRandomId(),
                 };
                 try {
-                    const response = await wallet.sendMessageWithEvents(
-                        message,
-                        (resp) =>
+                    const response = await wallet.sendMessageWithRetry(message, {
+                        onEvent: (resp) =>
                             options?.eventCallback?.(
                                 (resp as ResponseMigrateDeprecatedSignerVtxosEvent).payload,
                             ),
-                        (resp) => resp.type === "MIGRATE_DEPRECATED_SIGNER_VTXOS_SUCCESS",
-                    );
+                        isComplete: (resp) =>
+                            resp.type === "MIGRATE_DEPRECATED_SIGNER_VTXOS_SUCCESS",
+                    });
                     return deserializeMigrationReport(
                         (response as ResponseMigrateDeprecatedSignerVtxos).payload.report,
                     );

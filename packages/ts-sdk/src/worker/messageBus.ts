@@ -170,17 +170,12 @@ export class MessageBus {
     private initialized = false;
     /**
      * FIFO chain that serializes `INITIALIZE_MESSAGE_BUS` handling. Each init
-     * runs to completion in enqueue order so a later init can never interleave
-     * with — or finish before — an earlier one and bind the bus to a stale
-     * identity. The stored promise is kept healed (`.catch`) so a rejected
-     * init never blocks the next request.
+     * runs to completion in enqueue order.
      */
     private initChain: Promise<void> = Promise.resolve();
     /**
      * Number of inits accepted but not yet settled (queued or running). The
-     * bus refuses ordinary wallet messages while this is > 0 so the previous
-     * wallet is no longer served the moment a new init is accepted, even
-     * before that init begins running.
+     * bus refuses ordinary wallet messages while this is > 0.
      */
     private pendingInitCount = 0;
     private readonly buildServicesFn: (config: Initialize["config"]) => Promise<{
@@ -269,16 +264,13 @@ export class MessageBus {
         if (!this.running) return;
         if (this.tickInProgress) return;
 
-        // The fired timer has elapsed; drop its handle first so an early
-        // return below cannot leave a stale handle that wedges scheduleNextTick().
         if (this.tickTimeout !== null) {
+            // The fired timer has elapsed: clear its handle.
             self.clearTimeout(this.tickTimeout);
             this.tickTimeout = null;
         }
 
-        // Never tick while an init is queued or running: doInit() stops and
-        // rebuilds handlers, so ticking them would touch stale/half-reset
-        // state. doInit() re-arms the scheduler once it completes.
+        // Never tick while an init is queued or running
         if (this.pendingInitCount > 0) return;
 
         this.tickInProgress = true;
@@ -321,11 +313,8 @@ export class MessageBus {
     }
 
     /**
-     * Serialize init requests on {@link initChain}. The bus stops serving the
-     * old wallet as soon as a new init is accepted (via `pendingInitCount`),
-     * even while this request is still queued behind an older one. Returns
-     * this init's own result, but heals the stored chain so a rejected init
-     * never blocks the next request.
+     * Serialize init requests on {@link initChain}.
+     * Returns this init's own result.
      */
     private waitForInit(config: Initialize["config"]): Promise<void> {
         this.pendingInitCount += 1;
@@ -333,6 +322,7 @@ export class MessageBus {
         const run = this.initChain
             .then(
                 () => this.doInit(config),
+                // A rejected init never blocks the next request.
                 () => this.doInit(config),
             )
             .finally(() => {
@@ -343,10 +333,8 @@ export class MessageBus {
     }
 
     /**
-     * The bus serves ordinary wallet messages only when it is initialized and
-     * no init is in flight. A pending init (queued or running) makes the bus
-     * unavailable even though the currently bound handlers may still point at
-     * a previously initialized wallet.
+     * The bus serves ordinary wallet messages only when it is initialized AND
+     * no init is in flight.
      */
     private acceptsWalletMessages(): boolean {
         return this.initialized && this.pendingInitCount === 0;
@@ -354,39 +342,26 @@ export class MessageBus {
 
     private async doInit(config: Initialize["config"]) {
         // Cancel any tick scheduled by a previous init so it cannot fire while
-        // handlers are stopped or rebuilt below (the awaits in this method
-        // yield to the event loop). scheduleNextTick() re-arms after a
-        // successful start.
+        // handlers are stopped or rebuilt.
         if (this.tickTimeout !== null) {
             self.clearTimeout(this.tickTimeout);
             this.tickTimeout = null;
         }
         if (this.initialized) {
-            // Stop existing handlers before re-initializing.
-            // This handles the case where CLEAR was called, which nullifies
-            // handler state (readonlyWallet, etc.) without resetting the
-            // initialized flag. Without this, handlers never get start()
-            // called again and all messages fail with "not initialized".
-            //
             // Clear the flag first so onMessage() rejects incoming messages
-            // during the stop/start window instead of routing them to
-            // half-reset handlers. Restored to true after start() completes.
             this.initialized = false;
+            // Stop existing handlers before re-initializing.
             await Promise.all(
                 Array.from(this.handlers.values()).map((h) => h.stop().catch(() => {})),
             );
         }
-        // Recompute the active timeout map from scratch so a prior init's
-        // keys cannot linger after re-init with a smaller map.
         this.messageTimeoutOverrides = {
             ...this.constructorTimeoutOverrides,
             ...(config.messageTimeouts ?? {}),
         };
 
         const services = await this.buildServicesFn(config);
-        // Start all handlers. Track the ones that started so a later failure
-        // can roll them back — a partial service set must not survive a
-        // failed init.
+
         const started: MessageHandler[] = [];
         try {
             for (const updater of this.handlers.values()) {
@@ -489,11 +464,7 @@ export class MessageBus {
                     console.log("MessageBus initialized");
                 }
             } catch (error) {
-                // Deliver the failure so the page fails fast instead of
-                // waiting for its own timeout, and a failed init does not
-                // poison the next queued one. Do not rethrow: event.waitUntil
-                // must observe a handled init message, not turn an
-                // already-reported failure into an unhandled worker error.
+                // Deliver the failure so the page fails fast
                 if (this.debug) console.error("MessageBus init failed", error);
                 this.deliverResponse(event.source, { id, tag, error: toError(error) }, { id, tag });
             }
@@ -503,13 +474,7 @@ export class MessageBus {
         if (!this.acceptsWalletMessages()) {
             if (this.debug)
                 console.warn("Event received while bus unavailable, dropping", event.data);
-            // Send error response so the caller's promise rejects instead of
-            // hanging forever. Distinguish the two unavailable states so the
-            // page can react correctly:
-            //  - an init is in flight (queued or running) → the caller should
-            //    wait for it and retry the same message, NOT force a re-init;
-            //  - otherwise the worker was never initialized / was killed and
-            //    restarted → the caller should (re)initialize.
+
             const fallbackTag = tag ?? "unknown";
             const error =
                 this.pendingInitCount > 0
