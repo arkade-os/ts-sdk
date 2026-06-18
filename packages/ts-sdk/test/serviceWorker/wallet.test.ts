@@ -1551,7 +1551,7 @@ describe("ServiceWorker identity boundary assertion", () => {
     });
 
     it("create() resolves when the worker reports the matching identity", async () => {
-        const identity = await SingleKey.fromHex(KEY_A).toReadonly();
+        const identity = await SingleKey.fromHex(KEY_A);
         const key = await identity.xOnlyPublicKey();
         const { serviceWorker } = stub(initResponder(key));
 
@@ -1578,5 +1578,60 @@ describe("ServiceWorker identity boundary assertion", () => {
                 storage: storage(),
             }),
         ).rejects.toThrow(/identity mismatch/i);
+    });
+
+    it("reinitialize() rejects on mismatch before retrying the original wallet message", async () => {
+        const identity = SingleKey.fromHex(KEY_A);
+        const expectedKey = await identity.xOnlyPublicKey();
+        const otherKey = await SingleKey.fromHex(KEY_B).xOnlyPublicKey();
+
+        // The first init (inside create) matches; a later re-init reports a
+        // different identity, so recovery must reject rather than rebind.
+        let initCount = 0;
+        const { serviceWorker } = stub((message: any) => {
+            if (message.tag === "INITIALIZE_MESSAGE_BUS") {
+                initCount += 1;
+                return { id: message.id, tag: "INITIALIZE_MESSAGE_BUS" };
+            }
+            if (message.type === "INIT_WALLET") {
+                return { id: message.id, tag: messageTag, type: "WALLET_INITIALIZED" };
+            }
+            if (message.type === "GET_STATUS") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "WALLET_STATUS",
+                    payload: {
+                        walletInitialized: true,
+                        xOnlyPublicKey: initCount >= 2 ? otherKey : expectedKey,
+                    },
+                };
+            }
+            // Force the wallet down the not-initialized → reinitialize path.
+            if (message.type === "GET_ADDRESS") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    error: new Error(MESSAGE_BUS_NOT_INITIALIZED),
+                };
+            }
+            return null;
+        });
+
+        const wallet = await ServiceWorkerWallet.create({
+            serviceWorker: serviceWorker as any,
+            arkServerUrl: "https://ark.test",
+            identity,
+            storage: storage(),
+        });
+
+        await expect(wallet.getAddress()).rejects.toThrow(/identity mismatch/i);
+
+        // The mismatch is detected inside reinitialize(), so the original
+        // GET_ADDRESS is never retried against the wrong identity.
+        const addressCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_ADDRESS",
+        );
+        expect(addressCalls).toHaveLength(1);
     });
 });
