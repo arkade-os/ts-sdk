@@ -405,6 +405,178 @@ const { assets } = await wallet.getBalance()
 const assetBalance = assets.find(asset => asset.assetId === assetId)?.amount
 ```
 
+### Advanced Scripts (ArkadeScript) with the Emulator
+
+Arkade supports **covenant-style spending conditions** that go beyond standard Bitcoin tapscript — enforcing where funds may go, introspecting inputs/outputs/assets, streaming hashes, EC operations, and more. These conditions are written in **ArkadeScript** (an extended opcode set) and validated off-chain by the **[emulator](https://github.com/arkade-os/emulator)**, a co-signing service that signs a spend only when the script passes.
+
+A contract spending path has two segments:
+
+| Segment | Where it runs | Purpose |
+|---|---|---|
+| `tapscript` | enforced **on-chain** (standard Bitcoin Script) | signatures, hashlocks, timelocks (CSV/CLTV) |
+| `arkadeScript` | **emulated** by the co-signer | covenants / introspection (Arkade opcodes) |
+
+The arkade segment is bound to its path by tweaking the emulator's co-signer key with the script's hash, so the emulator can only co-sign a spend that satisfies that exact script. Paths without an `arkadeScript` (a plain multisig or timelock exit, say) are co-signed by the Ark server directly and **don't require the emulator at all**.
+
+> The SDK never interprets opcodes. It resolves `$param` placeholders into bytes, builds the taproot tree, and assembles the spend; the emulator runs the script.
+
+#### Running an emulator
+
+Covenant paths need a running emulator. For local development it runs as a REST service (default `http://localhost:7073`) — see [arkade-os/emulator](https://github.com/arkade-os/emulator) for the Docker setup. Point the SDK at it with `RestEmulatorProvider`:
+
+```typescript
+import { RestEmulatorProvider } from '@arkade-os/sdk'
+
+const emulator = new RestEmulatorProvider('http://localhost:7073')
+const info = await emulator.getInfo()
+console.log('Emulator signer pubkey:', info.signerPubkey)
+```
+
+#### Connecting
+
+`Arkade.connect` resolves the Ark server key, the checkpoint closure and (when an emulator is configured) the co-signer key up front, so instantiating contracts afterwards is synchronous:
+
+```typescript
+import {
+  arkade,
+  networks,
+  RestArkProvider,
+  RestIndexerProvider,
+  RestEmulatorProvider,
+} from '@arkade-os/sdk'
+
+const ark = await arkade.Arkade.connect({
+  arkade: new RestArkProvider('http://localhost:7070'),        // Ark server
+  emulator: new RestEmulatorProvider('http://localhost:7073'), // optional — only covenant paths need it
+  indexer: new RestIndexerProvider('http://localhost:7070'),   // enables getUtxos/getBalance + coin auto-selection
+  identity,                                                    // optional — required for paths with a "user" signer
+  network: networks.regtest,
+})
+
+// Or reuse an existing wallet's identity, network and indexer:
+// const ark = await arkade.Arkade.fromWallet(wallet, { arkade: arkProvider, emulator })
+```
+
+#### Defining a contract program
+
+A `Program` is a set of named functions (spending paths). Each function declares its call `inputs`, a `tapscript` segment, and an optional `arkadeScript` covenant. Annotate the program with `satisfies arkade.Program` (and `inputs: [...] as const`) so the contract's `functions` are strongly typed — `claim(preimage)` then requires a `Uint8Array`, with exact arity.
+
+```typescript
+import { arkade } from '@arkade-os/sdk'
+
+// Covenant body: force output 0 to pay exactly `$amount` to `$receiver`
+// (the 32-byte taproot witness program). The leading DUP consumes the output
+// index pushed by the arkade witness `[0]`.
+const payTo = [
+  'DUP',
+  'INSPECTOUTPUTSCRIPTPUBKEY', 1, 'EQUALVERIFY',
+  '$receiver', 'EQUALVERIFY',
+  'INSPECTOUTPUTVALUE', '$amount', 'EQUAL',
+] satisfies arkade.AsmToken[]
+
+// An HTLC: claim with a preimage (HASH160 gate), or refund after a timelock.
+// Both paths use the same covenant to pin the destination output.
+const htlc = {
+  params: ['hash', 'receiver', 'amount'],
+  functions: {
+    claim: {
+      inputs: [{ name: 'preimage', type: 'bytes' }] as const,
+      tapscript: { signers: ['server'], asm: ['HASH160', '$hash', 'EQUAL'], witness: ['preimage'] },
+      arkadeScript: { asm: payTo, witness: [0] },
+    },
+    refund: {
+      tapscript: { signers: ['server'], cltv: 800_000n },
+      arkadeScript: { asm: payTo, witness: [0] },
+    },
+  },
+} satisfies arkade.Program
+```
+
+Program reference:
+
+- **`signers`** — `"server"`, `"user"` (the connected identity), a `"$param"`, or raw x-only bytes. For covenant paths the tweaked emulator key is appended automatically.
+- **`$param`** — substituted from the contract's constructor args (below). Usable in both `asm` and `signers`.
+- **`tapscript.asm` / `csv` / `cltv`** — at most one. `asm` is a standard-opcode condition (e.g. a hashlock) encoded into a condition-multisig leaf; `csv`/`cltv` are relative/absolute timelocks. Arkade opcodes are **not** allowed here (they are `OP_SUCCESS` on-chain) — put them in `arkadeScript`.
+- **`witness`** — items satisfying the condition. In `tapscript` they form the on-chain witness; in `arkadeScript` they form the emulated script's stack. Each is a function-input name, a number, or raw bytes.
+
+#### Instantiating and spending
+
+```typescript
+const contract = ark.contract(htlc, {
+  hash,            // Uint8Array — HASH160 of the preimage
+  receiver,        // Uint8Array — 32-byte taproot witness program
+  amount: 10_000n,
+})
+
+// Fund the contract's Arkade address, then inspect what's spendable
+console.log('Send funds to:', contract.address)
+const balance = await contract.getBalance() // requires an indexer
+const coins = await contract.getUtxos()
+
+// Spend via a named function: build → sign your inputs → emulator co-signs → finalized
+const { txid } = await contract.functions
+  .claim(preimage)             // `preimage` is typed Uint8Array
+  .to(receiverScript, 10_000n) // destination script + amount
+  .send()
+```
+
+The fluent builder returned by `contract.functions.<name>(...)`:
+
+| Method | Purpose |
+|---|---|
+| `.to(script, amount)` / `.to(outputs[])` | add output(s) — at least one is required |
+| `.from(coin)` | spend a specific contract coin (default: auto-select) |
+| `.fund(coins)` | add caller-funded inputs (e.g. a taker's coins in a swap) |
+| `.change(script)` | where any surplus (inputs − outputs) goes |
+| `.withAsset(spec)` | attach an asset-group transfer |
+| `.build()` | assemble the unsigned ark tx + checkpoints (no broadcast) |
+| `.send()` | build, sign, submit; resolves to `{ txid, signedArkTx, signedCheckpointTxs }` |
+
+For a **covenant** path, `send()` signs the client's inputs and hands the spend to the emulator, which executes the arkade script and — being the last co-signer — finalizes with arkd. **The emulator refuses to sign when the covenant isn't satisfied**, so an invalid spend rejects:
+
+```typescript
+// ❌ wrong destination or amount — the emulator rejects and send() throws
+await contract.functions.claim(preimage).to(wrongScript, 10_000n).send()
+```
+
+A **pure-tapscript** path (no `arkadeScript` — e.g. a cooperative `exit` leaf gated only by `signers`/`csv`) is co-signed by the Ark server directly and needs no emulator.
+
+#### Working with raw scripts and opcodes
+
+The `arkade` namespace also exposes the lower-level codec for hand-assembling or inspecting scripts containing Arkade opcodes (which `@scure/btc-signer` would otherwise mis-parse as data pushes):
+
+```typescript
+import { arkade } from '@arkade-os/sdk'
+
+// Encode / decode scripts with Arkade opcodes
+const bytes = arkade.ArkadeScript.encode(['HASH160', hash, 'EQUAL'])
+const ops = arkade.ArkadeScript.decode(bytes)
+
+// ASM round-tripping
+arkade.bytesToASM(bytes)                       // "OP_HASH160 <hex> OP_EQUAL"
+arkade.asmToBytes('OP_DUP OP_INSPECTOUTPUTVALUE')
+
+// Resolve a $param template to bytes (substitution + encoding only)
+arkade.resolveAsm(['HASH160', '$hash', 'EQUAL'], { hash })
+
+// The Arkade opcode table (introspection, assets, SHA256 streaming, EC ops…)
+arkade.ARKADE_OP.INSPECTOUTPUTVALUE            // 0xcf
+arkade.ARKADE_OP.INSPECTASSETGROUPSUM          // 0xec
+```
+
+Arkade adds opcodes for input/output/transaction **introspection** (`INSPECTOUTPUTVALUE`, `INSPECTOUTPUTSCRIPTPUBKEY`, `INSPECTINPUT*`, `INSPECTNUMINPUTS`…), **asset-group** introspection (`INSPECTNUMASSETGROUPS`, `INSPECTASSETGROUPSUM`, `FINDASSETGROUPBYASSETID`…), **SHA256 streaming**, **EC operations** (`ECADD`, `ECMUL`, `TWEAKVERIFY`…) and more. See [arkade-os/emulator](https://github.com/arkade-os/emulator) for the full opcode reference and semantics.
+
+#### Loading a compiler artifact
+
+Hand-written programs share the exact shape of the ArkadeScript compiler's JSON output, so a compiled artifact flows through the same resolver — `parseArtifact` decodes its `0x`-prefixed byte tokens into a `Program`:
+
+```typescript
+import { arkade } from '@arkade-os/sdk'
+
+const program = arkade.parseArtifact(compiledArtifactJson)
+const contract = ark.contract(program, args)
+```
+
 ### Batch Settlement
 
 The `settle` method can be used to move preconfirmed balances into finalized balances and to manually convert onchain funds to virtual outputs.
