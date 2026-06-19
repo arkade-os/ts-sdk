@@ -1096,29 +1096,18 @@ export class ArkadeSwaps {
             };
 
             // Once the CLTV locktime has passed, the refundWithoutReceiver
-            // leaf (sender + server, no Boltz) is spendable. A live VTXO can
-            // settle it offchain — no batch round needed. A swept
-            // (recoverable) VTXO is no longer a spendable leaf, so it must be
-            // reclaimed by re-registering it into a batch.
+            // leaf is spendable — settle it offchain for a live VTXO, or via a
+            // batch round for a swept one (see settleRefundWithoutReceiver).
             if (cltvSatisfied) {
-                const input = {
-                    ...vtxo,
-                    tapLeafScript: refundWithoutReceiverLeaf,
-                    tapTree: vhtlcScript.encode(),
-                };
-                if (isRecoverableVtxo) {
-                    await this.joinBatch(this.wallet.identity, input, output, arkInfo, true);
-                } else {
-                    await refundWithoutReceiverVHTLCwithOffchainTx(
-                        this.wallet.identity,
-                        vhtlcScript,
-                        serverXOnlyPublicKey,
-                        input,
-                        output,
-                        arkInfo,
-                        this.arkProvider,
-                    );
-                }
+                await this.settleRefundWithoutReceiver({
+                    vtxo,
+                    isRecoverable: isRecoverableVtxo,
+                    output,
+                    refundWithoutReceiverLeaf,
+                    vhtlcScript,
+                    serverXOnlyPublicKey,
+                    arkInfo,
+                });
                 sweptCount++;
                 continue;
             }
@@ -1190,22 +1179,17 @@ export class ArkadeSwaps {
                     `Swap ${pendingSwap.id}: Boltz rejected VTXO outpoint, ` +
                         `falling back to refundWithoutReceiver offchain`,
                 );
-                const fallbackInput = {
-                    ...vtxo,
-                    tapLeafScript: refundWithoutReceiverLeaf,
-                    tapTree: vhtlcScript.encode(),
-                };
-                // Non-recoverable VTXO past CLTV → settle refundWithoutReceiver
-                // offchain (sender + server), same as the primary post-CLTV path.
-                await refundWithoutReceiverVHTLCwithOffchainTx(
-                    this.wallet.identity,
+                // Past CLTV and non-recoverable (recoverable VTXOs are skipped
+                // pre-CLTV) → settle offchain, same as the primary post-CLTV path.
+                await this.settleRefundWithoutReceiver({
+                    vtxo,
+                    isRecoverable: isRecoverableVtxo,
+                    output,
+                    refundWithoutReceiverLeaf,
                     vhtlcScript,
                     serverXOnlyPublicKey,
-                    fallbackInput,
-                    output,
                     arkInfo,
-                    this.arkProvider,
-                );
+                });
                 sweptCount++;
             }
         }
@@ -1986,26 +1970,15 @@ export class ArkadeSwaps {
             // and could needlessly defer a recoverable VTXO whose
             // locktime had just passed.
             if (isSubmarineRefundLocktimeReached(refundLocktime)) {
-                const input = {
-                    ...vtxo,
-                    tapLeafScript: refundWithoutReceiverLeaf,
-                    tapTree: vhtlcScript.encode(),
-                };
-                // Live VTXO → settle refundWithoutReceiver offchain; swept
-                // VTXO → reclaim via a batch round (no longer a live leaf).
-                if (isRecoverableVtxo) {
-                    await this.joinBatch(this.wallet.identity, input, output, arkInfo, true);
-                } else {
-                    await refundWithoutReceiverVHTLCwithOffchainTx(
-                        this.wallet.identity,
-                        vhtlcScript,
-                        serverXOnlyPublicKey,
-                        input,
-                        output,
-                        arkInfo,
-                        this.arkProvider,
-                    );
-                }
+                await this.settleRefundWithoutReceiver({
+                    vtxo,
+                    isRecoverable: isRecoverableVtxo,
+                    output,
+                    refundWithoutReceiverLeaf,
+                    vhtlcScript,
+                    serverXOnlyPublicKey,
+                    arkInfo,
+                });
                 sweptCount++;
                 continue;
             }
@@ -2070,22 +2043,17 @@ export class ArkadeSwaps {
                     `Swap ${pendingSwap.id}: Boltz rejected VTXO outpoint, ` +
                         `falling back to refundWithoutReceiver offchain`,
                 );
-                const fallbackInput = {
-                    ...vtxo,
-                    tapLeafScript: refundWithoutReceiverLeaf,
-                    tapTree: vhtlcScript.encode(),
-                };
-                // Non-recoverable VTXO past CLTV → settle refundWithoutReceiver
-                // offchain (sender + server), same as the primary post-CLTV path.
-                await refundWithoutReceiverVHTLCwithOffchainTx(
-                    this.wallet.identity,
+                // Past CLTV and non-recoverable (recoverable VTXOs are skipped
+                // pre-CLTV) → settle offchain, same as the primary post-CLTV path.
+                await this.settleRefundWithoutReceiver({
+                    vtxo,
+                    isRecoverable: isRecoverableVtxo,
+                    output,
+                    refundWithoutReceiverLeaf,
                     vhtlcScript,
                     serverXOnlyPublicKey,
-                    fallbackInput,
-                    output,
                     arkInfo,
-                    this.arkProvider,
-                );
+                });
                 sweptCount++;
             }
         }
@@ -2792,6 +2760,43 @@ export class ArkadeSwaps {
         isRecoverable = true,
     ): Promise<string> {
         return joinBatch(this.arkProvider, identity, input, output, arkInfo, isRecoverable);
+    }
+
+    /**
+     * Settle a `refundWithoutReceiver` (sender + server, no Boltz) refund for a
+     * single VTXO whose CLTV refund locktime has elapsed.
+     *
+     * A live VTXO settles the leaf with an offchain Ark tx — no batch round. A
+     * swept (recoverable) VTXO is no longer a live leaf, so it can only be
+     * reclaimed by re-registering it into a batch.
+     */
+    private async settleRefundWithoutReceiver(args: {
+        vtxo: VirtualCoin;
+        isRecoverable: boolean;
+        output: TransactionOutput;
+        refundWithoutReceiverLeaf: ArkTxInput["tapLeafScript"];
+        vhtlcScript: VHTLC.Script;
+        serverXOnlyPublicKey: Uint8Array;
+        arkInfo: ArkInfo;
+    }): Promise<void> {
+        const input = {
+            ...args.vtxo,
+            tapLeafScript: args.refundWithoutReceiverLeaf,
+            tapTree: args.vhtlcScript.encode(),
+        };
+        if (args.isRecoverable) {
+            await this.joinBatch(this.wallet.identity, input, args.output, args.arkInfo, true);
+        } else {
+            await refundWithoutReceiverVHTLCwithOffchainTx(
+                this.wallet.identity,
+                args.vhtlcScript,
+                args.serverXOnlyPublicKey,
+                input,
+                args.output,
+                args.arkInfo,
+                this.arkProvider,
+            );
+        }
     }
 
     /**
