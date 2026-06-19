@@ -101,6 +101,7 @@ import {
     createVHTLCScript,
     joinBatch,
     refundVHTLCwithOffchainTx,
+    refundWithoutReceiverVHTLCwithOffchainTx,
     type VhtlcTimeouts,
 } from "./utils/vhtlc";
 
@@ -1094,22 +1095,30 @@ export class ArkadeSwaps {
                 script: outputScript,
             };
 
-            // Prefer refundWithoutReceiver (sender + server, no Boltz) when
-            // the CLTV locktime has passed — works for both recoverable and
-            // non-recoverable VTXOs.
+            // Once the CLTV locktime has passed, the refundWithoutReceiver
+            // leaf (sender + server, no Boltz) is spendable. A live VTXO can
+            // settle it offchain — no batch round needed. A swept
+            // (recoverable) VTXO is no longer a spendable leaf, so it must be
+            // reclaimed by re-registering it into a batch.
             if (cltvSatisfied) {
                 const input = {
                     ...vtxo,
                     tapLeafScript: refundWithoutReceiverLeaf,
                     tapTree: vhtlcScript.encode(),
                 };
-                await this.joinBatch(
-                    this.wallet.identity,
-                    input,
-                    output,
-                    arkInfo,
-                    isRecoverableVtxo,
-                );
+                if (isRecoverableVtxo) {
+                    await this.joinBatch(this.wallet.identity, input, output, arkInfo, true);
+                } else {
+                    await refundWithoutReceiverVHTLCwithOffchainTx(
+                        this.wallet.identity,
+                        vhtlcScript,
+                        serverXOnlyPublicKey,
+                        input,
+                        output,
+                        arkInfo,
+                        this.arkProvider,
+                    );
+                }
                 sweptCount++;
                 continue;
             }
@@ -1179,14 +1188,24 @@ export class ArkadeSwaps {
 
                 logger.warn(
                     `Swap ${pendingSwap.id}: Boltz rejected VTXO outpoint, ` +
-                        `falling back to refundWithoutReceiver via joinBatch`,
+                        `falling back to refundWithoutReceiver offchain`,
                 );
                 const fallbackInput = {
                     ...vtxo,
                     tapLeafScript: refundWithoutReceiverLeaf,
                     tapTree: vhtlcScript.encode(),
                 };
-                await this.joinBatch(this.wallet.identity, fallbackInput, output, arkInfo, false);
+                // Non-recoverable VTXO past CLTV → settle refundWithoutReceiver
+                // offchain (sender + server), same as the primary post-CLTV path.
+                await refundWithoutReceiverVHTLCwithOffchainTx(
+                    this.wallet.identity,
+                    vhtlcScript,
+                    serverXOnlyPublicKey,
+                    fallbackInput,
+                    output,
+                    arkInfo,
+                    this.arkProvider,
+                );
                 sweptCount++;
             }
         }
@@ -1873,7 +1892,10 @@ export class ArkadeSwaps {
      * swap's ARK lockup address.
      *
      * Path selection per VTXO:
-     * - CLTV has elapsed → `refundWithoutReceiver` via `joinBatch` (no Boltz).
+     * - CLTV elapsed, live VTXO → `refundWithoutReceiver` offchain (sender +
+     *   server, no Boltz, no batch round).
+     * - CLTV elapsed, swept VTXO → `refundWithoutReceiver` via `joinBatch`
+     *   (a swept VTXO is no longer a live leaf).
      * - Pre-CLTV recoverable → skipped (Boltz can't co-sign swept-batch refund).
      * - Pre-CLTV non-recoverable → cooperative 3-of-3 refund via Boltz.
      *
@@ -1969,13 +1991,21 @@ export class ArkadeSwaps {
                     tapLeafScript: refundWithoutReceiverLeaf,
                     tapTree: vhtlcScript.encode(),
                 };
-                await this.joinBatch(
-                    this.wallet.identity,
-                    input,
-                    output,
-                    arkInfo,
-                    isRecoverableVtxo,
-                );
+                // Live VTXO → settle refundWithoutReceiver offchain; swept
+                // VTXO → reclaim via a batch round (no longer a live leaf).
+                if (isRecoverableVtxo) {
+                    await this.joinBatch(this.wallet.identity, input, output, arkInfo, true);
+                } else {
+                    await refundWithoutReceiverVHTLCwithOffchainTx(
+                        this.wallet.identity,
+                        vhtlcScript,
+                        serverXOnlyPublicKey,
+                        input,
+                        output,
+                        arkInfo,
+                        this.arkProvider,
+                    );
+                }
                 sweptCount++;
                 continue;
             }
@@ -2038,14 +2068,24 @@ export class ArkadeSwaps {
 
                 logger.warn(
                     `Swap ${pendingSwap.id}: Boltz rejected VTXO outpoint, ` +
-                        `falling back to refundWithoutReceiver via joinBatch`,
+                        `falling back to refundWithoutReceiver offchain`,
                 );
                 const fallbackInput = {
                     ...vtxo,
                     tapLeafScript: refundWithoutReceiverLeaf,
                     tapTree: vhtlcScript.encode(),
                 };
-                await this.joinBatch(this.wallet.identity, fallbackInput, output, arkInfo, false);
+                // Non-recoverable VTXO past CLTV → settle refundWithoutReceiver
+                // offchain (sender + server), same as the primary post-CLTV path.
+                await refundWithoutReceiverVHTLCwithOffchainTx(
+                    this.wallet.identity,
+                    vhtlcScript,
+                    serverXOnlyPublicKey,
+                    fallbackInput,
+                    output,
+                    arkInfo,
+                    this.arkProvider,
+                );
                 sweptCount++;
             }
         }

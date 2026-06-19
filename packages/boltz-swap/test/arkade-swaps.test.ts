@@ -38,6 +38,7 @@ import {
     claimVHTLCwithOffchainTx,
     createVHTLCScript as createVHTLCScriptReal,
     refundVHTLCwithOffchainTx,
+    refundWithoutReceiverVHTLCwithOffchainTx,
 } from "../src/utils/vhtlc";
 import { BoltzRefundError, InvoiceFailedToPayError, SwapError } from "../src/errors";
 
@@ -64,6 +65,9 @@ vi.mock("../src/utils/vhtlc", async () => {
             "a".repeat(64), // claim ark txid returned to claimArk
         ),
         refundVHTLCwithOffchainTx: vi.fn().mockResolvedValue(undefined),
+        refundWithoutReceiverVHTLCwithOffchainTx: vi.fn().mockResolvedValue(
+            "b".repeat(64), // refundWithoutReceiver ark txid
+        ),
     };
 });
 
@@ -257,7 +261,7 @@ describe("ArkadeSwaps", () => {
         claimPublicKey: compressedPubkeys.boltz,
         // Prod-shaped Boltz Ark VHTLC timeouts:
         //   refund — absolute Unix timestamp; 2023-11-14 in the past so the
-        //     default test case has CLTV satisfied (joinBatch path).
+        //     default test case has CLTV satisfied (refundWithoutReceiver path).
         //   unilateral* — BIP68 relative delays (seconds, ≥ 512 type-flag).
         timeoutBlockHeights: {
             refund: 1700000000,
@@ -3349,10 +3353,15 @@ describe("ArkadeSwaps", () => {
 
             await swaps.refundVHTLC(refundableSwap);
 
+            // Swept (recoverable) VTXO must join a batch; the live (settled)
+            // VTXO settles its refundWithoutReceiver leaf offchain.
             const joinBatch = vi.mocked((swaps as any).joinBatch);
-            expect(joinBatch).toHaveBeenCalledTimes(2);
-            expect(joinBatch.mock.calls[0][1].txid).toBe(otherTxid);
-            expect(joinBatch.mock.calls[1][1].txid).toBe(lockupTxid);
+            expect(joinBatch).toHaveBeenCalledOnce();
+            expect(joinBatch.mock.calls[0][1].txid).toBe(lockupTxid);
+
+            const offchain = vi.mocked(refundWithoutReceiverVHTLCwithOffchainTx);
+            expect(offchain).toHaveBeenCalledOnce();
+            expect((offchain.mock.calls[0][3] as any).txid).toBe(otherTxid);
         });
 
         it("should throw when all VTXOs are spent", async () => {
@@ -3462,9 +3471,11 @@ describe("ArkadeSwaps", () => {
                 expect((mockRefund.mock.calls[0][6] as any).txid).toBe(lockupTxid);
             });
 
-            it("should skip Boltz and use joinBatch when CLTV has passed", async () => {
+            it("should refund a non-recoverable VTXO offchain (refundWithoutReceiver) when CLTV has passed", async () => {
                 // Default refundableSwap has past refund timestamp; CLTV
-                // satisfied via wall-clock check → refundWithoutReceiver.
+                // satisfied via wall-clock check. A non-recoverable (live)
+                // VTXO can settle the refundWithoutReceiver leaf (sender +
+                // server) via an offchain Ark tx — no batch round needed.
                 const vtxo = makeNonRecoverableVtxo(lockupTxid, 0);
 
                 mockRefundSelection({
@@ -3473,14 +3484,20 @@ describe("ArkadeSwaps", () => {
 
                 await swaps.refundVHTLC(refundableSwap);
 
+                // Neither the Boltz 3-of-3 path nor a batch round.
                 expect(refundVHTLCwithOffchainTx).not.toHaveBeenCalled();
-                const joinBatch = vi.mocked((swaps as any).joinBatch);
-                expect(joinBatch).toHaveBeenCalledOnce();
-                // isRecoverable arg must be false for non-recoverable VTXOs
-                expect(joinBatch.mock.calls[0][4]).toBe(false);
+                expect((swaps as any).joinBatch).not.toHaveBeenCalled();
+
+                const offchain = vi.mocked(refundWithoutReceiverVHTLCwithOffchainTx);
+                expect(offchain).toHaveBeenCalledOnce();
+                // input (4th positional arg) carries the refundWithoutReceiver leaf
+                expect((offchain.mock.calls[0][3] as any).txid).toBe(lockupTxid);
+                expect((offchain.mock.calls[0][3] as any).tapLeafScript[1]).toEqual(
+                    new Uint8Array([4]),
+                );
             });
 
-            it("should fall back to joinBatch when Boltz rejects and CLTV has since passed", async () => {
+            it("should fall back to refundWithoutReceiver offchain when Boltz rejects and CLTV has since passed", async () => {
                 const vtxo = makeNonRecoverableVtxo(lockupTxid, 0);
 
                 mockRefundSelection({
@@ -3500,9 +3517,14 @@ describe("ArkadeSwaps", () => {
 
                 await swaps.refundVHTLC(refundableSwapPreCltv);
 
-                const joinBatch = vi.mocked((swaps as any).joinBatch);
-                expect(joinBatch).toHaveBeenCalledOnce();
-                expect(joinBatch.mock.calls[0][4]).toBe(false);
+                // Non-recoverable VTXO past CLTV → offchain, not a batch round.
+                expect((swaps as any).joinBatch).not.toHaveBeenCalled();
+                const offchain = vi.mocked(refundWithoutReceiverVHTLCwithOffchainTx);
+                expect(offchain).toHaveBeenCalledOnce();
+                expect((offchain.mock.calls[0][3] as any).txid).toBe(lockupTxid);
+                expect((offchain.mock.calls[0][3] as any).tapLeafScript[1]).toEqual(
+                    new Uint8Array([4]),
+                );
             });
 
             it("should skip when Boltz rejects and CLTV still not passed", async () => {
@@ -4182,7 +4204,7 @@ describe("ArkadeSwaps", () => {
             const swap = swapWithRefund(refundTs);
             const outcome = await swaps.refundVHTLC(swap);
 
-            // CLTV satisfied → joinBatch path; no Boltz 3-of-3 attempt.
+            // CLTV satisfied → live VTXO refunds offchain; no Boltz 3-of-3 attempt.
             expect(outcome.swept).toBe(1);
             expect(outcome.skipped).toBe(0);
             expect(refundVHTLCwithOffchainTx).not.toHaveBeenCalled();
@@ -4577,7 +4599,7 @@ describe("ArkadeSwaps", () => {
             });
         });
 
-        it("refunds two unspent VTXOs via joinBatch when CLTV is satisfied", async () => {
+        it("refunds two unspent non-recoverable VTXOs offchain (refundWithoutReceiver) when CLTV is satisfied", async () => {
             const vtxos = [nonRecoverableVtxo(txidA, 0), nonRecoverableVtxo(txidB, 1)];
             vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
                 vtxos: vtxos as any,
@@ -4585,13 +4607,40 @@ describe("ArkadeSwaps", () => {
 
             const outcome = await swaps.refundArk(buildSwap(pastRefund()));
 
+            // Live VTXOs settle the refundWithoutReceiver leaf offchain;
+            // no batch round, no Boltz.
+            const offchain = vi.mocked(refundWithoutReceiverVHTLCwithOffchainTx);
+            expect(offchain).toHaveBeenCalledTimes(2);
+            expect((offchain.mock.calls[0][3] as any).txid).toBe(txidA);
+            expect((offchain.mock.calls[1][3] as any).txid).toBe(txidB);
+            // refundWithoutReceiver leaf (script byte 4) was used
+            expect((offchain.mock.calls[0][3] as any).tapLeafScript[1]).toEqual(
+                new Uint8Array([4]),
+            );
+            expect((swaps as any).joinBatch).not.toHaveBeenCalled();
+            expect(refundVHTLCwithOffchainTx).not.toHaveBeenCalled();
+            expect(outcome).toEqual({ swept: 2, skipped: 0 });
+        });
+
+        it("refunds swept (recoverable) VTXOs via joinBatch when CLTV is satisfied", async () => {
+            const vtxos = [recoverableVtxo(txidA, 0), recoverableVtxo(txidB, 1)];
+            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                vtxos: vtxos as any,
+            });
+
+            const outcome = await swaps.refundArk(buildSwap(pastRefund()));
+
+            // Swept VTXOs are no longer live leaves — only a batch round
+            // can reclaim them.
             const joinBatchSpy = vi.mocked((swaps as any).joinBatch);
             expect(joinBatchSpy).toHaveBeenCalledTimes(2);
             expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
             expect(joinBatchSpy.mock.calls[1][1].txid).toBe(txidB);
             // refundWithoutReceiver leaf (script byte 4) was used
             expect(joinBatchSpy.mock.calls[0][1].tapLeafScript[1]).toEqual(new Uint8Array([4]));
-            expect(refundVHTLCwithOffchainTx).not.toHaveBeenCalled();
+            // isRecoverable arg must be true for swept VTXOs
+            expect(joinBatchSpy.mock.calls[0][4]).toBe(true);
+            expect(refundWithoutReceiverVHTLCwithOffchainTx).not.toHaveBeenCalled();
             expect(outcome).toEqual({ swept: 2, skipped: 0 });
         });
 
@@ -4673,7 +4722,7 @@ describe("ArkadeSwaps", () => {
             }
         });
 
-        it("falls back to joinBatch when Boltz rejects and CLTV passes during the catch", async () => {
+        it("falls back to refundWithoutReceiver offchain when Boltz rejects and CLTV passes during the catch", async () => {
             const futureTs = Math.floor(Date.now() / 1000) + 86400;
             vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
                 vtxos: [nonRecoverableVtxo(txidA, 0)] as any,
@@ -4689,11 +4738,14 @@ describe("ArkadeSwaps", () => {
 
             const outcome = await swaps.refundArk(buildSwap(futureTs));
 
-            const joinBatchSpy = vi.mocked((swaps as any).joinBatch);
-            expect(joinBatchSpy).toHaveBeenCalledTimes(1);
+            // Non-recoverable VTXO past CLTV → offchain, not a batch round.
+            expect((swaps as any).joinBatch).not.toHaveBeenCalled();
+            const offchain = vi.mocked(refundWithoutReceiverVHTLCwithOffchainTx);
+            expect(offchain).toHaveBeenCalledOnce();
             // fallback uses refundWithoutReceiver leaf (script byte 4)
-            expect(joinBatchSpy.mock.calls[0][1].tapLeafScript[1]).toEqual(new Uint8Array([4]));
-            expect(joinBatchSpy.mock.calls[0][4]).toBe(false);
+            expect((offchain.mock.calls[0][3] as any).tapLeafScript[1]).toEqual(
+                new Uint8Array([4]),
+            );
             expect(outcome).toEqual({ swept: 1, skipped: 0 });
         });
 

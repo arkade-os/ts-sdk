@@ -308,6 +308,82 @@ export const claimVHTLCwithOffchainTx = async (
 };
 
 /**
+ * Refunds a VHTLC offchain via the `refundWithoutReceiver` leaf (sender +
+ * server, no Boltz).
+ *
+ * Mirrors {@link claimVHTLCwithOffchainTx} — both spend a 2-of-2-with-server
+ * leaf offchain; the only difference is which leaf the server co-signs. Use
+ * this once the VHTLC's CLTV refund locktime has elapsed: `buildOffchainTx`
+ * reads the absolute timelock off the `refundWithoutReceiver` (CLTV) leaf and
+ * sets the Ark tx's nLockTime, so the server will co-sign without a batch
+ * round. Only valid for live (non-recoverable) VTXOs — a swept VTXO is no
+ * longer a spendable leaf and must be reclaimed via {@link joinBatch}.
+ *
+ * @param identity - The sender identity; one of the two signers on the leaf.
+ * @param vhtlcScript
+ * @param serverXOnlyPublicKey
+ * @param input - `input.tapLeafScript` must be the refundWithoutReceiver leaf.
+ * @param output
+ * @param arkInfo
+ * @param arkProvider
+ * @returns The Ark transaction ID of the refund.
+ */
+export const refundWithoutReceiverVHTLCwithOffchainTx = async (
+    identity: Identity,
+    vhtlcScript: VHTLC.Script,
+    serverXOnlyPublicKey: Uint8Array,
+    input: ArkTxInput,
+    output: TransactionOutput,
+    arkInfo: ArkInfo,
+    arkProvider: ArkProvider,
+): Promise<string> => {
+    // create the server unroll script for checkpoint transactions
+    const rawCheckpointTapscript = hex.decode(arkInfo.checkpointTapscript);
+    const serverUnrollScript = CSVMultisigTapscript.decode(rawCheckpointTapscript);
+
+    // create the offchain transaction to refund the VHTLC
+    const { arkTx, checkpoints } = buildOffchainTx([input], [output], serverUnrollScript);
+
+    // sign and submit the virtual transaction
+    const signedArkTx = await identity.sign(arkTx);
+    const { arkTxid, finalArkTx, signedCheckpointTxs } = await arkProvider.submitTx(
+        base64.encode(signedArkTx.toPSBT()),
+        checkpoints.map((c) => base64.encode(c.toPSBT())),
+    );
+
+    // verify the server signed the transaction with correct key on the refundWithoutReceiver leaf
+    const finalTx = Transaction.fromPSBT(base64.decode(finalArkTx));
+    const serverPubkeyHex = hex.encode(serverXOnlyPublicKey);
+    const refundLeafHash = tapLeafHash(
+        scriptFromTapLeafScript(vhtlcScript.refundWithoutReceiver()),
+    );
+    for (let i = 0; i < finalTx.inputsLength; i++) {
+        if (!verifySignatures(finalTx, i, [serverPubkeyHex], refundLeafHash)) {
+            throw new Error("Invalid final Ark transaction");
+        }
+    }
+
+    // verify and sign the checkpoint transactions pre signed by the server
+    const finalCheckpoints = await Promise.all(
+        signedCheckpointTxs.map(async (c, idx) => {
+            const tx = Transaction.fromPSBT(base64.decode(c));
+            const checkpointLeaf = checkpoints[idx].getInput(0).tapLeafScript![0];
+            const cpLeafHash = tapLeafHash(scriptFromTapLeafScript(checkpointLeaf));
+            if (!verifySignatures(tx, 0, [serverPubkeyHex], cpLeafHash)) {
+                throw new Error("Invalid server signature in checkpoint transaction");
+            }
+            const signedCheckpoint = await identity.sign(tx, [0]);
+            return base64.encode(signedCheckpoint.toPSBT());
+        }),
+    );
+
+    // submit the final transaction to the Ark provider
+    await arkProvider.finalizeTx(arkTxid, finalCheckpoints);
+
+    return arkTxid;
+};
+
+/**
  * Refunds a VHTLC using an offchain transaction.
  * @param swapId
  * @param identity
