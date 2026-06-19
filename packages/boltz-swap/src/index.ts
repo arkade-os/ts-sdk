@@ -1,3 +1,11 @@
+import { version } from "../package.json";
+
+/**
+ * This SDK plugin's own version string, sourced from package.json, and scoped
+ * by plugin name.
+ */
+export const sdkVersion = `boltz-swap/${version}`;
+
 export { ArkadeSwaps } from "./arkade-swaps";
 export type { QuoteSwapOptions } from "./arkade-swaps";
 export type { BoltzSwapStatus, SubmarineProgressionStatus } from "./boltz-swap-provider";
