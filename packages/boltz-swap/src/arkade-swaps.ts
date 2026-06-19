@@ -101,6 +101,7 @@ import {
     createVHTLCScript,
     joinBatch,
     refundVHTLCwithOffchainTx,
+    refundWithoutReceiverVHTLCwithOffchainTx,
     type VhtlcTimeouts,
 } from "./utils/vhtlc";
 
@@ -138,6 +139,19 @@ type SubmarineScanPrepared =
           swap: BoltzSubmarineSwap;
           error: string;
       };
+
+/**
+ * Loop-invariant inputs shared by every `refundWithoutReceiver` settlement in a
+ * single refund pass. Bundled so {@link ArkadeSwaps.settleRefundWithoutReceiver}
+ * needs only the per-VTXO coin alongside it.
+ */
+type RefundWithoutReceiverContext = {
+    arkInfo: ArkInfo;
+    vhtlcScript: VHTLC.Script;
+    serverXOnlyPublicKey: Uint8Array;
+    refundWithoutReceiverLeaf: ArkTxInput["tapLeafScript"];
+    outputScript: Uint8Array;
+};
 
 const dedupeVtxos = (vtxos: VirtualCoin[]): VirtualCoin[] => [
     ...new Map(vtxos.map((vtxo) => [`${vtxo.txid}:${vtxo.vout}`, vtxo] as const)).values(),
@@ -1078,118 +1092,24 @@ export class ArkadeSwaps {
 
         const outputScript = ArkAddress.decode(address).pkScript;
         const refundWithoutReceiverLeaf = vhtlcScript.refundWithoutReceiver();
-        const cltvSatisfied = isSubmarineRefundLocktimeReached(vhtlcTimeouts.refund);
+        const refundContext: RefundWithoutReceiverContext = {
+            arkInfo,
+            vhtlcScript,
+            serverXOnlyPublicKey,
+            refundWithoutReceiverLeaf,
+            outputScript,
+        };
 
         // Refund every unspent VTXO at the contract address.
-        // Throttle between Boltz API calls to avoid 429 rate-limiting.
-        let boltzCallCount = 0;
-        let sweptCount = 0;
-        let skippedCount = 0;
-
-        for (const vtxo of refundableVtxos) {
-            const isRecoverableVtxo = isRecoverable(vtxo);
-
-            const output = {
-                amount: BigInt(vtxo.value),
-                script: outputScript,
-            };
-
-            // Prefer refundWithoutReceiver (sender + server, no Boltz) when
-            // the CLTV locktime has passed — works for both recoverable and
-            // non-recoverable VTXOs.
-            if (cltvSatisfied) {
-                const input = {
-                    ...vtxo,
-                    tapLeafScript: refundWithoutReceiverLeaf,
-                    tapTree: vhtlcScript.encode(),
-                };
-                await this.joinBatch(
-                    this.wallet.identity,
-                    input,
-                    output,
-                    arkInfo,
-                    isRecoverableVtxo,
-                );
-                sweptCount++;
-                continue;
-            }
-
-            // Pre-CLTV: recoverable VTXOs can't use the Boltz 3-of-3 path
-            // (Boltz can't co-sign a swept-batch refund), so we must wait.
-            if (isRecoverableVtxo) {
-                logger.error(
-                    `Swap ${pendingSwap.id}: recoverable VTXO ${vtxo.txid}:${vtxo.vout} ` +
-                        `cannot be refunded yet — refundWithoutReceiver locktime has not passed ` +
-                        `(refundLocktime=${vhtlcTimeouts.refund}, ` +
-                        `currentTimestamp=${Math.floor(Date.now() / 1000)}). ` +
-                        `Refund will be retried after locktime.`,
-                );
-                skippedCount++;
-                continue;
-            }
-
-            // Pre-CLTV, non-recoverable: try the 3-of-3 refund via Boltz.
-            const input = {
-                ...vtxo,
-                tapLeafScript: vhtlcScript.refund(),
-                tapTree: vhtlcScript.encode(),
-            };
-            try {
-                if (boltzCallCount > 0) {
-                    await new Promise((r) => setTimeout(r, 2000));
-                }
-                // Count attempts, not successes — a thrown call still
-                // consumed Boltz's rate-limit slot, so the next attempt
-                // must observe the throttle even when the previous one
-                // failed.
-                boltzCallCount++;
-                await refundVHTLCwithOffchainTx(
-                    pendingSwap.id,
-                    this.wallet.identity,
-                    this.arkProvider,
-                    boltzXOnlyPublicKey,
-                    ourXOnlyPublicKey,
-                    serverXOnlyPublicKey,
-                    input,
-                    output,
-                    arkInfo,
-                    this.swapProvider.refundSubmarineSwap.bind(this.swapProvider),
-                );
-                sweptCount++;
-            } catch (error) {
-                // Only fall back for Boltz-side rejections (e.g. outpoint
-                // mismatch after an Ark round). Re-throw anything else.
-                if (!(error instanceof BoltzRefundError)) {
-                    throw error;
-                }
-
-                // Re-check the locktime — wall clock may have advanced while
-                // talking to Boltz.
-                if (!isSubmarineRefundLocktimeReached(vhtlcTimeouts.refund)) {
-                    logger.error(
-                        `Swap ${pendingSwap.id}: Boltz rejected VTXO outpoint and ` +
-                            `refundWithoutReceiver locktime has not passed yet ` +
-                            `(currentTimestamp=${Math.floor(Date.now() / 1000)}, ` +
-                            `locktime=${vhtlcTimeouts.refund}). ` +
-                            `Refund will be retried after locktime.`,
-                    );
-                    skippedCount++;
-                    continue;
-                }
-
-                logger.warn(
-                    `Swap ${pendingSwap.id}: Boltz rejected VTXO outpoint, ` +
-                        `falling back to refundWithoutReceiver via joinBatch`,
-                );
-                const fallbackInput = {
-                    ...vtxo,
-                    tapLeafScript: refundWithoutReceiverLeaf,
-                    tapTree: vhtlcScript.encode(),
-                };
-                await this.joinBatch(this.wallet.identity, fallbackInput, output, arkInfo, false);
-                sweptCount++;
-            }
-        }
+        const { swept: sweptCount, skipped: skippedCount } = await this.refundVtxos({
+            swapId: pendingSwap.id,
+            vtxos: refundableVtxos,
+            refundLocktime: vhtlcTimeouts.refund,
+            refundContext,
+            boltzXOnlyPublicKey,
+            ourXOnlyPublicKey,
+            refundViaBoltz: this.swapProvider.refundSubmarineSwap.bind(this.swapProvider),
+        });
 
         // Skip the flag update when this is a manual recovery on a
         // successfully-claimed swap (e.g. user accidentally double-funded
@@ -1873,7 +1793,10 @@ export class ArkadeSwaps {
      * swap's ARK lockup address.
      *
      * Path selection per VTXO:
-     * - CLTV has elapsed → `refundWithoutReceiver` via `joinBatch` (no Boltz).
+     * - CLTV elapsed, live VTXO → `refundWithoutReceiver` offchain (sender +
+     *   server, no Boltz, no batch round).
+     * - CLTV elapsed, swept VTXO → `refundWithoutReceiver` via `joinBatch`
+     *   (a swept VTXO is no longer a live leaf).
      * - Pre-CLTV recoverable → skipped (Boltz can't co-sign swept-batch refund).
      * - Pre-CLTV non-recoverable → cooperative 3-of-3 refund via Boltz.
      *
@@ -1946,109 +1869,23 @@ export class ArkadeSwaps {
         const outputScript = ArkAddress.decode(address).pkScript;
         const refundWithoutReceiverLeaf = vhtlcScript.refundWithoutReceiver();
         const refundLocktime = pendingSwap.response.lockupDetails.timeouts!.refund;
+        const refundContext: RefundWithoutReceiverContext = {
+            arkInfo,
+            vhtlcScript,
+            serverXOnlyPublicKey,
+            refundWithoutReceiverLeaf,
+            outputScript,
+        };
 
-        let boltzCallCount = 0;
-        let sweptCount = 0;
-        let skippedCount = 0;
-
-        for (const vtxo of unspentVtxos) {
-            const isRecoverableVtxo = isRecoverable(vtxo);
-            const output = {
-                amount: BigInt(vtxo.value),
-                script: outputScript,
-            };
-
-            // Re-evaluate per iteration so a CLTV that elapses mid-loop
-            // is observed by every branch (recoverable + non-recoverable).
-            // `Date.now()` is cheap; the snapshot saved nothing material
-            // and could needlessly defer a recoverable VTXO whose
-            // locktime had just passed.
-            if (isSubmarineRefundLocktimeReached(refundLocktime)) {
-                const input = {
-                    ...vtxo,
-                    tapLeafScript: refundWithoutReceiverLeaf,
-                    tapTree: vhtlcScript.encode(),
-                };
-                await this.joinBatch(
-                    this.wallet.identity,
-                    input,
-                    output,
-                    arkInfo,
-                    isRecoverableVtxo,
-                );
-                sweptCount++;
-                continue;
-            }
-
-            if (isRecoverableVtxo) {
-                logger.error(
-                    `Swap ${pendingSwap.id}: recoverable VTXO ${vtxo.txid}:${vtxo.vout} ` +
-                        `cannot be refunded yet — refundWithoutReceiver locktime has not passed ` +
-                        `(refundLocktime=${refundLocktime}, ` +
-                        `currentTimestamp=${Math.floor(Date.now() / 1000)}). ` +
-                        `Refund will be retried after locktime.`,
-                );
-                skippedCount++;
-                continue;
-            }
-
-            const input = {
-                ...vtxo,
-                tapLeafScript: vhtlcScript.refund(),
-                tapTree: vhtlcScript.encode(),
-            };
-            try {
-                if (boltzCallCount > 0) {
-                    await new Promise((r) => setTimeout(r, 2000));
-                }
-                // Count attempts, not successes — a thrown call still
-                // consumed Boltz's rate-limit slot, so the next attempt
-                // must observe the throttle even when the previous one
-                // failed.
-                boltzCallCount++;
-                await refundVHTLCwithOffchainTx(
-                    pendingSwap.id,
-                    this.wallet.identity,
-                    this.arkProvider,
-                    boltzXOnlyPublicKey,
-                    ourXOnlyPublicKey,
-                    serverXOnlyPublicKey,
-                    input,
-                    output,
-                    arkInfo,
-                    this.swapProvider.refundChainSwap.bind(this.swapProvider),
-                );
-                sweptCount++;
-            } catch (error) {
-                if (!(error instanceof BoltzRefundError)) {
-                    throw error;
-                }
-
-                if (!isSubmarineRefundLocktimeReached(refundLocktime)) {
-                    logger.error(
-                        `Swap ${pendingSwap.id}: Boltz rejected VTXO outpoint and ` +
-                            `refundWithoutReceiver locktime has not passed yet ` +
-                            `(currentTimestamp=${Math.floor(Date.now() / 1000)}, ` +
-                            `locktime=${refundLocktime}). ` +
-                            `Refund will be retried after locktime.`,
-                    );
-                    skippedCount++;
-                    continue;
-                }
-
-                logger.warn(
-                    `Swap ${pendingSwap.id}: Boltz rejected VTXO outpoint, ` +
-                        `falling back to refundWithoutReceiver via joinBatch`,
-                );
-                const fallbackInput = {
-                    ...vtxo,
-                    tapLeafScript: refundWithoutReceiverLeaf,
-                    tapTree: vhtlcScript.encode(),
-                };
-                await this.joinBatch(this.wallet.identity, fallbackInput, output, arkInfo, false);
-                sweptCount++;
-            }
-        }
+        const { swept: sweptCount, skipped: skippedCount } = await this.refundVtxos({
+            swapId: pendingSwap.id,
+            vtxos: unspentVtxos,
+            refundLocktime,
+            refundContext,
+            boltzXOnlyPublicKey,
+            ourXOnlyPublicKey,
+            refundViaBoltz: this.swapProvider.refundChainSwap.bind(this.swapProvider),
+        });
 
         // update the pending swap on storage
         const finalStatus = await this.getSwapStatus(pendingSwap.id);
@@ -2752,6 +2589,167 @@ export class ArkadeSwaps {
         isRecoverable = true,
     ): Promise<string> {
         return joinBatch(this.arkProvider, identity, input, output, arkInfo, isRecoverable);
+    }
+
+    /**
+     * Settle a `refundWithoutReceiver` (sender + server, no Boltz) refund for a
+     * single VTXO whose CLTV refund locktime has elapsed.
+     *
+     * A live VTXO settles the leaf with an offchain Ark tx — no batch round. A
+     * swept (recoverable) VTXO is no longer a live leaf, so it can only be
+     * reclaimed by re-registering it into a batch.
+     */
+    private async settleRefundWithoutReceiver(
+        ctx: RefundWithoutReceiverContext,
+        vtxo: VirtualCoin,
+    ): Promise<void> {
+        const input = {
+            ...vtxo,
+            tapLeafScript: ctx.refundWithoutReceiverLeaf,
+            tapTree: ctx.vhtlcScript.encode(),
+        };
+        const output = { amount: BigInt(vtxo.value), script: ctx.outputScript };
+        if (isRecoverable(vtxo)) {
+            await this.joinBatch(this.wallet.identity, input, output, ctx.arkInfo, true);
+        } else {
+            await refundWithoutReceiverVHTLCwithOffchainTx(
+                this.wallet.identity,
+                ctx.vhtlcScript,
+                ctx.serverXOnlyPublicKey,
+                input,
+                output,
+                ctx.arkInfo,
+                this.arkProvider,
+            );
+        }
+    }
+
+    /**
+     * Refund every VTXO at a swap's VHTLC address back to the wallet, shared by
+     * {@link ArkadeSwaps.refundVHTLC} (submarine) and {@link ArkadeSwaps.refundArk}
+     * (chain). Path selection per VTXO:
+     * - CLTV elapsed → `refundWithoutReceiver` (offchain for a live VTXO, via a
+     *   batch round for a swept one — see {@link settleRefundWithoutReceiver}).
+     * - Pre-CLTV recoverable → skipped (Boltz can't co-sign a swept-batch refund).
+     * - Pre-CLTV non-recoverable → cooperative 3-of-3 refund via Boltz, falling
+     *   back to `refundWithoutReceiver` offchain if Boltz rejects after the
+     *   locktime has since elapsed.
+     *
+     * @returns Counts of VTXOs swept vs. deferred.
+     */
+    private async refundVtxos(params: {
+        swapId: string;
+        vtxos: VirtualCoin[];
+        refundLocktime: number;
+        refundContext: RefundWithoutReceiverContext;
+        boltzXOnlyPublicKey: Uint8Array;
+        ourXOnlyPublicKey: Uint8Array;
+        refundViaBoltz: Parameters<typeof refundVHTLCwithOffchainTx>[9];
+    }): Promise<{ swept: number; skipped: number }> {
+        const {
+            swapId,
+            vtxos,
+            refundLocktime,
+            refundContext,
+            boltzXOnlyPublicKey,
+            ourXOnlyPublicKey,
+            refundViaBoltz,
+        } = params;
+        const { vhtlcScript, serverXOnlyPublicKey, arkInfo, outputScript } = refundContext;
+
+        // Throttle between Boltz API calls to avoid 429 rate-limiting.
+        let boltzCallCount = 0;
+        let sweptCount = 0;
+        let skippedCount = 0;
+
+        for (const vtxo of vtxos) {
+            const isRecoverableVtxo = isRecoverable(vtxo);
+            const output = { amount: BigInt(vtxo.value), script: outputScript };
+
+            // Re-evaluate the locktime per iteration so a CLTV that elapses
+            // mid-loop is observed by every branch. Once it has passed, the
+            // refundWithoutReceiver leaf is spendable — settle it offchain for a
+            // live VTXO, or via a batch round for a swept one.
+            if (isSubmarineRefundLocktimeReached(refundLocktime)) {
+                await this.settleRefundWithoutReceiver(refundContext, vtxo);
+                sweptCount++;
+                continue;
+            }
+
+            // Pre-CLTV: recoverable VTXOs can't use the Boltz 3-of-3 path
+            // (Boltz can't co-sign a swept-batch refund), so we must wait.
+            if (isRecoverableVtxo) {
+                logger.error(
+                    `Swap ${swapId}: recoverable VTXO ${vtxo.txid}:${vtxo.vout} ` +
+                        `cannot be refunded yet — refundWithoutReceiver locktime has not passed ` +
+                        `(refundLocktime=${refundLocktime}, ` +
+                        `currentTimestamp=${Math.floor(Date.now() / 1000)}). ` +
+                        `Refund will be retried after locktime.`,
+                );
+                skippedCount++;
+                continue;
+            }
+
+            // Pre-CLTV, non-recoverable: try the 3-of-3 refund via Boltz.
+            const input = {
+                ...vtxo,
+                tapLeafScript: vhtlcScript.refund(),
+                tapTree: vhtlcScript.encode(),
+            };
+            try {
+                if (boltzCallCount > 0) {
+                    await new Promise((r) => setTimeout(r, 2000));
+                }
+                // Count attempts, not successes — a thrown call still consumed
+                // Boltz's rate-limit slot, so the next attempt must observe the
+                // throttle even when the previous one failed.
+                boltzCallCount++;
+                await refundVHTLCwithOffchainTx(
+                    swapId,
+                    this.wallet.identity,
+                    this.arkProvider,
+                    boltzXOnlyPublicKey,
+                    ourXOnlyPublicKey,
+                    serverXOnlyPublicKey,
+                    input,
+                    output,
+                    arkInfo,
+                    refundViaBoltz,
+                );
+                sweptCount++;
+            } catch (error) {
+                // Only fall back for Boltz-side rejections (e.g. outpoint
+                // mismatch after an Ark round). Re-throw anything else.
+                if (!(error instanceof BoltzRefundError)) {
+                    throw error;
+                }
+
+                // Re-check the locktime — wall clock may have advanced while
+                // talking to Boltz.
+                if (!isSubmarineRefundLocktimeReached(refundLocktime)) {
+                    logger.error(
+                        `Swap ${swapId}: Boltz rejected VTXO outpoint and ` +
+                            `refundWithoutReceiver locktime has not passed yet ` +
+                            `(currentTimestamp=${Math.floor(Date.now() / 1000)}, ` +
+                            `locktime=${refundLocktime}). ` +
+                            `Refund will be retried after locktime.`,
+                    );
+                    skippedCount++;
+                    continue;
+                }
+
+                logger.warn(
+                    `Swap ${swapId}: Boltz rejected VTXO outpoint, ` +
+                        `falling back to refundWithoutReceiver offchain`,
+                );
+                // Past CLTV and non-recoverable (recoverable VTXOs are skipped
+                // pre-CLTV) → settle offchain, same as the primary post-CLTV path.
+                await this.settleRefundWithoutReceiver(refundContext, vtxo);
+                sweptCount++;
+            }
+        }
+
+        return { swept: sweptCount, skipped: skippedCount };
     }
 
     /**
