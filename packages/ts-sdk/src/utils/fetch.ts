@@ -3,11 +3,7 @@ import { version } from "../../package.json";
 export const buildVersion = "0.9.9";
 
 /**
- * The SDK's own version string, sent to arkd as `X-SDK-VERSION` so the operator
- * can distinguish client builds. Formatted `ts-sdk/{version}` to namespace it by
- * client. The version is sourced from package.json so it stays in sync with every
- * release bump — unlike {@link buildVersion}, which tracks arkd's compatibility
- * guard rather than this package's version.
+ * The SDK's own version string, sourced from package.json
  */
 export const sdkVersion = `ts-sdk/${version}`;
 
