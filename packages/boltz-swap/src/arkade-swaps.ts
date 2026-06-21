@@ -479,11 +479,14 @@ export class ArkadeSwaps {
         // build request object for reverse swap. A BOLT11 invoice carries
         // either a description or a description hash, never both, so prefer
         // descriptionHash when present and drop the plaintext description.
+        // Gate on `!== undefined` (not truthiness) so a present-but-invalid
+        // hash like "" is forwarded and rejected by the provider's hex check,
+        // rather than silently falling back to the description.
         const swapRequest: CreateReverseSwapRequest = {
             invoiceAmount: args.amount,
             claimPublicKey,
             preimageHash,
-            ...(args.descriptionHash
+            ...(args.descriptionHash !== undefined
                 ? { descriptionHash: args.descriptionHash }
                 : args.description?.trim()
                   ? { description: args.description.trim() }
