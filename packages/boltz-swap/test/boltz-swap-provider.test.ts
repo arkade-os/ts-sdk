@@ -623,6 +623,17 @@ describe("BoltzSwapProvider", () => {
             ).rejects.toThrow("descriptionHash must be a 32-byte SHA256");
         });
 
+        it("should throw when descriptionHash is not valid hex", async () => {
+            await expect(
+                provider.createReverseSwap({
+                    invoiceAmount: 21000,
+                    claimPublicKey: mockHexCompressedPubKey,
+                    preimageHash: "mock-preimage-hash",
+                    descriptionHash: "g".repeat(64), // right length, non-hex
+                }),
+            ).rejects.toThrow("descriptionHash must be a 32-byte SHA256");
+        });
+
         it("should throw on invalid reverse swap response", async () => {
             // arrange
             vi.stubGlobal(

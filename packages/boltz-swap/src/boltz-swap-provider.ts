@@ -1147,7 +1147,7 @@ export class BoltzSwapProvider {
             });
         }
         // descriptionHash, when given, must be a 32-byte SHA256 (64 hex chars)
-        if (descriptionHash !== undefined && descriptionHash.length != 64) {
+        if (descriptionHash !== undefined && !/^[0-9a-fA-F]{64}$/.test(descriptionHash)) {
             throw new SwapError({
                 message: "descriptionHash must be a 32-byte SHA256 (64 hex chars)",
             });
