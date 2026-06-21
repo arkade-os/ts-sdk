@@ -457,6 +457,12 @@ export type CreateReverseSwapRequest = {
     preimageHash: string;
     /** Optional description for the BOLT11 invoice. */
     description?: string;
+    /**
+     * Optional SHA256 description hash (hex, 32 bytes / 64 chars) to commit
+     * into the invoice instead of a plaintext description. BOLT11 carries one
+     * or the other, never both; when set, `description` is omitted.
+     */
+    descriptionHash?: string;
 };
 
 /** Response from creating a reverse swap. */
@@ -1132,6 +1138,7 @@ export class BoltzSwapProvider {
         claimPublicKey,
         preimageHash,
         description,
+        descriptionHash,
     }: CreateReverseSwapRequest): Promise<CreateReverseSwapResponse> {
         // claimPublicKey must be in compressed version (33 bytes / 66 hex chars)
         if (claimPublicKey.length != 66) {
@@ -1139,14 +1146,23 @@ export class BoltzSwapProvider {
                 message: "claimPublicKey must be a compressed public key",
             });
         }
-        // make reverse swap request
+        // descriptionHash, when given, must be a 32-byte SHA256 (64 hex chars)
+        if (descriptionHash !== undefined && descriptionHash.length != 64) {
+            throw new SwapError({
+                message: "descriptionHash must be a 32-byte SHA256 (64 hex chars)",
+            });
+        }
+        // make reverse swap request. BOLT11 carries a description OR a
+        // description hash, never both — prefer the hash when present.
         const requestBody = {
             from: "BTC",
             to: "ARK",
             invoiceAmount,
             claimPublicKey,
             preimageHash,
-            description: description?.trim() || "Send to Arkade address",
+            ...(descriptionHash
+                ? { descriptionHash }
+                : { description: description?.trim() || "Send to Arkade address" }),
             ...(this.referralId ? { referralId: this.referralId } : {}),
         };
 

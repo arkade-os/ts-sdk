@@ -476,12 +476,18 @@ export class ArkadeSwaps {
         const preimageHash = hex.encode(sha256(preimage));
         if (!preimageHash) throw new SwapError({ message: "Failed to get preimage hash" });
 
-        // build request object for reverse swap
+        // build request object for reverse swap. A BOLT11 invoice carries
+        // either a description or a description hash, never both, so prefer
+        // descriptionHash when present and drop the plaintext description.
         const swapRequest: CreateReverseSwapRequest = {
             invoiceAmount: args.amount,
             claimPublicKey,
             preimageHash,
-            ...(args.description?.trim() ? { description: args.description.trim() } : {}),
+            ...(args.descriptionHash
+                ? { descriptionHash: args.descriptionHash }
+                : args.description?.trim()
+                  ? { description: args.description.trim() }
+                  : {}),
         };
 
         // make reverse swap request

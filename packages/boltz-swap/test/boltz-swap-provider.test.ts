@@ -564,6 +564,65 @@ describe("BoltzSwapProvider", () => {
             expect(response).toEqual(mockResponse);
         });
 
+        it("should send descriptionHash and omit description when provided", async () => {
+            // arrange
+            const mockResponse = {
+                id: "mock-swap-id",
+                invoice: invoice,
+                onchainAmount: 21000,
+                lockupAddress: "mock-lockup-address",
+                refundPublicKey: "mock-refund-public-key",
+                timeoutBlockHeight: 21,
+                timeoutBlockHeights: {
+                    refund: 800000,
+                    unilateralClaim: 800050,
+                    unilateralRefund: 800100,
+                    unilateralRefundWithoutReceiver: 800150,
+                },
+            };
+            vi.stubGlobal(
+                "fetch",
+                vi.fn(() => createFetchResponse(mockResponse)),
+            );
+            const descriptionHash = "a".repeat(64); // 32-byte SHA256 in hex
+            // act
+            const response = await provider.createReverseSwap({
+                invoiceAmount: 21000,
+                claimPublicKey: mockHexCompressedPubKey,
+                preimageHash: "mock-preimage-hash",
+                // both supplied: BOLT11 carries one or the other, hash wins
+                description: "ignored when hash present",
+                descriptionHash,
+            });
+            // assert
+            expect(fetch).toHaveBeenCalledWith("http://localhost:9090/v2/swap/reverse", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    from: "BTC",
+                    to: "ARK",
+                    invoiceAmount: 21000,
+                    claimPublicKey: mockHexCompressedPubKey,
+                    preimageHash: "mock-preimage-hash",
+                    descriptionHash,
+                    referralId: "arkade-ts-sdk",
+                    // description is dropped in favor of descriptionHash
+                }),
+            });
+            expect(response).toEqual(mockResponse);
+        });
+
+        it("should throw when descriptionHash is not 32 bytes", async () => {
+            await expect(
+                provider.createReverseSwap({
+                    invoiceAmount: 21000,
+                    claimPublicKey: mockHexCompressedPubKey,
+                    preimageHash: "mock-preimage-hash",
+                    descriptionHash: "deadbeef", // too short
+                }),
+            ).rejects.toThrow("descriptionHash must be a 32-byte SHA256");
+        });
+
         it("should throw on invalid reverse swap response", async () => {
             // arrange
             vi.stubGlobal(
