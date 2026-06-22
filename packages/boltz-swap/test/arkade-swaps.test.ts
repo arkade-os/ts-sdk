@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ArkadeSwaps } from "../src/arkade-swaps";
 import {
+    BoltzSwapStatus,
     BoltzSwapProvider,
     CreateReverseSwapRequest,
     CreateReverseSwapResponse,
@@ -2974,7 +2975,7 @@ describe("ArkadeSwaps", () => {
             type: "reverse" as const,
             to: "ARK" as const,
             from: "BTC" as const,
-            status: "swap.created",
+            status: "swap.created" as BoltzSwapStatus,
             createdAt: 1000,
             preimageHash: hex.encode(sha256(randomBytes(32))),
             claimDetails: mockDetails,
@@ -2983,7 +2984,7 @@ describe("ArkadeSwaps", () => {
         const finalReverse = {
             ...pendingReverse,
             id: "rev-final",
-            status: "invoice.settled",
+            status: "invoice.settled" as BoltzSwapStatus,
         };
 
         const pendingSubmarine = {
@@ -2991,7 +2992,7 @@ describe("ArkadeSwaps", () => {
             type: "submarine" as const,
             to: "BTC" as const,
             from: "ARK" as const,
-            status: "transaction.mempool",
+            status: "transaction.mempool" as BoltzSwapStatus,
             createdAt: 2000,
             preimageHash: hex.encode(sha256(randomBytes(32))),
             refundDetails: mockDetails,
@@ -3000,7 +3001,7 @@ describe("ArkadeSwaps", () => {
         const finalSubmarine = {
             ...pendingSubmarine,
             id: "sub-final",
-            status: "transaction.claimed",
+            status: "transaction.claimed" as BoltzSwapStatus,
         };
 
         const pendingChain = {
@@ -3008,7 +3009,7 @@ describe("ArkadeSwaps", () => {
             type: "chain" as const,
             to: "BTC" as const,
             from: "ARK" as const,
-            status: "transaction.server.mempool",
+            status: "transaction.server.mempool" as BoltzSwapStatus,
             createdAt: 3000,
             preimageHash: hex.encode(sha256(randomBytes(32))),
             refundDetails: {
@@ -3020,7 +3021,7 @@ describe("ArkadeSwaps", () => {
         const finalChain = {
             ...pendingChain,
             id: "chain-final",
-            status: "transaction.claimed",
+            status: "transaction.claimed" as BoltzSwapStatus,
         };
 
         const mockFees = {
@@ -3293,7 +3294,7 @@ describe("ArkadeSwaps", () => {
                     refundWithoutReceiver: () => [{}, new Uint8Array([4]), 0xc0] as any,
                     encode: () => [] as any,
                     options: {
-                        refundLocktime: refundableSwap.response.timeoutBlockHeights.refund,
+                        refundLocktime: refundableSwap.response.timeoutBlockHeights!.refund,
                     },
                 },
                 vhtlcAddress: refundableSwap.response.address,
@@ -3429,12 +3430,13 @@ describe("ArkadeSwaps", () => {
             // Pre-CLTV: refundLocktime is a future Unix timestamp so the
             // Boltz 3-of-3 path is attempted for non-recoverable VTXOs.
             const futureRefundTimestamp = Math.floor(Date.now() / 1000) + 86400;
+            const refundableSwapTimeouts = refundableSwap.response.timeoutBlockHeights!;
             const refundableSwapPreCltv: BoltzSubmarineSwap = {
                 ...refundableSwap,
                 response: {
                     ...refundableSwap.response,
                     timeoutBlockHeights: {
-                        ...refundableSwap.response.timeoutBlockHeights,
+                        ...refundableSwapTimeouts,
                         refund: futureRefundTimestamp,
                     },
                 },
@@ -3569,12 +3571,13 @@ describe("ArkadeSwaps", () => {
 
         it("should skip a recoverable VTXO when pre-CLTV", async () => {
             const futureRefund = Math.floor(Date.now() / 1000) + 86400;
+            const refundableSwapTimeouts = refundableSwap.response.timeoutBlockHeights!;
             const preCltvSwap: BoltzSubmarineSwap = {
                 ...refundableSwap,
                 response: {
                     ...refundableSwap.response,
                     timeoutBlockHeights: {
-                        ...refundableSwap.response.timeoutBlockHeights,
+                        ...refundableSwapTimeouts,
                         refund: futureRefund,
                     },
                 },
@@ -3672,7 +3675,7 @@ describe("ArkadeSwaps", () => {
                     refundWithoutReceiver: () => [{}, new Uint8Array([4]), 0xc0] as any,
                     encode: () => [] as any,
                     options: {
-                        refundLocktime: claimedSwap.response.timeoutBlockHeights.refund,
+                        refundLocktime: claimedSwap.response.timeoutBlockHeights!.refund,
                     },
                 },
                 vhtlcAddress: claimedSwap.response.address,
@@ -3683,16 +3686,19 @@ describe("ArkadeSwaps", () => {
         const pastRefund = () => Math.floor(Date.now() / 1000) - 1;
         const futureRefund = () => Math.floor(Date.now() / 1000) + 86400;
 
-        const swapWithRefund = (base: BoltzSubmarineSwap, refund: number): BoltzSubmarineSwap => ({
-            ...base,
-            response: {
-                ...base.response,
-                timeoutBlockHeights: {
-                    ...base.response.timeoutBlockHeights,
-                    refund,
+        const swapWithRefund = (base: BoltzSubmarineSwap, refund: number): BoltzSubmarineSwap => {
+            const baseResponseTimeouts = base.response.timeoutBlockHeights!;
+            return {
+                ...base,
+                response: {
+                    ...base.response,
+                    timeoutBlockHeights: {
+                        ...baseResponseTimeouts,
+                        refund,
+                    },
                 },
-            },
-        });
+            };
+        };
 
         it("returns recoverable for transaction.claimed plus post-CLTV VTXO", async () => {
             mockSelection({ recoverable: [makeVtxo(lockupTxid, 0, 75000)] });
@@ -3881,7 +3887,7 @@ describe("ArkadeSwaps", () => {
                         refundWithoutReceiver: () => [{}, new Uint8Array([4]), 0xc0] as any,
                         encode: () => [] as any,
                         options: {
-                            refundLocktime: claimedSwap.response.timeoutBlockHeights.refund,
+                            refundLocktime: claimedSwap.response.timeoutBlockHeights!.refund,
                         },
                     },
                     vhtlcAddress: claimedSwap.response.address,
@@ -4006,7 +4012,7 @@ describe("ArkadeSwaps", () => {
                     refundWithoutReceiver: () => [{}, new Uint8Array([4]), 0xc0] as any,
                     encode: () => [] as any,
                     options: {
-                        refundLocktime: claimedSwap.response.timeoutBlockHeights.refund,
+                        refundLocktime: claimedSwap.response.timeoutBlockHeights!.refund,
                     },
                 },
                 vhtlcAddress: claimedSwap.response.address,
@@ -4108,12 +4114,13 @@ describe("ArkadeSwaps", () => {
                 // { swept: 0, skipped: 1 } without throwing. Aggregator must
                 // surface that as recovered:false / skipped:true rather than
                 // misreporting a successful sweep.
+                const failedSwapTimeouts = failedSwap.response.timeoutBlockHeights!;
                 const preCltvFailed: BoltzSubmarineSwap = {
                     ...failedSwap,
                     response: {
                         ...failedSwap.response,
                         timeoutBlockHeights: {
-                            ...failedSwap.response.timeoutBlockHeights,
+                            ...failedSwapTimeouts,
                             refund: Math.floor(Date.now() / 1000) + 86400,
                         },
                     },
@@ -4158,12 +4165,14 @@ describe("ArkadeSwaps", () => {
             status: "invoice.failedToPay",
         };
 
+        const failedSwapTimeouts = failedSwap.response.timeoutBlockHeights!;
+
         const swapWithRefund = (refund: number): BoltzSubmarineSwap => ({
             ...failedSwap,
             response: {
                 ...failedSwap.response,
                 timeoutBlockHeights: {
-                    ...failedSwap.response.timeoutBlockHeights,
+                    ...failedSwapTimeouts,
                     refund,
                 },
             },
@@ -4181,7 +4190,7 @@ describe("ArkadeSwaps", () => {
                     refundWithoutReceiver: () => [{}, new Uint8Array([4]), 0xc0] as any,
                     encode: () => [] as any,
                     options: {
-                        refundLocktime: failedSwap.response.timeoutBlockHeights.refund,
+                        refundLocktime: failedSwap.response.timeoutBlockHeights!.refund,
                     },
                 },
                 vhtlcAddress: failedSwap.response.address,
@@ -4370,8 +4379,8 @@ describe("ArkadeSwaps", () => {
             await swaps.claimVHTLC(buildPendingSwap());
 
             expect(joinBatchSpy).toHaveBeenCalledTimes(2);
-            expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
-            expect(joinBatchSpy.mock.calls[1][1].txid).toBe(txidB);
+            expect((joinBatchSpy.mock.calls[0][1] as any).txid).toBe(txidA);
+            expect((joinBatchSpy.mock.calls[1][1] as any).txid).toBe(txidB);
             expect(claimVHTLCwithOffchainTx).not.toHaveBeenCalled();
             expect(mockSwapRepository.saveSwap).toHaveBeenCalledTimes(1);
             expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
@@ -4422,7 +4431,7 @@ describe("ArkadeSwaps", () => {
             await swaps.claimVHTLC(buildPendingSwap());
 
             expect(joinBatchSpy).toHaveBeenCalledTimes(1);
-            expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
+            expect((joinBatchSpy.mock.calls[0][1] as any).txid).toBe(txidA);
             const offchainSpy = vi.mocked(claimVHTLCwithOffchainTx);
             expect(offchainSpy).toHaveBeenCalledTimes(1);
             expect((offchainSpy.mock.calls[0][3] as any).txid).toBe(txidB);
@@ -4440,7 +4449,7 @@ describe("ArkadeSwaps", () => {
 
             await expect(swaps.claimVHTLC(buildPendingSwap())).resolves.toBeUndefined();
             expect(joinBatchSpy).toHaveBeenCalledTimes(1);
-            expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidB);
+            expect((joinBatchSpy.mock.calls[0][1] as any).txid).toBe(txidB);
         });
 
         it("throws 'VHTLC is already spent' when every returned VTXO is spent", async () => {
@@ -4484,8 +4493,8 @@ describe("ArkadeSwaps", () => {
             // Both VTXOs were attempted — the failure on the second VTXO
             // didn't short-circuit the loop.
             expect(joinBatchSpy).toHaveBeenCalledTimes(2);
-            expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
-            expect(joinBatchSpy.mock.calls[1][1].txid).toBe(txidB);
+            expect((joinBatchSpy.mock.calls[0][1] as any).txid).toBe(txidA);
+            expect((joinBatchSpy.mock.calls[1][1] as any).txid).toBe(txidB);
             // Status is not saved on partial success (all-or-throw).
             expect(mockSwapRepository.saveSwap).not.toHaveBeenCalled();
         });
@@ -4505,8 +4514,8 @@ describe("ArkadeSwaps", () => {
             );
 
             expect(joinBatchSpy).toHaveBeenCalledTimes(2);
-            expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
-            expect(joinBatchSpy.mock.calls[1][1].txid).toBe(txidB);
+            expect((joinBatchSpy.mock.calls[0][1] as any).txid).toBe(txidA);
+            expect((joinBatchSpy.mock.calls[1][1] as any).txid).toBe(txidB);
         });
 
         it("retries the indexer and claims every VTXO returned on the second attempt", async () => {
@@ -4527,8 +4536,8 @@ describe("ArkadeSwaps", () => {
                 await expect(promise).resolves.toBeUndefined();
                 expect(indexerProvider.getVtxos).toHaveBeenCalledTimes(2);
                 expect(joinBatchSpy).toHaveBeenCalledTimes(2);
-                expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
-                expect(joinBatchSpy.mock.calls[1][1].txid).toBe(txidB);
+                expect((joinBatchSpy.mock.calls[0][1] as any).txid).toBe(txidA);
+                expect((joinBatchSpy.mock.calls[1][1] as any).txid).toBe(txidB);
             } finally {
                 vi.useRealTimers();
             }

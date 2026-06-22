@@ -219,7 +219,7 @@ describe("RealmSwapRepository", () => {
 
     beforeEach(() => {
         const realm = createMockRealm();
-        repo = new RealmSwapRepository(realm);
+        repo = new RealmSwapRepository(realm as any);
     });
 
     it("saves and retrieves swaps", async () => {
