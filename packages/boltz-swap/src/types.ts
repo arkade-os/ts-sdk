@@ -338,8 +338,10 @@ export interface DecodedInvoice {
     expiry: number;
     /** Invoice amount in satoshis. */
     amountSats: number;
-    /** Invoice description string. */
+    /** Invoice description string (BOLT11 `d` field; "" if none). */
     description: string;
+    /** Invoice description hash (BOLT11 `h` field, hex; "" if none). */
+    descriptionHash: string;
     /** Payment hash (hex-encoded). */
     paymentHash: string;
 }

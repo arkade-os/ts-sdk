@@ -418,6 +418,35 @@ describe("ArkadeSwaps", () => {
                 const decodeInvoiceResult = decodeInvoice(result.invoice);
                 expect(decodeInvoiceResult.amountSats).toBe(amount);
                 expect(decodeInvoiceResult.description).toBe(description);
+                // description only → no description hash
+                expect(decodeInvoiceResult.descriptionHash).toBe("");
+            });
+
+            it("should create a Lightning invoice with descriptionHash", async () => {
+                const amount = 1000;
+                const descriptionHash = "a".repeat(64);
+                const result = await swaps.createLightningInvoice({
+                    amount,
+                    descriptionHash,
+                });
+                const decoded = decodeInvoice(result.invoice);
+                expect(decoded.amountSats).toBe(amount);
+                expect(decoded.descriptionHash).toBe(descriptionHash);
+                // BOLT11 carries one or the other → no plaintext description
+                expect(decoded.description).toBe("");
+            });
+
+            it("should put only descriptionHash on the invoice when both are given", async () => {
+                const amount = 1000;
+                const descriptionHash = "b".repeat(64);
+                const result = await swaps.createLightningInvoice({
+                    amount,
+                    description: "ignored when hash present",
+                    descriptionHash,
+                });
+                const decoded = decodeInvoice(result.invoice);
+                expect(decoded.descriptionHash).toBe(descriptionHash);
+                expect(decoded.description).toBe("");
             });
 
             it("should return a valid response object", async () => {
