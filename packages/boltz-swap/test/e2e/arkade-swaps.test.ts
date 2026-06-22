@@ -595,10 +595,10 @@ describe("ArkadeSwaps", () => {
                 expect(response.address).toMatch(/^tark1/);
                 expect(response.expectedAmount).toBe(expectedAmount);
                 expect(response.timeoutBlockHeights).toBeDefined();
-                expect(response.timeoutBlockHeights.refund).toBeTypeOf("number");
-                expect(response.timeoutBlockHeights.unilateralClaim).toBeTypeOf("number");
-                expect(response.timeoutBlockHeights.unilateralRefund).toBeTypeOf("number");
-                expect(response.timeoutBlockHeights.unilateralRefundWithoutReceiver).toBeTypeOf(
+                expect(response.timeoutBlockHeights!.refund).toBeTypeOf("number");
+                expect(response.timeoutBlockHeights!.unilateralClaim).toBeTypeOf("number");
+                expect(response.timeoutBlockHeights!.unilateralRefund).toBeTypeOf("number");
+                expect(response.timeoutBlockHeights!.unilateralRefundWithoutReceiver).toBeTypeOf(
                     "number",
                 );
             });
@@ -625,8 +625,10 @@ describe("ArkadeSwaps", () => {
                     invoice,
                 });
 
+                expect(pendingSwap.response.address).toBeDefined();
+
                 await wallet.send({
-                    address: pendingSwap.response.address,
+                    address: pendingSwap.response.address!,
                     amount: pendingSwap.response.expectedAmount,
                 });
 
@@ -678,8 +680,10 @@ describe("ArkadeSwaps", () => {
                     invoice: res.invoice,
                 });
 
+                expect(pendingSwap.response.address).toBeDefined();
+
                 await wallet.send({
-                    address: pendingSwap.response.address,
+                    address: pendingSwap.response.address!,
                     amount: pendingSwap.response.expectedAmount,
                 });
 
@@ -728,8 +732,10 @@ describe("ArkadeSwaps", () => {
                 });
                 const balanceBeforeLockup = await wallet.getBalance();
 
+                expect(pendingSwap.response.address).toBeDefined();
+
                 await wallet.send({
-                    address: pendingSwap.response.address,
+                    address: pendingSwap.response.address!,
                     amount: pendingSwap.response.expectedAmount,
                 });
 
@@ -1506,7 +1512,7 @@ describe("ArkadeSwaps", () => {
                     // delta-sync cache.  Clear the cursors so the next
                     // getVtxos() does a full bootstrap and sees only the
                     // current indexer state.
-                    await defaultWallet.clearSyncCursors();
+                    await defaultWallet.clearSyncCursor();
 
                     const { invoice } = await getNewLightningInvoice(amount);
                     const result = await defaultSwaps.sendLightningPayment({
