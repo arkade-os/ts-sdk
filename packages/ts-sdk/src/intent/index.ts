@@ -67,7 +67,7 @@ export namespace Intent {
         const toSpend = craftToSpendTx(message, inputs[0].witnessUtxo.script);
 
         // Create the transaction to sign.
-        return craftToSignTx(toSpend, inputs, outputs);
+        return craftToSignTx(toSpend, inputs, outputs, message);
     }
 
     /**
@@ -154,6 +154,10 @@ export const OP_RETURN_EMPTY_PKSCRIPT = new Uint8Array([OP.RETURN]);
 const ZERO_32 = new Uint8Array(32).fill(0);
 const MAX_INDEX = 0xffffffff;
 export const TAG_INTENT_PROOF = "ark-intent-proof-message";
+// BIP-322 v2 global field: the UTF-8 message being signed. Lets a co-signer
+// recognise a message-signing PSBT and recompute the to_spend commitment from
+// PSBT-internal data alone.
+const PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE = 0x09;
 
 type ValidatedTxInput = TransactionInput & {
     witnessUtxo: { script: Uint8Array; amount: bigint };
@@ -235,6 +239,7 @@ function craftToSignTx(
     toSpend: Transaction,
     inputs: ValidatedTxInput[],
     outputs: ValidatedTxOutput[],
+    message: string,
 ): Transaction {
     const firstInput = inputs[0];
 
@@ -291,6 +296,24 @@ function craftToSignTx(
             script: output.script,
         });
     }
+
+    // Set BIP-322's PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE (0x09) to the signed
+    // message. @scure/btc-signer exposes no public setter for PSBT global
+    // fields, so write the unknown global entry directly. 0x09 is unused in the
+    // global keymap, so it round-trips as an unknown field that toPSBT()/
+    // fromPSBT() preserve.
+    const global = (
+        tx as unknown as {
+            global: { unknown?: [{ type: number; key: Uint8Array }, Uint8Array][] };
+        }
+    ).global;
+    global.unknown = [
+        ...(global.unknown ?? []),
+        [
+            { type: PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE, key: new Uint8Array() },
+            new TextEncoder().encode(message),
+        ],
+    ];
 
     return tx;
 }
