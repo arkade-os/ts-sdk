@@ -8,7 +8,9 @@ function globalSignedMessage(tx: unknown): Uint8Array | undefined {
     const unknown =
         (tx as { global?: { unknown?: [{ type: number; key: Uint8Array }, Uint8Array][] } }).global
             ?.unknown ?? [];
-    return unknown.find(([k]) => k.type === PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE)?.[1];
+    return unknown.find(
+        ([k]) => k.type === PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE && k.key.length === 0,
+    )?.[1];
 }
 
 describe("Intent", () => {
