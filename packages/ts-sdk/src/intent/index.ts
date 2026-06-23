@@ -234,7 +234,21 @@ export function craftToSpendTx(
     return tx;
 }
 
-// craftToSignTx creates the transaction that will be signed for the proof
+/**
+ * Creates the "to_sign" transaction that is signed to produce the proof.
+ *
+ * The first input references the `toSpend` transaction; the remaining inputs are
+ * the ownership inputs being proven. When no outputs are provided a single
+ * value-0 OP_RETURN output is added. The BIP-322 `PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE`
+ * (`0x09`) global field is set to the UTF-8 message so a verifier can recompute
+ * the `toSpend` commitment from PSBT-internal data alone.
+ *
+ * @param toSpend - The "to_spend" transaction whose id the first input references
+ * @param inputs - Validated ownership inputs (input[0] is the toSpend reference)
+ * @param outputs - Proof outputs; an OP_RETURN placeholder is used when empty
+ * @param message - The canonical message the proof commits to
+ * @returns The unsigned "to_sign" proof transaction
+ */
 function craftToSignTx(
     toSpend: Transaction,
     inputs: ValidatedTxInput[],
