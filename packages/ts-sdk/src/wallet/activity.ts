@@ -148,3 +148,23 @@ export class ActivityRegistry {
         return [...this.resolvers.values()];
     }
 }
+
+/** Built-in resolver: labels on-chain boarding (deposit) transactions. */
+export function boardingResolver(): ActivityResolver {
+    return {
+        id: "boarding",
+        resolve(tx) {
+            if (!tx.key.boardingTxid) return undefined;
+            return [
+                { groupId: `boarding:${tx.key.boardingTxid}`, label: "Deposit", kind: "boarding" },
+            ];
+        },
+    };
+}
+
+/** A registry pre-populated with the SDK's built-in resolvers (currently `boarding`). */
+export function createDefaultActivityRegistry(): ActivityRegistry {
+    const registry = new ActivityRegistry();
+    registry.use(boardingResolver());
+    return registry;
+}

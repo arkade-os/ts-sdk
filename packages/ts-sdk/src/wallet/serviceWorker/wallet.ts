@@ -19,7 +19,7 @@ import {
     Recipient,
 } from "..";
 import { SettlementEvent } from "../../providers/ark";
-import { ActivityRegistry, buildActivities, type Activity } from "../activity";
+import { createDefaultActivityRegistry, buildActivities, type Activity } from "../activity";
 import { hex } from "@scure/base";
 import {
     Identity,
@@ -487,7 +487,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
     public readonly identity: ReadonlyIdentity;
-    readonly activity = new ActivityRegistry();
+    readonly activity = createDefaultActivityRegistry();
     private readonly _readonlyAssetManager: IReadonlyAssetManager;
     protected initConfig: MessageBusInitConfig | null = null;
     protected initWalletPayload: RequestInitWallet["payload"] | null = null;

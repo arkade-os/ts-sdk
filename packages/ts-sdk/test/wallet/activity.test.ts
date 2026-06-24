@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 import {
     buildActivities,
     ActivityRegistry,
+    boardingResolver,
+    createDefaultActivityRegistry,
     type ActivityResolver,
 } from "../../src/wallet/activity";
 import { makeStaticWalletForTest } from "../helpers/restoreWallet";
@@ -145,5 +147,28 @@ describe("wallet.getActivityHistory", () => {
         expect(acts[0].id).toBe("g:1");
         expect(acts[0].intent?.label).toBe("Grouped");
         expect(acts[0].txs).toHaveLength(2);
+    });
+});
+
+describe("boardingResolver", () => {
+    it("tags a tx with a boardingTxid as a Deposit; ignores others", () => {
+        const r = boardingResolver();
+        const boarding: ArkTransaction = {
+            key: { arkTxid: "", commitmentTxid: "", boardingTxid: "bX" },
+            type: TxType.TxReceived,
+            amount: 1,
+            settled: true,
+            createdAt: 1,
+        };
+        expect(r.resolve(boarding)).toEqual([
+            { groupId: "boarding:bX", label: "Deposit", kind: "boarding" },
+        ]);
+        expect(r.resolve(tx("a"))).toBeUndefined();
+    });
+});
+
+describe("createDefaultActivityRegistry", () => {
+    it("pre-registers the boarding built-in", () => {
+        expect(createDefaultActivityRegistry().list()).toContain("boarding");
     });
 });
