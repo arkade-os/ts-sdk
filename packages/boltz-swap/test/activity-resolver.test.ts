@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { swapActivityResolver } from "../src/activity-resolver";
 import { InMemorySwapRepository } from "../src/repositories/inMemory/swap-repository";
-import type { BoltzChainSwap } from "../src/types";
+import type { BoltzChainSwap, BoltzReverseSwap } from "../src/types";
 import type { ArkTransaction } from "@arkade-os/sdk";
 
 function chainSwap(id: string, claimTxid?: string): BoltzChainSwap {
@@ -47,5 +47,23 @@ describe("swapActivityResolver", () => {
             },
         ]);
         expect(r.resolve(tx("txZ"))).toBeUndefined();
+    });
+
+    it("labels reverse/submarine swaps as 'Lightning swap'", async () => {
+        const repo = new InMemorySwapRepository();
+        const reverse: BoltzReverseSwap = {
+            id: "r1",
+            type: "reverse",
+            createdAt: 1,
+            preimage: "p",
+            status: "invoice.settled" as BoltzReverseSwap["status"],
+            request: {} as BoltzReverseSwap["request"],
+            response: {} as BoltzReverseSwap["response"],
+            claimTxid: "txR",
+        };
+        await repo.saveSwap(reverse);
+        const r = swapActivityResolver(repo);
+        await r.prepare!();
+        expect(r.resolve(tx("txR"))?.[0].label).toBe("Lightning swap");
     });
 });

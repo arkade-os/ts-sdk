@@ -706,6 +706,9 @@ export class ArkadeSwaps {
                             break;
                         }
 
+                        // Persist the claim txid for the swap activity resolver (additive).
+                        pendingSwap.claimTxid = txid;
+                        await saveStatus();
                         resolve({ txid });
                         break;
                     }
@@ -799,6 +802,10 @@ export class ArkadeSwaps {
             address: pendingSwap.response.address,
             amount: pendingSwap.response.expectedAmount,
         });
+        // Persist the lockup payment txid for the swap activity resolver. Mutate so it
+        // survives the later settlement save (additive — see the activity PR).
+        pendingSwap.claimTxid = txid;
+        await this.savePendingSubmarineSwap(pendingSwap);
 
         try {
             if (args.waitFor === "funded") {
@@ -1629,6 +1636,9 @@ export class ArkadeSwaps {
                             );
                             break;
                         }
+                        // Persist the claim txid so the swap activity resolver can correlate this
+                        // swap to the wallet's ArkTransaction (additive — see the activity PR).
+                        await this.savePendingChainSwap({ ...swap, claimTxid: txid });
                         resolve({ txid });
                         break;
                     }
@@ -1992,6 +2002,9 @@ export class ArkadeSwaps {
                             );
                             break;
                         }
+                        // Persist the claim txid so the swap activity resolver can correlate this
+                        // swap to the wallet's ArkTransaction (additive — see the activity PR).
+                        await this.savePendingChainSwap({ ...swap, claimTxid: txid });
                         resolve({ txid });
                         break;
                     }
