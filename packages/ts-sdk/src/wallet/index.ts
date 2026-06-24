@@ -17,6 +17,7 @@ export {
     boardingResolver,
     createDefaultActivityRegistry,
     type Activity,
+    type ActivityIntent,
     type GroupMembership,
     type ActivityResolver,
 } from "./activity";

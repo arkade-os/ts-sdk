@@ -2,21 +2,37 @@ import type { ArkTransaction } from "./index";
 
 /** One transaction's participation in one logical action. A tx may return several. */
 export interface GroupMembership {
-    /** Stable id of the action; txs sharing it group together. */
+    /**
+     * Stable id of the action; txs sharing it group together. Third-party
+     * resolvers should namespace it (`"vendor:thing"`) to avoid colliding with
+     * other resolvers' groups; the built-ins use `boarding:`/`exit:`/`mint:`.
+     */
     groupId: string;
     /** Human label for the action, e.g. "Dice game". */
     label?: string;
-    /** App category for icon/filtering, e.g. "game". */
+    /** App category for icon/filtering, e.g. "game". Namespace across vendors to avoid clashes. */
     kind?: string;
-    /** Free-form row data (renderer-defined). */
+    /**
+     * Free-form row data (renderer-defined). When several resolvers tag the same
+     * tx+group, this is shallow-merged with earlier-resolver-wins on key
+     * collision — namespace keys (e.g. `swap.status`) to avoid clobbering.
+     */
     metadata?: Record<string, unknown>;
-    /** This tx's contribution to THIS group, in sats; defaults to the tx's full net amount. */
+    /**
+     * This tx's contribution to THIS group, in sats; defaults to the tx's full
+     * net amount. Set it to split a batched tx across the groups it touches —
+     * omitting it on a multi-group tx attributes the full amount to each group.
+     */
     amount?: number;
 }
 
 /** A pluggable resolver. Registered by id; `prepare()` refreshes correlation data. */
 export interface ActivityResolver {
-    /** Registry key — override or remove by it. */
+    /**
+     * Registry key — override or remove by it. Namespace it (`"vendor:games"`)
+     * so independent libraries don't clobber each other; `use()` overwrites
+     * silently on a duplicate id.
+     */
     id: string;
     /**
      * Load fresh correlation data (swaps, games…) before `resolve` runs. A
@@ -27,15 +43,25 @@ export interface ActivityResolver {
     resolve(tx: ArkTransaction): GroupMembership[] | undefined;
 }
 
+/** The label/kind/metadata an activity carries — the non-id, non-amount part of a {@link GroupMembership}. */
+export interface ActivityIntent {
+    /** Human label for the action, e.g. "Dice game". */
+    label?: string;
+    /** App category for icon/filtering, e.g. "game". */
+    kind?: string;
+    /** Free-form row data, shallow-merged across the group's resolvers (first-writer-wins). */
+    metadata?: Record<string, unknown>;
+}
+
 /** One logical activity: the projection of all txs sharing a groupId. */
 export interface Activity {
     /** The groupId, or the tx's own key when ungrouped. */
     id: string;
     /** Merged intent for the group, if any resolver tagged it. */
-    intent?: { label?: string; kind?: string; metadata?: Record<string, unknown> };
+    intent?: ActivityIntent;
     /** Member txs, oldest-first. */
     txs: ArkTransaction[];
-    /** Net amount across the group, in sats (sum of members' attributed amounts). */
+    /** Net amount across the group, in sats — always sats, never asset units (sum of members' attributed amounts). */
     amount: number;
     /** Earliest member createdAt (ms since epoch). */
     createdAt: number;
