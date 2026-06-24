@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
     buildActivities,
     ActivityRegistry,
@@ -6,7 +6,11 @@ import {
     createDefaultActivityRegistry,
     type ActivityResolver,
 } from "../../src/wallet/activity";
-import { makeStaticWalletForTest } from "../helpers/restoreWallet";
+import {
+    makeStaticWalletForTest,
+    installRestoreHarness,
+    teardownRestoreHarness,
+} from "../helpers/restoreWallet";
 import { TxType } from "../../src/wallet/index";
 import type { ArkTransaction } from "../../src/wallet/index";
 
@@ -135,6 +139,11 @@ describe("ActivityRegistry", () => {
 });
 
 describe("wallet.getActivityHistory", () => {
+    // Wallet.create resolves the ark /info over the global fetch; stub it
+    // (and EventSource) so the test never reaches a live :7070 ark server.
+    beforeEach(installRestoreHarness);
+    afterEach(teardownRestoreHarness);
+
     it("groups getTransactionHistory via the registered resolvers", async () => {
         const { wallet } = await makeStaticWalletForTest();
         vi.spyOn(wallet, "getTransactionHistory").mockResolvedValue([
