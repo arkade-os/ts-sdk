@@ -146,6 +146,8 @@ export interface BoltzReverseSwap {
     request: CreateReverseSwapRequest;
     /** Boltz API response with lockup address, invoice, and timeout details. */
     response: CreateReverseSwapResponse;
+    /** On-chain claim/settlement txid once known; correlates to the wallet's ArkTransaction for activity history. */
+    claimTxid?: string;
 }
 
 /** Tracks an in-progress submarine swap (Arkade → Lightning). */
@@ -170,6 +172,8 @@ export interface BoltzSubmarineSwap {
     request: CreateSubmarineSwapRequest;
     /** Boltz API response with payment address and expected amount. */
     response: CreateSubmarineSwapResponse;
+    /** On-chain claim/settlement txid once known; correlates to the wallet's ArkTransaction for activity history. */
+    claimTxid?: string;
 }
 
 /**
@@ -279,6 +283,8 @@ export interface BoltzChainSwap {
     toAddress?: string;
     /** Swap amount in satoshis. */
     amount: number;
+    /** On-chain claim/settlement txid once known; correlates to the wallet's ArkTransaction for activity history. */
+    claimTxid?: string;
 }
 
 /** Union type of all pending swap types. */

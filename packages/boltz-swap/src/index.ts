@@ -7,6 +7,7 @@ import { version } from "../package.json";
 export const sdkVersion = `boltz-swap/${version}`;
 
 export { ArkadeSwaps } from "./arkade-swaps";
+export { swapActivityResolver } from "./activity-resolver";
 export type { QuoteSwapOptions } from "./arkade-swaps";
 export type { BoltzSwapStatus, SubmarineProgressionStatus } from "./boltz-swap-provider";
 export {
