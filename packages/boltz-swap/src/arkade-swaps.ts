@@ -2155,6 +2155,11 @@ export class ArkadeSwaps {
         await this.savePendingChainSwap({
             ...pendingSwap,
             status: finalStatus.status,
+            // Persist the claim txid so the swap activity resolver can correlate
+            // this swap to the wallet's ArkTransaction. Additive — does not touch
+            // the claim/broadcast path. (Other completion paths + reverse/submarine
+            // swaps still need the same one-line persist; see the PR description.)
+            claimTxid: txid,
         });
 
         return { txid };
