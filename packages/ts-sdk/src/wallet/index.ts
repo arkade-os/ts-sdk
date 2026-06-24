@@ -610,6 +610,21 @@ export interface TxKey {
 }
 
 /**
+ * The category the history builder assigns to a transaction:
+ * - `"boarding"` — an on-chain boarding deposit
+ * - `"batch"` — received in a commitment batch (a settlement)
+ * - `"offchain"` — a preconfirmed Ark send/receive
+ * - `"exit"` — a collaborative exit
+ *
+ * Open-ended: the `(string & {})` arm lets activity resolvers and apps introduce
+ * their own categories (e.g. `"swap"`, `"game"`) without a breaking change to
+ * this union, while preserving editor autocomplete for the built-in four.
+ *
+ * @see ArkTransaction.tag
+ */
+export type TxTag = "offchain" | "boarding" | "exit" | "batch" | (string & {});
+
+/**
  * Wallet transaction history entry.
  *
  * @see TxKey
@@ -635,12 +650,12 @@ export interface ArkTransaction {
     assets?: Asset[];
 
     /**
-     * Category assigned by the history builder: `"boarding"` (on-chain deposit),
-     * `"batch"` (received in a commitment batch), `"offchain"` (preconfirmed Ark
-     * send/receive), or `"exit"` (collaborative exit). Lets activity resolvers
-     * label rows without re-deriving the category.
+     * The {@link TxTag} category assigned by the history builder. Always set on
+     * transactions returned by the wallet's `getTransactionHistory()`; optional
+     * only because a hand-built `ArkTransaction` may omit it. Lets activity
+     * resolvers label rows without re-deriving the category.
      */
-    tag?: "offchain" | "boarding" | "exit" | "batch";
+    tag?: TxTag;
 }
 
 /**
