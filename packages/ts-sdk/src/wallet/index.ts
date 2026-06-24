@@ -12,6 +12,14 @@ import { ContractRepository, WalletRepository } from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
 import { IDelegateManager } from "./delegate";
 import type { Activity, ActivityRegistry } from "./activity";
+export {
+    ActivityRegistry,
+    boardingResolver,
+    createDefaultActivityRegistry,
+    type Activity,
+    type GroupMembership,
+    type ActivityResolver,
+} from "./activity";
 import { DelegateProvider } from "../providers/delegate";
 
 /**
