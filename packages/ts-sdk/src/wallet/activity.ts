@@ -123,3 +123,28 @@ export async function buildActivities(
         })
         .sort((a, c) => latest(c) - latest(a));
 }
+
+/** Holds activity resolvers keyed by id. Built-in resolvers are pre-registered on the wallet. */
+export class ActivityRegistry {
+    private readonly resolvers = new Map<string, ActivityResolver>();
+
+    /** Add a resolver, or override an existing one with the same id (kept in place). */
+    use(resolver: ActivityResolver): void {
+        this.resolvers.set(resolver.id, resolver);
+    }
+
+    /** Remove a resolver (built-in or custom) by id. */
+    remove(id: string): void {
+        this.resolvers.delete(id);
+    }
+
+    /** The registered resolver ids, in registration order. */
+    list(): string[] {
+        return [...this.resolvers.keys()];
+    }
+
+    /** All registered resolvers, in registration (priority) order. */
+    all(): ActivityResolver[] {
+        return [...this.resolvers.values()];
+    }
+}

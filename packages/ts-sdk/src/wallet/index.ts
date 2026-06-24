@@ -11,6 +11,7 @@ import { ContractWatcherConfig } from "../contracts/contractWatcher";
 import { ContractRepository, WalletRepository } from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
 import { IDelegateManager } from "./delegate";
+import type { Activity, ActivityRegistry } from "./activity";
 import { DelegateProvider } from "../providers/delegate";
 
 /**
@@ -883,6 +884,12 @@ export interface IReadonlyWallet {
 
     /** @returns Wallet transaction history derived from boarding and Arkade activity. */
     getTransactionHistory(): Promise<ArkTransaction[]>;
+
+    /** Registry of resolvers that group/label {@link getActivityHistory} rows. */
+    readonly activity: ActivityRegistry;
+
+    /** @returns Wallet history grouped into logical activities via the registered resolvers. */
+    getActivityHistory(): Promise<Activity[]>;
 
     /**
      * Get the contract manager associated with this wallet.

@@ -1,5 +1,10 @@
-import { describe, it, expect } from "vitest";
-import { buildActivities, type ActivityResolver } from "../../src/wallet/activity";
+import { describe, it, expect, vi } from "vitest";
+import {
+    buildActivities,
+    ActivityRegistry,
+    type ActivityResolver,
+} from "../../src/wallet/activity";
+import { makeStaticWalletForTest } from "../helpers/restoreWallet";
 import { TxType } from "../../src/wallet/index";
 import type { ArkTransaction } from "../../src/wallet/index";
 
@@ -107,5 +112,38 @@ describe("buildActivities", () => {
         };
         const [act] = await buildActivities([tx("t")], [r]);
         expect(act.id).toBe("g:1");
+    });
+});
+
+describe("ActivityRegistry", () => {
+    it("use/list/all in order, override in place, remove", () => {
+        const reg = new ActivityRegistry();
+        const a: ActivityResolver = { id: "a", resolve: () => undefined };
+        const b: ActivityResolver = { id: "b", resolve: () => undefined };
+        reg.use(a);
+        reg.use(b);
+        expect(reg.list()).toEqual(["a", "b"]);
+        const a2: ActivityResolver = { id: "a", resolve: () => [{ groupId: "x" }] };
+        reg.use(a2);
+        expect(reg.list()).toEqual(["a", "b"]);
+        expect(reg.all()[0]).toBe(a2);
+        reg.remove("b");
+        expect(reg.list()).toEqual(["a"]);
+    });
+});
+
+describe("wallet.getActivityHistory", () => {
+    it("groups getTransactionHistory via the registered resolvers", async () => {
+        const { wallet } = await makeStaticWalletForTest();
+        vi.spyOn(wallet, "getTransactionHistory").mockResolvedValue([
+            tx("a", { createdAt: 1 }),
+            tx("b", { createdAt: 2 }),
+        ]);
+        wallet.activity.use({ id: "g", resolve: () => [{ groupId: "g:1", label: "Grouped" }] });
+        const acts = await wallet.getActivityHistory();
+        expect(acts).toHaveLength(1);
+        expect(acts[0].id).toBe("g:1");
+        expect(acts[0].intent?.label).toBe("Grouped");
+        expect(acts[0].txs).toHaveLength(2);
     });
 });
