@@ -15,6 +15,8 @@ import type { Activity, ActivityRegistry } from "./activity";
 export {
     ActivityRegistry,
     boardingResolver,
+    collabExitResolver,
+    assetMintResolver,
     createDefaultActivityRegistry,
     type Activity,
     type ActivityIntent,
@@ -631,6 +633,14 @@ export interface ArkTransaction {
 
     /** Assets sent or received by this transaction, if any. */
     assets?: Asset[];
+
+    /**
+     * Category assigned by the history builder: `"boarding"` (on-chain deposit),
+     * `"batch"` (received in a commitment batch), `"offchain"` (preconfirmed Ark
+     * send/receive), or `"exit"` (collaborative exit). Lets activity resolvers
+     * label rows without re-deriving the category.
+     */
+    tag?: "offchain" | "boarding" | "exit" | "batch";
 }
 
 /**

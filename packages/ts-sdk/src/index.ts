@@ -75,6 +75,8 @@ import {
 export {
     ActivityRegistry,
     boardingResolver,
+    collabExitResolver,
+    assetMintResolver,
     createDefaultActivityRegistry,
     type Activity,
     type ActivityIntent,
