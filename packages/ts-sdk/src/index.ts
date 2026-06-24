@@ -75,11 +75,14 @@ import {
 export {
     ActivityRegistry,
     boardingResolver,
+    collabExitResolver,
+    assetMintResolver,
     createDefaultActivityRegistry,
     type Activity,
     type ActivityIntent,
     type GroupMembership,
     type ActivityResolver,
+    type TxTag,
 } from "./wallet";
 import { Batch } from "./wallet/batch";
 import {

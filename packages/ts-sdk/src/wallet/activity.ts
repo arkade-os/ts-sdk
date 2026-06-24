@@ -1,4 +1,6 @@
+import { hex } from "@scure/base";
 import type { ArkTransaction } from "./index";
+import { AssetId } from "../extension/asset/assetId";
 
 /** One transaction's participation in one logical action. A tx may return several. */
 export interface GroupMembership {
@@ -203,9 +205,61 @@ export function boardingResolver(): ActivityResolver {
     };
 }
 
-/** A registry pre-populated with the SDK's built-in resolvers (currently `boarding`). */
+/** Built-in resolver: labels collaborative exits (VTXOs forfeited to chain in a batch). */
+export function collabExitResolver(): ActivityResolver {
+    return {
+        id: "collab-exit",
+        resolve(tx) {
+            if (tx.tag !== "exit") return undefined;
+            return [
+                {
+                    groupId: `exit:${tx.key.commitmentTxid}`,
+                    label: "Collaborative exit",
+                    kind: "exit",
+                },
+            ];
+        },
+    };
+}
+
+/**
+ * Built-in resolver: labels the genesis transaction of a minted asset. An asset
+ * id encodes its genesis txid, so a tx is the mint of an asset exactly when it
+ * carries that asset and its `arkTxid` is the asset's genesis. Reissues and
+ * transfers carry the asset but key off a different genesis, so they are left
+ * plain.
+ */
+export function assetMintResolver(): ActivityResolver {
+    return {
+        id: "asset-mint",
+        resolve(tx) {
+            if (!tx.assets?.length || !tx.key.arkTxid) return undefined;
+            const minted = tx.assets.filter((a) => {
+                try {
+                    return hex.encode(AssetId.fromString(a.assetId).txid) === tx.key.arkTxid;
+                } catch {
+                    return false;
+                }
+            });
+            if (minted.length === 0) return undefined;
+            return minted.map((a) => ({
+                groupId: `mint:${a.assetId}`,
+                label: "Asset mint",
+                kind: "asset-mint",
+                metadata: { assetId: a.assetId, amount: a.amount.toString() },
+            }));
+        },
+    };
+}
+
+/**
+ * A registry pre-populated with the SDK's built-in resolvers: `boarding`,
+ * `collab-exit`, and `asset-mint`.
+ */
 export function createDefaultActivityRegistry(): ActivityRegistry {
     const registry = new ActivityRegistry();
     registry.use(boardingResolver());
+    registry.use(collabExitResolver());
+    registry.use(assetMintResolver());
     return registry;
 }
