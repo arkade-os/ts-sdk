@@ -62,6 +62,7 @@ function createBackgroundWalletShim(args: {
         getVtxos: async () => notImplemented("getVtxos"),
         getBoardingUtxos: async () => notImplemented("getBoardingUtxos"),
         getTransactionHistory: async () => notImplemented("getTransactionHistory"),
+        getActivityHistory: async () => notImplemented("getActivityHistory"),
         getContractManager: async () => notImplemented("getContractManager"),
         getDelegateManager: async () => notImplemented("getDelegateManager"),
         getDelegatorManager: async () => notImplemented("getDelegatorManager"),
@@ -70,6 +71,9 @@ function createBackgroundWalletShim(args: {
         settle: async () => notImplemented("settle"),
         assetManager: new Proxy({} as IWallet["assetManager"], {
             get: () => notImplemented("assetManager" as keyof IWallet),
+        }),
+        activity: new Proxy({} as IWallet["activity"], {
+            get: () => notImplemented("activity" as keyof IWallet),
         }),
     };
 }
