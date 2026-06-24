@@ -18,7 +18,10 @@ export interface GroupMembership {
 export interface ActivityResolver {
     /** Registry key — override or remove by it. */
     id: string;
-    /** Load fresh correlation data (swaps, games…) before `resolve` runs. */
+    /**
+     * Load fresh correlation data (swaps, games…) before `resolve` runs. A
+     * rejection is isolated — the resolver then contributes no memberships.
+     */
     prepare?(): Promise<void>;
     /** Pure and synchronous. The groups this tx belongs to, or undefined to leave it plain. */
     resolve(tx: ArkTransaction): GroupMembership[] | undefined;
@@ -50,13 +53,25 @@ export interface Activity {
  *   `label`/`kind` first-defined-wins (resolver order), `metadata` shallow-merged.
  * - A member's contribution defaults to the tx's full amount, or `membership.amount`
  *   when given (so a batched tx splits across the groups it touches).
- * - A resolver throwing on a tx is caught and treated as no membership.
+ * - A resolver that throws in resolve() or rejects in prepare() is isolated and
+ *   contributes no memberships, so one bad resolver never breaks the whole history.
  */
 export async function buildActivities(
     txs: ArkTransaction[],
     resolvers: ActivityResolver[],
 ): Promise<Activity[]> {
-    await Promise.all(resolvers.map((r) => r.prepare?.()));
+    // Isolate prepare() like resolve(): a resolver that fails to load its
+    // correlation data contributes no memberships, rather than throwing away
+    // the whole history.
+    await Promise.all(
+        resolvers.map(async (r) => {
+            try {
+                await r.prepare?.();
+            } catch {
+                // a failed prepare leaves this resolver with stale/empty data
+            }
+        }),
+    );
 
     const keyOf = (tx: ArkTransaction) =>
         tx.key.arkTxid || tx.key.commitmentTxid || tx.key.boardingTxid;

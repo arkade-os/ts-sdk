@@ -97,6 +97,19 @@ describe("buildActivities", () => {
         expect(act.id).toBe("ok");
     });
 
+    it("isolates a resolver whose prepare() rejects (a bad prepare does not break history)", async () => {
+        const bad: ActivityResolver = {
+            id: "bad",
+            prepare: async () => {
+                throw new Error("prepare boom");
+            },
+            resolve: () => undefined, // prepare failed -> no correlation data -> plain
+        };
+        const good: ActivityResolver = { id: "good", resolve: () => [{ groupId: "ok" }] };
+        const [act] = await buildActivities([tx("t")], [bad, good]);
+        expect(act.id).toBe("ok");
+    });
+
     it("sorts activities by most-recent member, descending", async () => {
         const r: ActivityResolver = {
             id: "g",
