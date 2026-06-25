@@ -875,6 +875,31 @@ describe("Wallet", () => {
             expect(cached).toHaveLength(1);
             expect(cached[0].isSpent).toBe(true);
         });
+
+        it("drops a cached VTXO the indexer no longer returns at all (chain reset)", async () => {
+            let walletScript = "";
+            let chainReset = false;
+            const getVtxos = vi
+                .fn<IndexerProvider["getVtxos"]>()
+                .mockImplementation(async (opts) => {
+                    if (!walletScript && opts?.scripts?.[0]) {
+                        walletScript = opts.scripts[0];
+                    }
+                    return { vtxos: chainReset ? [] : [createMockVtxo(walletScript)] };
+                });
+
+            const { wallet, walletRepository } = await createReadonlyTestWallet(getVtxos);
+
+            expect(await wallet.getVtxos()).toHaveLength(1);
+
+            // Chain reset: the indexer no longer reports the VTXO at all (not even spent).
+            chainReset = true;
+
+            expect(await wallet.getVtxos()).toEqual([]);
+
+            const cached = await walletRepository.getVtxos(await wallet.getAddress());
+            expect(cached).toEqual([]);
+        });
     });
 
     describe("notifyIncomingFunds — single SSE stream", () => {
