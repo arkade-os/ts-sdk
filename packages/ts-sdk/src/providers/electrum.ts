@@ -1024,6 +1024,16 @@ function errorText(err: unknown): string {
 }
 
 /**
+ * Lowercased, whitespace-stripped error text for substring matching.
+ * `ws-electrumx-client`'s frame parser drops the spaces inside server error
+ * messages, so we strip whitespace from both sides (matching against the
+ * whitespace-free needles below) to classify regardless of the mangling.
+ */
+function normalizedErrorText(err: unknown): string {
+    return errorText(err).toLowerCase().replace(/\s+/g, "");
+}
+
+/**
  * Recognise the "block header not yet indexable" failure shape returned by
  * electrum servers (electrs in particular) when `block.header(N)` runs
  * against a height that's already in `listunspent`/`get_merkle` but hasn't
@@ -1032,7 +1042,7 @@ function errorText(err: unknown): string {
  * failures (auth/network) propagate.
  */
 function isMissingHeightError(err: unknown): boolean {
-    return errorText(err).toLowerCase().includes("missingheight");
+    return normalizedErrorText(err).includes("missingheight");
 }
 
 /**
@@ -1043,12 +1053,15 @@ function isMissingHeightError(err: unknown): boolean {
  * malformed response) still propagate.
  */
 function isTxNotInBlockError(err: unknown): boolean {
-    const normalized = errorText(err).toLowerCase();
+    // Needles are whitespace-free because normalizedErrorText() strips spaces
+    // from the haystack (see its doc); they still match servers that send the
+    // wording with spaces intact.
+    const normalized = normalizedErrorText(err);
     return (
-        normalized.includes("not yet in a block") ||
-        normalized.includes("not in a block") ||
-        normalized.includes("not in block") ||
-        normalized.includes("no confirmed transaction")
+        normalized.includes("notyetinablock") ||
+        normalized.includes("notinablock") ||
+        normalized.includes("notinblock") ||
+        normalized.includes("noconfirmedtransaction")
     );
 }
 

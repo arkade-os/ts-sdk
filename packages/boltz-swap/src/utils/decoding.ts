@@ -14,6 +14,13 @@ export const decodeInvoice = (invoice: string): DecodedInvoice => {
         expiry: decoded.expiry ?? 3600,
         amountSats: Number(millisats / 1000n),
         description: decoded.sections.find((s) => s.name === "description")?.value ?? "",
+        // description_hash (BOLT11 `h`) is missing from light-bolt11-decoder's
+        // Section union even though the decoder emits it. Widen just this lookup
+        // rather than patch the library's types (separate repo, out of scope).
+        descriptionHash:
+            (decoded.sections as Array<{ name: string; value?: string }>).find(
+                (s) => s.name === "description_hash",
+            )?.value ?? "",
         paymentHash: decoded.sections.find((s) => s.name === "payment_hash")?.value ?? "",
     };
 };

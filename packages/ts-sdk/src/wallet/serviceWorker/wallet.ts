@@ -147,15 +147,29 @@ import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegate";
 import { getRandomId } from "../utils";
 import type { VirtualCoin } from "..";
-import { MESSAGE_BUS_NOT_INITIALIZED, ServiceWorkerTimeoutError } from "../../worker/errors";
+import {
+    MESSAGE_BUS_INITIALIZING,
+    MESSAGE_BUS_NOT_INITIALIZED,
+    ServiceWorkerTimeoutError,
+} from "../../worker/errors";
 import { getArkadeServerUrl } from "../wallet";
 
-// Check by error message content instead of instanceof because postMessage uses the
-// structured clone algorithm which strips the prototype chain — the page
-// receives a plain Error, not the original MessageBusNotInitializedError.
 function isMessageBusNotInitializedError(error: unknown): boolean {
     return error instanceof Error && error.message.includes(MESSAGE_BUS_NOT_INITIALIZED);
 }
+
+function isMessageBusInitializingError(error: unknown): boolean {
+    return error instanceof Error && error.message.includes(MESSAGE_BUS_INITIALIZING);
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// Bounded backoff for waiting out an in-flight init: ~100ms, 200ms, … capped at
+// 2s, so a stuck init still surfaces an error instead of hanging the caller.
+const INIT_WAIT_BACKOFF_CAP_MS = 2_000;
+const MAX_INIT_WAITS = 8;
+const initWaitBackoffMs = (attempt: number) =>
+    Math.min(100 * 2 ** attempt, INIT_WAIT_BACKOFF_CAP_MS);
 
 type RequestType = WalletUpdaterRequest["type"];
 
@@ -627,6 +641,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
         wallet.messageTimeouts = messageTimeouts;
 
+        // Refuse to return a wallet bound to a different identity than the
+        // worker ended up with (e.g. a stale/queued init rebinding it).
+        await wallet.assertWorkerIdentityMatches();
+
         return wallet;
     }
 
@@ -792,11 +810,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
     // send a message, retrying up to 2 times if the service worker was
     // killed and restarted by the OS (mobile browsers do this aggressively)
-    private async sendMessageWithRetry(
+    protected async sendMessageWithRetry(
         request: WalletUpdaterRequest,
+        withEvents?: {
+            onEvent: (response: WalletUpdaterResponse) => void;
+            isComplete: (response: WalletUpdaterResponse) => boolean;
+        },
     ): Promise<WalletUpdaterResponse> {
-        // Skip the preflight ping during the initial INIT_WALLET call:
-        // create() hasn't set initConfig yet, so reinitialize() would throw.
         if (this.initConfig) {
             try {
                 await this.pingServiceWorker();
@@ -807,39 +827,24 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         const timeoutMs = this.getTimeoutForRequest(request);
         const maxRetries = 2;
-        for (let attempt = 0; ; attempt++) {
+        for (let attempt = 0, initWaits = 0; ; attempt++) {
             try {
+                if (withEvents) {
+                    return await this.sendMessageStreaming(
+                        request,
+                        withEvents.onEvent,
+                        withEvents.isComplete,
+                    );
+                }
                 return await this.sendMessageDirect(request, timeoutMs);
             } catch (error: any) {
-                if (!isMessageBusNotInitializedError(error) || attempt >= maxRetries) {
-                    throw error;
+                // If init is already in flight in the worker, wait for it
+                if (isMessageBusInitializingError(error)) {
+                    if (initWaits >= MAX_INIT_WAITS) throw error;
+                    await sleep(initWaitBackoffMs(initWaits++));
+                    attempt--;
+                    continue;
                 }
-
-                await this.reinitialize();
-            }
-        }
-    }
-
-    // Like sendMessage but for streaming responses — retries with
-    // reinitialize when the service worker has been killed/restarted.
-    protected async sendMessageWithEvents(
-        request: WalletUpdaterRequest,
-        onEvent: (response: WalletUpdaterResponse) => void,
-        isComplete: (response: WalletUpdaterResponse) => boolean,
-    ): Promise<WalletUpdaterResponse> {
-        if (this.initConfig) {
-            try {
-                await this.pingServiceWorker();
-            } catch {
-                await this.reinitialize();
-            }
-        }
-
-        const maxRetries = 2;
-        for (let attempt = 0; ; attempt++) {
-            try {
-                return await this.sendMessageStreaming(request, onEvent, isComplete);
-            } catch (error: any) {
                 if (!isMessageBusNotInitializedError(error) || attempt >= maxRetries) {
                     throw error;
                 }
@@ -921,6 +926,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             };
 
             await this.sendMessageDirect(initMessage, this.getTimeoutForRequest(initMessage));
+            await this.assertWorkerIdentityMatches();
         })().finally(() => {
             this.reinitPromise = null;
         });
@@ -943,6 +949,38 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             await Promise.all([this.walletRepository.clear(), this.contractRepository.clear()]);
         } catch (_) {
             console.warn("Failed to clear page-side wallet storage");
+        }
+    }
+
+    /**
+     * Verify the worker is bound to this wallet's identity before the SDK hands
+     * back (or recovers) a usable wallet object.
+     *
+     * Compares the stable baseline identity key (`identity.xOnlyPublicKey()`) to the one reported
+     * by the worker via GET_STATUS.
+     */
+    protected async assertWorkerIdentityMatches(): Promise<void> {
+        const expected = hex.encode(await this.identity.xOnlyPublicKey());
+
+        const message: RequestGetStatus = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_STATUS",
+        };
+        const response = (await this.sendMessageDirect(
+            message,
+            this.getTimeoutForRequest(message),
+        )) as ResponseGetStatus;
+
+        const workerKey = response.payload.xOnlyPublicKey;
+        if (!workerKey) {
+            throw new Error("Service worker identity mismatch: worker did not report an identity");
+        }
+        const actual = hex.encode(workerKey);
+        if (actual !== expected) {
+            throw new Error(
+                `Service worker identity mismatch: expected ${expected}, got ${actual}`,
+            );
         }
     }
 
@@ -1458,6 +1496,10 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
         wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
         wallet.messageTimeouts = messageTimeouts;
 
+        // Refuse to return a wallet bound to a different identity than the
+        // worker ended up with (e.g. a stale/queued init rebinding it).
+        await wallet.assertWorkerIdentityMatches();
+
         return wallet;
     }
 
@@ -1516,11 +1558,10 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
         };
 
         try {
-            const response = await this.sendMessageWithEvents(
-                message,
-                (resp) => callback?.((resp as ResponseSettleEvent).payload),
-                (resp) => resp.type === "SETTLE_SUCCESS",
-            );
+            const response = await this.sendMessageWithRetry(message, {
+                onEvent: (resp) => callback?.((resp as ResponseSettleEvent).payload),
+                isComplete: (resp) => resp.type === "SETTLE_SUCCESS",
+            });
             return (response as ResponseSettle).payload.txid;
         } catch (error) {
             throw new Error(`Settlement failed: ${error}`);
@@ -1547,11 +1588,10 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
         };
 
         try {
-            await this.sendMessageWithEvents(
-                message,
-                () => {},
-                (resp) => resp.type === "RESTORE_WALLET_SUCCESS",
-            );
+            await this.sendMessageWithRetry(message, {
+                onEvent: () => {},
+                isComplete: (resp) => resp.type === "RESTORE_WALLET_SUCCESS",
+            });
         } catch (error: unknown) {
             if (isSerializedAggregateError(error)) {
                 throw deserializeAggregateError(error);
@@ -1650,11 +1690,11 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
                     id: getRandomId(),
                 };
                 try {
-                    const response = await wallet.sendMessageWithEvents(
-                        message,
-                        (resp) => eventCallback?.((resp as ResponseRecoverVtxosEvent).payload),
-                        (resp) => resp.type === "RECOVER_VTXOS_SUCCESS",
-                    );
+                    const response = await wallet.sendMessageWithRetry(message, {
+                        onEvent: (resp) =>
+                            eventCallback?.((resp as ResponseRecoverVtxosEvent).payload),
+                        isComplete: (resp) => resp.type === "RECOVER_VTXOS_SUCCESS",
+                    });
                     return (response as ResponseRecoverVtxos).payload.txid;
                 } catch (e) {
                     throw new Error(`Failed to recover vtxos: ${e}`);
@@ -1707,11 +1747,11 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
                     payload: options,
                 };
                 try {
-                    const response = await wallet.sendMessageWithEvents(
-                        message,
-                        (resp) => eventCallback?.((resp as ResponseRenewVtxosEvent).payload),
-                        (resp) => resp.type === "RENEW_VTXOS_SUCCESS",
-                    );
+                    const response = await wallet.sendMessageWithRetry(message, {
+                        onEvent: (resp) =>
+                            eventCallback?.((resp as ResponseRenewVtxosEvent).payload),
+                        isComplete: (resp) => resp.type === "RENEW_VTXOS_SUCCESS",
+                    });
                     return (response as ResponseRenewVtxos).payload.txid;
                 } catch (e) {
                     throw new Error(`Failed to renew vtxos: ${e}`);
@@ -1755,14 +1795,14 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
                     id: getRandomId(),
                 };
                 try {
-                    const response = await wallet.sendMessageWithEvents(
-                        message,
-                        (resp) =>
+                    const response = await wallet.sendMessageWithRetry(message, {
+                        onEvent: (resp) =>
                             options?.eventCallback?.(
                                 (resp as ResponseMigrateDeprecatedSignerVtxosEvent).payload,
                             ),
-                        (resp) => resp.type === "MIGRATE_DEPRECATED_SIGNER_VTXOS_SUCCESS",
-                    );
+                        isComplete: (resp) =>
+                            resp.type === "MIGRATE_DEPRECATED_SIGNER_VTXOS_SUCCESS",
+                    });
                     return deserializeMigrationReport(
                         (response as ResponseMigrateDeprecatedSignerVtxos).payload.report,
                     );

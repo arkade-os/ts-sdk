@@ -22,12 +22,9 @@ import { DEFAULT_ARKADE_SERVER_URL } from "../../src/networks";
 
 type MessageHandler = (event: { data: any }) => void;
 
-// Simulate the structured clone algorithm that postMessage uses: Error
-// subclasses lose their prototype chain and arrive as plain Error objects,
-// but name and message are preserved as own properties. Plain objects in
-// the error envelope (e.g., the RESTORE_WALLET path's serialized
-// AggregateError) survive structured clone with all enumerable own
-// properties intact, so we deep-clone them via JSON to preserve fidelity.
+const STUB_XONLY_PUBLIC_KEY = new Uint8Array(32).fill(0xab);
+
+// Simulate the structured clone algorithm that postMessage uses
 function structuredCloneError(error: any): any {
     if (error instanceof Error) {
         const cloned = new Error(error.message);
@@ -47,9 +44,15 @@ function structuredCloneResponse(response: any): any {
 
 const createServiceWorkerHarness = (
     responder?: (message: any) => any,
-    options?: { handlePing?: boolean },
+    options?: { handlePing?: boolean; getStatusKey?: Uint8Array | null },
 ) => {
     const handlePing = options?.handlePing ?? true;
+    // Auto-answer GET_STATUS with this x-only key when the responder does not
+    // handle it, so the create()/reinitialize() identity assertion can pass.
+    // Pass `null` to disable the auto-answer (e.g. to exercise a worker that
+    // reports no identity).
+    const getStatusKey =
+        options && "getStatusKey" in options ? options.getStatusKey : STUB_XONLY_PUBLIC_KEY;
     const listeners = new Set<MessageHandler>();
 
     const navigatorServiceWorker = {
@@ -71,11 +74,27 @@ const createServiceWorkerHarness = (
                 );
                 return;
             }
-            if (!responder) return;
-            const response = responder(message);
-            if (!response) return;
-            const cloned = structuredCloneResponse(response);
-            listeners.forEach((handler) => handler({ data: cloned }));
+            const response = responder ? responder(message) : null;
+            if (response) {
+                const cloned = structuredCloneResponse(response);
+                listeners.forEach((handler) => handler({ data: cloned }));
+                return;
+            }
+            if (message.type === "GET_STATUS" && getStatusKey !== null) {
+                listeners.forEach((handler) =>
+                    handler({
+                        data: {
+                            id: message.id,
+                            tag: message.tag,
+                            type: "WALLET_STATUS",
+                            payload: {
+                                walletInitialized: true,
+                                xOnlyPublicKey: getStatusKey,
+                            },
+                        },
+                    }),
+                );
+            }
         }),
     };
 
@@ -90,7 +109,7 @@ const createServiceWorkerHarness = (
 const createWallet = (serviceWorker: ServiceWorker, messageTag: string = DEFAULT_MESSAGE_TAG) =>
     new (ServiceWorkerReadonlyWallet as any)(
         serviceWorker,
-        {} as any,
+        { xOnlyPublicKey: async () => STUB_XONLY_PUBLIC_KEY } as any,
         new InMemoryWalletRepository(),
         new InMemoryContractRepository(),
         messageTag,
@@ -321,7 +340,7 @@ const createSWWallet = (
 ) =>
     new (ServiceWorkerWallet as any)(
         serviceWorker,
-        { toHex: () => "deadbeef" } as any,
+        { toHex: () => "deadbeef", xOnlyPublicKey: async () => STUB_XONLY_PUBLIC_KEY } as any,
         new InMemoryWalletRepository(),
         new InMemoryContractRepository(),
         messageTag,
@@ -612,6 +631,19 @@ describe("sendMessage reinitialize on SW restart", () => {
                     id: message.id,
                     tag: messageTag,
                     type: "WALLET_INITIALIZED",
+                };
+            }
+            // Let the post-init identity assertion pass so reinitialize()
+            // succeeds and GET_ADDRESS exhausts its own retry budget.
+            if (message.type === "GET_STATUS") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "WALLET_STATUS",
+                    payload: {
+                        walletInitialized: true,
+                        xOnlyPublicKey: STUB_XONLY_PUBLIC_KEY,
+                    },
                 };
             }
             // Always return not-initialized (simulates persistent failure)
@@ -1186,8 +1218,12 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         return null;
     };
 
-    const setup = () => {
-        const harness = createServiceWorkerHarness(initResponder);
+    // Answer the post-init identity assertion's GET_STATUS with the identity's
+    // own x-only key so create() resolves. Tests that omit the identity fall
+    // back to the stub key (only used by paths that reject before GET_STATUS).
+    const setup = async (identity?: { xOnlyPublicKey(): Promise<Uint8Array> }) => {
+        const getStatusKey = identity ? await identity.xOnlyPublicKey() : STUB_XONLY_PUBLIC_KEY;
+        const harness = createServiceWorkerHarness(initResponder, { getStatusKey });
         vi.stubGlobal("navigator", {
             serviceWorker: harness.navigatorServiceWorker,
         } as any);
@@ -1234,8 +1270,8 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
     });
 
     it("SingleKey emits a tagged single-key envelope", async () => {
-        const { serviceWorker } = setup();
         const identity = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
+        const { serviceWorker } = await setup(identity);
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
@@ -1252,8 +1288,8 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
     });
 
     it("ServiceWorkerWallet.create uses the default Arkade server URL when omitted", async () => {
-        const { serviceWorker } = setup();
         const identity = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
+        const { serviceWorker } = await setup(identity);
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
@@ -1270,10 +1306,10 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
     });
 
     it("ServiceWorkerWallet.create forwards walletMode to the worker init config", async () => {
-        const { serviceWorker } = setup();
         const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: true,
         });
+        const { serviceWorker } = await setup(identity);
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
@@ -1287,9 +1323,9 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
     });
 
     it("ServiceWorkerReadonlyWallet.create uses the default Arkade server URL when omitted", async () => {
-        const { serviceWorker } = setup();
         const signing = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
         const identity = await signing.toReadonly();
+        const { serviceWorker } = await setup(identity);
 
         await ServiceWorkerReadonlyWallet.create({
             serviceWorker: serviceWorker as any,
@@ -1306,10 +1342,10 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
     });
 
     it("ReadonlySingleKey emits a tagged readonly-single-key envelope", async () => {
-        const { serviceWorker } = setup();
         const signing = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
         const identity = await signing.toReadonly();
         const expectedPubKey = hex.encode(await identity.compressedPublicKey());
+        const { serviceWorker } = await setup(identity);
 
         await ServiceWorkerReadonlyWallet.create({
             serviceWorker: serviceWorker as any,
@@ -1326,10 +1362,10 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
     });
 
     it("MnemonicIdentity emits a tagged mnemonic envelope", async () => {
-        const { serviceWorker } = setup();
         const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: true,
         });
+        const { serviceWorker } = await setup(identity);
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
@@ -1347,11 +1383,11 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
     });
 
     it("MnemonicIdentity with passphrase includes it in the envelope", async () => {
-        const { serviceWorker } = setup();
         const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: true,
             passphrase: "extra secret",
         });
+        const { serviceWorker } = await setup(identity);
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
@@ -1369,9 +1405,9 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
     });
 
     it("SeedIdentity emits a tagged seed envelope", async () => {
-        const { serviceWorker } = setup();
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+        const { serviceWorker } = await setup(identity);
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
@@ -1389,11 +1425,11 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
     });
 
     it("ReadonlyDescriptorIdentity emits a tagged readonly-descriptor envelope", async () => {
-        const { serviceWorker } = setup();
         const reference = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: true,
         });
         const identity = ReadonlyDescriptorIdentity.fromDescriptor(reference.descriptor);
+        const { serviceWorker } = await setup(identity);
 
         await ServiceWorkerReadonlyWallet.create({
             serviceWorker: serviceWorker as any,
@@ -1410,11 +1446,11 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
     });
 
     it("ServiceWorkerReadonlyWallet downgrades a signing mnemonic identity to readonly-descriptor", async () => {
-        const { serviceWorker } = setup();
         const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: true,
             passphrase: "extra secret",
         });
+        const { serviceWorker } = await setup(identity);
 
         await ServiceWorkerReadonlyWallet.create({
             serviceWorker: serviceWorker as any,
@@ -1434,9 +1470,9 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
     });
 
     it("ServiceWorkerReadonlyWallet with a signing SingleKey downgrades to readonly-single-key", async () => {
-        const { serviceWorker } = setup();
         const identity = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
         const expectedPubKey = hex.encode(await identity.compressedPublicKey());
+        const { serviceWorker } = await setup(identity);
 
         await ServiceWorkerReadonlyWallet.create({
             serviceWorker: serviceWorker as any,
@@ -1454,7 +1490,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
     });
 
     it("ServiceWorkerWallet.create rejects a ReadonlyIdentity input", async () => {
-        const { serviceWorker } = setup();
+        const { serviceWorker } = await setup();
         const readonly = ReadonlySingleKey.fromPublicKey(
             await SingleKey.fromHex(TEST_PRIVATE_KEY_HEX).compressedPublicKey(),
         );
@@ -1467,5 +1503,135 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
                 storage: storage(),
             }),
         ).rejects.toThrow(/requires a signing Identity/);
+    });
+});
+
+describe("ServiceWorker identity boundary assertion", () => {
+    const messageTag = DEFAULT_MESSAGE_TAG;
+    const KEY_A = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const KEY_B = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+
+    const storage = () => ({
+        walletRepository: new InMemoryWalletRepository(),
+        contractRepository: new InMemoryContractRepository(),
+    });
+
+    // Drives the init handshake and answers GET_STATUS with `statusKey` so each test controls
+    // exactly what identity the worker claims.
+    const initResponder = (statusKey: Uint8Array | "omit") => (message: any) => {
+        if (message.tag === "INITIALIZE_MESSAGE_BUS") {
+            return { id: message.id, tag: "INITIALIZE_MESSAGE_BUS" };
+        }
+        if (message.type === "INIT_WALLET") {
+            return { id: message.id, tag: messageTag, type: "WALLET_INITIALIZED" };
+        }
+        if (message.type === "GET_STATUS") {
+            return {
+                id: message.id,
+                tag: messageTag,
+                type: "WALLET_STATUS",
+                payload: {
+                    walletInitialized: true,
+                    xOnlyPublicKey: statusKey === "omit" ? undefined : statusKey,
+                },
+            };
+        }
+        return null;
+    };
+
+    // Disable the harness auto-status so the responder fully controls GET_STATUS.
+    const stub = (responder: (m: any) => any) => {
+        const harness = createServiceWorkerHarness(responder, { getStatusKey: null });
+        vi.stubGlobal("navigator", { serviceWorker: harness.navigatorServiceWorker } as any);
+        return harness;
+    };
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it("create() resolves when the worker reports the matching identity", async () => {
+        const identity = await SingleKey.fromHex(KEY_A);
+        const key = await identity.xOnlyPublicKey();
+        const { serviceWorker } = stub(initResponder(key));
+
+        await expect(
+            ServiceWorkerWallet.create({
+                serviceWorker: serviceWorker as any,
+                arkServerUrl: "https://ark.test",
+                identity,
+                storage: storage(),
+            }),
+        ).resolves.toBeDefined();
+    });
+
+    it("create() rejects when the worker reports a different identity", async () => {
+        const identity = SingleKey.fromHex(KEY_A);
+        const otherKey = await SingleKey.fromHex(KEY_B).xOnlyPublicKey();
+        const { serviceWorker } = stub(initResponder(otherKey));
+
+        await expect(
+            ServiceWorkerWallet.create({
+                serviceWorker: serviceWorker as any,
+                arkServerUrl: "https://ark.test",
+                identity,
+                storage: storage(),
+            }),
+        ).rejects.toThrow(/identity mismatch/i);
+    });
+
+    it("reinitialize() rejects on mismatch before retrying the original wallet message", async () => {
+        const identity = SingleKey.fromHex(KEY_A);
+        const expectedKey = await identity.xOnlyPublicKey();
+        const otherKey = await SingleKey.fromHex(KEY_B).xOnlyPublicKey();
+
+        // The first init (inside create) matches; a later re-init reports a
+        // different identity, so recovery must reject rather than rebind.
+        let initCount = 0;
+        const { serviceWorker } = stub((message: any) => {
+            if (message.tag === "INITIALIZE_MESSAGE_BUS") {
+                initCount += 1;
+                return { id: message.id, tag: "INITIALIZE_MESSAGE_BUS" };
+            }
+            if (message.type === "INIT_WALLET") {
+                return { id: message.id, tag: messageTag, type: "WALLET_INITIALIZED" };
+            }
+            if (message.type === "GET_STATUS") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "WALLET_STATUS",
+                    payload: {
+                        walletInitialized: true,
+                        xOnlyPublicKey: initCount >= 2 ? otherKey : expectedKey,
+                    },
+                };
+            }
+            // Force the wallet down the not-initialized → reinitialize path.
+            if (message.type === "GET_ADDRESS") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    error: new Error(MESSAGE_BUS_NOT_INITIALIZED),
+                };
+            }
+            return null;
+        });
+
+        const wallet = await ServiceWorkerWallet.create({
+            serviceWorker: serviceWorker as any,
+            arkServerUrl: "https://ark.test",
+            identity,
+            storage: storage(),
+        });
+
+        await expect(wallet.getAddress()).rejects.toThrow(/identity mismatch/i);
+
+        // The mismatch is detected inside reinitialize(), so the original
+        // GET_ADDRESS is never retried against the wrong identity.
+        const addressCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_ADDRESS",
+        );
+        expect(addressCalls).toHaveLength(1);
     });
 });
