@@ -871,6 +871,18 @@ export class ReadonlyWallet implements IReadonlyWallet {
     async clearSyncCursor(): Promise<void> {
         await clearSyncCursor(this.walletRepository);
     }
+
+    /**
+     * Wipe all locally persisted wallet data (VTXOs, UTXOs, history, sync
+     * cursor, contracts). Create a fresh wallet instance afterward.
+     */
+    async clearLocalData(): Promise<void> {
+        try {
+            await this.dispose();
+        } finally {
+            await Promise.all([this.walletRepository.clear(), this.contractRepository.clear()]);
+        }
+    }
     /**
      * The on-chain (P2TR) addresses of every boarding tapscript this wallet
      * uses — the current address plus any historical rotated boarding

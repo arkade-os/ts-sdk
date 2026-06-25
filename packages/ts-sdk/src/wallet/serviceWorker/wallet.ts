@@ -935,6 +935,20 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
+     * Wipe all locally persisted wallet data on the page and service worker
+     * (VTXOs, UTXOs, history, sync cursor, contracts). Re-init the wallet after.
+     */
+    async clearLocalData(): Promise<void> {
+        const message: RequestClear = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "CLEAR",
+        };
+        await this.sendMessage(message);
+        await Promise.all([this.walletRepository.clear(), this.contractRepository.clear()]);
+    }
+
+    /**
      * Verify the worker is bound to this wallet's identity before the SDK hands
      * back (or recovers) a usable wallet object.
      *
@@ -966,7 +980,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         }
     }
 
-    /** Clear cached wallet state from both the page and service worker storage. */
+    /** @deprecated Use {@link clearLocalData} for a full reset; clear() leaves contract rows. */
     async clear() {
         const message: RequestClear = {
             id: getRandomId(),
