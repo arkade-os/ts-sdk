@@ -945,11 +945,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             type: "CLEAR",
         };
         await this.sendMessage(message);
-        try {
-            await Promise.all([this.walletRepository.clear(), this.contractRepository.clear()]);
-        } catch (_) {
-            console.warn("Failed to clear page-side wallet storage");
-        }
+        await Promise.all([this.walletRepository.clear(), this.contractRepository.clear()]);
     }
 
     /**
