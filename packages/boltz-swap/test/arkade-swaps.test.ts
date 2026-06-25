@@ -731,6 +731,52 @@ describe("ArkadeSwaps", () => {
                     description: testDescription,
                 });
             });
+
+            it("should forward descriptionHash and omit description", async () => {
+                // arrange
+                const descriptionHash = "a".repeat(64);
+                const spy = vi
+                    .spyOn(swapProvider, "createReverseSwap")
+                    .mockImplementationOnce(reverseSwapResponseFor(createReverseSwapResponse));
+
+                // act — both supplied: hash wins, description dropped
+                await swaps.createReverseSwap({
+                    amount: mock.invoice.amount,
+                    description: "ignored when hash present",
+                    descriptionHash,
+                });
+
+                // assert
+                expect(spy).toHaveBeenCalledWith({
+                    invoiceAmount: mock.invoice.amount,
+                    claimPublicKey: expect.any(String),
+                    preimageHash: expect.any(String),
+                    descriptionHash,
+                });
+                expect(spy.mock.calls[0]![0]).not.toHaveProperty("description");
+            });
+
+            it("should forward a present-but-empty descriptionHash, not silently drop it", async () => {
+                // A present descriptionHash (even "") must reach the provider so
+                // its hex check rejects it, rather than falling back to the
+                // description. Guards the `!== undefined` gating.
+                const spy = vi
+                    .spyOn(swapProvider, "createReverseSwap")
+                    .mockImplementationOnce(reverseSwapResponseFor(createReverseSwapResponse));
+
+                await swaps.createReverseSwap({
+                    amount: mock.invoice.amount,
+                    descriptionHash: "",
+                });
+
+                expect(spy).toHaveBeenCalledWith({
+                    invoiceAmount: mock.invoice.amount,
+                    claimPublicKey: expect.any(String),
+                    preimageHash: expect.any(String),
+                    descriptionHash: "",
+                });
+                expect(spy.mock.calls[0]![0]).not.toHaveProperty("description");
+            });
         });
 
         describe("VHTLC Operations", () => {
