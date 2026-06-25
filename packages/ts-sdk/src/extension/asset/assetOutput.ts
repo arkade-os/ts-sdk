@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import { BufferReader, BufferWriter } from "./utils";
+import { BufferReader, BufferWriter } from "../utils";
 
 /**
  * AssetOutput references a real transaction output and specify the amount in satoshis.
