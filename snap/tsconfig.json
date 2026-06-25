@@ -1,0 +1,9 @@
+{
+  "extends": "@metamask/snaps-cli/config/typescript/tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist"
+  },
+  "include": ["./src/**/*"],
+  "exclude": ["./dist/**/*"]
+}

@@ -1,0 +1,31 @@
+{
+  "name": "@arkade-os/metamask-snap",
+  "version": "0.1.0",
+  "description": "MetaMask Snap for ARK wallet Bitcoin operations",
+  "keywords": ["metamask", "snap", "bitcoin", "ark", "taproot"],
+  "license": "MIT",
+  "main": "./dist/bundle.js",
+  "files": ["dist/", "snap.manifest.json", "images/"],
+  "scripts": {
+    "build": "mm-snap build",
+    "serve": "mm-snap serve",
+    "start": "mm-snap watch",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@arkade-os/sdk": "link:..",
+    "@metamask/snaps-sdk": "^6.13.0",
+    "@noble/curves": "^1.2.0",
+    "@scure/base": "^1.1.3",
+    "@scure/btc-signer": "^1.3.1"
+  },
+  "devDependencies": {
+    "@metamask/snaps-cli": "latest",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "packageManager": "pnpm@10.15.0",
+  "engines": {
+    "node": ">=18.6.0"
+  }
+}
