@@ -118,3 +118,7 @@ export type { Logger } from "./logger";
 export { IndexedDbSwapRepository } from "./repositories/IndexedDb/swap-repository";
 export { InMemorySwapRepository } from "./repositories/inMemory/swap-repository";
 export type { SwapRepository } from "./repositories/swap-repository";
+
+// Payment router: swap rails + the full createDefaultPaymentRouter(wallet, swaps)
+// overload composing them with the core Wallet-only rails.
+export { createDefaultPaymentRouter, lightningRail, onchainSwapRail } from "./payment";
