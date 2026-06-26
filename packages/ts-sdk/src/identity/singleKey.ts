@@ -1,7 +1,7 @@
 import { pubECDSA, pubSchnorr, randomPrivateKeyBytes } from "@scure/btc-signer/utils.js";
 import { SigHash } from "@scure/btc-signer";
 import { hex } from "@scure/base";
-import { Identity, ReadonlyIdentity } from ".";
+import { DeterministicSignCapable, Identity, ReadonlyIdentity } from ".";
 import { Transaction } from "../utils/transaction";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 import { schnorr, signAsync } from "@noble/secp256k1";
@@ -26,7 +26,7 @@ const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
  * const signedTx = await key.sign(transaction);
  * ```
  */
-export class SingleKey implements Identity {
+export class SingleKey implements Identity, DeterministicSignCapable {
     private key: Uint8Array;
 
     private constructor(key: Uint8Array | undefined) {
@@ -102,6 +102,10 @@ export class SingleKey implements Identity {
     ): Promise<Uint8Array> {
         if (signatureType === "ecdsa") return signAsync(message, this.key, { prehash: false });
         return schnorr.signAsync(message, this.key);
+    }
+
+    async signSchnorrDeterministic(messageHash: Uint8Array): Promise<Uint8Array> {
+        return schnorr.signAsync(messageHash, this.key, new Uint8Array(32));
     }
 
     async toReadonly(): Promise<ReadonlySingleKey> {
