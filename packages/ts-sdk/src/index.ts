@@ -72,6 +72,15 @@ import {
     IAssetManager,
     IReadonlyAssetManager,
 } from "./wallet";
+export {
+    ActivityRegistry,
+    boardingResolver,
+    createDefaultActivityRegistry,
+    type Activity,
+    type ActivityIntent,
+    type GroupMembership,
+    type ActivityResolver,
+} from "./wallet";
 import { Batch } from "./wallet/batch";
 import {
     Wallet,

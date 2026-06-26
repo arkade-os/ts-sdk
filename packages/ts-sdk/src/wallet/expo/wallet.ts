@@ -1,5 +1,6 @@
 import { hex } from "@scure/base";
 import { Wallet } from "../wallet";
+import type { Activity, ActivityRegistry } from "../activity";
 import { RestArkProvider } from "../../providers/ark";
 import type {
     IWallet,
@@ -280,6 +281,14 @@ export class ExpoWallet implements IWallet {
 
     getTransactionHistory(): Promise<ArkTransaction[]> {
         return this.wallet.getTransactionHistory();
+    }
+
+    get activity(): ActivityRegistry {
+        return this.wallet.activity;
+    }
+
+    getActivityHistory(): Promise<Activity[]> {
+        return this.wallet.getActivityHistory();
     }
 
     getContractManager(): Promise<IContractManager> {
