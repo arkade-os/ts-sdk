@@ -13,16 +13,18 @@ export { onchainSwapRail } from "./onchain-swap";
  * the boltz-swap overload of the core `createDefaultPaymentRouter(wallet)`; an
  * Ark-only app uses the core one, a Lightning-capable app uses this.
  *
- * Default priority `["ark", "lightning", "onchain"]` — Ark first, then Lightning,
- * then on-chain. The `onchain-swap` rail is unlisted, so it ranks after the
- * collaborative-exit `onchain` rail: a plain BTC address prefers a direct exit
- * and falls back to a chain swap.
+ * Default priority `["ark", "lightning", "onchain-swap", "onchain"]` — Ark first,
+ * then Lightning, then on-chain. For a plain BTC address the chain swap
+ * (`onchain-swap`) is preferred over the collaborative exit (`onchain`), but
+ * both stay registered: the default is a *preference*, not a restriction —
+ * `options()` surfaces both and an app/user can override `priority` (or
+ * `disabled`) to force the collaborative exit.
  */
 export function createDefaultPaymentRouter(wallet: Wallet, swaps: ArkadeSwaps): PaymentRouter {
     return new PaymentRouter({
         wallet,
         swaps,
-        prefs: { priority: ["ark", "lightning", "onchain"] },
+        prefs: { priority: ["ark", "lightning", "onchain-swap", "onchain"] },
     })
         .use(arkRail())
         .use(onchainRail())
