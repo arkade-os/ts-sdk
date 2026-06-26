@@ -97,21 +97,23 @@ describe("getBoardingTxs — sweep correlation without outspend txid", () => {
             },
         });
 
-        boardingAddr = await wallet.getBoardingAddress();
-        fundingTx.vout[0].scriptpubkey_address = boardingAddr;
+        try {
+            boardingAddr = await wallet.getBoardingAddress();
+            fundingTx.vout[0].scriptpubkey_address = boardingAddr;
 
-        const { boardingTxs, commitmentsToIgnore } = await wallet.getBoardingTxs();
+            const { boardingTxs, commitmentsToIgnore } = await wallet.getBoardingTxs();
 
-        // The sweep must be ignorable so the resulting VTXO is suppressed.
-        expect(commitmentsToIgnore.has(SWEEP_TXID)).toBe(true);
-        // And we must never pollute the set with `undefined`.
-        expect(commitmentsToIgnore.has(undefined as unknown as string)).toBe(false);
+            // The sweep must be ignorable so the resulting VTXO is suppressed.
+            expect(commitmentsToIgnore.has(SWEEP_TXID)).toBe(true);
+            // And we must never pollute the set with `undefined`.
+            expect(commitmentsToIgnore.has(undefined as unknown as string)).toBe(false);
 
-        const boarding = boardingTxs.find((t) => t.key.boardingTxid === FUNDING_TXID);
-        expect(boarding).toBeDefined();
-        expect(boarding!.settled).toBe(true);
-        expect(boarding!.key.commitmentTxid).toBe(SWEEP_TXID);
-
-        await wallet.dispose();
+            const boarding = boardingTxs.find((t) => t.key.boardingTxid === FUNDING_TXID);
+            expect(boarding).toBeDefined();
+            expect(boarding!.settled).toBe(true);
+            expect(boarding!.key.commitmentTxid).toBe(SWEEP_TXID);
+        } finally {
+            await wallet.dispose();
+        }
     });
 });
