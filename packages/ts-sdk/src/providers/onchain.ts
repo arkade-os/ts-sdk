@@ -21,6 +21,17 @@ export const ESPLORA_URL: Record<NetworkName, string> = {
 
 export type ExplorerTransaction = {
     txid: string;
+    /**
+     * Inputs as returned by Esplora's `/address/:addr/txs`, each carrying the
+     * outpoint it spends (`txid:vout`). Optional: not every provider populates
+     * it (the electrum provider omits inputs), so consumers that correlate
+     * spenders must tolerate its absence. Used to recover a boarding output's
+     * spending (commitment) tx when `/outspends` omits the spender txid.
+     */
+    vin?: {
+        txid: string;
+        vout: number;
+    }[];
     vout: {
         scriptpubkey_address: string;
         value: string;
