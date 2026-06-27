@@ -1,0 +1,12 @@
+{
+    "extends": "../../config/tsconfig.base.json",
+    "compilerOptions": {
+        "lib": ["es2022", "dom"],
+        "types": ["node"],
+        "noEmit": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true
+    },
+    "include": ["src/**/*.ts", "test/**/*.ts", "../../config/types/**/*.d.ts"],
+    "exclude": ["node_modules", "dist"]
+}
