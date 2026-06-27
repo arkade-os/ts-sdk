@@ -72,6 +72,31 @@ export function isBatchSignable(identity: Identity): identity is BatchSignableId
     );
 }
 
+/**
+ * Optional capability for identities that can produce a deterministic
+ * Schnorr signature. Used by boltz-swap to derive a reproducible preimage
+ * so a restored wallet can re-derive and claim an outstanding VHTLC
+ * without persisted local state.
+ */
+export interface DeterministicSignCapable {
+    /**
+     * BIP-340 Schnorr-sign `messageHash` with aux_rand being 0
+     *
+     * @param messageHash - 32-byte SHA-256 hash of the message to sign.
+     */
+    signSchnorrDeterministic(messageHash: Uint8Array): Promise<Uint8Array>;
+}
+
+/** Type guard for {@link DeterministicSignCapable}. */
+export function isDeterministicSignCapable(v: unknown): v is DeterministicSignCapable {
+    return (
+        typeof v === "object" &&
+        v !== null &&
+        "signSchnorrDeterministic" in v &&
+        typeof (v as Record<string, unknown>).signSchnorrDeterministic === "function"
+    );
+}
+
 export * from "./singleKey";
 // Explicit named re-export so the barrel stays a documented public surface.
 // `serializeSeedOwnedSigningIdentity` and `serializeSeedOwnedReadonlyIdentity`
