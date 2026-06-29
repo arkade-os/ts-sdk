@@ -48,12 +48,20 @@ export const MUTINYNET_NETWORK = {
     wif: 0xef,
 };
 
-export const arkNetworkToBtc = (arkNetwork: string): typeof NETWORK =>
-    arkNetwork === "bitcoin"
-        ? NETWORK
-        : arkNetwork === "mutinynet"
-          ? MUTINYNET_NETWORK
-          : REGTEST_NETWORK;
+// Fail closed on unrecognized networks: validating a BTC address against the
+// wrong network params would silently weaken the check.
+export const arkNetworkToBtc = (arkNetwork: string): typeof NETWORK => {
+    switch (arkNetwork) {
+        case "bitcoin":
+            return NETWORK;
+        case "mutinynet":
+            return MUTINYNET_NETWORK;
+        case "regtest":
+            return REGTEST_NETWORK;
+        default:
+            throw new Error(`Unsupported network: ${arkNetwork}`);
+    }
+};
 
 // ---------------------------------------------------------------------------
 // Swap tree serialization
