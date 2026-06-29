@@ -79,6 +79,8 @@ describe("SwapManager", () => {
             userLockAmount: 100000,
             claimPublicKey: "0".repeat(66),
             refundPublicKey: "0".repeat(66),
+            preimageHash: "0".repeat(64),
+            feeSatsPerByte: 1,
         },
         response: {
             id: "chain-swap-1",
@@ -897,7 +899,6 @@ describe("SwapManager", () => {
             // Mock getReverseSwapTxId to return a mock txid
             vi.spyOn(swapProvider, "getReverseSwapTxId").mockResolvedValue({
                 id: mockTxId,
-                hex: "0200000001...",
                 timeoutBlockHeight: 10,
             });
 
