@@ -894,10 +894,10 @@ export interface IReadonlyWallet {
     /** @returns Wallet transaction history derived from boarding and Arkade activity. */
     getTransactionHistory(): Promise<ArkTransaction[]>;
 
-    /** Registry of resolvers that group/label {@link getActivityHistory} rows. */
+    /** Resolvers that group/label {@link getActivityHistory} rows. */
     readonly activity: ActivityRegistry;
 
-    /** @returns Wallet history grouped into logical activities via the registered resolvers. */
+    /** @returns Wallet history grouped into logical activities with signed net amounts. */
     getActivityHistory(): Promise<Activity[]>;
 
     /**

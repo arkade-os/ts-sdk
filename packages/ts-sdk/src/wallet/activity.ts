@@ -1,34 +1,32 @@
 import { TxType, type ArkTransaction } from "./index";
 
-/** One transaction's participation in one logical action. A tx may return several. */
+/** One transaction's participation in one logical action. */
 export interface GroupMembership {
     /**
      * Stable id of the action; txs sharing it group together. Third-party
      * resolvers should namespace it (`"vendor:thing"`) to avoid colliding with
-     * other resolvers' groups; the built-ins use `boarding:`/`exit:`/`mint:`.
+     * other resolvers' groups. SDK built-ins use namespaced ids such as `boarding:`.
      */
     groupId: string;
     /** Human label for the action, e.g. "Dice game". */
     label?: string;
-    /** App category for icon/filtering, e.g. "game". Namespace across vendors to avoid clashes. */
+    /** App category for icon/filtering, e.g. "game". */
     kind?: string;
     /**
-     * Free-form row data (renderer-defined). When several resolvers tag the same
-     * tx+group, this is shallow-merged with earlier-resolver-wins on key
-     * collision — namespace keys (e.g. `swap.status`) to avoid clobbering.
+     * Free-form row data. Same-group metadata is shallow-merged with
+     * earlier-resolver keys winning.
      */
     metadata?: Record<string, unknown>;
     /**
-     * This tx's contribution to THIS group, as an unsigned sat magnitude;
-     * defaults to the tx's full amount. The activity builder applies the tx
-     * direction (received positive, sent negative). Set it to split a batched
-     * tx across the groups it touches — omitting it on a multi-group tx
-     * attributes the full amount to each group.
+     * This tx's unsigned sat contribution to this group. Defaults to the tx's
+     * full amount; the builder applies direction. Use it to split a batched tx
+     * across groups. Same-key receive rows paired with a sent row are treated
+     * as change and excluded from `Activity.amount`.
      */
     amount?: number;
 }
 
-/** A pluggable resolver. Registered by id; `prepare()` refreshes correlation data. */
+/** A pluggable resolver keyed by `id`. */
 export interface ActivityResolver {
     /**
      * Registry key — override or remove by it. Namespace it (`"vendor:games"`)
@@ -37,15 +35,15 @@ export interface ActivityResolver {
      */
     id: string;
     /**
-     * Load fresh correlation data (swaps, games…) before `resolve` runs. A
-     * rejection is isolated — the resolver then contributes no memberships.
+     * Load correlation data before `resolve` runs. If it rejects, this resolver
+     * contributes no memberships.
      */
     prepare?(): Promise<void>;
     /** Pure and synchronous. The groups this tx belongs to, or undefined to leave it plain. */
     resolve(tx: ArkTransaction): GroupMembership[] | undefined;
 }
 
-/** The label/kind/metadata an activity carries — the non-id, non-amount part of a {@link GroupMembership}. */
+/** The non-id, non-amount part of a {@link GroupMembership}. */
 export interface ActivityIntent {
     /** Human label for the action, e.g. "Dice game". */
     label?: string;
@@ -55,15 +53,15 @@ export interface ActivityIntent {
     metadata?: Record<string, unknown>;
 }
 
-/** One logical activity: the projection of all txs sharing a groupId. */
+/** One logical activity. */
 export interface Activity {
-    /** The groupId, or the tx's own key when ungrouped. */
+    /** The groupId, or the natural tx key for untagged rows. */
     id: string;
     /** Merged intent for the group, if any resolver tagged it. */
     intent?: ActivityIntent;
     /** Member txs, oldest-first. */
     txs: ArkTransaction[];
-    /** Signed net amount across the group, in sats: positive received, negative sent. */
+    /** Signed net sats: positive received, negative sent; same-key change rows are excluded. */
     amount: number;
     /** Earliest member createdAt (ms since epoch). */
     createdAt: number;
@@ -72,27 +70,21 @@ export interface Activity {
 }
 
 /**
- * Pure grouping engine: project a flat tx list into activities via resolvers.
- * Mirrors `buildTransactionHistory` — no I/O beyond the resolvers' own `prepare()`.
+ * Project a flat tx list into activities via resolvers.
  *
- * - A tx with no memberships is bucketed by its own transaction key; rows that
- *   share a key stay together so send/change pairs remain one activity.
+ * - Untagged rows bucket by natural tx key, so send/change pairs stay together.
  * - Memberships are unioned across resolvers and bucketed by `groupId`; a tx may join
  *   several groups (Ark batching). Same-group memberships (across resolvers) merge:
  *   `label`/`kind` first-defined-wins (resolver order), `metadata` shallow-merged.
- * - A member's contribution defaults to the tx's signed amount (received positive,
- *   sent negative), or the signed form of `membership.amount` when given (so a
- *   batched tx splits across the groups it touches).
+ * - Contributions are signed by tx direction; same-key received rows paired with
+ *   a sent row are treated as change and excluded from the activity amount.
  * - A resolver that throws in resolve() or rejects in prepare() is isolated and
- *   contributes no memberships, so one bad resolver never breaks the whole history.
+ *   contributes no memberships.
  */
 export async function buildActivities(
     txs: ArkTransaction[],
     resolvers: ActivityResolver[],
 ): Promise<Activity[]> {
-    // Isolate prepare() like resolve(): a resolver that fails to load its
-    // correlation data contributes no memberships, rather than throwing away
-    // the whole history.
     const preparedResolvers = (
         await Promise.all(
             resolvers.map(async (r) => {
@@ -130,15 +122,14 @@ export async function buildActivities(
     const buckets = new Map<string, Bucket>();
 
     for (const tx of txs) {
-        // Collect this tx's memberships, deduping by groupId so two resolvers tagging
-        // the same tx+group merge into one membership (rather than counting the tx twice).
+        // Deduplicate resolver memberships by groupId for this tx.
         const perGroup = new Map<string, GroupMembership>();
         for (const r of preparedResolvers) {
             let ms: GroupMembership[] | undefined;
             try {
                 ms = r.resolve(tx);
             } catch {
-                ms = undefined; // one bad tag must not break the whole history
+                ms = undefined;
             }
             for (const m of ms ?? []) {
                 const existing = perGroup.get(m.groupId);
@@ -168,13 +159,12 @@ export async function buildActivities(
     const netAmount = (members: { tx: ArkTransaction; amount: number }[]) => {
         const sentKeys = new Set(members.filter((x) => isSent(x.tx)).map((x) => keyOf(x.tx)));
         return members.reduce((s, x) => {
-            // A sent row is already net of its own change; do not add the paired receive back.
+            // Same-key receives are change for sent rows.
             if (!isSent(x.tx) && sentKeys.has(keyOf(x.tx))) return s;
             return s + x.amount;
         }, 0);
     };
 
-    // Members are oldest-first, so the last one is the most recent.
     const latest = (a: Activity) => a.txs[a.txs.length - 1].createdAt;
     return [...buckets.entries()]
         .map(([id, b]): Activity => {
@@ -191,7 +181,7 @@ export async function buildActivities(
         .sort((a, c) => latest(c) - latest(a));
 }
 
-/** Holds activity resolvers keyed by id. Built-in resolvers are pre-registered on the wallet. */
+/** Resolver registry keyed by id. */
 export class ActivityRegistry {
     private readonly resolvers = new Map<string, ActivityResolver>();
 
@@ -229,7 +219,7 @@ export function boardingResolver(): ActivityResolver {
     };
 }
 
-/** A registry pre-populated with the SDK's built-in resolvers (currently `boarding`). */
+/** Default registry with SDK built-ins. */
 export function createDefaultActivityRegistry(): ActivityRegistry {
     const registry = new ActivityRegistry();
     registry.use(boardingResolver());

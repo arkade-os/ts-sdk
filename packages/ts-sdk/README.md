@@ -363,8 +363,9 @@ const txid = await wallet.send({
 ### Activity history
 
 Group the wallet's transaction history into labelled, logical activities. Register an
-`ActivityResolver` — a pure `tx -> memberships` function — and `getActivityHistory()`
-buckets the transactions into `Activity` rows. The `boarding` built-in is pre-registered,
+`ActivityResolver` object; its optional `prepare()` can refresh correlation data, and
+its synchronous `resolve(tx)` returns memberships. `getActivityHistory()` buckets
+the transactions into `Activity` rows. The `boarding` built-in is pre-registered,
 and a transaction can belong to multiple groups (e.g. a batched settlement).
 
 ```typescript
@@ -379,6 +380,7 @@ wallet.activity.use({
 
 // Built-ins (boarding) + your resolver; txs grouped oldest-first per activity
 const activities = await wallet.getActivityHistory()
+// amount is signed sats: positive received, negative sent; same-key change rows are excluded
 // each Activity: { id, intent?, txs, amount, createdAt, settled }
 ```
 

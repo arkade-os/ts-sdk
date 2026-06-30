@@ -303,7 +303,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     // clears it, and a stale entry only hides a VTXO (never spends one).
     protected _pendingSpendOutpoints = new Set<string>();
 
-    /** Registry of activity resolvers consumed by {@link getActivityHistory}. */
+    /** Activity resolvers consumed by {@link getActivityHistory}. */
     readonly activity = createDefaultActivityRegistry();
 
     get assetManager(): IReadonlyAssetManager {
@@ -869,9 +869,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Wallet activity history: {@link getTransactionHistory} grouped into logical
-     * {@link Activity} rows by the resolvers registered on {@link activity}. With no
-     * resolvers, rows are bucketed by their transaction key so send/change pairs stay together.
+     * Wallet history grouped by registered activity resolvers. With no resolver match,
+     * rows bucket by transaction key so send/change pairs stay together.
      */
     async getActivityHistory(): Promise<Activity[]> {
         return buildActivities(await this.getTransactionHistory(), this.activity.all());
