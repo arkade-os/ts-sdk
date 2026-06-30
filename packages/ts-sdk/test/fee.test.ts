@@ -246,7 +246,7 @@ describe("Estimator", () => {
                             convertJsonOutput,
                         );
 
-                        const result = estimator.eval(
+                        const result = estimator.evaluate(
                             offchainInputs,
                             onchainInputs,
                             offchainOutputs,
