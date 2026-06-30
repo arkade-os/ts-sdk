@@ -16,6 +16,7 @@ import {
 import type { SerializedSigningIdentity, SerializedReadonlyIdentity } from "./serialize";
 import { DescriptorSigningRequest } from "./descriptorProvider";
 import { HDCapableIdentity, ReadonlyHDCapableIdentity } from "./hdCapableIdentity";
+import { DeterministicSignCapable } from ".";
 import { descriptorIsOurs, isMainnetDescriptor } from "./descriptor";
 
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
@@ -104,7 +105,7 @@ export type MnemonicOptions = SeedIdentityOptions & {
  * const identity = SeedIdentity.fromSeed(seed, { descriptor });
  * ```
  */
-export class SeedIdentity implements HDCapableIdentity {
+export class SeedIdentity implements HDCapableIdentity, DeterministicSignCapable {
     private readonly derivedKey: Uint8Array;
     /**
      * Wildcard account-descriptor template (e.g.
@@ -226,6 +227,10 @@ export class SeedIdentity implements HDCapableIdentity {
         signatureType: "schnorr" | "ecdsa" = "schnorr",
     ): Promise<Uint8Array> {
         return this.signMessageWithKey(this.derivedKey, message, signatureType);
+    }
+
+    async signSchnorrDeterministic(messageHash: Uint8Array): Promise<Uint8Array> {
+        return schnorr.signAsync(messageHash, this.derivedKey, new Uint8Array(32));
     }
 
     signerSession(): SignerSession {
