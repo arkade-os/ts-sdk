@@ -3036,6 +3036,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     settlementPsbt = await this._signerRouter.sign(settlementPsbt, [
                         { index: i, lookupScript: script },
                     ]);
+                    // The signer router silently skips inputs it can't resolve,
+                    // which would leave this boarding input unsigned and cause
+                    // arkd to reject it as "not a wallet script". Fail early.
+                    if (!settlementPsbt.getInput(i).tapScriptSig?.length) {
+                        throw new Error(await this.unsignableBoardingInputError(input, script));
+                    }
                     hasBoardingUtxos = true;
                     break;
                 }
@@ -3113,6 +3119,32 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 hasBoardingUtxos ? base64.encode(settlementPsbt.toPSBT()) : undefined,
             );
         }
+    }
+
+    // Best-effort: every enrichment is guarded so a secondary failure can't
+    // mask the original signing error.
+    private async unsignableBoardingInputError(
+        input: { txid: string; vout: number },
+        script: Bytes,
+    ): Promise<string> {
+        const scriptHex = hex.encode(script);
+        let unresolvedAddress = "<undecodable>";
+        try {
+            unresolvedAddress = Address(this.network).encode(OutScript.decode(script));
+        } catch {}
+        let recognized = "<unavailable>";
+        try {
+            const current = await this.getBoardingAddress();
+            const all = await this.getBoardingAddresses();
+            recognized = `current=${current}; all=[${all.join(", ")}]`;
+        } catch {}
+        return (
+            `failed to sign boarding input ${input.txid}:${input.vout}: ` +
+            `signer did not recognize script ${scriptHex} (${unresolvedAddress}); ` +
+            `would have reached arkd unsigned and been rejected as "not a wallet script". ` +
+            `Recognized boarding addresses: ${recognized}. ` +
+            `Likely a rotated boarding address with a missing contract row.`
+        );
     }
 
     /**
