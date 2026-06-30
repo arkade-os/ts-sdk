@@ -3036,18 +3036,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     settlementPsbt = await this._signerRouter.sign(settlementPsbt, [
                         { index: i, lookupScript: script },
                     ]);
-                    // Defense-in-depth: the signer router silently skips any
-                    // input whose script it cannot resolve (no matching contract
-                    // row and not the recognized boarding script). For a
-                    // boarding input the wallet itself selected, a skip means we
-                    // would submit an unsigned, leaf-less-looking input that arkd
-                    // rejects far downstream with the opaque "script ... is not a
-                    // wallet script" — after every signature already "succeeded".
-                    // Fail here instead, naming the exact outpoint and the
-                    // boarding addresses the wallet actually recognizes, so an
-                    // unsignable boarding address (e.g. a rotated boarding script
-                    // whose contract row is missing from the repo) is immediately
-                    // diagnosable rather than a server-side mystery.
+                    // The signer router silently skips inputs it can't resolve,
+                    // which would leave this boarding input unsigned and cause
+                    // arkd to reject it as "not a wallet script". Fail early.
                     if (!settlementPsbt.getInput(i).tapScriptSig?.length) {
                         throw new Error(await this.unsignableBoardingInputError(input, script));
                     }
@@ -3130,17 +3121,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         }
     }
 
-    /**
-     * Build the diagnostic thrown when a selected boarding input could not be
-     * signed (the signer router resolved no contract row and no recognized
-     * boarding script for it). Without this, the unsigned input flows to arkd
-     * and surfaces as the opaque "script ... is not a wallet script" two RPCs
-     * later. The message names the exact outpoint, the unresolved boarding
-     * address, and the boarding addresses the wallet *does* recognize — enough
-     * to classify the offender (rotated vs baseline, missing contract row)
-     * without introspecting wallet internals. Best-effort: every enrichment is
-     * guarded so building the error can never itself throw and mask the cause.
-     */
+    // Best-effort: every enrichment is guarded so a secondary failure can't
+    // mask the original signing error.
     private async unsignableBoardingInputError(
         input: { txid: string; vout: number },
         script: Bytes,
@@ -3149,25 +3131,19 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         let unresolvedAddress = "<undecodable>";
         try {
             unresolvedAddress = Address(this.network).encode(OutScript.decode(script));
-        } catch {
-            // leave placeholder — a non-standard script is itself a signal
-        }
+        } catch {}
         let recognized = "<unavailable>";
         try {
             const current = await this.getBoardingAddress();
             const all = await this.getBoardingAddresses();
             recognized = `current=${current}; all=[${all.join(", ")}]`;
-        } catch {
-            // never let address discovery failure mask the signing error
-        }
+        } catch {}
         return (
             `failed to sign boarding input ${input.txid}:${input.vout}: ` +
-            `no signer recognized its script ${scriptHex} (${unresolvedAddress}). ` +
-            `This boarding address is not in the signer's recognized set, so its ` +
-            `commitment-tx input would reach the operator unsigned and be rejected ` +
-            `as "not a wallet script". Recognized boarding addresses: ${recognized}. ` +
-            `Likely a rotated boarding address whose contract row is missing from the ` +
-            `repository; onboarding this UTXO cannot proceed until that row is restored.`
+            `signer did not recognize script ${scriptHex} (${unresolvedAddress}); ` +
+            `would have reached arkd unsigned and been rejected as "not a wallet script". ` +
+            `Recognized boarding addresses: ${recognized}. ` +
+            `Likely a rotated boarding address with a missing contract row.`
         );
     }
 

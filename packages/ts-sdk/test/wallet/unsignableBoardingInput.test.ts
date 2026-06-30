@@ -7,18 +7,6 @@ import {
     InMemoryContractRepository,
 } from "../../src";
 
-/**
- * Regression for the boarding onboard failure that surfaced server-side as the
- * opaque arkd error "script ... is not a wallet script" (arkd-wallet
- * SignTransaction key-path branch): a boarding UTXO the wallet selected but
- * whose script the signer router could not resolve was *silently skipped*, so
- * its commitment-tx input reached the operator unsigned/leaf-less.
- *
- * The wallet now fails fast with a diagnostic naming the exact outpoint, the
- * unresolved boarding address, and the boarding addresses it *does* recognize.
- * This test pins that diagnostic (the harness mirrors walletBoardingRotation).
- */
-
 const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -69,9 +57,7 @@ afterEach(() => {
     vi.unstubAllGlobals();
 });
 
-// A taproot scriptPubKey (OP_1 <32-byte key>) for a boarding address the wallet
-// does NOT own — stands in for the unresolved boarding script (e.g. a rotated
-// boarding address whose contract row is missing from the repo).
+// Taproot scriptPubKey the wallet does not own — simulates an unresolved boarding script.
 const FOREIGN_BOARDING_SCRIPT = new Uint8Array([
     0x51,
     0x20,
@@ -97,13 +83,9 @@ describe("unsignable boarding input diagnostic", () => {
             FOREIGN_BOARDING_SCRIPT,
         );
 
-        // Exact outpoint and script the operator would have rejected.
         expect(msg).toContain("0c2a677ca31a50d1745b9f49d43756b8a274e751e957d9cb7271960f87649243:2");
         expect(msg).toContain(hex.encode(FOREIGN_BOARDING_SCRIPT));
-        // Maps the cryptic server error to its client-side cause.
         expect(msg).toContain("not a wallet script");
-        // Surfaces what the wallet *can* sign, so the offender is classifiable
-        // without introspecting wallet internals.
         expect(msg).toContain(recognized);
 
         await wallet.dispose();
@@ -120,8 +102,6 @@ describe("unsignable boarding input diagnostic", () => {
             },
         });
 
-        // A non-taproot / undecodable script must degrade to a placeholder, not
-        // throw — the signing error must never be masked by error-building.
         const garbage = new Uint8Array([0x00, 0x01, 0x02]);
         const msg = await (wallet as any).unsignableBoardingInputError(
             { txid: "deadbeef", vout: 0 },
