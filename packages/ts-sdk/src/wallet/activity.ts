@@ -1,4 +1,4 @@
-import type { ArkTransaction } from "./index";
+import { TxType, type ArkTransaction } from "./index";
 
 /** One transaction's participation in one logical action. A tx may return several. */
 export interface GroupMembership {
@@ -117,8 +117,7 @@ export async function buildActivities(
         amount: a.amount ?? b.amount,
     });
 
-    const sentType = "SENT" as ArkTransaction["type"];
-    const isSent = (tx: ArkTransaction) => tx.type === sentType;
+    const isSent = (tx: ArkTransaction) => tx.type === TxType.TxSent;
     const signedAmount = (tx: ArkTransaction, amount = tx.amount) => {
         const magnitude = Math.abs(amount);
         return isSent(tx) ? -magnitude : magnitude;
@@ -175,7 +174,8 @@ export async function buildActivities(
         }, 0);
     };
 
-    const latest = (a: Activity) => Math.max(...a.txs.map((t) => t.createdAt));
+    // Members are oldest-first, so the last one is the most recent.
+    const latest = (a: Activity) => a.txs[a.txs.length - 1].createdAt;
     return [...buckets.entries()]
         .map(([id, b]): Activity => {
             const members = [...b.members].sort((x, y) => x.tx.createdAt - y.tx.createdAt);
