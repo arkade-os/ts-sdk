@@ -36,12 +36,26 @@ describe("buildActivities", () => {
         expect(a.intent).toBeUndefined();
     });
 
-    it("groups txs sharing a groupId, summing amounts, members oldest-first", async () => {
+    it("nets ungrouped same-arkTxid send/change rows into one sent activity", async () => {
+        const txs = [
+            tx("same", { type: TxType.TxSent, amount: 300, createdAt: 2 }),
+            tx("same", { type: TxType.TxReceived, amount: 700, createdAt: 2 }),
+        ];
+        const [act] = await buildActivities(txs, []);
+        expect(act.id).toBe("same");
+        expect(act.amount).toBe(-300);
+        expect(act.txs).toEqual(txs);
+    });
+
+    it("groups txs sharing a groupId, netting sent and received amounts", async () => {
         const r: ActivityResolver = {
             id: "game",
             resolve: () => [{ groupId: "game:1", label: "Dice game" }],
         };
-        const txs = [tx("a", { amount: -50, createdAt: 2 }), tx("b", { amount: 80, createdAt: 5 })];
+        const txs = [
+            tx("a", { type: TxType.TxSent, amount: 50, createdAt: 2 }),
+            tx("b", { type: TxType.TxReceived, amount: 80, createdAt: 5 }),
+        ];
         const [act] = await buildActivities(txs, [r]);
         expect(act.id).toBe("game:1");
         expect(act.intent?.label).toBe("Dice game");
@@ -60,15 +74,18 @@ describe("buildActivities", () => {
                       ]
                     : undefined,
         };
-        const acts = await buildActivities([tx("settle", { amount: 8 })], [r]);
-        expect(acts.find((x) => x.id === "game:A")!.amount).toBe(5);
-        expect(acts.find((x) => x.id === "game:B")!.amount).toBe(3);
+        const acts = await buildActivities([tx("settle", { type: TxType.TxSent, amount: 8 })], [r]);
+        expect(acts.find((x) => x.id === "game:A")!.amount).toBe(-5);
+        expect(acts.find((x) => x.id === "game:B")!.amount).toBe(-3);
     });
 
-    it("defaults a membership's contribution to the tx's full amount", async () => {
+    it("defaults a membership's contribution to the tx's signed amount", async () => {
         const r: ActivityResolver = { id: "g", resolve: () => [{ groupId: "g:1" }] };
-        const [act] = await buildActivities([tx("a", { amount: 42 })], [r]);
-        expect(act.amount).toBe(42);
+        const [received] = await buildActivities([tx("a", { amount: 42 })], [r]);
+        expect(received.amount).toBe(42);
+
+        const [sent] = await buildActivities([tx("b", { type: TxType.TxSent, amount: 42 })], [r]);
+        expect(sent.amount).toBe(-42);
     });
 
     it("merges two resolvers on the same groupId: label first-wins, metadata additive", async () => {
@@ -169,6 +186,25 @@ describe("wallet.getActivityHistory", () => {
         expect(acts[0].id).toBe("g:1");
         expect(acts[0].intent?.label).toBe("Grouped");
         expect(acts[0].txs).toHaveLength(2);
+    });
+
+    it("preserves every getTransactionHistory row in the activity view", async () => {
+        const { wallet } = await makeStaticWalletForTest();
+        const history = [
+            tx("same", { type: TxType.TxSent, amount: 300, createdAt: 2 }),
+            tx("same", { type: TxType.TxReceived, amount: 700, createdAt: 2 }),
+            tx("other", { type: TxType.TxReceived, amount: 50, createdAt: 1 }),
+        ];
+        vi.spyOn(wallet, "getTransactionHistory").mockResolvedValue(history);
+
+        const acts = await wallet.getActivityHistory();
+        const flattened = acts.flatMap((a) => a.txs);
+
+        expect(flattened).toHaveLength(history.length);
+        for (const row of history) {
+            expect(flattened).toContain(row);
+        }
+        expect(acts.find((a) => a.id === "same")?.txs).toEqual([history[0], history[1]]);
     });
 });
 

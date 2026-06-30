@@ -19,9 +19,11 @@ export interface GroupMembership {
      */
     metadata?: Record<string, unknown>;
     /**
-     * This tx's contribution to THIS group, in sats; defaults to the tx's full
-     * net amount. Set it to split a batched tx across the groups it touches —
-     * omitting it on a multi-group tx attributes the full amount to each group.
+     * This tx's contribution to THIS group, as an unsigned sat magnitude;
+     * defaults to the tx's full amount. The activity builder applies the tx
+     * direction (received positive, sent negative). Set it to split a batched
+     * tx across the groups it touches — omitting it on a multi-group tx
+     * attributes the full amount to each group.
      */
     amount?: number;
 }
@@ -61,7 +63,7 @@ export interface Activity {
     intent?: ActivityIntent;
     /** Member txs, oldest-first. */
     txs: ArkTransaction[];
-    /** Net amount across the group, in sats — always sats, never asset units (sum of members' attributed amounts). */
+    /** Signed net amount across the group, in sats: positive received, negative sent. */
     amount: number;
     /** Earliest member createdAt (ms since epoch). */
     createdAt: number;
@@ -73,12 +75,14 @@ export interface Activity {
  * Pure grouping engine: project a flat tx list into activities via resolvers.
  * Mirrors `buildTransactionHistory` — no I/O beyond the resolvers' own `prepare()`.
  *
- * - A tx with no memberships becomes its own single-member activity (= the flat row).
+ * - A tx with no memberships is bucketed by its own transaction key; rows that
+ *   share a key stay together so send/change pairs remain one activity.
  * - Memberships are unioned across resolvers and bucketed by `groupId`; a tx may join
  *   several groups (Ark batching). Same-group memberships (across resolvers) merge:
  *   `label`/`kind` first-defined-wins (resolver order), `metadata` shallow-merged.
- * - A member's contribution defaults to the tx's full amount, or `membership.amount`
- *   when given (so a batched tx splits across the groups it touches).
+ * - A member's contribution defaults to the tx's signed amount (received positive,
+ *   sent negative), or the signed form of `membership.amount` when given (so a
+ *   batched tx splits across the groups it touches).
  * - A resolver that throws in resolve() or rejects in prepare() is isolated and
  *   contributes no memberships, so one bad resolver never breaks the whole history.
  */
@@ -110,9 +114,17 @@ export async function buildActivities(
         amount: a.amount ?? b.amount,
     });
 
+    const sentType = "SENT" as ArkTransaction["type"];
+    const isSent = (tx: ArkTransaction) => tx.type === sentType;
+    const signedAmount = (tx: ArkTransaction, amount = tx.amount) => {
+        const magnitude = Math.abs(amount);
+        return isSent(tx) ? -magnitude : magnitude;
+    };
+
     type Bucket = {
         intent?: Activity["intent"];
         members: { tx: ArkTransaction; amount: number }[];
+        ungrouped?: boolean;
     };
     const buckets = new Map<string, Bucket>();
 
@@ -134,7 +146,10 @@ export async function buildActivities(
         }
 
         if (perGroup.size === 0) {
-            buckets.set(keyOf(tx), { members: [{ tx, amount: tx.amount }] });
+            const id = keyOf(tx);
+            const b = buckets.get(id) ?? { members: [], ungrouped: true };
+            b.members.push({ tx, amount: signedAmount(tx) });
+            buckets.set(id, b);
             continue;
         }
         for (const m of perGroup.values()) {
@@ -144,10 +159,17 @@ export async function buildActivities(
                 kind: b.intent?.kind ?? m.kind,
                 metadata: { ...m.metadata, ...b.intent?.metadata },
             };
-            b.members.push({ tx, amount: m.amount ?? tx.amount });
+            b.members.push({ tx, amount: signedAmount(tx, m.amount ?? tx.amount) });
             buckets.set(m.groupId, b);
         }
     }
+
+    const netAmount = (b: Bucket, members: { tx: ArkTransaction; amount: number }[]) => {
+        if (b.ungrouped && members.some((x) => isSent(x.tx))) {
+            return members.filter((x) => isSent(x.tx)).reduce((s, x) => s + x.amount, 0);
+        }
+        return members.reduce((s, x) => s + x.amount, 0);
+    };
 
     const latest = (a: Activity) => Math.max(...a.txs.map((t) => t.createdAt));
     return [...buckets.entries()]
@@ -157,7 +179,7 @@ export async function buildActivities(
                 id,
                 intent: b.intent,
                 txs: members.map((x) => x.tx),
-                amount: members.reduce((s, x) => s + x.amount, 0),
+                amount: netAmount(b, members),
                 createdAt: members[0].tx.createdAt,
                 settled: members.every((x) => x.tx.settled),
             };
