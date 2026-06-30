@@ -93,15 +93,18 @@ export async function buildActivities(
     // Isolate prepare() like resolve(): a resolver that fails to load its
     // correlation data contributes no memberships, rather than throwing away
     // the whole history.
-    await Promise.all(
-        resolvers.map(async (r) => {
-            try {
-                await r.prepare?.();
-            } catch {
-                // a failed prepare leaves this resolver with stale/empty data
-            }
-        }),
-    );
+    const preparedResolvers = (
+        await Promise.all(
+            resolvers.map(async (r) => {
+                try {
+                    await r.prepare?.();
+                    return r;
+                } catch {
+                    return undefined;
+                }
+            }),
+        )
+    ).filter((r): r is ActivityResolver => r !== undefined);
 
     const keyOf = (tx: ArkTransaction) =>
         tx.key.arkTxid || tx.key.commitmentTxid || tx.key.boardingTxid;
@@ -124,7 +127,6 @@ export async function buildActivities(
     type Bucket = {
         intent?: Activity["intent"];
         members: { tx: ArkTransaction; amount: number }[];
-        ungrouped?: boolean;
     };
     const buckets = new Map<string, Bucket>();
 
@@ -132,7 +134,7 @@ export async function buildActivities(
         // Collect this tx's memberships, deduping by groupId so two resolvers tagging
         // the same tx+group merge into one membership (rather than counting the tx twice).
         const perGroup = new Map<string, GroupMembership>();
-        for (const r of resolvers) {
+        for (const r of preparedResolvers) {
             let ms: GroupMembership[] | undefined;
             try {
                 ms = r.resolve(tx);
@@ -147,7 +149,7 @@ export async function buildActivities(
 
         if (perGroup.size === 0) {
             const id = keyOf(tx);
-            const b = buckets.get(id) ?? { members: [], ungrouped: true };
+            const b = buckets.get(id) ?? { members: [] };
             b.members.push({ tx, amount: signedAmount(tx) });
             buckets.set(id, b);
             continue;
@@ -164,11 +166,13 @@ export async function buildActivities(
         }
     }
 
-    const netAmount = (b: Bucket, members: { tx: ArkTransaction; amount: number }[]) => {
-        if (b.ungrouped && members.some((x) => isSent(x.tx))) {
-            return members.filter((x) => isSent(x.tx)).reduce((s, x) => s + x.amount, 0);
-        }
-        return members.reduce((s, x) => s + x.amount, 0);
+    const netAmount = (members: { tx: ArkTransaction; amount: number }[]) => {
+        const sentKeys = new Set(members.filter((x) => isSent(x.tx)).map((x) => keyOf(x.tx)));
+        return members.reduce((s, x) => {
+            // A sent row is already net of its own change; do not add the paired receive back.
+            if (!isSent(x.tx) && sentKeys.has(keyOf(x.tx))) return s;
+            return s + x.amount;
+        }, 0);
     };
 
     const latest = (a: Activity) => Math.max(...a.txs.map((t) => t.createdAt));
@@ -179,7 +183,7 @@ export async function buildActivities(
                 id,
                 intent: b.intent,
                 txs: members.map((x) => x.tx),
-                amount: netAmount(b, members),
+                amount: netAmount(members),
                 createdAt: members[0].tx.createdAt,
                 settled: members.every((x) => x.tx.settled),
             };

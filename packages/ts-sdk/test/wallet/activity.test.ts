@@ -26,7 +26,7 @@ function tx(id: string, over: Partial<Omit<ArkTransaction, "key">> = {}): ArkTra
 }
 
 describe("buildActivities", () => {
-    it("with no resolvers, each tx is its own single-member activity (passthrough)", async () => {
+    it("with no resolvers, distinct txs are single-member activities (passthrough)", async () => {
         const txs = [tx("a", { amount: 10, createdAt: 1 }), tx("b", { amount: 20, createdAt: 2 })];
         const acts = await buildActivities(txs, []);
         expect(acts).toHaveLength(2);
@@ -43,6 +43,21 @@ describe("buildActivities", () => {
         ];
         const [act] = await buildActivities(txs, []);
         expect(act.id).toBe("same");
+        expect(act.amount).toBe(-300);
+        expect(act.txs).toEqual(txs);
+    });
+
+    it("nets grouped same-arkTxid send/change rows into one sent activity", async () => {
+        const r: ActivityResolver = {
+            id: "app",
+            resolve: (t) => [{ groupId: `app:${t.key.arkTxid}` }],
+        };
+        const txs = [
+            tx("same", { type: TxType.TxSent, amount: 300, createdAt: 2 }),
+            tx("same", { type: TxType.TxReceived, amount: 700, createdAt: 2 }),
+        ];
+        const [act] = await buildActivities(txs, [r]);
+        expect(act.id).toBe("app:same");
         expect(act.amount).toBe(-300);
         expect(act.txs).toEqual(txs);
     });
@@ -120,11 +135,11 @@ describe("buildActivities", () => {
             prepare: async () => {
                 throw new Error("prepare boom");
             },
-            resolve: () => undefined, // prepare failed -> no correlation data -> plain
+            resolve: () => [{ groupId: "stale" }],
         };
         const good: ActivityResolver = { id: "good", resolve: () => [{ groupId: "ok" }] };
-        const [act] = await buildActivities([tx("t")], [bad, good]);
-        expect(act.id).toBe("ok");
+        const acts = await buildActivities([tx("t")], [bad, good]);
+        expect(acts.map((act) => act.id)).toEqual(["ok"]);
     });
 
     it("sorts activities by most-recent member, descending", async () => {

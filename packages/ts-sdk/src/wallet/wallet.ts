@@ -871,7 +871,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     /**
      * Wallet activity history: {@link getTransactionHistory} grouped into logical
      * {@link Activity} rows by the resolvers registered on {@link activity}. With no
-     * resolvers, every transaction is its own single-member activity.
+     * resolvers, rows are bucketed by their transaction key so send/change pairs stay together.
      */
     async getActivityHistory(): Promise<Activity[]> {
         return buildActivities(await this.getTransactionHistory(), this.activity.all());
