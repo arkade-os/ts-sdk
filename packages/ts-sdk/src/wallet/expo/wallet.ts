@@ -260,13 +260,13 @@ export class ExpoWallet implements IWallet {
      * Stop foreground polling and wipe all locally persisted wallet data.
      * Does not unregister the OS background task or persisted queue config.
      */
-    async clearLocalData(): Promise<void> {
+    async clear(): Promise<void> {
         if (this.foregroundIntervalId) {
             clearInterval(this.foregroundIntervalId);
             this.foregroundIntervalId = undefined;
         }
 
-        await this.wallet.clearLocalData();
+        await this.wallet.clear();
     }
 
     // ── IWallet delegation ───────────────────────────────────────────

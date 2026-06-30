@@ -876,7 +876,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Wipe all locally persisted wallet data (VTXOs, UTXOs, history, sync
      * cursor, contracts). Create a fresh wallet instance afterward.
      */
-    async clearLocalData(): Promise<void> {
+    async clear(): Promise<void> {
         try {
             await this.dispose();
         } finally {

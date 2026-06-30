@@ -899,5 +899,5 @@ export interface IReadonlyWallet {
      * Wipe all locally persisted wallet data (VTXOs, UTXOs, history, sync
      * cursor, contracts). Create a fresh wallet instance afterward.
      */
-    clearLocalData(): Promise<void>;
+    clear(): Promise<void>;
 }

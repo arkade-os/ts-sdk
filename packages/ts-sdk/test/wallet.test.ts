@@ -877,7 +877,7 @@ describe("Wallet", () => {
         });
     });
 
-    describe("clearLocalData", () => {
+    describe("clear", () => {
         const mockArkInfo = {
             signerPubkey: mockServerKeyHex,
             forfeitPubkey: mockServerKeyHex,
@@ -955,7 +955,7 @@ describe("Wallet", () => {
             expect(await walletRepository.getVtxos(address)).toHaveLength(1);
             expect((await contractRepository.getContracts()).length).toBeGreaterThan(0);
 
-            await wallet.clearLocalData();
+            await wallet.clear();
 
             expect(await walletRepository.getVtxos(address)).toEqual([]);
             expect(await contractRepository.getContracts()).toEqual([]);
