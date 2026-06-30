@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ArkadeSwaps } from "../src/arkade-swaps";
 import {
+    BoltzSwapStatus,
     BoltzSwapProvider,
     CreateReverseSwapRequest,
     CreateReverseSwapResponse,
@@ -32,13 +33,15 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import { decodeInvoice } from "../src/utils/decoding";
+import { logger } from "../src/logger";
 import { pubECDSA } from "@scure/btc-signer/utils.js";
 import {
     claimVHTLCwithOffchainTx,
     createVHTLCScript as createVHTLCScriptReal,
     refundVHTLCwithOffchainTx,
+    refundWithoutReceiverVHTLCwithOffchainTx,
 } from "../src/utils/vhtlc";
-import { BoltzRefundError, SwapError } from "../src/errors";
+import { BoltzRefundError, InvoiceFailedToPayError, SwapError } from "../src/errors";
 
 // Mock the @arkade-os/sdk modules
 vi.mock("@arkade-os/sdk", async () => {
@@ -63,6 +66,9 @@ vi.mock("../src/utils/vhtlc", async () => {
             "a".repeat(64), // claim ark txid returned to claimArk
         ),
         refundVHTLCwithOffchainTx: vi.fn().mockResolvedValue(undefined),
+        refundWithoutReceiverVHTLCwithOffchainTx: vi.fn().mockResolvedValue(
+            "b".repeat(64), // refundWithoutReceiver ark txid
+        ),
     };
 });
 
@@ -256,7 +262,7 @@ describe("ArkadeSwaps", () => {
         claimPublicKey: compressedPubkeys.boltz,
         // Prod-shaped Boltz Ark VHTLC timeouts:
         //   refund — absolute Unix timestamp; 2023-11-14 in the past so the
-        //     default test case has CLTV satisfied (joinBatch path).
+        //     default test case has CLTV satisfied (refundWithoutReceiver path).
         //   unilateral* — BIP68 relative delays (seconds, ≥ 512 type-flag).
         timeoutBlockHeights: {
             refund: 1700000000,
@@ -725,6 +731,52 @@ describe("ArkadeSwaps", () => {
                     description: testDescription,
                 });
             });
+
+            it("should forward descriptionHash and omit description", async () => {
+                // arrange
+                const descriptionHash = "a".repeat(64);
+                const spy = vi
+                    .spyOn(swapProvider, "createReverseSwap")
+                    .mockImplementationOnce(reverseSwapResponseFor(createReverseSwapResponse));
+
+                // act — both supplied: hash wins, description dropped
+                await swaps.createReverseSwap({
+                    amount: mock.invoice.amount,
+                    description: "ignored when hash present",
+                    descriptionHash,
+                });
+
+                // assert
+                expect(spy).toHaveBeenCalledWith({
+                    invoiceAmount: mock.invoice.amount,
+                    claimPublicKey: expect.any(String),
+                    preimageHash: expect.any(String),
+                    descriptionHash,
+                });
+                expect(spy.mock.calls[0]![0]).not.toHaveProperty("description");
+            });
+
+            it("should forward a present-but-empty descriptionHash, not silently drop it", async () => {
+                // A present descriptionHash (even "") must reach the provider so
+                // its hex check rejects it, rather than falling back to the
+                // description. Guards the `!== undefined` gating.
+                const spy = vi
+                    .spyOn(swapProvider, "createReverseSwap")
+                    .mockImplementationOnce(reverseSwapResponseFor(createReverseSwapResponse));
+
+                await swaps.createReverseSwap({
+                    amount: mock.invoice.amount,
+                    descriptionHash: "",
+                });
+
+                expect(spy).toHaveBeenCalledWith({
+                    invoiceAmount: mock.invoice.amount,
+                    claimPublicKey: expect.any(String),
+                    preimageHash: expect.any(String),
+                    descriptionHash: "",
+                });
+                expect(spy.mock.calls[0]![0]).not.toHaveProperty("description");
+            });
         });
 
         describe("VHTLC Operations", () => {
@@ -1004,6 +1056,327 @@ describe("ArkadeSwaps", () => {
                 expect(result.amount).toBe(mock.invoice.amount);
                 expect(result.preimage).toBe(mock.preimage);
                 expect(result.txid).toBe(mock.txid);
+            });
+
+            it("should send a Lightning payment without waiting for settlement when waitFor is funded", async () => {
+                // arrange
+                const pendingSwap = mockSubmarineSwap;
+                vi.spyOn(wallet, "send").mockResolvedValueOnce(mock.txid);
+                vi.spyOn(swaps, "createSubmarineSwap").mockResolvedValueOnce(pendingSwap);
+                const waitSpy = vi
+                    .spyOn(swaps, "waitForSwapFunded")
+                    .mockResolvedValueOnce(undefined);
+                // act
+                const result = await swaps.sendLightningPayment({
+                    invoice: mock.invoice.address,
+                    waitFor: "funded",
+                });
+                // assert
+                expect(waitSpy).toHaveBeenCalledWith(pendingSwap);
+                expect(result.amount).toBe(mock.invoice.amount);
+                expect(result.preimage).toBeUndefined();
+                expect(result.txid).toBe(mock.txid);
+            });
+
+            it("should warn on waitFor funded when the SwapManager is disabled", async () => {
+                // arrange: `swaps` is constructed with swapManager: false, so a
+                // failure after the optimistic resolution would not be auto-refunded
+                const pendingSwap = mockSubmarineSwap;
+                vi.spyOn(wallet, "send").mockResolvedValueOnce(mock.txid);
+                vi.spyOn(swaps, "createSubmarineSwap").mockResolvedValueOnce(pendingSwap);
+                vi.spyOn(swaps, "waitForSwapFunded").mockResolvedValueOnce(undefined);
+                const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+                // act
+                await swaps.sendLightningPayment({
+                    invoice: mock.invoice.address,
+                    waitFor: "funded",
+                });
+
+                // assert
+                expect(warnSpy).toHaveBeenCalledWith(
+                    expect.stringContaining("SwapManager is disabled"),
+                );
+            });
+        });
+
+        describe("waitForSwapSettlement", () => {
+            it("should resolve with the preimage only at transaction.claimed", async () => {
+                // arrange
+                vi.spyOn(swapProvider, "getSwapPreimage").mockResolvedValueOnce({
+                    preimage: mock.preimage,
+                });
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
+                    async (_swapId, update) => {
+                        setTimeout(() => update("transaction.mempool"), 5);
+                        setTimeout(() => update("invoice.pending"), 10);
+                        setTimeout(() => update("transaction.claimed"), 15);
+                    },
+                );
+
+                // act
+                const result = await swaps.waitForSwapSettlement(mockSubmarineSwap);
+
+                // assert
+                expect(result.preimage).toBe(mock.preimage);
+            });
+
+            it("should reject instead of hanging when the preimage fetch fails on claim", async () => {
+                // arrange
+                vi.spyOn(swapProvider, "getSwapPreimage").mockRejectedValueOnce(new Error("boom"));
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
+                    async (_swapId, update) => {
+                        setTimeout(() => update("transaction.claimed"), 5);
+                    },
+                );
+
+                // act & assert
+                await expect(swaps.waitForSwapSettlement(mockSubmarineSwap)).rejects.toThrow(
+                    "boom",
+                );
+            });
+
+            it("should still reject with the swap error when persisting the failure fails", async () => {
+                // arrange: the repository write throws — the domain error must
+                // win over the persistence error and the promise must complete
+                mockSwapRepository.saveSwap.mockRejectedValueOnce(new Error("storage down"));
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
+                    async (_swapId, update) => {
+                        setTimeout(() => update("swap.expired"), 5);
+                    },
+                );
+
+                // act & assert
+                await expect(swaps.waitForSwapSettlement(mockSubmarineSwap)).rejects.toThrow(
+                    "The swap has expired",
+                );
+            });
+        });
+
+        describe("waitForSwapFunded", () => {
+            it("should resolve when the lockup transaction is observed", async () => {
+                // arrange
+                const getPreimageSpy = vi.spyOn(swapProvider, "getSwapPreimage");
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
+                    async (_swapId, update) => {
+                        setTimeout(() => update("transaction.mempool"), 5);
+                    },
+                );
+
+                // act
+                await swaps.waitForSwapFunded(mockSubmarineSwap);
+
+                // assert
+                expect(getPreimageSpy).not.toHaveBeenCalled();
+                // the observed status is persisted before resolving
+                expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        id: mockSubmarineSwap.id,
+                        status: "transaction.mempool",
+                    }),
+                );
+            });
+
+            it("should resolve when a status beyond transaction.mempool is observed", async () => {
+                // arrange: "transaction.mempool" is never reported — the
+                // monitor only sees the current status, which has already
+                // moved on (e.g. 0-conf accepted, invoice being paid)
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
+                    async (_swapId, update) => {
+                        setTimeout(() => update("invoice.paid"), 5);
+                    },
+                );
+
+                // act & assert: resolves instead of hanging
+                await swaps.waitForSwapFunded(mockSubmarineSwap);
+            });
+
+            it("should not resolve on statuses earlier than transaction.mempool", async () => {
+                // arrange
+                const getPreimageSpy = vi
+                    .spyOn(swapProvider, "getSwapPreimage")
+                    .mockResolvedValueOnce({ preimage: mock.preimage });
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
+                    async (_swapId, update) => {
+                        setTimeout(() => update("invoice.set"), 5);
+                        setTimeout(() => update("transaction.claimed"), 10);
+                    },
+                );
+
+                // act: invoice.set precedes funding, so the wait continues
+                // until the swap settles
+                await swaps.waitForSwapFunded(mockSubmarineSwap);
+
+                // assert: it resolved via the terminal claimed handler
+                expect(getPreimageSpy).toHaveBeenCalled();
+            });
+
+            it("should reject on failure statuses observed before funding", async () => {
+                // arrange
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
+                    async (_swapId, update) => {
+                        setTimeout(() => update("invoice.failedToPay"), 5);
+                    },
+                );
+
+                // act & assert
+                await expect(swaps.waitForSwapFunded(mockSubmarineSwap)).rejects.toBeInstanceOf(
+                    InvoiceFailedToPayError,
+                );
+            });
+
+            it("should keep persisting a failure that arrives after funding resolved", async () => {
+                // arrange
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
+                    async (_swapId, update) => {
+                        setTimeout(() => update("transaction.mempool"), 5);
+                        setTimeout(() => update("invoice.failedToPay"), 10);
+                    },
+                );
+
+                // act
+                await swaps.waitForSwapFunded(mockSubmarineSwap);
+
+                // assert: the late failure is still written to the repository
+                // (marked refundable) so SwapManager / restoreSwaps can act on it
+                await vi.waitFor(() => {
+                    expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                        expect.objectContaining({
+                            id: mockSubmarineSwap.id,
+                            status: "invoice.failedToPay",
+                            refundable: true,
+                        }),
+                    );
+                });
+            });
+
+            it("should persist the preimage when the swap settles after funding resolved", async () => {
+                // arrange
+                vi.spyOn(swapProvider, "getSwapPreimage").mockResolvedValueOnce({
+                    preimage: mock.preimage,
+                });
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
+                    async (_swapId, update) => {
+                        setTimeout(() => update("transaction.mempool"), 5);
+                        setTimeout(() => update("transaction.claimed"), 10);
+                    },
+                );
+
+                // act
+                await swaps.waitForSwapFunded(mockSubmarineSwap);
+
+                // assert: the final settlement is still persisted with the preimage
+                await vi.waitFor(() => {
+                    expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                        expect.objectContaining({
+                            id: mockSubmarineSwap.id,
+                            status: "transaction.claimed",
+                            preimage: mock.preimage,
+                        }),
+                    );
+                });
+            });
+
+            it("should not be affected by monitor errors after funding resolved", async () => {
+                // arrange: the monitor fails (e.g. WebSocket drop) after the
+                // funding status was already observed
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
+                    async (_swapId, update) => {
+                        update("transaction.mempool");
+                        await new Promise((r) => setTimeout(r, 10));
+                        throw new Error("websocket dropped");
+                    },
+                );
+
+                // act & assert: resolves, and the late monitor error is swallowed
+                await swaps.waitForSwapFunded(mockSubmarineSwap);
+                await new Promise((r) => setTimeout(r, 20));
+            });
+        });
+
+        describe("refreshSwapsStatus", () => {
+            it("should fetch and persist the preimage when a pending submarine swap has settled", async () => {
+                // arrange: a swap left pending (e.g. after a "funded" optimistic
+                // send and an app restart) that has settled on Boltz since
+                const pendingSwap: BoltzSubmarineSwap = {
+                    ...mockSubmarineSwap,
+                    status: "invoice.pending",
+                };
+                mockSwapRepository.getAllSwaps.mockImplementation(async (filter: any) =>
+                    filter?.type === "submarine" ? [pendingSwap] : [],
+                );
+                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                    status: "transaction.claimed",
+                });
+                const getPreimageSpy = vi
+                    .spyOn(swapProvider, "getSwapPreimage")
+                    .mockResolvedValueOnce({ preimage: mock.preimage });
+
+                // act
+                await swaps.refreshSwapsStatus();
+
+                // assert
+                expect(getPreimageSpy).toHaveBeenCalledWith(pendingSwap.id);
+                expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        id: pendingSwap.id,
+                        status: "transaction.claimed",
+                        preimage: mock.preimage,
+                    }),
+                );
+            });
+
+            it("should still persist the settled status when the preimage fetch fails", async () => {
+                // arrange
+                const pendingSwap: BoltzSubmarineSwap = {
+                    ...mockSubmarineSwap,
+                    status: "invoice.pending",
+                };
+                mockSwapRepository.getAllSwaps.mockImplementation(async (filter: any) =>
+                    filter?.type === "submarine" ? [pendingSwap] : [],
+                );
+                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                    status: "transaction.claimed",
+                });
+                vi.spyOn(swapProvider, "getSwapPreimage").mockRejectedValueOnce(new Error("boom"));
+
+                // act
+                await swaps.refreshSwapsStatus();
+
+                // assert
+                expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        id: pendingSwap.id,
+                        status: "transaction.claimed",
+                    }),
+                );
+            });
+
+            it("should not fetch the preimage for swaps that have not settled", async () => {
+                // arrange
+                const pendingSwap: BoltzSubmarineSwap = {
+                    ...mockSubmarineSwap,
+                    status: "invoice.set",
+                };
+                mockSwapRepository.getAllSwaps.mockImplementation(async (filter: any) =>
+                    filter?.type === "submarine" ? [pendingSwap] : [],
+                );
+                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                    status: "invoice.pending",
+                });
+                const getPreimageSpy = vi.spyOn(swapProvider, "getSwapPreimage");
+
+                // act
+                await swaps.refreshSwapsStatus();
+
+                // assert
+                expect(getPreimageSpy).not.toHaveBeenCalled();
+                expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        id: pendingSwap.id,
+                        status: "invoice.pending",
+                    }),
+                );
             });
         });
 
@@ -2648,7 +3021,7 @@ describe("ArkadeSwaps", () => {
             type: "reverse" as const,
             to: "ARK" as const,
             from: "BTC" as const,
-            status: "swap.created",
+            status: "swap.created" as BoltzSwapStatus,
             createdAt: 1000,
             preimageHash: hex.encode(sha256(randomBytes(32))),
             claimDetails: mockDetails,
@@ -2657,7 +3030,7 @@ describe("ArkadeSwaps", () => {
         const finalReverse = {
             ...pendingReverse,
             id: "rev-final",
-            status: "invoice.settled",
+            status: "invoice.settled" as BoltzSwapStatus,
         };
 
         const pendingSubmarine = {
@@ -2665,7 +3038,7 @@ describe("ArkadeSwaps", () => {
             type: "submarine" as const,
             to: "BTC" as const,
             from: "ARK" as const,
-            status: "transaction.mempool",
+            status: "transaction.mempool" as BoltzSwapStatus,
             createdAt: 2000,
             preimageHash: hex.encode(sha256(randomBytes(32))),
             refundDetails: mockDetails,
@@ -2674,7 +3047,7 @@ describe("ArkadeSwaps", () => {
         const finalSubmarine = {
             ...pendingSubmarine,
             id: "sub-final",
-            status: "transaction.claimed",
+            status: "transaction.claimed" as BoltzSwapStatus,
         };
 
         const pendingChain = {
@@ -2682,7 +3055,7 @@ describe("ArkadeSwaps", () => {
             type: "chain" as const,
             to: "BTC" as const,
             from: "ARK" as const,
-            status: "transaction.server.mempool",
+            status: "transaction.server.mempool" as BoltzSwapStatus,
             createdAt: 3000,
             preimageHash: hex.encode(sha256(randomBytes(32))),
             refundDetails: {
@@ -2694,7 +3067,7 @@ describe("ArkadeSwaps", () => {
         const finalChain = {
             ...pendingChain,
             id: "chain-final",
-            status: "transaction.claimed",
+            status: "transaction.claimed" as BoltzSwapStatus,
         };
 
         const mockFees = {
@@ -2967,7 +3340,7 @@ describe("ArkadeSwaps", () => {
                     refundWithoutReceiver: () => [{}, new Uint8Array([4]), 0xc0] as any,
                     encode: () => [] as any,
                     options: {
-                        refundLocktime: refundableSwap.response.timeoutBlockHeights.refund,
+                        refundLocktime: refundableSwap.response.timeoutBlockHeights!.refund,
                     },
                 },
                 vhtlcAddress: refundableSwap.response.address,
@@ -3027,10 +3400,15 @@ describe("ArkadeSwaps", () => {
 
             await swaps.refundVHTLC(refundableSwap);
 
+            // Swept (recoverable) VTXO must join a batch; the live (settled)
+            // VTXO settles its refundWithoutReceiver leaf offchain.
             const joinBatch = vi.mocked((swaps as any).joinBatch);
-            expect(joinBatch).toHaveBeenCalledTimes(2);
-            expect(joinBatch.mock.calls[0][1].txid).toBe(otherTxid);
-            expect(joinBatch.mock.calls[1][1].txid).toBe(lockupTxid);
+            expect(joinBatch).toHaveBeenCalledOnce();
+            expect(joinBatch.mock.calls[0][1].txid).toBe(lockupTxid);
+
+            const offchain = vi.mocked(refundWithoutReceiverVHTLCwithOffchainTx);
+            expect(offchain).toHaveBeenCalledOnce();
+            expect((offchain.mock.calls[0][3] as any).txid).toBe(otherTxid);
         });
 
         it("should throw when all VTXOs are spent", async () => {
@@ -3098,12 +3476,13 @@ describe("ArkadeSwaps", () => {
             // Pre-CLTV: refundLocktime is a future Unix timestamp so the
             // Boltz 3-of-3 path is attempted for non-recoverable VTXOs.
             const futureRefundTimestamp = Math.floor(Date.now() / 1000) + 86400;
+            const refundableSwapTimeouts = refundableSwap.response.timeoutBlockHeights!;
             const refundableSwapPreCltv: BoltzSubmarineSwap = {
                 ...refundableSwap,
                 response: {
                     ...refundableSwap.response,
                     timeoutBlockHeights: {
-                        ...refundableSwap.response.timeoutBlockHeights,
+                        ...refundableSwapTimeouts,
                         refund: futureRefundTimestamp,
                     },
                 },
@@ -3140,9 +3519,11 @@ describe("ArkadeSwaps", () => {
                 expect((mockRefund.mock.calls[0][6] as any).txid).toBe(lockupTxid);
             });
 
-            it("should skip Boltz and use joinBatch when CLTV has passed", async () => {
+            it("should refund a non-recoverable VTXO offchain (refundWithoutReceiver) when CLTV has passed", async () => {
                 // Default refundableSwap has past refund timestamp; CLTV
-                // satisfied via wall-clock check → refundWithoutReceiver.
+                // satisfied via wall-clock check. A non-recoverable (live)
+                // VTXO can settle the refundWithoutReceiver leaf (sender +
+                // server) via an offchain Ark tx — no batch round needed.
                 const vtxo = makeNonRecoverableVtxo(lockupTxid, 0);
 
                 mockRefundSelection({
@@ -3151,14 +3532,20 @@ describe("ArkadeSwaps", () => {
 
                 await swaps.refundVHTLC(refundableSwap);
 
+                // Neither the Boltz 3-of-3 path nor a batch round.
                 expect(refundVHTLCwithOffchainTx).not.toHaveBeenCalled();
-                const joinBatch = vi.mocked((swaps as any).joinBatch);
-                expect(joinBatch).toHaveBeenCalledOnce();
-                // isRecoverable arg must be false for non-recoverable VTXOs
-                expect(joinBatch.mock.calls[0][4]).toBe(false);
+                expect((swaps as any).joinBatch).not.toHaveBeenCalled();
+
+                const offchain = vi.mocked(refundWithoutReceiverVHTLCwithOffchainTx);
+                expect(offchain).toHaveBeenCalledOnce();
+                // input (4th positional arg) carries the refundWithoutReceiver leaf
+                expect((offchain.mock.calls[0][3] as any).txid).toBe(lockupTxid);
+                expect((offchain.mock.calls[0][3] as any).tapLeafScript[1]).toEqual(
+                    new Uint8Array([4]),
+                );
             });
 
-            it("should fall back to joinBatch when Boltz rejects and CLTV has since passed", async () => {
+            it("should fall back to refundWithoutReceiver offchain when Boltz rejects and CLTV has since passed", async () => {
                 const vtxo = makeNonRecoverableVtxo(lockupTxid, 0);
 
                 mockRefundSelection({
@@ -3178,9 +3565,14 @@ describe("ArkadeSwaps", () => {
 
                 await swaps.refundVHTLC(refundableSwapPreCltv);
 
-                const joinBatch = vi.mocked((swaps as any).joinBatch);
-                expect(joinBatch).toHaveBeenCalledOnce();
-                expect(joinBatch.mock.calls[0][4]).toBe(false);
+                // Non-recoverable VTXO past CLTV → offchain, not a batch round.
+                expect((swaps as any).joinBatch).not.toHaveBeenCalled();
+                const offchain = vi.mocked(refundWithoutReceiverVHTLCwithOffchainTx);
+                expect(offchain).toHaveBeenCalledOnce();
+                expect((offchain.mock.calls[0][3] as any).txid).toBe(lockupTxid);
+                expect((offchain.mock.calls[0][3] as any).tapLeafScript[1]).toEqual(
+                    new Uint8Array([4]),
+                );
             });
 
             it("should skip when Boltz rejects and CLTV still not passed", async () => {
@@ -3225,12 +3617,13 @@ describe("ArkadeSwaps", () => {
 
         it("should skip a recoverable VTXO when pre-CLTV", async () => {
             const futureRefund = Math.floor(Date.now() / 1000) + 86400;
+            const refundableSwapTimeouts = refundableSwap.response.timeoutBlockHeights!;
             const preCltvSwap: BoltzSubmarineSwap = {
                 ...refundableSwap,
                 response: {
                     ...refundableSwap.response,
                     timeoutBlockHeights: {
-                        ...refundableSwap.response.timeoutBlockHeights,
+                        ...refundableSwapTimeouts,
                         refund: futureRefund,
                     },
                 },
@@ -3328,7 +3721,7 @@ describe("ArkadeSwaps", () => {
                     refundWithoutReceiver: () => [{}, new Uint8Array([4]), 0xc0] as any,
                     encode: () => [] as any,
                     options: {
-                        refundLocktime: claimedSwap.response.timeoutBlockHeights.refund,
+                        refundLocktime: claimedSwap.response.timeoutBlockHeights!.refund,
                     },
                 },
                 vhtlcAddress: claimedSwap.response.address,
@@ -3339,16 +3732,19 @@ describe("ArkadeSwaps", () => {
         const pastRefund = () => Math.floor(Date.now() / 1000) - 1;
         const futureRefund = () => Math.floor(Date.now() / 1000) + 86400;
 
-        const swapWithRefund = (base: BoltzSubmarineSwap, refund: number): BoltzSubmarineSwap => ({
-            ...base,
-            response: {
-                ...base.response,
-                timeoutBlockHeights: {
-                    ...base.response.timeoutBlockHeights,
-                    refund,
+        const swapWithRefund = (base: BoltzSubmarineSwap, refund: number): BoltzSubmarineSwap => {
+            const baseResponseTimeouts = base.response.timeoutBlockHeights!;
+            return {
+                ...base,
+                response: {
+                    ...base.response,
+                    timeoutBlockHeights: {
+                        ...baseResponseTimeouts,
+                        refund,
+                    },
                 },
-            },
-        });
+            };
+        };
 
         it("returns recoverable for transaction.claimed plus post-CLTV VTXO", async () => {
             mockSelection({ recoverable: [makeVtxo(lockupTxid, 0, 75000)] });
@@ -3537,7 +3933,7 @@ describe("ArkadeSwaps", () => {
                         refundWithoutReceiver: () => [{}, new Uint8Array([4]), 0xc0] as any,
                         encode: () => [] as any,
                         options: {
-                            refundLocktime: claimedSwap.response.timeoutBlockHeights.refund,
+                            refundLocktime: claimedSwap.response.timeoutBlockHeights!.refund,
                         },
                     },
                     vhtlcAddress: claimedSwap.response.address,
@@ -3662,7 +4058,7 @@ describe("ArkadeSwaps", () => {
                     refundWithoutReceiver: () => [{}, new Uint8Array([4]), 0xc0] as any,
                     encode: () => [] as any,
                     options: {
-                        refundLocktime: claimedSwap.response.timeoutBlockHeights.refund,
+                        refundLocktime: claimedSwap.response.timeoutBlockHeights!.refund,
                     },
                 },
                 vhtlcAddress: claimedSwap.response.address,
@@ -3764,12 +4160,13 @@ describe("ArkadeSwaps", () => {
                 // { swept: 0, skipped: 1 } without throwing. Aggregator must
                 // surface that as recovered:false / skipped:true rather than
                 // misreporting a successful sweep.
+                const failedSwapTimeouts = failedSwap.response.timeoutBlockHeights!;
                 const preCltvFailed: BoltzSubmarineSwap = {
                     ...failedSwap,
                     response: {
                         ...failedSwap.response,
                         timeoutBlockHeights: {
-                            ...failedSwap.response.timeoutBlockHeights,
+                            ...failedSwapTimeouts,
                             refund: Math.floor(Date.now() / 1000) + 86400,
                         },
                     },
@@ -3814,12 +4211,14 @@ describe("ArkadeSwaps", () => {
             status: "invoice.failedToPay",
         };
 
+        const failedSwapTimeouts = failedSwap.response.timeoutBlockHeights!;
+
         const swapWithRefund = (refund: number): BoltzSubmarineSwap => ({
             ...failedSwap,
             response: {
                 ...failedSwap.response,
                 timeoutBlockHeights: {
-                    ...failedSwap.response.timeoutBlockHeights,
+                    ...failedSwapTimeouts,
                     refund,
                 },
             },
@@ -3837,7 +4236,7 @@ describe("ArkadeSwaps", () => {
                     refundWithoutReceiver: () => [{}, new Uint8Array([4]), 0xc0] as any,
                     encode: () => [] as any,
                     options: {
-                        refundLocktime: failedSwap.response.timeoutBlockHeights.refund,
+                        refundLocktime: failedSwap.response.timeoutBlockHeights!.refund,
                     },
                 },
                 vhtlcAddress: failedSwap.response.address,
@@ -3860,7 +4259,7 @@ describe("ArkadeSwaps", () => {
             const swap = swapWithRefund(refundTs);
             const outcome = await swaps.refundVHTLC(swap);
 
-            // CLTV satisfied → joinBatch path; no Boltz 3-of-3 attempt.
+            // CLTV satisfied → live VTXO refunds offchain; no Boltz 3-of-3 attempt.
             expect(outcome.swept).toBe(1);
             expect(outcome.skipped).toBe(0);
             expect(refundVHTLCwithOffchainTx).not.toHaveBeenCalled();
@@ -4026,8 +4425,8 @@ describe("ArkadeSwaps", () => {
             await swaps.claimVHTLC(buildPendingSwap());
 
             expect(joinBatchSpy).toHaveBeenCalledTimes(2);
-            expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
-            expect(joinBatchSpy.mock.calls[1][1].txid).toBe(txidB);
+            expect((joinBatchSpy.mock.calls[0][1] as any).txid).toBe(txidA);
+            expect((joinBatchSpy.mock.calls[1][1] as any).txid).toBe(txidB);
             expect(claimVHTLCwithOffchainTx).not.toHaveBeenCalled();
             expect(mockSwapRepository.saveSwap).toHaveBeenCalledTimes(1);
             expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
@@ -4078,7 +4477,7 @@ describe("ArkadeSwaps", () => {
             await swaps.claimVHTLC(buildPendingSwap());
 
             expect(joinBatchSpy).toHaveBeenCalledTimes(1);
-            expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
+            expect((joinBatchSpy.mock.calls[0][1] as any).txid).toBe(txidA);
             const offchainSpy = vi.mocked(claimVHTLCwithOffchainTx);
             expect(offchainSpy).toHaveBeenCalledTimes(1);
             expect((offchainSpy.mock.calls[0][3] as any).txid).toBe(txidB);
@@ -4096,7 +4495,7 @@ describe("ArkadeSwaps", () => {
 
             await expect(swaps.claimVHTLC(buildPendingSwap())).resolves.toBeUndefined();
             expect(joinBatchSpy).toHaveBeenCalledTimes(1);
-            expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidB);
+            expect((joinBatchSpy.mock.calls[0][1] as any).txid).toBe(txidB);
         });
 
         it("throws 'VHTLC is already spent' when every returned VTXO is spent", async () => {
@@ -4140,8 +4539,8 @@ describe("ArkadeSwaps", () => {
             // Both VTXOs were attempted — the failure on the second VTXO
             // didn't short-circuit the loop.
             expect(joinBatchSpy).toHaveBeenCalledTimes(2);
-            expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
-            expect(joinBatchSpy.mock.calls[1][1].txid).toBe(txidB);
+            expect((joinBatchSpy.mock.calls[0][1] as any).txid).toBe(txidA);
+            expect((joinBatchSpy.mock.calls[1][1] as any).txid).toBe(txidB);
             // Status is not saved on partial success (all-or-throw).
             expect(mockSwapRepository.saveSwap).not.toHaveBeenCalled();
         });
@@ -4161,8 +4560,8 @@ describe("ArkadeSwaps", () => {
             );
 
             expect(joinBatchSpy).toHaveBeenCalledTimes(2);
-            expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
-            expect(joinBatchSpy.mock.calls[1][1].txid).toBe(txidB);
+            expect((joinBatchSpy.mock.calls[0][1] as any).txid).toBe(txidA);
+            expect((joinBatchSpy.mock.calls[1][1] as any).txid).toBe(txidB);
         });
 
         it("retries the indexer and claims every VTXO returned on the second attempt", async () => {
@@ -4183,8 +4582,8 @@ describe("ArkadeSwaps", () => {
                 await expect(promise).resolves.toBeUndefined();
                 expect(indexerProvider.getVtxos).toHaveBeenCalledTimes(2);
                 expect(joinBatchSpy).toHaveBeenCalledTimes(2);
-                expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
-                expect(joinBatchSpy.mock.calls[1][1].txid).toBe(txidB);
+                expect((joinBatchSpy.mock.calls[0][1] as any).txid).toBe(txidA);
+                expect((joinBatchSpy.mock.calls[1][1] as any).txid).toBe(txidB);
             } finally {
                 vi.useRealTimers();
             }
@@ -4255,7 +4654,7 @@ describe("ArkadeSwaps", () => {
             });
         });
 
-        it("refunds two unspent VTXOs via joinBatch when CLTV is satisfied", async () => {
+        it("refunds two unspent non-recoverable VTXOs offchain (refundWithoutReceiver) when CLTV is satisfied", async () => {
             const vtxos = [nonRecoverableVtxo(txidA, 0), nonRecoverableVtxo(txidB, 1)];
             vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
                 vtxos: vtxos as any,
@@ -4263,13 +4662,40 @@ describe("ArkadeSwaps", () => {
 
             const outcome = await swaps.refundArk(buildSwap(pastRefund()));
 
+            // Live VTXOs settle the refundWithoutReceiver leaf offchain;
+            // no batch round, no Boltz.
+            const offchain = vi.mocked(refundWithoutReceiverVHTLCwithOffchainTx);
+            expect(offchain).toHaveBeenCalledTimes(2);
+            expect((offchain.mock.calls[0][3] as any).txid).toBe(txidA);
+            expect((offchain.mock.calls[1][3] as any).txid).toBe(txidB);
+            // refundWithoutReceiver leaf (script byte 4) was used
+            expect((offchain.mock.calls[0][3] as any).tapLeafScript[1]).toEqual(
+                new Uint8Array([4]),
+            );
+            expect((swaps as any).joinBatch).not.toHaveBeenCalled();
+            expect(refundVHTLCwithOffchainTx).not.toHaveBeenCalled();
+            expect(outcome).toEqual({ swept: 2, skipped: 0 });
+        });
+
+        it("refunds swept (recoverable) VTXOs via joinBatch when CLTV is satisfied", async () => {
+            const vtxos = [recoverableVtxo(txidA, 0), recoverableVtxo(txidB, 1)];
+            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
+                vtxos: vtxos as any,
+            });
+
+            const outcome = await swaps.refundArk(buildSwap(pastRefund()));
+
+            // Swept VTXOs are no longer live leaves — only a batch round
+            // can reclaim them.
             const joinBatchSpy = vi.mocked((swaps as any).joinBatch);
             expect(joinBatchSpy).toHaveBeenCalledTimes(2);
             expect(joinBatchSpy.mock.calls[0][1].txid).toBe(txidA);
             expect(joinBatchSpy.mock.calls[1][1].txid).toBe(txidB);
             // refundWithoutReceiver leaf (script byte 4) was used
             expect(joinBatchSpy.mock.calls[0][1].tapLeafScript[1]).toEqual(new Uint8Array([4]));
-            expect(refundVHTLCwithOffchainTx).not.toHaveBeenCalled();
+            // isRecoverable arg must be true for swept VTXOs
+            expect(joinBatchSpy.mock.calls[0][4]).toBe(true);
+            expect(refundWithoutReceiverVHTLCwithOffchainTx).not.toHaveBeenCalled();
             expect(outcome).toEqual({ swept: 2, skipped: 0 });
         });
 
@@ -4351,7 +4777,7 @@ describe("ArkadeSwaps", () => {
             }
         });
 
-        it("falls back to joinBatch when Boltz rejects and CLTV passes during the catch", async () => {
+        it("falls back to refundWithoutReceiver offchain when Boltz rejects and CLTV passes during the catch", async () => {
             const futureTs = Math.floor(Date.now() / 1000) + 86400;
             vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
                 vtxos: [nonRecoverableVtxo(txidA, 0)] as any,
@@ -4367,11 +4793,14 @@ describe("ArkadeSwaps", () => {
 
             const outcome = await swaps.refundArk(buildSwap(futureTs));
 
-            const joinBatchSpy = vi.mocked((swaps as any).joinBatch);
-            expect(joinBatchSpy).toHaveBeenCalledTimes(1);
+            // Non-recoverable VTXO past CLTV → offchain, not a batch round.
+            expect((swaps as any).joinBatch).not.toHaveBeenCalled();
+            const offchain = vi.mocked(refundWithoutReceiverVHTLCwithOffchainTx);
+            expect(offchain).toHaveBeenCalledOnce();
             // fallback uses refundWithoutReceiver leaf (script byte 4)
-            expect(joinBatchSpy.mock.calls[0][1].tapLeafScript[1]).toEqual(new Uint8Array([4]));
-            expect(joinBatchSpy.mock.calls[0][4]).toBe(false);
+            expect((offchain.mock.calls[0][3] as any).tapLeafScript[1]).toEqual(
+                new Uint8Array([4]),
+            );
             expect(outcome).toEqual({ swept: 1, skipped: 0 });
         });
 

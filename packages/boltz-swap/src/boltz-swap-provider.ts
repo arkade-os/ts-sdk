@@ -77,6 +77,47 @@ export const isSubmarineRefundableStatus = (status: BoltzSwapStatus): boolean =>
     return ["invoice.failedToPay", "transaction.lockupFailed", "swap.expired"].includes(status);
 };
 
+/**
+ * Canonical progression of a successful submarine swap, in order. Failure
+ * statuses are intentionally absent. This defines relative ordering, NOT a
+ * guaranteed sequence: statuses can be skipped (e.g. "transaction.mempool"
+ * jumps straight to "invoice.pending" when Boltz accepts 0-conf, and a
+ * subscription only ever reports the current status). Consumers must treat
+ * any later status as implying the earlier ones — which is exactly what
+ * hasSubmarineStatusReached does.
+ */
+const SUBMARINE_STATUS_PROGRESSION = [
+    "swap.created",
+    "invoice.set",
+    "transaction.mempool",
+    "transaction.confirmed",
+    "invoice.pending",
+    "invoice.paid",
+    "transaction.claim.pending",
+    "transaction.claimed",
+] as const satisfies readonly BoltzSwapStatus[];
+
+/**
+ * A status in the successful submarine swap progression — the only valid
+ * targets for optimistic settlement resolution.
+ */
+export type SubmarineProgressionStatus = (typeof SUBMARINE_STATUS_PROGRESSION)[number];
+
+/**
+ * Returns true if `status` is at or beyond `target` in the successful
+ * submarine swap progression. Returns false when the observed status is not
+ * part of the progression (e.g. failure statuses like "swap.expired").
+ */
+export const hasSubmarineStatusReached = (
+    status: BoltzSwapStatus,
+    target: SubmarineProgressionStatus,
+): boolean => {
+    const progression: readonly BoltzSwapStatus[] = SUBMARINE_STATUS_PROGRESSION;
+    const statusIndex = progression.indexOf(status);
+    const targetIndex = progression.indexOf(target);
+    return statusIndex >= 0 && targetIndex >= 0 && statusIndex >= targetIndex;
+};
+
 /** Returns true if the submarine swap completed successfully. */
 export const isSubmarineSuccessStatus = (status: BoltzSwapStatus): boolean => {
     return status === "transaction.claimed";
@@ -416,6 +457,12 @@ export type CreateReverseSwapRequest = {
     preimageHash: string;
     /** Optional description for the BOLT11 invoice. */
     description?: string;
+    /**
+     * Optional SHA256 description hash (hex, 32 bytes / 64 chars) to commit
+     * into the invoice instead of a plaintext description. BOLT11 carries one
+     * or the other, never both; when set, `description` is omitted.
+     */
+    descriptionHash?: string;
 };
 
 /** Response from creating a reverse swap. */
@@ -1091,6 +1138,7 @@ export class BoltzSwapProvider {
         claimPublicKey,
         preimageHash,
         description,
+        descriptionHash,
     }: CreateReverseSwapRequest): Promise<CreateReverseSwapResponse> {
         // claimPublicKey must be in compressed version (33 bytes / 66 hex chars)
         if (claimPublicKey.length != 66) {
@@ -1098,14 +1146,23 @@ export class BoltzSwapProvider {
                 message: "claimPublicKey must be a compressed public key",
             });
         }
-        // make reverse swap request
+        // descriptionHash, when given, must be a 32-byte SHA256 (64 hex chars)
+        if (descriptionHash !== undefined && !/^[0-9a-fA-F]{64}$/.test(descriptionHash)) {
+            throw new SwapError({
+                message: "descriptionHash must be a 32-byte SHA256 (64 hex chars)",
+            });
+        }
+        // make reverse swap request. BOLT11 carries a description OR a
+        // description hash, never both — prefer the hash when present.
         const requestBody = {
             from: "BTC",
             to: "ARK",
             invoiceAmount,
             claimPublicKey,
             preimageHash,
-            description: description?.trim() || "Send to Arkade address",
+            ...(descriptionHash
+                ? { descriptionHash }
+                : { description: description?.trim() || "Send to Arkade address" }),
             ...(this.referralId ? { referralId: this.referralId } : {}),
         };
 

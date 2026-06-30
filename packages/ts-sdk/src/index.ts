@@ -301,6 +301,7 @@ import type {
 } from "./contracts/types";
 import type { ScanResult, ScanContractsOptions, HandlerError } from "./contracts/contractManager";
 import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
+import { buildVersion, sdkVersion } from "./utils/fetch";
 import { closeDatabase, openDatabase } from "./repositories/indexedDB/manager";
 import {
     WalletMessageHandler,
@@ -310,7 +311,9 @@ import {
     DelegatorNotConfiguredError,
 } from "./wallet/serviceWorker/wallet-message-handler";
 import {
+    MESSAGE_BUS_INITIALIZING,
     MESSAGE_BUS_NOT_INITIALIZED,
+    MessageBusInitializingError,
     MessageBusNotInitializedError,
     ServiceWorkerTimeoutError,
 } from "./worker/errors";
@@ -374,7 +377,9 @@ export {
     ReadonlyWalletError,
     DelegateNotConfiguredError,
     DelegatorNotConfiguredError,
+    MESSAGE_BUS_INITIALIZING,
     MESSAGE_BUS_NOT_INITIALIZED,
+    MessageBusInitializingError,
     MessageBusNotInitializedError,
     ServiceWorkerTimeoutError,
     ServiceWorkerWallet,
@@ -409,6 +414,8 @@ export {
     isVtxoExpiringSoon,
     isValidArkAddress,
     getRandomId,
+    buildVersion,
+    sdkVersion,
 
     // Arknote
     ArkNote,

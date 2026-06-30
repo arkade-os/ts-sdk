@@ -162,6 +162,50 @@ describe("buildTransactionHistory", () => {
             // The result vtxos should not show as received either (they're change from our own spend)
             expect(receivedTxs).toHaveLength(0);
         });
+
+        it("should not record a ghost zero-amount sent for a signer-rotation migration", async () => {
+            // Migrating all VTXOs to a new signer spends old-signer VTXOs to a single
+            // self output of the full amount. spentAmount === changeAmount, so the net
+            // sent amount is 0 and no assets move: it must not appear in the history.
+            const arkTxId = "migration-ark-tx";
+            const baseDate = new Date("2026-06-15T07:45:58Z");
+
+            const oldSignerVtxos: VirtualCoin[] = [1000, 2471, 173875, 7529].map((value, i) => ({
+                txid: `old-signer-vtxo-${i}`,
+                vout: 0,
+                value,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: new Date(baseDate.getTime() - 1000),
+                isUnrolled: false,
+                isSpent: true,
+                arkTxId,
+            }));
+
+            // Single new-signer output holding the full migrated amount (self change).
+            const newSignerOutput: VirtualCoin = {
+                txid: arkTxId,
+                vout: 0,
+                value: 184875,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: baseDate,
+                isUnrolled: false,
+                isSpent: false,
+            };
+
+            const txs = await buildTransactionHistory(
+                [...oldSignerVtxos, newSignerOutput],
+                [],
+                new Set<string>(),
+            );
+
+            // No sent tx at all, and nothing keyed by the migration tx (the ghost).
+            expect(txs.filter((t) => t.type === TxType.TxSent)).toHaveLength(0);
+            expect(txs.some((t) => t.key.arkTxid === arkTxId)).toBe(false);
+            // The new-signer self output is change, not a receive.
+            expect(txs.some((t) => t.amount === 184875)).toBe(false);
+        });
     });
 
     describe("Receive transactions", () => {
@@ -390,6 +434,98 @@ describe("buildTransactionHistory", () => {
                     (tx) => tx.key.commitmentTxid === "independent-receive-commitment",
                 ),
             ).toBe(true);
+        });
+
+        it("does not double-count when several boardings are swept into one combined VTXO (arkade.money N->1 regression)", async () => {
+            // Feb 2026 mainnet incident: two boarding deposits (76,186 + 152,346)
+            // were swept into a single 228,532 VTXO in commitment 58b3d35a. With
+            // the commitment ignored, the swept VTXO must be suppressed, leaving
+            // only the two boarding receives — net 228,532, NOT 457,064. The
+            // amount-fallback dedup cannot catch this (no single boarding equals
+            // the combined value), so it relies on the commitment-id match that
+            // getBoardingTxs() now populates reliably.
+            const sweepTxid = "58b3d35a7f0fb5f0a67294d28c409a8acaf56fd95b3aedcfbfa74b96e918ff11";
+
+            const boarding1: ArkTransaction = {
+                key: { boardingTxid: "1aece24a", commitmentTxid: sweepTxid, arkTxid: "" },
+                amount: 76186,
+                type: TxType.TxReceived,
+                settled: true,
+                createdAt: new Date("2026-02-23T17:06:18Z").getTime(),
+            };
+            const boarding2: ArkTransaction = {
+                key: { boardingTxid: "a4f9f575", commitmentTxid: sweepTxid, arkTxid: "" },
+                amount: 152346,
+                type: TxType.TxReceived,
+                settled: true,
+                createdAt: new Date("2026-02-23T18:37:36Z").getTime(),
+            };
+            const combinedVtxo: VirtualCoin = {
+                txid: "34592d08e0a22d91d58a9e80afdc87073831e5bea856e985daf52fadee62063c",
+                vout: 0,
+                value: 228532,
+                status: { confirmed: true, isLeaf: true },
+                virtualStatus: { state: "settled", commitmentTxIds: [sweepTxid] },
+                settledBy: "",
+                createdAt: new Date("2026-02-23T19:59:12Z"),
+                isUnrolled: false,
+                isSpent: false,
+            };
+
+            const transactions = await buildTransactionHistory(
+                [combinedVtxo],
+                [boarding1, boarding2],
+                new Set([sweepTxid]),
+            );
+
+            const received = transactions.filter((tx) => tx.type === TxType.TxReceived);
+            const net = received.reduce((acc, tx) => acc + tx.amount, 0);
+
+            // Net inflow equals the deposited amount; no phantom VTXO receive.
+            expect(net).toBe(228532);
+            // The combined VTXO must NOT surface as its own receive (would inflate).
+            expect(received.some((tx) => tx.amount === 228532)).toBe(false);
+            // Both boarding deposits are present.
+            expect(received.filter((tx) => tx.key.boardingTxid !== "")).toHaveLength(2);
+        });
+
+        it("suppresses a boarding sweep whose VTXO batches in refreshed funds (Dec refill regression)", async () => {
+            // Dec 2025 mainnet incident: a 28,469 boarding deposit settled into an
+            // 82,147 VTXO because the same commitment refreshed 53,678 of existing
+            // VTXOs. Showing the 82,147 VTXO would double-count the refreshed part,
+            // so the swept VTXO is suppressed and only the boarding deposit shows.
+            const sweepTxid = "d5e1c7cf6387ed6725a9a7af3eb9e46f2991275c4685c4701389ce0e8455d7d3";
+
+            const boarding: ArkTransaction = {
+                key: { boardingTxid: "f53e56e8", commitmentTxid: sweepTxid, arkTxid: "" },
+                amount: 28469,
+                type: TxType.TxReceived,
+                settled: true,
+                createdAt: new Date("2025-12-06T12:13:48Z").getTime(),
+            };
+            // The combined leaf created by the sweep (boarding + refreshed funds).
+            const combinedVtxo: VirtualCoin = {
+                txid: "d46e8991f8bc534f63cd05cf673791d024a440fde9e80891eb5698fb53dff7ec",
+                vout: 0,
+                value: 82147,
+                status: { confirmed: true, isLeaf: true },
+                virtualStatus: { state: "settled", commitmentTxIds: [sweepTxid] },
+                settledBy: "",
+                createdAt: new Date("2025-12-10T13:47:08Z"),
+                isUnrolled: false,
+                isSpent: false,
+            };
+
+            const transactions = await buildTransactionHistory(
+                [combinedVtxo],
+                [boarding],
+                new Set([sweepTxid]),
+            );
+
+            const received = transactions.filter((tx) => tx.type === TxType.TxReceived);
+            // Only the boarding deposit is counted; the 82,147 combined leaf is hidden.
+            expect(received.reduce((acc, tx) => acc + tx.amount, 0)).toBe(28469);
+            expect(received.some((tx) => tx.amount === 82147)).toBe(false);
         });
 
         it("should create a receive transaction for a new vtxo", async () => {

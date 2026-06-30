@@ -1,6 +1,14 @@
+import { version } from "../package.json";
+
+/**
+ * This SDK plugin's own version string, sourced from package.json, and scoped
+ * by plugin name.
+ */
+export const sdkVersion = `boltz-swap/${version}`;
+
 export { ArkadeSwaps } from "./arkade-swaps";
 export type { QuoteSwapOptions } from "./arkade-swaps";
-export type { BoltzSwapStatus } from "./boltz-swap-provider";
+export type { BoltzSwapStatus, SubmarineProgressionStatus } from "./boltz-swap-provider";
 export {
     BoltzSwapProvider,
     isChainClaimableStatus,
@@ -27,6 +35,7 @@ export {
     isSubmarineSuccessStatus,
     isSubmarineRefundableStatus,
     isSubmarineSwapRefundable,
+    hasSubmarineStatusReached,
 } from "./boltz-swap-provider";
 export {
     SwapError,
@@ -72,6 +81,7 @@ export type {
     CreateLightningInvoiceRequest,
     SendLightningPaymentResponse,
     SendLightningPaymentRequest,
+    OptimisticSendLightningPaymentResponse,
     IncomingPaymentSubscription,
     ArkadeSwapsConfig,
     ArkadeSwapsCreateConfig,

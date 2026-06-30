@@ -905,6 +905,19 @@ export class ReadonlyWallet implements IReadonlyWallet {
             const scriptHex = hex.encode(tapscript.pkScript);
             const txs = await this.onchainProvider.getTransactions(boardingAddress);
 
+            // A boarding output's spending (commitment) tx is the tx in this same
+            // address history whose vin spends it. We index that here as a fallback
+            // for the spender txid: some Esplora deployments (e.g. mempool.arkade.sh)
+            // return `/outspends` as `{spent:true}` WITHOUT the spender txid, which
+            // would leave the boarding sweep uncorrelated and double-count the
+            // resulting VTXO as a phantom receive in the history.
+            const commitmentByOutpoint = new Map<string, string>();
+            for (const tx of txs) {
+                for (const input of tx.vin ?? []) {
+                    commitmentByOutpoint.set(`${input.txid}:${input.vout}`, tx.txid);
+                }
+            }
+
             for (const tx of txs) {
                 for (let i = 0; i < tx.vout.length; i++) {
                     const vout = tx.vout[i];
@@ -916,8 +929,16 @@ export class ReadonlyWallet implements IReadonlyWallet {
                         }
                         const spentStatus = spentStatuses[i];
 
-                        if (spentStatus?.spent) {
-                            commitmentsToIgnore.add(spentStatus.txid);
+                        // Prefer the outspends spender txid; fall back to the
+                        // vin-derived commitment when the provider omits it. `||`
+                        // (not `??`) so the electrum provider's `txid: ""` sentinel
+                        // for unspent outputs falls through to the vin lookup.
+                        const commitmentTxid =
+                            spentStatus?.txid || commitmentByOutpoint.get(`${tx.txid}:${i}`);
+                        const spent = Boolean(spentStatus?.spent) || commitmentTxid !== undefined;
+
+                        if (spent && commitmentTxid) {
+                            commitmentsToIgnore.add(commitmentTxid);
                         }
 
                         utxos.push({
@@ -930,10 +951,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
                             },
                             isUnrolled: true,
                             virtualStatus: {
-                                state: spentStatus?.spent ? "spent" : "settled",
-                                commitmentTxIds: spentStatus?.spent
-                                    ? [spentStatus.txid]
-                                    : undefined,
+                                state: spent ? "spent" : "settled",
+                                commitmentTxIds:
+                                    spent && commitmentTxid ? [commitmentTxid] : undefined,
                             },
                             createdAt: tx.status.confirmed
                                 ? new Date(tx.status.block_time * 1000)
