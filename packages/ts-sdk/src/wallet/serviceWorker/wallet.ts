@@ -966,10 +966,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         }
     }
 
-    /**
-     * Wipe all locally persisted wallet data on the page and service worker
-     * (VTXOs, UTXOs, history, sync cursor, contracts). Re-init the wallet after.
-     */
+    /** This tells the service worker to wipe all locally persisted wallet data. */
     async clear(): Promise<void> {
         const message: RequestClear = {
             id: getRandomId(),
@@ -977,7 +974,6 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             type: "CLEAR",
         };
         await this.sendMessage(message);
-        await Promise.all([this.walletRepository.clear(), this.contractRepository.clear()]);
     }
 
     async getAddress(): Promise<string> {
