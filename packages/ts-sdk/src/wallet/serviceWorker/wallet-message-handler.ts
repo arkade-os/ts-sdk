@@ -1722,14 +1722,12 @@ export class WalletMessageHandler
             this.contractEventsSubscription = undefined;
         }
 
-        try {
-            await wallet.clear();
-        } finally {
-            this.wallet = undefined;
-            this.readonlyWallet = undefined;
-            this.arkProvider = undefined;
-            this.indexerProvider = undefined;
-        }
+        await wallet.clear();
+
+        this.wallet = undefined;
+        this.readonlyWallet = undefined;
+        this.arkProvider = undefined;
+        this.indexerProvider = undefined;
     }
 
     /**
