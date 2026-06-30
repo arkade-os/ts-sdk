@@ -20,6 +20,8 @@ import {
     ArkTxInput,
     Identity,
     VirtualCoin,
+    getNetwork,
+    type NetworkName,
 } from "@arkade-os/sdk";
 import type {
     Chain,
@@ -80,7 +82,6 @@ import {
     targetFee,
     p2trScript,
     toXOnly,
-    arkNetworkToBtc,
     assertChainHtlcLeaves,
 } from "./utils/boltz-swap-tx";
 import { decodeInvoice, getInvoicePaymentHash } from "./utils/decoding";
@@ -1714,7 +1715,7 @@ export class ArkadeSwaps {
 
         const arkInfo = await this.arkProvider.getInfo();
 
-        const network = arkNetworkToBtc(arkInfo.network);
+        const network = getNetwork(arkInfo.network as NetworkName);
 
         const swapTree = deserializeSwapTree(pendingSwap.response.claimDetails.swapTree);
 
@@ -2458,7 +2459,7 @@ export class ArkadeSwaps {
                 message: `Swap ${swap.id}: missing timeout block height in BTC details`,
             });
 
-        const network = arkNetworkToBtc(arkNetwork);
+        const network = getNetwork(arkNetwork as NetworkName);
         const swapTree = deserializeSwapTree(btcDetails.swapTree);
         const ephemeralPub = secp256k1.getPublicKey(hex.decode(swap.ephemeralKey));
 

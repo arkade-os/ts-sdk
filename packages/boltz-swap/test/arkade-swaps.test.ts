@@ -25,6 +25,7 @@ import {
     Wallet,
     SingleKey,
     ArkInfo,
+    getNetwork,
 } from "@arkade-os/sdk";
 import { VHTLC } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
@@ -38,12 +39,7 @@ import { decodeInvoice } from "../src/utils/decoding";
 import { logger } from "../src/logger";
 import { pubECDSA } from "@scure/btc-signer/utils.js";
 import { create as createMusig } from "../src/utils/musig";
-import {
-    deserializeSwapTree,
-    tweakMusig,
-    p2trScript,
-    REGTEST_NETWORK,
-} from "../src/utils/boltz-swap-tx";
+import { deserializeSwapTree, tweakMusig, p2trScript } from "../src/utils/boltz-swap-tx";
 import {
     claimVHTLCwithOffchainTx,
     createVHTLCScript as createVHTLCScriptReal,
@@ -536,7 +532,7 @@ describe("ArkadeSwaps", () => {
             createMusig(btcEphemeralPriv, [btcBoltzPub, btcEphemeralPub]),
             tree,
         );
-        return Address(REGTEST_NETWORK).encode(OutScript.decode(p2trScript(musig.aggPubkey)));
+        return Address(getNetwork("regtest")).encode(OutScript.decode(p2trScript(musig.aggPubkey)));
     };
 
     // Builds a chain swap with a real, self-consistent BTC HTLC on the side the

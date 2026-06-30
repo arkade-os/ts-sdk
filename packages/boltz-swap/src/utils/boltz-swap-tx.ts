@@ -4,9 +4,9 @@
  */
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { hex } from "@scure/base";
-import { Script, Transaction } from "@scure/btc-signer";
+import { Script, ScriptNum, Transaction } from "@scure/btc-signer";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
-import { compareBytes, equalBytes, NETWORK } from "@scure/btc-signer/utils.js";
+import { compareBytes, equalBytes } from "@scure/btc-signer/utils.js";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import type { MusigKeyAgg } from "./musig";
 
@@ -29,39 +29,6 @@ type SerializedTree = {
 };
 
 export type DetectedSwapOutput = TransactionOutput & { vout: number };
-
-// ---------------------------------------------------------------------------
-// Network constants
-// ---------------------------------------------------------------------------
-
-export const REGTEST_NETWORK = {
-    bech32: "bcrt",
-    pubKeyHash: 0x6f,
-    scriptHash: 0xc4,
-    wif: 0xef,
-};
-
-export const MUTINYNET_NETWORK = {
-    bech32: "tb",
-    pubKeyHash: 0x6f,
-    scriptHash: 0xc4,
-    wif: 0xef,
-};
-
-// Fail closed on unrecognized networks: validating a BTC address against the
-// wrong network params would silently weaken the check.
-export const arkNetworkToBtc = (arkNetwork: string): typeof NETWORK => {
-    switch (arkNetwork) {
-        case "bitcoin":
-            return NETWORK;
-        case "mutinynet":
-            return MUTINYNET_NETWORK;
-        case "regtest":
-            return REGTEST_NETWORK;
-        default:
-            throw new Error(`Unsupported network: ${arkNetwork}`);
-    }
-};
 
 // ---------------------------------------------------------------------------
 // Swap tree serialization
@@ -113,10 +80,9 @@ export const deserializeSwapTree = (tree: string | SerializedTree): SwapTree => 
 const TAPLEAF_V1 = 0xc0;
 const PUSH_32 = Uint8Array.of(0x20);
 
-const scriptNumToInt = (data: unknown): number | undefined => {
-    if (!(data instanceof Uint8Array) || data.length === 0) return undefined;
-    return parseInt(hex.encode(Uint8Array.from(data).reverse()), 16);
-};
+// CLTV timeout is a minimally-encoded script number; reuse scure's decoder.
+const decodeScriptNum = (data: unknown): number | undefined =>
+    data instanceof Uint8Array && data.length > 0 ? Number(ScriptNum().decode(data)) : undefined;
 
 /**
  * Asserts a BTC chain-swap HTLC's leaves match the canonical Boltz shape and
@@ -160,7 +126,7 @@ export const assertChainHtlcLeaves = (
         !(refund[0] instanceof Uint8Array) ||
         !equalBytes(refund[0], expected.refundXOnly) ||
         refund[1] !== "CHECKSIGVERIFY" ||
-        scriptNumToInt(refund[2]) !== expected.timeoutBlockHeight ||
+        decodeScriptNum(refund[2]) !== expected.timeoutBlockHeight ||
         refund[3] !== "CHECKLOCKTIMEVERIFY"
     )
         throw new Error("unexpected refund leaf");
