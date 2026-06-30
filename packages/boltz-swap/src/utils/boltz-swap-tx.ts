@@ -80,9 +80,12 @@ export const deserializeSwapTree = (tree: string | SerializedTree): SwapTree => 
 const TAPLEAF_V1 = 0xc0;
 const PUSH_32 = Uint8Array.of(0x20);
 
-// CLTV timeout is a minimally-encoded script number; reuse scure's decoder.
+// CLTV timeout is a canonical ScriptNum: at most 5 bytes (BIP65) and minimally
+// encoded. Enforce both so only the exact Boltz refund-leaf shape is accepted.
 const decodeScriptNum = (data: unknown): number | undefined =>
-    data instanceof Uint8Array && data.length > 0 ? Number(ScriptNum().decode(data)) : undefined;
+    data instanceof Uint8Array && data.length > 0
+        ? Number(ScriptNum(5, true).decode(data))
+        : undefined;
 
 /**
  * Asserts a BTC chain-swap HTLC's leaves match the canonical Boltz shape and
