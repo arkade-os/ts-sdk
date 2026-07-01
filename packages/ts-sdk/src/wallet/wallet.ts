@@ -616,10 +616,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
             ? await config.delegateProvider
                   .getDelegateInfo()
                   .then((info) => hex.decode(info.pubkey).slice(1))
+                  .catch(() => undefined)
             : config.delegatorProvider
               ? await config.delegatorProvider
                     .getDelegateInfo()
                     .then((info) => hex.decode(info.pubkey).slice(1))
+                    .catch(() => undefined)
               : undefined;
 
         const offchainOptions = {
