@@ -1,14 +1,19 @@
 import { expect, describe, it, beforeEach } from "vitest";
 import { base64, hex } from "@scure/base";
+import { p2tr, SigHash } from "@scure/btc-signer";
 
 import {
     arkade,
     asset,
     buildOffchainTx,
     ArkAddress,
+    EsploraProvider,
     networks,
+    PrevoutTxField,
     RestArkProvider,
     RestIndexerProvider,
+    setArkPsbtField,
+    SingleKey,
     Transaction,
     Intent,
     Batch,
@@ -18,11 +23,13 @@ import {
 } from "../../src";
 import type { Identity } from "../../src/identity";
 import {
+    addEmulatorPacket,
     beforeEachFaucet,
     createTestArkWallet,
     createTestIdentity,
     faucetOffchain,
     faucetOnchain,
+    waitForUtxo,
 } from "./utils";
 
 /**
@@ -42,48 +49,31 @@ function makeEmulatorExtensionOutput(
 
 const EMULATOR_URL = "http://localhost:7073";
 const ARK_SERVER_URL = "http://localhost:7070";
+// mempool serves the Esplora REST API under `/api`; the root path is the HTML UI.
+const ESPLORA_URL = "http://localhost:3000/api";
+const FUNDING_SATS = 1_000_000;
+const FUNDING_AMOUNT = 1_000_000n;
+const FEE_AMOUNT = 500n;
+const SPEND_AMOUNT = FUNDING_AMOUNT - FEE_AMOUNT;
 
 // =========================================================================
 // Arkade contract programs (mirror the hand-built VtxoScript trees)
 // =========================================================================
 
-// Arkade script: check output 0's scriptPubKey is taproot (v1) and equals
-// `$receiver` (the 32-byte witness program). The index 0 is pushed by the
-// script itself, so the arkade witness stack is empty.
-const checkOutputToReceiver = [
-    0,
-    "INSPECTOUTPUTSCRIPTPUBKEY",
-    1,
-    "EQUALVERIFY",
-    "$receiver",
-    "EQUAL",
-] satisfies arkade.AsmToken[];
-
-// Same, plus asset-group introspection: exactly one group whose output sum
-// equals `$assetAmount`.
-const checkOutputWithAsset = [
-    0,
-    "INSPECTOUTPUTSCRIPTPUBKEY",
-    1,
-    "EQUALVERIFY",
-    "$receiver",
-    "EQUALVERIFY",
-    "INSPECTNUMASSETGROUPS",
-    1,
-    "EQUALVERIFY",
-    0, // group index
-    1, // source = outputs
-    "INSPECTASSETGROUPSUM",
-    "$assetAmount",
-    "EQUAL",
-] satisfies arkade.AsmToken[];
+// The arkade script `checkOutputToReceiver` checks output 0's scriptPubKey is
+// taproot (v1) and equals `$receiver` (the 32-byte witness program). The index 0
+// is pushed by the script itself, so the arkade witness stack is empty. The
+// `WithAsset` variants add asset-group introspection: exactly one group whose
+// output sum equals `$assetAmount`.
 
 // Plain offchain covenant: user + server + arkade-tweaked emulator.
 const offchainProgram = {
     functions: {
         send: {
             tapscript: { signers: ["user", "server"] },
-            arkadeScript: { asm: checkOutputToReceiver },
+            arkadeScript: {
+                asm: [0, "INSPECTOUTPUTSCRIPTPUBKEY", 1, "EQUALVERIFY", "$receiver", "EQUAL"],
+            },
         },
     },
 } satisfies arkade.Program;
@@ -93,7 +83,24 @@ const assetOffchainProgram = {
     functions: {
         send: {
             tapscript: { signers: ["user", "server"] },
-            arkadeScript: { asm: checkOutputWithAsset },
+            arkadeScript: {
+                asm: [
+                    0,
+                    "INSPECTOUTPUTSCRIPTPUBKEY",
+                    1,
+                    "EQUALVERIFY",
+                    "$receiver",
+                    "EQUALVERIFY",
+                    "INSPECTNUMASSETGROUPS",
+                    1,
+                    "EQUALVERIFY",
+                    0, // group index
+                    1, // source = outputs
+                    "INSPECTASSETGROUPSUM",
+                    "$assetAmount",
+                    "EQUAL",
+                ],
+            },
         },
     },
 } satisfies arkade.Program;
@@ -103,7 +110,9 @@ const settlementProgram = {
     functions: {
         settle: {
             tapscript: { signers: ["user", "server"] },
-            arkadeScript: { asm: checkOutputToReceiver },
+            arkadeScript: {
+                asm: [0, "INSPECTOUTPUTSCRIPTPUBKEY", 1, "EQUALVERIFY", "$receiver", "EQUAL"],
+            },
         },
         exit: {
             tapscript: { signers: ["user", "server"], csv: { type: "blocks", value: 5120n } },
@@ -116,10 +125,52 @@ const settleAssetProgram = {
     functions: {
         settle: {
             tapscript: { signers: ["user", "server"] },
-            arkadeScript: { asm: checkOutputWithAsset },
+            arkadeScript: {
+                asm: [
+                    0,
+                    "INSPECTOUTPUTSCRIPTPUBKEY",
+                    1,
+                    "EQUALVERIFY",
+                    "$receiver",
+                    "EQUALVERIFY",
+                    "INSPECTNUMASSETGROUPS",
+                    1,
+                    "EQUALVERIFY",
+                    0, // group index
+                    1, // source = outputs
+                    "INSPECTASSETGROUPSUM",
+                    "$assetAmount",
+                    "EQUAL",
+                ],
+            },
         },
         exit: {
             tapscript: { signers: ["user", "server"], csv: { type: "blocks", value: 5120n } },
+        },
+    },
+} satisfies arkade.Program;
+
+// On-chain spend contract: a 2-of-2 multisig [$bob, $alice] plus the
+// arkade-tweaked emulator, guarding a pay-to covenant. The arkade body (token
+// form of `enforcePayTo`) forces output 0 to pay `$amount` to `$receiver`; the
+// leading DUP consumes the witness's `[0]`.
+const spendProgram = {
+    functions: {
+        spend: {
+            tapscript: { signers: ["$bob", "$alice"] },
+            arkadeScript: {
+                asm: [
+                    "DUP",
+                    "INSPECTOUTPUTSCRIPTPUBKEY",
+                    1,
+                    "EQUALVERIFY",
+                    "$receiver",
+                    "EQUALVERIFY",
+                    "INSPECTOUTPUTVALUE",
+                    "$amount",
+                    "EQUAL",
+                ],
+            },
         },
     },
 } satisfies arkade.Program;
@@ -128,7 +179,24 @@ const mintAssetProgram = {
     functions: {
         mint: {
             tapscript: { signers: ["user", "server"] },
-            arkadeScript: { asm: checkOutputWithAsset },
+            arkadeScript: {
+                asm: [
+                    0,
+                    "INSPECTOUTPUTSCRIPTPUBKEY",
+                    1,
+                    "EQUALVERIFY",
+                    "$receiver",
+                    "EQUALVERIFY",
+                    "INSPECTNUMASSETGROUPS",
+                    1,
+                    "EQUALVERIFY",
+                    0, // group index
+                    1, // source = outputs
+                    "INSPECTASSETGROUPSUM",
+                    "$assetAmount",
+                    "EQUAL",
+                ],
+            },
         },
     },
 } satisfies arkade.Program;
@@ -137,6 +205,7 @@ describe("arkade", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
     const arkProvider = new RestArkProvider(ARK_SERVER_URL);
     const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
+    const explorer = new EsploraProvider(ESPLORA_URL);
 
     /** Connect an Arkade client bound to the given signing identity. */
     function connect(identity: Identity): Promise<arkade.Arkade> {
@@ -216,7 +285,10 @@ describe("arkade", () => {
 
         // Derive the contract (arkade covenant + CSV exit) from the program.
         const contract = ark.contract(settlementProgram, { receiver: aliceWP });
-        const arkadeScriptBytes = arkade.resolveAsm(checkOutputToReceiver, { receiver: aliceWP });
+        const arkadeScriptBytes = arkade.resolveAsm(
+            settlementProgram.functions.settle.arkadeScript.asm,
+            { receiver: aliceWP },
+        );
         const arkadeLeaf = contract.leafScript(0); // the arkade covenant leaf
         const tapTree = contract.tapTree;
 
@@ -335,7 +407,16 @@ describe("arkade", () => {
             functions: {
                 board: {
                     tapscript: { signers: ["user", "server"] },
-                    arkadeScript: { asm: checkOutputToReceiver },
+                    arkadeScript: {
+                        asm: [
+                            0,
+                            "INSPECTOUTPUTSCRIPTPUBKEY",
+                            1,
+                            "EQUALVERIFY",
+                            "$receiver",
+                            "EQUAL",
+                        ],
+                    },
                 },
                 exit: {
                     tapscript: {
@@ -347,7 +428,10 @@ describe("arkade", () => {
         } satisfies arkade.Program;
 
         const contract = ark.contract(boardingProgram, { receiver: aliceWP });
-        const arkadeScriptBytes = arkade.resolveAsm(checkOutputToReceiver, { receiver: aliceWP });
+        const arkadeScriptBytes = arkade.resolveAsm(
+            boardingProgram.functions.board.arkadeScript.asm,
+            { receiver: aliceWP },
+        );
         const arkadeLeaf = contract.leafScript(0);
         const tapTree = contract.tapTree;
 
@@ -477,10 +561,13 @@ describe("arkade", () => {
         // = null) is not expressible via the builder's `.withAsset()`, so the
         // offchain tx is assembled manually from the contract's script.
         const contract = ark.contract(assetOffchainProgram, { receiver: aliceWP, assetAmount });
-        const arkadeScriptBytes = arkade.resolveAsm(checkOutputWithAsset, {
-            receiver: aliceWP,
-            assetAmount,
-        });
+        const arkadeScriptBytes = arkade.resolveAsm(
+            assetOffchainProgram.functions.send.arkadeScript.asm,
+            {
+                receiver: aliceWP,
+                assetAmount,
+            },
+        );
         const tapLeafScript = contract.leafScript(0);
         const tapTree = contract.tapTree;
 
@@ -546,18 +633,24 @@ describe("arkade", () => {
         // Settle contract: forces the spend to Alice + 1 asset group summing to
         // assetAmount; plus a server+user CSV exit.
         const settleContract = ark.contract(settleAssetProgram, { receiver: aliceWP, assetAmount });
-        const settleArkadeScript = arkade.resolveAsm(checkOutputWithAsset, {
-            receiver: aliceWP,
-            assetAmount,
-        });
+        const settleArkadeScript = arkade.resolveAsm(
+            settleAssetProgram.functions.settle.arkadeScript.asm,
+            {
+                receiver: aliceWP,
+                assetAmount,
+            },
+        );
         const settleWP = getWitnessProgram(settleContract.address);
 
         // Mint contract: forces the spend to the settle contract + 1 asset group.
         const mintContract = ark.contract(mintAssetProgram, { receiver: settleWP, assetAmount });
-        const mintArkadeScript = arkade.resolveAsm(checkOutputWithAsset, {
-            receiver: settleWP,
-            assetAmount,
-        });
+        const mintArkadeScript = arkade.resolveAsm(
+            mintAssetProgram.functions.mint.arkadeScript.asm,
+            {
+                receiver: settleWP,
+                assetAmount,
+            },
+        );
 
         // Fund the mint contract
         faucetOffchain(mintContract.address, fundAmount);
@@ -705,4 +798,87 @@ describe("arkade", () => {
             abortController.abort();
         }
     });
+
+    // On-chain spend: emulator co-signs a SubmitOnchainTx and the tx broadcasts
+    // after the third signature.
+    it("TestSubmitOnchainTx", { timeout: 120000 }, async () => {
+        // No identity: every signer is a `$param`, so the contract is used purely
+        // to derive scripts/addresses; bob/alice sign the PSBTs directly.
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            network: networks.regtest,
+        });
+
+        const bob = SingleKey.fromRandomBytes();
+        const alice = SingleKey.fromRandomBytes();
+        const bobX = await bob.xOnlyPublicKey();
+        const aliceX = await alice.xOnlyPublicKey();
+        const bobP2TR = p2tr(bobX, undefined, networks.regtest).script;
+        const receiver = bobP2TR.slice(2);
+
+        const contract = ark.contract(spendProgram, {
+            bob: bobX,
+            alice: aliceX,
+            receiver,
+            amount: SPEND_AMOUNT,
+        });
+        const arkadeScript = arkade.resolveAsm(spendProgram.functions.spend.arkadeScript.asm, {
+            receiver,
+            amount: SPEND_AMOUNT,
+        });
+        const vtxoScript = contract.vtxoScript;
+        const tapLeafScript = contract.leafScript(0);
+
+        // fund the contract address on-chain
+        faucetOnchain(vtxoScript.onchainAddress(networks.regtest), FUNDING_SATS);
+        const utxo = await waitForUtxo(vtxoScript.onchainAddress(networks.regtest));
+        const rawFundingTx = hex.decode(await fetchTxHex(utxo.txid));
+
+        // build the unsigned 1-in/1-out spend PSBT with all required arkade fields
+        const tx = new Transaction({ version: 2 });
+        tx.addInput({
+            txid: hex.decode(utxo.txid),
+            index: utxo.vout,
+            sequence: 0xffffffff,
+            witnessUtxo: { amount: FUNDING_AMOUNT, script: vtxoScript.pkScript },
+            tapLeafScript: [tapLeafScript],
+            sighashType: SigHash.DEFAULT,
+        });
+        tx.addOutput({ script: bobP2TR, amount: SPEND_AMOUNT });
+        setArkPsbtField(tx, 0, PrevoutTxField, rawFundingTx);
+        addEmulatorPacket(tx, [
+            {
+                vin: 0,
+                script: arkadeScript,
+                // single empty push for output_index = 0
+                witness: new Uint8Array([0x01, 0x00]),
+            },
+        ]);
+
+        // bob signs, then the emulator co-signs
+        const bobSigned = await bob.sign(tx, [0]);
+        const result = await emulator.submitOnchainTx(base64.encode(bobSigned.toPSBT()));
+
+        const parsed = Transaction.fromPSBT(base64.decode(result.signedTx));
+        const sigs = parsed.getInput(0)?.tapScriptSig ?? [];
+        expect(sigs.length).toBeGreaterThanOrEqual(2);
+
+        // alice adds the final signature to complete the multisig and broadcast
+        const aliceSigned = await alice.sign(parsed, [0]);
+        aliceSigned.finalize();
+        const broadcastTxid = await explorer.broadcastTransaction(
+            hex.encode(aliceSigned.extract()),
+        );
+        expect(broadcastTxid).toBeTruthy();
+    });
 });
+
+/** Fetch the raw hex of a transaction from the Esplora REST API */
+async function fetchTxHex(txid: string): Promise<string> {
+    const resp = await fetch(`${ESPLORA_URL}/tx/${txid}/hex`);
+    if (!resp.ok) {
+        throw new Error(`fetchTxHex failed: ${resp.statusText}`);
+    }
+    return resp.text();
+}
