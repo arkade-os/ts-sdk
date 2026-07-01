@@ -258,6 +258,10 @@ import {
 export * from "./arkfee";
 export * as asset from "./extension/asset";
 
+// BIP21 codec (reused by the payment rails) + the modular payment router.
+export * from "./utils/bip21";
+export * from "./payment";
+
 // Contracts
 // Side-effect import: registers the built-in handlers with `contractHandlers`.
 // Kept as a bare import so the registration runs even though the named
