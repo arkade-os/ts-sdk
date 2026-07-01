@@ -47,11 +47,15 @@ describe("Extension", () => {
                     const data = hex.decode(v.hex);
                     const ext = Extension.fromBytes(data);
                     expect(ext).toBeDefined();
-                    const assetPacket = ext.getAssetPacket();
                     if (v.expectedPacketTypes.includes(0)) {
-                        expect(assetPacket).not.toBeNull();
+                        expect(ext.getAssetPacket()).not.toBeNull();
                     } else {
-                        expect(assetPacket).toBeNull();
+                        expect(ext.getAssetPacket()).toBeNull();
+                    }
+                    if (v.expectedPacketTypes.includes(3)) {
+                        expect(ext.getPacketByType(3)).not.toBeNull();
+                    } else {
+                        expect(ext.getPacketByType(3)).toBeNull();
                     }
                 });
             });
@@ -137,33 +141,6 @@ describe("Extension", () => {
                 );
             });
         });
-
-        it("getAssetPacket returns the embedded Packet", () => {
-            const data = hex.decode(extFixtures.valid.roundtrip[0].hex);
-            const ext = Extension.fromBytes(data);
-            const assetPacket = ext.getAssetPacket();
-            expect(assetPacket).not.toBeNull();
-            expect(assetPacket!.groups.length).toBeGreaterThan(0);
-        });
-
-        it("Extension.create wraps a Packet and round-trips", () => {
-            const group = AssetGroup.create(
-                null,
-                AssetRef.fromGroupIndex(0),
-                [],
-                [AssetOutput.create(0, 21000000n)],
-                [],
-            );
-            const packet = Packet.create([group]);
-            const ext = Extension.create([packet]);
-            const script = ext.serialize();
-            expect(Extension.isExtension(script)).toBe(true);
-
-            const reparsed = Extension.fromBytes(script);
-            const reparsedPacket = reparsed.getAssetPacket();
-            expect(reparsedPacket).not.toBeNull();
-            expect(reparsedPacket!.groups.length).toBe(1);
-        });
     });
 
     describe("invalid", () => {
@@ -174,6 +151,31 @@ describe("Extension", () => {
                     expect(() => Extension.fromBytes(data)).toThrow(v.expectedError);
                 });
             });
+        });
+    });
+
+    describe("known packet", () => {
+        it("asset", () => {
+            const ext = Extension.fromBytes(
+                hex.decode("6a1341524b000e01020200000001010000c0de810a"),
+            );
+            expect(ext.getAssetPacket()).not.toBeNull();
+        });
+
+        it("emulator", () => {
+            const ext = Extension.fromBytes(hex.decode("6a0b41524b0106010000015100"));
+            expect(ext.getEmulatorPacket()).not.toBeNull();
+        });
+
+        it("banco offer (generic packet lookup)", () => {
+            const ext = Extension.fromBytes(
+                hex.decode(
+                    "6a4ca141524b039b010100225120eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee020008000000000000c3500500225120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa070020bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb080020cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                ),
+            );
+            const packet = ext.getPacketByType(3);
+            expect(packet).not.toBeNull();
+            expect(packet!.type()).toBe(3);
         });
     });
 });

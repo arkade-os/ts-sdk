@@ -339,16 +339,15 @@ export interface Asset {
  */
 export interface Recipient {
     address: string;
-
     /**
      * BTC amount in satoshis.
      *
      * @defaultValue Dust amount (`330`).
      */
     amount?: number;
-
     /** Assets to send to the same recipient (`assetId` & `amount`) */
     assets?: Asset[];
+    extensions?: Array<{ type: number; payload: Uint8Array }>; // custom extension packets to embed in the tx
 }
 
 /**

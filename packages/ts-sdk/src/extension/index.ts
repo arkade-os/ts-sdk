@@ -1,11 +1,12 @@
 import { hex } from "@scure/base";
 import { Script } from "@scure/btc-signer";
 import { equalBytes } from "@scure/btc-signer/utils.js";
-import { Packet } from "./asset/packet";
-import { BufferReader } from "./asset/utils";
+import { Packet } from "./asset";
+import { BufferReader } from "./utils";
 import { ExtensionPacket, UnknownPacket } from "./packet";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import type { Transaction } from "../utils/transaction";
+import { EmulatorPacket } from "./emulator";
 
 export type { ExtensionPacket } from "./packet";
 export { UnknownPacket } from "./packet";
@@ -206,16 +207,52 @@ export class Extension {
         }
         return null;
     }
+
+    /**
+     * getEmulatorPacket returns the embedded EmulatorPacket, or null if not present.
+     */
+    getEmulatorPacket(): EmulatorPacket | null {
+        for (const p of this.packets) {
+            if (p instanceof EmulatorPacket) {
+                return p;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * getPacketByType returns the first packet matching the given type tag, or null.
+     */
+    getPacketByType(packetType: number): ExtensionPacket | null {
+        for (const p of this.packets) {
+            if (p.type() === packetType) {
+                return p;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Returns all embedded packets in insertion order. Used when callers need
+     * to rebuild an Extension from an existing one (e.g. appending a new packet).
+     */
+    getPackets(): readonly ExtensionPacket[] {
+        return this.packets;
+    }
 }
 
 /**
  * parsePacket dispatches to a known packet type or falls back to UnknownPacket.
  */
 function parsePacket(packetType: number, data: Uint8Array): ExtensionPacket {
-    if (packetType === Packet.PACKET_TYPE) {
-        return Packet.fromBytes(data);
+    switch (packetType) {
+        case Packet.PACKET_TYPE:
+            return Packet.fromBytes(data);
+        case EmulatorPacket.PACKET_TYPE:
+            return EmulatorPacket.fromBytes(data);
+        default:
+            return new UnknownPacket(packetType, data);
     }
-    return new UnknownPacket(packetType, data);
 }
 
 /**
