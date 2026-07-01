@@ -6,6 +6,7 @@ export interface GroupMembership {
      * Stable id of the action; txs sharing it group together. Third-party
      * resolvers should namespace it (`"vendor:thing"`) to avoid colliding with
      * other resolvers' groups. SDK built-ins use namespaced ids such as `boarding:`.
+     * A membership with an empty groupId is dropped.
      */
     groupId: string;
     /** Human label for the action, e.g. "Dice game". */
@@ -21,7 +22,8 @@ export interface GroupMembership {
      * This tx's unsigned sat contribution to this group. Defaults to the tx's
      * full amount; the builder applies direction. Use it to split a batched tx
      * across groups. Same-key receive rows paired with a sent row are treated
-     * as change and excluded from `Activity.amount`.
+     * as change and excluded from `Activity.amount`. A membership with a
+     * non-finite amount (NaN/Infinity) is dropped.
      */
     amount?: number;
 }
@@ -79,7 +81,8 @@ export interface Activity {
  * - Contributions are signed by tx direction; same-key received rows paired with
  *   a sent row are treated as change and excluded from the activity amount.
  * - A resolver that throws in resolve() or rejects in prepare() is isolated and
- *   contributes no memberships.
+ *   contributes no memberships. A membership with an empty `groupId` or a
+ *   non-finite `amount` is dropped the same way.
  */
 export async function buildActivities(
     txs: ArkTransaction[],
@@ -132,6 +135,8 @@ export async function buildActivities(
                 ms = undefined;
             }
             for (const m of ms ?? []) {
+                if (!m.groupId) continue;
+                if (m.amount !== undefined && !Number.isFinite(m.amount)) continue;
                 const existing = perGroup.get(m.groupId);
                 perGroup.set(m.groupId, existing ? merge(existing, m) : { ...m });
             }
