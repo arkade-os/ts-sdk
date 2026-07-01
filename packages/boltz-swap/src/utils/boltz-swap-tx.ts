@@ -271,6 +271,13 @@ export const targetFee = (
     satPerVbyte: number,
     constructTx: (fee: bigint) => Transaction,
 ): Transaction => {
-    const tx = constructTx(BigInt(1));
-    return constructTx(BigInt(Math.ceil((tx.vsize + tx.inputsLength) * satPerVbyte)));
+    // Size the fee from the exact virtual size. The tx is finalized with a
+    // real-length 64-byte Taproot key-path signature placeholder, so `vsize`
+    // already matches the broadcast size — no per-input pad. The old
+    // `+ inputsLength` overpaid ~1 sat/input, which claimBtc subtracts from the
+    // recipient output, so the claim under-delivered by 1 sat/input. Sizing to the
+    // true vsize keeps targetFee <= Boltz's grossed-up `minerFees.user.claim`, so
+    // claimBtc's max() picks the reserved estimate and delivers the exact amount.
+    const probe = constructTx(BigInt(1));
+    return constructTx(BigInt(Math.ceil(probe.vsize * satPerVbyte)));
 };
