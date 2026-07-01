@@ -77,6 +77,7 @@ import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
 import { DelegateProvider } from "../providers/delegate";
 import { buildTransactionHistory } from "../utils/transactionHistory";
+import { createDefaultActivityRegistry, buildActivities, type Activity } from "./activity";
 import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
 import { Extension } from "../extension";
 import { DelegateVtxo } from "../script/delegate";
@@ -301,6 +302,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
     // already on their way out. The set is in-memory only: a process crash
     // clears it, and a stale entry only hides a VTXO (never spends one).
     protected _pendingSpendOutpoints = new Set<string>();
+
+    /** Activity resolvers consumed by {@link getActivityHistory}. */
+    readonly activity = createDefaultActivityRegistry();
 
     get assetManager(): IReadonlyAssetManager {
         return this._assetManager;
@@ -862,6 +866,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 .then((res) => res.vtxos[0]?.createdAt.getTime());
 
         return buildTransactionHistory(allVtxos, boardingTxs, commitmentsToIgnore, getTxCreatedAt);
+    }
+
+    /**
+     * Wallet history grouped by registered activity resolvers. With no resolver match,
+     * rows bucket by transaction key so send/change pairs stay together.
+     */
+    async getActivityHistory(): Promise<Activity[]> {
+        return buildActivities(await this.getTransactionHistory(), this.activity.all());
     }
 
     /**
