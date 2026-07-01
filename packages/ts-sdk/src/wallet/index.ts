@@ -894,4 +894,10 @@ export interface IReadonlyWallet {
 
     /** Readonly asset manager bound to this wallet instance. */
     assetManager: IReadonlyAssetManager;
+
+    /**
+     * Wipe all locally persisted wallet data (VTXOs, UTXOs, history, sync
+     * cursor, contracts).
+     */
+    clear(): Promise<void>;
 }

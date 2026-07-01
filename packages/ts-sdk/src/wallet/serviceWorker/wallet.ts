@@ -966,21 +966,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         }
     }
 
-    /** Clear cached wallet state from both the page and service worker storage. */
-    async clear() {
+    /** This tells the service worker to wipe all locally persisted wallet data. */
+    async clear(): Promise<void> {
         const message: RequestClear = {
             id: getRandomId(),
             tag: this.messageTag,
             type: "CLEAR",
         };
-        // Clear page-side storage to maintain parity with SW
-        try {
-            const address = await this.getAddress();
-            await this.walletRepository.deleteVtxos(address);
-        } catch (_) {
-            console.warn("Failed to clear vtxos from wallet repository");
-        }
-
         await this.sendMessage(message);
     }
 

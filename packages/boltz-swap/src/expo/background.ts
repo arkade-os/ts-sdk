@@ -68,6 +68,7 @@ function createBackgroundWalletShim(args: {
         sendBitcoin: async () => notImplemented("sendBitcoin"),
         send: async () => notImplemented("send"),
         settle: async () => notImplemented("settle"),
+        clear: async () => notImplemented("clear"),
         assetManager: new Proxy({} as IWallet["assetManager"], {
             get: () => notImplemented("assetManager" as keyof IWallet),
         }),
