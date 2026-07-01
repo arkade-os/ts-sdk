@@ -1,6 +1,6 @@
 import { hex } from "@scure/base";
 import { normalizeToXOnlyPublicKey } from "./keys";
-import { VHTLC } from "@arkade-os/sdk";
+import { getNetwork, VHTLC, type NetworkName } from "@arkade-os/sdk";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 
 /**
@@ -77,7 +77,7 @@ export function createVHTLCScript({
     if (!vhtlcScript) throw new Error("Failed to create VHTLC script");
 
     // validate vhtlc script
-    const hrp = network === "bitcoin" ? "ark" : "tark";
+    const hrp = getNetwork(network as NetworkName).hrp;
     const vhtlcAddress = vhtlcScript.address(hrp, serverXOnlyPublicKey).encode();
 
     return { vhtlcScript, vhtlcAddress };

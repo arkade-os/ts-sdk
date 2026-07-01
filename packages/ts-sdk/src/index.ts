@@ -205,7 +205,7 @@ import {
 import { Intent } from "./intent";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
-import { networks, Network, NetworkName } from "./networks";
+import { getNetwork, networks, Network, NetworkName } from "./networks";
 import {
     RestIndexerProvider,
     IndexerProvider,
@@ -430,6 +430,7 @@ export {
     ArkNote,
 
     // Network
+    getNetwork,
     networks,
 
     // DB

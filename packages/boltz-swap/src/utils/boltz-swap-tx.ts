@@ -4,7 +4,7 @@
  */
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { hex } from "@scure/base";
-import { Script, Transaction } from "@scure/btc-signer";
+import { Script, ScriptNum, Transaction } from "@scure/btc-signer";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { compareBytes, equalBytes } from "@scure/btc-signer/utils.js";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
@@ -29,24 +29,6 @@ type SerializedTree = {
 };
 
 export type DetectedSwapOutput = TransactionOutput & { vout: number };
-
-// ---------------------------------------------------------------------------
-// Network constants
-// ---------------------------------------------------------------------------
-
-export const REGTEST_NETWORK = {
-    bech32: "bcrt",
-    pubKeyHash: 0x6f,
-    scriptHash: 0xc4,
-    wif: 0xef,
-};
-
-export const MUTINYNET_NETWORK = {
-    bech32: "tb",
-    pubKeyHash: 0x6f,
-    scriptHash: 0xc4,
-    wif: 0xef,
-};
 
 // ---------------------------------------------------------------------------
 // Swap tree serialization
@@ -88,6 +70,69 @@ export const deserializeSwapTree = (tree: string | SerializedTree): SwapTree => 
             { probability: 49, value: refundLeaf },
         ]),
     };
+};
+
+// ---------------------------------------------------------------------------
+// BTC chain HTLC leaf assertions
+// ---------------------------------------------------------------------------
+
+// Boltz uses tapscript v1 leaves only; see NArk BtcHtlcScripts.
+const TAPLEAF_V1 = 0xc0;
+const PUSH_32 = Uint8Array.of(0x20);
+
+// CLTV timeout is a canonical ScriptNum: at most 5 bytes (BIP65) and minimally
+// encoded. Enforce both so only the exact Boltz refund-leaf shape is accepted.
+const decodeScriptNum = (data: unknown): number | undefined =>
+    data instanceof Uint8Array && data.length > 0
+        ? Number(ScriptNum(5, true).decode(data))
+        : undefined;
+
+/**
+ * Asserts a BTC chain-swap HTLC's leaves match the canonical Boltz shape and
+ * carry the agreed preimage hash, keys, and CLTV. Throws on any deviation.
+ *
+ * claim:  OP_SIZE 32 OP_EQUALVERIFY OP_HASH160 <h160> OP_EQUALVERIFY <claim> OP_CHECKSIG
+ * refund: <refund> OP_CHECKSIGVERIFY <timeout> OP_CHECKLOCKTIMEVERIFY
+ */
+export const assertChainHtlcLeaves = (
+    tree: SwapTree,
+    expected: {
+        preimageHash160: Uint8Array;
+        claimXOnly: Uint8Array;
+        refundXOnly: Uint8Array;
+        timeoutBlockHeight: number;
+    },
+): void => {
+    if (tree.claimLeaf.version !== TAPLEAF_V1 || tree.refundLeaf.version !== TAPLEAF_V1)
+        throw new Error("unexpected leaf version");
+
+    const claim = Script.decode(tree.claimLeaf.output);
+    if (
+        claim.length !== 8 ||
+        claim[0] !== "SIZE" ||
+        !(claim[1] instanceof Uint8Array) ||
+        !equalBytes(claim[1], PUSH_32) ||
+        claim[2] !== "EQUALVERIFY" ||
+        claim[3] !== "HASH160" ||
+        !(claim[4] instanceof Uint8Array) ||
+        !equalBytes(claim[4], expected.preimageHash160) ||
+        claim[5] !== "EQUALVERIFY" ||
+        !(claim[6] instanceof Uint8Array) ||
+        !equalBytes(claim[6], expected.claimXOnly) ||
+        claim[7] !== "CHECKSIG"
+    )
+        throw new Error("unexpected claim leaf");
+
+    const refund = Script.decode(tree.refundLeaf.output);
+    if (
+        refund.length !== 4 ||
+        !(refund[0] instanceof Uint8Array) ||
+        !equalBytes(refund[0], expected.refundXOnly) ||
+        refund[1] !== "CHECKSIGVERIFY" ||
+        decodeScriptNum(refund[2]) !== expected.timeoutBlockHeight ||
+        refund[3] !== "CHECKLOCKTIMEVERIFY"
+    )
+        throw new Error("unexpected refund leaf");
 };
 
 // ---------------------------------------------------------------------------
@@ -144,7 +189,7 @@ export const tweakMusig = (musig: MusigKeyAgg, tree: TapTree): MusigKeyAgg => {
 // Swap output detection
 // ---------------------------------------------------------------------------
 
-const toXOnly = (pubKey: Uint8Array): Uint8Array => {
+export const toXOnly = (pubKey: Uint8Array): Uint8Array => {
     if (pubKey.length === 32) return pubKey;
     if (pubKey.length === 33) {
         if (pubKey[0] !== 0x02 && pubKey[0] !== 0x03) {
@@ -157,7 +202,7 @@ const toXOnly = (pubKey: Uint8Array): Uint8Array => {
     throw new Error(`Invalid public key length: expected 32 or 33 bytes, got ${pubKey.length}`);
 };
 
-const p2trScript = (publicKey: Uint8Array): Uint8Array =>
+export const p2trScript = (publicKey: Uint8Array): Uint8Array =>
     Script.encode(["OP_1", toXOnly(publicKey)]);
 
 export const detectSwapOutput = (
