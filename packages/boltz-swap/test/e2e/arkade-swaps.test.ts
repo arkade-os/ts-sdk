@@ -1025,14 +1025,14 @@ describe("ArkadeSwaps", () => {
                 );
 
                 const btcBalance = await getBtcAddressFunds(toAddress);
-                // serverLockAmount = receiverLockAmount + minerFees.user.claim grosses the
-                // estimated claim fee into the server lock-up. claimBtc subtracts the
-                // larger of that estimate and the actual claim-tx fee (sized at
-                // feeSatsPerByte), so the receiver nets exactly receiverLockAmount when the
-                // estimate covers the fee and a few sats less when the actual fee is higher.
-                // Assert that bound rather than an exact sat value.
-                expect(btcBalance).toBeLessThanOrEqual(amountSats);
-                expect(btcBalance).toBeGreaterThan(amountSats - 200);
+                // serverLockAmount = receiverLockAmount + minerFees.user.claim grosses the claim
+                // fee into the server lock-up, and claimBtc pays max(that estimate, the claim's
+                // own vsize fee). Dropping the per-input pad keeps targetFee <= that estimate for
+                // standard destinations at feeSatsPerByte = 1 — it ties for a P2TR output and
+                // stays under for a smaller P2WPKH one — so the estimate wins (or ties) and the
+                // receiver nets exactly receiverLockAmount. (The bug only ever surfaced when
+                // targetFee exceeded the estimate, which the +inputsLength pad caused for P2TR.)
+                expect(btcBalance).toBe(amountSats);
             });
 
             it("should send less than amount to btc address", { timeout: 10_000 }, async () => {

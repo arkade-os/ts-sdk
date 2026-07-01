@@ -1694,6 +1694,21 @@ export class ArkadeSwaps {
 
     /**
      * Claim sats on BTC chain by claiming the HTLC.
+     *
+     * The claim output is `swapOutput.amount − max(feeToDeliverExactAmount, targetFee)`.
+     * `feeToDeliverExactAmount = serverLockAmount − amount` is Boltz's grossed-up
+     * `minerFees.user.claim`, reserved inside the server lock-up so the receiver nets the
+     * exact requested amount. `targetFee` sizes the fee from the claim's true vsize; for the
+     * standard 1-in/1-out P2TR key-path claim at `feeSatsPerByte = 1` it ties (P2TR) or stays
+     * under (smaller P2WPKH) the reserved estimate, so the estimate wins and delivery is exact.
+     *
+     * Boundaries inherent to this fee model (not regressions):
+     * - Min-relay floor: at the default `feeSatsPerByte = 1` the fee equals `vsize` (1 sat/vB),
+     *   the relay floor Core and Boltz's own claims use. No extra cushion is added — it would
+     *   reintroduce a shortfall.
+     * - `feeSatsPerByte > 1` or an oversized destination script makes `targetFee` exceed Boltz's
+     *   fixed estimate, leaving a residual shortfall by design (the real network fee is paid).
+     *
      * @param pendingSwap - The pending chain swap with BTC transaction hex.
      * @returns The BTC transaction ID of the claim.
      */
