@@ -1,7 +1,152 @@
 # AGENTS.md
 
-Agent project instructions for Codex and other agents that read AGENTS.md.
+This file provides guidance to AI coding assistants when working with code in this repository.
 
-Read and follow the shared project guidance imported below.
+## Project Overview
 
-@FOUNDATION.md
+**arkade-monorepo** — A pnpm workspace monorepo for the Arkade Bitcoin wallet ecosystem. Contains two published packages: `@arkade-os/sdk` (Bitcoin wallet SDK with Taproot/Ark protocol) and `@arkade-os/boltz-swap` (Lightning/chain swaps via Boltz). Both target browser, Node.js, and React Native (Expo).
+
+## Reference Implementation & Technical Direction
+
+**The .NET Ark SDK (`NArk`, ArkLabsHQ) is the reference implementation for this TypeScript SDK** —
+for feature parity and, more broadly, for technical direction and architecture. When designing a new
+feature, refactoring, or resolving an ambiguity about how something *should* work, check how `NArk`
+does it and align with it unless there's a TypeScript- or platform-specific reason to diverge (and
+note the reason when you do). A local checkout typically lives alongside this repo at `../dotnet-sdk`.
+
+Context for why this matters: this TypeScript SDK began as a fairly literal port of the Go SDK. That
+origin left it carrying Go idioms and structural choices that don't fit TypeScript well, so parts of
+the codebase are shaped by the translation rather than by what's idiomatic or best for this platform.
+Treat such patterns as legacy to be improved, not as precedent to extend. The `NArk` codebase is the
+better-architected, more deliberately designed expression of the same domain; prefer its structure
+and naming when they conflict with the inherited Go-shaped patterns here.
+
+## Core Package, Plugins & Code Reuse
+
+`@arkade-os/sdk` is the core package. `@arkade-os/boltz-swap` should be treated as a plugin-style
+extension of that core, and as one example of the many integrations/plugins expected to exist over
+time. Prefer reusing existing SDK utilities, types, primitives, and helper functions from
+`packages/ts-sdk` instead of duplicating equivalent logic in `boltz-swap` or future plugins. When
+shared behavior is generally useful beyond one plugin and belongs to the wallet/protocol core,
+promote it into `ts-sdk` rather than copying it outward.
+
+Keep the dependency and ownership direction clear: plugins may depend on and consume `ts-sdk`, but
+`ts-sdk` must remain independent of plugin packages and must not import from or special-case
+`boltz-swap`. Core capabilities flow from `ts-sdk` outward to plugins.
+
+## Commands
+
+```bash
+# Monorepo-wide
+pnpm run build                # Build all packages (ts-sdk must build before boltz-swap)
+pnpm test                     # Run all unit and integration tests
+pnpm run test:unit            # Run all unit tests
+pnpm run test:integration     # Run all integration tests against the root regtest stack
+pnpm run lint                 # Check formatting (prettier)
+
+# Per-package (from repo root)
+pnpm -C packages/ts-sdk test              # Unit tests for SDK
+pnpm -C packages/ts-sdk test:unit         # Unit tests excluding e2e
+pnpm -C packages/boltz-swap test          # Unit tests for boltz-swap
+pnpm -C packages/boltz-swap test:unit     # Unit tests excluding e2e
+
+# Single test file
+pnpm -C packages/ts-sdk vitest run test/wallet.test.ts
+pnpm -C packages/boltz-swap vitest run test/swap-manager.test.ts
+
+# Single test by name
+pnpm -C packages/ts-sdk vitest run -t "test name pattern"
+
+# Integration tests (require Docker regtest stack)
+# `test:integration` runs each package's full cycle (reset + up + setup + test)
+# via `scripts/regtest.sh <pkg> cycle`, using packages/<pkg>/.env.regtest.
+pnpm run test:integration              # Both packages, end-to-end
+pnpm run test:integration:ts-sdk       # ts-sdk only
+pnpm run test:integration:boltz-swap   # boltz-swap only
+
+# Per-package stack control (replace :ts-sdk with :boltz-swap for the other)
+pnpm run regtest:up:ts-sdk
+pnpm run regtest:setup:ts-sdk
+pnpm run regtest:test:ts-sdk
+pnpm run regtest:down:ts-sdk
+pnpm run regtest:reset:ts-sdk
+
+# Release (package-scoped; target = sdk | boltz-swap | all)
+pnpm run release -- boltz-swap patch          # Boltz bugfix only
+pnpm run release -- sdk patch                 # SDK + dependent boltz-swap patch
+pnpm run release -- sdk prepatch --preid beta # Mirrors prerelease into boltz-swap
+pnpm run release -- all patch                 # Bump both
+pnpm run release:dry-run -- sdk patch         # Preview without changes
+pnpm run release:cleanup                      # Auto-detect dirty release artifacts
+```
+
+Tags are `@arkade-os/sdk/<version>` and `@arkade-os/boltz-swap/<version>` (no `v<version>`). Releasing SDK implies a dependent boltz-swap release because boltz-swap depends on SDK via `workspace:*`; override with `--boltz-bump <bump-or-version>`. The script runs tests, builds, commits, tags, publishes to npm (requires local npm credentials), and pushes commit + tags to `origin`.
+
+## Code Style
+
+- **Prettier**: double quotes, semicolons, trailing commas (all), 100 char width, 4-space indent
+- **Package manager**: pnpm 10.25.x only (enforced). Node >=24.15.0 (see `.nvmrc`)
+- **TypeScript**: 5.9, strict mode, target ES2022, module resolution "bundler"
+
+## Architecture
+
+### Workspace Structure
+
+```
+config/              # Shared configs (tsconfig.base.json, vitest.base.ts)
+packages/
+  ts-sdk/            # @arkade-os/sdk — core Bitcoin wallet SDK
+  boltz-swap/        # @arkade-os/boltz-swap — Boltz submarine swaps (depends on ts-sdk)
+regtest/             # Git submodule (arkade-regtest) — shared regtest environment
+scripts/
+  release.mjs        # Root package-scoped release orchestrator (SDK first, then boltz-swap)
+  release.sh         # Thin wrapper that execs release.mjs
+```
+
+### `@arkade-os/sdk` (packages/ts-sdk)
+
+Multi-entry dual ESM/CJS build via `tsup` (see `tsup.config.ts`). Subpath exports cover adapters, repositories (sqlite/realm), the Expo worker, and the Expo wallet (including its background-task entry).
+
+Key layers:
+- **Wallet** (`src/wallet/`) — `Wallet` (signing), `ReadonlyWallet` (watch-only), `OnchainWallet` (on-chain UTXOs). Service worker variants communicate via `MessageBus`.
+- **Providers** (`src/providers/`) — `ArkProvider` (Ark server/SSE), `IndexerProvider` (VTXO queries), `OnchainProvider` (Esplora). Each has REST and Expo-compatible implementations.
+- **Repositories** (`src/repositories/`) — `WalletRepository` and `ContractRepository` interfaces with IndexedDB, InMemory, FileSystem, AsyncStorage, SQLite, and Realm backends. Interfaces carry `readonly version: N` to force compile-time updates on schema changes.
+- **Contracts** (`src/contracts/`) — Event-driven pipeline with strict ownership rules:
+  - `ContractWatcher` is event-only: emits `vtxo_received`/`vtxo_spent`, never writes to repositories, never reads VTXO state from `IndexerProvider`.
+  - `ContractManager` owns orchestration: subscribes to watcher events, fetches fresh VTXO data from `IndexerProvider`, and is the **only** component that writes VTXO/contract state to repositories.
+  - `Wallet`/`ReadonlyWallet` read balance and VTXO state from repositories only (offline-first); any indexer synchronization is delegated to `ContractManager`.
+  - Repositories are the system of record and are mutated exclusively by `ContractManager`.
+- **Service Worker** (`src/worker/`) — `MessageBus` orchestrator with pluggable `MessageHandler`s and tick-based scheduling.
+- **Bitcoin primitives** — `src/script/` (tapscript, VHTLC, Ark addresses), `src/musig2/` (MuSig2), `src/tree/` (transaction trees), `src/forfeit.ts` (unilateral exit).
+
+### `@arkade-os/boltz-swap` (packages/boltz-swap)
+
+Built with `tsup` (multi-entry ESM+CJS+dts). Depends on `@arkade-os/sdk` via `workspace:*`.
+
+Key components:
+- **ArkadeSwaps** (`src/arkade-swaps.ts`) — Main class orchestrating swap lifecycle.
+- **BoltzSwapProvider** (`src/boltz-swap-provider.ts`) — Boltz API integration for swap creation/monitoring.
+- **SwapManager** (`src/swap-manager.ts`) — Autonomous background swap monitoring and execution.
+- **Repositories** (`src/repositories/`) — `SwapRepository` interface with IndexedDB, InMemory, SQLite, and Realm implementations.
+- Swap types: Reverse (Lightning→Ark), Submarine (Ark→Lightning), Chain (ARK↔BTC on-chain).
+
+### Integration Testing Stack (regtest/)
+
+Git submodule pointing to [arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest). Manages a Docker Compose stack (Bitcoin Core, Fulcrum, mempool, NBXplorer, arkd, boltz, LND, fulmine, and supporting services) driven by the in-house Node CLI `regtest.mjs`. Use `node regtest/regtest.mjs start` / `stop` / `clean` (or the `scripts/regtest.sh` controller). Run `git submodule update --init` after cloning.
+
+### Shared Config Pattern
+
+Packages extend shared base configs from `config/`:
+- `tsconfig.json` extends `../../config/tsconfig.base.json`
+- `vitest.config.ts` merges with `../../config/vitest.base.ts`
+
+### Testing
+
+- Vitest with `globals: true`, `fileParallelism: false`
+- ts-sdk uses `test/polyfill.js` (IndexedDB shim + EventSource polyfill for Node)
+- boltz-swap uses `test/setup.ts`
+- Integration tests live in `test/e2e/` within each package and require the Docker regtest stack
+
+## Local Scratch Files
+
+`.gitignore` excludes `*.agents.md`, `TASKS.md`, `CLAUDE.md`, `REVIEW.md`, and `.claude/`. These are local scratch notes — drafts, review snapshots, AI session state — and are **not** authoritative project guidance. Authoritative guidance lives in this `AGENTS.md` (and the package READMEs); treat anything in an ignored file as transient context that may be stale or contradict the codebase.
