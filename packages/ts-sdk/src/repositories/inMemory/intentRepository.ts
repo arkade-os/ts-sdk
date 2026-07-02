@@ -26,7 +26,8 @@ export class InMemoryIntentRepository implements IntentRepository {
     async getIntents(filter?: IntentFilter): Promise<ArkIntent[]> {
         let out = [...this.byId.values()];
         if (filter) out = out.filter((i) => matches(i, filter));
-        // Stable order: insertion order of the Map is preserved.
+        // Stable order shared with all persistent backends: (createdAt, intentTxId).
+        out.sort((a, b) => a.createdAt - b.createdAt || a.intentTxId.localeCompare(b.intentTxId));
         const skip = filter?.skip ?? 0;
         const take = filter?.take ?? out.length;
         return out.slice(skip, skip + take).map(clone);

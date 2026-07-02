@@ -68,11 +68,20 @@ export function intentRepositoryConformance(
             expect((await r.getIntents({ validAt: 25 })).map((i) => i.intentTxId)).toEqual(["b"]);
         });
 
-        it("paginates with skip/take on a stable order", async () => {
+        it("orders by (createdAt, intentTxId) across skip/take", async () => {
             const r = await make();
-            for (const id of ["a", "b", "c"]) await r.saveIntent(intent(id));
-            const page = await r.getIntents({ skip: 1, take: 1 });
-            expect(page.length).toBe(1);
+            // Written out of order, with same-createdAt ties and a
+            // non-insertion-order timestamp to pin the cross-backend contract.
+            await r.saveIntent(intent("d", { createdAt: 2 }));
+            await r.saveIntent(intent("b", { createdAt: 1 }));
+            await r.saveIntent(intent("a", { createdAt: 1 }));
+            await r.saveIntent(intent("c", { createdAt: 2 }));
+            // (createdAt, intentTxId): (1,a) (1,b) (2,c) (2,d)
+            expect((await r.getIntents()).map((i) => i.intentTxId)).toEqual(["a", "b", "c", "d"]);
+            expect((await r.getIntents({ skip: 1, take: 2 })).map((i) => i.intentTxId)).toEqual([
+                "b",
+                "c",
+            ]);
         });
 
         it("getLockedVtxoOutpoints excludes terminal intents", async () => {
