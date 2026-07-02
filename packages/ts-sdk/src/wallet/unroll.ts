@@ -145,8 +145,8 @@ export namespace Unroll {
 
         /**
          * Resolve a chain tx's raw PSBT (base64). Repo first when configured;
-         * indexer on a miss, then best-effort cached so a later exit (or a
-         * Lite-mode wallet) doesn't re-fetch. Never throws from the cache
+         * indexer on a miss, then best-effort cached so a later exit doesn't
+         * re-fetch. Never throws from the cache
          * write — exit correctness must not depend on persistence.
          */
         private async resolveVirtualTxBase64(next: ChainTx): Promise<string | undefined> {
