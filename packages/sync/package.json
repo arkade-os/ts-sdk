@@ -1,0 +1,60 @@
+{
+    "name": "@arkade-os/sync",
+    "version": "0.0.1",
+    "type": "module",
+    "description": "End-to-end-encrypted backup, restore and multi-device sync for Arkade wallet state (contracts, coins, history) via the bucket-sync protocol. The server only ever stores opaque ciphertext.",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "import": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.js"
+            },
+            "require": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.cjs"
+            }
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+        "typecheck": "tsc --noEmit",
+        "format": "prettier --write src test",
+        "lint": "prettier --check src test",
+        "test": "vitest run",
+        "test:unit": "vitest run --exclude test/e2e",
+        "test:integration": "vitest run test/e2e/**",
+        "prepack": "pnpm run build"
+    },
+    "keywords": [
+        "arkade",
+        "ark",
+        "bitcoin",
+        "backup",
+        "restore",
+        "sync",
+        "encryption",
+        "wallet",
+        "e2ee"
+    ],
+    "author": "Arkade-OS",
+    "license": "MIT",
+    "dependencies": {
+        "@arkade-os/sdk": "workspace:*",
+        "@noble/ciphers": "2.2.0",
+        "@noble/hashes": "2.0.1",
+        "@scure/base": "2.0.0"
+    },
+    "devDependencies": {
+        "fake-indexeddb": "6.2.5"
+    },
+    "publishConfig": {
+        "access": "public",
+        "registry": "https://registry.npmjs.org/"
+    },
+    "packageManager": "pnpm@10.25.0"
+}
