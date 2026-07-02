@@ -8,7 +8,6 @@
 import { Intent } from "../intent";
 
 export interface EmulatorInfo {
-    version: string;
     signerPubkey: string;
 }
 
@@ -68,10 +67,7 @@ export class RestEmulatorProvider implements EmulatorProvider {
         if (typeof signerPubkey !== "string" || !signerPubkey) {
             throw new Error("Invalid emulator info response: missing signerPubkey");
         }
-        return {
-            version: data.version ?? "",
-            signerPubkey,
-        };
+        return { signerPubkey };
     }
 
     async submitTx(

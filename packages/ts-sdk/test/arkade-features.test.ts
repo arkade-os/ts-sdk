@@ -102,7 +102,7 @@ function providers(
     };
     const emulator: EmulatorProvider = {
         async getInfo(): Promise<EmulatorInfo> {
-            return { version: "t", signerPubkey: hex.encode(emulatorKey) };
+            return { signerPubkey: hex.encode(emulatorKey) };
         },
         submitTx: vi.fn(async (arkTx: string, cps: string[]) => {
             captured.arkTx = arkTx;

@@ -80,7 +80,7 @@ function stubProviders(server: Uint8Array, emulatorKey: Uint8Array) {
     };
     const emulator: EmulatorProvider = {
         async getInfo(): Promise<EmulatorInfo> {
-            return { version: "t", signerPubkey: hex.encode(emulatorKey) };
+            return { signerPubkey: hex.encode(emulatorKey) };
         },
         async submitTx(arkTx: string, cps: string[]) {
             return { signedArkTx: arkTx, signedCheckpointTxs: cps };

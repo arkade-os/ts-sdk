@@ -345,31 +345,6 @@ export class Arkade {
     }
 
     /**
-     * Build a client from an existing wallet, reusing its identity, network and
-     * indexer. The `arkade` provider must still be supplied (a `Wallet` does not
-     * hold one); `emulator` is optional and only needed for covenant contracts.
-     */
-    static async fromWallet(
-        wallet: {
-            identity: Identity;
-            network: Network;
-            indexerProvider: Pick<IndexerProvider, "getVtxos">;
-        },
-        opts: {
-            arkade: Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
-            emulator?: EmulatorProvider;
-        },
-    ): Promise<Arkade> {
-        return Arkade.connect({
-            arkade: opts.arkade,
-            emulator: opts.emulator,
-            indexer: wallet.indexerProvider,
-            identity: wallet.identity,
-            network: wallet.network,
-        });
-    }
-
-    /**
      * Instantiate a contract from a program and its constructor arguments. The
      * `program`'s literal type is preserved (`const` inference) so the resulting
      * contract's `functions` map is strongly typed — `functions.<name>(...)`

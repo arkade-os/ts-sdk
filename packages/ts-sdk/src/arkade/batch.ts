@@ -63,16 +63,8 @@ export function createArkadeBatchHandler(
             const intentIdHash = sha256(utf8IntentId);
             const intentIdHashStr = hex.encode(intentIdHash);
 
-            let skip = true;
-            for (const idHash of event.intentIdHashes) {
-                if (idHash === intentIdHashStr) {
-                    await arkProvider.confirmRegistration(intentId);
-                    skip = false;
-                    break;
-                }
-            }
-
-            if (skip) return { skip };
+            if (!event.intentIdHashes.includes(intentIdHashStr)) return { skip: true };
+            await arkProvider.confirmRegistration(intentId);
 
             batchId = event.id;
 
@@ -140,7 +132,6 @@ export function createArkadeBatchHandler(
 
             let commitmentPsbt = Transaction.fromPSBT(base64.decode(event.commitmentTx));
             const signedForfeits: string[] = [];
-            let hasBoardingInputs = false;
             let connectorIndex = 0;
             const connectorLeaves = connectorTree?.leaves() || [];
 
@@ -168,7 +159,6 @@ export function createArkadeBatchHandler(
                     });
 
                     boardingIndices.push(boardingIdx);
-                    hasBoardingInputs = true;
                 } else {
                     // Recoverable or subdust VTXOs don't get a forfeit tx, and the
                     // server allocates no connector for them. Skip so we don't consume
@@ -249,6 +239,7 @@ export function createArkadeBatchHandler(
                 }
             }
 
+            const hasBoardingInputs = boardingIndices.length > 0;
             const commitmentB64 = hasBoardingInputs
                 ? base64.encode(commitmentPsbt.toPSBT())
                 : event.commitmentTx;

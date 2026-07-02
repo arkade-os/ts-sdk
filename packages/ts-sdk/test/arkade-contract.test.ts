@@ -93,7 +93,7 @@ function stubProviders(server: Uint8Array, emulatorKey: Uint8Array) {
     const captured: { arkTx?: string } = {};
     const emulator: EmulatorProvider = {
         async getInfo(): Promise<EmulatorInfo> {
-            return { version: "t", signerPubkey: hex.encode(emulatorKey) };
+            return { signerPubkey: hex.encode(emulatorKey) };
         },
         async submitTx(arkTx: string, checkpointTxs: string[]) {
             captured.arkTx = arkTx;

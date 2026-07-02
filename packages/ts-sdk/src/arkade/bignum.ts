@@ -39,33 +39,3 @@ export function encode(value: bigint): Uint8Array {
 export function decode(value: Uint8Array): bigint {
     return codec.decode(value);
 }
-
-/**
- * Encode `value` to exactly `size` bytes by padding with zero magnitude bytes
- * between the value and the sign bit. Throws if the value doesn't fit.
- *
- * Useful when matching arkade VM outputs that push values as fixed-size byte
- * strings (e.g. some asset opcodes that push 8-byte LE values).
- */
-export function encodeFixed(value: bigint, size: number): Uint8Array {
-    if (size < 0) throw new Error(`negative fixed size ${size}`);
-    if (size === 0) {
-        if (value !== 0n) throw new Error(`value ${value} does not fit in 0 bytes`);
-        return new Uint8Array(0);
-    }
-    const minimal = encode(value);
-    if (minimal.length === 0) {
-        return new Uint8Array(size);
-    }
-    if (minimal.length > size) {
-        throw new Error(`value needs ${minimal.length} bytes, size=${size}`);
-    }
-    const out = new Uint8Array(size);
-    const sign = minimal[minimal.length - 1] & 0x80;
-    // Copy magnitude with sign bit stripped from the magnitude's MSB.
-    out.set(minimal);
-    out[minimal.length - 1] &= 0x7f;
-    // Apply sign on the LAST byte of the output buffer.
-    out[size - 1] |= sign;
-    return out;
-}
