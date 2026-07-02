@@ -1694,6 +1694,9 @@ export class ArkadeSwaps {
 
     /**
      * Claim sats on BTC chain by claiming the HTLC.
+     *
+     * The claim output is `swapOutput.amount − max(feeToDeliverExactAmount, targetFee)`.
+     *
      * @param pendingSwap - The pending chain swap with BTC transaction hex.
      * @returns The BTC transaction ID of the claim.
      */
