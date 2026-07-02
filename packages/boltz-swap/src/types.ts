@@ -81,7 +81,7 @@ export interface CreateLightningInvoiceRequest {
 export interface CreateLightningInvoiceResponse {
     /** The on-chain amount in satoshis (after Boltz fees). */
     amount: number;
-    /** Invoice expiry timestamp (Unix seconds). */
+    /** Invoice expiry: seconds from invoice creation (timestamp) until it expires. */
     expiry: number;
     /** The BOLT11-encoded Lightning invoice string. */
     invoice: string;
