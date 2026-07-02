@@ -1,8 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import {
-    shouldPruneSpentVtxo,
-    ContractManager,
-} from "../src/contracts/contractManager";
+import { shouldPruneSpentVtxo, ContractManager } from "../src/contracts/contractManager";
 import type { VirtualCoin } from "../src/wallet";
 
 const vtxo = (over: Partial<VirtualCoin>): VirtualCoin =>
@@ -18,12 +15,8 @@ describe("shouldPruneSpentVtxo", () => {
     });
 
     it("never prunes an unrolled output, even if spent or settled", () => {
-        expect(
-            shouldPruneSpentVtxo(vtxo({ isSpent: true, isUnrolled: true }))
-        ).toBe(false);
-        expect(
-            shouldPruneSpentVtxo(vtxo({ settledBy: "ctx", isUnrolled: true }))
-        ).toBe(false);
+        expect(shouldPruneSpentVtxo(vtxo({ isSpent: true, isUnrolled: true }))).toBe(false);
+        expect(shouldPruneSpentVtxo(vtxo({ settledBy: "ctx", isUnrolled: true }))).toBe(false);
     });
 
     it("does not prune unspent / swept-without-isSpent-or-settledBy", () => {
@@ -60,19 +53,13 @@ describe("ContractManager.pruneSpentVirtualTxs (automated GC glue)", () => {
     });
 
     it("is a no-op when no virtualTxRepository is configured", async () => {
-        await expect(
-            call({}, [vtxo({ isSpent: true })])
-        ).resolves.toBeUndefined();
+        await expect(call({}, [vtxo({ isSpent: true })])).resolves.toBeUndefined();
     });
 
     it("swallows repository errors (never breaks the sync path)", async () => {
-        const pruneForSpentVtxo = vi
-            .fn()
-            .mockRejectedValue(new Error("backend down"));
+        const pruneForSpentVtxo = vi.fn().mockRejectedValue(new Error("backend down"));
         await expect(
-            call({ virtualTxRepository: { pruneForSpentVtxo } }, [
-                vtxo({ isSpent: true }),
-            ])
+            call({ virtualTxRepository: { pruneForSpentVtxo } }, [vtxo({ isSpent: true })]),
         ).resolves.toBeUndefined();
         expect(pruneForSpentVtxo).toHaveBeenCalledTimes(1);
     });

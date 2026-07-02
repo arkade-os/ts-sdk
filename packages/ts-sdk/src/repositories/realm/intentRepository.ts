@@ -59,14 +59,13 @@ export class RealmIntentRepository implements IntentRepository {
                     deleteProof: intent.deleteProof,
                     deleteProofMessage: intent.deleteProofMessage,
                     batchId: intent.batchId ?? null,
-                    commitmentTransactionId:
-                        intent.commitmentTransactionId ?? null,
+                    commitmentTransactionId: intent.commitmentTransactionId ?? null,
                     cancellationReason: intent.cancellationReason ?? null,
                     partialForfeitsJson: JSON.stringify(intent.partialForfeits),
                     signerDescriptor: intent.signerDescriptor ?? null,
                     intentVtxosJson: JSON.stringify(intent.intentVtxos),
                 },
-                "modified"
+                "modified",
             );
         });
     }
@@ -74,11 +73,7 @@ export class RealmIntentRepository implements IntentRepository {
     async getIntents(filter?: IntentFilter): Promise<ArkIntent[]> {
         const all = [...this.realm.objects("ArkIntent")]
             .map(toIntent)
-            .sort(
-                (a, b) =>
-                    a.createdAt - b.createdAt ||
-                    a.intentTxId.localeCompare(b.intentTxId)
-            );
+            .sort((a, b) => a.createdAt - b.createdAt || a.intentTxId.localeCompare(b.intentTxId));
         const out = filter ? all.filter((i) => matches(i, filter)) : all;
         const skip = filter?.skip ?? 0;
         const take = filter?.take ?? out.length;

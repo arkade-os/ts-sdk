@@ -28,8 +28,8 @@ function withFiltered(rows: Row[]): Row[] {
                         const m = c.trim().match(/(\w+)\s*==\s*\$(\d+)/);
                         if (!m) return true;
                         return row[m[1]] === a[Number(m[2])];
-                    })
-            )
+                    }),
+            ),
         );
         return withFiltered(matched);
     };
@@ -54,18 +54,12 @@ export function createMockRealm(): RealmLike {
         objects<T = Row>(name: string): T[] {
             return withFiltered([...coll(name).values()]) as unknown as T[];
         },
-        create(
-            name: string,
-            values: Record<string, unknown>,
-            _mode?: string
-        ): void {
+        create(name: string, values: Record<string, unknown>, _mode?: string): void {
             void _mode;
             coll(name).set(pkOf(name, values), { ...values });
         },
         delete(objs: unknown): void {
-            const arr = Array.isArray(objs)
-                ? (objs as Row[])
-                : [...(objs as Iterable<Row>)];
+            const arr = Array.isArray(objs) ? (objs as Row[]) : [...(objs as Iterable<Row>)];
             for (const target of arr)
                 for (const c of colls.values())
                     for (const [k, row] of c) if (row === target) c.delete(k);

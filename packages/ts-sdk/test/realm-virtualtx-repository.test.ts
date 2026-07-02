@@ -4,5 +4,5 @@ import { createMockRealm } from "./helpers/mockRealm";
 
 virtualTxRepositoryConformance(
     "realm",
-    async () => new RealmVirtualTxRepository(createMockRealm())
+    async () => new RealmVirtualTxRepository(createMockRealm()),
 );

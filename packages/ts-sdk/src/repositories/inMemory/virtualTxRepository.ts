@@ -1,9 +1,5 @@
 import { Outpoint } from "../../wallet";
-import {
-    VirtualTx,
-    VirtualTxRepository,
-    VtxoBranch,
-} from "../virtualTxRepository";
+import { VirtualTx, VirtualTxRepository, VtxoBranch } from "../virtualTxRepository";
 
 const opKey = (o: Outpoint) => `${o.txid}:${o.vout}`;
 
@@ -41,7 +37,7 @@ export class InMemoryVirtualTxRepository implements VirtualTxRepository {
     async setBranch(vtxo: Outpoint, branch: VtxoBranch[]): Promise<void> {
         this.branches.set(
             opKey(vtxo),
-            [...branch].sort((a, b) => a.position - b.position)
+            [...branch].sort((a, b) => a.position - b.position),
         );
     }
 
@@ -64,8 +60,7 @@ export class InMemoryVirtualTxRepository implements VirtualTxRepository {
         for (const b of this.branches.values())
             for (const e of b) stillReferenced.add(e.virtualTxid);
         for (const e of removed)
-            if (!stillReferenced.has(e.virtualTxid))
-                this.txs.delete(e.virtualTxid);
+            if (!stillReferenced.has(e.virtualTxid)) this.txs.delete(e.virtualTxid);
     }
 
     async [Symbol.asyncDispose](): Promise<void> {}

@@ -1,9 +1,5 @@
 import { SettlementEvent, SettlementEventType } from "../providers/ark";
-import {
-    ArkIntent,
-    ArkIntentState,
-    isTerminalIntentState,
-} from "../repositories/intentRepository";
+import { ArkIntent, ArkIntentState, isTerminalIntentState } from "../repositories/intentRepository";
 
 /**
  * Pure, monotonic reducer: maps a settlement event onto the next intent
@@ -15,10 +11,7 @@ import {
  *   - BatchFinalized  → batch_succeeded
  *   - BatchFailed     → batch_failed
  */
-export function reduceIntentState(
-    current: ArkIntentState,
-    event: SettlementEvent
-): ArkIntentState {
+export function reduceIntentState(current: ArkIntentState, event: SettlementEvent): ArkIntentState {
     if (isTerminalIntentState(current)) return current;
 
     switch (event.type) {
@@ -40,7 +33,7 @@ export function reduceIntentState(
  */
 export function applySettlementEventToIntent(
     intent: ArkIntent,
-    event: SettlementEvent
+    event: SettlementEvent,
 ): ArkIntent | undefined {
     const next = reduceIntentState(intent.state, event);
     if (next === intent.state) return undefined;

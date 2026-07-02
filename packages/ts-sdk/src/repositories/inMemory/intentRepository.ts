@@ -35,8 +35,7 @@ export class InMemoryIntentRepository implements IntentRepository {
     async getLockedVtxoOutpoints(): Promise<Outpoint[]> {
         const out: Outpoint[] = [];
         for (const i of this.byId.values())
-            if (!isTerminalIntentState(i.state))
-                for (const o of i.intentVtxos) out.push({ ...o });
+            if (!isTerminalIntentState(i.state)) for (const o of i.intentVtxos) out.push({ ...o });
         return out;
     }
 
@@ -51,23 +50,18 @@ const clone = (i: ArkIntent): ArkIntent => ({
 
 export function matches(i: ArkIntent, f: IntentFilter): boolean {
     if (f.intentTxIds && !f.intentTxIds.includes(i.intentTxId)) return false;
-    if (f.intentIds && (!i.intentId || !f.intentIds.includes(i.intentId)))
-        return false;
+    if (f.intentIds && (!i.intentId || !f.intentIds.includes(i.intentId))) return false;
     if (f.states && !f.states.includes(i.state)) return false;
     if (f.containingInputs) {
         const keys = new Set(i.intentVtxos.map((o) => `${o.txid}:${o.vout}`));
-        if (!f.containingInputs.some((o) => keys.has(`${o.txid}:${o.vout}`)))
-            return false;
+        if (!f.containingInputs.some((o) => keys.has(`${o.txid}:${o.vout}`))) return false;
     }
     if (f.validAt !== undefined) {
         if (i.validFrom !== undefined && f.validAt < i.validFrom) return false;
-        if (i.validUntil !== undefined && f.validAt > i.validUntil)
-            return false;
+        if (i.validUntil !== undefined && f.validAt > i.validUntil) return false;
     }
     if (f.searchText) {
-        const hay = [i.intentId, i.batchId, i.commitmentTransactionId]
-            .filter(Boolean)
-            .join(" ");
+        const hay = [i.intentId, i.batchId, i.commitmentTransactionId].filter(Boolean).join(" ");
         if (!hay.includes(f.searchText)) return false;
     }
     return true;

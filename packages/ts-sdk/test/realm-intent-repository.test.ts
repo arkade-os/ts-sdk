@@ -2,7 +2,4 @@ import { intentRepositoryConformance } from "./conformance/intentRepository.conf
 import { RealmIntentRepository } from "../src/repositories/realm/intentRepository";
 import { createMockRealm } from "./helpers/mockRealm";
 
-intentRepositoryConformance(
-    "realm",
-    async () => new RealmIntentRepository(createMockRealm())
-);
+intentRepositoryConformance("realm", async () => new RealmIntentRepository(createMockRealm()));

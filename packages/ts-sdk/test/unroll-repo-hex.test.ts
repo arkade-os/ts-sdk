@@ -20,7 +20,7 @@ function makeSession(repo?: InMemoryVirtualTxRepository) {
         {} as never,
         {} as never,
         indexer,
-        repo
+        repo,
     );
     return { session, indexer };
 }
@@ -40,9 +40,7 @@ describe("Unroll.Session repo-first virtual-tx resolution", () => {
 
         const psbt = await (
             session as never as {
-                resolveVirtualTxBase64: (
-                    c: unknown
-                ) => Promise<string | undefined>;
+                resolveVirtualTxBase64: (c: unknown) => Promise<string | undefined>;
             }
         ).resolveVirtualTxBase64(chainTx("t1", ChainTxType.ARK));
 
@@ -56,9 +54,7 @@ describe("Unroll.Session repo-first virtual-tx resolution", () => {
 
         const psbt = await (
             session as never as {
-                resolveVirtualTxBase64: (
-                    c: unknown
-                ) => Promise<string | undefined>;
+                resolveVirtualTxBase64: (c: unknown) => Promise<string | undefined>;
             }
         ).resolveVirtualTxBase64(chainTx("t2", ChainTxType.TREE));
 
@@ -77,9 +73,7 @@ describe("Unroll.Session repo-first virtual-tx resolution", () => {
         const { session, indexer } = makeSession(undefined);
         const psbt = await (
             session as never as {
-                resolveVirtualTxBase64: (
-                    c: unknown
-                ) => Promise<string | undefined>;
+                resolveVirtualTxBase64: (c: unknown) => Promise<string | undefined>;
             }
         ).resolveVirtualTxBase64(chainTx("t3", ChainTxType.ARK));
         expect(psbt).toBe("INDEXER_PSBT");

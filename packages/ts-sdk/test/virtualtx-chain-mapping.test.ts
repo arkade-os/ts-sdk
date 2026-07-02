@@ -1,24 +1,15 @@
 import { describe, it, expect } from "vitest";
-import {
-    chainToBranchAndTxs,
-    chainTxTypeToChained,
-} from "../src/contracts/contractManager";
+import { chainToBranchAndTxs, chainTxTypeToChained } from "../src/contracts/contractManager";
 import { ChainTxType } from "../src/providers/indexer";
 import { ChainedTxType } from "../src/repositories/virtualTxRepository";
 
 describe("chainTxTypeToChained", () => {
     it("maps every indexer chain-tx type", () => {
-        expect(chainTxTypeToChained(ChainTxType.COMMITMENT)).toBe(
-            ChainedTxType.Commitment
-        );
+        expect(chainTxTypeToChained(ChainTxType.COMMITMENT)).toBe(ChainedTxType.Commitment);
         expect(chainTxTypeToChained(ChainTxType.ARK)).toBe(ChainedTxType.Ark);
         expect(chainTxTypeToChained(ChainTxType.TREE)).toBe(ChainedTxType.Tree);
-        expect(chainTxTypeToChained(ChainTxType.CHECKPOINT)).toBe(
-            ChainedTxType.Checkpoint
-        );
-        expect(chainTxTypeToChained(ChainTxType.UNSPECIFIED)).toBe(
-            ChainedTxType.Unspecified
-        );
+        expect(chainTxTypeToChained(ChainTxType.CHECKPOINT)).toBe(ChainedTxType.Checkpoint);
+        expect(chainTxTypeToChained(ChainTxType.UNSPECIFIED)).toBe(ChainedTxType.Unspecified);
     });
 });
 
@@ -59,11 +50,7 @@ describe("chainToBranchAndTxs", () => {
         const lite = chainToBranchAndTxs(vtxo, chain);
         expect(lite.txs.every((t) => t.hex === null)).toBe(true);
 
-        const full = chainToBranchAndTxs(
-            vtxo,
-            chain,
-            new Map([["leaf", "AAAA"]])
-        );
+        const full = chainToBranchAndTxs(vtxo, chain, new Map([["leaf", "AAAA"]]));
         expect(full.txs.find((t) => t.txid === "leaf")!.hex).toBe("AAAA");
         expect(full.txs.find((t) => t.txid === "mid")!.hex).toBeNull();
     });

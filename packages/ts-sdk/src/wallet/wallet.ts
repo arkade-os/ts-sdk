@@ -71,14 +71,10 @@ import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
-import type {
-    IntentRepository,
-    ArkIntent,
-    ArkIntentState,
-} from "../repositories/intentRepository";
+import type { IntentRepository, ArkIntent, ArkIntentState } from "../repositories/intentRepository";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { applySettlementEventToIntent } from "./intentStateReducer";
-import { extendCoin, extendCoinWithTapscript, validateRecipients } from "./utils";
+import { extendCoinWithTapscript, validateRecipients } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
@@ -283,9 +279,10 @@ export { DescriptorSigningProviderMissingError, MissingSigningDescriptorError };
  * input array unchanged when nothing is locked (cheap no-op for the common
  * case where no `intentRepository` is configured).
  */
-export function excludeLockedOutpoints<
-    T extends { txid: string; vout: number },
->(vtxos: T[], locked: { txid: string; vout: number }[]): T[] {
+export function excludeLockedOutpoints<T extends { txid: string; vout: number }>(
+    vtxos: T[],
+    locked: { txid: string; vout: number }[],
+): T[] {
     if (locked.length === 0) return vtxos;
     const lockedKeys = new Set(locked.map((o) => `${o.txid}:${o.vout}`));
     return vtxos.filter((v) => !lockedKeys.has(`${v.txid}:${v.vout}`));
@@ -776,10 +773,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // Exclude VTXOs locked by non-terminal intents from spendable
         // balance. No-op (same array) when no intentRepository is configured.
         const spendableVtxos = this.intentRepository
-            ? excludeLockedOutpoints(
-                  vtxos,
-                  await this.intentRepository.getLockedVtxoOutpoints()
-              )
+            ? excludeLockedOutpoints(vtxos, await this.intentRepository.getLockedVtxoOutpoints())
             : vtxos;
 
         // boarding
@@ -2963,7 +2957,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             "waiting_to_submit",
             intent,
             deleteIntent,
-            params.inputs
+            params.inputs,
         );
 
         const topics = [
@@ -3004,7 +2998,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 intent,
                 deleteIntent,
                 params.inputs,
-                { intentId }
+                { intentId },
             );
 
             const handler = this.createBatchHandler(intentId, params.inputs, recipients, session);
@@ -3028,16 +3022,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                                   })
                               )[0];
                               if (!cur) return;
-                              const next = applySettlementEventToIntent(
-                                  cur,
-                                  event
-                              );
+                              const next = applySettlementEventToIntent(cur, event);
                               if (next) await intentRepo.saveIntent(next);
                           } catch (e) {
-                              console.error(
-                                  "Failed to apply settlement event to intent",
-                                  e
-                              );
+                              console.error("Failed to apply settlement event to intent", e);
                           }
                       }
                     : undefined;
@@ -3080,9 +3068,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 deleteIntent,
                 params.inputs,
                 {
-                    cancellationReason:
-                        error instanceof Error ? error.message : String(error),
-                }
+                    cancellationReason: error instanceof Error ? error.message : String(error),
+                },
             );
             throw error;
         } finally {
@@ -3461,15 +3448,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         intent: SignedIntent<Intent.RegisterMessage>,
         deleteIntent: SignedIntent<Intent.DeleteMessage>,
         inputs: ExtendedCoin[],
-        patch?: Partial<ArkIntent>
+        patch?: Partial<ArkIntent>,
     ): Promise<void> {
         const repo = this.intentRepository;
         if (!repo) return;
         try {
             const now = Date.now();
-            const existing = (
-                await repo.getIntents({ intentTxIds: [intentTxId] })
-            )[0];
+            const existing = (await repo.getIntents({ intentTxIds: [intentTxId] }))[0];
             await repo.saveIntent({
                 ...(existing ?? {}),
                 intentTxId,
@@ -3488,10 +3473,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 ...patch,
             });
         } catch (e) {
-            console.error(
-                `Failed to persist intent ${intentTxId} (state=${state})`,
-                e
-            );
+            console.error(`Failed to persist intent ${intentTxId} (state=${state})`, e);
         }
     }
 

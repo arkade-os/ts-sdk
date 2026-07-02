@@ -4,5 +4,5 @@ import { createMockSQLExecutor } from "./helpers/mockSqlExecutor";
 
 virtualTxRepositoryConformance(
     "sqlite",
-    async () => new SQLiteVirtualTxRepository(createMockSQLExecutor())
+    async () => new SQLiteVirtualTxRepository(createMockSQLExecutor()),
 );

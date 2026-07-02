@@ -127,7 +127,7 @@ function parseExpiry(raw: string | null | undefined): number | null {
 export function chainToBranchAndTxs(
     vtxo: Outpoint,
     chain: ChainTx[],
-    hexByTxid?: Map<string, string>
+    hexByTxid?: Map<string, string>,
 ): { branch: VtxoBranch[]; txs: VirtualTx[] } {
     const branch: VtxoBranch[] = chain.map((c, i) => ({
         vtxoTxid: vtxo.txid,
@@ -168,10 +168,7 @@ export function chainToBranchAndTxs(
  * adjust here.
  */
 export function shouldPruneSpentVtxo(vtxo: VirtualCoin): boolean {
-    return (
-        (vtxo.isSpent === true || vtxo.settledBy !== undefined) &&
-        !vtxo.isUnrolled
-    );
+    return (vtxo.isSpent === true || vtxo.settledBy !== undefined) && !vtxo.isUnrolled;
 }
 
 export type RefreshVtxosOptions = {
@@ -1326,9 +1323,7 @@ export class ContractManager implements IContractManager {
                     contract,
                     filtered as ExtendedVirtualCoin[],
                 );
-                await this.pruneSpentVirtualTxs(
-                    filtered as ExtendedVirtualCoin[]
-                );
+                await this.pruneSpentVirtualTxs(filtered as ExtendedVirtualCoin[]);
             }
         }
         return result;
@@ -1356,10 +1351,7 @@ export class ContractManager implements IContractManager {
                     vout: vtxo.vout,
                 });
             } catch (e) {
-                console.error(
-                    `pruneForSpentVtxo failed for ${vtxo.txid}:${vtxo.vout}`,
-                    e
-                );
+                console.error(`pruneForSpentVtxo failed for ${vtxo.txid}:${vtxo.vout}`, e);
             }
         }
     }

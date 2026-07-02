@@ -123,7 +123,7 @@ export namespace Unroll {
              * cached (NArk Lite "materialise on demand"). Omitted ⇒ exact
              * previous behaviour (indexer only).
              */
-            readonly virtualTxRepository?: VirtualTxRepository
+            readonly virtualTxRepository?: VirtualTxRepository,
         ) {}
 
         /** Create an unroll session by loading the virtual output chain from the indexer. */
@@ -132,7 +132,7 @@ export namespace Unroll {
             bumper: AnchorBumper,
             explorer: OnchainProvider,
             indexer: IndexerProvider,
-            virtualTxRepository?: VirtualTxRepository
+            virtualTxRepository?: VirtualTxRepository,
         ): Promise<Session> {
             const { chain } = await indexer.getVtxoChain(toUnroll);
             return new Session(
@@ -140,7 +140,7 @@ export namespace Unroll {
                 bumper,
                 explorer,
                 indexer,
-                virtualTxRepository
+                virtualTxRepository,
             );
         }
 
@@ -150,9 +150,7 @@ export namespace Unroll {
          * Lite-mode wallet) doesn't re-fetch. Never throws from the cache
          * write — exit correctness must not depend on persistence.
          */
-        private async resolveVirtualTxBase64(
-            next: ChainTx
-        ): Promise<string | undefined> {
+        private async resolveVirtualTxBase64(next: ChainTx): Promise<string | undefined> {
             const repo = this.virtualTxRepository;
             if (repo) {
                 try {
@@ -230,8 +228,7 @@ export namespace Unroll {
             }
 
             // Get the virtual transaction data (repo-first when configured).
-            const virtualTxBase64 =
-                await this.resolveVirtualTxBase64(nextTxToBroadcast);
+            const virtualTxBase64 = await this.resolveVirtualTxBase64(nextTxToBroadcast);
 
             if (!virtualTxBase64) {
                 throw new Error(`Tx ${nextTxToBroadcast.txid} not found`);

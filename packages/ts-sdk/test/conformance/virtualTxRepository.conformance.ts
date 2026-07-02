@@ -19,7 +19,7 @@ const tx = (txid: string, over: Partial<VirtualTx> = {}): VirtualTx => ({
  */
 export function virtualTxRepositoryConformance(
     name: string,
-    make: () => Promise<VirtualTxRepository>
+    make: () => Promise<VirtualTxRepository>,
 ): void {
     describe(`VirtualTxRepository conformance: ${name}`, () => {
         it("round-trips a virtual tx", async () => {
@@ -72,9 +72,11 @@ export function virtualTxRepositoryConformance(
                     position: 1,
                 },
             ]);
-            expect(
-                (await r.getBranch({ txid: "v", vout: 0 })).map((t) => t.txid)
-            ).toEqual(["root", "mid", "leaf"]);
+            expect((await r.getBranch({ txid: "v", vout: 0 })).map((t) => t.txid)).toEqual([
+                "root",
+                "mid",
+                "leaf",
+            ]);
             expect(await r.hasBranch({ txid: "v", vout: 0 })).toBe(true);
             expect(await r.hasBranch({ txid: "v", vout: 1 })).toBe(false);
 
@@ -86,9 +88,9 @@ export function virtualTxRepositoryConformance(
                     position: 0,
                 },
             ]);
-            expect(
-                (await r.getBranch({ txid: "v", vout: 0 })).map((t) => t.txid)
-            ).toEqual(["root"]);
+            expect((await r.getBranch({ txid: "v", vout: 0 })).map((t) => t.txid)).toEqual([
+                "root",
+            ]);
         });
 
         it("pruneForSpentVtxo drops branch rows and orphaned txs only", async () => {

@@ -8,15 +8,9 @@ import { initDatabase, DB_VERSION } from "../src/repositories/indexedDB/schema";
 describe("IndexedDB schema v4", () => {
     it("creates intent + virtualtx + branch stores", async () => {
         expect(DB_VERSION).toBe(4);
-        const db = await openDatabase(
-            "schema-v4-test",
-            DB_VERSION,
-            initDatabase
-        );
+        const db = await openDatabase("schema-v4-test", DB_VERSION, initDatabase);
         const names = Array.from(db.objectStoreNames);
-        expect(names).toEqual(
-            expect.arrayContaining(["intents", "virtualTxs", "vtxoBranches"])
-        );
+        expect(names).toEqual(expect.arrayContaining(["intents", "virtualTxs", "vtxoBranches"]));
         db.close();
     });
 });

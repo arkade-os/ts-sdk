@@ -12,9 +12,7 @@ interface TableDef {
 }
 
 function parseCreateTable(sql: string): { name: string; pk: string[] } {
-    const nameMatch = sql.match(
-        /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)/i
-    );
+    const nameMatch = sql.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)/i);
     if (!nameMatch) throw new Error(`Cannot parse CREATE TABLE: ${sql}`);
     const name = nameMatch[1];
     const pkMatch = sql.match(/PRIMARY\s+KEY\s*\(([^)]+)\)/i);
@@ -32,9 +30,7 @@ function parseInsertOrReplace(sql: string): {
     table: string;
     columns: string[];
 } {
-    const match = sql.match(
-        /INSERT\s+OR\s+REPLACE\s+INTO\s+(\w+)\s*\(([^)]+)\)/i
-    );
+    const match = sql.match(/INSERT\s+OR\s+REPLACE\s+INTO\s+(\w+)\s*\(([^)]+)\)/i);
     if (!match) throw new Error(`Cannot parse INSERT OR REPLACE: ${sql}`);
     return {
         table: match[1],
@@ -53,8 +49,7 @@ function parseOrderBys(sql: string): { col: string; dir: string }[] {
     const m = sql.match(/ORDER\s+BY\s+([\s\S]+?)\s*$/i);
     if (!m) return [];
     return m[1].split(",").map((part) => {
-        const [, col, dir = "ASC"] =
-            part.trim().match(/(\w+)\s*(ASC|DESC)?/i) ?? [];
+        const [, col, dir = "ASC"] = part.trim().match(/(\w+)\s*(ASC|DESC)?/i) ?? [];
         return { col, dir: dir.toUpperCase() };
     });
 }
@@ -73,18 +68,16 @@ export function createMockSQLExecutor(): SQLExecutor {
     const filterRows = (
         t: TableDef,
         whereCols: string[],
-        params?: unknown[]
+        params?: unknown[],
     ): Record<string, unknown>[] => {
         const rows = Array.from(t.rows.values());
         if (whereCols.length === 0) return rows;
-        return rows.filter((row) =>
-            whereCols.every((col, i) => row[col] === params?.[i])
-        );
+        return rows.filter((row) => whereCols.every((col, i) => row[col] === params?.[i]));
     };
 
     const applyOrder = (
         rows: Record<string, unknown>[],
-        orderBys: { col: string; dir: string }[]
+        orderBys: { col: string; dir: string }[],
     ): Record<string, unknown>[] => {
         if (orderBys.length === 0) return rows;
         return [...rows].sort((a, b) => {
@@ -115,9 +108,7 @@ export function createMockSQLExecutor(): SQLExecutor {
                 return;
             }
 
-            const dropMatch = trimmed.match(
-                /^DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(\w+)/i
-            );
+            const dropMatch = trimmed.match(/^DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(\w+)/i);
             if (dropMatch) {
                 const tableName = dropMatch[1];
                 if (!tables.has(tableName) && !/IF\s+EXISTS/i.test(trimmed)) {
@@ -127,9 +118,7 @@ export function createMockSQLExecutor(): SQLExecutor {
                 return;
             }
 
-            const renameMatch = trimmed.match(
-                /^ALTER\s+TABLE\s+(\w+)\s+RENAME\s+TO\s+(\w+)/i
-            );
+            const renameMatch = trimmed.match(/^ALTER\s+TABLE\s+(\w+)\s+RENAME\s+TO\s+(\w+)/i);
             if (renameMatch) {
                 const [, oldName, newName] = renameMatch;
                 const t = tables.get(oldName);
@@ -140,7 +129,7 @@ export function createMockSQLExecutor(): SQLExecutor {
             }
 
             const insertSelectMatch = trimmed.match(
-                /^INSERT\s+INTO\s+(\w+)\s*\([^)]+\)\s*SELECT\s+[\s\S]+\s+FROM\s+(\w+)/i
+                /^INSERT\s+INTO\s+(\w+)\s*\([^)]+\)\s*SELECT\s+[\s\S]+\s+FROM\s+(\w+)/i,
             );
             if (insertSelectMatch) {
                 const [, dest, src] = insertSelectMatch;
@@ -154,16 +143,13 @@ export function createMockSQLExecutor(): SQLExecutor {
             }
 
             const updateMatch = trimmed.match(
-                /^UPDATE\s+(\w+)\s+SET\s+(\w+)\s*=\s*\?\s+WHERE\s+(\w+)\s*=\s*\?\s+AND\s+(\w+)\s*=\s*\?/i
+                /^UPDATE\s+(\w+)\s+SET\s+(\w+)\s*=\s*\?\s+WHERE\s+(\w+)\s*=\s*\?\s+AND\s+(\w+)\s*=\s*\?/i,
             );
             if (updateMatch) {
                 const [, tableName, setCol, whereCol1, whereCol2] = updateMatch;
                 const t = getTable(tableName);
                 for (const row of t.rows.values()) {
-                    if (
-                        row[whereCol1] === params?.[1] &&
-                        row[whereCol2] === params?.[2]
-                    ) {
+                    if (row[whereCol1] === params?.[1] && row[whereCol2] === params?.[2]) {
                         row[setCol] = params?.[0];
                     }
                 }
@@ -183,8 +169,7 @@ export function createMockSQLExecutor(): SQLExecutor {
 
             if (/^DELETE/i.test(trimmed)) {
                 const tableMatch = trimmed.match(/DELETE\s+FROM\s+(\w+)/i);
-                if (!tableMatch)
-                    throw new Error(`Cannot parse DELETE: ${trimmed}`);
+                if (!tableMatch) throw new Error(`Cannot parse DELETE: ${trimmed}`);
                 const t = getTable(tableMatch[1]);
                 const whereCols = parseWhereCols(trimmed);
                 if (whereCols.length === 0) {
@@ -192,16 +177,13 @@ export function createMockSQLExecutor(): SQLExecutor {
                     return;
                 }
                 for (const [key, row] of t.rows)
-                    if (whereCols.every((c, i) => row[c] === params?.[i]))
-                        t.rows.delete(key);
+                    if (whereCols.every((c, i) => row[c] === params?.[i])) t.rows.delete(key);
                 return;
             }
 
             if (/^CREATE\s+(UNIQUE\s+)?INDEX/i.test(trimmed)) return;
 
-            const alterMatch = trimmed.match(
-                /^ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)/i
-            );
+            const alterMatch = trimmed.match(/^ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)/i);
             if (alterMatch) {
                 const [, tableName, colName] = alterMatch;
                 const t = tables.get(tableName);
@@ -218,7 +200,7 @@ export function createMockSQLExecutor(): SQLExecutor {
 
         async get<T = Record<string, unknown>>(
             sql: string,
-            params?: unknown[]
+            params?: unknown[],
         ): Promise<T | undefined> {
             const trimmed = sql.trim();
 
@@ -227,9 +209,7 @@ export function createMockSQLExecutor(): SQLExecutor {
                 return name && tables.has(name) ? ({ name } as T) : undefined;
             }
 
-            const countMatch = trimmed.match(
-                /^SELECT\s+COUNT\(\*\)\s+AS\s+(\w+)\s+FROM\s+(\w+)/i
-            );
+            const countMatch = trimmed.match(/^SELECT\s+COUNT\(\*\)\s+AS\s+(\w+)\s+FROM\s+(\w+)/i);
             if (countMatch) {
                 const [, alias, tableName] = countMatch;
                 const t = getTable(tableName);
@@ -244,15 +224,10 @@ export function createMockSQLExecutor(): SQLExecutor {
             return rows.length ? (rows[0] as T) : undefined;
         },
 
-        async all<T = Record<string, unknown>>(
-            sql: string,
-            params?: unknown[]
-        ): Promise<T[]> {
+        async all<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
             const trimmed = sql.trim();
 
-            const pragmaMatch = trimmed.match(
-                /^PRAGMA\s+table_info\s*\(\s*(\w+)\s*\)/i
-            );
+            const pragmaMatch = trimmed.match(/^PRAGMA\s+table_info\s*\(\s*(\w+)\s*\)/i);
             if (pragmaMatch) {
                 const t = tables.get(pragmaMatch[1]);
                 if (!t) return [] as T[];

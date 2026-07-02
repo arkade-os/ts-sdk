@@ -1,10 +1,5 @@
 import { Outpoint } from "../../wallet";
-import {
-    ChainedTxType,
-    VirtualTx,
-    VirtualTxRepository,
-    VtxoBranch,
-} from "../virtualTxRepository";
+import { ChainedTxType, VirtualTx, VirtualTxRepository, VtxoBranch } from "../virtualTxRepository";
 import { SQLExecutor } from "./types";
 
 const SAFE_PREFIX = /^[a-zA-Z0-9_]+$/;
@@ -35,7 +30,7 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
 
     constructor(
         private readonly db: SQLExecutor,
-        options?: { prefix?: string }
+        options?: { prefix?: string },
     ) {
         this.prefix = sanitizePrefix(options?.prefix ?? "ark_");
         this.tTx = `${this.prefix}virtual_txs`;
@@ -62,7 +57,7 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
             PRIMARY KEY (vtxo_txid, vtxo_vout, position)
         )`);
         await this.db.run(
-            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}branch_vtxid ON ${this.tBranch} (virtual_txid)`
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}branch_vtxid ON ${this.tBranch} (virtual_txid)`,
         );
     }
 
@@ -93,16 +88,15 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
         await this.ensureInit();
         await this.tx(async () => {
             for (const t of txs) {
-                const prev = await this.db.get<VtxRow>(
-                    `SELECT * FROM ${this.tTx} WHERE txid = ?`,
-                    [t.txid]
-                );
+                const prev = await this.db.get<VtxRow>(`SELECT * FROM ${this.tTx} WHERE txid = ?`, [
+                    t.txid,
+                ]);
                 const hex = t.hex ?? prev?.hex ?? null;
                 const expires = t.expiresAt ?? prev?.expires_at ?? null;
                 const type = t.type ?? prev?.type ?? ChainedTxType.Unspecified;
                 await this.db.run(
                     `INSERT OR REPLACE INTO ${this.tTx} (txid, hex, expires_at, type) VALUES (?, ?, ?, ?)`,
-                    [t.txid, hex, expires, type]
+                    [t.txid, hex, expires, type],
                 );
             }
         });
@@ -110,24 +104,21 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
 
     async getVirtualTx(txid: string): Promise<VirtualTx | null> {
         await this.ensureInit();
-        const row = await this.db.get<VtxRow>(
-            `SELECT * FROM ${this.tTx} WHERE txid = ?`,
-            [txid]
-        );
+        const row = await this.db.get<VtxRow>(`SELECT * FROM ${this.tTx} WHERE txid = ?`, [txid]);
         return row ? rowToTx(row) : null;
     }
 
     async setBranch(vtxo: Outpoint, branch: VtxoBranch[]): Promise<void> {
         await this.ensureInit();
         await this.tx(async () => {
-            await this.db.run(
-                `DELETE FROM ${this.tBranch} WHERE vtxo_txid = ? AND vtxo_vout = ?`,
-                [vtxo.txid, vtxo.vout]
-            );
+            await this.db.run(`DELETE FROM ${this.tBranch} WHERE vtxo_txid = ? AND vtxo_vout = ?`, [
+                vtxo.txid,
+                vtxo.vout,
+            ]);
             for (const b of branch) {
                 await this.db.run(
                     `INSERT OR REPLACE INTO ${this.tBranch} (vtxo_txid, vtxo_vout, virtual_txid, position) VALUES (?, ?, ?, ?)`,
-                    [b.vtxoTxid, b.vtxoVout, b.virtualTxid, b.position]
+                    [b.vtxoTxid, b.vtxoVout, b.virtualTxid, b.position],
                 );
             }
         });
@@ -137,14 +128,13 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
         await this.ensureInit();
         const rows = await this.db.all<BranchRow>(
             `SELECT * FROM ${this.tBranch} WHERE vtxo_txid = ? AND vtxo_vout = ? ORDER BY position ASC`,
-            [vtxo.txid, vtxo.vout]
+            [vtxo.txid, vtxo.vout],
         );
         const out: VirtualTx[] = [];
         for (const b of rows) {
-            const t = await this.db.get<VtxRow>(
-                `SELECT * FROM ${this.tTx} WHERE txid = ?`,
-                [b.virtual_txid]
-            );
+            const t = await this.db.get<VtxRow>(`SELECT * FROM ${this.tTx} WHERE txid = ?`, [
+                b.virtual_txid,
+            ]);
             if (t) out.push(rowToTx(t));
         }
         return out;
@@ -154,7 +144,7 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
         await this.ensureInit();
         const r = await this.db.get<{ c: number }>(
             `SELECT COUNT(*) AS c FROM ${this.tBranch} WHERE vtxo_txid = ? AND vtxo_vout = ?`,
-            [vtxo.txid, vtxo.vout]
+            [vtxo.txid, vtxo.vout],
         );
         return (r?.c ?? 0) > 0;
     }
@@ -164,22 +154,19 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
         await this.tx(async () => {
             const removed = await this.db.all<BranchRow>(
                 `SELECT * FROM ${this.tBranch} WHERE vtxo_txid = ? AND vtxo_vout = ?`,
-                [vtxo.txid, vtxo.vout]
+                [vtxo.txid, vtxo.vout],
             );
-            await this.db.run(
-                `DELETE FROM ${this.tBranch} WHERE vtxo_txid = ? AND vtxo_vout = ?`,
-                [vtxo.txid, vtxo.vout]
-            );
+            await this.db.run(`DELETE FROM ${this.tBranch} WHERE vtxo_txid = ? AND vtxo_vout = ?`, [
+                vtxo.txid,
+                vtxo.vout,
+            ]);
             for (const e of removed) {
                 const ref = await this.db.get<{ c: number }>(
                     `SELECT COUNT(*) AS c FROM ${this.tBranch} WHERE virtual_txid = ?`,
-                    [e.virtual_txid]
+                    [e.virtual_txid],
                 );
                 if ((ref?.c ?? 0) === 0)
-                    await this.db.run(
-                        `DELETE FROM ${this.tTx} WHERE txid = ?`,
-                        [e.virtual_txid]
-                    );
+                    await this.db.run(`DELETE FROM ${this.tTx} WHERE txid = ?`, [e.virtual_txid]);
             }
         });
     }

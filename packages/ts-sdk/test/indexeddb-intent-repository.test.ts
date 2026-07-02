@@ -5,5 +5,5 @@ import { IndexedDBIntentRepository } from "../src/repositories/indexedDB/intentR
 let n = 0;
 intentRepositoryConformance(
     "indexeddb",
-    async () => new IndexedDBIntentRepository(`intent-${n++}`)
+    async () => new IndexedDBIntentRepository(`intent-${n++}`),
 );

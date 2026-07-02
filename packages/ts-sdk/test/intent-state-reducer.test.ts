@@ -7,17 +7,17 @@ describe("reduceIntentState", () => {
         expect(
             reduceIntentState("waiting_for_batch", {
                 type: SettlementEventType.BatchStarted,
-            } as never)
+            } as never),
         ).toBe("batch_in_progress");
         expect(
             reduceIntentState("batch_in_progress", {
                 type: SettlementEventType.BatchFinalized,
-            } as never)
+            } as never),
         ).toBe("batch_succeeded");
         expect(
             reduceIntentState("batch_in_progress", {
                 type: SettlementEventType.BatchFailed,
-            } as never)
+            } as never),
         ).toBe("batch_failed");
     });
 
@@ -27,12 +27,10 @@ describe("reduceIntentState", () => {
             SettlementEventType.BatchFinalized,
             SettlementEventType.BatchFailed,
         ]) {
-            expect(
-                reduceIntentState("batch_succeeded", { type: ev } as never)
-            ).toBe("batch_succeeded");
-            expect(reduceIntentState("cancelled", { type: ev } as never)).toBe(
-                "cancelled"
+            expect(reduceIntentState("batch_succeeded", { type: ev } as never)).toBe(
+                "batch_succeeded",
             );
+            expect(reduceIntentState("cancelled", { type: ev } as never)).toBe("cancelled");
         }
     });
 
@@ -40,7 +38,7 @@ describe("reduceIntentState", () => {
         expect(
             reduceIntentState("batch_succeeded", {
                 type: SettlementEventType.BatchStarted,
-            } as never)
+            } as never),
         ).toBe("batch_succeeded");
     });
 
@@ -48,12 +46,12 @@ describe("reduceIntentState", () => {
         expect(
             reduceIntentState("waiting_for_batch", {
                 type: SettlementEventType.TreeNonces,
-            } as never)
+            } as never),
         ).toBe("waiting_for_batch");
         expect(
             reduceIntentState("waiting_for_batch", {
                 type: SettlementEventType.StreamStarted,
-            } as never)
+            } as never),
         ).toBe("waiting_for_batch");
     });
 });

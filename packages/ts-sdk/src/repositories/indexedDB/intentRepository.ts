@@ -40,8 +40,7 @@ export class IndexedDBIntentRepository implements IntentRepository {
     constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
 
     private async getDB(): Promise<IDBDatabase> {
-        if (!this.db)
-            this.db = await openDatabase(this.dbName, DB_VERSION, initDatabase);
+        if (!this.db) this.db = await openDatabase(this.dbName, DB_VERSION, initDatabase);
         return this.db;
     }
 
@@ -55,23 +54,15 @@ export class IndexedDBIntentRepository implements IntentRepository {
     async saveIntent(intent: ArkIntent): Promise<void> {
         const db = await this.getDB();
         const t = db.transaction([STORE_INTENTS], "readwrite");
-        t.objectStore(STORE_INTENTS).put(
-            toStored({ ...intent, updatedAt: Date.now() })
-        );
+        t.objectStore(STORE_INTENTS).put(toStored({ ...intent, updatedAt: Date.now() }));
         await done(t);
     }
 
     async getIntents(filter?: IntentFilter): Promise<ArkIntent[]> {
         const db = await this.getDB();
-        const s = db
-            .transaction([STORE_INTENTS], "readonly")
-            .objectStore(STORE_INTENTS);
+        const s = db.transaction([STORE_INTENTS], "readonly").objectStore(STORE_INTENTS);
         const all = ((await req(s.getAll())) as StoredIntent[]).map(fromStored);
-        all.sort(
-            (a, b) =>
-                a.createdAt - b.createdAt ||
-                a.intentTxId.localeCompare(b.intentTxId)
-        );
+        all.sort((a, b) => a.createdAt - b.createdAt || a.intentTxId.localeCompare(b.intentTxId));
         const out = filter ? all.filter((i) => matches(i, filter)) : all;
         const skip = filter?.skip ?? 0;
         const take = filter?.take ?? out.length;
@@ -80,14 +71,11 @@ export class IndexedDBIntentRepository implements IntentRepository {
 
     async getLockedVtxoOutpoints(): Promise<Outpoint[]> {
         const db = await this.getDB();
-        const s = db
-            .transaction([STORE_INTENTS], "readonly")
-            .objectStore(STORE_INTENTS);
+        const s = db.transaction([STORE_INTENTS], "readonly").objectStore(STORE_INTENTS);
         const all = (await req(s.getAll())) as StoredIntent[];
         const out: Outpoint[] = [];
         for (const i of all)
-            if (!isTerminalIntentState(i.state))
-                for (const o of i.intentVtxos) out.push(o);
+            if (!isTerminalIntentState(i.state)) for (const o of i.intentVtxos) out.push(o);
         return out;
     }
 

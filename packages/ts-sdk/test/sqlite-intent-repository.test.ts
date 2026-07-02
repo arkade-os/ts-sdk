@@ -4,5 +4,5 @@ import { createMockSQLExecutor } from "./helpers/mockSqlExecutor";
 
 intentRepositoryConformance(
     "sqlite",
-    async () => new SQLiteIntentRepository(createMockSQLExecutor())
+    async () => new SQLiteIntentRepository(createMockSQLExecutor()),
 );

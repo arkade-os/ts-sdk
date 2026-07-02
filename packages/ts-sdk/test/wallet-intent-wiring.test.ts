@@ -25,9 +25,7 @@ describe("settle intent persistence contract", () => {
         await repo.saveIntent(base);
         await repo.saveIntent({ ...base, state: "waiting_for_batch" });
 
-        expect(await repo.getLockedVtxoOutpoints()).toEqual([
-            { txid: "v", vout: 0 },
-        ]);
+        expect(await repo.getLockedVtxoOutpoints()).toEqual([{ txid: "v", vout: 0 }]);
 
         const cur = (await repo.getIntents({ intentTxIds: ["i1"] }))[0];
         const next = applySettlementEventToIntent(cur, {

@@ -43,7 +43,7 @@ export class SQLiteIntentRepository implements IntentRepository {
 
     constructor(
         private readonly db: SQLExecutor,
-        options?: { prefix?: string }
+        options?: { prefix?: string },
     ) {
         this.prefix = sanitizePrefix(options?.prefix ?? "ark_");
         this.t = `${this.prefix}intents`;
@@ -75,10 +75,10 @@ export class SQLiteIntentRepository implements IntentRepository {
             intent_vtxos_json TEXT NOT NULL
         )`);
         await this.db.run(
-            `CREATE UNIQUE INDEX IF NOT EXISTS idx_${this.prefix}intent_id ON ${this.t} (intent_id) WHERE intent_id IS NOT NULL`
+            `CREATE UNIQUE INDEX IF NOT EXISTS idx_${this.prefix}intent_id ON ${this.t} (intent_id) WHERE intent_id IS NOT NULL`,
         );
         await this.db.run(
-            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}intent_state ON ${this.t} (state)`
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}intent_state ON ${this.t} (state)`,
         );
     }
 
@@ -132,7 +132,7 @@ export class SQLiteIntentRepository implements IntentRepository {
                     JSON.stringify(intent.partialForfeits),
                     intent.signerDescriptor ?? null,
                     JSON.stringify(intent.intentVtxos),
-                ]
+                ],
             );
         });
     }
@@ -140,7 +140,7 @@ export class SQLiteIntentRepository implements IntentRepository {
     async getIntents(filter?: IntentFilter): Promise<ArkIntent[]> {
         await this.ensureInit();
         const rows = await this.db.all<IntentRow>(
-            `SELECT * FROM ${this.t} ORDER BY created_at ASC, intent_tx_id ASC`
+            `SELECT * FROM ${this.t} ORDER BY created_at ASC, intent_tx_id ASC`,
         );
         let out = rows.map(rowToIntent);
         if (filter) out = out.filter((i) => matches(i, filter));
@@ -155,8 +155,7 @@ export class SQLiteIntentRepository implements IntentRepository {
         const out: Outpoint[] = [];
         for (const r of rows) {
             if (isTerminalIntentState(r.state as ArkIntentState)) continue;
-            for (const o of JSON.parse(r.intent_vtxos_json) as Outpoint[])
-                out.push(o);
+            for (const o of JSON.parse(r.intent_vtxos_json) as Outpoint[]) out.push(o);
         }
         return out;
     }

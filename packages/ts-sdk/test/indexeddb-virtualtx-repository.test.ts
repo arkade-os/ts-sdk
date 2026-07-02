@@ -5,5 +5,5 @@ import { IndexedDBVirtualTxRepository } from "../src/repositories/indexedDB/virt
 let n = 0;
 virtualTxRepositoryConformance(
     "indexeddb",
-    async () => new IndexedDBVirtualTxRepository(`vtx-${n++}`)
+    async () => new IndexedDBVirtualTxRepository(`vtx-${n++}`),
 );
