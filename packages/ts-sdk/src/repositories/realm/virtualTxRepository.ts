@@ -95,22 +95,30 @@ export class RealmVirtualTxRepository implements VirtualTxRepository {
 
     async pruneForSpentVtxo(vtxo: Outpoint): Promise<void> {
         this.realm.write(() => {
-            const removed = [
-                ...this.realm.objects("ArkVtxoBranch").filtered("vtxoKey == $0", vtxoKey(vtxo)),
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            ] as any[];
-            this.realm.delete(
-                this.realm.objects("ArkVtxoBranch").filtered("vtxoKey == $0", vtxoKey(vtxo)),
-            );
-            for (const e of removed) {
+            const branchRows = this.realm
+                .objects("ArkVtxoBranch")
+                .filtered("vtxoKey == $0", vtxoKey(vtxo));
+            // Snapshot the referenced txids into plain strings BEFORE deleting.
+            // Real Realm invalidates deleted objects, so reading `virtualTxid`
+            // off them after `delete` throws ("Accessing object which has been
+            // invalidated") — which would roll back the whole write() and make
+            // prune a permanent no-op on React Native.
+            const virtualTxids = [
+                ...new Set(
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    [...branchRows].map((e: any) => e.virtualTxid as string),
+                ),
+            ];
+            this.realm.delete(branchRows);
+            for (const virtualTxid of virtualTxids) {
                 const stillRef = [
                     ...this.realm
                         .objects("ArkVtxoBranch")
-                        .filtered("virtualTxid == $0", e.virtualTxid),
+                        .filtered("virtualTxid == $0", virtualTxid),
                 ];
                 if (stillRef.length === 0)
                     this.realm.delete(
-                        this.realm.objects("ArkVirtualTx").filtered("txid == $0", e.virtualTxid),
+                        this.realm.objects("ArkVirtualTx").filtered("txid == $0", virtualTxid),
                     );
             }
         });

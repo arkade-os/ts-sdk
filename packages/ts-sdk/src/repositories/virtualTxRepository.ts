@@ -16,7 +16,7 @@ export enum ChainedTxType {
 export interface VirtualTx {
     /** Transaction id (hex). Primary key. */
     txid: string;
-    /** Hex-encoded PSBT body; null in Lite mode / for indexer-opaque commitments. */
+    /** Hex-encoded PSBT body; null when only metadata has been cached. */
     hex: string | null;
     /** Operator pre-signature expiry, ms epoch; null if not applicable. */
     expiresAt: number | null;
@@ -34,9 +34,6 @@ export interface VtxoBranch {
     virtualTxid: string;
     position: number;
 }
-
-/** Controls how much virtual tx data is stored. */
-export type VirtualTxMode = "lite" | "full";
 
 export interface VirtualTxRepository extends AsyncDisposable {
     readonly version: 1;

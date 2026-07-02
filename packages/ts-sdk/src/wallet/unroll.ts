@@ -118,9 +118,8 @@ export namespace Unroll {
             readonly indexer: IndexerProvider,
             /**
              * Optional virtual-tx repository. When provided, each step's raw
-             * tx is read from the repo first (instant exit in Full mode) and
-             * only fetched from the indexer on a miss — at which point it is
-             * cached (NArk Lite "materialise on demand"). Omitted ⇒ exact
+             * tx is read from the repo first and fetched from the indexer on a
+             * miss, then cached best-effort for later exits. Omitted ⇒ exact
              * previous behaviour (indexer only).
              */
             readonly virtualTxRepository?: VirtualTxRepository,

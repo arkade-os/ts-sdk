@@ -37,6 +37,7 @@ import {
     isSpendable,
     isSubdust,
     IWallet,
+    Outpoint,
     ReadonlyWalletConfig,
     Recipient,
     SendBitcoinParams,
@@ -72,6 +73,7 @@ import { TxTree } from "../tree/txTree";
 import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
 import type { IntentRepository, ArkIntent, ArkIntentState } from "../repositories/intentRepository";
+import { isTerminalIntentState } from "../repositories/intentRepository";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { applySettlementEventToIntent } from "./intentStateReducer";
 import { extendCoinWithTapscript, validateRecipients } from "./utils";
@@ -286,6 +288,31 @@ export function excludeLockedOutpoints<T extends { txid: string; vout: number }>
     if (locked.length === 0) return vtxos;
     const lockedKeys = new Set(locked.map((o) => `${o.txid}:${o.vout}`));
     return vtxos.filter((v) => !lockedKeys.has(`${v.txid}:${v.vout}`));
+}
+
+/**
+ * Spendable-balance view of `vtxos`: the same set minus any outpoint locked by
+ * a non-terminal settlement intent. Offline-first and best-effort — it only
+ * *reads* the intent store's lock set (never arkd/indexer, never a mutation),
+ * and **fails open** to the unfiltered VTXOs if that read rejects. A transient
+ * or corrupt intent-store read must not sink the wallet's whole balance; the
+ * cost of failing open is that a genuinely-locked VTXO can briefly re-appear as
+ * spendable until the store recovers, which is strictly safer than reporting no
+ * balance at all. No-op (same array) when no `intentRepository` is configured.
+ */
+export async function spendableVtxosExcludingLocked<T extends { txid: string; vout: number }>(
+    vtxos: T[],
+    intentRepository?: Pick<IntentRepository, "getLockedVtxoOutpoints">,
+): Promise<T[]> {
+    if (!intentRepository) return vtxos;
+    let locked: Outpoint[];
+    try {
+        locked = await intentRepository.getLockedVtxoOutpoints();
+    } catch (e) {
+        console.error("getLockedVtxoOutpoints failed; reporting unfiltered balance", e);
+        return vtxos;
+    }
+    return excludeLockedOutpoints(vtxos, locked);
 }
 
 /**
@@ -770,11 +797,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const isPendingRecovery = (coin: ExtendedVirtualCoin) =>
             pendingOutpoints.has(`${coin.txid}:${coin.vout}`);
 
-        // Exclude VTXOs locked by non-terminal intents from spendable
-        // balance. No-op (same array) when no intentRepository is configured.
-        const spendableVtxos = this.intentRepository
-            ? excludeLockedOutpoints(vtxos, await this.intentRepository.getLockedVtxoOutpoints())
-            : vtxos;
+        // Exclude VTXOs locked by non-terminal intents from spendable balance.
+        // `getBalance()` is offline-first: it reads the intent locks from the
+        // repository only and never calls arkd/indexer or mutates intent state
+        // (stale-intent reconciliation is the online sync path's job — see
+        // ContractManager). The read is best-effort and fails open — see
+        // {@link spendableVtxosExcludingLocked}.
+        const spendableVtxos = await spendableVtxosExcludingLocked(vtxos, this.intentRepository);
 
         // boarding
         let confirmed = 0;
@@ -1479,7 +1508,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             indexerProvider: this.indexerProvider,
             contractRepository: this.contractRepository,
             walletRepository: this.walletRepository,
-            virtualTxRepository: this.virtualTxRepository,
+            intentRepository: this.intentRepository,
             watcherConfig: this.watcherConfig,
         });
 
@@ -3455,6 +3484,16 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         try {
             const now = Date.now();
             const existing = (await repo.getIntents({ intentTxIds: [intentTxId] }))[0];
+            // Terminal stickiness: the event reducer (BatchFinalized/-Failed)
+            // drives the intent to a terminal state via `Batch.join`'s callback.
+            // A *later* try-block step (updateDbAfterSettle, boarding rotation)
+            // can still throw and route through settle()'s catch, which calls
+            // this with "cancelled". Writing `state` directly here would clobber
+            // a `batch_succeeded` whose money already moved. Terminal is sticky:
+            // never overwrite it — the reducer already recorded the outcome.
+            if (existing && isTerminalIntentState(existing.state)) {
+                return;
+            }
             await repo.saveIntent({
                 ...(existing ?? {}),
                 intentTxId,

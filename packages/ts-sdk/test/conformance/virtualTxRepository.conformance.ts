@@ -124,6 +124,21 @@ export function virtualTxRepositoryConformance(
             expect(await r.getVirtualTx("shared")).not.toBeNull(); // still referenced by v2
         });
 
+        it("pruneForSpentVtxo is idempotent when repeated", async () => {
+            const r = await make();
+            await r.upsertVirtualTxs([tx("a"), tx("b")]);
+            await r.setBranch({ txid: "v1", vout: 0 }, [
+                { vtxoTxid: "v1", vtxoVout: 0, virtualTxid: "a", position: 0 },
+                { vtxoTxid: "v1", vtxoVout: 0, virtualTxid: "b", position: 1 },
+            ]);
+            await r.pruneForSpentVtxo({ txid: "v1", vout: 0 });
+            // Second prune of the same (already-gone) vtxo must not throw.
+            await expect(r.pruneForSpentVtxo({ txid: "v1", vout: 0 })).resolves.toBeUndefined();
+            expect(await r.hasBranch({ txid: "v1", vout: 0 })).toBe(false);
+            expect(await r.getVirtualTx("a")).toBeNull();
+            expect(await r.getVirtualTx("b")).toBeNull();
+        });
+
         it("clear empties the store", async () => {
             const r = await make();
             await r.upsertVirtualTxs([tx("a")]);

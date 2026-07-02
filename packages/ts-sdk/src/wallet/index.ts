@@ -13,7 +13,6 @@ import {
     WalletRepository,
     IntentRepository,
     VirtualTxRepository,
-    VirtualTxMode,
 } from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
 import { IDelegateManager } from "./delegate";
@@ -239,18 +238,12 @@ export type StorageConfig = {
      */
     intentRepository?: IntentRepository;
     /**
-     * Optional virtual-tx / exit-branch repository. Opt-in: when present, the
-     * VTXO sync path populates raw txs + branch. Absent ⇒ no-op.
+     * Optional virtual-tx repository used as a best-effort raw transaction cache
+     * by unilateral exit. The wallet does not currently pre-populate exit
+     * branches during sync; callers should treat branch/full-mode persistence as
+     * out of scope for this release.
      */
     virtualTxRepository?: VirtualTxRepository;
-    /**
-     * How much virtual-tx data to store during sync. `"lite"` (default):
-     * txids + branch structure only; tx hex is materialized on demand at
-     * unilateral-exit time and cached. `"full"`: tx hex stored eagerly on
-     * sync (ready for instant exit, heavier sync). Mirrors NArk
-     * `VirtualTxMode` (whose enum default is also Lite).
-     */
-    virtualTxMode?: VirtualTxMode;
 };
 
 /**
