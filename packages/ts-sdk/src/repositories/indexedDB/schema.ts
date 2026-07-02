@@ -186,10 +186,6 @@ export function initDatabase(
         });
         s.createIndex("intentId", "intentId", { unique: false });
         s.createIndex("state", "state", { unique: false });
-        s.createIndex("intentVtxoKeys", "intentVtxoKeys", {
-            unique: false,
-            multiEntry: true,
-        });
     }
     if (!db.objectStoreNames.contains(STORE_VIRTUAL_TXS)) {
         db.createObjectStore(STORE_VIRTUAL_TXS, { keyPath: "txid" });

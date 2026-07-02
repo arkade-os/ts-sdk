@@ -14,13 +14,6 @@ interface VtxRow {
     expires_at: number | null;
     type: number;
 }
-interface BranchRow {
-    vtxo_txid: string;
-    vtxo_vout: number;
-    virtual_txid: string;
-    position: number;
-}
-
 export class SQLiteVirtualTxRepository implements VirtualTxRepository {
     readonly version = 1 as const;
     private initPromise: Promise<void> | null = null;
@@ -126,18 +119,17 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
 
     async getBranch(vtxo: Outpoint): Promise<VirtualTx[]> {
         await this.ensureInit();
-        const rows = await this.db.all<BranchRow>(
-            `SELECT * FROM ${this.tBranch} WHERE vtxo_txid = ? AND vtxo_vout = ? ORDER BY position ASC`,
+        // Single JOIN instead of one lookup per branch row; the inner join
+        // naturally drops branch rows whose tx no longer exists.
+        const rows = await this.db.all<VtxRow>(
+            `SELECT t.txid, t.hex, t.expires_at, t.type
+             FROM ${this.tBranch} b
+             JOIN ${this.tTx} t ON t.txid = b.virtual_txid
+             WHERE b.vtxo_txid = ? AND b.vtxo_vout = ?
+             ORDER BY b.position ASC`,
             [vtxo.txid, vtxo.vout],
         );
-        const out: VirtualTx[] = [];
-        for (const b of rows) {
-            const t = await this.db.get<VtxRow>(`SELECT * FROM ${this.tTx} WHERE txid = ?`, [
-                b.virtual_txid,
-            ]);
-            if (t) out.push(rowToTx(t));
-        }
-        return out;
+        return rows.map(rowToTx);
     }
 
     async hasBranch(vtxo: Outpoint): Promise<boolean> {
@@ -152,22 +144,28 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
     async pruneForSpentVtxo(vtxo: Outpoint): Promise<void> {
         await this.ensureInit();
         await this.tx(async () => {
-            const removed = await this.db.all<BranchRow>(
-                `SELECT * FROM ${this.tBranch} WHERE vtxo_txid = ? AND vtxo_vout = ?`,
+            // Capture the txs this vtxo's branch referenced, then delete its
+            // branch rows and — in one set-based pass — drop only those txs
+            // that no other branch still references. Scoping the delete to the
+            // captured txids preserves txs inserted without a branch.
+            const removed = await this.db.all<{ virtual_txid: string }>(
+                `SELECT DISTINCT virtual_txid FROM ${this.tBranch} WHERE vtxo_txid = ? AND vtxo_vout = ?`,
                 [vtxo.txid, vtxo.vout],
             );
             await this.db.run(`DELETE FROM ${this.tBranch} WHERE vtxo_txid = ? AND vtxo_vout = ?`, [
                 vtxo.txid,
                 vtxo.vout,
             ]);
-            for (const e of removed) {
-                const ref = await this.db.get<{ c: number }>(
-                    `SELECT COUNT(*) AS c FROM ${this.tBranch} WHERE virtual_txid = ?`,
-                    [e.virtual_txid],
-                );
-                if ((ref?.c ?? 0) === 0)
-                    await this.db.run(`DELETE FROM ${this.tTx} WHERE txid = ?`, [e.virtual_txid]);
-            }
+            if (removed.length === 0) return;
+            const placeholders = removed.map(() => "?").join(", ");
+            await this.db.run(
+                `DELETE FROM ${this.tTx}
+                 WHERE txid IN (${placeholders})
+                 AND NOT EXISTS (
+                     SELECT 1 FROM ${this.tBranch} b WHERE b.virtual_txid = ${this.tTx}.txid
+                 )`,
+                removed.map((r) => r.virtual_txid),
+            );
         });
     }
 
