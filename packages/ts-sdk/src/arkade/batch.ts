@@ -29,6 +29,7 @@ import type {
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { Transaction } from "../utils/transaction";
+import { validateConnectorsTxGraph, validateVtxoTxGraph } from "../tree/validation";
 import { buildForfeitTx } from "../forfeit";
 import { Batch } from "../wallet/batch";
 import { Intent } from "../intent";
@@ -94,6 +95,9 @@ export function createArkadeBatchHandler(
             }
 
             const commitmentTx = Transaction.fromPSBT(base64.decode(event.unsignedCommitmentTx));
+
+            validateVtxoTxGraph(vtxoTree, commitmentTx, sweepTapTreeRoot);
+
             const sharedOutput = commitmentTx.getOutput(0);
             if (!sharedOutput?.amount) {
                 throw new Error("Shared output not found");
@@ -130,6 +134,10 @@ export function createArkadeBatchHandler(
                 Address(network).decode(info.forfeitAddress),
             );
 
+            if (connectorTree) {
+                validateConnectorsTxGraph(event.commitmentTx, connectorTree);
+            }
+
             let commitmentPsbt = Transaction.fromPSBT(base64.decode(event.commitmentTx));
             const signedForfeits: string[] = [];
             let connectorIndex = 0;
@@ -138,81 +146,74 @@ export function createArkadeBatchHandler(
             const boardingIndices: number[] = [];
 
             for (const input of inputs) {
-                // Auto-detect: is this input in the commitment tx? (boarding)
-                let boardingIdx: number | null = null;
-                for (let i = 0; i < commitmentPsbt.inputsLength; i++) {
-                    const psbtInput = commitmentPsbt.getInput(i);
-                    if (!psbtInput.txid) continue;
-                    if (
-                        hex.encode(psbtInput.txid) === input.txid &&
-                        psbtInput.index === input.vout
-                    ) {
-                        boardingIdx = i;
-                        break;
+                if (!isVtxoCoin(input)) {
+                    let boardingIdx: number | null = null;
+                    for (let i = 0; i < commitmentPsbt.inputsLength; i++) {
+                        const psbtInput = commitmentPsbt.getInput(i);
+                        if (!psbtInput.txid) continue;
+                        if (
+                            hex.encode(psbtInput.txid) === input.txid &&
+                            psbtInput.index === input.vout
+                        ) {
+                            boardingIdx = i;
+                            break;
+                        }
                     }
-                }
 
-                if (boardingIdx !== null) {
-                    // Boarding: sign commitment tx directly
+                    if (boardingIdx === null) continue;
+
                     commitmentPsbt.updateInput(boardingIdx, {
                         tapLeafScript: [input.forfeitTapLeafScript],
                     });
-
                     boardingIndices.push(boardingIdx);
-                } else {
-                    // Recoverable or subdust VTXOs don't get a forfeit tx, and the
-                    // server allocates no connector for them. Skip so we don't consume
-                    // a connector meant for a forfeitable input (which would misalign
-                    // the connector indices and fail). Mirrors the standard settlement
-                    // flow in Wallet.handleSettlementFinalizationEvent.
-                    if (
-                        isVtxoCoin(input) &&
-                        (isRecoverable(input) || isSubdust(input, info.dust))
-                    ) {
-                        continue;
-                    }
-
-                    // Settlement: build forfeit from connector leaf
-                    if (connectorIndex >= connectorLeaves.length) {
-                        throw new Error("not enough connectors received");
-                    }
-
-                    const connectorLeaf = connectorLeaves[connectorIndex++];
-                    const connectorTxId = connectorLeaf.id;
-                    const connectorOutput = connectorLeaf.getOutput(0);
-                    if (!connectorOutput?.amount || !connectorOutput?.script) {
-                        throw new Error(
-                            `Invalid connector output at index ${connectorIndex - 1}: missing amount or script`,
-                        );
-                    }
-
-                    let forfeitTx = buildForfeitTx(
-                        [
-                            {
-                                txid: input.txid,
-                                index: input.vout,
-                                witnessUtxo: {
-                                    amount: BigInt(input.value),
-                                    script: VtxoScript.decode(input.tapTree).pkScript,
-                                },
-                                sighashType: SigHash.DEFAULT,
-                                tapLeafScript: [input.forfeitTapLeafScript],
-                            },
-                            {
-                                txid: connectorTxId,
-                                index: 0,
-                                witnessUtxo: {
-                                    amount: connectorOutput.amount,
-                                    script: connectorOutput.script,
-                                },
-                            },
-                        ],
-                        forfeitOutputScript,
-                    );
-
-                    forfeitTx = await signer.sign(forfeitTx, [0]);
-                    signedForfeits.push(base64.encode(forfeitTx.toPSBT()));
+                    continue;
                 }
+
+                // Recoverable or subdust VTXOs don't require a forfeit tx
+                if (isRecoverable(input) || isSubdust(input, info.dust)) {
+                    continue;
+                }
+
+                // Settlement: build forfeit from connector leaf
+                if (connectorIndex >= connectorLeaves.length) {
+                    throw new Error("not enough connectors received");
+                }
+
+                const connectorLeaf = connectorLeaves[connectorIndex++];
+                const connectorTxId = connectorLeaf.id;
+                const connectorOutput = connectorLeaf.getOutput(0);
+                if (!connectorOutput?.amount || !connectorOutput?.script) {
+                    throw new Error(
+                        `Invalid connector output at index ${connectorIndex - 1}: missing amount or script`,
+                    );
+                }
+
+                let forfeitTx = buildForfeitTx(
+                    [
+                        {
+                            txid: input.txid,
+                            index: input.vout,
+                            witnessUtxo: {
+                                amount: BigInt(input.value),
+                                script: VtxoScript.decode(input.tapTree).pkScript,
+                            },
+                            sighashType: SigHash.DEFAULT,
+                            tapLeafScript: [input.forfeitTapLeafScript],
+                        },
+                        {
+                            txid: connectorTxId,
+                            index: 0,
+                            witnessUtxo: {
+                                amount: connectorOutput.amount,
+                                script: connectorOutput.script,
+                            },
+                        },
+                    ],
+                    forfeitOutputScript,
+                );
+
+                forfeitTx = await signer.sign(forfeitTx, [0]);
+                signedForfeits.push(base64.encode(forfeitTx.toPSBT()));
             }
 
             // Sign boarding inputs on the commitment tx

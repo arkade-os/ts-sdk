@@ -7,9 +7,9 @@
  * shape mirrors the compiler artifact, so a hand-written program today and the
  * compiler's JSON output later flow through the identical resolver.
  *
- * The SDK never interprets scripts: it resolves placeholders (`$param`,
- * `<SERVER_KEY>`, `<COSIGNER_KEY>`) into bytes, builds the taproot tree (with the
- * co-signer key tweaked by the arkade-script hash), and assembles the spend from
+ * The SDK never interprets scripts: it resolves `$param` placeholders into bytes,
+ * builds the taproot tree (with the `"server"`/`"user"` signers and the co-signer
+ * key tweaked by the arkade-script hash), and assembles the spend from
  * the per-segment witness layout. All key tweaking, packet encoding and PSBT
  * plumbing is internal — from the caller's side it is just Arkade.
  *
@@ -86,7 +86,7 @@ const MinimalScriptNum = ScriptNum(undefined, true);
 
 // --- Program model (mirrors the compiler artifact) -------------------------
 
-/** A token in an `asm` array: an opcode name, a number/bigint push, raw bytes, or a `$param`/`<SERVER_KEY>` placeholder. */
+/** A token in an `asm` array: an opcode name, a number/bigint push, raw bytes, or a `$param` placeholder. */
 export type AsmToken = string | number | bigint | Uint8Array;
 
 /** A constructor argument or resolved value. */
@@ -214,8 +214,9 @@ export interface Utxo {
     value: number;
     /**
      * The ark transaction that created this VTXO. Required only by continuation
-     * /recursive covenants that inspect the input's provenance; the SDK attaches
-     * it as the PrevArkTx field. Often populated automatically from the indexer.
+     * /recursive covenants that inspect the input's provenance; when set, the SDK
+     * attaches it as the PrevArkTx field.
+     *
      */
     sourceTx?: Uint8Array;
 }
@@ -544,7 +545,6 @@ export class ArkadeTransactionBuilder {
         private readonly args: Record<string, ArkadeArgValue>,
     ) {}
 
-    /** Spend a specific contract coin. Defaults to auto-selecting one from the contract. */
     from(coin: Utxo): this {
         this.coin = coin;
         return this;
@@ -633,13 +633,10 @@ export class ArkadeTransactionBuilder {
             setArkPsbtField(arkTx, 0, PrevArkTxField, coin.sourceTx);
         }
 
-        // tapscript witness → ConditionWitness on the ark tx and every checkpoint.
         const condition = (def.tapscript.witness ?? []).map((w) => this.witnessBytes(w));
         if (condition.length > 0) {
             setArkPsbtField(arkTx, 0, ConditionWitness, condition);
-            for (const cp of checkpoints) {
-                setArkPsbtField(cp, 0, ConditionWitness, condition);
-            }
+            setArkPsbtField(checkpoints[0], 0, ConditionWitness, condition);
         }
 
         // Collect extension packets — asset groups (type 0) then the emulator
@@ -821,10 +818,11 @@ function bindValue(bind: Record<string, ArkadeParamValue>, name: string): Arkade
 }
 
 /**
- * Resolve an `asm` array to bytes: substitute `$param` / `<SERVER_KEY>` /
- * `<COSIGNER_KEY>` placeholders from `bind`, pass everything else through to the
+ * Resolve an `asm` array to bytes: substitute `$param` placeholders from `bind`,
+ * pass everything else (opcode names, numbers, raw byte pushes) through to the
  * Arkade script encoder. The SDK does not interpret opcodes — this is pure
- * substitution + encoding.
+ * substitution + encoding. To embed the server or co-signer key, push its bytes
+ * directly (or via a `$param`); there is no `<SERVER_KEY>`/`<COSIGNER_KEY>` token.
  */
 export function resolveAsm(asm: AsmToken[], bind: Record<string, ArkadeParamValue>): Uint8Array {
     const tokens = asm.map((t) => {
