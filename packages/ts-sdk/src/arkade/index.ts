@@ -42,6 +42,7 @@ export {
     ArkadeTransactionBuilder,
     resolveAsm,
     parseArtifact,
+    SUPPORTED_PROGRAM_VERSION,
     type Program,
     type ArkadeFunction,
     type AssetSpec,

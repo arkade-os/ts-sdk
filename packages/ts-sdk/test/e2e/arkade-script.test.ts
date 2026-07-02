@@ -68,6 +68,7 @@ const SPEND_AMOUNT = FUNDING_AMOUNT - FEE_AMOUNT;
 
 // Plain offchain covenant: user + server + arkade-tweaked emulator.
 const offchainProgram = {
+    version: 0,
     functions: {
         send: {
             tapscript: { signers: ["user", "server"] },
@@ -80,6 +81,7 @@ const offchainProgram = {
 
 // Offchain covenant with asset introspection.
 const assetOffchainProgram = {
+    version: 0,
     functions: {
         send: {
             tapscript: { signers: ["user", "server"] },
@@ -107,6 +109,7 @@ const assetOffchainProgram = {
 
 // Settlement contract: arkade covenant + a server+user CSV exit leaf.
 const settlementProgram = {
+    version: 0,
     functions: {
         settle: {
             tapscript: { signers: ["user", "server"] },
@@ -122,6 +125,7 @@ const settlementProgram = {
 
 // Settle/mint contracts with asset introspection (used by TestSettlementWithAsset).
 const settleAssetProgram = {
+    version: 0,
     functions: {
         settle: {
             tapscript: { signers: ["user", "server"] },
@@ -155,6 +159,7 @@ const settleAssetProgram = {
 // form of `enforcePayTo`) forces output 0 to pay `$amount` to `$receiver`; the
 // leading DUP consumes the witness's `[0]`.
 const spendProgram = {
+    version: 0,
     functions: {
         spend: {
             tapscript: { signers: ["$bob", "$alice"] },
@@ -176,6 +181,7 @@ const spendProgram = {
 } satisfies arkade.Program;
 
 const mintAssetProgram = {
+    version: 0,
     functions: {
         mint: {
             tapscript: { signers: ["user", "server"] },
@@ -404,6 +410,7 @@ describe("arkade", () => {
         // delay is the server-provided boarding delay, so the program is built
         // inline rather than as a module constant.
         const boardingProgram = {
+            version: 0,
             functions: {
                 board: {
                     tapscript: { signers: ["user", "server"] },

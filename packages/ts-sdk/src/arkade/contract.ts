@@ -23,6 +23,7 @@
  * @example
  * ```typescript
  * const htlcProgram = {
+ *     version: 0,
  *     params: ["hash", "receiver", "amount"],
  *     functions: {
  *         claim: {
@@ -169,8 +170,11 @@ export interface ArkadeFunction {
     arkadeScript?: ArkadeSegment;
 }
 
+export const SUPPORTED_PROGRAM_VERSION = 0;
+
 /** An Arkade contract program (hand-written or compiler-emitted). */
 export interface Program {
+    version: number;
     /** Ordered constructor parameter names (documentation/validation only). */
     params?: string[];
     functions: Record<string, ArkadeFunction>;
@@ -391,6 +395,11 @@ export class ArkadeContract<P extends Program = Program> {
         readonly program: P,
         readonly args: Record<string, ArkadeParamValue>,
     ) {
+        if (program.version !== SUPPORTED_PROGRAM_VERSION) {
+            throw new Error(
+                `ArkadeContract: unsupported program version ${program.version} — this SDK supports version ${SUPPORTED_PROGRAM_VERSION}`,
+            );
+        }
         const functions: Record<string, ArkadeFunction> = program.functions;
         const names = Object.keys(functions);
         if (names.length === 0) {
@@ -872,6 +881,7 @@ function validateTapscript(seg: TapscriptSegment): void {
  * `$param` placeholders and numbers pass through unchanged.
  */
 export function parseArtifact(artifact: {
+    version?: number;
     params?: string[];
     functions: Record<string, any>;
 }): Program {
@@ -902,7 +912,11 @@ export function parseArtifact(artifact: {
             ...(arkadeScript ? { arkadeScript } : {}),
         };
     }
-    return { ...(artifact.params ? { params: artifact.params } : {}), functions };
+    return {
+        version: artifact.version ?? SUPPORTED_PROGRAM_VERSION,
+        ...(artifact.params ? { params: artifact.params } : {}),
+        functions,
+    };
 }
 
 /**

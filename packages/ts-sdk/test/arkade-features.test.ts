@@ -37,6 +37,7 @@ const payTo = [
 
 function claimProgram(): arkade.Program {
     return {
+        version: 0,
         params: ["receiver", "amount"],
         functions: {
             claim: {
@@ -142,6 +143,7 @@ describe("ArkadeContract — extended features", () => {
         // A pure-tapscript path that requires the user's key.
         const c = ark.contract(
             {
+                version: 0,
                 functions: {
                     move: {
                         tapscript: {
@@ -256,6 +258,7 @@ describe("ArkadeContract — extended features", () => {
         });
         const c = ark.contract(
             {
+                version: 0,
                 functions: {
                     exit: {
                         tapscript: {
@@ -285,6 +288,7 @@ describe("ArkadeContract — extended features", () => {
         expect(() =>
             ark.contract(
                 {
+                    version: 0,
                     functions: {
                         bad: {
                             tapscript: {
@@ -310,6 +314,7 @@ describe("ArkadeContract — extended features", () => {
         expect(() =>
             ark.contract(
                 {
+                    version: 0,
                     functions: {
                         bad: {
                             tapscript: {
@@ -389,6 +394,7 @@ describe("ArkadeContract — extended features", () => {
             network: networks.regtest,
         });
         const prog: arkade.Program = {
+            version: 0,
             params: ["receiver", "amount"],
             functions: {
                 spend: {
@@ -423,6 +429,7 @@ describe("ArkadeContract — extended features", () => {
         });
         const c = ark.contract(
             {
+                version: 0,
                 functions: {
                     exit: {
                         tapscript: {
@@ -530,6 +537,7 @@ describe("ArkadeContract — extended features", () => {
         });
         const c = ark.contract(
             {
+                version: 0,
                 functions: {
                     exit: {
                         tapscript: { signers: ["server"], csv: { type: "blocks", value: 20n } },

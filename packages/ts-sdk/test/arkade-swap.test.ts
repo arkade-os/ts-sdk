@@ -40,6 +40,7 @@ const EXIT_BLOCKS = 144n;
  */
 function swapProgram(): arkade.Program {
     return {
+        version: 0,
         params: ["payout", "makerKey", "wantAmount"],
         functions: {
             fulfill: {

@@ -16,6 +16,7 @@ const HTLC_PREIMAGE_HASH = hex.decode("8739f40ec4dbf569dcb38134c6e7310908566981"
 const CONTRACT_AMOUNT = 10_000n;
 
 const nonInteractiveHTLC = {
+    version: 0,
     params: ["hash", "funder", "receiver", "amount"],
     functions: {
         claim: {

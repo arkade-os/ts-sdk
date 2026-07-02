@@ -40,6 +40,7 @@ const payTo = [
 // rather than falling back to the loose `(...args: ArkadeArgValue[])`.
 function htlcProgram() {
     return {
+        version: 0,
         params: ["hash", "receiver", "amount"],
         functions: {
             claim: {
