@@ -9,7 +9,7 @@
  */
 
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
-import { hex } from "@scure/base";
+import { bytesToNumberBE } from "@noble/curves/utils.js";
 
 const TAG_SCRIPT = "ArkScriptHash";
 const TAG_WITNESS = "ArkWitnessHash";
@@ -54,28 +54,11 @@ export function computeArkadeScriptPublicKey(pubKey: Uint8Array, script: Uint8Ar
     const hash = arkadeScriptHash(script);
 
     const xOnly = pubKey.length === 33 ? pubKey.subarray(1) : pubKey;
-    // Force the even-Y ("02") interpretation of the x-only key. This mirrors the
-    // emulator, which lifts its key to even Y (BIP-340 lift_x) before tweaking;
-    // we must derive the tweaked pubkey from the same point or it won't match the
-    // key the emulator signs with. Prepending the prefix also lets `fromHex`
-    // accept both 32-byte (x-only) and 33-byte (compressed) inputs uniformly.
-    const point = secp256k1.Point.fromHex("02" + hex.encode(xOnly));
+    const point = schnorr.utils.lift_x(bytesToNumberBE(xOnly));
 
-    // tweakPoint = hash * G (reduce modulo curve order n)
-    const scalar = bytesToBigInt(hash) % secp256k1.Point.CURVE().n || 1n;
-    const tweakPoint = secp256k1.Point.BASE.multiply(scalar);
+    // tweak = (scriptHash mod n) * G
+    const scalar = bytesToNumberBE(hash) % secp256k1.Point.CURVE().n;
+    const tweak = secp256k1.Point.BASE.multiply(scalar);
 
-    // result = point + tweakPoint
-    const result = point.add(tweakPoint);
-
-    // Return x-only (32-byte) representation
-    return result.toBytes().subarray(1);
-}
-
-function bytesToBigInt(bytes: Uint8Array): bigint {
-    let result = 0n;
-    for (const byte of bytes) {
-        result = (result << 8n) | BigInt(byte);
-    }
-    return result;
+    return schnorr.utils.pointToBytes(point.add(tweak));
 }
