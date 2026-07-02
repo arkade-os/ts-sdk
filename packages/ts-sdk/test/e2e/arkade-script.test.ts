@@ -218,7 +218,7 @@ describe("arkade", () => {
         });
     }
 
-    beforeEach(beforeEachFaucet, 20000);
+    beforeEach(beforeEachFaucet, 60000);
 
     // =========================================================================
     // Helpers
