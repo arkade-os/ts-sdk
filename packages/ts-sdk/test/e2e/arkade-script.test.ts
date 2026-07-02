@@ -490,12 +490,6 @@ describe("arkade", () => {
                 confirmed: utxo.status?.confirmed ?? false,
                 block_time: 0,
             },
-            isSpent: false,
-            virtualStatus: {
-                state: "settled" as const,
-                batchExpiry: 0,
-                batchTxid: "",
-            },
         };
 
         const intentProof = Intent.create(
