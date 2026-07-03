@@ -37,6 +37,13 @@ export function onchainRail(): PaymentRail {
         quote: async (raw, amount, ctx: RouterContext) => {
             const address = btcTarget(raw)!;
             const amt = amount ?? encodedAmountSats(raw) ?? 0;
+            // Reject non-positive or fractional amounts up front: 0 sats would
+            // silently settle nothing, and BigInt(amt) throws on non-integers.
+            if (!Number.isInteger(amt) || amt <= 0) {
+                throw new Error(
+                    `onchain: invalid amount ${amt} sats (expected a positive integer)`,
+                );
+            }
             return {
                 railId: "onchain",
                 amount: amt,

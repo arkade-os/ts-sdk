@@ -14,7 +14,14 @@ export function makeHandle(
     const emit = (u: Update) => {
         status = u.status;
         last = u;
-        for (const f of subs) f(u);
+        // A throwing subscriber must not break the run cycle or other subscribers.
+        for (const f of subs) {
+            try {
+                f(u);
+            } catch {
+                // ignore subscriber errors
+            }
+        }
     };
     const done = run(emit);
     // Swallow the unhandled-rejection warning for fire-and-forget callers that
@@ -32,12 +39,13 @@ export function makeHandle(
         },
         settled(opts) {
             if (!opts?.timeoutMs) return done;
+            let timer: ReturnType<typeof setTimeout>;
             return Promise.race([
                 done,
-                new Promise<RouteResult>((_, rej) =>
-                    setTimeout(() => rej(new Error("settle timeout")), opts.timeoutMs),
-                ),
-            ]);
+                new Promise<RouteResult>((_, rej) => {
+                    timer = setTimeout(() => rej(new Error("settle timeout")), opts.timeoutMs);
+                }),
+            ]).finally(() => clearTimeout(timer));
         },
     };
 }
