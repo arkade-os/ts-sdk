@@ -11,17 +11,19 @@ export function makeHandle(
     let status: PaymentStatus = "pending";
     let last: Update = { status };
     const subs = new Set<(u: Update) => void>();
+    // A throwing subscriber must not break the run cycle, other subscribers, or
+    // the subscribe() replay below.
+    const notify = (f: (u: Update) => void, u: Update) => {
+        try {
+            f(u);
+        } catch {
+            // ignore subscriber errors
+        }
+    };
     const emit = (u: Update) => {
         status = u.status;
         last = u;
-        // A throwing subscriber must not break the run cycle or other subscribers.
-        for (const f of subs) {
-            try {
-                f(u);
-            } catch {
-                // ignore subscriber errors
-            }
-        }
+        for (const f of subs) notify(f, u);
     };
     const done = run(emit);
     // Swallow the unhandled-rejection warning for fire-and-forget callers that
@@ -33,7 +35,7 @@ export function makeHandle(
             return status;
         },
         subscribe(fn) {
-            fn(last);
+            notify(fn, last);
             subs.add(fn);
             return () => subs.delete(fn);
         },

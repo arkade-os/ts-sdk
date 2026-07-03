@@ -26,4 +26,17 @@ describe("makeHandle", () => {
         const h = makeHandle("op2", () => new Promise<RouteResult>(() => {}));
         await expect(h.settled({ timeoutMs: 20 })).rejects.toThrow(/timeout/i);
     });
+
+    it("isolates a subscriber that throws on the initial replay", () => {
+        const h = makeHandle("op3", () => new Promise<RouteResult>(() => {}));
+        const thrower = () => {
+            throw new Error("boom");
+        };
+        // The replay call inside subscribe() must not propagate the error, and a
+        // later subscriber must still receive the replay.
+        expect(() => h.subscribe(thrower)).not.toThrow();
+        const seen: string[] = [];
+        h.subscribe((u) => seen.push(u.status));
+        expect(seen).toEqual(["pending"]);
+    });
 });
