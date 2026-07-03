@@ -22,7 +22,7 @@ import * as BackgroundTask from "expo-background-task";
 import type { TaskItem } from "@arkade-os/sdk/worker/expo";
 import { runTasks } from "@arkade-os/sdk/worker/expo";
 import { ExpoArkProvider, ExpoIndexerProvider } from "@arkade-os/sdk/adapters/expo";
-import { getRandomId, type IWallet } from "@arkade-os/sdk";
+import { getRandomId, type IWallet, type NetworkName } from "@arkade-os/sdk";
 import { BoltzSwapProvider } from "../boltz-swap-provider";
 import { swapsPollProcessor, SWAP_POLL_TASK_TYPE } from "./swapsPollProcessor";
 import type {
@@ -62,14 +62,19 @@ function createBackgroundWalletShim(args: {
         getVtxos: async () => notImplemented("getVtxos"),
         getBoardingUtxos: async () => notImplemented("getBoardingUtxos"),
         getTransactionHistory: async () => notImplemented("getTransactionHistory"),
+        getActivityHistory: async () => notImplemented("getActivityHistory"),
         getContractManager: async () => notImplemented("getContractManager"),
         getDelegateManager: async () => notImplemented("getDelegateManager"),
         getDelegatorManager: async () => notImplemented("getDelegatorManager"),
         sendBitcoin: async () => notImplemented("sendBitcoin"),
         send: async () => notImplemented("send"),
         settle: async () => notImplemented("settle"),
+        clear: async () => notImplemented("clear"),
         assetManager: new Proxy({} as IWallet["assetManager"], {
             get: () => notImplemented("assetManager" as keyof IWallet),
+        }),
+        activity: new Proxy({} as IWallet["activity"], {
+            get: () => notImplemented("activity" as keyof IWallet),
         }),
     };
 }
@@ -130,14 +135,14 @@ export function defineExpoSwapBackgroundTask(
             const wallet = createBackgroundWalletShim({
                 identity,
                 getAddress: async () => {
-                    const { ArkAddress } = await import("@arkade-os/sdk");
+                    const { ArkAddress, getNetwork } = await import("@arkade-os/sdk");
                     const { hex } = await import("@scure/base");
                     const info = await arkProvider.getInfo();
                     const pubkey = await identity.xOnlyPublicKey();
                     const serverPubKey = hex.decode(info.signerPubkey);
                     const xOnlyServerPubKey =
                         serverPubKey.length === 33 ? serverPubKey.slice(1) : serverPubKey;
-                    const hrp = info.network === "bitcoin" ? "ark" : "tark";
+                    const hrp = getNetwork(info.network as NetworkName).hrp;
                     return new ArkAddress(xOnlyServerPubKey, pubkey, hrp).encode();
                 },
             });

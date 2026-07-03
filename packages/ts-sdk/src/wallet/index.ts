@@ -11,6 +11,16 @@ import { ContractWatcherConfig } from "../contracts/contractWatcher";
 import { ContractRepository, WalletRepository } from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
 import { IDelegateManager } from "./delegate";
+import type { Activity, ActivityRegistry } from "./activity";
+export {
+    ActivityRegistry,
+    boardingResolver,
+    createDefaultActivityRegistry,
+    type Activity,
+    type ActivityIntent,
+    type GroupMembership,
+    type ActivityResolver,
+} from "./activity";
 import { DelegateProvider } from "../providers/delegate";
 
 /**
@@ -883,6 +893,12 @@ export interface IReadonlyWallet {
     /** @returns Wallet transaction history derived from boarding and Arkade activity. */
     getTransactionHistory(): Promise<ArkTransaction[]>;
 
+    /** Resolvers that group/label {@link getActivityHistory} rows. */
+    readonly activity: ActivityRegistry;
+
+    /** @returns Wallet history grouped into logical activities with signed net amounts. */
+    getActivityHistory(): Promise<Activity[]>;
+
     /**
      * Get the contract manager associated with this wallet.
      * This is useful for querying contract state and watching for contract events.
@@ -893,4 +909,10 @@ export interface IReadonlyWallet {
 
     /** Readonly asset manager bound to this wallet instance. */
     assetManager: IReadonlyAssetManager;
+
+    /**
+     * Wipe all locally persisted wallet data (VTXOs, UTXOs, history, sync
+     * cursor, contracts).
+     */
+    clear(): Promise<void>;
 }

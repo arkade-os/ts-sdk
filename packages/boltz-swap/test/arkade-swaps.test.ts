@@ -25,6 +25,7 @@ import {
     Wallet,
     SingleKey,
     ArkInfo,
+    getNetwork,
 } from "@arkade-os/sdk";
 import { VHTLC } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
@@ -32,9 +33,13 @@ import { randomBytes } from "@noble/hashes/utils.js";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
+import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { Address, OutScript, Script, ScriptNum } from "@scure/btc-signer";
 import { decodeInvoice } from "../src/utils/decoding";
 import { logger } from "../src/logger";
 import { pubECDSA } from "@scure/btc-signer/utils.js";
+import { create as createMusig } from "../src/utils/musig";
+import { deserializeSwapTree, tweakMusig, p2trScript } from "../src/utils/boltz-swap-tx";
 import {
     claimVHTLCwithOffchainTx,
     createVHTLCScript as createVHTLCScriptReal,
@@ -483,6 +488,92 @@ describe("ArkadeSwaps", () => {
             },
         }),
         vhtlcAddress: mock.address.ark,
+    };
+
+    // --- BTC chain HTLC fixtures (canonical Boltz / NArk BtcHtlcScripts shape) ---
+    const BTC_HTLC_TIMEOUT = 500000;
+    const btcEphemeralPriv = seckeys.ephemeral;
+    const btcEphemeralPub = secp256k1.getPublicKey(btcEphemeralPriv);
+    const btcBoltzPub = hex.decode(compressedPubkeys.boltz);
+    const xonly = (k: Uint8Array) => k.subarray(1, 33);
+
+    const buildBtcLeaves = (opts: {
+        claimKey: Uint8Array;
+        refundKey: Uint8Array;
+        preimageHash?: Uint8Array;
+        timeout?: number;
+        version?: number;
+        omitSize?: boolean;
+    }) => {
+        const version = opts.version ?? 0xc0;
+        const claim = Script.encode([
+            ...(opts.omitSize ? [] : (["SIZE", Uint8Array.of(0x20), "EQUALVERIFY"] as const)),
+            "HASH160",
+            ripemd160(opts.preimageHash ?? mockPreimageHash),
+            "EQUALVERIFY",
+            xonly(opts.claimKey),
+            "CHECKSIG",
+        ]);
+        const refund = Script.encode([
+            xonly(opts.refundKey),
+            "CHECKSIGVERIFY",
+            ScriptNum().encode(BigInt(opts.timeout ?? BTC_HTLC_TIMEOUT)),
+            "CHECKLOCKTIMEVERIFY",
+        ]);
+        return {
+            claimLeaf: { version, output: hex.encode(claim) },
+            refundLeaf: { version, output: hex.encode(refund) },
+        };
+    };
+
+    const btcLockupAddress = (swapTree: any) => {
+        const { tree } = deserializeSwapTree(swapTree);
+        const musig = tweakMusig(
+            createMusig(btcEphemeralPriv, [btcBoltzPub, btcEphemeralPub]),
+            tree,
+        );
+        return Address(getNetwork("regtest")).encode(OutScript.decode(p2trScript(musig.aggPubkey)));
+    };
+
+    // Builds a chain swap with a real, self-consistent BTC HTLC on the side the
+    // user funds (lockupDetails for btcToArk, claimDetails for arkToBtc) and a
+    // placeholder ARK side (callers mock createVHTLCScript to its lockupAddress).
+    const makeBtcChainSwap = (to: "ARK" | "BTC", treeOverride?: any, timeoutOverride?: number) => {
+        const swapTree =
+            treeOverride ??
+            buildBtcLeaves({
+                claimKey: to === "ARK" ? btcBoltzPub : btcEphemeralPub,
+                refundKey: to === "ARK" ? btcEphemeralPub : btcBoltzPub,
+            });
+        const btcDetails = {
+            serverPublicKey: compressedPubkeys.boltz,
+            lockupAddress: btcLockupAddress(swapTree),
+            amount: mock.amount,
+            swapTree,
+            timeoutBlockHeight: timeoutOverride ?? BTC_HTLC_TIMEOUT,
+        };
+        const arkDetails = {
+            serverPublicKey: compressedPubkeys.fulmine,
+            lockupAddress: mock.address.ark,
+            amount: mock.amount,
+            timeoutBlockHeight: 21,
+            timeouts: {
+                refund: 17,
+                unilateralClaim: 21,
+                unilateralRefund: 42,
+                unilateralRefundWithoutReceiver: 63,
+            },
+        };
+        return {
+            ...mockBtcArkChainSwap,
+            ephemeralKey: hex.encode(btcEphemeralPriv),
+            request: { ...mockBtcArkChainSwap.request, preimageHash: hex.encode(mockPreimageHash) },
+            response: {
+                id: mock.id,
+                claimDetails: to === "ARK" ? arkDetails : btcDetails,
+                lockupDetails: to === "ARK" ? btcDetails : arkDetails,
+            },
+        } as unknown as BoltzChainSwap;
     };
 
     beforeEach(async () => {
@@ -1922,10 +2013,7 @@ describe("ArkadeSwaps", () => {
                     vhtlcAddress: mock.address.ark,
                 });
 
-                const pendingSwap: BoltzChainSwap = {
-                    ...mockArkBtcChainSwap,
-                    response: createArkBtcChainSwapResponse,
-                };
+                const pendingSwap = makeBtcChainSwap("BTC");
 
                 // act & assert
                 await expect(
@@ -2380,10 +2468,7 @@ describe("ArkadeSwaps", () => {
                     vhtlcAddress: mock.address.ark,
                 });
 
-                const pendingSwap: BoltzChainSwap = {
-                    ...mockBtcArkChainSwap,
-                    response: createBtcArkChainSwapResponse,
-                };
+                const pendingSwap = makeBtcChainSwap("ARK");
 
                 // act & assert
                 await expect(
@@ -4921,6 +5006,113 @@ describe("ArkadeSwaps", () => {
         it("throws an address mismatch when no candidate signer matches", () => {
             const unrelated = buildAddress(mock.pubkeys.alice);
             expect(() => resolve(unrelated.vhtlcAddress)).toThrow(/VHTLC address mismatch/);
+        });
+    });
+
+    describe("BTC chain HTLC verification", () => {
+        const verify = (to: "ARK" | "BTC", swap: BoltzChainSwap) =>
+            (swaps as any).verifyBtcChainHtlc({ to, swap, arkNetwork: "regtest" });
+
+        it("accepts a valid btcToArk BTC HTLC", () => {
+            expect(() => verify("ARK", makeBtcChainSwap("ARK"))).not.toThrow();
+        });
+
+        it("accepts a valid arkToBtc BTC HTLC", () => {
+            expect(() => verify("BTC", makeBtcChainSwap("BTC"))).not.toThrow();
+        });
+
+        it("rejects a tampered lockup address", () => {
+            const swap = makeBtcChainSwap("ARK");
+            swap.response.lockupDetails.lockupAddress = mock.address.btc;
+            expect(() => verify("ARK", swap)).toThrow(/invalid BTC address/);
+        });
+
+        it("rejects an internal key not bound to MuSig2(boltz, user)", () => {
+            const swap = makeBtcChainSwap("ARK");
+            swap.response.lockupDetails.serverPublicKey = compressedPubkeys.alice;
+            expect(() => verify("ARK", swap)).toThrow(/invalid BTC address/);
+        });
+
+        // The leaves below still bind to the address (they drive its derivation);
+        // only the content assertions reject them.
+        it("rejects a claim leaf with the wrong preimage hash", () => {
+            const tree = buildBtcLeaves({
+                claimKey: btcBoltzPub,
+                refundKey: btcEphemeralPub,
+                preimageHash: randomBytes(32),
+            });
+            expect(() => verify("ARK", makeBtcChainSwap("ARK", tree))).toThrow(/invalid BTC HTLC/);
+        });
+
+        it("rejects a claim leaf with the wrong claim key", () => {
+            const tree = buildBtcLeaves({
+                claimKey: hex.decode(compressedPubkeys.alice),
+                refundKey: btcEphemeralPub,
+            });
+            expect(() => verify("ARK", makeBtcChainSwap("ARK", tree))).toThrow(/invalid BTC HTLC/);
+        });
+
+        it("rejects a refund leaf with the wrong refund key", () => {
+            const tree = buildBtcLeaves({
+                claimKey: btcBoltzPub,
+                refundKey: hex.decode(compressedPubkeys.alice),
+            });
+            expect(() => verify("ARK", makeBtcChainSwap("ARK", tree))).toThrow(/invalid BTC HTLC/);
+        });
+
+        it("rejects a non-0xc0 leaf version", () => {
+            const tree = buildBtcLeaves({
+                claimKey: btcBoltzPub,
+                refundKey: btcEphemeralPub,
+                version: 0xc1,
+            });
+            expect(() => verify("ARK", makeBtcChainSwap("ARK", tree))).toThrow(/invalid BTC HTLC/);
+        });
+
+        it("rejects a CLTV that does not equal timeoutBlockHeight", () => {
+            expect(() =>
+                verify("ARK", makeBtcChainSwap("ARK", undefined, BTC_HTLC_TIMEOUT + 1)),
+            ).toThrow(/invalid BTC HTLC/);
+        });
+
+        it("rejects a malformed claim leaf missing OP_SIZE 32", () => {
+            const tree = buildBtcLeaves({
+                claimKey: btcBoltzPub,
+                refundKey: btcEphemeralPub,
+                omitSize: true,
+            });
+            expect(() => verify("ARK", makeBtcChainSwap("ARK", tree))).toThrow(/invalid BTC HTLC/);
+        });
+
+        it("fails closed when the BTC side lacks swapTree, serverPublicKey, or timeout", () => {
+            const noTree = makeBtcChainSwap("ARK");
+            noTree.response.lockupDetails.swapTree = undefined;
+            expect(() => verify("ARK", noTree)).toThrow(/missing swap tree/);
+
+            const noKey = makeBtcChainSwap("ARK");
+            noKey.response.lockupDetails.serverPublicKey = "";
+            expect(() => verify("ARK", noKey)).toThrow(/missing server public key/);
+
+            const noTimeout = makeBtcChainSwap("ARK");
+            noTimeout.response.lockupDetails.timeoutBlockHeight = undefined as any;
+            expect(() => verify("ARK", noTimeout)).toThrow(/missing timeout block height/);
+        });
+
+        it("verifyChainSwap invokes the BTC check after the ARK side", async () => {
+            const swap = makeBtcChainSwap("ARK");
+            vi.spyOn(swaps, "createVHTLCScript").mockReturnValue({
+                vhtlcAddress: swap.response.claimDetails.lockupAddress,
+            } as any);
+
+            await expect(
+                swaps.verifyChainSwap({ to: "ARK", from: "BTC", swap, arkInfo: mockArkInfo }),
+            ).resolves.toBe(true);
+
+            const bad = makeBtcChainSwap("ARK");
+            bad.response.lockupDetails.lockupAddress = mock.address.btc;
+            await expect(
+                swaps.verifyChainSwap({ to: "ARK", from: "BTC", swap: bad, arkInfo: mockArkInfo }),
+            ).rejects.toThrow(/invalid BTC address/);
         });
     });
 });

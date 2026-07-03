@@ -360,6 +360,30 @@ const txid = await wallet.send({
 })
 ```
 
+### Activity history
+
+Group the wallet's transaction history into labelled, logical activities. Register an
+`ActivityResolver` object; its optional `prepare()` can refresh correlation data, and
+its synchronous `resolve(tx)` returns memberships. `getActivityHistory()` buckets
+the transactions into `Activity` rows. The `boarding` built-in is pre-registered,
+and a transaction can belong to multiple groups (e.g. a batched settlement).
+
+```typescript
+// Tag your app's transactions (correlate by txid however you track them)
+wallet.activity.use({
+  id: 'my-app',
+  resolve: (tx) => {
+    const action = myActions.get(tx.key.arkTxid)
+    return action ? [{ groupId: action.id, label: action.label, kind: 'app' }] : undefined
+  },
+})
+
+// Built-ins (boarding) + your resolver; txs grouped oldest-first per activity
+const activities = await wallet.getActivityHistory()
+// amount is signed sats: positive received, negative sent; same-key change rows are excluded
+// each Activity: { id, intent?, txs, amount, createdAt, settled }
+```
+
 ### Assets (Issue, Reissue, Burn, Send)
 
 The wallet's `assetManager` lets you create and manage assets on Arkade. The `send` method supports sending assets.

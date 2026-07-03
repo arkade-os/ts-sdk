@@ -877,6 +877,91 @@ describe("Wallet", () => {
         });
     });
 
+    describe("clear", () => {
+        const mockArkInfo = {
+            signerPubkey: mockServerKeyHex,
+            forfeitPubkey: mockServerKeyHex,
+            batchExpiry: BigInt(144),
+            unilateralExitDelay: BigInt(144),
+            boardingExitDelay: BigInt(144),
+            roundInterval: BigInt(144),
+            network: "mutinynet",
+            dust: BigInt(1000),
+            forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+            checkpointTapscript:
+                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+        };
+
+        function createMockVtxo(script: string): VirtualCoin {
+            return {
+                txid: "11".repeat(32),
+                vout: 0,
+                value: 50_000,
+                status: { confirmed: false, isLeaf: false },
+                virtualStatus: {
+                    state: "preconfirmed",
+                    commitmentTxIds: ["22".repeat(32)],
+                    batchExpiry: 1767225600000,
+                },
+                spentBy: "",
+                settledBy: undefined,
+                arkTxId: "",
+                createdAt: new Date("2026-01-01T00:00:00.000Z"),
+                isUnrolled: false,
+                isSpent: false,
+                script,
+            };
+        }
+
+        async function createReadonlyTestWallet() {
+            let walletScript = "";
+            const getVtxos = vi
+                .fn<IndexerProvider["getVtxos"]>()
+                .mockImplementation(async (opts) => {
+                    if (!walletScript && opts?.scripts?.[0]) walletScript = opts.scripts[0];
+                    return { vtxos: [createMockVtxo(walletScript)] };
+                });
+
+            const compressedPubKey = await mockIdentity.compressedPublicKey();
+            const readonlyIdentity = ReadonlySingleKey.fromPublicKey(compressedPubKey);
+            const walletRepository = new InMemoryWalletRepository();
+            const contractRepository = new InMemoryContractRepository();
+
+            const wallet = await ReadonlyWallet.create({
+                identity: readonlyIdentity,
+                arkServerUrl: "http://localhost:7070",
+                arkProvider: {
+                    getInfo: vi.fn().mockResolvedValue(mockArkInfo),
+                } as Partial<ArkProvider> as ArkProvider,
+                indexerProvider: {
+                    getVtxos,
+                    subscribeForScripts: vi.fn().mockResolvedValue("sub-1"),
+                    unsubscribeForScripts: vi.fn().mockResolvedValue(undefined),
+                    getSubscription: async function* () {},
+                } as Partial<IndexerProvider> as IndexerProvider,
+                onchainProvider: {} as OnchainProvider,
+                storage: { walletRepository, contractRepository },
+            });
+
+            return { wallet, walletRepository, contractRepository };
+        }
+
+        it("wipes stored VTXOs and contracts from both repositories", async () => {
+            const { wallet, walletRepository, contractRepository } =
+                await createReadonlyTestWallet();
+            const address = await wallet.getAddress();
+
+            expect(await wallet.getVtxos()).toHaveLength(1);
+            expect(await walletRepository.getVtxos(address)).toHaveLength(1);
+            expect((await contractRepository.getContracts()).length).toBeGreaterThan(0);
+
+            await wallet.clear();
+
+            expect(await walletRepository.getVtxos(address)).toEqual([]);
+            expect(await contractRepository.getContracts()).toEqual([]);
+        });
+    });
+
     describe("notifyIncomingFunds — single SSE stream", () => {
         const mockArkInfo = {
             signerPubkey: mockServerKeyHex,
