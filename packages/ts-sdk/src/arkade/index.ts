@@ -37,6 +37,16 @@ export { arkadeScriptHash, arkadeWitnessHash, computeArkadeScriptPublicKey } fro
 export * as BigNum from "./bignum";
 export { createArkadeBatchHandler, type ArkadeExtendedCoin } from "./batch";
 export {
+    ArkadeProgramScript,
+    stringifyArtifact,
+    serializeArkadeContractParams,
+    deserializeArkadeContractParams,
+    witnessRefToBytes,
+    type ArkadeContractParams,
+    type CompiledProgramFunction,
+    type ProgramKeys,
+} from "./program";
+export {
     Arkade,
     ArkadeContract,
     ArkadeTransactionBuilder,

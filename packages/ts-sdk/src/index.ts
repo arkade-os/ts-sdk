@@ -288,6 +288,8 @@ import type { VHTLCContractParams } from "./contracts/handlers/vhtlc";
 import { isCsvSpendable, isCltvSatisfied } from "./contracts/handlers/helpers";
 import { BoardingContractHandler } from "./contracts/handlers/boarding";
 import type { BoardingContractParams } from "./contracts/handlers/boarding";
+import { ArkadeContractHandler } from "./contracts/handlers/arkade";
+import type { ArkadeContractParams } from "./arkade/program";
 import {
     encodeArkContract,
     decodeArkContract,
@@ -503,6 +505,7 @@ export {
     DelegateContractHandler,
     VHTLCContractHandler,
     BoardingContractHandler,
+    ArkadeContractHandler,
     encodeArkContract,
     decodeArkContract,
     contractFromArkContract,
@@ -680,6 +683,7 @@ export type {
     DelegateContractParams,
     VHTLCContractParams,
     BoardingContractParams,
+    ArkadeContractParams,
     Discoverable,
     DiscoveryDeps,
     DiscoveredContract,
