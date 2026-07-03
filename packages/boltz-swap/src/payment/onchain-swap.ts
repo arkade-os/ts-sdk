@@ -13,16 +13,6 @@ function btcTarget(raw: string): string | undefined {
     }
 }
 
-/** Integer-sats amount encoded in a BIP21 URI (`amount=` is BTC), if any. */
-function encodedAmountSats(raw: string): number | undefined {
-    try {
-        const btc = BIP21.parse(raw).params.amount;
-        return typeof btc === "number" ? Math.round(btc * 1e8) : undefined;
-    } catch {
-        return undefined;
-    }
-}
-
 /**
  * On-chain BTC send via an Ark → BTC chain swap. Matches a bare BTC address or
  * the on-chain part of a unified BIP21 URI, and drives the full swap: create it
@@ -37,7 +27,7 @@ export function onchainSwapRail(): PaymentRail {
         available: (ctx) => ctx.swaps != null,
         quote: async (raw, amount, ctx: RouterContext) => {
             const address = btcTarget(raw)!;
-            const amt = amount ?? encodedAmountSats(raw) ?? 0;
+            const amt = amount ?? BIP21.amountSats(raw) ?? 0;
             return {
                 railId: "onchain-swap",
                 amount: amt,

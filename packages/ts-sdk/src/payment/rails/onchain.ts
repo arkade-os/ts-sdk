@@ -15,16 +15,6 @@ function btcTarget(raw: string): string | undefined {
     }
 }
 
-/** Integer-sats amount encoded in a BIP21 URI (`amount=` is BTC), if any. */
-function encodedAmountSats(raw: string): number | undefined {
-    try {
-        const btc = BIP21.parse(raw).params.amount;
-        return typeof btc === "number" ? Math.round(btc * 1e8) : undefined;
-    } catch {
-        return undefined;
-    }
-}
-
 /**
  * On-chain BTC send via collaborative exit — the Wallet-only on-chain path (no
  * swap). Matches a bare BTC address or the on-chain part of a unified BIP21 URI
@@ -37,7 +27,7 @@ export function onchainRail(): PaymentRail {
         match: (raw) => btcTarget(raw) !== undefined,
         quote: async (raw, amount, ctx: RouterContext) => {
             const address = btcTarget(raw)!;
-            const amt = amount ?? encodedAmountSats(raw) ?? 0;
+            const amt = amount ?? BIP21.amountSats(raw) ?? 0;
             // Reject non-positive or fractional amounts up front: 0 sats would
             // silently settle nothing, and BigInt(amt) throws on non-integers.
             if (!Number.isInteger(amt) || amt <= 0) {
