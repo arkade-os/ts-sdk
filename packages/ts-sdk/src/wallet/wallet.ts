@@ -13,6 +13,7 @@ import {
     BatchStartedEvent,
     RestArkProvider,
     SettlementEvent,
+    SettlementEventType,
     SignedIntent,
     TreeNoncesEvent,
     TreeSigningStartedEvent,
@@ -797,13 +798,16 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const isPendingRecovery = (coin: ExtendedVirtualCoin) =>
             pendingOutpoints.has(`${coin.txid}:${coin.vout}`);
 
-        // Exclude VTXOs locked by non-terminal intents from spendable balance.
-        // `getBalance()` is offline-first: it reads the intent locks from the
-        // repository only and never calls arkd/indexer or mutates intent state
-        // (stale-intent reconciliation is the online sync path's job — see
-        // ContractManager). The read is best-effort and fails open — see
+        // `settled`, `preconfirmed`, `total` and the asset rollup count every
+        // spendable VTXO the wallet owns — including those temporarily locked
+        // by a non-terminal intent, which are still the wallet's funds. Only
+        // `available` (what can be spent right now) subtracts intent-locked
+        // VTXOs. `getBalance()` is offline-first: that lock read touches the
+        // intent repository only and never calls arkd/indexer or mutates intent
+        // state (stale-intent reconciliation is the online sync path's job — see
+        // ContractManager). It is best-effort and fails open — see
         // {@link spendableVtxosExcludingLocked}.
-        const spendableVtxos = await spendableVtxosExcludingLocked(vtxos, this.intentRepository);
+        const unlockedVtxos = await spendableVtxosExcludingLocked(vtxos, this.intentRepository);
 
         // boarding
         let confirmed = 0;
@@ -817,19 +821,27 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
 
         // offchain
-        let settled = 0;
-        let preconfirmed = 0;
         let recoverable = 0;
         let pendingRecovery = 0;
         // Funds under a past-cutoff (EXPIRED) deprecated signer that are not yet
         // swept are NOT spendable — excluded from settled/preconfirmed/available
         // and surfaced under `pendingRecovery` (they still count toward `total`).
-        settled = spendableVtxos
+        const settled = vtxos
             .filter((coin) => coin.virtualStatus.state === "settled" && !isPendingRecovery(coin))
             .reduce((sum, coin) => sum + coin.value, 0);
-        preconfirmed = spendableVtxos
+        const preconfirmed = vtxos
             .filter(
                 (coin) => coin.virtualStatus.state === "preconfirmed" && !isPendingRecovery(coin),
+            )
+            .reduce((sum, coin) => sum + coin.value, 0);
+        // Spendable-right-now subset: the same settled+preconfirmed rule, but
+        // over VTXOs not currently locked by an in-flight intent.
+        const available = unlockedVtxos
+            .filter(
+                (coin) =>
+                    (coin.virtualStatus.state === "settled" ||
+                        coin.virtualStatus.state === "preconfirmed") &&
+                    !isPendingRecovery(coin),
             )
             .reduce((sum, coin) => sum + coin.value, 0);
         recoverable = vtxos
@@ -844,7 +856,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         // aggregate asset balances from spendable virtual outputs
         const assetBalances = new Map<string, bigint>();
-        for (const vtxo of spendableVtxos) {
+        for (const vtxo of vtxos) {
             if (!isSpendable(vtxo)) continue;
             if (vtxo.assets) {
                 for (const a of vtxo.assets) {
@@ -866,7 +878,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             },
             settled,
             preconfirmed,
-            available: settled + preconfirmed,
+            available,
             recoverable,
             pendingRecovery,
             total: totalBoarding + totalOffchain,
@@ -3044,6 +3056,16 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                               await Promise.resolve(eventCallback(event));
                           }
                           if (!intentRepo) return;
+                          // Only batch-boundary events can move intent state
+                          // (see reduceIntentState); skip the repo round-trip
+                          // for the far more frequent tree/stream sub-steps.
+                          if (
+                              event.type !== SettlementEventType.BatchStarted &&
+                              event.type !== SettlementEventType.BatchFinalized &&
+                              event.type !== SettlementEventType.BatchFailed
+                          ) {
+                              return;
+                          }
                           try {
                               const cur = (
                                   await intentRepo.getIntents({

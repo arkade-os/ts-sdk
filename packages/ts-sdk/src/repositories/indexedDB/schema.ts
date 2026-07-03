@@ -181,21 +181,21 @@ export function initDatabase(
     // `contains()` guards are idempotent and there is no legacy data to
     // migrate, so no oldVersion gate is needed.
     if (!db.objectStoreNames.contains(STORE_INTENTS)) {
-        const s = db.createObjectStore(STORE_INTENTS, {
+        const intentsStore = db.createObjectStore(STORE_INTENTS, {
             keyPath: "intentTxId",
         });
-        s.createIndex("intentId", "intentId", { unique: false });
-        s.createIndex("state", "state", { unique: false });
+        intentsStore.createIndex("intentId", "intentId", { unique: false });
+        intentsStore.createIndex("state", "state", { unique: false });
     }
     if (!db.objectStoreNames.contains(STORE_VIRTUAL_TXS)) {
         db.createObjectStore(STORE_VIRTUAL_TXS, { keyPath: "txid" });
     }
     if (!db.objectStoreNames.contains(STORE_VTXO_BRANCHES)) {
-        const s = db.createObjectStore(STORE_VTXO_BRANCHES, {
+        const branchesStore = db.createObjectStore(STORE_VTXO_BRANCHES, {
             keyPath: ["vtxoTxid", "vtxoVout", "position"],
         });
-        s.createIndex("vtxo", ["vtxoTxid", "vtxoVout"], { unique: false });
-        s.createIndex("virtualTxid", "virtualTxid", { unique: false });
+        branchesStore.createIndex("vtxo", ["vtxoTxid", "vtxoVout"], { unique: false });
+        branchesStore.createIndex("virtualTxid", "virtualTxid", { unique: false });
     }
 
     if (!db.objectStoreNames.contains(LEGACY_STORE_CONTRACT_COLLECTIONS)) {

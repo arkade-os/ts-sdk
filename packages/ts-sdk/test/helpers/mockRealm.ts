@@ -43,8 +43,16 @@ function withFiltered(rows: Row[]): Row[] {
                     .replace(/[()]/g, "")
                     .split(/\s+OR\s+/i)
                     .some((c) => {
-                        const m = c.trim().match(/(\w+)\s*==\s*\$(\d+)/);
-                        if (!m) return true;
+                        const m = c.trim().match(/^(\w+)\s*==\s*\$(\d+)$/);
+                        // Fail loudly rather than matching everything: an
+                        // unrecognized predicate shape means the mock can't
+                        // faithfully emulate the query, and a silent match would
+                        // hide real query/schema mismatches from the tests.
+                        if (!m) {
+                            throw new Error(
+                                `mockRealm: unsupported filtered() clause: "${c.trim()}"`,
+                            );
+                        }
                         return row[m[1]] === a[Number(m[2])];
                     }),
             ),

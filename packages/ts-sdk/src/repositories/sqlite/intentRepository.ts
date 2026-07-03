@@ -4,10 +4,11 @@ import {
     ArkIntentState,
     IntentFilter,
     IntentRepository,
+    intentMatchesFilter,
+    intentPageBounds,
     isTerminalIntentState,
 } from "../intentRepository";
 import { SQLExecutor } from "./types";
-import { matches } from "../inMemory/intentRepository";
 
 const SAFE_PREFIX = /^[a-zA-Z0-9_]+$/;
 function sanitizePrefix(p: string): string {
@@ -143,10 +144,9 @@ export class SQLiteIntentRepository implements IntentRepository {
             `SELECT * FROM ${this.t} ORDER BY created_at ASC, intent_tx_id ASC`,
         );
         let out = rows.map(rowToIntent);
-        if (filter) out = out.filter((i) => matches(i, filter));
-        const skip = filter?.skip ?? 0;
-        const take = filter?.take ?? out.length;
-        return out.slice(skip, skip + take);
+        if (filter) out = out.filter((i) => intentMatchesFilter(i, filter));
+        const { skip, end } = intentPageBounds(filter, out.length);
+        return out.slice(skip, end);
     }
 
     async getLockedVtxoOutpoints(): Promise<Outpoint[]> {

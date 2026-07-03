@@ -4,9 +4,10 @@ import {
     ArkIntentState,
     IntentFilter,
     IntentRepository,
+    intentMatchesFilter,
+    intentPageBounds,
     isTerminalIntentState,
 } from "../intentRepository";
-import { matches } from "../inMemory/intentRepository";
 import { RealmLike } from "./types";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -74,10 +75,9 @@ export class RealmIntentRepository implements IntentRepository {
         const all = [...this.realm.objects("ArkIntent")]
             .map(toIntent)
             .sort((a, b) => a.createdAt - b.createdAt || a.intentTxId.localeCompare(b.intentTxId));
-        const out = filter ? all.filter((i) => matches(i, filter)) : all;
-        const skip = filter?.skip ?? 0;
-        const take = filter?.take ?? out.length;
-        return out.slice(skip, skip + take);
+        const out = filter ? all.filter((i) => intentMatchesFilter(i, filter)) : all;
+        const { skip, end } = intentPageBounds(filter, out.length);
+        return out.slice(skip, end);
     }
 
     async getLockedVtxoOutpoints(): Promise<Outpoint[]> {

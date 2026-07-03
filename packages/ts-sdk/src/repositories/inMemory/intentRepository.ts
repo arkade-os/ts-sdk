@@ -3,6 +3,8 @@ import {
     ArkIntent,
     IntentFilter,
     IntentRepository,
+    intentMatchesFilter,
+    intentPageBounds,
     isTerminalIntentState,
 } from "../intentRepository";
 
@@ -25,12 +27,11 @@ export class InMemoryIntentRepository implements IntentRepository {
 
     async getIntents(filter?: IntentFilter): Promise<ArkIntent[]> {
         let out = [...this.byId.values()];
-        if (filter) out = out.filter((i) => matches(i, filter));
+        if (filter) out = out.filter((i) => intentMatchesFilter(i, filter));
         // Stable order shared with all persistent backends: (createdAt, intentTxId).
         out.sort((a, b) => a.createdAt - b.createdAt || a.intentTxId.localeCompare(b.intentTxId));
-        const skip = filter?.skip ?? 0;
-        const take = filter?.take ?? out.length;
-        return out.slice(skip, skip + take).map(clone);
+        const { skip, end } = intentPageBounds(filter, out.length);
+        return out.slice(skip, end).map(clone);
     }
 
     async getLockedVtxoOutpoints(): Promise<Outpoint[]> {
@@ -48,22 +49,3 @@ const clone = (i: ArkIntent): ArkIntent => ({
     intentVtxos: i.intentVtxos.map((o) => ({ ...o })),
     partialForfeits: [...i.partialForfeits],
 });
-
-export function matches(i: ArkIntent, f: IntentFilter): boolean {
-    if (f.intentTxIds && !f.intentTxIds.includes(i.intentTxId)) return false;
-    if (f.intentIds && (!i.intentId || !f.intentIds.includes(i.intentId))) return false;
-    if (f.states && !f.states.includes(i.state)) return false;
-    if (f.containingInputs) {
-        const keys = new Set(i.intentVtxos.map((o) => `${o.txid}:${o.vout}`));
-        if (!f.containingInputs.some((o) => keys.has(`${o.txid}:${o.vout}`))) return false;
-    }
-    if (f.validAt !== undefined) {
-        if (i.validFrom !== undefined && f.validAt < i.validFrom) return false;
-        if (i.validUntil !== undefined && f.validAt > i.validUntil) return false;
-    }
-    if (f.searchText) {
-        const hay = [i.intentId, i.batchId, i.commitmentTransactionId].filter(Boolean).join(" ");
-        if (!hay.includes(f.searchText)) return false;
-    }
-    return true;
-}

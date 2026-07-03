@@ -284,7 +284,11 @@ export interface WalletBalance {
     settled: number;
     /** Spendable preconfirmed (unfinalized) balance. */
     preconfirmed: number;
-    /** Spendable offchain balance (`settled + preconfirmed`). */
+    /**
+     * Immediately spendable offchain balance: the `settled + preconfirmed`
+     * rule applied only to VTXOs not locked by an in-flight (non-terminal)
+     * intent. Equals `settled + preconfirmed` when nothing is intent-locked.
+     */
     available: number;
     /** Recoverable balance from subdust or expired (swept) virtual outputs. */
     recoverable: number;

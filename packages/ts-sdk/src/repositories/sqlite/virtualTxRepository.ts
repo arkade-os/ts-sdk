@@ -17,6 +17,9 @@ interface VtxRow {
 export class SQLiteVirtualTxRepository implements VirtualTxRepository {
     readonly version = 1 as const;
     private initPromise: Promise<void> | null = null;
+    // Serializes transactions on the shared connection: SQLite cannot nest
+    // BEGIN IMMEDIATE, so overlapping tx() callers must run one at a time.
+    private writeChain: Promise<void> = Promise.resolve();
     private readonly prefix: string;
     private readonly tTx: string;
     private readonly tBranch: string;
@@ -54,19 +57,27 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
         );
     }
 
-    private async tx(fn: () => Promise<void>): Promise<void> {
-        await this.db.run("BEGIN IMMEDIATE");
-        try {
-            await fn();
-            await this.db.run("COMMIT");
-        } catch (e) {
+    private tx(fn: () => Promise<void>): Promise<void> {
+        // Chain onto the previous transaction so concurrent callers never
+        // interleave BEGIN IMMEDIATE/COMMIT/ROLLBACK on the shared connection.
+        const run = this.writeChain.then(async () => {
+            await this.db.run("BEGIN IMMEDIATE");
             try {
-                await this.db.run("ROLLBACK");
-            } catch {
-                /* already rolled back */
+                await fn();
+                await this.db.run("COMMIT");
+            } catch (e) {
+                try {
+                    await this.db.run("ROLLBACK");
+                } catch {
+                    /* already rolled back */
+                }
+                throw e;
             }
-            throw e;
-        }
+        });
+        // Keep the chain alive regardless of this run's outcome so a failed
+        // transaction doesn't wedge every subsequent writer.
+        this.writeChain = run.catch(() => {});
+        return run;
     }
 
     async clear(): Promise<void> {
@@ -78,12 +89,19 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
     }
 
     async upsertVirtualTxs(txs: VirtualTx[]): Promise<void> {
+        if (txs.length === 0) return;
         await this.ensureInit();
         await this.tx(async () => {
+            // Prefetch existing rows in one query instead of a SELECT per tx,
+            // then merge (new value wins, else keep the stored one) in memory.
+            const placeholders = txs.map(() => "?").join(", ");
+            const existing = await this.db.all<VtxRow>(
+                `SELECT * FROM ${this.tTx} WHERE txid IN (${placeholders})`,
+                txs.map((t) => t.txid),
+            );
+            const prevByTxid = new Map(existing.map((r) => [r.txid, r]));
             for (const t of txs) {
-                const prev = await this.db.get<VtxRow>(`SELECT * FROM ${this.tTx} WHERE txid = ?`, [
-                    t.txid,
-                ]);
+                const prev = prevByTxid.get(t.txid);
                 const hex = t.hex ?? prev?.hex ?? null;
                 const expires = t.expiresAt ?? prev?.expires_at ?? null;
                 const type = t.type ?? prev?.type ?? ChainedTxType.Unspecified;
@@ -91,6 +109,9 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
                     `INSERT OR REPLACE INTO ${this.tTx} (txid, hex, expires_at, type) VALUES (?, ?, ?, ?)`,
                     [t.txid, hex, expires, type],
                 );
+                // A txid repeated later in the same batch must merge onto this
+                // just-written row, matching the original per-tx-read behavior.
+                prevByTxid.set(t.txid, { txid: t.txid, hex, expires_at: expires, type });
             }
         });
     }

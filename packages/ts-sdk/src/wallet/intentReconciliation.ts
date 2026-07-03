@@ -1,5 +1,6 @@
 import { IndexerProvider } from "../providers/indexer";
 import {
+    ALL_INTENT_STATES,
     ArkIntent,
     ArkIntentState,
     IntentRepository,
@@ -11,12 +12,13 @@ import type { Outpoint, VirtualCoin } from ".";
  * Intent states a persisted intent can be stuck in after a crash: none of
  * these is terminal, so on their own they hide the intent's input VTXOs from
  * spendable balance forever (see {@link IntentRepository.getLockedVtxoOutpoints}).
+ *
+ * Derived from {@link ALL_INTENT_STATES} so a newly added state only has to be
+ * classified terminal-or-not in one place ({@link isTerminalIntentState}).
  */
-export const NON_TERMINAL_INTENT_STATES: readonly ArkIntentState[] = [
-    "waiting_to_submit",
-    "waiting_for_batch",
-    "batch_in_progress",
-];
+export const NON_TERMINAL_INTENT_STATES: readonly ArkIntentState[] = ALL_INTENT_STATES.filter(
+    (s) => !isTerminalIntentState(s),
+);
 
 /** Minimal indexer surface the reconciler needs. */
 export type IntentReconcilerIndexer = Pick<IndexerProvider, "getVtxos">;
@@ -129,7 +131,18 @@ export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<
     for (const intent of intents) {
         try {
             const next = await classifyIntent(intent, vtxosByOutpoint, nowMs);
-            if (next) await deps.intentRepository.saveIntent(next);
+            if (!next) continue;
+            // Freshness guard: a live settle() can advance this intent
+            // (e.g. waiting_to_submit → waiting_for_batch) between the snapshot
+            // read above and this write — reconciliation runs on reconnect,
+            // concurrently with in-flight settlements. Re-read and only persist
+            // the terminal result if the intent is still in the state we
+            // classified, so we never overwrite a live in-process outcome.
+            const [fresh] = await deps.intentRepository.getIntents({
+                intentTxIds: [intent.intentTxId],
+            });
+            if (!fresh || fresh.state !== intent.state) continue;
+            await deps.intentRepository.saveIntent(next);
         } catch (e) {
             console.error(`reconcileIntents: failed to reconcile intent ${intent.intentTxId}`, e);
         }
