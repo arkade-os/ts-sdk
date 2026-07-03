@@ -325,6 +325,37 @@ export function isDiscoverable(
 }
 
 /**
+ * The per-contract tapscript annotation stamped onto every VTXO locked to a
+ * contract (see `extendVirtualCoinForContract`): the leaf used to co-sign
+ * forfeits, the leaf committed in intent proofs, and the encoded taproot tree.
+ */
+export interface DerivedContractTapscripts {
+    forfeitTapLeafScript: TapLeafScript;
+    intentTapLeafScript: TapLeafScript;
+    tapTree: Bytes;
+}
+
+/**
+ * Optional capability a {@link ContractHandler} implements to provide the
+ * forfeit/intent tapscripts for VTXO annotation. Handlers whose script shape
+ * doesn't expose the legacy `forfeit()` method (e.g. program-compiled arkade
+ * contracts, where the right leaf depends on the program) implement this so
+ * the annotation pipeline stays type-agnostic.
+ */
+export interface TapscriptDeriving<S extends VtxoScript = VtxoScript> {
+    deriveTapscripts(script: S, contract: Contract): DerivedContractTapscripts;
+}
+
+/** Duck-typed guard (mirrors {@link isDiscoverable}). */
+export function isTapscriptDeriving(
+    handler: ContractHandler<unknown> | undefined,
+): handler is ContractHandler<unknown> & TapscriptDeriving {
+    return (
+        !!handler && typeof (handler as Partial<TapscriptDeriving>).deriveTapscripts === "function"
+    );
+}
+
+/**
  * Event emitted when contract-related changes occur.
  */
 export type ContractEvent =

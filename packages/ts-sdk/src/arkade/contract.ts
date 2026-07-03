@@ -13,6 +13,12 @@
  * the per-segment witness layout. All key tweaking, packet encoding and PSBT
  * plumbing is internal — from the caller's side it is just Arkade.
  *
+ * Program → script compilation lives in {@link ArkadeProgramScript}
+ * (./program.ts) and is shared with the generic `"arkade"` contract handler,
+ * so a contract created here can be persisted, watched and re-derived through
+ * the standard `src/contracts` pipeline: pass a `contractManager` to
+ * {@link Arkade.connect} and call {@link ArkadeContract.register}.
+ *
  * Contract functions are strongly typed from the program's literal shape: a
  * function declaring `inputs: [{ name: "preimage", type: "bytes" }]` produces a
  * `functions.claim(preimage: Uint8Array)` call signature. The type flows through
@@ -44,7 +50,7 @@
  */
 
 import { base64, hex } from "@scure/base";
-import { RawWitness, ScriptNum } from "@scure/btc-signer";
+import { RawWitness } from "@scure/btc-signer";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 
 import type { Network } from "../networks";
@@ -54,16 +60,9 @@ import type { EmulatorProvider } from "../providers/emulator";
 import type { IndexerProvider } from "../providers/indexer";
 import type { Identity } from "../identity";
 import type { VirtualCoin } from "../wallet";
-import {
-    MultisigTapscript,
-    CSVMultisigTapscript,
-    CLTVMultisigTapscript,
-    ConditionMultisigTapscript,
-    type ArkTapscript,
-    type TapscriptType,
-    type RelativeTimelock,
-} from "../script/tapscript";
-import { VtxoScript, type TapLeafScript } from "../script/base";
+import { isSpendable } from "../wallet";
+import { CSVMultisigTapscript } from "../script/tapscript";
+import type { TapLeafScript } from "../script/base";
 import { buildOffchainTx, type ArkTxInput } from "../utils/arkTransaction";
 import { ConditionWitness, PrevArkTxField, setArkPsbtField } from "../utils/unknownFields";
 import { Transaction } from "../utils/transaction";
@@ -79,106 +78,50 @@ import {
     AssetId,
     Metadata,
 } from "../extension/asset";
-import { ArkadeScript } from "./script";
-import { ARKADE_OP } from "./opcodes";
-import { computeArkadeScriptPublicKey } from "./tweak";
+import type { IContractManager } from "../contracts/contractManager";
+import type { Contract } from "../contracts/types";
+import {
+    ArkadeProgramScript,
+    deserializeArkadeContractParams,
+    inputName,
+    serializeArkadeContractParams,
+    witnessRefToBytes,
+    type ArkadeArgValue,
+    type ArkadeFunction,
+    type ArkadeParamValue,
+    type ArkadeValueType,
+    type CompiledProgramFunction,
+    type InputDef,
+    type InputRef,
+    type Program,
+    type ProgramKeys,
+    type WitnessRef,
+} from "./program";
 
-const MinimalScriptNum = ScriptNum(undefined, true);
-
-// --- Program model (mirrors the compiler artifact) -------------------------
-
-/** A token in an `asm` array: an opcode name, a number/bigint push, raw bytes, or a `$param` placeholder. */
-export type AsmToken = string | number | bigint | Uint8Array;
-
-/** A constructor argument or resolved value. */
-export type ArkadeParamValue = Uint8Array | bigint | number;
-
-/** A function call argument (function input). */
-export type ArkadeArgValue = Uint8Array | bigint | number;
-
-/**
- * The declared type of a function input, used to derive the static TS type of
- * the corresponding `functions.<name>(...)` argument. Byte-like types map to
- * `Uint8Array`; `int` maps to `bigint | number`.
- */
-export type ArkadeArgType = "bytes" | "pubkey" | "sig" | "hash" | "int";
-
-/**
- * Maps an {@link ArkadeArgType} to its TypeScript argument type.
- * @internal
- */
-interface ArkadeValueType {
-    bytes: Uint8Array;
-    pubkey: Uint8Array;
-    sig: Uint8Array;
-    hash: Uint8Array;
-    int: bigint | number;
-}
-
-/** A typed function input: a name plus its {@link ArkadeArgType}. */
-export interface InputDef {
-    name: string;
-    type: ArkadeArgType;
-}
-
-/**
- * A function input declaration: either a typed descriptor `{ name, type }` (the
- * argument is statically typed) or a bare name string (the argument falls back
- * to the loose {@link ArkadeArgValue}).
- */
-export type InputRef = string | InputDef;
-
-/** Reference to a signer key: `"server"`, `"user"`, a `"$param"`, or literal x-only bytes. */
-export type SignerRef = "server" | "user" | string | Uint8Array;
-
-/** A witness-stack item: a function-input name, a literal number/bigint (minimal script-num), or raw bytes. */
-export type WitnessRef = string | number | bigint | Uint8Array;
-
-/** Bitcoin Script segment of a spending path — enforced on-chain. */
-export interface TapscriptSegment {
-    /** Required signers. The tweaked co-signer is appended automatically when the path has an `arkadeScript`. */
-    signers: SignerRef[];
-    /** Optional standard-opcode condition (e.g. a hashlock), encoded into a ConditionMultisig leaf. */
-    asm?: AsmToken[];
-    /** Relative timelock (CSV). Mutually exclusive with `cltv`/`asm`. */
-    csv?: RelativeTimelock;
-    /** Absolute timelock (CLTV). Mutually exclusive with `csv`/`asm`. */
-    cltv?: bigint;
-    /** Items satisfying the condition (e.g. an HTLC preimage); set via the ConditionWitness PSBT field. */
-    witness?: WitnessRef[];
-}
-
-/** Arkade Script segment of a spending path — emulated, bound via the key tweak. */
-export interface ArkadeSegment {
-    /** Raw Arkade opcodes with `$param` placeholders. */
-    asm: AsmToken[];
-    /** The arkade-script witness stack (e.g. an output index). */
-    witness?: WitnessRef[];
-}
-
-/** One named spending path. */
-export interface ArkadeFunction {
-    /**
-     * The function ABI: an ordered list of call arguments. Each entry is a typed
-     * descriptor `{ name, type }` (which gives the matching `functions.<name>`
-     * argument a precise static type) or a bare name string (loose
-     * {@link ArkadeArgValue}). Absent for nullary paths (e.g. exit/cancel).
-     */
-    inputs?: readonly InputRef[];
-    tapscript: TapscriptSegment;
-    /** Present for covenant paths; absent for pure-tapscript paths (cancel/exit). */
-    arkadeScript?: ArkadeSegment;
-}
-
-export const SUPPORTED_PROGRAM_VERSION = 0;
-
-/** An Arkade contract program (hand-written or compiler-emitted). */
-export interface Program {
-    version: number;
-    /** Ordered constructor parameter names (documentation/validation only). */
-    params?: string[];
-    functions: Record<string, ArkadeFunction>;
-}
+// Program model & artifact helpers moved to ./program — re-exported here so
+// existing `from "./contract"` importers keep working.
+export {
+    parseArtifact,
+    resolveAsm,
+    stringifyArtifact,
+    SUPPORTED_PROGRAM_VERSION,
+    ArkadeProgramScript,
+    type ArkadeContractParams,
+    type AsmToken,
+    type ArkadeParamValue,
+    type ArkadeArgValue,
+    type ArkadeArgType,
+    type ArkadeFunction,
+    type ArkadeSegment,
+    type CompiledProgramFunction,
+    type InputDef,
+    type InputRef,
+    type Program,
+    type ProgramKeys,
+    type SignerRef,
+    type TapscriptSegment,
+    type WitnessRef,
+} from "./program";
 
 // --- Static typing of contract functions -----------------------------------
 
@@ -272,6 +215,15 @@ export interface ArkadeConnectOptions {
     identity?: Identity;
     /** Network for address derivation; defaults to the SDK default. */
     network?: Network;
+    /**
+     * The wallet's contract manager. When set, contracts created from this
+     * client can {@link ArkadeContract.register} themselves into the standard
+     * contract pipeline (persistence, watching, events), and
+     * {@link ArkadeContract.getUtxos} reads repository-backed state
+     * (offline-first) for registered contracts instead of querying the
+     * indexer directly. Obtain it via `wallet.getContractManager()`.
+     */
+    contractManager?: IContractManager;
 }
 
 /**
@@ -292,6 +244,8 @@ export class Arkade {
     readonly identity?: Identity;
     /** The signing identity's x-only public key, resolved at connect for the `"user"` signer. */
     readonly userKey?: Uint8Array;
+    /** The wallet's contract manager, when contract persistence is wired up. */
+    readonly contractManager?: IContractManager;
 
     private constructor(fields: {
         arkProvider: Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
@@ -303,6 +257,7 @@ export class Arkade {
         indexer?: Pick<IndexerProvider, "getVtxos">;
         identity?: Identity;
         userKey?: Uint8Array;
+        contractManager?: IContractManager;
     }) {
         this.arkProvider = fields.arkProvider;
         this.emulator = fields.emulator;
@@ -313,6 +268,7 @@ export class Arkade {
         this.indexer = fields.indexer;
         this.identity = fields.identity;
         this.userKey = fields.userKey;
+        this.contractManager = fields.contractManager;
     }
 
     /** Connect and resolve the server key, checkpoint closure and (if present) the co-signer key. */
@@ -346,6 +302,7 @@ export class Arkade {
             indexer: opts.indexer,
             identity: opts.identity,
             userKey,
+            contractManager: opts.contractManager,
         });
     }
 
@@ -365,85 +322,52 @@ export class Arkade {
 
 // --- Contract --------------------------------------------------------------
 
-/**
- * A single spending path, fully resolved at construction: its definition, the
- * committed leaf body, the per-path arkade-script bytes (covenant paths only),
- * and the {@link TapLeafScript} (control block) for spending it.
- */
-interface CompiledFunction {
-    name: string;
-    def: ArkadeFunction;
-    /** The committed leaf script (body). */
-    leafScript: Uint8Array;
-    /** Resolved arkade-script bytes; undefined for pure-tapscript paths. */
-    arkadeScript?: Uint8Array;
-    /** Resolved once — the taproot leaf + control block for this path. */
-    tapLeafScript: TapLeafScript;
-}
-
 /** A resolved, instantiated Arkade contract. */
 export class ArkadeContract<P extends Program = Program> {
-    /** The taproot tree of spending-path leaves. */
-    readonly vtxoScript: VtxoScript;
+    /** The compiled taproot tree of spending-path leaves. */
+    readonly vtxoScript: ArkadeProgramScript;
     /** Encoded taproot tree (shared spend context for every path). */
     readonly tapTree: Uint8Array;
+    /** The signer keys the program was compiled against. */
+    readonly keys: ProgramKeys;
     /** Spending paths in declaration order. */
-    private readonly compiled: CompiledFunction[];
+    private readonly compiled: CompiledProgramFunction[];
 
     constructor(
         readonly client: Arkade,
         readonly program: P,
-        readonly args: Record<string, ArkadeParamValue>,
+        readonly args: Record<string, ArkadeParamValue> = {},
+        keys?: ProgramKeys,
     ) {
-        if (program.version !== SUPPORTED_PROGRAM_VERSION) {
-            throw new Error(
-                `ArkadeContract: unsupported program version ${program.version} — this SDK supports version ${SUPPORTED_PROGRAM_VERSION}`,
-            );
-        }
-        const functions: Record<string, ArkadeFunction> = program.functions;
-        const names = Object.keys(functions);
-        if (names.length === 0) {
-            throw new Error("ArkadeContract: program has no functions");
-        }
-        const defs = names.map((n) => functions[n]);
-
-        // Covenant functions need the emulator's co-signer key for the tweak.
-        const covenant = names.find((_, i) => defs[i].arkadeScript);
-        if (covenant && !client.emulatorKey) {
-            throw new Error(
-                `ArkadeContract: function '${covenant}' has an arkadeScript but no emulator is configured — pass an \`emulator\` to Arkade.connect`,
-            );
-        }
-
-        // First pass: resolve each leaf body (and arkade bytes) so the tree can
-        // be built. Second pass resolves each path's TapLeafScript once the tree
-        // (and thus the control blocks) exists.
-        const partial = defs.map((def, i) => {
-            validateTapscript(def.tapscript);
-            const pubkeys = def.tapscript.signers.map((s) => this.resolveSigner(s));
-
-            if (def.arkadeScript) {
-                // Covenant leaf: bind the emulator's co-signer key to the arkade
-                // script via the tagged-hash tweak, then append it to the leaf's
-                // signer set (equivalent to the former ArkadeVtxoScript).
-                const arkadeScript = resolveAsm(def.arkadeScript.asm, args);
-                const tweaked = computeArkadeScriptPublicKey(client.emulatorKey!, arkadeScript);
-                const leafScript = this.encodeTapscript(def.tapscript, [
-                    ...pubkeys,
-                    tweaked,
-                ]).script;
-                return { name: names[i], def, leafScript, arkadeScript };
-            }
-            const leafScript = this.encodeTapscript(def.tapscript, pubkeys).script;
-            return { name: names[i], def, leafScript, arkadeScript: undefined };
-        });
-
-        this.vtxoScript = new VtxoScript(partial.map((p) => p.leafScript));
+        this.keys = keys ?? {
+            serverKey: client.serverKey,
+            userKey: client.userKey,
+            emulatorKey: client.emulatorKey,
+        };
+        this.vtxoScript = new ArkadeProgramScript(program, args, this.keys);
         this.tapTree = this.vtxoScript.encode();
-        this.compiled = partial.map((p) => ({
-            ...p,
-            tapLeafScript: this.vtxoScript.findLeaf(hex.encode(p.leafScript)),
-        }));
+        this.compiled = this.vtxoScript.compiled;
+    }
+
+    /**
+     * Rebuild a callable contract from a persisted `"arkade"` contract row
+     * (see {@link ArkadeContract.register}). The stored keys are used for
+     * compilation — not the client's current ones — so the derived script and
+     * address stay identical to the registered contract even after a server
+     * signer rotation.
+     */
+    static fromContract(client: Arkade, contract: Contract): ArkadeContract {
+        if (contract.type !== "arkade") {
+            throw new Error(
+                `ArkadeContract.fromContract: expected contract type 'arkade', got '${contract.type}'`,
+            );
+        }
+        const typed = deserializeArkadeContractParams(contract.params);
+        return new ArkadeContract(client, typed.program, typed.args, {
+            serverKey: typed.serverKey,
+            userKey: typed.userKey,
+            emulatorKey: typed.emulatorKey,
+        });
     }
 
     /** Resolve the {@link TapLeafScript} for a spending path by its index. */
@@ -455,7 +379,7 @@ export class ArkadeContract<P extends Program = Program> {
 
     /** Arkade funding address. */
     get address(): string {
-        return this.vtxoScript.address(this.client.network.hrp, this.client.serverKey).encode();
+        return this.vtxoScript.address(this.client.network.hrp, this.keys.serverKey).encode();
     }
 
     /** Taproot output script. */
@@ -477,13 +401,77 @@ export class ArkadeContract<P extends Program = Program> {
         return out as unknown as ContractFunctions<P>;
     }
 
-    /** Spendable VTXOs locked by this contract (requires an indexer). */
+    /**
+     * The `createContract` payload for this contract — the serialized program,
+     * args and keys plus the derived script/address. Useful when registering
+     * through a manager the client does not hold.
+     */
+    toContractParams(): {
+        type: string;
+        params: Record<string, string>;
+        script: string;
+        address: string;
+    } {
+        return {
+            type: "arkade",
+            params: serializeArkadeContractParams({
+                program: this.program,
+                args: this.args,
+                serverKey: this.keys.serverKey,
+                userKey: this.keys.userKey,
+                emulatorKey: this.keys.emulatorKey,
+            }),
+            script: hex.encode(this.pkScript),
+            address: this.address,
+        };
+    }
+
+    /**
+     * Persist this contract through the wallet's {@link IContractManager} so it
+     * is tracked like any other contract type: stored in the contract
+     * repository, watched for VTXO events, counted in repository-backed
+     * balances, and re-derivable offline via the `"arkade"` contract handler.
+     * Idempotent — re-registering the same script is a no-op.
+     */
+    async register(options?: {
+        label?: string;
+        metadata?: Record<string, unknown>;
+    }): Promise<Contract> {
+        const manager = this.client.contractManager;
+        if (!manager) {
+            throw new Error(
+                "ArkadeContract.register requires a `contractManager` on the Arkade client — pass one to Arkade.connect",
+            );
+        }
+        return manager.createContract({
+            ...this.toContractParams(),
+            label: options?.label,
+            metadata: options?.metadata,
+        });
+    }
+
+    /**
+     * Spendable VTXOs locked by this contract.
+     *
+     * When a `contractManager` is configured and this contract is registered,
+     * reads the repository-backed state (offline-first, kept fresh by the
+     * contract watcher). Otherwise falls back to a direct indexer query.
+     */
     async getUtxos(): Promise<VirtualCoin[]> {
+        const manager = this.client.contractManager;
+        const scriptHex = hex.encode(this.pkScript);
+        if (manager) {
+            const [registered] = await manager.getContracts({ script: scriptHex });
+            if (registered) {
+                const [withVtxos] = await manager.getContractsWithVtxos({ script: scriptHex });
+                return (withVtxos?.vtxos ?? []).filter(isSpendable);
+            }
+        }
         if (!this.client.indexer) {
             throw new Error("ArkadeContract.getUtxos: an indexer is required");
         }
         const { vtxos } = await this.client.indexer.getVtxos({
-            scripts: [hex.encode(this.pkScript)],
+            scripts: [scriptHex],
             spendableOnly: true,
         });
         return vtxos;
@@ -493,42 +481,6 @@ export class ArkadeContract<P extends Program = Program> {
     async getBalance(): Promise<bigint> {
         const utxos = await this.getUtxos();
         return utxos.reduce((sum, u) => sum + BigInt(u.value), 0n);
-    }
-
-    private resolveSigner(ref: SignerRef): Uint8Array {
-        if (ref instanceof Uint8Array) return ref;
-        if (ref === "server") return this.client.serverKey;
-        if (ref === "user") {
-            if (!this.client.userKey) {
-                throw new Error("signer 'user' requires an `identity` on the Arkade client");
-            }
-            return this.client.userKey;
-        }
-        if (ref.startsWith("$")) {
-            const v = bindValue(this.args, ref.slice(1));
-            if (!(v instanceof Uint8Array)) {
-                throw new Error(`signer ${ref} must be a pubkey (bytes)`);
-            }
-            return v;
-        }
-        throw new Error(`unknown signer reference '${ref}'`);
-    }
-
-    private encodeTapscript(
-        seg: TapscriptSegment,
-        pubkeys: Uint8Array[],
-    ): ArkTapscript<TapscriptType, any> {
-        if (seg.csv) return CSVMultisigTapscript.encode({ timelock: seg.csv, pubkeys });
-        if (seg.cltv !== undefined) {
-            return CLTVMultisigTapscript.encode({ absoluteTimelock: seg.cltv, pubkeys });
-        }
-        if (seg.asm) {
-            return ConditionMultisigTapscript.encode({
-                conditionScript: resolveAsm(seg.asm, this.args),
-                pubkeys,
-            });
-        }
-        return MultisigTapscript.encode({ pubkeys });
     }
 }
 
@@ -550,7 +502,7 @@ export class ArkadeTransactionBuilder {
         // `<any>`: the builder only reads `client`/`tapTree` (program-independent),
         // and the concrete `P` would otherwise make `this` unassignable here.
         private readonly contract: ArkadeContract<any>,
-        private readonly fn: CompiledFunction,
+        private readonly fn: CompiledProgramFunction,
         private readonly args: Record<string, ArkadeArgValue>,
     ) {}
 
@@ -585,6 +537,14 @@ export class ArkadeTransactionBuilder {
     to(outputs: TransactionOutput[]): this;
     to(scriptOrOutputs: Uint8Array | TransactionOutput[], amount?: bigint): this {
         if (Array.isArray(scriptOrOutputs)) {
+            for (const [i, out] of scriptOrOutputs.entries()) {
+                // `TransactionOutput` fields are all optional in scure's PSBT
+                // types; an amount-less output would silently skew the balance
+                // math below, so reject it here like the single-output form.
+                if (out.amount === undefined) {
+                    throw new Error(`to(outputs): output ${i} is missing an amount`);
+                }
+            }
             this.outputs.push(...scriptOrOutputs);
         } else {
             if (amount === undefined) throw new Error("to(script, amount): amount is required");
@@ -788,26 +748,15 @@ export class ArkadeTransactionBuilder {
     }
 
     private witnessBytes(ref: WitnessRef): Uint8Array {
-        if (ref instanceof Uint8Array) return ref;
-        if (typeof ref === "number" || typeof ref === "bigint") {
-            return MinimalScriptNum.encode(BigInt(ref));
-        }
-        const v = bindValue(this.args, ref);
-        if (v instanceof Uint8Array) return v;
-        return MinimalScriptNum.encode(BigInt(v));
+        return witnessRefToBytes(ref, this.args, this.contract.args);
     }
 }
 
 // --- helpers ---------------------------------------------------------------
 
-/** The declared name of a function input, whether typed descriptor or bare string. */
-function inputName(ref: InputRef): string {
-    return typeof ref === "string" ? ref : ref.name;
-}
-
 /** Bind positional call arguments to a function's declared input names. */
 function bindInputs(
-    fn: CompiledFunction,
+    fn: CompiledProgramFunction,
     callArgs: ArkadeArgValue[],
 ): Record<string, ArkadeArgValue> {
     const names = (fn.def.inputs ?? []).map(inputName);
@@ -817,106 +766,6 @@ function bindInputs(
     const bound: Record<string, ArkadeArgValue> = {};
     names.forEach((n, i) => (bound[n] = callArgs[i]));
     return bound;
-}
-
-/** Look up a `$param` / function-input value in a bind map; throws when unbound. */
-function bindValue(bind: Record<string, ArkadeParamValue>, name: string): ArkadeParamValue {
-    const v = bind[name];
-    if (v === undefined) throw new Error(`unbound parameter '${name}'`);
-    return v;
-}
-
-/**
- * Resolve an `asm` array to bytes: substitute `$param` placeholders from `bind`,
- * pass everything else (opcode names, numbers, raw byte pushes) through to the
- * Arkade script encoder. The SDK does not interpret opcodes — this is pure
- * substitution + encoding. To embed the server or co-signer key, push its bytes
- * directly (or via a `$param`); there is no `<SERVER_KEY>`/`<COSIGNER_KEY>` token.
- */
-export function resolveAsm(asm: AsmToken[], bind: Record<string, ArkadeParamValue>): Uint8Array {
-    const tokens = asm.map((t) => {
-        if (typeof t === "string" && t.startsWith("$")) {
-            return bindValue(bind, t.slice(1));
-        }
-        if (t === "<SELF>") {
-            // Continuation covenants don't hard-code their own address (that would
-            // be a non-converging fixpoint); express them with input introspection
-            // (PUSHCURRENTINPUTINDEX + INSPECTINPUTSCRIPTPUBKEY) instead.
-            throw new Error(
-                "<SELF> is not a placeholder; use INSPECTINPUTSCRIPTPUBKEY for continuation covenants",
-            );
-        }
-        return t;
-    });
-    return ArkadeScript.encode(tokens as never);
-}
-
-/**
- * Validate a tapscript segment: it must have signers, may use at most one of
- * `asm`/`csv`/`cltv`, and may not contain Arkade opcodes (those are `OP_SUCCESS`
- * on-chain and belong in the `arkadeScript` segment).
- */
-function validateTapscript(seg: TapscriptSegment): void {
-    if (!seg.signers || seg.signers.length === 0) {
-        throw new Error("tapscript: at least one signer is required");
-    }
-    const forms = [seg.asm !== undefined, seg.csv !== undefined, seg.cltv !== undefined].filter(
-        Boolean,
-    ).length;
-    if (forms > 1) {
-        throw new Error("tapscript: `asm`, `csv` and `cltv` conflict — use at most one");
-    }
-    for (const t of seg.asm ?? []) {
-        if (typeof t === "string" && t in ARKADE_OP) {
-            throw new Error(
-                `tapscript: arkade opcode '${t}' is not enforceable on-chain — move it to arkadeScript`,
-            );
-        }
-    }
-}
-
-/**
- * Convert a compiler-style JSON artifact into a {@link Program}. Byte values are
- * encoded as `0x`-prefixed hex strings in `asm`/`witness`/`signers`; opcode names,
- * `$param` placeholders and numbers pass through unchanged.
- */
-export function parseArtifact(artifact: {
-    version?: number;
-    params?: string[];
-    functions: Record<string, any>;
-}): Program {
-    const hexToken = (t: unknown): any =>
-        typeof t === "string" && t.startsWith("0x") ? hex.decode(t.slice(2)) : t;
-
-    const functions: Record<string, ArkadeFunction> = {};
-    for (const [name, fn] of Object.entries(artifact.functions)) {
-        const tap = fn.tapscript ?? {};
-        const tapscript: TapscriptSegment = {
-            signers: (tap.signers ?? []).map(hexToken),
-            ...(tap.asm ? { asm: tap.asm.map(hexToken) } : {}),
-            ...(tap.witness ? { witness: tap.witness.map(hexToken) } : {}),
-            ...(tap.csv ? { csv: { type: tap.csv.type, value: BigInt(tap.csv.value) } } : {}),
-            ...(tap.cltv !== undefined ? { cltv: BigInt(tap.cltv) } : {}),
-        };
-        const arkadeScript = fn.arkadeScript
-            ? {
-                  asm: fn.arkadeScript.asm.map(hexToken),
-                  ...(fn.arkadeScript.witness
-                      ? { witness: fn.arkadeScript.witness.map(hexToken) }
-                      : {}),
-              }
-            : undefined;
-        functions[name] = {
-            ...(fn.inputs ? { inputs: fn.inputs } : {}),
-            tapscript,
-            ...(arkadeScript ? { arkadeScript } : {}),
-        };
-    }
-    return {
-        version: artifact.version ?? SUPPORTED_PROGRAM_VERSION,
-        ...(artifact.params ? { params: artifact.params } : {}),
-        functions,
-    };
 }
 
 /**
