@@ -1,5 +1,5 @@
 import type { PaymentRail, RouterContext } from "@arkade-os/sdk";
-import { isLightningInvoice, makeHandle, BIP21 } from "@arkade-os/sdk";
+import { isLightningInvoice, makeHandle, BIP21, assertSendableAmount } from "@arkade-os/sdk";
 import type { ArkadeSwaps } from "../arkade-swaps";
 import { getInvoiceSatoshis } from "../utils/decoding";
 
@@ -39,7 +39,10 @@ export function lightningRail(): PaymentRail {
         available: (ctx) => ctx.swaps != null,
         quote: async (raw, _amount, ctx: RouterContext) => {
             const invoice = invoiceOf(raw)!;
+            // The bolt11 invoice carries the amount; reject amountless or
+            // undecodable invoices instead of surfacing a `total: 0` quote.
             const amount = invoiceSats(invoice);
+            assertSendableAmount("lightning", amount);
             return {
                 railId: "lightning",
                 amount,

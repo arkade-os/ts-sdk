@@ -4,6 +4,11 @@ import { createDefaultPaymentRouter } from "../../src/payment";
 
 const arkAddr = new ArkAddress(new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)).encode();
 const btcAddr = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7k";
+// BOLT11 spec example — decodes to 250_000 sats.
+const INVOICE =
+    "lnbc2500u1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdq5xysxxatsyp3k7en" +
+    "xv4jsxqzpuaztrnwngzn3kdzw5hydlzf03qdgm2hdq27cqv3agm2awhz5se903vruatfhq77w3ls4evs3ch9zw97j2" +
+    "5emudupq63nyw24cg27h2rspfj9srp";
 
 describe("createDefaultPaymentRouter(wallet, swaps)", () => {
     it("fans a unified BIP21 URI out across all four rails, ranked by priority", async () => {
@@ -14,7 +19,7 @@ describe("createDefaultPaymentRouter(wallet, swaps)", () => {
 
     it("routes a bare bolt11 invoice to the lightning rail", async () => {
         const router = createDefaultPaymentRouter({} as any, {} as any);
-        expect((await router.route("lnbc10n1pjexample")).railId).toBe("lightning");
+        expect((await router.route(INVOICE)).railId).toBe("lightning");
     });
 
     it("prefers the chain swap for a bare BTC address (ark -> btc default)", async () => {

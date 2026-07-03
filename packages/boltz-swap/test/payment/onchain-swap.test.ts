@@ -47,4 +47,16 @@ describe("onchainSwapRail", () => {
         expect(send).toHaveBeenCalledWith({ address: "ark1lockup", amount: 1100 });
         expect(waitAndClaimBtc).toHaveBeenCalledWith(pendingSwap);
     });
+
+    it("rejects a missing, zero, or fractional amount at quote time", async () => {
+        await expect(onchainSwapRail().quote(btcAddr, undefined, ctx({}))).rejects.toThrow(
+            /amount is required/i,
+        );
+        await expect(onchainSwapRail().quote(btcAddr, 0, ctx({}))).rejects.toThrow(
+            /invalid amount/i,
+        );
+        await expect(onchainSwapRail().quote(btcAddr, 1.5, ctx({}))).rejects.toThrow(
+            /invalid amount/i,
+        );
+    });
 });

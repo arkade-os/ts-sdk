@@ -1,5 +1,6 @@
 export * from "./types";
 export * from "./predicates";
+export * from "./amount";
 export * from "./handle";
 export { PaymentRouter, AmbiguousRouteError } from "./router";
 export { arkRail } from "./rails/ark";

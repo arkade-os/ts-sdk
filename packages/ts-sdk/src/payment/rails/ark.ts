@@ -1,5 +1,6 @@
 import type { PaymentRail, RouterContext } from "../types";
 import { isValidArkAddress } from "../predicates";
+import { resolveSendAmount } from "../amount";
 import { makeHandle } from "../handle";
 import { BIP21 } from "../../utils/bip21";
 
@@ -24,7 +25,7 @@ export function arkRail(): PaymentRail {
         match: (raw) => arkTarget(raw) !== undefined,
         quote: async (raw, amount, ctx: RouterContext) => {
             const address = arkTarget(raw)!;
-            const amt = amount ?? BIP21.amountSats(raw) ?? 0;
+            const amt = resolveSendAmount("ark", raw, amount);
             return {
                 railId: "ark",
                 amount: amt,

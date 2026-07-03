@@ -1,5 +1,5 @@
 import type { PaymentRail, RouterContext } from "@arkade-os/sdk";
-import { isBtcAddress, makeHandle, BIP21 } from "@arkade-os/sdk";
+import { isBtcAddress, makeHandle, BIP21, resolveSendAmount } from "@arkade-os/sdk";
 import type { ArkadeSwaps } from "../arkade-swaps";
 
 /** The on-chain BTC address in `raw`: bare, or the address of a BIP21 URI. */
@@ -27,7 +27,7 @@ export function onchainSwapRail(): PaymentRail {
         available: (ctx) => ctx.swaps != null,
         quote: async (raw, amount, ctx: RouterContext) => {
             const address = btcTarget(raw)!;
-            const amt = amount ?? BIP21.amountSats(raw) ?? 0;
+            const amt = resolveSendAmount("onchain-swap", raw, amount);
             return {
                 railId: "onchain-swap",
                 amount: amt,

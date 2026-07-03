@@ -4,6 +4,12 @@ import { lightningRail } from "../../src/payment/lightning";
 
 const ctx = (swaps: unknown): RouterContext => ({ wallet: {} as any, swaps, prefs: {} });
 
+// BOLT11 spec example — decodes to 250_000 sats (amount = 2500u).
+const INVOICE =
+    "lnbc2500u1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdq5xysxxatsyp3k7en" +
+    "xv4jsxqzpuaztrnwngzn3kdzw5hydlzf03qdgm2hdq27cqv3agm2awhz5se903vruatfhq77w3ls4evs3ch9zw97j2" +
+    "5emudupq63nyw24cg27h2rspfj9srp";
+
 describe("lightningRail", () => {
     it("matches a bolt11 invoice and the lightning= param of a BIP21 URI", () => {
         const r = lightningRail();
@@ -22,11 +28,8 @@ describe("lightningRail", () => {
         const sendLightningPayment = vi
             .fn()
             .mockResolvedValue({ amount: 1000, preimage: "pre", txid: "txID" });
-        const q = await lightningRail().quote(
-            "lnbc10n1pjexample",
-            undefined,
-            ctx({ sendLightningPayment }),
-        );
+        const q = await lightningRail().quote(INVOICE, undefined, ctx({ sendLightningPayment }));
+        expect(q.amount).toBe(250_000);
         const h = await q.send();
         expect(await h.settled()).toMatchObject({
             railId: "lightning",
@@ -34,8 +37,14 @@ describe("lightningRail", () => {
             txid: "txID",
         });
         expect(sendLightningPayment).toHaveBeenCalledWith({
-            invoice: "lnbc10n1pjexample",
+            invoice: INVOICE,
             waitFor: "settled",
         });
+    });
+
+    it("rejects an amountless / undecodable invoice at quote time", async () => {
+        await expect(lightningRail().quote("lnbc1invalid", undefined, ctx({}))).rejects.toThrow(
+            /invalid amount/i,
+        );
     });
 });

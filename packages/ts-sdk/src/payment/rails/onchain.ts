@@ -1,5 +1,6 @@
 import type { PaymentRail, RouterContext } from "../types";
 import { isBtcAddress } from "../predicates";
+import { resolveSendAmount } from "../amount";
 import { makeHandle } from "../handle";
 import { BIP21 } from "../../utils/bip21";
 import { Ramps } from "../../wallet/ramps";
@@ -27,14 +28,9 @@ export function onchainRail(): PaymentRail {
         match: (raw) => btcTarget(raw) !== undefined,
         quote: async (raw, amount, ctx: RouterContext) => {
             const address = btcTarget(raw)!;
-            const amt = amount ?? BIP21.amountSats(raw) ?? 0;
-            // Reject non-positive or fractional amounts up front: 0 sats would
+            // Reject missing/zero/fractional amounts up front: 0 sats would
             // silently settle nothing, and BigInt(amt) throws on non-integers.
-            if (!Number.isInteger(amt) || amt <= 0) {
-                throw new Error(
-                    `onchain: invalid amount ${amt} sats (expected a positive integer)`,
-                );
-            }
+            const amt = resolveSendAmount("onchain", raw, amount);
             return {
                 railId: "onchain",
                 amount: amt,

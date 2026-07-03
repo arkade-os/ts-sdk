@@ -42,4 +42,12 @@ describe("arkRail", () => {
         await q.send();
         expect(sendBitcoin).toHaveBeenCalledWith({ address: arkAddr, amount: 10000 });
     });
+
+    it("rejects a missing, zero, or fractional amount at quote time", async () => {
+        await expect(arkRail().quote(arkAddr, undefined, ctx())).rejects.toThrow(
+            /amount is required/i,
+        );
+        await expect(arkRail().quote(arkAddr, 0, ctx())).rejects.toThrow(/invalid amount/i);
+        await expect(arkRail().quote(arkAddr, 1.5, ctx())).rejects.toThrow(/invalid amount/i);
+    });
 });
