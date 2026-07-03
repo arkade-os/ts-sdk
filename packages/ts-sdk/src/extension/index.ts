@@ -42,10 +42,16 @@ export class Extension {
         }
         const seen = new Set<number>();
         for (const p of packets) {
-            if (seen.has(p.type())) {
-                throw new Error(`duplicate packet type ${p.type()}`);
+            const type = p.type();
+            // The TLV type tag serializes as a single byte (see serialize());
+            // anything else would silently truncate on the wire.
+            if (!Number.isInteger(type) || type < 0 || type > 0xff) {
+                throw new Error(`invalid packet type ${type}: must be an integer in [0, 255]`);
             }
-            seen.add(p.type());
+            if (seen.has(type)) {
+                throw new Error(`duplicate packet type ${type}`);
+            }
+            seen.add(type);
         }
         return new Extension(packets);
     }

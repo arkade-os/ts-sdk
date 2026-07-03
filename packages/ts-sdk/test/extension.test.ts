@@ -179,3 +179,23 @@ describe("Extension", () => {
         });
     });
 });
+
+describe("Extension.create packet-type validation", () => {
+    const packet = (type: number) => ({
+        type: () => type,
+        serialize: () => new Uint8Array([0x01]),
+    });
+
+    it("rejects packet types outside the single-byte range", () => {
+        // The type tag serializes as a single byte; 256 would silently
+        // truncate to 0 and collide with the asset packet type.
+        expect(() => Extension.create([packet(256)])).toThrow(/packet type/i);
+        expect(() => Extension.create([packet(-1)])).toThrow(/packet type/i);
+        expect(() => Extension.create([packet(1.5)])).toThrow(/packet type/i);
+    });
+
+    it("accepts the full single-byte range", () => {
+        expect(() => Extension.create([packet(0)])).not.toThrow();
+        expect(() => Extension.create([packet(255)])).not.toThrow();
+    });
+});

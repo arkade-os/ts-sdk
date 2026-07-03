@@ -56,13 +56,16 @@ export const ArkadeScript: P.CoderType<ArkadeScriptType> = P.wrap({
                 w.byte(v);
                 continue;
             } else if (typeof o === "number" || typeof o === "bigint") {
-                // Arkade VM enforces MINIMALDATA: values 0 and 1..16 must use
-                // OP_0 / OP_1..OP_16, not data pushes.
+                // Arkade VM enforces MINIMALDATA: values 0, 1..16 and -1 must
+                // use OP_0 / OP_1..OP_16 / OP_1NEGATE, not data pushes.
                 if (o === 0 || o === 0n) {
                     w.byte(0x00);
                     continue;
                 } else if (o >= 1 && o <= 16) {
                     w.byte(OP.OP_1 - 1 + Number(o));
+                    continue;
+                } else if (o === -1 || o === -1n) {
+                    w.byte(OP["1NEGATE"]);
                     continue;
                 }
                 // Encode numbers via BigNum (520-byte cap).
@@ -103,6 +106,8 @@ export const ArkadeScript: P.CoderType<ArkadeScriptType> = P.wrap({
                 out.push(0);
             } else if (OP.OP_1 <= cur && cur <= OP.OP_16) {
                 out.push(cur - (OP.OP_1 - 1));
+            } else if (cur === OP["1NEGATE"]) {
+                out.push(-1);
             } else {
                 const op = ArkadeOPNames[cur] as keyof typeof ARKADE_OPS;
                 if (op === undefined) throw new Error(`Unknown opcode=${cur.toString(16)}`);
@@ -131,16 +136,19 @@ export function toASM(script: ArkadeScriptType): string {
             // Opcode name from ArkadeOPNames — add OP_ prefix for ASM format
             const name = op.startsWith("OP_") ? op : `OP_${op}`;
             parts.push(name);
-        } else if (typeof op === "number") {
-            if (op === 0) {
+        } else if (typeof op === "number" || typeof op === "bigint") {
+            if (op === 0 || op === 0n) {
                 parts.push("OP_0");
             } else if (op >= 1 && op <= 16) {
                 parts.push(`OP_${op}`);
+            } else if (op === -1 || op === -1n) {
+                parts.push("OP_1NEGATE");
             } else {
-                parts.push(op.toString());
+                // A bare decimal token would not survive fromASM (it parses
+                // hex or opcodes only) — render the minimal script-num bytes,
+                // which re-encode byte-identically to the number itself.
+                parts.push(hex.encode(BigNum.encode(BigInt(op))));
             }
-        } else if (typeof op === "bigint") {
-            parts.push(op.toString());
         } else {
             // Uint8Array data
             parts.push(hex.encode(op));

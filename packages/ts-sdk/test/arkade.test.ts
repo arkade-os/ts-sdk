@@ -534,3 +534,38 @@ describe("arkadeWitnessHash", () => {
         expect(hex.encode(scriptHash)).not.toBe(hex.encode(witnessHash));
     });
 });
+
+describe("ASM number-token fidelity", () => {
+    it("renders numbers above 16 as their minimal script-num bytes", () => {
+        // Decimal tokens don't survive fromASM: "255" is unparseable (odd
+        // length), and "4660" is misread as the hex bytes 0x46 0x60 instead
+        // of script-num 4660 (= 0x34 0x12 LE).
+        expect(toASM([4660])).toBe("3412");
+        expect(toASM([255])).toBe("ff00");
+        expect(toASM([255n])).toBe("ff00");
+    });
+
+    it("round-trips numeric pushes through ASM byte-identically", () => {
+        const scripts: ArkadeScriptType[] = [[4660], [255], ["DUP", 17, "EQUAL"], [-5]];
+        for (const script of scripts) {
+            const roundTripped = ArkadeScript.encode(fromASM(toASM(script)));
+            expect(hex.encode(roundTripped)).toBe(hex.encode(ArkadeScript.encode(script)));
+        }
+    });
+
+    it("renders -1 as OP_1NEGATE and re-encodes it to 0x4f", () => {
+        expect(toASM([-1])).toBe("OP_1NEGATE");
+        expect(hex.encode(ArkadeScript.encode(fromASM("OP_1NEGATE")))).toBe("4f");
+    });
+});
+
+describe("MINIMALDATA number encoding", () => {
+    it("encodes -1 as OP_1NEGATE, not a data push", () => {
+        expect(hex.encode(ArkadeScript.encode([-1]))).toBe("4f");
+        expect(hex.encode(ArkadeScript.encode([-1n]))).toBe("4f");
+    });
+
+    it("decodes 0x4f back to the number -1", () => {
+        expect(ArkadeScript.decode(new Uint8Array([0x4f]))).toEqual([-1]);
+    });
+});

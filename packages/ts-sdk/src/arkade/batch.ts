@@ -17,7 +17,7 @@ import type { Identity } from "../identity";
 import type { ArkProvider } from "../providers/ark";
 import type { EmulatorProvider, ConnectorTreeNode } from "../providers/emulator";
 import type { Network } from "../networks";
-import type { ExtendedCoin } from "../wallet";
+import type { ExtendedCoin, Recipient } from "../wallet";
 import type { SignerSession } from "../tree/signingSession";
 import type {
     BatchStartedEvent,
@@ -30,6 +30,7 @@ import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { Transaction } from "../utils/transaction";
 import { validateConnectorsTxGraph, validateVtxoTxGraph } from "../tree/validation";
+import { validateBatchRecipients } from "../wallet/validation";
 import { buildForfeitTx } from "../forfeit";
 import { Batch } from "../wallet/batch";
 import { Intent } from "../intent";
@@ -54,6 +55,12 @@ export function createArkadeBatchHandler(
     arkProvider: ArkProvider,
     emulator: EmulatorProvider,
     network: Network,
+    /**
+     * Expected recipients of the settlement, validated against the virtual
+     * output tree before co-signing it (mirrors `Wallet.createBatchHandler`).
+     * Without this the handler signs whatever tree the server proposes.
+     */
+    recipients?: Recipient[],
 ): Batch.Handler {
     let batchId: string;
     let sweepTapTreeRoot: Uint8Array;
@@ -97,6 +104,12 @@ export function createArkadeBatchHandler(
             const commitmentTx = Transaction.fromPSBT(base64.decode(event.unsignedCommitmentTx));
 
             validateVtxoTxGraph(vtxoTree, commitmentTx, sweepTapTreeRoot);
+
+            // validate that all expected receivers are in the virtual output
+            // tree with correct amounts and assets
+            if (recipients && recipients.length > 0) {
+                validateBatchRecipients(commitmentTx, vtxoTree.leaves(), recipients, network);
+            }
 
             const sharedOutput = commitmentTx.getOutput(0);
             if (!sharedOutput?.amount) {
