@@ -559,17 +559,20 @@ export class ArkadeTransactionBuilder {
             throw new Error("ArkadeTransactionBuilder: at least one output is required");
         }
         const outputsSum = this.outputs.reduce((s, o) => s + (o.amount ?? 0n), 0n);
-        const coin = this.coin ?? (await this.selectCoin(outputsSum));
+        // Funded inputs already cover part of the outputs — the contract coin
+        // only needs to supply the remainder.
+        const fundingSum = this.fundingCoins.reduce((s, f) => s + BigInt(f.value), 0n);
+        const needed = outputsSum > fundingSum ? outputsSum - fundingSum : 0n;
+        const coin = this.coin ?? (await this.selectCoin(needed));
         const def = this.fn.def;
 
         // Balance the spend: inputs must equal outputs. Append a change output
         // for any surplus (a local copy keeps `build()` idempotent).
         const outputs = [...this.outputs];
-        const fundingSum = this.fundingCoins.reduce((s, f) => s + BigInt(f.value), 0n);
         const surplus = BigInt(coin.value) + fundingSum - outputsSum;
         if (surplus < 0n) {
             throw new Error(
-                `ArkadeTransactionBuilder: insufficient inputs — outputs ${outputsSum} exceed inputs ${BigInt(coin.value) + fundingSum}`,
+                `ArkadeTransactionBuilder: insufficient inputs — outputs ${outputsSum} exceed inputs ${BigInt(coin.value) + fundingSum}; add coins via .fund() or reduce outputs`,
             );
         }
         if (surplus > 0n) {

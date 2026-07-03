@@ -155,6 +155,47 @@ describe("arkade.Arkade / ArkadeContract", () => {
         expect(await contract.getBalance()).toBe(BigInt(COIN.value));
     });
 
+    it("funded builds select the contract coin for the remainder, not the full outputs", async () => {
+        const { arkProvider, emulator } = stubProviders(server, emulatorKey);
+        const small = { txid: hex.encode(new Uint8Array(32).fill(2)), vout: 0, value: 600 };
+        const large = { txid: hex.encode(new Uint8Array(32).fill(3)), vout: 0, value: 3000 };
+        const indexer = {
+            async getVtxos() {
+                return { vtxos: [small, large] as any };
+            },
+        };
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer,
+            network: networks.regtest,
+        });
+        const contract = ark.contract(htlcProgram(), args);
+
+        const out = new Uint8Array([0x51, 0x20, ...receiver]);
+        const funding = {
+            txid: hex.encode(new Uint8Array(32).fill(4)),
+            vout: 0,
+            value: 2000,
+            tapLeafScript: contract.leafScript(0),
+            tapTree: contract.tapTree,
+        };
+        const preimage = new Uint8Array(32).fill(0x42);
+        const { checkpoints } = await contract.functions
+            .claim(preimage)
+            .fund([funding])
+            .to(out, 2500n)
+            .change(out)
+            .build();
+
+        // 2000 sats are already funded, so the contract coin only needs to
+        // cover the remaining 500 — the 600-sat coin suffices. Selecting for
+        // the full 2500 would wrongly pick the 3000-sat coin. The contract
+        // coin's outpoint sits on its checkpoint tx (the ark tx spends the
+        // checkpoint outputs, not the coins directly).
+        expect(hex.encode(checkpoints[0].getInput(0).txid!)).toBe(small.txid);
+    });
+
     it("send() resolves the covenant + encodes the witness ([0] → empty push)", async () => {
         const { ark, captured } = await connect();
         const contract = ark.contract(htlcProgram(), args);
