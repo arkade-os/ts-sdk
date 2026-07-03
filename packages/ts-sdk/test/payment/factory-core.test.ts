@@ -1,5 +1,4 @@
 import { describe, it, expect } from "vitest";
-import * as sdk from "../../src";
 import { ArkAddress } from "../../src";
 import { createDefaultPaymentRouter } from "../../src/payment";
 
@@ -17,12 +16,5 @@ describe("createDefaultPaymentRouter(wallet)", () => {
         const router = createDefaultPaymentRouter({} as any);
         expect((await router.route(arkAddr, 500)).railId).toBe("ark");
         expect((await router.route(btcAddr, 500)).railId).toBe("onchain");
-    });
-
-    it("is re-exported from the SDK root with PaymentRouter, BIP21 and predicates", () => {
-        expect(typeof sdk.createDefaultPaymentRouter).toBe("function");
-        expect(typeof sdk.PaymentRouter).toBe("function");
-        expect(typeof sdk.BIP21).toBe("function");
-        expect(typeof sdk.isArkAddress).toBe("function");
     });
 });

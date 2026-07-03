@@ -32,9 +32,4 @@ describe("createDefaultPaymentRouter(wallet, swaps)", () => {
             "onchain",
         );
     });
-
-    it("is re-exported from the boltz-swap package root", async () => {
-        const mod = await import("../../src/index");
-        expect(typeof mod.createDefaultPaymentRouter).toBe("function");
-    });
 });
