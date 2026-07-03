@@ -2,6 +2,7 @@ import type { PaymentRail, RouterContext } from "../types";
 import { isBtcAddress } from "../predicates";
 import { makeHandle } from "../handle";
 import { BIP21 } from "../../utils/bip21";
+import { Ramps } from "../../wallet/ramps";
 
 /** The on-chain BTC address in `raw`: bare, or the address of a BIP21 URI. */
 function btcTarget(raw: string): string | undefined {
@@ -26,9 +27,9 @@ function encodedAmountSats(raw: string): number | undefined {
 
 /**
  * On-chain BTC send via collaborative exit — the Wallet-only on-chain path (no
- * swap). Matches a bare BTC address or the on-chain part of a unified BIP21
- * URI, selects soonest-expiring VTXOs to cover the amount, and `Wallet.settle`s
- * them to the address with change back to the wallet.
+ * swap). Matches a bare BTC address or the on-chain part of a unified BIP21 URI
+ * and offboards VTXOs to the address via {@link Ramps.offboard}, which owns
+ * fee-aware coin selection, dust-safe change, and settlement.
  */
 export function onchainRail(): PaymentRail {
     return {
@@ -47,11 +48,18 @@ export function onchainRail(): PaymentRail {
             return {
                 railId: "onchain",
                 amount: amt,
+                // Provisional: Ramps.offboard deducts the real intent + network
+                // fees from the amount at settlement time.
                 fee: 0,
                 total: amt,
                 send: async () =>
                     makeHandle("onchain", async (emit) => {
-                        const txid = await collaborativeExit(ctx.wallet, address, amt);
+                        const { fees } = await ctx.wallet.arkProvider.getInfo();
+                        const txid = await new Ramps(ctx.wallet).offboard(
+                            address,
+                            fees,
+                            BigInt(amt),
+                        );
                         const result = { railId: "onchain", txid };
                         emit({ status: "settled", result });
                         return result;
@@ -59,40 +67,4 @@ export function onchainRail(): PaymentRail {
             };
         },
     };
-}
-
-/**
- * Select soonest-expiring VTXOs covering `amount` and settle them to `address`,
- * returning change to the wallet's offchain address. Mirrors the wallet app's
- * hand-rolled collaborative exit (`lib/asp.ts`), the dedup target of this rail.
- */
-async function collaborativeExit(
-    wallet: RouterContext["wallet"],
-    address: string,
-    amount: number,
-): Promise<string> {
-    const vtxos = await wallet.getVtxos();
-    const sorted = [...vtxos].sort(
-        (a, b) => (a.virtualStatus.batchExpiry ?? 0) - (b.virtualStatus.batchExpiry ?? 0),
-    );
-
-    const selected: typeof sorted = [];
-    let selectedAmount = 0;
-    for (const v of sorted) {
-        if (selectedAmount >= amount) break;
-        selected.push(v);
-        selectedAmount += v.value;
-    }
-    if (selectedAmount < amount) {
-        throw new Error("Insufficient funds for collaborative exit");
-    }
-
-    const outputs = [{ address, amount: BigInt(amount) }];
-    const change = selectedAmount - amount;
-    if (change > 0) {
-        outputs.push({ address: await wallet.getAddress(), amount: BigInt(change) });
-    }
-    outputs.reverse(); // exit-with-assets ordering (mirrors the wallet app)
-
-    return wallet.settle({ inputs: selected, outputs });
 }
