@@ -26,10 +26,9 @@ export class IndexedDBVirtualTxRepository implements VirtualTxRepository {
     async upsertVirtualTxs(txs: VirtualTx[]): Promise<void> {
         if (txs.length === 0) return;
         const db = await this.getDB();
-        // Read-modify-write in ONE transaction: each merged put is issued from
-        // its get's onsuccess, so the transaction stays live (never crossing an
-        // await boundary) and a concurrent writer can't slip between read and
-        // write. new value wins, else the stored value is preserved.
+        // Read-modify-write in one transaction. Each put is issued from its
+        // get's onsuccess rather than after an await, which would let the
+        // transaction auto-commit mid-method. new value wins, else keep stored.
         const transaction = db.transaction([STORE_VIRTUAL_TXS], "readwrite");
         const store = transaction.objectStore(STORE_VIRTUAL_TXS);
         for (const tx of txs) {
@@ -58,9 +57,8 @@ export class IndexedDBVirtualTxRepository implements VirtualTxRepository {
 
     async setBranch(vtxo: Outpoint, branch: VtxoBranch[]): Promise<void> {
         const db = await this.getDB();
-        // Replace the branch atomically: the deletes+puts are issued from the
-        // getAll onsuccess, inside one readwrite transaction, so no concurrent
-        // setBranch/prune can interleave with the read that drives them.
+        // Replace the branch atomically: deletes+puts issued from the getAll
+        // onsuccess, in one readwrite transaction.
         const transaction = db.transaction([STORE_VTXO_BRANCHES], "readwrite");
         const store = transaction.objectStore(STORE_VTXO_BRANCHES);
         const getAllReq = store.index("vtxo").getAll(IDBKeyRange.only([vtxo.txid, vtxo.vout]));
@@ -74,9 +72,8 @@ export class IndexedDBVirtualTxRepository implements VirtualTxRepository {
 
     async getBranch(vtxo: Outpoint): Promise<VirtualTx[]> {
         const db = await this.getDB();
-        // One transaction over both stores: batch-load every referenced tx by
-        // issuing the gets from the branch getAll's onsuccess, instead of N
-        // sequential getVirtualTx round trips each opening its own transaction.
+        // Batch-load the referenced txs in one transaction instead of N
+        // sequential getVirtualTx round trips.
         const transaction = db.transaction([STORE_VTXO_BRANCHES, STORE_VIRTUAL_TXS], "readonly");
         const branchStore = transaction.objectStore(STORE_VTXO_BRANCHES);
         const txStore = transaction.objectStore(STORE_VIRTUAL_TXS);
@@ -120,12 +117,9 @@ export class IndexedDBVirtualTxRepository implements VirtualTxRepository {
 
     async pruneForSpentVtxo(vtxo: Outpoint): Promise<void> {
         const db = await this.getDB();
-        // Branch pruning + orphan sweep in ONE readwrite transaction spanning
-        // both stores. Every request is issued from a prior request's
-        // onsuccess, so the transaction never crosses an await boundary and no
-        // concurrent setBranch can race the read/delete/recount/delete pipeline.
-        // Requests execute in issue order, so the per-tx orphan count runs after
-        // the branch deletes and reflects post-delete reference state.
+        // Branch pruning + orphan sweep in one readwrite transaction over both
+        // stores. Requests run in issue order, so each orphan count sees the
+        // branch deletes and reflects post-delete reference state.
         const transaction = db.transaction([STORE_VTXO_BRANCHES, STORE_VIRTUAL_TXS], "readwrite");
         const branches = transaction.objectStore(STORE_VTXO_BRANCHES);
         const txStore = transaction.objectStore(STORE_VIRTUAL_TXS);

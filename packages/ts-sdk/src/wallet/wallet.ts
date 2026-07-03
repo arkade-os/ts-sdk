@@ -798,14 +798,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const isPendingRecovery = (coin: ExtendedVirtualCoin) =>
             pendingOutpoints.has(`${coin.txid}:${coin.vout}`);
 
-        // `settled`, `preconfirmed`, `total` and the asset rollup count every
-        // spendable VTXO the wallet owns — including those temporarily locked
-        // by a non-terminal intent, which are still the wallet's funds. Only
-        // `available` (what can be spent right now) subtracts intent-locked
-        // VTXOs. `getBalance()` is offline-first: that lock read touches the
-        // intent repository only and never calls arkd/indexer or mutates intent
-        // state (stale-intent reconciliation is the online sync path's job — see
-        // ContractManager). It is best-effort and fails open — see
+        // `settled`/`preconfirmed`/`total` and the asset rollup count every
+        // spendable VTXO, including those locked by a non-terminal intent (still
+        // the wallet's funds); only `available` subtracts the locked ones. The
+        // lock read is offline-first and fails open — see
         // {@link spendableVtxosExcludingLocked}.
         const unlockedVtxos = await spendableVtxosExcludingLocked(vtxos, this.intentRepository);
 

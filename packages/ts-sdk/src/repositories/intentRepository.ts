@@ -80,9 +80,8 @@ export interface IntentRepository extends AsyncDisposable {
 }
 
 /**
- * Backend-agnostic {@link IntentFilter} predicate shared by every repository
- * that filters in memory (InMemory, Realm). Lives here so backends depend on
- * this interface module rather than on each other.
+ * Backend-agnostic {@link IntentFilter} predicate shared by every repository.
+ * Lives here so backends depend on this interface module, not on each other.
  */
 export function intentMatchesFilter(i: ArkIntent, f: IntentFilter): boolean {
     if (f.intentTxIds && !f.intentTxIds.includes(i.intentTxId)) return false;
@@ -104,10 +103,9 @@ export function intentMatchesFilter(i: ArkIntent, f: IntentFilter): boolean {
 }
 
 /**
- * Clamp {@link IntentFilter} pagination to a concrete `[skip, end]` slice
- * window over `total` rows, treating missing/negative values as 0 (`take`
- * defaults to "all remaining"). Keeps backends off JS's relative-to-end
- * `slice` behavior for negative bounds.
+ * Clamp {@link IntentFilter} pagination to a `[skip, end]` slice window over
+ * `total` rows. Negative `skip`/`take` clamp to 0 (avoiding `slice`'s
+ * relative-to-end behavior); a missing `take` means "all remaining".
  */
 export function intentPageBounds(
     filter: IntentFilter | undefined,

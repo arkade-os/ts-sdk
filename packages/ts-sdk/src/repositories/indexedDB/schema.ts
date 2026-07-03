@@ -177,9 +177,7 @@ export function initDatabase(
         }
     }
 
-    // v4: intent + virtualtx persistence. New, empty stores — the
-    // `contains()` guards are idempotent and there is no legacy data to
-    // migrate, so no oldVersion gate is needed.
+    // v4: intent + virtualtx persistence
     if (!db.objectStoreNames.contains(STORE_INTENTS)) {
         const intentsStore = db.createObjectStore(STORE_INTENTS, {
             keyPath: "intentTxId",

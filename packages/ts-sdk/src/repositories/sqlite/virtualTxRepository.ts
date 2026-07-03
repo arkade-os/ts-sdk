@@ -58,8 +58,7 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
     }
 
     private tx(fn: () => Promise<void>): Promise<void> {
-        // Chain onto the previous transaction so concurrent callers never
-        // interleave BEGIN IMMEDIATE/COMMIT/ROLLBACK on the shared connection.
+        // Chain onto the previous transaction (see writeChain).
         const run = this.writeChain.then(async () => {
             await this.db.run("BEGIN IMMEDIATE");
             try {

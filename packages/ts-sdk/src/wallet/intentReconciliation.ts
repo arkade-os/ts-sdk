@@ -132,12 +132,10 @@ export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<
         try {
             const next = await classifyIntent(intent, vtxosByOutpoint, nowMs);
             if (!next) continue;
-            // Freshness guard: a live settle() can advance this intent
-            // (e.g. waiting_to_submit → waiting_for_batch) between the snapshot
-            // read above and this write — reconciliation runs on reconnect,
-            // concurrently with in-flight settlements. Re-read and only persist
-            // the terminal result if the intent is still in the state we
-            // classified, so we never overwrite a live in-process outcome.
+            // Freshness guard: reconciliation runs on reconnect, alongside
+            // in-flight settlements. Re-read and only persist if the intent is
+            // still in the state we classified, so a live settle() that has
+            // since advanced it is never overwritten.
             const [fresh] = await deps.intentRepository.getIntents({
                 intentTxIds: [intent.intentTxId],
             });
