@@ -26,12 +26,31 @@ export class IndexedDBVirtualTxRepository implements VirtualTxRepository {
     async upsertVirtualTxs(txs: VirtualTx[]): Promise<void> {
         if (txs.length === 0) return;
         const db = await this.getDB();
+        // Fold duplicate txids first (later non-null wins, absent preserved).
+        // The queued get()s all read before any onsuccess-issued put() runs, so
+        // a second get() for the same txid would otherwise merge against stale
+        // state and drop fields set by the first — collapse to one put per txid.
+        const merged = new Map<string, VirtualTx>();
+        for (const tx of txs) {
+            const acc = merged.get(tx.txid);
+            merged.set(
+                tx.txid,
+                acc
+                    ? {
+                          txid: tx.txid,
+                          hex: tx.hex ?? acc.hex,
+                          expiresAt: tx.expiresAt ?? acc.expiresAt,
+                          type: tx.type ?? acc.type,
+                      }
+                    : tx,
+            );
+        }
         // Read-modify-write in one transaction. Each put is issued from its
         // get's onsuccess rather than after an await, which would let the
         // transaction auto-commit mid-method. new value wins, else keep stored.
         const transaction = db.transaction([STORE_VIRTUAL_TXS], "readwrite");
         const store = transaction.objectStore(STORE_VIRTUAL_TXS);
-        for (const tx of txs) {
+        for (const tx of merged.values()) {
             const getReq = store.get(tx.txid);
             getReq.onsuccess = () => {
                 const prev = getReq.result as VirtualTx | undefined;

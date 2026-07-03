@@ -49,6 +49,20 @@ export function virtualTxRepositoryConformance(
             });
         });
 
+        it("folds duplicate txids within one batch (later non-null wins, absent preserved)", async () => {
+            const r = await make();
+            await r.upsertVirtualTxs([
+                { txid: "a", hex: "first", expiresAt: 1, type: ChainedTxType.Ark },
+                { txid: "a", hex: null, expiresAt: 2, type: ChainedTxType.Tree },
+            ]);
+            expect(await r.getVirtualTx("a")).toEqual({
+                txid: "a",
+                hex: "first", // second entry's null preserved the first's hex
+                expiresAt: 2, // second entry's non-null overwrote
+                type: ChainedTxType.Tree,
+            });
+        });
+
         it("setBranch replaces, getBranch returns txs ordered by position", async () => {
             const r = await make();
             await r.upsertVirtualTxs([tx("root"), tx("mid"), tx("leaf")]);
