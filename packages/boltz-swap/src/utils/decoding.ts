@@ -12,6 +12,8 @@ export const decodeInvoice = (invoice: string): DecodedInvoice => {
     const millisats = BigInt(decoded.sections.find((s) => s.name === "amount")?.value ?? "0");
     return {
         expiry: decoded.expiry ?? 3600,
+        // The timestamp fallback to 0 is just to satisfy the type checker.
+        // In practice, the timestamp is always present in well-formatted BOLT11 invoices.
         timestamp: decoded.sections.find((s) => s.name === "timestamp")?.value ?? 0,
         amountSats: Number(millisats / 1000n),
         description: decoded.sections.find((s) => s.name === "description")?.value ?? "",
