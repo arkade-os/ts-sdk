@@ -34,7 +34,7 @@
  *     functions: {
  *         claim: {
  *             inputs: [{ name: "preimage", type: "bytes" }],
- *             tapscript: { signers: ["server"], asm: ["HASH160", "$hash", "EQUALVERIFY"], witness: ["preimage"] },
+ *             tapscript: { signers: ["server"], asm: ["HASH160", "$hash", "EQUAL"], witness: ["preimage"] },
  *             arkadeScript: { asm: payTo, witness: [0] },
  *         },
  *     },
