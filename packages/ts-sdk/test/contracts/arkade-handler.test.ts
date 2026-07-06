@@ -43,13 +43,14 @@ const payTo = [
 function multisigProgram() {
     return {
         version: 0,
+        params: ["server", "user"],
         functions: {
             cooperative: {
-                tapscript: { signers: ["user", "server"] },
+                tapscript: { signers: ["$user", "$server"] },
             },
             exit: {
                 tapscript: {
-                    signers: ["user"],
+                    signers: ["$user"],
                     csv: { type: "blocks", value: 144n },
                 },
             },
@@ -61,12 +62,12 @@ function multisigProgram() {
 function htlcProgram() {
     return {
         version: 0,
-        params: ["hash", "receiver", "amount"],
+        params: ["hash", "receiver", "amount", "server", "user"],
         functions: {
             claim: {
                 inputs: [{ name: "preimage", type: "bytes" }] as const,
                 tapscript: {
-                    signers: ["server"],
+                    signers: ["$server"],
                     asm: ["HASH160", "$hash", "EQUALVERIFY"],
                     witness: ["preimage"],
                 },
@@ -74,7 +75,7 @@ function htlcProgram() {
             },
             exit: {
                 tapscript: {
-                    signers: ["user"],
+                    signers: ["$user"],
                     csv: { type: "blocks", value: 144n },
                 },
             },
@@ -83,7 +84,13 @@ function htlcProgram() {
 }
 
 function htlcArgs() {
-    return { hash: HASH, receiver: TEST_PUB_KEY, amount: 10_000n };
+    return {
+        hash: HASH,
+        receiver: TEST_PUB_KEY,
+        amount: 10_000n,
+        server: TEST_SERVER_PUB_KEY,
+        user: TEST_PUB_KEY,
+    };
 }
 
 function stubProviders() {
@@ -181,7 +188,7 @@ describe("ArkadeContractHandler", () => {
         expect(typed.args.hash).toEqual(HASH);
 
         const claim = typed.program.functions.claim;
-        expect(claim.tapscript.signers).toEqual(["server"]);
+        expect(claim.tapscript.signers).toEqual(["$server"]);
         expect(claim.tapscript.asm?.[0]).toBe("HASH160");
         expect(claim.tapscript.asm?.[1]).toBe("$hash");
         expect(claim.arkadeScript?.asm).toBeDefined();
@@ -211,7 +218,7 @@ describe("ArkadeContractHandler", () => {
         const parsed = arkade.parseArtifact(JSON.parse(json));
         // bytes come back as Uint8Array, bigints as bigint
         const claim = parsed.functions.claim;
-        expect(claim.tapscript.signers).toEqual(["server"]);
+        expect(claim.tapscript.signers).toEqual(["$server"]);
         expect(claim.tapscript.witness).toEqual(["preimage"]);
         expect(parsed.functions.exit.tapscript.csv?.value).toBe(144n);
     });
@@ -223,7 +230,13 @@ describe("ArkadeContractHandler", () => {
             walletPubKey: TEST_PUB_KEY_HEX,
         };
 
-        function makeContract(program: arkade.Program, args = {}): Contract {
+        function makeContract(
+            program: arkade.Program,
+            args: Record<string, arkade.ArkadeParamValue> = {
+                user: TEST_PUB_KEY,
+                server: TEST_SERVER_PUB_KEY,
+            },
+        ): Contract {
             const params = ArkadeContractHandler.serializeParams({
                 program,
                 args,
@@ -295,14 +308,18 @@ describe("ArkadeContractHandler", () => {
                     claim: {
                         inputs: [{ name: "preimage", type: "bytes" }] as const,
                         tapscript: {
-                            signers: ["user", "server"],
+                            signers: ["$user", "$server"],
                             asm: ["HASH160", "$hash", "EQUALVERIFY"],
                             witness: ["preimage"],
                         },
                     },
                 },
             } satisfies arkade.Program;
-            const contract = makeContract(program, { hash: HASH });
+            const contract = makeContract(program, {
+                hash: HASH,
+                user: TEST_PUB_KEY,
+                server: TEST_SERVER_PUB_KEY,
+            });
             const script = ArkadeContractHandler.createScript(contract.params);
             expect(ArkadeContractHandler.selectPath(script, contract, baseContext)).toBeNull();
         });
@@ -315,14 +332,19 @@ describe("ArkadeContractHandler", () => {
                 functions: {
                     claim: {
                         tapscript: {
-                            signers: ["user", "server"],
+                            signers: ["$user", "$server"],
                             asm: ["HASH160", "$hash", "EQUALVERIFY"],
                             witness: ["$preimage"],
                         },
                     },
                 },
             } satisfies arkade.Program;
-            const contract = makeContract(program, { hash: HASH, preimage });
+            const contract = makeContract(program, {
+                hash: HASH,
+                preimage,
+                user: TEST_PUB_KEY,
+                server: TEST_SERVER_PUB_KEY,
+            });
             const script = ArkadeContractHandler.createScript(contract.params);
             const path = ArkadeContractHandler.selectPath(script, contract, baseContext);
             expect(path).not.toBeNull();
@@ -351,7 +373,7 @@ describe("ArkadeContract ↔ ContractManager integration", () => {
     it("createContract accepts handler-serialized arkade params (script validation passes)", async () => {
         const params = ArkadeContractHandler.serializeParams({
             program: multisigProgram(),
-            args: {},
+            args: { user: TEST_PUB_KEY, server: TEST_SERVER_PUB_KEY },
             ...handlerKeys(),
         });
         const script = ArkadeContractHandler.createScript(params);

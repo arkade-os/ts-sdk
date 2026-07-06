@@ -83,8 +83,8 @@ export interface InputDef {
  */
 export type InputRef = string | InputDef;
 
-/** Reference to a signer key: `"server"`, `"user"`, a `"$param"`, or literal x-only bytes. */
-export type SignerRef = "server" | "user" | string | Uint8Array;
+/** Reference to a signer key: a `"$param"` reference or literal x-only bytes. */
+export type SignerRef = string | Uint8Array;
 
 /** A witness-stack item: a function-input name, a `"$param"`, a literal number/bigint (minimal script-num), or raw bytes. */
 export type WitnessRef = string | number | bigint | Uint8Array;
@@ -153,8 +153,9 @@ export function bindValue(bind: Record<string, ArkadeParamValue>, name: string):
  * Resolve an `asm` array to bytes: substitute `$param` placeholders from `bind`,
  * pass everything else (opcode names, numbers, raw byte pushes) through to the
  * Arkade script encoder. The SDK does not interpret opcodes — this is pure
- * substitution + encoding. To embed the server or co-signer key, push its bytes
- * directly (or via a `$param`); there is no `<SERVER_KEY>`/`<COSIGNER_KEY>` token.
+ * substitution + encoding. To embed a signer key (server, user, or any
+ * other), pass it as a `$param` in the constructor args; there is no
+ * `<SERVER_KEY>`/`<COSIGNER_KEY>` token.
  */
 export function resolveAsm(asm: AsmToken[], bind: Record<string, ArkadeParamValue>): Uint8Array {
     const tokens = asm.map((t) => {
@@ -225,9 +226,9 @@ export function validateTapscript(seg: TapscriptSegment): void {
 
 /** The signer keys a program is compiled against. */
 export interface ProgramKeys {
-    /** The Arkade Service signer key (x-only), resolved from server info. */
+    /** The Arkade Service signer key (x-only) — used for address derivation and collaborative-path detection, not for `$param` resolution. */
     serverKey: Uint8Array;
-    /** The wallet's x-only key — required only when a function names the `"user"` signer. */
+    /** The wallet's x-only key — identifies which inputs the wallet signs. */
     userKey?: Uint8Array;
     /** The co-signer (emulator) key — required only for covenant (`arkadeScript`) functions. */
     emulatorKey?: Uint8Array;
@@ -245,32 +246,23 @@ export interface CompiledProgramFunction {
     leafScript: Uint8Array;
     /** Resolved arkade-script bytes; undefined for pure-tapscript paths. */
     arkadeScript?: Uint8Array;
+    /** Resolved signer keys (x-only), in the declared `signers` order. */
+    signerKeys: Uint8Array[];
     /** Resolved once — the taproot leaf + control block for this path. */
     tapLeafScript: TapLeafScript;
 }
 
-/** Resolve a {@link SignerRef} to x-only key bytes against the compiled keys/args. */
-export function resolveSigner(
-    ref: SignerRef,
-    keys: ProgramKeys,
-    args: Record<string, ArkadeParamValue>,
-): Uint8Array {
+/** Resolve a {@link SignerRef} to x-only key bytes against the program's constructor args. */
+function resolveSigner(ref: SignerRef, args: Record<string, ArkadeParamValue>): Uint8Array {
     if (ref instanceof Uint8Array) return ref;
-    if (ref === "server") return keys.serverKey;
-    if (ref === "user") {
-        if (!keys.userKey) {
-            throw new Error("signer 'user' requires an `identity` on the Arkade client");
-        }
-        return keys.userKey;
+    if (!ref.startsWith("$")) {
+        throw new Error(`unknown signer reference '${ref}' — use '$${ref}'`);
     }
-    if (ref.startsWith("$")) {
-        const v = bindValue(args, ref.slice(1));
-        if (!(v instanceof Uint8Array)) {
-            throw new Error(`signer ${ref} must be a pubkey (bytes)`);
-        }
-        return v;
+    const v = bindValue(args, ref.slice(1));
+    if (!(v instanceof Uint8Array)) {
+        throw new Error(`signer ${ref} must be a pubkey (bytes)`);
     }
-    throw new Error(`unknown signer reference '${ref}'`);
+    return v;
 }
 
 function encodeTapscriptSegment(
@@ -318,23 +310,17 @@ function compileFunctions(
 
     return defs.map((def, i) => {
         validateTapscript(def.tapscript);
-        const pubkeys = def.tapscript.signers.map((s) => resolveSigner(s, keys, args));
+        const pubkeys = def.tapscript.signers.map((s) => resolveSigner(s, args));
 
-        if (def.arkadeScript) {
-            // Covenant leaf: bind the emulator's co-signer key to the arkade
-            // script via the tagged-hash tweak, then append it to the leaf's
-            // signer set.
-            const arkadeScript = resolveAsm(def.arkadeScript.asm, args);
-            const tweaked = computeArkadeScriptPublicKey(keys.emulatorKey!, arkadeScript);
-            const leafScript = encodeTapscriptSegment(
-                def.tapscript,
-                [...pubkeys, tweaked],
-                args,
-            ).script;
-            return { name: names[i], def, leafScript, arkadeScript };
-        }
-        const leafScript = encodeTapscriptSegment(def.tapscript, pubkeys, args).script;
-        return { name: names[i], def, leafScript, arkadeScript: undefined };
+        // Covenant leaf: bind the emulator's co-signer key to the arkade
+        // script via the tagged-hash tweak, then append it to the leaf's
+        // signer set.
+        const arkadeScript = def.arkadeScript ? resolveAsm(def.arkadeScript.asm, args) : undefined;
+        const leafPubkeys = arkadeScript
+            ? [...pubkeys, computeArkadeScriptPublicKey(keys.emulatorKey!, arkadeScript)]
+            : pubkeys;
+        const leafScript = encodeTapscriptSegment(def.tapscript, leafPubkeys, args).script;
+        return { name: names[i], def, leafScript, arkadeScript, signerKeys: pubkeys };
     });
 }
 

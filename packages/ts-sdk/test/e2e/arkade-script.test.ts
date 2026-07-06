@@ -69,9 +69,10 @@ const SPEND_AMOUNT = FUNDING_AMOUNT - FEE_AMOUNT;
 // Plain offchain covenant: user + server + arkade-tweaked emulator.
 const offchainProgram = {
     version: 0,
+    params: ["server", "user"],
     functions: {
         send: {
-            tapscript: { signers: ["user", "server"] },
+            tapscript: { signers: ["$user", "$server"] },
             arkadeScript: {
                 asm: [0, "INSPECTOUTPUTSCRIPTPUBKEY", 1, "EQUALVERIFY", "$receiver", "EQUAL"],
             },
@@ -82,9 +83,10 @@ const offchainProgram = {
 // Offchain covenant with asset introspection.
 const assetOffchainProgram = {
     version: 0,
+    params: ["server", "user"],
     functions: {
         send: {
-            tapscript: { signers: ["user", "server"] },
+            tapscript: { signers: ["$user", "$server"] },
             arkadeScript: {
                 asm: [
                     0,
@@ -110,15 +112,16 @@ const assetOffchainProgram = {
 // Settlement contract: arkade covenant + a server+user CSV exit leaf.
 const settlementProgram = {
     version: 0,
+    params: ["server", "user"],
     functions: {
         settle: {
-            tapscript: { signers: ["user", "server"] },
+            tapscript: { signers: ["$user", "$server"] },
             arkadeScript: {
                 asm: [0, "INSPECTOUTPUTSCRIPTPUBKEY", 1, "EQUALVERIFY", "$receiver", "EQUAL"],
             },
         },
         exit: {
-            tapscript: { signers: ["user", "server"], csv: { type: "blocks", value: 5120n } },
+            tapscript: { signers: ["$user", "$server"], csv: { type: "blocks", value: 5120n } },
         },
     },
 } satisfies arkade.Program;
@@ -126,9 +129,10 @@ const settlementProgram = {
 // Settle/mint contracts with asset introspection (used by TestSettlementWithAsset).
 const settleAssetProgram = {
     version: 0,
+    params: ["server", "user"],
     functions: {
         settle: {
-            tapscript: { signers: ["user", "server"] },
+            tapscript: { signers: ["$user", "$server"] },
             arkadeScript: {
                 asm: [
                     0,
@@ -149,7 +153,7 @@ const settleAssetProgram = {
             },
         },
         exit: {
-            tapscript: { signers: ["user", "server"], csv: { type: "blocks", value: 5120n } },
+            tapscript: { signers: ["$user", "$server"], csv: { type: "blocks", value: 5120n } },
         },
     },
 } satisfies arkade.Program;
@@ -182,9 +186,10 @@ const spendProgram = {
 
 const mintAssetProgram = {
     version: 0,
+    params: ["server", "user"],
     functions: {
         mint: {
-            tapscript: { signers: ["user", "server"] },
+            tapscript: { signers: ["$user", "$server"] },
             arkadeScript: {
                 asm: [
                     0,
@@ -261,7 +266,9 @@ describe("arkade", () => {
         const aliceWP = getWitnessProgram(aliceAddress);
 
         // The covenant forces output 0 to pay Alice.
-        const contract = ark.contract(offchainProgram, { receiver: aliceWP });
+        const contract = ark.contract(offchainProgram, {
+            receiver: aliceWP,
+        });
 
         // Fund the contract.
         const fundAmount = 10000;
@@ -290,7 +297,9 @@ describe("arkade", () => {
         const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
 
         // Derive the contract (arkade covenant + CSV exit) from the program.
-        const contract = ark.contract(settlementProgram, { receiver: aliceWP });
+        const contract = ark.contract(settlementProgram, {
+            receiver: aliceWP,
+        });
         const arkadeScriptBytes = arkade.resolveAsm(
             settlementProgram.functions.settle.arkadeScript.asm,
             { receiver: aliceWP },
@@ -411,9 +420,10 @@ describe("arkade", () => {
         // inline rather than as a module constant.
         const boardingProgram = {
             version: 0,
+            params: ["server", "user"],
             functions: {
                 board: {
-                    tapscript: { signers: ["user", "server"] },
+                    tapscript: { signers: ["$user", "$server"] },
                     arkadeScript: {
                         asm: [
                             0,
@@ -427,14 +437,16 @@ describe("arkade", () => {
                 },
                 exit: {
                     tapscript: {
-                        signers: ["user"],
+                        signers: ["$user"],
                         csv: { type: "blocks", value: BigInt(boardingExitDelay) },
                     },
                 },
             },
         } satisfies arkade.Program;
 
-        const contract = ark.contract(boardingProgram, { receiver: aliceWP });
+        const contract = ark.contract(boardingProgram, {
+            receiver: aliceWP,
+        });
         const arkadeScriptBytes = arkade.resolveAsm(
             boardingProgram.functions.board.arkadeScript.asm,
             { receiver: aliceWP },
@@ -561,7 +573,10 @@ describe("arkade", () => {
         // Derive the asset covenant contract. The issuance asset packet (assetId
         // = null) is not expressible via the builder's `.withAsset()`, so the
         // offchain tx is assembled manually from the contract's script.
-        const contract = ark.contract(assetOffchainProgram, { receiver: aliceWP, assetAmount });
+        const contract = ark.contract(assetOffchainProgram, {
+            receiver: aliceWP,
+            assetAmount,
+        });
         const arkadeScriptBytes = arkade.resolveAsm(
             assetOffchainProgram.functions.send.arkadeScript.asm,
             {
@@ -633,7 +648,10 @@ describe("arkade", () => {
 
         // Settle contract: forces the spend to Alice + 1 asset group summing to
         // assetAmount; plus a server+user CSV exit.
-        const settleContract = ark.contract(settleAssetProgram, { receiver: aliceWP, assetAmount });
+        const settleContract = ark.contract(settleAssetProgram, {
+            receiver: aliceWP,
+            assetAmount,
+        });
         const settleArkadeScript = arkade.resolveAsm(
             settleAssetProgram.functions.settle.arkadeScript.asm,
             {
@@ -644,7 +662,10 @@ describe("arkade", () => {
         const settleWP = getWitnessProgram(settleContract.address);
 
         // Mint contract: forces the spend to the settle contract + 1 asset group.
-        const mintContract = ark.contract(mintAssetProgram, { receiver: settleWP, assetAmount });
+        const mintContract = ark.contract(mintAssetProgram, {
+            receiver: settleWP,
+            assetAmount,
+        });
         const mintArkadeScript = arkade.resolveAsm(
             mintAssetProgram.functions.mint.arkadeScript.asm,
             {

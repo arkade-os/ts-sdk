@@ -13,7 +13,6 @@ import { extractPubKey, isDescriptor } from "../../identity/descriptor";
 import {
     ArkadeProgramScript,
     deserializeArkadeContractParams,
-    resolveSigner,
     serializeArkadeContractParams,
     witnessRefToBytes,
     type ArkadeContractParams,
@@ -92,16 +91,7 @@ function pathsFor(
         const witness = staticWitness(fn, script);
         if (witness === null) continue;
 
-        let signers: Uint8Array[];
-        try {
-            signers = fn.def.tapscript.signers.map((s) =>
-                resolveSigner(s, script.keys, script.args),
-            );
-        } catch {
-            // e.g. a "user" signer with no userKey persisted — not ours to spend.
-            continue;
-        }
-        const signerHexes = signers.map((s) => hex.encode(s));
+        const signerHexes = fn.signerKeys.map((s) => hex.encode(s));
         const requiresServer = signerHexes.includes(serverHex);
         const nonServer = signerHexes.filter((s) => s !== serverHex);
 

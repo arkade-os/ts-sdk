@@ -34,9 +34,10 @@ const DELEGATE_EXIT_DELAY = 512;
 // and preserve its value — i.e. refresh in place.
 const delegateProgram = {
     version: 0,
+    params: ["server", "user"],
     functions: {
         delegate: {
-            tapscript: { signers: ["server"] },
+            tapscript: { signers: ["$server"] },
             arkadeScript: {
                 asm: [
                     "INSPECTVERSION",
@@ -61,7 +62,7 @@ const delegateProgram = {
         },
         exit: {
             tapscript: {
-                signers: ["user"],
+                signers: ["$user"],
                 csv: { type: "seconds", value: BigInt(DELEGATE_EXIT_DELAY) },
             },
         },
@@ -79,7 +80,7 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
         const aliceIdentity = SingleKey.fromRandomBytes();
 
         // Derive the delegate contract (forfeit covenant + alice CSV exit)
-        // from the program. Alice is the `"user"` signer of the exit leaf.
+        // from the program. Alice is the `$user` signer of the exit leaf.
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
@@ -87,7 +88,7 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
             identity: aliceIdentity,
             network: networks.regtest,
         });
-        const contract = ark.contract(delegateProgram, {});
+        const contract = ark.contract(delegateProgram);
         const arkadeScript = arkade.resolveAsm(
             delegateProgram.functions.delegate.arkadeScript.asm,
             {},

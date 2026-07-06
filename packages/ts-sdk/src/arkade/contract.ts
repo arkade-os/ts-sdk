@@ -8,10 +8,11 @@
  * compiler's JSON output later flow through the identical resolver.
  *
  * The SDK never interprets scripts: it resolves `$param` placeholders into bytes,
- * builds the taproot tree (with the `"server"`/`"user"` signers and the co-signer
- * key tweaked by the arkade-script hash), and assembles the spend from
- * the per-segment witness layout. All key tweaking, packet encoding and PSBT
- * plumbing is internal — from the caller's side it is just Arkade.
+ * builds the taproot tree (resolving `$param` signers such as `$server`/`$user` from
+ * the constructor args, plus the co-signer key tweaked by the arkade-script hash),
+ * and assembles the spend from the per-segment witness layout. All key tweaking,
+ * packet encoding and PSBT plumbing is internal — from the caller's side it is just
+ * Arkade.
  *
  * Program → script compilation lives in {@link ArkadeProgramScript}
  * (./program.ts) and is shared with the generic `"arkade"` contract handler,
@@ -30,17 +31,18 @@
  * ```typescript
  * const htlcProgram = {
  *     version: 0,
- *     params: ["hash", "receiver", "amount"],
+ *     params: ["hash", "receiver", "amount", "server"],
  *     functions: {
  *         claim: {
  *             inputs: [{ name: "preimage", type: "bytes" }],
- *             tapscript: { signers: ["server"], asm: ["HASH160", "$hash", "EQUAL"], witness: ["preimage"] },
+ *             tapscript: { signers: ["$server"], asm: ["HASH160", "$hash", "EQUAL"], witness: ["preimage"] },
  *             arkadeScript: { asm: payTo, witness: [0] },
  *         },
  *     },
  * } satisfies Program;
  *
  * const arkade = await Arkade.connect({ arkade: ark, emulator, indexer, identity, network });
+ * // `server` is declared in `params`, so it defaults to the client's server key.
  * const htlc = arkade.contract(htlcProgram, { hash, receiver, amount: 10_000n });
  * // `preimage` is typed Uint8Array; calling `claim()` with no args is a type error.
  * const { txid } = await htlc.functions.claim(preimage).to(receiver, 10_000n).send();
@@ -52,6 +54,7 @@
 import { base64, hex } from "@scure/base";
 import { RawWitness } from "@scure/btc-signer";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
+import { equalBytes } from "@scure/btc-signer/utils.js";
 
 import type { Network } from "../networks";
 import { DEFAULT_NETWORK } from "../networks";
@@ -242,7 +245,7 @@ export class Arkade {
     readonly checkpoint: CSVMultisigTapscript.Type;
     readonly indexer?: Pick<IndexerProvider, "getVtxos">;
     readonly identity?: Identity;
-    /** The signing identity's x-only public key, resolved at connect for the `"user"` signer. */
+    /** The signing identity's x-only public key, resolved at connect — identifies which inputs the wallet signs. */
     readonly userKey?: Uint8Array;
     /** The wallet's contract manager, when contract persistence is wired up. */
     readonly contractManager?: IContractManager;
@@ -285,7 +288,7 @@ export class Arkade {
         }
 
         // Resolve the user key up-front so contract instantiation stays synchronous
-        // and `signers: ["user"]` works without the caller passing a $param.
+        // and the builder can identify which inputs the wallet signs.
         let userKey: Uint8Array | undefined;
         if (opts.identity) {
             const pub = await opts.identity.xOnlyPublicKey();
@@ -311,11 +314,21 @@ export class Arkade {
      * `program`'s literal type is preserved (`const` inference) so the resulting
      * contract's `functions` map is strongly typed — `functions.<name>(...)`
      * knows each argument's type from the function's `inputs` descriptors.
+     *
+     * When the program declares a `server` or `user` param and the caller does
+     * not bind it, it defaults to the client's server key or the identity's
+     * key respectively; explicit args always win.
      */
     contract<const P extends Program>(
         program: P,
         args: Record<string, ArkadeParamValue> = {},
     ): ArkadeContract<P> {
+        if (program.params?.includes("server") && args.server === undefined) {
+            args = { ...args, server: this.serverKey };
+        }
+        if (program.params?.includes("user") && args.user === undefined && this.userKey) {
+            args = { ...args, user: this.userKey };
+        }
         return new ArkadeContract(this, program, args);
     }
 }
@@ -635,7 +648,7 @@ export class ArkadeTransactionBuilder {
         const { arkTx, checkpoints } = await this.build();
         const client = this.contract.client;
 
-        // Inputs the client must sign: the contract input (0) when "user" is one
+        // Inputs the client must sign: the contract input (0) when the user key is one
         // of its signers, plus every funded input (1..n).
         const userInputs = this.userInputIndexes();
 
@@ -709,7 +722,8 @@ export class ArkadeTransactionBuilder {
     /** Indexes of inputs the client owns and must sign (contract input + funded inputs). */
     private userInputIndexes(): number[] {
         const idxs: number[] = [];
-        if (this.fn.def.tapscript.signers.includes("user")) {
+        const userKey = this.contract.keys.userKey;
+        if (userKey && this.fn.signerKeys.some((k) => equalBytes(k, userKey))) {
             idxs.push(0);
         }
         for (let i = 0; i < this.fundingCoins.length; i++) {

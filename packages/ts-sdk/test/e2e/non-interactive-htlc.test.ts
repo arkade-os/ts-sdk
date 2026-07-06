@@ -17,12 +17,12 @@ const CONTRACT_AMOUNT = 10_000n;
 
 const nonInteractiveHTLC = {
     version: 0,
-    params: ["hash", "funder", "receiver", "amount"],
+    params: ["hash", "funder", "receiver", "amount", "server"],
     functions: {
         claim: {
             inputs: [{ name: "preimage", type: "bytes" }] as const,
             tapscript: {
-                signers: ["server"],
+                signers: ["$server"],
                 asm: ["HASH160", "$hash", "EQUAL"],
                 witness: ["preimage"],
             },
@@ -44,7 +44,7 @@ const nonInteractiveHTLC = {
         },
         refund: {
             tapscript: {
-                signers: ["server"],
+                signers: ["$server"],
                 cltv: 500_000_000n,
             },
             arkadeScript: {

@@ -30,9 +30,10 @@ const LIQUIDATION_PRICE = numberToBytesBE(50_000n, 32);
 // the liquidation contract.
 const mintProgram = {
     version: 0,
+    params: ["server"],
     functions: {
         mint: {
-            tapscript: { signers: ["server"] },
+            tapscript: { signers: ["$server"] },
             arkadeScript: {
                 asm: [0, "INSPECTOUTPUTSCRIPTPUBKEY", 1, "EQUALVERIFY", "$receiver", "EQUAL"],
             },
@@ -43,10 +44,11 @@ const mintProgram = {
 // Burns the asset against a valid oracle signature over the liquidation price.
 const liquidationProgram = {
     version: 0,
+    params: ["server"],
     functions: {
         liquidate: {
             inputs: [{ name: "signature", type: "sig" }],
-            tapscript: { signers: ["server"] },
+            tapscript: { signers: ["$server"] },
             arkadeScript: {
                 asm: [
                     // CHECKSIGFROMSTACK pops oracle, price, signature (from witness)

@@ -41,12 +41,12 @@ const payTo = [
 function htlcProgram() {
     return {
         version: 0,
-        params: ["hash", "receiver", "amount"],
+        params: ["hash", "receiver", "amount", "server"],
         functions: {
             claim: {
                 inputs: [{ name: "preimage", type: "bytes" }] as const,
                 tapscript: {
-                    signers: ["server"],
+                    signers: ["$server"],
                     asm: ["HASH160", "$hash", "EQUALVERIFY"],
                     witness: ["preimage"],
                 },
@@ -186,6 +186,28 @@ describe("arkade.Arkade / ArkadeContract", () => {
         const { ark } = await connect();
         const contract = ark.contract(htlcProgram(), args);
         expect(() => (contract.functions.claim as any)()).toThrow(/expected 1 argument/);
+    });
+
+    it("defaults declared 'server'/'user' params to the client keys", async () => {
+        const userKey = xOnly();
+        const { arkProvider, indexer, emulator } = stubProviders(server, emulatorKey);
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer,
+            identity: { xOnlyPublicKey: async () => userKey, sign: async (tx: any) => tx } as any,
+            network: networks.regtest,
+        });
+        const program = {
+            version: 0,
+            params: ["server", "user"],
+            functions: { exit: { tapscript: { signers: ["$server", "$user"] } } },
+        } satisfies arkade.Program;
+        const defaulted = ark.contract(program);
+        const explicit = ark.contract(program, { server, user: userKey });
+        expect(defaulted.address).toBe(explicit.address);
+        const overridden = ark.contract(program, { server: xOnly(), user: userKey });
+        expect(overridden.address).not.toBe(defaulted.address);
     });
 
     it("resolveAsm substitutes $params and passes opcodes through", () => {
