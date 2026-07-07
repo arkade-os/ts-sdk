@@ -25,6 +25,20 @@ export interface VirtualTx {
 }
 
 /**
+ * Upsert merge rule for {@link VirtualTx.type}: a known (specific) type is
+ * never downgraded to `Unspecified`. An incoming `Unspecified` is treated as
+ * "no new information" and keeps the stored type (NArk parity). Shared by every
+ * backend so the invariant can't drift between them.
+ */
+export function mergeChainedTxType(
+    incoming: ChainedTxType,
+    prev: ChainedTxType | undefined,
+): ChainedTxType {
+    if (incoming !== ChainedTxType.Unspecified) return incoming;
+    return prev ?? ChainedTxType.Unspecified;
+}
+
+/**
  * Links a VTXO to one virtual tx in its exit branch, ordered.
  * `position` 0 = closest to commitment (tree root); higher = closer to leaf.
  */
@@ -38,7 +52,8 @@ export interface VtxoBranch {
 export interface VirtualTxRepository extends AsyncDisposable {
     readonly version: 1;
     clear(): Promise<void>;
-    /** Upsert: non-null incoming fields overwrite, null/absent fields are preserved. */
+    /** Upsert: non-null incoming fields overwrite; null (or, for `type`,
+     *  `Unspecified`) is treated as absent and preserves the stored value. */
     upsertVirtualTxs(txs: VirtualTx[]): Promise<void>;
     getVirtualTx(txid: string): Promise<VirtualTx | null>;
     /** Replace the entire stored branch for a VTXO. */

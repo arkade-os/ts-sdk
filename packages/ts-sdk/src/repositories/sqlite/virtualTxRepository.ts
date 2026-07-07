@@ -1,5 +1,11 @@
 import { Outpoint } from "../../wallet";
-import { ChainedTxType, VirtualTx, VirtualTxRepository, VtxoBranch } from "../virtualTxRepository";
+import {
+    ChainedTxType,
+    mergeChainedTxType,
+    VirtualTx,
+    VirtualTxRepository,
+    VtxoBranch,
+} from "../virtualTxRepository";
 import { SQLExecutor } from "./types";
 import { runInTransaction } from "./transaction";
 
@@ -83,7 +89,7 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
                 const prev = prevByTxid.get(t.txid);
                 const psbt = t.psbt ?? prev?.psbt ?? null;
                 const expires = t.expiresAt ?? prev?.expires_at ?? null;
-                const type = t.type ?? prev?.type ?? ChainedTxType.Unspecified;
+                const type = mergeChainedTxType(t.type, prev?.type);
                 await this.db.run(
                     `INSERT OR REPLACE INTO ${this.tTx} (txid, psbt, expires_at, type) VALUES (?, ?, ?, ?)`,
                     [t.txid, psbt, expires, type],

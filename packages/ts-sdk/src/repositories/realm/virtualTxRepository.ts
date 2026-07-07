@@ -1,5 +1,11 @@
 import { Outpoint } from "../../wallet";
-import { ChainedTxType, VirtualTx, VirtualTxRepository, VtxoBranch } from "../virtualTxRepository";
+import {
+    ChainedTxType,
+    mergeChainedTxType,
+    VirtualTx,
+    VirtualTxRepository,
+    VtxoBranch,
+} from "../virtualTxRepository";
 import { RealmLike } from "./types";
 
 const vtxoKey = (o: Outpoint) => `${o.txid}:${o.vout}`;
@@ -38,7 +44,7 @@ export class RealmVirtualTxRepository implements VirtualTxRepository {
                         txid: t.txid,
                         psbt: t.psbt ?? prev?.psbt ?? null,
                         expiresAt: t.expiresAt ?? prev?.expiresAt ?? null,
-                        type: t.type ?? prev?.type ?? ChainedTxType.Unspecified,
+                        type: mergeChainedTxType(t.type, prev?.type),
                     },
                     "modified",
                 );

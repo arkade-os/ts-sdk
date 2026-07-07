@@ -63,6 +63,24 @@ export function virtualTxRepositoryConformance(
             });
         });
 
+        it("upsert does not downgrade a known type to Unspecified", async () => {
+            const r = await make();
+            await r.upsertVirtualTxs([tx("a", { type: ChainedTxType.Checkpoint })]);
+            await r.upsertVirtualTxs([
+                { txid: "a", psbt: null, expiresAt: null, type: ChainedTxType.Unspecified },
+            ]);
+            expect((await r.getVirtualTx("a"))?.type).toBe(ChainedTxType.Checkpoint);
+        });
+
+        it("does not downgrade a known type within a single batch", async () => {
+            const r = await make();
+            await r.upsertVirtualTxs([
+                { txid: "a", psbt: "p", expiresAt: 1, type: ChainedTxType.Checkpoint },
+                { txid: "a", psbt: "p2", expiresAt: 2, type: ChainedTxType.Unspecified },
+            ]);
+            expect((await r.getVirtualTx("a"))?.type).toBe(ChainedTxType.Checkpoint);
+        });
+
         it("setBranch replaces, getBranch returns txs ordered by position", async () => {
             const r = await make();
             await r.upsertVirtualTxs([tx("root"), tx("mid"), tx("leaf")]);

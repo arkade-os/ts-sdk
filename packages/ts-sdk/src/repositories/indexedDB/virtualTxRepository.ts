@@ -1,5 +1,10 @@
 import { Outpoint } from "../../wallet";
-import { ChainedTxType, VirtualTx, VirtualTxRepository, VtxoBranch } from "../virtualTxRepository";
+import {
+    mergeChainedTxType,
+    VirtualTx,
+    VirtualTxRepository,
+    VtxoBranch,
+} from "../virtualTxRepository";
 import { awaitTransaction, promisifyRequest } from "./idbUtils";
 import { closeDatabase, openDatabase } from "./manager";
 import { initDatabase, DB_VERSION, STORE_VIRTUAL_TXS, STORE_VTXO_BRANCHES } from "./schema";
@@ -40,7 +45,7 @@ export class IndexedDBVirtualTxRepository implements VirtualTxRepository {
                           txid: tx.txid,
                           psbt: tx.psbt ?? acc.psbt,
                           expiresAt: tx.expiresAt ?? acc.expiresAt,
-                          type: tx.type ?? acc.type,
+                          type: mergeChainedTxType(tx.type, acc.type),
                       }
                     : tx,
             );
@@ -58,7 +63,7 @@ export class IndexedDBVirtualTxRepository implements VirtualTxRepository {
                     txid: tx.txid,
                     psbt: tx.psbt ?? prev?.psbt ?? null,
                     expiresAt: tx.expiresAt ?? prev?.expiresAt ?? null,
-                    type: tx.type ?? prev?.type ?? ChainedTxType.Unspecified,
+                    type: mergeChainedTxType(tx.type, prev?.type),
                 } satisfies VirtualTx);
             };
         }

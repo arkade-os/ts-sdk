@@ -1,5 +1,10 @@
 import { Outpoint } from "../../wallet";
-import { VirtualTx, VirtualTxRepository, VtxoBranch } from "../virtualTxRepository";
+import {
+    mergeChainedTxType,
+    VirtualTx,
+    VirtualTxRepository,
+    VtxoBranch,
+} from "../virtualTxRepository";
 
 const opKey = (o: Outpoint) => `${o.txid}:${o.vout}`;
 
@@ -24,7 +29,7 @@ export class InMemoryVirtualTxRepository implements VirtualTxRepository {
                 txid: t.txid,
                 psbt: t.psbt ?? prev.psbt,
                 expiresAt: t.expiresAt ?? prev.expiresAt,
-                type: t.type ?? prev.type,
+                type: mergeChainedTxType(t.type, prev.type),
             });
         }
     }
