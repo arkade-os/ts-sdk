@@ -9,6 +9,7 @@ import {
     isTerminalIntentState,
 } from "../intentRepository";
 import { SQLExecutor } from "./types";
+import { runInTransaction } from "./transaction";
 
 const SAFE_PREFIX = /^[a-zA-Z0-9_]+$/;
 function sanitizePrefix(p: string): string {
@@ -83,19 +84,8 @@ export class SQLiteIntentRepository implements IntentRepository {
         );
     }
 
-    private async withTx(fn: () => Promise<void>): Promise<void> {
-        await this.db.run("BEGIN IMMEDIATE");
-        try {
-            await fn();
-            await this.db.run("COMMIT");
-        } catch (e) {
-            try {
-                await this.db.run("ROLLBACK");
-            } catch {
-                /* already rolled back */
-            }
-            throw e;
-        }
+    private withTx(fn: () => Promise<void>): Promise<void> {
+        return runInTransaction(this.db, fn);
     }
 
     async clear(): Promise<void> {

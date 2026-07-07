@@ -1,6 +1,7 @@
 import { Outpoint } from "../../wallet";
 import { ChainedTxType, VirtualTx, VirtualTxRepository, VtxoBranch } from "../virtualTxRepository";
 import { SQLExecutor } from "./types";
+import { runInTransaction } from "./transaction";
 
 const SAFE_PREFIX = /^[a-zA-Z0-9_]+$/;
 function sanitizePrefix(p: string): string {
@@ -17,9 +18,6 @@ interface VtxRow {
 export class SQLiteVirtualTxRepository implements VirtualTxRepository {
     readonly version = 1 as const;
     private initPromise: Promise<void> | null = null;
-    // Serializes transactions on the shared connection: SQLite cannot nest
-    // BEGIN IMMEDIATE, so overlapping tx() callers must run one at a time.
-    private writeChain: Promise<void> = Promise.resolve();
     private readonly prefix: string;
     private readonly tTx: string;
     private readonly tBranch: string;
@@ -58,25 +56,7 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
     }
 
     private tx(fn: () => Promise<void>): Promise<void> {
-        // Chain onto the previous transaction (see writeChain).
-        const run = this.writeChain.then(async () => {
-            await this.db.run("BEGIN IMMEDIATE");
-            try {
-                await fn();
-                await this.db.run("COMMIT");
-            } catch (e) {
-                try {
-                    await this.db.run("ROLLBACK");
-                } catch {
-                    /* already rolled back */
-                }
-                throw e;
-            }
-        });
-        // Keep the chain alive regardless of this run's outcome so a failed
-        // transaction doesn't wedge every subsequent writer.
-        this.writeChain = run.catch(() => {});
-        return run;
+        return runInTransaction(this.db, fn);
     }
 
     async clear(): Promise<void> {
