@@ -8,16 +8,48 @@ export const buildVersion = "0.9.9";
 export const sdkVersion = `ts-sdk/${version}`;
 
 /**
+ * Thrown by {@link baseFetch} — and therefore by the Ark-server {@link fetch}
+ * wrapper, which delegates to it — when the underlying platform `fetch` rejects
+ * at the transport layer: DNS failure, connection refused, TLS or CORS error,
+ * etc. The raw platform rejection (`TypeError: Failed to fetch` in browsers, the
+ * opaque `TypeError: fetch failed` in Node) says nothing about which request
+ * failed; this wraps it with the request method and URL and preserves the
+ * original as {@link Error.cause}. It does NOT retry — retrying is the caller's
+ * responsibility.
+ */
+export class FetchError extends Error {
+    /** The request URL that failed, when derivable from the `fetch` input. */
+    readonly url?: string;
+    /** The HTTP method of the failed request (defaults to `"GET"`). */
+    readonly method?: string;
+
+    constructor(message: string, options: { url?: string; method?: string; cause?: unknown }) {
+        super(message, { cause: options.cause });
+        this.name = "FetchError";
+        this.url = options.url;
+        this.method = options.method;
+    }
+}
+
+/**
  * Guarded passthrough to the platform `fetch` with no Arkade-specific headers.
  * Use for any service that is NOT the Ark server (delegate, Esplora, …): those
  * origins reject unknown request headers such as `X-Build-Version` in the CORS
  * preflight.
+ *
+ * A transport-level rejection from the platform `fetch` is re-thrown as a
+ * {@link FetchError} that names the request and keeps the original error as
+ * `cause`, so callers can tell *which* request failed instead of receiving an
+ * opaque `TypeError: Failed to fetch`.
  */
-export function baseFetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
+export function baseFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     if (typeof globalThis.fetch !== "function") {
         throw new Error("Fetch API is not available in this environment.");
     }
-    return globalThis.fetch(input, init);
+    return globalThis.fetch(input, init).catch((cause) => {
+        const { url, method } = describeRequest(input, init);
+        throw new FetchError(`Network request failed: ${method} ${url}`, { url, method, cause });
+    });
 }
 
 /**
@@ -26,9 +58,39 @@ export function baseFetch(input: RequestInfo, init?: RequestInit): Promise<Respo
  * carrying this package's own version. Do NOT use it for other origins — they
  * reject these custom headers in CORS preflight.
  */
-export function fetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
+export function fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const headers = new Headers(init?.headers);
     headers.set("X-Build-Version", buildVersion);
     headers.set("X-SDK-VERSION", sdkVersion);
     return baseFetch(input, { ...init, headers });
+}
+
+/**
+ * Derive a human-readable `{ url, method }` for a failed request from the
+ * `fetch` arguments, handling the `string | URL | Request` input shapes. The
+ * `init.method` wins, then a `Request`'s own method, defaulting to `"GET"`.
+ */
+function describeRequest(
+    input: RequestInfo | URL,
+    init?: RequestInit,
+): { url: string; method: string } {
+    let url: string;
+    if (typeof input === "string") {
+        url = input;
+    } else if (input instanceof URL) {
+        url = input.href;
+    } else {
+        url = input.url;
+    }
+
+    let method: string;
+    if (init?.method !== undefined) {
+        method = init.method;
+    } else if (input instanceof Request) {
+        method = input.method;
+    } else {
+        method = "GET";
+    }
+
+    return { url, method };
 }
