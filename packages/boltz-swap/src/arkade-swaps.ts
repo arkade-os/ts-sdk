@@ -451,6 +451,7 @@ export class ArkadeSwaps {
         return {
             amount: pendingSwap.response.onchainAmount,
             expiry: decodedInvoice.expiry,
+            timestamp: decodedInvoice.timestamp,
             invoice: pendingSwap.response.invoice,
             paymentHash: decodedInvoice.paymentHash,
             pendingSwap,
@@ -1694,6 +1695,9 @@ export class ArkadeSwaps {
 
     /**
      * Claim sats on BTC chain by claiming the HTLC.
+     *
+     * The claim output is `swapOutput.amount − max(feeToDeliverExactAmount, targetFee)`.
+     *
      * @param pendingSwap - The pending chain swap with BTC transaction hex.
      * @returns The BTC transaction ID of the claim.
      */

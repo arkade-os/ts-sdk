@@ -6,6 +6,7 @@ vi.mock("light-bolt11-decoder", () => ({
             expiry: 3600,
             sections: [
                 { name: "amount", value: "9007199254741999" },
+                { name: "timestamp", value: 1700000000 },
                 { name: "description", value: "large invoice" },
                 { name: "description_hash", value: "a".repeat(64) },
                 { name: "payment_hash", value: "hash" },
@@ -23,5 +24,9 @@ describe("decodeInvoice", () => {
 
     it("surfaces the description_hash (BOLT11 h) section", () => {
         expect(decodeInvoice("lnbc1mock").descriptionHash).toBe("a".repeat(64));
+    });
+
+    it("surfaces the timestamp (invoice creation) section", () => {
+        expect(decodeInvoice("lnbc1mock").timestamp).toBe(1700000000);
     });
 });

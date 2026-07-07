@@ -267,10 +267,17 @@ export const constructClaimTransaction = (
 // Fee targeting
 // ---------------------------------------------------------------------------
 
+/**
+ * Size the fee from the exact virtual size.
+ * This helps protect against fee estimation errors and keeps targetFee <= Boltz's grossed-up
+ * `minerFees.user.claim`so consumer can deliver the exact amount.
+ * @param satPerVbyte
+ * @param constructTx
+ */
 export const targetFee = (
     satPerVbyte: number,
     constructTx: (fee: bigint) => Transaction,
 ): Transaction => {
-    const tx = constructTx(BigInt(1));
-    return constructTx(BigInt(Math.ceil((tx.vsize + tx.inputsLength) * satPerVbyte)));
+    const probe = constructTx(BigInt(1));
+    return constructTx(BigInt(Math.ceil(probe.vsize * satPerVbyte)));
 };
