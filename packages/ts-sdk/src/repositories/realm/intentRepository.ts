@@ -2,6 +2,7 @@ import { Outpoint } from "../../wallet";
 import {
     ArkIntent,
     ArkIntentState,
+    assertIntentIdUnique,
     IntentFilter,
     IntentRepository,
     intentMatchesFilter,
@@ -45,6 +46,12 @@ export class RealmIntentRepository implements IntentRepository {
 
     async saveIntent(intent: ArkIntent): Promise<void> {
         this.realm.write(() => {
+            if (intent.intentId != null) {
+                const clashes = [
+                    ...this.realm.objects("ArkIntent").filtered("intentId == $0", intent.intentId),
+                ].map(toIntent);
+                assertIntentIdUnique(intent, clashes);
+            }
             this.realm.create(
                 "ArkIntent",
                 {

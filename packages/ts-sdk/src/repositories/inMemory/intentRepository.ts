@@ -1,6 +1,7 @@
 import { Outpoint } from "../../wallet";
 import {
     ArkIntent,
+    assertIntentIdUnique,
     IntentFilter,
     IntentRepository,
     intentMatchesFilter,
@@ -17,6 +18,7 @@ export class InMemoryIntentRepository implements IntentRepository {
     }
 
     async saveIntent(intent: ArkIntent): Promise<void> {
+        assertIntentIdUnique(intent, this.byId.values());
         this.byId.set(intent.intentTxId, {
             ...intent,
             intentVtxos: [...intent.intentVtxos],

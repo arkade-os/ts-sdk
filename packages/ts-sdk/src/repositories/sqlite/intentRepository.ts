@@ -97,14 +97,35 @@ export class SQLiteIntentRepository implements IntentRepository {
         await this.ensureInit();
         const now = Date.now();
         await this.withTx(async () => {
+            // Upsert by the primary key only. INSERT OR REPLACE would also fire
+            // on the intent_id unique index, silently deleting the *other* row
+            // that holds it; ON CONFLICT(intent_tx_id) updates in place and lets
+            // an intent_id collision surface as a constraint error instead.
             await this.db.run(
-                `INSERT OR REPLACE INTO ${this.t}
+                `INSERT INTO ${this.t}
                  (intent_tx_id, intent_id, state, valid_from, valid_until,
                   created_at, updated_at, register_proof, register_proof_message,
                   delete_proof, delete_proof_message, batch_id, commitment_txid,
                   cancellation_reason, partial_forfeits_json, signer_descriptor,
                   intent_vtxos_json)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(intent_tx_id) DO UPDATE SET
+                  intent_id = excluded.intent_id,
+                  state = excluded.state,
+                  valid_from = excluded.valid_from,
+                  valid_until = excluded.valid_until,
+                  created_at = excluded.created_at,
+                  updated_at = excluded.updated_at,
+                  register_proof = excluded.register_proof,
+                  register_proof_message = excluded.register_proof_message,
+                  delete_proof = excluded.delete_proof,
+                  delete_proof_message = excluded.delete_proof_message,
+                  batch_id = excluded.batch_id,
+                  commitment_txid = excluded.commitment_txid,
+                  cancellation_reason = excluded.cancellation_reason,
+                  partial_forfeits_json = excluded.partial_forfeits_json,
+                  signer_descriptor = excluded.signer_descriptor,
+                  intent_vtxos_json = excluded.intent_vtxos_json`,
                 [
                     intent.intentTxId,
                     intent.intentId ?? null,

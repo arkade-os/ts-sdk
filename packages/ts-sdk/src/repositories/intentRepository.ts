@@ -32,7 +32,11 @@ export function isTerminalIntentState(s: ArkIntentState): boolean {
 export interface ArkIntent {
     /** Intent proof tx id. Primary key. */
     intentTxId: string;
-    /** Server-assigned; unique when present. */
+    /**
+     * Server-assigned batch intent id. Unique when present: saving a *different*
+     * intentTxId that reuses a live intentId is rejected (NArk parity). Absent
+     * until the intent is registered with arkd.
+     */
     intentId?: string;
     state: ArkIntentState;
     validFrom?: number;
@@ -77,6 +81,23 @@ export interface IntentRepository extends AsyncDisposable {
     getIntents(filter?: IntentFilter): Promise<ArkIntent[]>;
     /** Outpoints held by NON-terminal intents (for spendable-balance exclusion). */
     getLockedVtxoOutpoints(): Promise<Outpoint[]>;
+}
+
+/**
+ * Enforce the "intentId unique when present" contract for backends without a
+ * native partial-unique index (in-memory, Realm). Throws if `intent` carries an
+ * intentId already held by a *different* intentTxId. SQLite/IndexedDB enforce
+ * the same invariant at the storage layer.
+ */
+export function assertIntentIdUnique(intent: ArkIntent, existing: Iterable<ArkIntent>): void {
+    if (intent.intentId === undefined) return;
+    for (const e of existing) {
+        if (e.intentTxId !== intent.intentTxId && e.intentId === intent.intentId) {
+            throw new Error(
+                `intentId "${intent.intentId}" is already used by intent ${e.intentTxId}`,
+            );
+        }
+    }
 }
 
 /**

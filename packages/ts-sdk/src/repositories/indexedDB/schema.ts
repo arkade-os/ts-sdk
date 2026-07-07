@@ -182,7 +182,9 @@ export function initDatabase(
         const intentsStore = db.createObjectStore(STORE_INTENTS, {
             keyPath: "intentTxId",
         });
-        intentsStore.createIndex("intentId", "intentId", { unique: false });
+        // Unique-when-present: records with no intentId aren't indexed, so many
+        // pre-registration intents coexist; a duplicate intentId is rejected.
+        intentsStore.createIndex("intentId", "intentId", { unique: true });
         intentsStore.createIndex("state", "state", { unique: false });
     }
     if (!db.objectStoreNames.contains(STORE_VIRTUAL_TXS)) {

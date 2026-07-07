@@ -30,6 +30,25 @@ export function intentRepositoryConformance(
             expect((await r.getIntents()).length).toBe(1);
         });
 
+        it("rejects reusing an intentId for a different intentTxId, without losing the original", async () => {
+            const r = await make();
+            await r.saveIntent(intent("a", { intentId: "srv1" }));
+            await expect(r.saveIntent(intent("b", { intentId: "srv1" }))).rejects.toThrow();
+            // The original row must survive — no silent delete/replace.
+            expect((await r.getIntents({ intentIds: ["srv1"] })).map((i) => i.intentTxId)).toEqual([
+                "a",
+            ]);
+        });
+
+        it("allows updating the same intentTxId that keeps its intentId", async () => {
+            const r = await make();
+            await r.saveIntent(intent("a", { intentId: "srv1", state: "waiting_for_batch" }));
+            await expect(
+                r.saveIntent(intent("a", { intentId: "srv1", state: "batch_succeeded" })),
+            ).resolves.toBeUndefined();
+            expect((await r.getIntents({ intentTxIds: ["a"] }))[0].state).toBe("batch_succeeded");
+        });
+
         it("filters by state, intentId, containingInputs, searchText, validAt", async () => {
             const r = await make();
             await r.saveIntent(
