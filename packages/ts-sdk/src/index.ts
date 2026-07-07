@@ -252,6 +252,7 @@ import type {
     VirtualTx,
     VtxoBranch,
 } from "./repositories/virtualTxRepository";
+import { ChainedTxType } from "./repositories/virtualTxRepository";
 import {
     MIGRATION_KEY,
     migrateWalletRepository,
@@ -464,6 +465,7 @@ export {
     IndexedDBVirtualTxRepository,
     isTerminalIntentState,
     INTENT_TERMINAL_STATES,
+    ChainedTxType,
     MIGRATION_KEY,
     migrateWalletRepository,
     requiresMigration,
