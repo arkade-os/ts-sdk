@@ -1895,6 +1895,56 @@ describe("Wallet._settleImpl", () => {
         batchJoinSpy.mockRestore();
     });
 
+    it("keeps a committed batch as batch_succeeded when a post-commit step throws", async () => {
+        const stream = {
+            next: vi.fn().mockResolvedValue({ done: false, value: { type: "batch_started" } }),
+            return: vi.fn().mockResolvedValue({ done: true, value: undefined }),
+            [Symbol.asyncIterator]() {
+                return this;
+            },
+        } as AsyncIterableIterator<any>;
+
+        const deleteIntent = vi.fn().mockResolvedValue(undefined);
+        const persistIntentSnapshot = vi.fn().mockResolvedValue(undefined);
+        // Batch.join returns without invoking the handler, so the hook's
+        // batch_succeeded write never lands — the exact gap the flag closes.
+        const batchJoinSpy = vi.spyOn(Batch, "join").mockResolvedValue("commitment-txid");
+
+        const thisArg: any = {
+            network: "mutinynet",
+            arkProvider: {
+                getEventStream: vi.fn().mockReturnValue(stream),
+                deleteIntent,
+            },
+            _addPendingSpends: vi.fn(),
+            _removePendingSpends: vi.fn(),
+            getAddress: vi.fn().mockResolvedValue(walletAddress),
+            makeRegisterIntentSignature: vi.fn().mockResolvedValue({
+                proof: "register-proof",
+                message: { type: "register" },
+            }),
+            makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+                proof: "delete-proof",
+                message: { type: "delete", expire_at: 0 },
+            }),
+            safeRegisterIntent: vi.fn().mockResolvedValue("intent-id"),
+            createBatchHandler: vi.fn().mockReturnValue({} as Batch.Handler),
+            updateDbAfterSettle: vi.fn().mockRejectedValue(new Error("db write failed")),
+            maybeRotateBoardingAfterBoard: vi.fn().mockResolvedValue(undefined),
+            persistIntentSnapshot,
+        };
+
+        await expect(
+            (Wallet.prototype as any)._settleImpl.call(thisArg, { inputs: [input], outputs: [] }),
+        ).rejects.toThrow("db write failed");
+
+        const states = persistIntentSnapshot.mock.calls.map((c) => c[1]);
+        expect(states).toContain("batch_succeeded");
+        expect(states).not.toContain("cancelled");
+        expect(deleteIntent).not.toHaveBeenCalled();
+        batchJoinSpy.mockRestore();
+    });
+
     // Regression coverage for the no-params (auto-select) settle branch, which
     // selects all spendable inputs itself and applies MAX_VTXOS_PER_SETTLEMENT.
     describe("no-params auto-select cap", () => {

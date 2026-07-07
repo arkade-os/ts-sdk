@@ -13,7 +13,6 @@ import {
     BatchStartedEvent,
     RestArkProvider,
     SettlementEvent,
-    SettlementEventType,
     SignedIntent,
     TreeNoncesEvent,
     TreeSigningStartedEvent,
@@ -76,7 +75,7 @@ import { ContractRepository } from "../repositories/contractRepository";
 import type { IntentRepository, ArkIntent, ArkIntentState } from "../repositories/intentRepository";
 import { isTerminalIntentState } from "../repositories/intentRepository";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
-import { applySettlementEventToIntent } from "./intentStateReducer";
+import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
 import { extendCoinWithTapscript, validateRecipients } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
@@ -3004,6 +3003,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         const abortController = new AbortController();
         let stream: AsyncIterableIterator<SettlementEvent> | undefined;
+        // Set once Batch.join returns: the batch is committed on-chain and no
+        // local cleanup failure may cancel it. Authoritative in memory even if
+        // the hook's terminal repo write failed, which repo state can't tell us.
+        let committedTxid: string | undefined;
 
         // Optimistically hide these inputs from concurrent getVtxos() callers
         // while the settlement is in flight. Set before safeRegisterIntent so
@@ -3038,50 +3041,25 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 { intentId },
             );
 
-            const handler = this.createBatchHandler(intentId, params.inputs, recipients, session);
-
-            // Compose the caller's event callback with event-sourced intent
-            // state. Active whenever an intentRepository is configured, even
-            // if the caller passed no eventCallback. Reducer/persist failures
-            // are swallowed — they must not break the settlement stream.
-            const intentRepo = this.intentRepository;
-            const composedEventCallback =
-                eventCallback || intentRepo
-                    ? async (event: SettlementEvent) => {
-                          if (eventCallback) {
-                              await Promise.resolve(eventCallback(event));
-                          }
-                          if (!intentRepo) return;
-                          // Only batch-boundary events can move intent state
-                          // (see reduceIntentState); skip the repo round-trip
-                          // for the far more frequent tree/stream sub-steps.
-                          if (
-                              event.type !== SettlementEventType.BatchStarted &&
-                              event.type !== SettlementEventType.BatchFinalized &&
-                              event.type !== SettlementEventType.BatchFailed
-                          ) {
-                              return;
-                          }
-                          try {
-                              const cur = (
-                                  await intentRepo.getIntents({
-                                      intentTxIds: [intentTxId],
-                                  })
-                              )[0];
-                              if (!cur) return;
-                              const next = applySettlementEventToIntent(cur, event);
-                              if (next) await intentRepo.saveIntent(next);
-                          } catch (e) {
-                              console.error("Failed to apply settlement event to intent", e);
-                          }
-                      }
-                    : undefined;
+            // SDK-owned intent persistence runs from the awaited batch hooks;
+            // the caller's eventCallback stays purely observational.
+            const handler = wrapHandlerWithIntentPersistence(
+                this.createBatchHandler(intentId, params.inputs, recipients, session),
+                { intentRepository: this.intentRepository, intentTxId },
+            );
 
             const commitmentTxid = await Batch.join(primedStream, handler, {
                 abortController,
                 skipVtxoTreeSigning: !hasOffchainOutputs,
-                eventCallback: composedEventCallback,
+                // async so a synchronous throw becomes a rejection Batch.join
+                // swallows, keeping the observational callback off the stream path.
+                eventCallback:
+                    eventCallback &&
+                    (async (event) => {
+                        await eventCallback(event);
+                    }),
             });
+            committedTxid = commitmentTxid;
 
             await this.updateDbAfterSettle(params.inputs, commitmentTxid);
 
@@ -3097,10 +3075,23 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             return commitmentTxid;
         } catch (error) {
-            // delete the intent to not be stuck in the queue. If deletion fails
-            // the intent stays on the server and the next settle will hit
-            // "duplicated input" in safeRegisterIntent — surface the failure
-            // rather than silently swallowing it.
+            if (committedTxid !== undefined) {
+                // The batch committed and a later local step (updateDbAfterSettle,
+                // rotation) threw. The settlement stands — never delete or cancel
+                // it. Re-persist the terminal success in case the hook's write
+                // failed; persistIntentSnapshot no-ops if it already landed.
+                await this.persistIntentSnapshot(
+                    intentTxId,
+                    "batch_succeeded",
+                    intent,
+                    deleteIntent,
+                    params.inputs,
+                    { commitmentTransactionId: committedTxid },
+                );
+                throw error;
+            }
+            // Pre-commit failure: release the server intent so the next settle
+            // doesn't hit "duplicated input", and record the cancellation.
             const inputIds = params.inputs.map((i) => `${i.txid}:${i.vout}`).join(",");
             await this.arkProvider.deleteIntent(deleteIntent).catch((e) => {
                 console.warn(
