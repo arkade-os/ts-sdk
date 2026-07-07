@@ -346,8 +346,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     public intentRepository?: IntentRepository;
     /**
-     * Opt-in virtual-tx / exit-branch repository. Assigned by `create()`
-     * from `config.storage.virtualTxRepository`; `undefined` ⇒ no-op.
+     * **Experimental / inert.** Opt-in virtual-tx / exit-branch repository,
+     * exposed so callers can pass it to {@link Unroll.Session.create} as a
+     * best-effort raw-tx cache. Assigned by `create()` from
+     * `config.storage.virtualTxRepository`. Normal sync never writes it
+     * (ContractManager isn't given it); `undefined` ⇒ no-op.
      */
     public virtualTxRepository?: VirtualTxRepository;
     private readonly _assetManager: IReadonlyAssetManager;

@@ -238,10 +238,13 @@ export type StorageConfig = {
      */
     intentRepository?: IntentRepository;
     /**
-     * Optional virtual-tx repository used as a best-effort raw transaction cache
-     * by unilateral exit. The wallet does not currently pre-populate exit
-     * branches during sync; callers should treat branch/full-mode persistence as
-     * out of scope for this release.
+     * **Experimental / inert.** Optional virtual-tx (exit-branch) repository.
+     * Today it is only a best-effort raw-PSBT cache that unilateral exit
+     * ({@link Unroll}) reads and writes when a caller passes it to
+     * `Unroll.Session.create`. Normal wallet/contract sync does NOT populate,
+     * maintain, or prune it, and {@link ContractManager} is never given it —
+     * branch/full-mode persistence is out of scope for this release. Treat this
+     * option as experimental until those paths land. Absent ⇒ no-op.
      */
     virtualTxRepository?: VirtualTxRepository;
 };
