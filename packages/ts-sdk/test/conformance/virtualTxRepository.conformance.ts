@@ -7,7 +7,7 @@ import {
 
 const tx = (txid: string, over: Partial<VirtualTx> = {}): VirtualTx => ({
     txid,
-    hex: `aa${txid}`,
+    psbt: `aa${txid}`,
     expiresAt: 1000,
     type: ChainedTxType.Ark,
     ...over,
@@ -31,11 +31,11 @@ export function virtualTxRepositoryConformance(
 
         it("upsert merges non-null fields and preserves existing on null", async () => {
             const r = await make();
-            await r.upsertVirtualTxs([tx("a", { hex: "old", expiresAt: 5 })]);
+            await r.upsertVirtualTxs([tx("a", { psbt: "old", expiresAt: 5 })]);
             await r.upsertVirtualTxs([
                 {
                     txid: "a",
-                    hex: null,
+                    psbt: null,
                     expiresAt: 9,
                     type: ChainedTxType.Tree,
                 },
@@ -43,7 +43,7 @@ export function virtualTxRepositoryConformance(
             const got = await r.getVirtualTx("a");
             expect(got).toEqual({
                 txid: "a",
-                hex: "old", // null incoming preserved existing
+                psbt: "old", // null incoming preserved existing
                 expiresAt: 9, // non-null incoming overwrote
                 type: ChainedTxType.Tree,
             });
@@ -52,12 +52,12 @@ export function virtualTxRepositoryConformance(
         it("folds duplicate txids within one batch (later non-null wins, absent preserved)", async () => {
             const r = await make();
             await r.upsertVirtualTxs([
-                { txid: "a", hex: "first", expiresAt: 1, type: ChainedTxType.Ark },
-                { txid: "a", hex: null, expiresAt: 2, type: ChainedTxType.Tree },
+                { txid: "a", psbt: "first", expiresAt: 1, type: ChainedTxType.Ark },
+                { txid: "a", psbt: null, expiresAt: 2, type: ChainedTxType.Tree },
             ]);
             expect(await r.getVirtualTx("a")).toEqual({
                 txid: "a",
-                hex: "first", // second entry's null preserved the first's hex
+                psbt: "first", // second entry's null preserved the first's psbt
                 expiresAt: 2, // second entry's non-null overwrote
                 type: ChainedTxType.Tree,
             });

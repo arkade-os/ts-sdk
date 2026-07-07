@@ -11,7 +11,7 @@ function sanitizePrefix(p: string): string {
 
 interface VtxRow {
     txid: string;
-    hex: string | null;
+    psbt: string | null;
     expires_at: number | null;
     type: number;
 }
@@ -39,7 +39,7 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
     private async init(): Promise<void> {
         await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.tTx} (
             txid TEXT PRIMARY KEY,
-            hex TEXT,
+            psbt TEXT,
             expires_at INTEGER,
             type INTEGER NOT NULL DEFAULT 0
         )`);
@@ -81,16 +81,16 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
             const prevByTxid = new Map(existing.map((r) => [r.txid, r]));
             for (const t of txs) {
                 const prev = prevByTxid.get(t.txid);
-                const hex = t.hex ?? prev?.hex ?? null;
+                const psbt = t.psbt ?? prev?.psbt ?? null;
                 const expires = t.expiresAt ?? prev?.expires_at ?? null;
                 const type = t.type ?? prev?.type ?? ChainedTxType.Unspecified;
                 await this.db.run(
-                    `INSERT OR REPLACE INTO ${this.tTx} (txid, hex, expires_at, type) VALUES (?, ?, ?, ?)`,
-                    [t.txid, hex, expires, type],
+                    `INSERT OR REPLACE INTO ${this.tTx} (txid, psbt, expires_at, type) VALUES (?, ?, ?, ?)`,
+                    [t.txid, psbt, expires, type],
                 );
                 // A txid repeated later in the same batch must merge onto this
                 // just-written row, matching the original per-tx-read behavior.
-                prevByTxid.set(t.txid, { txid: t.txid, hex, expires_at: expires, type });
+                prevByTxid.set(t.txid, { txid: t.txid, psbt, expires_at: expires, type });
             }
         });
     }
@@ -122,7 +122,7 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
         // Single JOIN instead of one lookup per branch row; the inner join
         // naturally drops branch rows whose tx no longer exists.
         const rows = await this.db.all<VtxRow>(
-            `SELECT t.txid, t.hex, t.expires_at, t.type
+            `SELECT t.txid, t.psbt, t.expires_at, t.type
              FROM ${this.tBranch} b
              JOIN ${this.tTx} t ON t.txid = b.virtual_txid
              WHERE b.vtxo_txid = ? AND b.vtxo_vout = ?
@@ -175,7 +175,7 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
 function rowToTx(r: VtxRow): VirtualTx {
     return {
         txid: r.txid,
-        hex: r.hex ?? null,
+        psbt: r.psbt ?? null,
         expiresAt: r.expires_at ?? null,
         type: r.type as ChainedTxType,
     };

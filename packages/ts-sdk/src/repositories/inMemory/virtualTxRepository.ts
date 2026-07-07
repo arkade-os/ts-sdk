@@ -22,7 +22,7 @@ export class InMemoryVirtualTxRepository implements VirtualTxRepository {
             }
             this.txs.set(t.txid, {
                 txid: t.txid,
-                hex: t.hex ?? prev.hex,
+                psbt: t.psbt ?? prev.psbt,
                 expiresAt: t.expiresAt ?? prev.expiresAt,
                 type: t.type ?? prev.type,
             });

@@ -134,7 +134,7 @@ export const ArkVirtualTxSchema = {
     primaryKey: "txid",
     properties: {
         txid: "string",
-        hex: "string?",
+        psbt: "string?",
         expiresAt: "int?",
         type: "int",
     },
@@ -191,8 +191,10 @@ export const ArkRealmSchemas = [
  *     the owning Ark address during migration.
  *   - v3: add ArkIntent / ArkVirtualTx / ArkVtxoBranch schemas (new; no
  *     backfill — runArkRealmMigrations is unchanged).
+ *   - v4: rename ArkVirtualTx.hex to psbt (holds a base64 PSBT); property-only
+ *     change, no data to migrate.
  */
-export const ARK_REALM_SCHEMA_VERSION = 3;
+export const ARK_REALM_SCHEMA_VERSION = 4;
 
 /**
  * Run every Arkade schema migration applicable to the open Realm.

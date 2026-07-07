@@ -26,12 +26,12 @@ function makeSession(repo?: InMemoryVirtualTxRepository) {
 }
 
 describe("Unroll.Session repo-first virtual-tx resolution", () => {
-    it("returns the stored hex and skips the indexer on a repo hit", async () => {
+    it("returns the stored psbt and skips the indexer on a repo hit", async () => {
         const repo = new InMemoryVirtualTxRepository();
         await repo.upsertVirtualTxs([
             {
                 txid: "t1",
-                hex: "REPO_PSBT",
+                psbt: "REPO_PSBT",
                 expiresAt: null,
                 type: ChainedTxType.Ark,
             },
@@ -63,7 +63,7 @@ describe("Unroll.Session repo-first virtual-tx resolution", () => {
         const cached = await repo.getVirtualTx("t2");
         expect(cached).toEqual({
             txid: "t2",
-            hex: "INDEXER_PSBT",
+            psbt: "INDEXER_PSBT",
             expiresAt: null,
             type: ChainedTxType.Tree,
         });

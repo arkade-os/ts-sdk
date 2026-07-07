@@ -9,7 +9,7 @@ const branchPk = (b: VtxoBranch) => `${b.vtxoTxid}:${b.vtxoVout}:${b.position}`;
 function toTx(o: any): VirtualTx {
     return {
         txid: o.txid,
-        hex: o.hex ?? null,
+        psbt: o.psbt ?? null,
         expiresAt: o.expiresAt ?? null,
         type: (o.type ?? ChainedTxType.Unspecified) as ChainedTxType,
     };
@@ -36,7 +36,7 @@ export class RealmVirtualTxRepository implements VirtualTxRepository {
                     "ArkVirtualTx",
                     {
                         txid: t.txid,
-                        hex: t.hex ?? prev?.hex ?? null,
+                        psbt: t.psbt ?? prev?.psbt ?? null,
                         expiresAt: t.expiresAt ?? prev?.expiresAt ?? null,
                         type: t.type ?? prev?.type ?? ChainedTxType.Unspecified,
                     },

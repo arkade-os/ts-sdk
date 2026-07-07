@@ -26,7 +26,7 @@ const intent = (id: string): ArkIntent => ({
 
 const vtx = (txid: string): VirtualTx => ({
     txid,
-    hex: "00",
+    psbt: "00",
     expiresAt: null,
     type: ChainedTxType.Checkpoint,
 });

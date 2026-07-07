@@ -16,8 +16,8 @@ export enum ChainedTxType {
 export interface VirtualTx {
     /** Transaction id (hex). Primary key. */
     txid: string;
-    /** Hex-encoded PSBT body; null when only metadata has been cached. */
-    hex: string | null;
+    /** Base64-encoded PSBT body; null when only metadata has been cached. */
+    psbt: string | null;
     /** Operator pre-signature expiry, ms epoch; null if not applicable. */
     expiresAt: number | null;
     /** Tx type as reported by arkd's chain indexer. */

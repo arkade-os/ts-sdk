@@ -38,7 +38,7 @@ export class IndexedDBVirtualTxRepository implements VirtualTxRepository {
                 acc
                     ? {
                           txid: tx.txid,
-                          hex: tx.hex ?? acc.hex,
+                          psbt: tx.psbt ?? acc.psbt,
                           expiresAt: tx.expiresAt ?? acc.expiresAt,
                           type: tx.type ?? acc.type,
                       }
@@ -56,7 +56,7 @@ export class IndexedDBVirtualTxRepository implements VirtualTxRepository {
                 const prev = getReq.result as VirtualTx | undefined;
                 store.put({
                     txid: tx.txid,
-                    hex: tx.hex ?? prev?.hex ?? null,
+                    psbt: tx.psbt ?? prev?.psbt ?? null,
                     expiresAt: tx.expiresAt ?? prev?.expiresAt ?? null,
                     type: tx.type ?? prev?.type ?? ChainedTxType.Unspecified,
                 } satisfies VirtualTx);

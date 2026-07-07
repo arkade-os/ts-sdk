@@ -154,7 +154,7 @@ export namespace Unroll {
             if (repo) {
                 try {
                     const stored = await repo.getVirtualTx(next.txid);
-                    if (stored?.hex) return stored.hex;
+                    if (stored?.psbt) return stored.psbt;
                 } catch {
                     // fall through to the indexer
                 }
@@ -164,7 +164,7 @@ export namespace Unroll {
             if (psbt && repo) {
                 const cached: VirtualTx = {
                     txid: next.txid,
-                    hex: psbt,
+                    psbt,
                     expiresAt: null,
                     type: chainTxTypeToChainedExit(next.type),
                 };
