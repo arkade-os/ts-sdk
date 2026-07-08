@@ -8,14 +8,9 @@ export const buildVersion = "0.9.9";
 export const sdkVersion = `ts-sdk/${version}`;
 
 /**
- * Thrown by {@link baseFetch} — and therefore by the Ark-server {@link fetch}
- * wrapper, which delegates to it — when the underlying platform `fetch` rejects
- * at the transport layer: DNS failure, connection refused, TLS or CORS error,
- * etc. The raw platform rejection (`TypeError: Failed to fetch` in browsers, the
- * opaque `TypeError: fetch failed` in Node) says nothing about which request
- * failed; this wraps it with the request method and URL and preserves the
- * original as {@link Error.cause}. It does NOT retry — retrying is the caller's
- * responsibility.
+ * Wraps a transport-level `fetch` rejection (DNS failure, connection refused,
+ * TLS or CORS error) with the request method and URL, preserving the original
+ * as {@link Error.cause}.
  */
 export class FetchError extends Error {
     /** The request URL that failed, when derivable from the `fetch` input. */
@@ -37,10 +32,7 @@ export class FetchError extends Error {
  * origins reject unknown request headers such as `X-Build-Version` in the CORS
  * preflight.
  *
- * A transport-level rejection from the platform `fetch` is re-thrown as a
- * {@link FetchError} that names the request and keeps the original error as
- * `cause`, so callers can tell *which* request failed instead of receiving an
- * opaque `TypeError: Failed to fetch`.
+ * Transport-level rejections are re-thrown as a {@link FetchError}.
  */
 export function baseFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     if (typeof globalThis.fetch !== "function") {

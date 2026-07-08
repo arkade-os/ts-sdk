@@ -22,7 +22,7 @@ describe("FetchError", () => {
 });
 
 describe("baseFetch", () => {
-    it("wraps a transport-level rejection in FetchError with context and cause", async () => {
+    it("wraps a transport-level rejection in FetchError, defaulting method to GET and honoring init.method", async () => {
         const cause = new TypeError("Failed to fetch");
         vi.stubGlobal(
             "fetch",
@@ -31,29 +31,17 @@ describe("baseFetch", () => {
             }),
         );
 
-        const err = await baseFetch("https://esplora.test/address/abc/utxo").catch((e) => e);
-        expect(err).toBeInstanceOf(FetchError);
-        expect(err.name).toBe("FetchError");
-        expect(err.message).toContain("https://esplora.test/address/abc/utxo");
-        expect(err.message).toContain("GET");
-        expect(err.url).toBe("https://esplora.test/address/abc/utxo");
-        expect(err.method).toBe("GET");
-        expect(err.cause).toBe(cause);
-    });
+        const getErr = await baseFetch("https://esplora.test/address/abc/utxo").catch((e) => e);
+        expect(getErr).toBeInstanceOf(FetchError);
+        expect(getErr.name).toBe("FetchError");
+        expect(getErr.message).toContain("GET https://esplora.test/address/abc/utxo");
+        expect(getErr.url).toBe("https://esplora.test/address/abc/utxo");
+        expect(getErr.method).toBe("GET");
+        expect(getErr.cause).toBe(cause);
 
-    it("reflects the request method from init in the wrapped error", async () => {
-        vi.stubGlobal(
-            "fetch",
-            vi.fn(async () => {
-                throw new TypeError("Failed to fetch");
-            }),
-        );
-
-        const err = await baseFetch("https://x.test/tx", { method: "POST" }).catch((e) => e);
-        expect(err).toBeInstanceOf(FetchError);
-        expect(err.method).toBe("POST");
-        expect(err.message).toContain("POST");
-        expect(err.message).toContain("https://x.test/tx");
+        const postErr = await baseFetch("https://x.test/tx", { method: "POST" }).catch((e) => e);
+        expect(postErr.method).toBe("POST");
+        expect(postErr.message).toContain("POST https://x.test/tx");
     });
 
     it("derives the request URL from a URL instance", async () => {
