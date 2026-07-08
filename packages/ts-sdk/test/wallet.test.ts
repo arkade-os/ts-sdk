@@ -20,6 +20,7 @@ import { TEST_PUB_KEY, TEST_DELEGATE_PUB_KEY, TEST_SERVER_PUB_KEY } from "./cont
 import type { ExtendedCoin, ExtendedVirtualCoin } from "../src/wallet";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
 import { MAX_VTXOS_PER_SETTLEMENT } from "../src/wallet/vtxo-manager";
+import { RECONCILE_ABSENCE_THRESHOLD } from "../src/contracts/contractManager";
 import { ReadonlySingleKey } from "../src/identity/singleKey";
 import { IndexedDBWalletRepository, IndexedDBContractRepository } from "../src/repositories";
 import type { Coin, VirtualCoin } from "../src/wallet";
@@ -894,6 +895,14 @@ describe("Wallet", () => {
 
             // Chain reset: the indexer no longer reports the VTXO at all (not even spent).
             chainReset = true;
+
+            // The ghost is dropped only after it stays absent across the threshold.
+            // Reset the reconcile cooldown each pass so the rapid loop actually re-checks.
+            const manager = await wallet.getContractManager();
+            for (let i = 0; i < RECONCILE_ABSENCE_THRESHOLD; i++) {
+                (manager as any).lastReconcileAt = 0;
+                await wallet.getVtxos();
+            }
 
             expect(await wallet.getVtxos()).toEqual([]);
 
