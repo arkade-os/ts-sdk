@@ -4,7 +4,7 @@ import { Coin, SendBitcoinParams } from ".";
 import { Identity } from "../identity";
 import { DEFAULT_NETWORK_NAME, getNetwork, Network, NetworkName } from "../networks";
 import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
-import { AnchorBumper, findP2AOutput, P2A } from "../utils/anchor";
+import { AnchorBumper, buildAnchorChild } from "../utils/anchor";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Transaction } from "../utils/transaction";
 import { DUST_AMOUNT } from "./utils";
@@ -243,63 +243,50 @@ export class OnchainWallet implements AnchorBumper {
      * @see send
      */
     async bumpP2A(parent: Transaction): Promise<[string, string]> {
-        const parentVsize = parent.vsize;
-
-        let child = new Transaction({
-            version: 3,
-            allowLegacyWitnessUtxo: true,
-        });
-        child.addInput(findP2AOutput(parent)); // throws if not found
-
-        const childVsize = TxWeightEstimator.create()
-            .addKeySpendInput(true)
-            .addP2AInput()
-            .addOutputAddress(this.address, this.network)
-            .vsize().value;
-
-        const packageVSize = parentVsize + Number(childVsize);
-
         let feeRate = await this.provider.getFeeRate();
         if (!feeRate || feeRate < OnchainWallet.MIN_FEE_RATE) {
             feeRate = OnchainWallet.MIN_FEE_RATE;
         }
-        const fee = Math.ceil(feeRate * packageVSize);
-        if (!fee) {
+
+        // Probe the package fee with a single-input child, select coins for
+        // it, then build with the actual selection (fee grows per input).
+        const probeVsize = TxWeightEstimator.create()
+            .addKeySpendInput(true)
+            .addP2AInput()
+            .addOutputAddress(this.address, this.network)
+            .vsize().value;
+        const probeFee = Math.ceil(feeRate * (parent.vsize + Number(probeVsize)));
+        if (!probeFee) {
             throw new Error(
-                `invalid fee, got ${fee} with vsize ${packageVSize}, feeRate ${feeRate}`,
+                `invalid fee, got ${probeFee} with vsize ${parent.vsize + Number(probeVsize)}, feeRate ${feeRate}`,
             );
         }
 
-        // Select onchain outputs
         const coins = await this.getCoins();
-        const selected = selectCoins(coins, fee, true);
+        const selected = selectCoins(coins, probeFee, true);
 
-        for (const input of selected.inputs) {
-            child.addInput({
-                txid: input.txid,
-                index: input.vout,
-                witnessUtxo: {
-                    script: this.onchainP2TR.script,
-                    amount: BigInt(input.value),
-                },
-                tapInternalKey: this.onchainP2TR.tapInternalKey,
-            });
-        }
-
-        child.addOutputAddress(this.address, P2A.amount + selected.changeAmount, this.network);
+        const { child } = buildAnchorChild({
+            parent,
+            feeRate,
+            fundingCoins: selected.inputs,
+            changeAddress: this.address,
+            changeScript: this.onchainP2TR.script,
+            tapInternalKey: this.onchainP2TR.tapInternalKey,
+            network: this.network,
+        });
 
         // Sign inputs and Finalize
-        child = await this.identity.sign(child);
-        for (let i = 1; i < child.inputsLength; i++) {
-            child.finalizeIdx(i);
+        const signed = await this.identity.sign(child);
+        for (let i = 1; i < signed.inputsLength; i++) {
+            signed.finalizeIdx(i);
         }
 
         try {
-            await this.provider.broadcastTransaction(parent.hex, child.hex);
+            await this.provider.broadcastTransaction(parent.hex, signed.hex);
         } catch (error) {
             console.error(error);
         } finally {
-            return [parent.hex, child.hex];
+            return [parent.hex, signed.hex];
         }
     }
 }
