@@ -22,7 +22,9 @@ export const LEGACY_STORE_CONTRACT_COLLECTIONS = "contractsCollections";
 //        Realm (`realm/schemas.ts`) and SQLite (`sqlite/walletRepository.ts`).
 //   v4 — add intent + virtualtx persistence: `intents`, `virtualTxs`,
 //        `vtxoBranches` object stores (new, empty — no backfill).
-export const DB_VERSION = 4;
+//   v5 — make `intents.intentId` unique (was non-unique in v4), matching the
+//        "unique when present" contract enforced by the other backends.
+export const DB_VERSION = 5;
 
 export function initDatabase(
     db: IDBDatabase,
@@ -216,6 +218,17 @@ export function initDatabase(
             vtxosStore.createIndex("script", "script", { unique: false });
         }
         backfillVtxoScripts(transaction);
+    }
+
+    // v4 → v5: the intents store already exists with a NON-unique intentId
+    // index; recreate it as unique. Only oldVersion === 4 hits this — a store
+    // created fresh (or via a <4 upgrade) already gets the unique index above.
+    if (oldVersion === 4 && transaction) {
+        const intentsStore = transaction.objectStore(STORE_INTENTS);
+        if (intentsStore.indexNames.contains("intentId")) {
+            intentsStore.deleteIndex("intentId");
+        }
+        intentsStore.createIndex("intentId", "intentId", { unique: true });
     }
 }
 
