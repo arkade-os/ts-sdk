@@ -31,7 +31,6 @@ import {
     ConditionMultisigTapscript,
     type ArkTapscript,
     type TapscriptType,
-    type RelativeTimelock,
 } from "../script/tapscript";
 import { VtxoScript, type TapLeafScript } from "../script/base";
 import { ArkadeScript } from "./script";
@@ -95,10 +94,17 @@ export interface TapscriptSegment {
     signers: SignerRef[];
     /** Optional standard-opcode condition (e.g. a hashlock), encoded into a ConditionMultisig leaf. */
     asm?: AsmToken[];
-    /** Relative timelock (CSV). Mutually exclusive with `cltv`/`asm`. */
-    csv?: RelativeTimelock;
-    /** Absolute timelock (CLTV). Mutually exclusive with `csv`/`asm`. */
-    cltv?: bigint;
+    /**
+     * Relative timelock (CSV). The value is a literal or a `"$param"` reference
+     * resolved against the constructor args (same convention as {@link SignerRef}).
+     * Mutually exclusive with `cltv`/`asm`.
+     */
+    csv?: { type: "blocks" | "seconds"; value: bigint | string };
+    /**
+     * Absolute timelock (CLTV): a literal or a `"$param"` reference.
+     * Mutually exclusive with `csv`/`asm`.
+     */
+    cltv?: bigint | string;
     /** Items satisfying the condition (e.g. an HTLC preimage); set via the ConditionWitness PSBT field. */
     witness?: WitnessRef[];
 }
@@ -147,6 +153,26 @@ export function bindValue(bind: Record<string, ArkadeParamValue>, name: string):
     const v = bind[name];
     if (v === undefined) throw new Error(`unbound parameter '${name}'`);
     return v;
+}
+
+/**
+ * Resolve a timelock value to a bigint: bigints pass through; a `"$param"`
+ * string resolves against the program's constructor args and must be bound to
+ * a bigint/number. Any other string is an error.
+ */
+export function resolveTimelockValue(
+    value: bigint | string,
+    args: Record<string, ArkadeParamValue>,
+): bigint {
+    if (typeof value === "bigint") return value;
+    if (value.startsWith("$")) {
+        const v = bindValue(args, value.slice(1));
+        if (typeof v === "bigint" || typeof v === "number") return BigInt(v);
+        throw new Error(`timelock value '${value}' must resolve to a number`);
+    }
+    throw new Error(
+        `invalid timelock value '${value}' — expected a bigint or a '$param' reference`,
+    );
 }
 
 /**
@@ -270,9 +296,17 @@ function encodeTapscriptSegment(
     pubkeys: Uint8Array[],
     args: Record<string, ArkadeParamValue>,
 ): ArkTapscript<TapscriptType, any> {
-    if (seg.csv) return CSVMultisigTapscript.encode({ timelock: seg.csv, pubkeys });
+    if (seg.csv) {
+        return CSVMultisigTapscript.encode({
+            timelock: { type: seg.csv.type, value: resolveTimelockValue(seg.csv.value, args) },
+            pubkeys,
+        });
+    }
     if (seg.cltv !== undefined) {
-        return CLTVMultisigTapscript.encode({ absoluteTimelock: seg.cltv, pubkeys });
+        return CLTVMultisigTapscript.encode({
+            absoluteTimelock: resolveTimelockValue(seg.cltv, args),
+            pubkeys,
+        });
     }
     if (seg.asm) {
         return ConditionMultisigTapscript.encode({
@@ -371,6 +405,10 @@ export function parseArtifact(artifact: {
 }): Program {
     const hexToken = (t: unknown): any =>
         typeof t === "string" && t.startsWith("0x") ? hex.decode(t.slice(2)) : t;
+    // A "$param" timelock stays a reference (resolved at compile time); anything
+    // else is a literal.
+    const timelockValue = (v: unknown): bigint | string =>
+        typeof v === "string" && v.startsWith("$") ? v : BigInt(v as string | number);
 
     const functions: Record<string, ArkadeFunction> = {};
     for (const [name, fn] of Object.entries(artifact.functions)) {
@@ -379,8 +417,10 @@ export function parseArtifact(artifact: {
             signers: (tap.signers ?? []).map(hexToken),
             ...(tap.asm ? { asm: tap.asm.map(hexToken) } : {}),
             ...(tap.witness ? { witness: tap.witness.map(hexToken) } : {}),
-            ...(tap.csv ? { csv: { type: tap.csv.type, value: BigInt(tap.csv.value) } } : {}),
-            ...(tap.cltv !== undefined ? { cltv: BigInt(tap.cltv) } : {}),
+            ...(tap.csv
+                ? { csv: { type: tap.csv.type, value: timelockValue(tap.csv.value) } }
+                : {}),
+            ...(tap.cltv !== undefined ? { cltv: timelockValue(tap.cltv) } : {}),
         };
         const arkadeScript = fn.arkadeScript
             ? {
@@ -408,7 +448,8 @@ export function parseArtifact(artifact: {
  * {@link parseArtifact}: bytes become `0x`-hex strings; bigint tokens become
  * plain numbers (or, above `Number.MAX_SAFE_INTEGER`, `0x`-hex of their
  * minimal script-num bytes, which the script encoder pushes identically);
- * timelock values serialize as decimal strings.
+ * literal timelock values serialize as decimal strings while `"$param"`
+ * timelock references are emitted as-is.
  */
 export function stringifyArtifact(program: Program): string {
     const token = (t: AsmToken | WitnessRef | SignerRef): unknown => {
