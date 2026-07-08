@@ -1,4 +1,4 @@
-import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
+import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin, Outpoint } from "../../wallet";
 import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
 import {
     serializeVtxo,
@@ -342,6 +342,19 @@ export class SQLiteWalletRepository implements WalletRepository {
     async deleteVtxosForScript(script: string): Promise<void> {
         await this.ensureInit();
         await this.db.run(`DELETE FROM ${this.tables.vtxos} WHERE script = ?`, [script]);
+    }
+
+    async deleteVtxosByOutpoint(outpoints: Outpoint[]): Promise<void> {
+        if (outpoints.length === 0) return;
+        await this.ensureInit();
+        // Chunk to stay under SQLite's bound-parameter limit (2 params/outpoint).
+        const chunkSize = 200;
+        for (let i = 0; i < outpoints.length; i += chunkSize) {
+            const batch = outpoints.slice(i, i + chunkSize);
+            const clause = batch.map(() => "(txid = ? AND vout = ?)").join(" OR ");
+            const params = batch.flatMap((o) => [o.txid, o.vout]);
+            await this.db.run(`DELETE FROM ${this.tables.vtxos} WHERE ${clause}`, params);
+        }
     }
 
     // ── UTXO management ────────────────────────────────────────────────
