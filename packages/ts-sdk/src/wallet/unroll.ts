@@ -3,6 +3,11 @@ import { SigHash, TaprootControlBlock } from "@scure/btc-signer";
 import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
 import { sequenceToTimelock } from "../utils/timelock";
 import { ChainTx, ChainTxType, IndexerProvider } from "../providers/indexer";
+import {
+    ChainedTxType,
+    type VirtualTx,
+    type VirtualTxRepository,
+} from "../repositories/virtualTxRepository";
 import { AnchorBumper } from "../utils/anchor";
 import { OnchainProvider } from "../providers/onchain";
 import { Outpoint } from ".";
@@ -13,6 +18,26 @@ import { Transaction } from "../utils/transaction";
 import { DUST_AMOUNT } from "./utils";
 import { finalizeVirtualTx } from "./exit/finalizeVirtualTx";
 import { resolveUnilateralPath } from "./exit/path";
+
+/**
+ * Local ChainTxType → ChainedTxType map. Duplicated (not imported from
+ * contractManager) deliberately: keeps the unilateral-exit path free of a
+ * cross-module dependency on the contract layer.
+ */
+function chainTxTypeToChainedExit(t: ChainTxType): ChainedTxType {
+    switch (t) {
+        case ChainTxType.COMMITMENT:
+            return ChainedTxType.Commitment;
+        case ChainTxType.ARK:
+            return ChainedTxType.Ark;
+        case ChainTxType.TREE:
+            return ChainedTxType.Tree;
+        case ChainTxType.CHECKPOINT:
+            return ChainedTxType.Checkpoint;
+        default:
+            return ChainedTxType.Unspecified;
+    }
+}
 
 export namespace Unroll {
     export enum StepType {
@@ -92,6 +117,13 @@ export namespace Unroll {
             readonly bumper: AnchorBumper,
             readonly explorer: OnchainProvider,
             readonly indexer: IndexerProvider,
+            /**
+             * Optional virtual-tx repository. When provided, each step's raw
+             * tx is read from the repo first and fetched from the indexer on a
+             * miss, then cached best-effort for later exits. Omitted ⇒ exact
+             * previous behaviour (indexer only).
+             */
+            readonly virtualTxRepository?: VirtualTxRepository,
         ) {}
 
         /** Create an unroll session by loading the virtual output chain from the indexer. */
@@ -100,9 +132,50 @@ export namespace Unroll {
             bumper: AnchorBumper,
             explorer: OnchainProvider,
             indexer: IndexerProvider,
+            virtualTxRepository?: VirtualTxRepository,
         ): Promise<Session> {
             const { chain } = await indexer.getVtxoChain(toUnroll);
-            return new Session({ ...toUnroll, chain }, bumper, explorer, indexer);
+            return new Session(
+                { ...toUnroll, chain },
+                bumper,
+                explorer,
+                indexer,
+                virtualTxRepository,
+            );
+        }
+
+        /**
+         * Resolve a chain tx's raw PSBT (base64). Repo first when configured;
+         * indexer on a miss, then best-effort cached so a later exit doesn't
+         * re-fetch. Never throws from the cache
+         * write — exit correctness must not depend on persistence.
+         */
+        private async resolveVirtualTxBase64(next: ChainTx): Promise<string | undefined> {
+            const repo = this.virtualTxRepository;
+            if (repo) {
+                try {
+                    const stored = await repo.getVirtualTx(next.txid);
+                    if (stored?.psbt) return stored.psbt;
+                } catch {
+                    // fall through to the indexer
+                }
+            }
+            const fetched = await this.indexer.getVirtualTxs([next.txid]);
+            const psbt = fetched.txs[0];
+            if (psbt && repo) {
+                const cached: VirtualTx = {
+                    txid: next.txid,
+                    psbt,
+                    expiresAt: null,
+                    type: chainTxTypeToChainedExit(next.type),
+                };
+                try {
+                    await repo.upsertVirtualTxs([cached]);
+                } catch {
+                    // best-effort cache only
+                }
+            }
+            return psbt;
         }
 
         /**
@@ -154,14 +227,16 @@ export namespace Unroll {
                 };
             }
 
-            // Get the virtual transaction data
-            const virtualTxs = await this.indexer.getVirtualTxs([nextTxToBroadcast.txid]);
+            // Get the virtual transaction data (repo-first when configured).
+            const virtualTxBase64 = await this.resolveVirtualTxBase64(nextTxToBroadcast);
 
-            if (virtualTxs.txs.length === 0) {
+            if (!virtualTxBase64) {
                 throw new Error(`Tx ${nextTxToBroadcast.txid} not found`);
             }
 
-            const tx = finalizeVirtualTx(nextTxToBroadcast.type, virtualTxs.txs[0]);
+            // Repo-first virtual tx (master) finalized via the shared helper
+            // (extracted for reuse by the exit-package prepare flow).
+            const tx = finalizeVirtualTx(nextTxToBroadcast.type, virtualTxBase64);
 
             const pkg = await this.bumper.bumpP2A(tx);
             return {
