@@ -37,6 +37,7 @@
  * ```typescript
  * const htlcProgram = {
  *     version: 0,
+ *     name: "htlc", // metadata only — round-tripped, never compiled
  *     params: [
  *         { name: "hash", type: "hash" },
  *         { name: "receiver", type: "pubkey" },

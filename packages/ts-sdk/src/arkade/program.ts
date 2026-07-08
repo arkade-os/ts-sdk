@@ -144,6 +144,11 @@ export const SUPPORTED_PROGRAM_VERSION = 0;
 export interface Program {
     version: number;
     /**
+     * Optional program name — metadata only: round-tripped through the
+     * artifact JSON, never used in compilation or the taproot tree.
+     */
+    name?: string;
+    /**
      * Ordered constructor parameters. Bare name strings are documentation only
      * (the legacy hand-written form); typed descriptors `{ name, type }` make
      * the list authoritative — see {@link validateProgram}.
@@ -497,6 +502,7 @@ export class ArkadeProgramScript extends VtxoScript {
  */
 export function parseArtifact(artifact: {
     version?: number;
+    name?: string;
     params?: readonly InputRef[];
     functions: Record<string, any>;
 }): Program {
@@ -535,6 +541,7 @@ export function parseArtifact(artifact: {
     }
     return {
         version: artifact.version ?? SUPPORTED_PROGRAM_VERSION,
+        ...(artifact.name !== undefined ? { name: artifact.name } : {}),
         ...(artifact.params ? { params: artifact.params } : {}),
         functions,
     };
@@ -591,6 +598,7 @@ export function stringifyArtifact(program: Program): string {
 
     return JSON.stringify({
         version: program.version,
+        ...(program.name !== undefined ? { name: program.name } : {}),
         ...(program.params ? { params: program.params } : {}),
         functions,
     });

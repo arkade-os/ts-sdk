@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { hex } from "@scure/base";
+import { ScriptNum } from "@scure/btc-signer";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     arkade,
@@ -7,6 +8,8 @@ import {
     CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,
 } from "../src";
+
+const MinimalScriptNum = ScriptNum(undefined, true);
 
 function xOnly(): Uint8Array {
     return schnorr.getPublicKey(schnorr.utils.randomSecretKey());
@@ -302,5 +305,96 @@ describe("Type-directed persistence", () => {
         const typed = arkade.deserializeArkadeContractParams(stored);
         expect(typed.args.exit).toBe(144n);
         expect(typed.args.user).toEqual(user);
+    });
+});
+
+describe("Program name & full-feature artifact round-trip", () => {
+    it("name is metadata only — it never changes the compiled tree", () => {
+        const base: arkade.Program = {
+            version: 0,
+            functions: {
+                exit: { tapscript: { signers: ["$user"], csv: { type: "blocks", value: 144n } } },
+            },
+        };
+        const named: arkade.Program = { ...base, name: "wallet" };
+        const a = new arkade.ArkadeProgramScript(base, { user }, keys);
+        const b = new arkade.ArkadeProgramScript(named, { user }, keys);
+        expect(hex.encode(b.pkScript)).toBe(hex.encode(a.pkScript));
+    });
+
+    it("a program exercising every feature survives the artifact round-trip", () => {
+        const hash = new Uint8Array(20).fill(7);
+        const HUGE = 2n ** 60n; // above Number.MAX_SAFE_INTEGER
+        const program: arkade.Program = {
+            version: 0,
+            name: "vault",
+            params: [
+                { name: "user", type: "pubkey" },
+                { name: "server", type: "pubkey" },
+                { name: "hash", type: "hash" },
+                { name: "amount", type: "int" },
+                { name: "exit", type: "int" },
+            ],
+            functions: {
+                claim: {
+                    inputs: [{ name: "preimage", type: "bytes" }],
+                    tapscript: {
+                        signers: ["$server"],
+                        asm: ["HASH160", "$hash", "EQUALVERIFY"],
+                        witness: ["preimage"],
+                    },
+                    arkadeScript: {
+                        asm: ["INSPECTOUTPUTVALUE", "$amount", HUGE, "EQUAL"],
+                        witness: [0, "$hash"],
+                    },
+                },
+                reclaim: {
+                    // condition + csv, with a "$param" csv value
+                    tapscript: {
+                        signers: ["$user"],
+                        asm: ["HASH160", "$hash", "EQUAL"],
+                        csv: { type: "blocks", value: "$exit" },
+                    },
+                },
+                refund: {
+                    tapscript: { signers: ["$user", "$server"], cltv: 900_000n },
+                },
+            },
+        };
+
+        const rt = arkade.parseArtifact(JSON.parse(arkade.stringifyArtifact(program)));
+
+        // Bigint tokens above Number.MAX_SAFE_INTEGER canonicalize to their
+        // minimal script-num byte push (the script encoder pushes both forms
+        // identically); everything else survives structurally unchanged.
+        const expected: arkade.Program = {
+            ...program,
+            functions: {
+                ...program.functions,
+                claim: {
+                    ...program.functions.claim,
+                    arkadeScript: {
+                        ...program.functions.claim.arkadeScript!,
+                        asm: [
+                            "INSPECTOUTPUTVALUE",
+                            "$amount",
+                            MinimalScriptNum.encode(HUGE),
+                            "EQUAL",
+                        ],
+                    },
+                },
+            },
+        };
+        expect(rt).toEqual(expected);
+        // ...and the parsed form is a fixpoint of the round trip.
+        expect(arkade.parseArtifact(JSON.parse(arkade.stringifyArtifact(rt)))).toEqual(rt);
+
+        // The canonicalization is semantics-preserving: both forms compile to
+        // the same taproot tree.
+        const args = { user, server, hash, amount: 10_000n, exit: 144n };
+        const fullKeys = { serverKey: server, userKey: user, emulatorKey: xOnly() };
+        const a = new arkade.ArkadeProgramScript(program, args, fullKeys);
+        const b = new arkade.ArkadeProgramScript(rt, args, fullKeys);
+        expect(hex.encode(b.pkScript)).toBe(hex.encode(a.pkScript));
     });
 });
