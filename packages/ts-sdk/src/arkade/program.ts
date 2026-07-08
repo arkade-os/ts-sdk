@@ -7,7 +7,9 @@
  * service. This module owns everything that is *pure data → script*:
  *
  * - the Program/segment/token types,
- * - `$param` resolution ({@link resolveAsm}) and witness resolution,
+ * - `$param` resolution ({@link resolveAsm}), witness and timelock resolution,
+ * - program validation ({@link validateProgram}) — typed constructor params
+ *   are authoritative when present,
  * - {@link ArkadeProgramScript} — a {@link VtxoScript} compiled from a
  *   program, its constructor args and the signer keys,
  * - artifact JSON (de)serialization ({@link parseArtifact} /
@@ -70,16 +72,17 @@ export interface ArkadeValueType {
     int: bigint | number;
 }
 
-/** A typed function input: a name plus its {@link ArkadeArgType}. */
+/** A typed function input or constructor param: a name plus its {@link ArkadeArgType}. */
 export interface InputDef {
     name: string;
     type: ArkadeArgType;
 }
 
 /**
- * A function input declaration: either a typed descriptor `{ name, type }` (the
- * argument is statically typed) or a bare name string (the argument falls back
- * to the loose {@link ArkadeArgValue}).
+ * A function input or constructor param declaration: either a typed descriptor
+ * `{ name, type }` (the argument is statically typed and its bound value is
+ * validated) or a bare name string (the argument falls back to the loose
+ * {@link ArkadeArgValue}).
  */
 export type InputRef = string | InputDef;
 
@@ -140,14 +143,18 @@ export const SUPPORTED_PROGRAM_VERSION = 0;
 /** An Arkade contract program (hand-written or compiler-emitted). */
 export interface Program {
     version: number;
-    /** Ordered constructor parameter names (documentation/validation only). */
-    params?: string[];
+    /**
+     * Ordered constructor parameters. Bare name strings are documentation only
+     * (the legacy hand-written form); typed descriptors `{ name, type }` make
+     * the list authoritative — see {@link validateProgram}.
+     */
+    params?: readonly InputRef[];
     functions: Record<string, ArkadeFunction>;
 }
 
 // --- helpers ---------------------------------------------------------------
 
-/** The declared name of a function input, whether typed descriptor or bare string. */
+/** The declared name of a function input or constructor param, whether typed descriptor or bare string. */
 export function inputName(ref: InputRef): string {
     return typeof ref === "string" ? ref : ref.name;
 }
@@ -256,6 +263,81 @@ export function validateTapscript(seg: TapscriptSegment): void {
     }
 }
 
+/** Collect every `"$name"` reference in a program's signers, asm, witness and timelock values. */
+function collectParamRefs(program: Program): Set<string> {
+    const refs = new Set<string>();
+    const collect = (items: readonly (AsmToken | WitnessRef | SignerRef)[] | undefined) => {
+        for (const t of items ?? []) {
+            if (typeof t === "string" && t.startsWith("$")) refs.add(t.slice(1));
+        }
+    };
+    for (const fn of Object.values(program.functions)) {
+        const tap = fn.tapscript;
+        collect(tap.signers);
+        collect(tap.asm);
+        collect(tap.witness);
+        collect(tap.csv ? [tap.csv.value] : undefined);
+        collect(tap.cltv !== undefined ? [tap.cltv] : undefined);
+        collect(fn.arkadeScript?.asm);
+        collect(fn.arkadeScript?.witness);
+    }
+    return refs;
+}
+
+/** Byte lengths enforced for typed values (x-only pubkey, BIP340 signature). */
+const TYPED_BYTE_LENGTHS: Partial<Record<ArkadeArgType, number>> = { pubkey: 32, sig: 64 };
+
+/** Validate a bound value against its typed declaration; errors name the parameter. */
+function validateParamValue(def: InputDef, value: ArkadeParamValue): void {
+    if (def.type === "int") {
+        if (typeof value !== "bigint" && typeof value !== "number") {
+            throw new Error(`program parameter '${def.name}' expects an int, got bytes`);
+        }
+        return;
+    }
+    if (!(value instanceof Uint8Array)) {
+        throw new Error(
+            `program parameter '${def.name}' expects ${def.type} bytes, got ${typeof value}`,
+        );
+    }
+    const length = TYPED_BYTE_LENGTHS[def.type];
+    if (length !== undefined && value.length !== length) {
+        throw new Error(
+            `program parameter '${def.name}' expects a ${length}-byte ${def.type}, got ${value.length} bytes`,
+        );
+    }
+}
+
+/**
+ * Validate a program's constructor-parameter declarations against the bound
+ * args. A `params` list of bare name strings is documentation only (the
+ * legacy hand-written form — no checks). When at least one entry is a typed
+ * descriptor (the compiler-emitted form), the list is authoritative: every
+ * declared param must be bound in `args`, every `"$name"` reference in the
+ * program must be declared, and typed entries validate their bound value
+ * (bytes-like types require a Uint8Array — 32 bytes for `pubkey`, 64 for
+ * `sig`; `int` requires a bigint/number).
+ */
+export function validateProgram(program: Program, args: Record<string, ArkadeParamValue>): void {
+    const params = program.params;
+    if (!params || !params.some((p) => typeof p !== "string")) return;
+
+    const declared = new Set(params.map(inputName));
+    for (const name of declared) {
+        if (args[name] === undefined) {
+            throw new Error(`program parameter '${name}' is declared but not bound in args`);
+        }
+    }
+    for (const ref of collectParamRefs(program)) {
+        if (!declared.has(ref)) {
+            throw new Error(`'$${ref}' is referenced but not declared in program params`);
+        }
+    }
+    for (const p of params) {
+        if (typeof p !== "string") validateParamValue(p, args[p.name]);
+    }
+}
+
 // --- Compilation -----------------------------------------------------------
 
 /** The signer keys a program is compiled against. */
@@ -346,6 +428,7 @@ function compileFunctions(
     if (names.length === 0) {
         throw new Error("ArkadeContract: program has no functions");
     }
+    validateProgram(program, args);
     const defs = names.map((n) => functions[n]);
 
     // Covenant functions need the emulator's co-signer key for the tweak.
@@ -414,7 +497,7 @@ export class ArkadeProgramScript extends VtxoScript {
  */
 export function parseArtifact(artifact: {
     version?: number;
-    params?: string[];
+    params?: readonly InputRef[];
     functions: Record<string, any>;
 }): Program {
     const hexToken = (t: unknown): any =>
@@ -544,6 +627,25 @@ function parseArgValue(v: unknown): ArkadeParamValue {
     throw new Error(`invalid arkade arg value: ${JSON.stringify(v)}`);
 }
 
+/**
+ * Decode a persisted arg by its declared type — no `0x`/BigInt guessing. A
+ * bytes-like param whose serialized value lacks the `0x` prefix is an error
+ * (the untyped heuristic would silently decode such a value as a bigint).
+ */
+function parseTypedArgValue(name: string, type: ArkadeArgType, v: unknown): ArkadeParamValue {
+    if (type === "int") {
+        if (typeof v === "number") return v;
+        if (typeof v === "string") return BigInt(v);
+        throw new Error(
+            `arkade contract params: '${name}' expects an int, got ${JSON.stringify(v)}`,
+        );
+    }
+    if (typeof v === "string" && v.startsWith("0x")) return hex.decode(v.slice(2));
+    throw new Error(
+        `arkade contract params: '${name}' expects ${type} as 0x-prefixed hex, got ${JSON.stringify(v)}`,
+    );
+}
+
 /** Serialize {@link ArkadeContractParams} to the string map `Contract.params` requires. */
 export function serializeArkadeContractParams(typed: ArkadeContractParams): Record<string, string> {
     const args: Record<string, string | number> = {};
@@ -569,14 +671,22 @@ export function deserializeArkadeContractParams(
     if (!params.serverKey) {
         throw new Error("arkade contract params: missing 'serverKey'");
     }
+    const program = parseArtifact(JSON.parse(params.program));
+    // Typed param declarations direct how their persisted args decode;
+    // untyped params keep the legacy 0x/BigInt heuristic.
+    const paramTypes = new Map<string, ArkadeArgType>();
+    for (const p of program.params ?? []) {
+        if (typeof p !== "string") paramTypes.set(p.name, p.type);
+    }
     const args: Record<string, ArkadeParamValue> = {};
     if (params.args) {
         for (const [k, v] of Object.entries(JSON.parse(params.args))) {
-            args[k] = parseArgValue(v);
+            const type = paramTypes.get(k);
+            args[k] = type ? parseTypedArgValue(k, type, v) : parseArgValue(v);
         }
     }
     return {
-        program: parseArtifact(JSON.parse(params.program)),
+        program,
         args,
         serverKey: hex.decode(params.serverKey),
         ...(params.userKey ? { userKey: hex.decode(params.userKey) } : {}),
