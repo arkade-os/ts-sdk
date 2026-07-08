@@ -327,7 +327,7 @@ import type {
 } from "./contracts/types";
 import type { ScanResult, ScanContractsOptions, HandlerError } from "./contracts/contractManager";
 import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
-import { buildVersion, sdkVersion } from "./utils/fetch";
+import { buildVersion, sdkVersion, FetchError } from "./utils/fetch";
 import { closeDatabase, openDatabase } from "./repositories/indexedDB/manager";
 import {
     WalletMessageHandler,
@@ -379,6 +379,7 @@ export {
     WsElectrumChainSource,
     RestArkProvider,
     DigestMismatchError,
+    FetchError,
     RestIndexerProvider,
 
     // Script-related
