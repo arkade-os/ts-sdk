@@ -460,9 +460,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Refresh the cached deprecated-signer set from a fresh server-info
-     * snapshot. Called by the create() factories at construction and by the
-     * server-info-change handler mid-session. Lenient: a malformed deprecated
-     * entry is skipped, never fatal to wallet creation.
+     * snapshot. Called by the create() factories at construction, by the
+     * server-info-change handler mid-session, and by the deprecated-signer
+     * migration pass (`VtxoManager.migrateDeprecatedSignerVtxos`). This set feeds
+     * {@link pendingRecoveryOutpoints}, which drops EXPIRED (past-cutoff)
+     * deprecated-signer VTXOs from the wallet's own coin selection. Lenient: a
+     * malformed deprecated entry is skipped, never fatal to wallet creation.
      */
     refreshDeprecatedSigners(info: {
         deprecatedSigners?: readonly { pubkey?: string; cutoffDate?: bigint }[];
