@@ -1,18 +1,18 @@
 import { hex } from "@scure/base";
 import { SigHash, TaprootControlBlock } from "@scure/btc-signer";
 import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
-import { timelockToSequence } from "../utils/timelock";
+import { sequenceToTimelock } from "../utils/timelock";
 import { ChainTx, ChainTxType, IndexerProvider } from "../providers/indexer";
 import { AnchorBumper } from "../utils/anchor";
 import { OnchainProvider } from "../providers/onchain";
-import { ExtendedVirtualCoin, Outpoint } from ".";
-import { ConditionCSVMultisigTapscript, CSVMultisigTapscript } from "../script/tapscript";
+import { Outpoint } from ".";
 import { VtxoScript } from "../script/base";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Wallet } from "./wallet";
 import { Transaction } from "../utils/transaction";
 import { DUST_AMOUNT } from "./utils";
 import { finalizeVirtualTx } from "./exit/finalizeVirtualTx";
+import { resolveUnilateralPath } from "./exit/path";
 
 export namespace Unroll {
     export enum StepType {
@@ -248,22 +248,27 @@ export async function prepareUnrollTransaction(
             throw new Error(`tx ${vtxo.txid} is not confirmed`);
         }
 
-        const exit = availableExitPath(
-            { height: txStatus.blockHeight, time: txStatus.blockTime },
-            chainTip,
+        const resolved = await resolveUnilateralPath({
             vtxo,
-        );
-        if (!exit) {
+            scriptHex: hex.encode(VtxoScript.decode(vtxo.tapTree).pkScript),
+            contractRepository: wallet.contractRepository,
+            walletPubKeyHex: hex.encode((await wallet.identity.xOnlyPublicKey())!),
+            currentTime: Date.now(),
+        });
+        const spendingLeaf = resolved.selection.leaf;
+        const sequence = resolved.selection.sequence!;
+
+        // preserve the historical precondition: the sweep must be valid NOW
+        const timelock = sequenceToTimelock(sequence);
+        const elapsed =
+            timelock.type === "blocks"
+                ? chainTip.height >= txStatus.blockHeight + Number(timelock.value)
+                : chainTip.time >= txStatus.blockTime + Number(timelock.value);
+        if (!elapsed) {
             throw new Error(`no available exit path found for vtxo ${vtxo.txid}:${vtxo.vout}`);
         }
 
-        const spendingLeaf = VtxoScript.decode(vtxo.tapTree).findLeaf(hex.encode(exit.script));
-        if (!spendingLeaf) {
-            throw new Error(`spending leaf not found for vtxo ${vtxo.txid}:${vtxo.vout}`);
-        }
-
         totalAmount += BigInt(vtxo.value);
-        const sequence = timelockToSequence(exit.params.timelock);
         inputs.push({
             txid: vtxo.txid,
             index: vtxo.vout,
@@ -342,30 +347,4 @@ function doWait(onchainProvider: OnchainProvider, txid: string): () => Promise<v
             }, 5_000);
         });
     };
-}
-
-type BlockTime = {
-    height: number;
-    time: number;
-};
-
-function availableExitPath(
-    confirmedAt: BlockTime,
-    current: BlockTime,
-    vtxo: ExtendedVirtualCoin,
-): CSVMultisigTapscript.Type | ConditionCSVMultisigTapscript.Type | undefined {
-    const exits = VtxoScript.decode(vtxo.tapTree).exitPaths();
-    for (const exit of exits) {
-        if (exit.params.timelock.type === "blocks") {
-            if (current.height >= confirmedAt.height + Number(exit.params.timelock.value)) {
-                return exit;
-            }
-        } else {
-            if (current.time >= confirmedAt.time + Number(exit.params.timelock.value)) {
-                return exit;
-            }
-        }
-    }
-
-    return undefined;
 }
