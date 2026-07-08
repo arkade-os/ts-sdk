@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { excludeLockedOutpoints, spendableVtxosExcludingLocked } from "../src/wallet/wallet";
+import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
+import type { ArkIntent } from "../src/repositories/intentRepository";
 
 describe("excludeLockedOutpoints", () => {
     it("drops vtxos locked by non-terminal intents", () => {
@@ -49,6 +51,30 @@ describe("spendableVtxosExcludingLocked (getBalance offline-first, best-effort)"
             getLockedVtxoOutpoints: vi.fn().mockRejectedValue(new Error("db corrupt")),
         };
         expect(await spendableVtxosExcludingLocked(vtxos, repo)).toBe(vtxos);
+    });
+
+    it("hides a batch_in_progress intent's VTXO end-to-end (real repo lock logic)", async () => {
+        // Pins the deliberate divergence from NArk EF storage: batch_in_progress
+        // is non-terminal, so its inputs stay out of spendable balance.
+        const repo = new InMemoryIntentRepository();
+        const base: Omit<ArkIntent, "state" | "intentVtxos"> = {
+            intentTxId: "i",
+            createdAt: 1,
+            updatedAt: 1,
+            registerProof: "",
+            registerProofMessage: "",
+            deleteProof: "",
+            deleteProofMessage: "",
+            partialForfeits: [],
+        };
+        await repo.saveIntent({
+            ...base,
+            state: "batch_in_progress",
+            intentVtxos: [{ txid: "a", vout: 0 }],
+        });
+        expect((await spendableVtxosExcludingLocked(vtxos, repo)).map((v) => v.txid)).toEqual([
+            "b",
+        ]);
     });
 
     it("only reads the lock set — never mutates intent state", async () => {

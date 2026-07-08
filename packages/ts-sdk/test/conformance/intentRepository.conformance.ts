@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { IntentRepository, ArkIntent } from "../../src/repositories/intentRepository";
+import {
+    IntentRepository,
+    ArkIntent,
+    ArkIntentState,
+} from "../../src/repositories/intentRepository";
 
 const intent = (intentTxId: string, over: Partial<ArkIntent> = {}): ArkIntent => ({
     intentTxId,
@@ -103,22 +107,29 @@ export function intentRepositoryConformance(
             ]);
         });
 
-        it("getLockedVtxoOutpoints excludes terminal intents", async () => {
+        it("locks exactly the non-terminal intents, including batch_in_progress", async () => {
             const r = await make();
-            await r.saveIntent(
-                intent("live", {
-                    state: "waiting_for_batch",
-                    intentVtxos: [{ txid: "L", vout: 0 }],
-                }),
-            );
-            await r.saveIntent(
-                intent("done", {
-                    state: "batch_succeeded",
-                    intentVtxos: [{ txid: "D", vout: 0 }],
-                }),
-            );
-            const locked = await r.getLockedVtxoOutpoints();
-            expect(locked).toEqual([{ txid: "L", vout: 0 }]);
+            // batch_in_progress locks in TS but NOT in NArk EF storage — the TS
+            // balance is offline-first and this set is its only coin lock, so an
+            // in-progress batch's inputs must stay hidden. See
+            // getLockedVtxoOutpoints docs.
+            const cases: [ArkIntentState, boolean][] = [
+                ["waiting_to_submit", true],
+                ["waiting_for_batch", true],
+                ["batch_in_progress", true],
+                ["batch_failed", false],
+                ["batch_succeeded", false],
+                ["cancelled", false],
+            ];
+            for (const [state] of cases) {
+                await r.saveIntent(
+                    intent(state, { state, intentVtxos: [{ txid: state, vout: 0 }] }),
+                );
+            }
+            const locked = new Set((await r.getLockedVtxoOutpoints()).map((o) => o.txid));
+            for (const [state, shouldLock] of cases) {
+                expect(locked.has(state)).toBe(shouldLock);
+            }
         });
 
         it("clear empties the store", async () => {

@@ -79,7 +79,18 @@ export interface IntentRepository extends AsyncDisposable {
     /** Upsert by `intentTxId`; implementation sets `updatedAt = Date.now()`. */
     saveIntent(intent: ArkIntent): Promise<void>;
     getIntents(filter?: IntentFilter): Promise<ArkIntent[]>;
-    /** Outpoints held by NON-terminal intents (for spendable-balance exclusion). */
+    /**
+     * Outpoints held by NON-terminal intents — `waiting_to_submit`,
+     * `waiting_for_batch`, and `batch_in_progress` — to exclude from spendable
+     * balance. Terminal states never lock.
+     *
+     * Deliberate divergence from NArk EF storage, whose `GetLockedVtxoOutpoints`
+     * locks only `WaitingToSubmit`/`WaitingForBatch`: the TS wallet balance is
+     * offline-first and reads this set as its single source of coin locking, so
+     * it must also hold inputs already committed to an in-progress batch. NArk
+     * excludes `BatchInProgress` here but protects those inputs through its
+     * active-intent services instead.
+     */
     getLockedVtxoOutpoints(): Promise<Outpoint[]>;
 }
 
