@@ -1,5 +1,6 @@
 import { base64, hex } from "@scure/base";
-import type { ExtendedVirtualCoin, Outpoint } from "..";
+import type { Outpoint, VirtualCoin } from "..";
+import { contractHandlers } from "../../contracts/handlers";
 import { NetworkName } from "../../networks";
 import { VtxoScript } from "../../script/base";
 import { sequenceToTimelock } from "../../utils/timelock";
@@ -55,11 +56,41 @@ export async function resolveFeeRate(opts: ExitOptions): Promise<number> {
     return Math.ceil(feeRate);
 }
 
-export async function selectExitVtxos(opts: ExitOptions): Promise<ExtendedVirtualCoin[]> {
-    const all = await opts.wallet.getVtxos();
-    if (!opts.vtxos) return all;
-    const wanted = new Set(opts.vtxos.map((o) => `${o.txid}:${o.vout}`));
-    return all.filter((v) => wanted.has(`${v.txid}:${v.vout}`));
+/** The VTXO shape the exit flow needs — a coin plus its taproot tree. */
+export type ExitVtxo = Pick<VirtualCoin, "txid" | "vout" | "value"> & { tapTree: Uint8Array };
+
+export async function selectExitVtxos(opts: ExitOptions): Promise<ExitVtxo[]> {
+    if (!opts.vtxos) return opts.wallet.getVtxos();
+
+    // Explicit outpoints are resolved from the indexer plus the registered
+    // contract row (tap tree derived via the contract handler). This
+    // deliberately bypasses the wallet's own VTXO listing, so contract
+    // VTXOs the wallet does not track are exitable too.
+    const res = await opts.wallet.indexerProvider.getVtxos({ outpoints: opts.vtxos });
+    const tapTrees = new Map<string, Uint8Array>();
+    const out: ExitVtxo[] = [];
+    for (const vtxo of res.vtxos) {
+        if (vtxo.isSpent) continue;
+        let tapTree = tapTrees.get(vtxo.script);
+        if (!tapTree) {
+            const [contract] = await opts.wallet.contractRepository.getContracts({
+                script: vtxo.script,
+            });
+            if (!contract) {
+                throw new Error(
+                    `no contract registered for vtxo script ${vtxo.script} — register the contract before exiting`,
+                );
+            }
+            const handler = contractHandlers.get(contract.type);
+            if (!handler) {
+                throw new Error(`no contract handler registered for type '${contract.type}'`);
+            }
+            tapTree = handler.createScript(contract.params).encode();
+            tapTrees.set(vtxo.script, tapTree);
+        }
+        out.push({ txid: vtxo.txid, vout: vtxo.vout, value: vtxo.value, tapTree });
+    }
+    return out;
 }
 
 export type ExitStepPlan = {
@@ -70,14 +101,14 @@ export type ExitStepPlan = {
 };
 
 export type ExitSweepPlan = {
-    vtxo: ExtendedVirtualCoin;
+    vtxo: ExitVtxo;
     resolved: ResolvedExitPath;
     sweepFee: number;
     delay: ExitDelay;
 };
 
 export type ExitLayout = {
-    vtxos: ExtendedVirtualCoin[];
+    vtxos: ExitVtxo[];
     dag: DagNode[];
     steps: ExitStepPlan[];
     sweeps: ExitSweepPlan[];

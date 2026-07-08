@@ -214,4 +214,86 @@ describe("estimate", () => {
         // no sweep -> package still counts unroll steps but recovers nothing
         expect(quote.totals.recoveredSats).toBe(0);
     });
+
+    it("resolves explicit outpoints via indexer + contract row, not wallet.getVtxos", async () => {
+        const { exitOpts, vtxo } = await estimateFixture();
+        const opts = exitOpts as unknown as {
+            wallet: {
+                getVtxos: () => Promise<never>;
+                indexerProvider: { getVtxos?: unknown };
+                contractRepository: InMemoryContractRepository;
+            };
+            vtxos?: { txid: string; vout: number }[];
+        };
+
+        // wallet listing must NOT be touched on the explicit path
+        opts.wallet.getVtxos = async () => {
+            throw new Error("wallet.getVtxos must not be called");
+        };
+
+        // indexer serves the outpoint with its locking script — which must be
+        // the script the contract params derive (as it is for real rows)
+        const owner = (await identity.xOnlyPublicKey())!;
+        const server = schnorr.getPublicKey(new Uint8Array(32).fill(0xbb));
+        const { DefaultVtxo } = await import("../src/script/default");
+        const defaultScript = new DefaultVtxo.Script({
+            pubKey: owner,
+            serverPubKey: server,
+            csvTimelock: timelock,
+        });
+        const scriptHex = hex.encode(defaultScript.pkScript);
+        opts.wallet.indexerProvider.getVtxos = async (o: {
+            outpoints: { txid: string; vout: number }[];
+        }) => ({
+            vtxos: o.outpoints.map((op) => ({
+                txid: op.txid,
+                vout: op.vout,
+                value: 50_000,
+                script: scriptHex,
+                isSpent: false,
+            })),
+        });
+
+        // the registered contract row provides the tap tree via its handler
+        const { DefaultContractHandler } = await import("../src/contracts/handlers");
+        await opts.wallet.contractRepository.saveContract({
+            type: "default",
+            params: DefaultContractHandler.serializeParams({
+                pubKey: owner,
+                serverPubKey: server,
+                csvTimelock: timelock,
+            }),
+            script: scriptHex,
+            address: "unused",
+            state: "active",
+            createdAt: 1,
+        });
+
+        opts.vtxos = [{ txid: vtxo.txid, vout: 0 }];
+        const quote = await estimate(exitOpts);
+        const active = quote.vtxos.filter((v) => !v.skipped);
+        expect(active).toHaveLength(1);
+        expect(active[0].path).toBe("default:unilateral");
+    });
+
+    it("rejects explicit outpoints whose script has no registered contract", async () => {
+        const { exitOpts, vtxo } = await estimateFixture();
+        const opts = exitOpts as unknown as {
+            wallet: { indexerProvider: Record<string, unknown> };
+            vtxos?: { txid: string; vout: number }[];
+        };
+        opts.wallet.indexerProvider.getVtxos = async () => ({
+            vtxos: [
+                {
+                    txid: vtxo.txid,
+                    vout: 0,
+                    value: 50_000,
+                    script: "beef".repeat(8),
+                    isSpent: false,
+                },
+            ],
+        });
+        opts.vtxos = [{ txid: vtxo.txid, vout: 0 }];
+        await expect(estimate(exitOpts)).rejects.toThrow(/no contract registered/);
+    });
 });
