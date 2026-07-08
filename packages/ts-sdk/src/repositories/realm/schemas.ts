@@ -191,8 +191,9 @@ export const ArkRealmSchemas = [
  *     the owning Ark address during migration.
  *   - v3: add ArkIntent / ArkVirtualTx / ArkVtxoBranch schemas (new; no
  *     backfill — runArkRealmMigrations is unchanged).
- *   - v4: rename ArkVirtualTx.hex to psbt (holds a base64 PSBT); property-only
- *     change, no data to migrate.
+ *   - v4: rename ArkVirtualTx.hex to psbt (holds a base64 PSBT). Realm models a
+ *     rename as drop-old + add-new, so runArkRealmMigrations copies any legacy
+ *     `hex` payload into `psbt` to preserve it.
  */
 export const ARK_REALM_SCHEMA_VERSION = 4;
 
@@ -206,12 +207,30 @@ export const ARK_REALM_SCHEMA_VERSION = 4;
  * Arkade v1→v2 script backfill when the row has never been populated.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function runArkRealmMigrations(_oldRealm: any, newRealm: any): void {
+export function runArkRealmMigrations(oldRealm: any, newRealm: any): void {
     const newVtxos = newRealm.objects("ArkVtxo");
     for (let i = 0; i < newVtxos.length; i++) {
         const newVtxo = newVtxos[i];
         if (!newVtxo.script) {
             newVtxo.script = scriptFromArkAddress(newVtxo.address);
+        }
+    }
+
+    // v3 → v4: ArkVirtualTx.hex was renamed to psbt (both hold the same
+    // serialized tx payload). A rename is drop-old + add-new, so the value
+    // would be lost unless we copy it across. Guard on the old schema actually
+    // defining ArkVirtualTx — a v1/v2 realm never had it, and reading objects
+    // of an unknown type throws.
+    const oldHasVirtualTx =
+        Array.isArray(oldRealm?.schema) &&
+        oldRealm.schema.some((s: { name: string }) => s.name === "ArkVirtualTx");
+    if (oldHasVirtualTx) {
+        const oldTxs = oldRealm.objects("ArkVirtualTx");
+        const newTxs = newRealm.objects("ArkVirtualTx");
+        for (let i = 0; i < newTxs.length; i++) {
+            if (newTxs[i].psbt == null && oldTxs[i].hex != null) {
+                newTxs[i].psbt = oldTxs[i].hex;
+            }
         }
     }
 }

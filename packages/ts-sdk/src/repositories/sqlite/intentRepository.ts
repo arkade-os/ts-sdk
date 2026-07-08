@@ -11,7 +11,7 @@ import {
 import { SQLExecutor } from "./types";
 import { runInTransaction } from "./transaction";
 
-const SAFE_PREFIX = /^[a-zA-Z0-9_]+$/;
+const SAFE_PREFIX = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 function sanitizePrefix(p: string): string {
     if (!SAFE_PREFIX.test(p)) throw new Error(`Invalid table prefix "${p}"`);
     return p;
@@ -90,7 +90,11 @@ export class SQLiteIntentRepository implements IntentRepository {
 
     async clear(): Promise<void> {
         await this.ensureInit();
-        await this.db.run(`DELETE FROM ${this.t}`);
+        // Route through the same serialized write chain as saveIntent so a
+        // clear can't interleave with an in-flight transaction on this executor.
+        await this.withTx(async () => {
+            await this.db.run(`DELETE FROM ${this.t}`);
+        });
     }
 
     async saveIntent(intent: ArkIntent): Promise<void> {

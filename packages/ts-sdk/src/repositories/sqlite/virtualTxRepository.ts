@@ -9,7 +9,7 @@ import {
 import { SQLExecutor } from "./types";
 import { runInTransaction } from "./transaction";
 
-const SAFE_PREFIX = /^[a-zA-Z0-9_]+$/;
+const SAFE_PREFIX = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 function sanitizePrefix(p: string): string {
     if (!SAFE_PREFIX.test(p)) throw new Error(`Invalid table prefix "${p}"`);
     return p;

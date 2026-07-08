@@ -228,8 +228,41 @@ export function initDatabase(
         if (intentsStore.indexNames.contains("intentId")) {
             intentsStore.deleteIndex("intentId");
         }
-        intentsStore.createIndex("intentId", "intentId", { unique: true });
+        // The v4 index was non-unique, so duplicate intentId values may exist.
+        // Building the unique index directly would abort the whole upgrade on
+        // the first collision, so drop duplicate rows first (keeping the first
+        // seen per intentId), then create the index once the store is clean.
+        // Absent/null intentIds are never indexed and can't collide.
+        dedupeIntentIds(intentsStore, () => {
+            intentsStore.createIndex("intentId", "intentId", { unique: true });
+        });
     }
+}
+
+// Walk the intents store, deleting rows whose `intentId` repeats an
+// already-seen value, then invoke `onComplete` once the walk finishes. The
+// version-change transaction stays open while the cursor requests are pending,
+// and every delete is applied before the terminal (null-cursor) callback, so
+// `onComplete` observes a store free of duplicate intentIds.
+function dedupeIntentIds(store: IDBObjectStore, onComplete: () => void): void {
+    const seen = new Set<string>();
+    const cursorRequest = store.openCursor();
+    cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) {
+            onComplete();
+            return;
+        }
+        const id = (cursor.value as { intentId?: string | null }).intentId;
+        if (id != null) {
+            if (seen.has(id)) {
+                cursor.delete();
+            } else {
+                seen.add(id);
+            }
+        }
+        cursor.continue();
+    };
 }
 
 // Exported for unit tests — the `onupgradeneeded` transaction can't be
