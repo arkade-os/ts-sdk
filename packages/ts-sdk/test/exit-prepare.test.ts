@@ -115,7 +115,7 @@ async function fixture(opts?: { coins?: { value: number }[] }) {
         feeRate: 2,
     } as unknown as ExitOptions;
 
-    return { exitOpts, vtxo, broadcasts, leaf, shared };
+    return { exitOpts, vtxo, broadcasts, leaf, shared, coins };
 }
 
 describe("prepare", () => {
@@ -174,5 +174,31 @@ describe("prepare", () => {
         await expect(prepare(exitOpts)).rejects.toThrow(
             /insufficient confirmed onchain funds: need \d+ sats, have 0/,
         );
+    });
+
+    it("quotes enough for the deposit UTXO when the wallet holds pre-existing dust", async () => {
+        // A reused fee wallet holds one small (dust-ish) confirmed coin, not
+        // enough to fund the exit. The quote must account for the deposit the
+        // caller will add being a SECOND splitter input — otherwise depositing
+        // exactly the quoted shortfall leaves prepare() one input short.
+        const f = await fixture({ coins: [{ value: 1_000 }] });
+        const quote = await estimate(f.exitOpts);
+        expect(quote.currentBalanceSats).toBe(1_000);
+        expect(quote.shortfallSats).toBeGreaterThan(0);
+
+        // caller deposits EXACTLY the quoted shortfall as one new UTXO
+        f.coins.push({
+            txid: "99".repeat(32),
+            vout: 0,
+            value: quote.shortfallSats,
+            status: { confirmed: true },
+        });
+
+        // prepare must now succeed and consume BOTH coins (deposit + dust)
+        const pkg = await prepare(f.exitOpts);
+        const splitterStep = pkg.steps[0];
+        if (splitterStep.kind !== "broadcast") throw new Error("expected broadcast step");
+        const splitter = Transaction.fromRaw(hex.decode(splitterStep.hex));
+        expect(splitter.inputsLength).toBe(2);
     });
 });

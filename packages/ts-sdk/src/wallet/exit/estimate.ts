@@ -202,21 +202,29 @@ export async function computeExitLayout(opts: ExitOptions, feeRate: number): Pro
         }
     }
 
-    // Splitter sizing. Input count is exact once the balance covers the
-    // requirement; before funding arrives it assumes one (documented
-    // approximation, re-derived at prepare time).
+    // Splitter sizing. Two passes break the fee↔input-count circularity:
+    // when the wallet must be topped up, the caller's deposit is an
+    // ADDITIONAL prepare-time input the current coin set does not yet
+    // include. Pricing pass 1 with the existing coins and, if that still
+    // leaves a shortfall, re-pricing with one extra input ensures the quote
+    // covers the deposit UTXO itself — otherwise depositing exactly the
+    // quoted shortfall would leave prepare() one input short.
     const coins = (await onchainWallet.getCoins()).filter((c) => c.status.confirmed);
     const balance = coins.reduce((sum, c) => sum + c.value, 0);
     const fundingTotal = steps.reduce((sum, s) => sum + s.funding, 0);
-    let splitterFee = 0;
-    if (steps.length > 0) {
-        const inputCount = Math.max(1, coins.length);
+    const splitterFeeFor = (inputCount: number): number => {
+        if (steps.length === 0) return 0;
         const est = TxWeightEstimator.create();
         for (let i = 0; i < inputCount; i++) est.addKeySpendInput(true);
         for (let i = 0; i < steps.length + 1; i++) {
             est.addOutputAddress(onchainWallet.address, wallet.network);
         }
-        splitterFee = Number(est.vsize().fee(BigInt(feeRate)));
+        return Number(est.vsize().fee(BigInt(feeRate)));
+    };
+    let splitterFee = splitterFeeFor(Math.max(1, coins.length));
+    if (steps.length > 0 && balance < fundingTotal + splitterFee) {
+        // a deposit is required — count it as a further input
+        splitterFee = splitterFeeFor(coins.length + 1);
     }
 
     const totals: ExitTotals = {
