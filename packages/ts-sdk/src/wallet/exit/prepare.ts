@@ -5,9 +5,15 @@ import { Transaction } from "../../utils/transaction";
 import { TxWeightEstimator } from "../../utils/txSizeEstimator";
 import { selectCoins } from "../onchain";
 import { DUST_AMOUNT } from "../utils";
-import { computeExitLayout, ExitOptions, resolveFeeRate, resolveNetworkName } from "./estimate";
+import {
+    computeExitLayout,
+    ExitOptions,
+    resolveFeeRate,
+    resolveMode,
+    resolveNetworkName,
+} from "./estimate";
 import { buildSignedSweep } from "./sweep";
-import { BroadcastStep, ExitPackage, PackageStep, SweepStep } from "./types";
+import { BroadcastStep, BumpStep, ExitPackage, PackageStep, SweepStep } from "./types";
 
 /**
  * Build the fully pre-signed unilateral exit package.
@@ -21,10 +27,16 @@ import { BroadcastStep, ExitPackage, PackageStep, SweepStep } from "./types";
 export async function prepare(opts: ExitOptions): Promise<ExitPackage> {
     const { wallet, onchainWallet } = opts;
     const feeRate = await resolveFeeRate(opts);
+    const mode = resolveMode(opts);
 
-    const walletKey = (await wallet.identity.xOnlyPublicKey())!;
-    if (hex.encode(onchainWallet.onchainP2TR.tapInternalKey) !== hex.encode(walletKey)) {
-        throw new Error("onchainWallet must share the wallet identity");
+    // Funded mode broadcasts a splitter from onchainWallet and pre-signs fee
+    // children, so its coins/change must be recoverable by the wallet key.
+    // Graph mode never touches onchainWallet funds, so the match is moot.
+    if (mode === "funded") {
+        const walletKey = (await wallet.identity.xOnlyPublicKey())!;
+        if (hex.encode(onchainWallet.onchainP2TR.tapInternalKey) !== hex.encode(walletKey)) {
+            throw new Error("onchainWallet must share the wallet identity");
+        }
     }
 
     const layout = await computeExitLayout(opts, feeRate);
@@ -71,6 +83,41 @@ export async function prepare(opts: ExitOptions): Promise<ExitPackage> {
     const steps = layout.steps.filter((s) => s.node.forVtxos.some((v) => activeOutpoints.has(v)));
     if (steps.length === 0 && sweepSteps.length === 0) {
         throw new Error("no exitable vtxos (all skipped)");
+    }
+
+    // Graph mode: transport only the tx graph + sweeps. No splitter, no
+    // pre-signed children — the executor funds and signs the CPFP bumps at
+    // execution time from its own fee wallet.
+    if (mode === "graph") {
+        const bumpSteps: BumpStep[] = steps.map((step) => ({
+            kind: "bump",
+            parentTxid: step.parent.id,
+            parentHex: step.parent.hex,
+            forVtxos: step.node.forVtxos.filter((v) => activeOutpoints.has(v)),
+        }));
+
+        const stepFees = steps.reduce((s, x) => s + x.stepFee, 0);
+        const activeInfos = layout.infos.filter((i) => !i.skipped);
+        const sweepFees = activeInfos.reduce((s, i) => s + (i.sweepFee ?? 0), 0);
+        const recovered = activeInfos.reduce((s, i) => s + (i.value ?? 0) - (i.sweepFee ?? 0), 0);
+
+        return {
+            version: 1,
+            mode: "graph",
+            network: resolveNetworkName(opts),
+            createdAt: Math.floor(Date.now() / 1000),
+            validUntil: layout.validUntil,
+            feeRate,
+            sweepAddress: opts.sweepAddress,
+            totals: {
+                txCount: bumpSteps.length * 2 + sweepSteps.length,
+                totalFeeSats: stepFees + sweepFees,
+                fundingRequiredSats: stepFees,
+                recoveredSats: recovered,
+            },
+            vtxos: layout.infos,
+            steps: [...bumpSteps, ...sweepSteps],
+        };
     }
 
     // 2. Splitter: iterative fee + coin selection (fee depends on input count).
@@ -166,6 +213,7 @@ export async function prepare(opts: ExitOptions): Promise<ExitPackage> {
 
     return {
         version: 1,
+        mode: "funded",
         network: resolveNetworkName(opts),
         createdAt: Math.floor(Date.now() / 1000),
         validUntil: layout.validUntil,

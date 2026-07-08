@@ -17,6 +17,20 @@ export type PackageStep = {
     forVtxos: string[];
 };
 
+/**
+ * A virtual tx that must go onchain but whose CPFP fee child is NOT
+ * pre-signed (graph mode). The executor builds and signs the child at
+ * execution time using its own fee wallet — this is how "send funds to
+ * this address and we proceed" works: funding is deferred, not baked in.
+ */
+export type BumpStep = {
+    kind: "bump";
+    parentTxid: string;
+    parentHex: string;
+    /** Outpoints (txid:vout) of the VTXOs this step serves. */
+    forVtxos: string[];
+};
+
 /** Broadcast a pre-signed CSV sweep once its dependency matured. */
 export type SweepStep = {
     kind: "sweep";
@@ -28,7 +42,17 @@ export type SweepStep = {
     delay: ExitDelay;
 };
 
-export type ExitStep = BroadcastStep | PackageStep | SweepStep;
+export type ExitStep = BroadcastStep | PackageStep | BumpStep | SweepStep;
+
+/**
+ * How fee funding is provided:
+ * - `"funded"`: a splitter tx (broadcast at prepare time) pre-funds
+ *   pre-signed fee children — execution is fully keyless.
+ * - `"graph"`: only the tx graph + sweeps are transported; the executor
+ *   funds and signs the CPFP bumps at execution time from its own fee
+ *   wallet ("send funds to this address and we proceed").
+ */
+export type ExitMode = "funded" | "graph";
 
 /** Per-VTXO metadata; skipped VTXOs carry a human-readable reason. */
 export type ExitVtxoInfo = {
@@ -58,6 +82,8 @@ export type ExitTotals = {
  */
 export type ExitPackage = {
     version: 1;
+    /** Fee-funding strategy. Absent is treated as "funded" (v1 default). */
+    mode?: ExitMode;
     network: NetworkName;
     createdAt: number;
     /** Min batch expiry (unix seconds) across included txs. Informational. */
@@ -128,6 +154,12 @@ function isValidStep(step: unknown): step is ExitStep {
                 typeof s.parentHex === "string" &&
                 typeof s.childTxid === "string" &&
                 typeof s.childHex === "string" &&
+                Array.isArray(s.forVtxos)
+            );
+        case "bump":
+            return (
+                typeof s.parentTxid === "string" &&
+                typeof s.parentHex === "string" &&
                 Array.isArray(s.forVtxos)
             );
         case "sweep":

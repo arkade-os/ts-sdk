@@ -127,6 +127,80 @@ describe("Executor", () => {
         expect(waiting.maturesAtHeight).toBe(100 + 10);
     });
 
+    it("graph mode: builds the CPFP child from the fee wallet, relays 1P1C", async () => {
+        const script = scriptedProvider();
+        script.register("parent1-hex", P1);
+        script.register("bumpchild1-hex", C1);
+        script.register("sweep1-hex", SW1);
+
+        // Fee wallet builds+signs the child on demand and returns the package
+        // hexes WITHOUT broadcasting — the executor owns broadcast.
+        const feeCalls: [string, number][] = [];
+        const feeWallet = {
+            async bumpAnchor(parentHex: string, feeRate: number) {
+                feeCalls.push([parentHex, feeRate]);
+                return ["parent1-hex", "bumpchild1-hex"] as [string, string];
+            },
+        };
+
+        const pkg: ExitPackage = {
+            ...pkgOf([
+                { kind: "bump", parentTxid: P1, parentHex: "parent1-hex", forVtxos: [`${P1}:0`] },
+                {
+                    kind: "sweep",
+                    vtxo: `${P1}:0`,
+                    txid: SW1,
+                    hex: "sweep1-hex",
+                    dependsOnTxid: P1,
+                    delay: { type: "blocks", value: 10 },
+                },
+            ]),
+            mode: "graph",
+        };
+
+        const executor = new Executor(pkg, script.provider, { pollIntervalMs: 1, feeWallet });
+        const events = await run(
+            executor,
+            (e, s) => {
+                if (e.status === "broadcast" && e.txid) s.confirm(e.txid);
+                if (e.status === "waiting_csv") s.tip.height = e.maturesAtHeight!;
+            },
+            script,
+        );
+
+        expect(events.map((e) => `${e.kind}:${e.status}`)).toEqual([
+            "bump:broadcast",
+            "bump:confirmed",
+            "sweep:waiting_csv",
+            "sweep:broadcast",
+            "sweep:confirmed",
+        ]);
+        // fee wallet was asked to bump the parent at the package fee rate
+        expect(feeCalls).toEqual([["parent1-hex", 2]]);
+        // executor broadcast the freshly built 1P1C package verbatim
+        expect(script.broadcasts[0]).toEqual(["parent1-hex", "bumpchild1-hex"]);
+    });
+
+    it("graph mode: fails a bump step when no fee wallet is provided", async () => {
+        const script = scriptedProvider();
+        script.register("parent1-hex", P1);
+        const pkg: ExitPackage = {
+            ...pkgOf([
+                { kind: "bump", parentTxid: P1, parentHex: "parent1-hex", forVtxos: [`${P1}:0`] },
+            ]),
+            mode: "graph",
+        };
+        const events = await run(
+            new Executor(pkg, script.provider, { pollIntervalMs: 1 }),
+            () => {},
+            script,
+        );
+        expect(events).toHaveLength(1);
+        expect(events[0].status).toBe("failed");
+        expect(events[0].reason).toMatch(/fee wallet/i);
+        expect(script.broadcasts).toHaveLength(0);
+    });
+
     it("skips steps whose parent is already confirmed", async () => {
         const script = scriptedProvider();
         script.confirm(P1);

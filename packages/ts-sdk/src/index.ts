@@ -232,6 +232,7 @@ import { Unroll } from "./wallet/unroll";
 import { UnilateralExit, deserializeExitPackage, serializeExitPackage } from "./wallet/exit";
 import type {
     ExitDelay,
+    ExitMode,
     ExitPackage,
     ExitQuote,
     ExitStep,
@@ -239,6 +240,7 @@ import type {
     ExitVtxoInfo,
     ExitOptions,
     ExecutorEvent,
+    ExitFeeWallet,
 } from "./wallet/exit";
 import { ArkError, maybeArkError } from "./providers/errors";
 import { validateVtxoTxGraph, validateConnectorsTxGraph } from "./tree/validation";
@@ -656,6 +658,7 @@ export type {
 
     // Unilateral exit packages
     ExitDelay,
+    ExitMode,
     ExitPackage,
     ExitQuote,
     ExitStep,
@@ -663,6 +666,7 @@ export type {
     ExitVtxoInfo,
     ExitOptions,
     ExecutorEvent,
+    ExitFeeWallet,
 
     // Storage
     StorageConfig,

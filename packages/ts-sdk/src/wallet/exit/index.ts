@@ -6,7 +6,7 @@ import { prepare } from "./prepare";
 export * from "./types";
 export { ExitPathError, resolveUnilateralPath } from "./path";
 export type { ResolvedExitPath } from "./path";
-export type { ExecutorEvent } from "./executor";
+export type { ExecutorEvent, ExitFeeWallet } from "./executor";
 export type { ExitOptions } from "./estimate";
 
 /**

@@ -14,6 +14,16 @@ export type ExecutorEvent = {
     maturesAtTime?: number;
 };
 
+/**
+ * Fee source for graph-mode `bump` steps. Given a parent tx carrying a P2A
+ * anchor, it builds and signs the CPFP fee child from its own funds and
+ * returns the 1P1C package hexes (parent unchanged, child signed) — WITHOUT
+ * broadcasting; the executor owns broadcast. `OnchainWallet` implements it.
+ */
+export interface ExitFeeWallet {
+    bumpAnchor(parentHex: string, feeRate: number): Promise<[parentHex: string, childHex: string]>;
+}
+
 type TxStatus = { confirmed: boolean; blockHeight?: number; blockTime?: number };
 
 /**
@@ -26,12 +36,15 @@ type TxStatus = { confirmed: boolean; blockHeight?: number; blockTime?: number }
 export class Executor implements AsyncIterable<ExecutorEvent> {
     private readonly pollIntervalMs: number;
 
+    private readonly feeWallet?: ExitFeeWallet;
+
     constructor(
         readonly pkg: ExitPackage,
         readonly provider: OnchainProvider,
-        opts?: { pollIntervalMs?: number },
+        opts?: { pollIntervalMs?: number; feeWallet?: ExitFeeWallet },
     ) {
         this.pollIntervalMs = opts?.pollIntervalMs ?? 5_000;
+        this.feeWallet = opts?.feeWallet;
     }
 
     private sleep(): Promise<void> {
@@ -77,7 +90,8 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
                 continue;
             }
 
-            const forVtxos = step.kind === "package" ? step.forVtxos : undefined;
+            const forVtxos =
+                step.kind === "package" || step.kind === "bump" ? step.forVtxos : undefined;
             if (forVtxos && forVtxos.every((v) => dead.has(v))) {
                 yield {
                     stepIndex: i,
@@ -89,7 +103,8 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
                 continue;
             }
 
-            const anchorTxid = step.kind === "package" ? step.parentTxid : step.txid;
+            const anchorTxid =
+                step.kind === "package" || step.kind === "bump" ? step.parentTxid : step.txid;
             const existing = await this.status(anchorTxid);
             if (existing?.confirmed) {
                 yield {
@@ -105,6 +120,19 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
                 try {
                     if (step.kind === "package") {
                         await this.provider.broadcastTransaction(step.parentHex, step.childHex);
+                    } else if (step.kind === "bump") {
+                        // Graph mode: build+sign the CPFP child now from our
+                        // own fee wallet, then broadcast the 1P1C package.
+                        if (!this.feeWallet) {
+                            throw new Error(
+                                "graph package requires a fee wallet (opts.feeWallet) to fund CPFP bumps",
+                            );
+                        }
+                        const [parentHex, childHex] = await this.feeWallet.bumpAnchor(
+                            step.parentHex,
+                            this.pkg.feeRate,
+                        );
+                        await this.provider.broadcastTransaction(parentHex, childHex);
                     } else {
                         await this.provider.broadcastTransaction(step.hex);
                     }
@@ -122,7 +150,7 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
                         for (const s of this.pkg.steps) {
                             if (s.kind === "package") s.forVtxos.forEach((v) => dead.add(v));
                         }
-                    } else {
+                    } else if (step.kind === "package" || step.kind === "bump") {
                         step.forVtxos.forEach((v) => dead.add(v));
                     }
                     yield {

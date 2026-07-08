@@ -12,7 +12,7 @@ import { buildExitDag, DagNode } from "./chain";
 import { finalizeVirtualTx } from "./finalizeVirtualTx";
 import { ExitPathError, ResolvedExitPath, resolveUnilateralPath } from "./path";
 import { sweepFeeFor } from "./sweep";
-import { ExitDelay, ExitQuote, ExitTotals, ExitVtxoInfo } from "./types";
+import { ExitDelay, ExitMode, ExitQuote, ExitTotals, ExitVtxoInfo } from "./types";
 
 /** Dust floor granted to every fee child's change output. */
 export const CHILD_OUTPUT_DUST = 546;
@@ -29,6 +29,15 @@ export type ExitOptions = {
     /** Defaults to all spendable VTXOs. */
     vtxos?: Outpoint[];
     /**
+     * Fee-funding strategy (default `"funded"`):
+     * - `"funded"`: broadcast a splitter at prepare time and pre-sign the
+     *   fee children — the package executes fully keyless.
+     * - `"graph"`: transport only the tx graph + sweeps; the executor funds
+     *   and signs the CPFP bumps at execution time ("send funds to this
+     *   address and we proceed"). No splitter, no `onchainWallet` funds used.
+     */
+    mode?: ExitMode;
+    /**
      * Network label embedded in the package (executor sanity check).
      * Resolved from the wallet's network when omitted — exact for
      * "bitcoin" and "regtest"; the tb-family defaults to "testnet", so
@@ -39,6 +48,10 @@ export type ExitOptions = {
 
 export function stepFundingAmount(stepFee: number): number {
     return stepFee + CHILD_OUTPUT_DUST;
+}
+
+export function resolveMode(opts: ExitOptions): ExitMode {
+    return opts.mode ?? "funded";
 }
 
 export function resolveNetworkName(opts: ExitOptions): NetworkName {
@@ -221,19 +234,27 @@ export async function computeExitLayout(opts: ExitOptions, feeRate: number): Pro
         }
         return Number(est.vsize().fee(BigInt(feeRate)));
     };
-    let splitterFee = splitterFeeFor(Math.max(1, coins.length));
-    if (steps.length > 0 && balance < fundingTotal + splitterFee) {
-        // a deposit is required — count it as a further input
-        splitterFee = splitterFeeFor(coins.length + 1);
+    const graph = resolveMode(opts) === "graph";
+    let splitterFee = 0;
+    if (!graph) {
+        splitterFee = splitterFeeFor(Math.max(1, coins.length));
+        if (steps.length > 0 && balance < fundingTotal + splitterFee) {
+            // a deposit is required — count it as a further input
+            splitterFee = splitterFeeFor(coins.length + 1);
+        }
     }
 
+    const stepFees = steps.reduce((s, x) => s + x.stepFee, 0);
+    const sweepFees = sweeps.reduce((s, x) => s + x.sweepFee, 0);
     const totals: ExitTotals = {
-        txCount: (steps.length > 0 ? 1 : 0) + steps.length * 2 + sweeps.length,
-        totalFeeSats:
-            splitterFee +
-            steps.reduce((s, x) => s + x.stepFee, 0) +
-            sweeps.reduce((s, x) => s + x.sweepFee, 0),
-        fundingRequiredSats: splitterFee + fundingTotal,
+        // graph: each unroll step is parent + a live-built child (2 txs), no
+        // splitter. funded: + 1 splitter tx and pre-signed children.
+        txCount: (graph ? 0 : steps.length > 0 ? 1 : 0) + steps.length * 2 + sweeps.length,
+        totalFeeSats: splitterFee + stepFees + sweepFees,
+        // graph funding is what the executor sends to its own fee address:
+        // just the CPFP fees (change recycles); funded also locks the
+        // per-child dust into the splitter.
+        fundingRequiredSats: graph ? stepFees : splitterFee + fundingTotal,
         recoveredSats: sweeps.reduce((s, x) => s + (x.vtxo.value - x.sweepFee), 0),
     };
 
@@ -264,6 +285,22 @@ export async function computeExitLayout(opts: ExitOptions, feeRate: number): Pro
 export async function estimate(opts: ExitOptions): Promise<ExitQuote> {
     const feeRate = await resolveFeeRate(opts);
     const layout = await computeExitLayout(opts, feeRate);
+
+    // In graph mode the executor funds from its own (e.g. ephemeral) fee
+    // wallet, so the preparer's onchain balance is irrelevant: report the
+    // whole fee budget as the amount to send, with no pre-known address.
+    if (resolveMode(opts) === "graph") {
+        return {
+            feeRate,
+            fundingAddress: "",
+            currentBalanceSats: 0,
+            shortfallSats: layout.totals.fundingRequiredSats,
+            validUntil: layout.validUntil,
+            totals: layout.totals,
+            vtxos: layout.infos,
+        };
+    }
+
     return {
         feeRate,
         fundingAddress: opts.onchainWallet.address,

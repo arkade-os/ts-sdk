@@ -176,6 +176,35 @@ describe("prepare", () => {
         );
     });
 
+    it("graph mode: transports bump steps + sweeps, no splitter, no broadcast", async () => {
+        // Graph mode funds nothing at prepare time — an empty fee wallet is fine.
+        const f = await fixture({ coins: [] });
+        const pkg = await prepare({ ...f.exitOpts, mode: "graph" });
+
+        expect(pkg.mode).toBe("graph");
+        // no splitter broadcast step, and prepare() broadcast nothing
+        expect(pkg.steps.some((s) => s.kind === "broadcast")).toBe(false);
+        expect(f.broadcasts).toHaveLength(0);
+
+        // one bump step per pending unroll node, carrying only the parent
+        const bumps = pkg.steps.filter((s) => s.kind === "bump");
+        expect(bumps.length).toBeGreaterThan(0);
+        for (const b of bumps) {
+            if (b.kind !== "bump") throw new Error("unreachable");
+            expect(b.parentHex.length).toBeGreaterThan(0);
+            expect(b.forVtxos.length).toBeGreaterThan(0);
+            expect((b as unknown as { childHex?: string }).childHex).toBeUndefined();
+        }
+
+        // sweep still pre-signed by the wallet key
+        expect(pkg.steps.some((s) => s.kind === "sweep")).toBe(true);
+
+        // funding guidance = CPFP fees only (no splitter, no per-child dust)
+        const stepFeeSum = pkg.totals.totalFeeSats; // no splitter fee in graph mode besides sweeps
+        expect(pkg.totals.fundingRequiredSats).toBeGreaterThan(0);
+        expect(pkg.totals.fundingRequiredSats).toBeLessThan(stepFeeSum + 1); // <= totalFee
+    });
+
     it("quotes enough for the deposit UTXO when the wallet holds pre-existing dust", async () => {
         // A reused fee wallet holds one small (dust-ish) confirmed coin, not
         // enough to fund the exit. The quote must account for the deposit the

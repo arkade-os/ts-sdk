@@ -1,5 +1,6 @@
 import { p2tr } from "@scure/btc-signer";
 import { P2TR } from "@scure/btc-signer/payment.js";
+import { hex } from "@scure/base";
 import { Coin, SendBitcoinParams } from ".";
 import { Identity } from "../identity";
 import { DEFAULT_NETWORK_NAME, getNetwork, Network, NetworkName } from "../networks";
@@ -248,26 +249,72 @@ export class OnchainWallet implements AnchorBumper {
             feeRate = OnchainWallet.MIN_FEE_RATE;
         }
 
-        // Probe the package fee with a single-input child, select coins for
-        // it, then build with the actual selection (fee grows per input).
+        const child = await this.buildBumpPackage(parent, feeRate, await this.getCoins());
+
+        try {
+            await this.provider.broadcastTransaction(parent.hex, child.hex);
+        } catch (error) {
+            console.error(error);
+        } finally {
+            return [parent.hex, child.hex];
+        }
+    }
+
+    /**
+     * Build and sign a CPFP fee child for a parent tx (given as raw hex)
+     * carrying a P2A anchor, funding it from this wallet's **confirmed**
+     * coins, and return the 1P1C package hexes WITHOUT broadcasting.
+     *
+     * This is the graph-mode fee source ({@link ExitFeeWallet}): the exit
+     * executor calls it to bump each transported virtual tx at execution
+     * time, so funding can be deferred rather than pre-signed.
+     *
+     * @param parentHex - Finalized parent transaction, raw network hex
+     * @param feeRate - sat/vB floor for the package (raised to MIN_FEE_RATE)
+     * @returns Tuple of parent hex (unchanged) and signed child hex
+     * @throws If the parent has no anchor, or funding cannot be selected/signed
+     */
+    async bumpAnchor(parentHex: string, feeRate: number): Promise<[string, string]> {
+        const parent = Transaction.fromRaw(hex.decode(parentHex));
+        // A CPFP fee input must be confirmed: an unconfirmed one would make
+        // the child depend on two unconfirmed ancestors, breaking 1P1C relay.
+        const coins = (await this.getCoins()).filter((c) => c.status.confirmed);
+        const child = await this.buildBumpPackage(parent, feeRate, coins);
+        return [parent.hex, child.hex];
+    }
+
+    /**
+     * Shared core of {@link bumpP2A} and {@link bumpAnchor}: probe the package
+     * fee with a single-input child, select coins for it, then build and sign
+     * with the actual selection (the fee grows per extra input).
+     */
+    private async buildBumpPackage(
+        parent: Transaction,
+        feeRate: number,
+        coins: Coin[],
+    ): Promise<Transaction> {
+        let rate = feeRate;
+        if (!rate || rate < OnchainWallet.MIN_FEE_RATE) {
+            rate = OnchainWallet.MIN_FEE_RATE;
+        }
+
         const probeVsize = TxWeightEstimator.create()
             .addKeySpendInput(true)
             .addP2AInput()
             .addOutputAddress(this.address, this.network)
             .vsize().value;
-        const probeFee = Math.ceil(feeRate * (parent.vsize + Number(probeVsize)));
+        const probeFee = Math.ceil(rate * (parent.vsize + Number(probeVsize)));
         if (!probeFee) {
             throw new Error(
-                `invalid fee, got ${probeFee} with vsize ${parent.vsize + Number(probeVsize)}, feeRate ${feeRate}`,
+                `invalid fee, got ${probeFee} with vsize ${parent.vsize + Number(probeVsize)}, feeRate ${rate}`,
             );
         }
 
-        const coins = await this.getCoins();
         const selected = selectCoins(coins, probeFee, true);
 
         const { child } = buildAnchorChild({
             parent,
-            feeRate,
+            feeRate: rate,
             fundingCoins: selected.inputs,
             changeAddress: this.address,
             changeScript: this.onchainP2TR.script,
@@ -275,19 +322,12 @@ export class OnchainWallet implements AnchorBumper {
             network: this.network,
         });
 
-        // Sign inputs and Finalize
+        // Sign inputs and finalize everything except the keyless P2A anchor.
         const signed = await this.identity.sign(child);
         for (let i = 1; i < signed.inputsLength; i++) {
             signed.finalizeIdx(i);
         }
-
-        try {
-            await this.provider.broadcastTransaction(parent.hex, signed.hex);
-        } catch (error) {
-            console.error(error);
-        } finally {
-            return [parent.hex, signed.hex];
-        }
+        return signed;
     }
 }
 

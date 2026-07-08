@@ -40,9 +40,13 @@ describe("unilateral exit packages", () => {
     async function driveExecutor(
         pkg: ExitPackage,
         provider: OnchainProvider,
+        feeWallet?: OnchainWallet,
     ): Promise<ExecutorEvent[]> {
         const events: ExecutorEvent[] = [];
-        const executor = new UnilateralExit.Executor(pkg, provider, { pollIntervalMs: 500 });
+        const executor = new UnilateralExit.Executor(pkg, provider, {
+            pollIntervalMs: 500,
+            feeWallet,
+        });
         for await (const event of executor) {
             events.push(event);
             if (event.status === "broadcast") {
@@ -108,6 +112,62 @@ describe("unilateral exit packages", () => {
             { timeout: 30_000 },
         );
     });
+
+    it(
+        "graph mode: funds the exit from an ephemeral fee wallet",
+        { timeout: 300_000 },
+        async () => {
+            const alice = await createTestArkWallet();
+            await createVtxo(alice, 60_000);
+
+            const dest = await createTestOnchainWallet();
+
+            // The preparer's wallet signs the sweeps; no fee wallet is used at
+            // prepare time in graph mode.
+            const feeWalletForPrepare = await OnchainWallet.create(alice.identity, "regtest");
+            const opts = {
+                wallet: alice.wallet,
+                onchainWallet: feeWalletForPrepare,
+                sweepAddress: dest.wallet.address,
+                feeRate: 2,
+                mode: "graph" as const,
+            };
+
+            // quote: funding is the CPFP fee budget, to be sent at execution
+            const quote = await UnilateralExit.estimate(opts);
+            expect(quote.totals.fundingRequiredSats).toBeGreaterThan(0);
+
+            const pkg = await UnilateralExit.prepare(opts);
+            expect(pkg.mode).toBe("graph");
+            expect(pkg.steps.some((s) => s.kind === "broadcast")).toBe(false);
+            expect(pkg.steps.some((s) => s.kind === "bump")).toBe(true);
+
+            // The executor's fee wallet is an INDEPENDENT ephemeral key — mirrors
+            // the web UI generating a throwaway key and asking the user to fund it.
+            const ephemeral = await createTestOnchainWallet();
+            faucetOnchain(ephemeral.wallet.address, pkg.totals.fundingRequiredSats + 30_000);
+            await waitFor(
+                async () => (await ephemeral.wallet.getCoins()).some((c) => c.status.confirmed),
+                { timeout: 30_000 },
+            );
+
+            const events = await driveExecutor(pkg, ephemeral.wallet.provider, ephemeral.wallet);
+            expect(events.filter((e) => e.status === "failed")).toHaveLength(0);
+            expect(
+                events.filter((e) => e.kind === "bump" && e.status === "confirmed").length,
+            ).toBeGreaterThan(0);
+            expect(
+                events.filter((e) => e.kind === "sweep" && e.status === "confirmed"),
+            ).toHaveLength(1);
+
+            await waitFor(
+                async () =>
+                    (await confirmedBalance(ephemeral.wallet.provider, dest.wallet.address)) ===
+                    pkg.totals.recoveredSats,
+                { timeout: 30_000 },
+            );
+        },
+    );
 
     it("dedupes shared ancestors across two vtxos", { timeout: 300_000 }, async () => {
         const alice = await createTestArkWallet();
