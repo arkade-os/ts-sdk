@@ -734,13 +734,7 @@ interface MigrationCapableWallet {
     arkServerPublicKey: Uint8Array;
     onchainProvider: OnchainProvider;
     rotateServerSigner(newServerPubKey: Uint8Array, checkpointTapscript: string): Promise<void>;
-    /**
-     * Refresh the wallet's cached deprecated-signer set from a fresh
-     * {@link ArkInfo} snapshot. The migration pass calls this so the wallet's
-     * spendability filter — which keeps EXPIRED deprecated-signer inputs out of
-     * `settle()` — reflects the same server info the pass classified against.
-     * Inherited by the concrete `Wallet` from `ReadonlyWallet`.
-     */
+    /** Refresh the wallet's cached deprecated-signer set from a fresh {@link ArkInfo} snapshot. */
     refreshDeprecatedSigners(info: ArkInfo): void;
     /**
      * Spend an explicit set of the wallet's own deprecated-signer VTXOs into a
@@ -925,10 +919,7 @@ export interface IVtxoManager {
      *
      * As a side effect, refreshes the wallet's cached deprecated-signer set from
      * fresh server info, so a subsequent `settle()` correctly excludes EXPIRED
-     * deprecated-signer inputs. A consumer that disables the poll loop
-     * (`settlementConfig: false`) and drives its own renewal can therefore call
-     * this before `settle()` to keep ticking across an arkd signer rotation. To
-     * only refresh that filter without migrating, call
+     * deprecated-signer inputs. To refresh that filter without migrating, call
      * `wallet.refreshDeprecatedSigners(await wallet.arkProvider.getInfo())` instead.
      *
      * @returns A report of what was migrated, skipped, expired, or failed.
@@ -1633,12 +1624,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const wallet = this.requireMigrationCapableWallet();
         const info = await wallet.arkProvider.getInfo();
         // Refresh the wallet's cached deprecated-signer set from this fresh
-        // snapshot BEFORE any classification or early-exit, so the wallet's
-        // spendability filter — which keeps EXPIRED deprecated-signer inputs out
-        // of settle() — is consistent for the rest of this pass and, crucially,
-        // for a consumer running its own renewal loop who calls settle() after a
-        // migrate pass (#589). Placed ahead of the cheap no-deprecated exit so a
-        // pass that finds nothing deprecated still clears any now-stale cache.
+        // snapshot before any classification or early-exit, so the spendability
+        // filter that excludes EXPIRED deprecated-signer inputs from settle() is
+        // consistent for the rest of this pass. Placed ahead of the no-deprecated
+        // exit so a pass that finds nothing deprecated still clears a stale cache.
         wallet.refreshDeprecatedSigners(info);
         const signerSet = signerSetFromInfo(info);
         const nowSeconds = Math.floor(Date.now() / 1000);
