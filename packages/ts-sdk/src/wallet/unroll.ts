@@ -1,4 +1,4 @@
-import { base64, hex } from "@scure/base";
+import { hex } from "@scure/base";
 import { SigHash, TaprootControlBlock } from "@scure/btc-signer";
 import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
 import { timelockToSequence } from "../utils/timelock";
@@ -12,6 +12,7 @@ import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Wallet } from "./wallet";
 import { Transaction } from "../utils/transaction";
 import { DUST_AMOUNT } from "./utils";
+import { finalizeVirtualTx } from "./exit/finalizeVirtualTx";
 
 export namespace Unroll {
     export enum StepType {
@@ -160,25 +161,7 @@ export namespace Unroll {
                 throw new Error(`Tx ${nextTxToBroadcast.txid} not found`);
             }
 
-            const tx = Transaction.fromPSBT(base64.decode(virtualTxs.txs[0]));
-
-            // finalize the tree transaction
-            if (nextTxToBroadcast.type === ChainTxType.TREE) {
-                const input = tx.getInput(0);
-                if (!input) {
-                    throw new Error("Input not found");
-                }
-                const tapKeySig = input.tapKeySig;
-                if (!tapKeySig) {
-                    throw new Error("Tap key sig not found");
-                }
-                tx.updateInput(0, {
-                    finalScriptWitness: [tapKeySig],
-                });
-            } else {
-                // finalize Arkade transaction
-                tx.finalize();
-            }
+            const tx = finalizeVirtualTx(nextTxToBroadcast.type, virtualTxs.txs[0]);
 
             const pkg = await this.bumper.bumpP2A(tx);
             return {
