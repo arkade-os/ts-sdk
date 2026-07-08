@@ -29,6 +29,7 @@ import {
     CSVMultisigTapscript,
     CLTVMultisigTapscript,
     ConditionMultisigTapscript,
+    ConditionCSVMultisigTapscript,
     type ArkTapscript,
     type TapscriptType,
 } from "../script/tapscript";
@@ -92,12 +93,15 @@ export type WitnessRef = string | number | bigint | Uint8Array;
 export interface TapscriptSegment {
     /** Required signers. The tweaked co-signer is appended automatically when the path has an `arkadeScript`. */
     signers: SignerRef[];
-    /** Optional standard-opcode condition (e.g. a hashlock), encoded into a ConditionMultisig leaf. */
+    /**
+     * Optional standard-opcode condition (e.g. a hashlock), encoded into a
+     * ConditionMultisig leaf — or ConditionCSVMultisig when combined with `csv`.
+     */
     asm?: AsmToken[];
     /**
      * Relative timelock (CSV). The value is a literal or a `"$param"` reference
      * resolved against the constructor args (same convention as {@link SignerRef}).
-     * Mutually exclusive with `cltv`/`asm`.
+     * Combinable with `asm` (condition + CSV); mutually exclusive with `cltv`.
      */
     csv?: { type: "blocks" | "seconds"; value: bigint | string };
     /**
@@ -225,19 +229,23 @@ export function witnessRefToBytes(
 }
 
 /**
- * Validate a tapscript segment: it must have signers, may use at most one of
- * `asm`/`csv`/`cltv`, and may not contain Arkade opcodes (those are `OP_SUCCESS`
- * on-chain and belong in the `arkadeScript` segment).
+ * Validate a tapscript segment: it must have signers; `asm` may combine with
+ * `csv` (the condition + CSV closure) but `cltv` conflicts with both (arkd
+ * recognizes no condition+CLTV or dual-timelock closure); the `asm` may not
+ * contain Arkade opcodes (those are `OP_SUCCESS` on-chain and belong in the
+ * `arkadeScript` segment).
  */
 export function validateTapscript(seg: TapscriptSegment): void {
     if (!seg.signers || seg.signers.length === 0) {
         throw new Error("tapscript: at least one signer is required");
     }
-    const forms = [seg.asm !== undefined, seg.csv !== undefined, seg.cltv !== undefined].filter(
-        Boolean,
-    ).length;
-    if (forms > 1) {
-        throw new Error("tapscript: `asm`, `csv` and `cltv` conflict — use at most one");
+    if (seg.asm !== undefined && seg.cltv !== undefined) {
+        throw new Error(
+            "tapscript: `asm` and `cltv` conflict — arkd has no condition+CLTV closure",
+        );
+    }
+    if (seg.csv !== undefined && seg.cltv !== undefined) {
+        throw new Error("tapscript: `csv` and `cltv` conflict — use at most one timelock");
     }
     for (const t of seg.asm ?? []) {
         if (typeof t === "string" && t in ARKADE_OP) {
@@ -297,10 +305,16 @@ function encodeTapscriptSegment(
     args: Record<string, ArkadeParamValue>,
 ): ArkTapscript<TapscriptType, any> {
     if (seg.csv) {
-        return CSVMultisigTapscript.encode({
-            timelock: { type: seg.csv.type, value: resolveTimelockValue(seg.csv.value, args) },
-            pubkeys,
-        });
+        const timelock = { type: seg.csv.type, value: resolveTimelockValue(seg.csv.value, args) };
+        if (seg.asm) {
+            // The fifth arkd closure: condition + CSV.
+            return ConditionCSVMultisigTapscript.encode({
+                conditionScript: resolveAsm(seg.asm, args),
+                timelock,
+                pubkeys,
+            });
+        }
+        return CSVMultisigTapscript.encode({ timelock, pubkeys });
     }
     if (seg.cltv !== undefined) {
         return CLTVMultisigTapscript.encode({
