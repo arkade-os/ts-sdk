@@ -218,6 +218,13 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
                         forVtxos: [step.vtxo],
                     };
                 } catch (e) {
+                    const reason = e instanceof Error ? e.message : String(e);
+                    // Maturity is computed from explorer block times, which can
+                    // lag consensus (BIP-68 seconds use median-time-past). A
+                    // "not final yet" rejection is transient — retry next poll.
+                    if (/non-?bip68|non-?final|premature/i.test(reason)) {
+                        continue;
+                    }
                     done.add(index);
                     yield {
                         stepIndex: index,
@@ -225,7 +232,7 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
                         status: "failed",
                         txid: step.txid,
                         forVtxos: [step.vtxo],
-                        reason: e instanceof Error ? e.message : String(e),
+                        reason,
                     };
                 }
             }

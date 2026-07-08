@@ -233,6 +233,51 @@ describe("Executor", () => {
         expect(events.map((e) => e.status)).toEqual(["warning", "skipped"]);
     });
 
+    it("retries a sweep rejected as non-BIP68-final instead of failing it", async () => {
+        const script = scriptedProvider();
+        script.register("sweep1-hex", SW1);
+        script.confirm(P1, 80); // matured by height math already
+        script.tip.height = 200;
+
+        // first broadcast attempt: consensus says not final yet
+        let rejectedOnce = false;
+        const provider = {
+            ...script.provider,
+            async broadcastTransaction(...txs: string[]) {
+                if (!rejectedOnce) {
+                    rejectedOnce = true;
+                    throw new Error("sendrawtransaction RPC error: non-BIP68-final");
+                }
+                return (script.provider as never as typeof script.provider).broadcastTransaction(
+                    ...txs,
+                );
+            },
+        } as never;
+
+        const pkg = pkgOf([
+            {
+                kind: "sweep",
+                vtxo: `${P1}:0`,
+                txid: SW1,
+                hex: "sweep1-hex",
+                dependsOnTxid: P1,
+                delay: { type: "blocks", value: 10 },
+            },
+        ]);
+
+        const events = await run(
+            new Executor(pkg, provider, { pollIntervalMs: 1 }),
+            (e, s) => {
+                if (e.status === "broadcast" && e.txid) s.confirm(e.txid);
+            },
+            script,
+        );
+
+        // no "failed" event: the rejection was transient and retried
+        expect(events.map((e) => e.status)).toEqual(["broadcast", "confirmed"]);
+        expect(rejectedOnce).toBe(true);
+    });
+
     it("matures time-based delays via blockTime, not height", async () => {
         const script = scriptedProvider();
         script.register("sweep1-hex", SW1);
