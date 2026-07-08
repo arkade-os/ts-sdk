@@ -163,6 +163,22 @@ export const ArkRealmSchemas = [
     ArkTransactionSchema,
     ArkWalletStateSchema,
     ArkContractSchema,
+];
+
+/**
+ * @experimental Schemas for the inert intent/virtualtx persistence layer.
+ *
+ * Deliberately kept OUT of {@link ArkRealmSchemas} and {@link
+ * ARK_REALM_SCHEMA_VERSION} so upgrading the SDK never migrates an existing
+ * consumer's Realm. A consumer opting in must register these schemas and bump
+ * their own `schemaVersion` themselves:
+ *
+ * ```ts
+ * schema: [...ArkRealmSchemas, ...ArkExperimentalRealmSchemas],
+ * schemaVersion: Math.max(ARK_REALM_SCHEMA_VERSION + 1, yourSchemaVersion),
+ * ```
+ */
+export const ArkExperimentalRealmSchemas = [
     ArkIntentSchema,
     ArkVirtualTxSchema,
     ArkVtxoBranchSchema,
@@ -189,13 +205,15 @@ export const ArkRealmSchemas = [
  *   - v1: initial ArkVtxo/ArkUtxo/... schemas, `script` nullable.
  *   - v2: ArkVtxo.script becomes required; NULL values are backfilled from
  *     the owning Ark address during migration.
- *   - v3: add ArkIntent / ArkVirtualTx / ArkVtxoBranch schemas (new; no
- *     backfill — runArkRealmMigrations is unchanged).
- *   - v4: rename ArkVirtualTx.hex to psbt (holds a base64 PSBT). Realm models a
- *     rename as drop-old + add-new, so runArkRealmMigrations copies any legacy
- *     `hex` payload into `psbt` to preserve it.
+ *
+ * The intent/virtualtx schemas ({@link ArkExperimentalRealmSchemas}) are NOT
+ * counted here: they are experimental and inert, so the advertised version
+ * stays at v2 and upgrading the SDK never triggers a Realm migration for a
+ * consumer using the default {@link ArkRealmSchemas} set. `runArkRealmMigrations`
+ * still carries the intent-schema migration steps (guarded per-schema) for
+ * consumers who opt in and bump their own version.
  */
-export const ARK_REALM_SCHEMA_VERSION = 4;
+export const ARK_REALM_SCHEMA_VERSION = 2;
 
 /**
  * Run every Arkade schema migration applicable to the open Realm.

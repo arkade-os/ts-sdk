@@ -9,16 +9,24 @@ import {
 } from "../intentRepository";
 import { awaitTransaction, promisifyRequest } from "./idbUtils";
 import { closeDatabase, openDatabase } from "./manager";
-import { initDatabase, DB_VERSION, STORE_INTENTS } from "./schema";
+import { initDatabaseWithIntents, INTENT_DB_VERSION, STORE_INTENTS } from "./schema";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 
+/**
+ * @experimental Intent persistence is inert by default. This repository opens
+ * its DB at {@link INTENT_DB_VERSION} and creates the intent stores, so it must
+ * be given a *dedicated* `dbName` distinct from the wallet/contract DB until
+ * intent persistence is activated in the shared schema — otherwise the shared
+ * DB's version-conflict guard rejects the mismatched open.
+ */
 export class IndexedDBIntentRepository implements IntentRepository {
     readonly version = 1 as const;
     private db: IDBDatabase | null = null;
     constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
 
     private async getDB(): Promise<IDBDatabase> {
-        if (!this.db) this.db = await openDatabase(this.dbName, DB_VERSION, initDatabase);
+        if (!this.db)
+            this.db = await openDatabase(this.dbName, INTENT_DB_VERSION, initDatabaseWithIntents);
         return this.db;
     }
 

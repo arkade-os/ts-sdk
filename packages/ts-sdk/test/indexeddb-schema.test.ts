@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { openDatabase, closeDatabase } from "../src/repositories/indexedDB/manager";
-import { initDatabase, DB_VERSION, STORE_INTENTS } from "../src/repositories/indexedDB/schema";
+import {
+    initDatabase,
+    initDatabaseWithIntents,
+    DB_VERSION,
+    INTENT_DB_VERSION,
+    STORE_INTENTS,
+} from "../src/repositories/indexedDB/schema";
 
 // IndexedDB is provided globally by test/polyfill.js (indexeddbshim);
 // no per-file shim import needed — matches existing IDB repo tests.
@@ -30,9 +36,26 @@ function countRows(db: IDBDatabase, store: string): Promise<number> {
 }
 
 describe("IndexedDB schema", () => {
+    // The shared wallet/contract schema is pinned at v3 and must NOT carry the
+    // intent-persistence stores: upgrading the SDK must never migrate an
+    // existing user's database. This is the inertness guarantee.
+    it("keeps the shared schema at v3 without the intent/virtualtx stores", async () => {
+        expect(DB_VERSION).toBe(3);
+        const db = await openDatabase("schema-shared-inert-test", DB_VERSION, initDatabase);
+        const names = Array.from(db.objectStoreNames);
+        expect(names).not.toContain("intents");
+        expect(names).not.toContain("virtualTxs");
+        expect(names).not.toContain("vtxoBranches");
+        await closeDatabase("schema-shared-inert-test");
+    });
+
     it("creates the intent/virtualtx/branch stores with a unique intentId index", async () => {
-        expect(DB_VERSION).toBe(5);
-        const db = await openDatabase("schema-fresh-test", DB_VERSION, initDatabase);
+        expect(INTENT_DB_VERSION).toBe(5);
+        const db = await openDatabase(
+            "schema-fresh-test",
+            INTENT_DB_VERSION,
+            initDatabaseWithIntents,
+        );
         const names = Array.from(db.objectStoreNames);
         expect(names).toEqual(expect.arrayContaining(["intents", "virtualTxs", "vtxoBranches"]));
         expect(indexIsUnique(db, STORE_INTENTS, "intentId")).toBe(true);
@@ -51,8 +74,8 @@ describe("IndexedDB schema", () => {
         await put(v4, STORE_INTENTS, { intentTxId: "a", intentId: "srv1" });
         await closeDatabase(name);
 
-        // Reopen at the current version: the upgrade must rebuild the index.
-        const v5 = await openDatabase(name, DB_VERSION, initDatabase);
+        // Reopen at the activation version: the upgrade must rebuild the index.
+        const v5 = await openDatabase(name, INTENT_DB_VERSION, initDatabaseWithIntents);
         expect(indexIsUnique(v5, STORE_INTENTS, "intentId")).toBe(true);
         // ...and it now rejects a second row reusing the same intentId.
         await expect(
@@ -78,7 +101,7 @@ describe("IndexedDB schema", () => {
 
         // The upgrade must complete despite the duplicate, dropping the extra
         // row and leaving a working unique index behind.
-        const v5 = await openDatabase(name, DB_VERSION, initDatabase);
+        const v5 = await openDatabase(name, INTENT_DB_VERSION, initDatabaseWithIntents);
         expect(indexIsUnique(v5, STORE_INTENTS, "intentId")).toBe(true);
         // One duplicate removed: srv1 collapses to a single row, srv2 and the
         // intentId-less row stay.

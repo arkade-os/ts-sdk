@@ -20,11 +20,23 @@ export const LEGACY_STORE_CONTRACT_COLLECTIONS = "contractsCollections";
 //        `vtxo.script` from `vtxo.address` so the field is always present
 //        at read time. Matches the `script` indexing already in place for
 //        Realm (`realm/schemas.ts`) and SQLite (`sqlite/walletRepository.ts`).
+//
+// The shared wallet/contract DB is pinned at v3 so upgrading the SDK never
+// migrates an existing user's database. The intent/virtualtx persistence
+// stores (v4/v5 below) are experimental and inert: they are created only by
+// the opt-in `IndexedDBIntentRepository`/`IndexedDBVirtualTxRepository`, which
+// open at `INTENT_DB_VERSION` with `initDatabaseWithIntents` on a *dedicated*
+// DB name — never through the default wallet path.
+export const DB_VERSION = 3;
+
 //   v4 — add intent + virtualtx persistence: `intents`, `virtualTxs`,
 //        `vtxoBranches` object stores (new, empty — no backfill).
 //   v5 — make `intents.intentId` unique (was non-unique in v4), matching the
 //        "unique when present" contract enforced by the other backends.
-export const DB_VERSION = 5;
+// Experimental activation version for intent/virtualtx persistence. Reaching
+// it requires deliberately constructing the opt-in repos; the shared wallet
+// DB never advertises this version.
+export const INTENT_DB_VERSION = 5;
 
 export function initDatabase(
     db: IDBDatabase,
@@ -179,6 +191,40 @@ export function initDatabase(
         }
     }
 
+    if (!db.objectStoreNames.contains(LEGACY_STORE_CONTRACT_COLLECTIONS)) {
+        db.createObjectStore(LEGACY_STORE_CONTRACT_COLLECTIONS, {
+            keyPath: "key",
+        });
+    }
+
+    // v2 → v3: add the `script` index on the existing vtxos store and
+    // backfill missing `script` on legacy VTXO rows. The upgrade transaction
+    // is null only on a brand-new database (oldVersion === 0), where no
+    // legacy rows exist. `createIndex` scans existing records; rows still
+    // missing `script` are skipped and get indexed automatically when the
+    // backfill's `cursor.update()` adds the field.
+    if (oldVersion >= 1 && oldVersion < 3 && transaction) {
+        const vtxosStore = transaction.objectStore(STORE_VTXOS);
+        if (!vtxosStore.indexNames.contains("script")) {
+            vtxosStore.createIndex("script", "script", { unique: false });
+        }
+        backfillVtxoScripts(transaction);
+    }
+}
+
+// Experimental / inert: creates the intent, virtualtx and vtxoBranch stores on
+// top of the shared wallet schema. Invoked ONLY by the opt-in
+// `IndexedDBIntentRepository`/`IndexedDBVirtualTxRepository` when they open a
+// dedicated DB at `INTENT_DB_VERSION`. The default wallet path uses
+// `initDatabase` and never reaches this code, so an existing user's database is
+// never upgraded to hold these stores.
+export function initDatabaseWithIntents(
+    db: IDBDatabase,
+    oldVersion: number,
+    transaction: IDBTransaction | null,
+): void {
+    initDatabase(db, oldVersion, transaction);
+
     // v4: intent + virtualtx persistence
     if (!db.objectStoreNames.contains(STORE_INTENTS)) {
         const intentsStore = db.createObjectStore(STORE_INTENTS, {
@@ -198,26 +244,6 @@ export function initDatabase(
         });
         branchesStore.createIndex("vtxo", ["vtxoTxid", "vtxoVout"], { unique: false });
         branchesStore.createIndex("virtualTxid", "virtualTxid", { unique: false });
-    }
-
-    if (!db.objectStoreNames.contains(LEGACY_STORE_CONTRACT_COLLECTIONS)) {
-        db.createObjectStore(LEGACY_STORE_CONTRACT_COLLECTIONS, {
-            keyPath: "key",
-        });
-    }
-
-    // v2 → v3: add the `script` index on the existing vtxos store and
-    // backfill missing `script` on legacy VTXO rows. The upgrade transaction
-    // is null only on a brand-new database (oldVersion === 0), where no
-    // legacy rows exist. `createIndex` scans existing records; rows still
-    // missing `script` are skipped and get indexed automatically when the
-    // backfill's `cursor.update()` adds the field.
-    if (oldVersion >= 1 && oldVersion < 3 && transaction) {
-        const vtxosStore = transaction.objectStore(STORE_VTXOS);
-        if (!vtxosStore.indexNames.contains("script")) {
-            vtxosStore.createIndex("script", "script", { unique: false });
-        }
-        backfillVtxoScripts(transaction);
     }
 
     // v4 → v5: the intents store already exists with a NON-unique intentId
