@@ -19,6 +19,7 @@ import {
     Recipient,
 } from "..";
 import { SettlementEvent } from "../../providers/ark";
+import { createDefaultActivityRegistry, buildActivities, type Activity } from "../activity";
 import { hex } from "@scure/base";
 import {
     Identity,
@@ -500,6 +501,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
     public readonly identity: ReadonlyIdentity;
+    readonly activity = createDefaultActivityRegistry();
     private readonly _readonlyAssetManager: IReadonlyAssetManager;
     protected initConfig: MessageBusInitConfig | null = null;
     protected initWalletPayload: RequestInitWallet["payload"] | null = null;
@@ -966,21 +968,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         }
     }
 
-    /** Clear cached wallet state from both the page and service worker storage. */
-    async clear() {
+    /** This tells the service worker to wipe all locally persisted wallet data. */
+    async clear(): Promise<void> {
         const message: RequestClear = {
             id: getRandomId(),
             tag: this.messageTag,
             type: "CLEAR",
         };
-        // Clear page-side storage to maintain parity with SW
-        try {
-            const address = await this.getAddress();
-            await this.walletRepository.deleteVtxos(address);
-        } catch (_) {
-            console.warn("Failed to clear vtxos from wallet repository");
-        }
-
         await this.sendMessage(message);
     }
 
@@ -1061,6 +1055,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         } catch (error) {
             throw new Error(`Failed to get status: ${error}`);
         }
+    }
+
+    async getActivityHistory(): Promise<Activity[]> {
+        return buildActivities(await this.getTransactionHistory(), this.activity.all());
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {

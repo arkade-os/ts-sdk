@@ -11,6 +11,7 @@ import {
 } from "../serialization";
 import { scriptFromArkAddress } from "../scriptFromAddress";
 import { SQLExecutor } from "./types";
+import { runInTransaction } from "./transaction";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
 
 interface SQLiteWalletRepositoryOptions {
@@ -132,33 +133,34 @@ export class SQLiteWalletRepository implements WalletRepository {
      * indexer would have returned — new rows from the indexer always carry a
      * populated `script`, so the migration is idempotent.
      *
-     * The rebuild path is wrapped in a transaction: without it, a crash
-     * between the `DROP TABLE vtxos` and the `RENAME tmp → vtxos` commits
-     * would leave the next startup seeing no `vtxos` table and create a
-     * fresh empty one, silently orphaning every row in the temp table.
+     * The whole check-and-migrate runs inside one transaction, not just the
+     * rebuild: the schema inspection is the decision point, so a second
+     * concurrent init on the same connection must not read a pre-migration
+     * schema and then re-run `ADD COLUMN` (duplicate column) after the first
+     * migration already committed. It also guards the crash window between the
+     * `DROP TABLE vtxos` and the `RENAME tmp → vtxos`, which would otherwise
+     * leave the next startup seeing no `vtxos` table.
      */
     private async migrateVtxosTable(): Promise<void> {
-        const tableExists = await this.db.get<{ name: string }>(
-            `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
-            [this.tables.vtxos],
-        );
+        await runInTransaction(this.db, async () => {
+            const tableExists = await this.db.get<{ name: string }>(
+                `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
+                [this.tables.vtxos],
+            );
+            if (!tableExists) {
+                await this.db.run(this.vtxosCreateSql(this.tables.vtxos));
+                return;
+            }
 
-        if (!tableExists) {
-            await this.db.run(this.vtxosCreateSql(this.tables.vtxos));
-            return;
-        }
+            const cols = await this.db.all<{ name: string; notnull: number }>(
+                `PRAGMA table_info(${this.tables.vtxos})`,
+            );
+            const scriptCol = cols.find((c) => c.name === "script");
+            if (scriptCol && scriptCol.notnull === 1) {
+                // Already on v1 schema.
+                return;
+            }
 
-        const cols = await this.db.all<{ name: string; notnull: number }>(
-            `PRAGMA table_info(${this.tables.vtxos})`,
-        );
-        const scriptCol = cols.find((c) => c.name === "script");
-        if (scriptCol && scriptCol.notnull === 1) {
-            // Already on v1 schema.
-            return;
-        }
-
-        await this.db.run("BEGIN IMMEDIATE");
-        try {
             if (!scriptCol) {
                 await this.db.run(`ALTER TABLE ${this.tables.vtxos} ADD COLUMN script TEXT`);
             }
@@ -200,18 +202,7 @@ export class SQLiteWalletRepository implements WalletRepository {
             `);
             await this.db.run(`DROP TABLE ${this.tables.vtxos}`);
             await this.db.run(`ALTER TABLE ${tempName} RENAME TO ${this.tables.vtxos}`);
-            await this.db.run("COMMIT");
-        } catch (e) {
-            // A failed COMMIT auto-rolls-back in SQLite, which makes a
-            // follow-up ROLLBACK throw "no transaction is active". Swallow
-            // that secondary error so the original cause surfaces.
-            try {
-                await this.db.run("ROLLBACK");
-            } catch {
-                // already rolled back
-            }
-            throw e;
-        }
+        });
     }
 
     private vtxosCreateSql(tableName: string): string {

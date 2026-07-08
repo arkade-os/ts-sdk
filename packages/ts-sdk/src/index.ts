@@ -72,6 +72,15 @@ import {
     IAssetManager,
     IReadonlyAssetManager,
 } from "./wallet";
+export {
+    ActivityRegistry,
+    boardingResolver,
+    createDefaultActivityRegistry,
+    type Activity,
+    type ActivityIntent,
+    type GroupMembership,
+    type ActivityResolver,
+} from "./wallet";
 import { Batch } from "./wallet/batch";
 import {
     Wallet,
@@ -196,7 +205,7 @@ import {
 import { Intent } from "./intent";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
-import { networks, Network, NetworkName } from "./networks";
+import { getNetwork, networks, Network, NetworkName } from "./networks";
 import {
     RestIndexerProvider,
     IndexerProvider,
@@ -227,6 +236,23 @@ import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletReposi
 import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
 import { InMemoryWalletRepository } from "./repositories/inMemory/walletRepository";
 import { InMemoryContractRepository } from "./repositories/inMemory/contractRepository";
+import { InMemoryIntentRepository } from "./repositories/inMemory/intentRepository";
+import { InMemoryVirtualTxRepository } from "./repositories/inMemory/virtualTxRepository";
+import { IndexedDBIntentRepository } from "./repositories/indexedDB/intentRepository";
+import { IndexedDBVirtualTxRepository } from "./repositories/indexedDB/virtualTxRepository";
+import { isTerminalIntentState, INTENT_TERMINAL_STATES } from "./repositories/intentRepository";
+import type {
+    IntentRepository,
+    ArkIntent,
+    ArkIntentState,
+    IntentFilter,
+} from "./repositories/intentRepository";
+import type {
+    VirtualTxRepository,
+    VirtualTx,
+    VtxoBranch,
+} from "./repositories/virtualTxRepository";
+import { ChainedTxType } from "./repositories/virtualTxRepository";
 import {
     MIGRATION_KEY,
     migrateWalletRepository,
@@ -305,7 +331,7 @@ import type {
 } from "./contracts/types";
 import type { ScanResult, ScanContractsOptions, HandlerError } from "./contracts/contractManager";
 import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
-import { buildVersion, sdkVersion } from "./utils/fetch";
+import { buildVersion, sdkVersion, FetchError } from "./utils/fetch";
 import { closeDatabase, openDatabase } from "./repositories/indexedDB/manager";
 import {
     WalletMessageHandler,
@@ -357,6 +383,7 @@ export {
     WsElectrumChainSource,
     RestArkProvider,
     DigestMismatchError,
+    FetchError,
     RestIndexerProvider,
 
     // Script-related
@@ -425,6 +452,7 @@ export {
     ArkNote,
 
     // Network
+    getNetwork,
     networks,
 
     // DB
@@ -436,6 +464,13 @@ export {
     IndexedDBContractRepository,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    InMemoryIntentRepository,
+    InMemoryVirtualTxRepository,
+    IndexedDBIntentRepository,
+    IndexedDBVirtualTxRepository,
+    isTerminalIntentState,
+    INTENT_TERMINAL_STATES,
+    ChainedTxType,
     MIGRATION_KEY,
     migrateWalletRepository,
     requiresMigration,
@@ -684,4 +719,11 @@ export type {
     WalletRepository,
     ContractRepository,
     MigrationStatus,
+    IntentRepository,
+    ArkIntent,
+    ArkIntentState,
+    IntentFilter,
+    VirtualTxRepository,
+    VirtualTx,
+    VtxoBranch,
 };

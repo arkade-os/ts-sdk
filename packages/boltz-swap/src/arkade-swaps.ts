@@ -20,6 +20,8 @@ import {
     ArkTxInput,
     Identity,
     VirtualCoin,
+    getNetwork,
+    type NetworkName,
 } from "@arkade-os/sdk";
 import type {
     Chain,
@@ -64,12 +66,13 @@ import {
     isRestoredChainSwap,
 } from "./boltz-swap-provider";
 import { sha256 } from "@noble/hashes/sha2.js";
+import { ripemd160 } from "@noble/hashes/legacy.js";
 import { hex } from "@scure/base";
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { randomBytes } from "@noble/hashes/utils.js";
 import { Address, OutScript, SigHash, Transaction } from "@scure/btc-signer";
-import { NETWORK } from "@scure/btc-signer/utils.js";
+import { equalBytes } from "@scure/btc-signer/utils.js";
 import { create as createMusig } from "./utils/musig";
 import {
     deserializeSwapTree,
@@ -77,8 +80,9 @@ import {
     detectSwapOutput,
     constructClaimTransaction,
     targetFee,
-    REGTEST_NETWORK,
-    MUTINYNET_NETWORK,
+    p2trScript,
+    toXOnly,
+    assertChainHtlcLeaves,
 } from "./utils/boltz-swap-tx";
 import { decodeInvoice, getInvoicePaymentHash } from "./utils/decoding";
 import { normalizeToXOnlyKey } from "./utils/signatures";
@@ -447,6 +451,7 @@ export class ArkadeSwaps {
         return {
             amount: pendingSwap.response.onchainAmount,
             expiry: decodedInvoice.expiry,
+            timestamp: decodedInvoice.timestamp,
             invoice: pendingSwap.response.invoice,
             paymentHash: decodedInvoice.paymentHash,
             pendingSwap,
@@ -1690,6 +1695,9 @@ export class ArkadeSwaps {
 
     /**
      * Claim sats on BTC chain by claiming the HTLC.
+     *
+     * The claim output is `swapOutput.amount − max(feeToDeliverExactAmount, targetFee)`.
+     *
      * @param pendingSwap - The pending chain swap with BTC transaction hex.
      * @returns The BTC transaction ID of the claim.
      */
@@ -1711,12 +1719,7 @@ export class ArkadeSwaps {
 
         const arkInfo = await this.arkProvider.getInfo();
 
-        const network =
-            arkInfo.network === "bitcoin"
-                ? NETWORK
-                : arkInfo.network === "mutinynet"
-                  ? MUTINYNET_NETWORK
-                  : REGTEST_NETWORK;
+        const network = getNetwork(arkInfo.network as NetworkName);
 
         const swapTree = deserializeSwapTree(pendingSwap.response.claimDetails.swapTree);
 
@@ -2428,7 +2431,69 @@ export class ArkadeSwaps {
             });
         }
 
+        this.verifyBtcChainHtlc({ to, swap, arkNetwork: arkInfo.network });
+
         return true;
+    }
+
+    /**
+     * Verifies the BTC-side Taproot HTLC of a chain swap before funds are
+     * committed: the lockup address must bind to MuSig2(boltz, user) over
+     * Boltz's leaves, and those leaves must enforce the agreed preimage hash,
+     * direction-specific keys, leaf version, and absolute refund CLTV.
+     */
+    private verifyBtcChainHtlc(args: {
+        to: Chain;
+        swap: BoltzChainSwap;
+        arkNetwork: string;
+    }): void {
+        const { to, swap, arkNetwork } = args;
+
+        // The BTC side is the details object opposite the verified ARK side.
+        const btcDetails = to === "ARK" ? swap.response.lockupDetails : swap.response.claimDetails;
+
+        if (!btcDetails.swapTree)
+            throw new SwapError({ message: `Swap ${swap.id}: missing swap tree in BTC details` });
+        if (!btcDetails.serverPublicKey)
+            throw new SwapError({
+                message: `Swap ${swap.id}: missing server public key in BTC details`,
+            });
+        if (typeof btcDetails.timeoutBlockHeight !== "number")
+            throw new SwapError({
+                message: `Swap ${swap.id}: missing timeout block height in BTC details`,
+            });
+
+        const network = getNetwork(arkNetwork as NetworkName);
+        const swapTree = deserializeSwapTree(btcDetails.swapTree);
+        const ephemeralPub = secp256k1.getPublicKey(hex.decode(swap.ephemeralKey));
+
+        // boltz first, no sorting — matches claimBtc and NArk ComputeAggregateKey.
+        const musig = tweakMusig(
+            createMusig(hex.decode(swap.ephemeralKey), [
+                hex.decode(btcDetails.serverPublicKey),
+                ephemeralPub,
+            ]),
+            swapTree.tree,
+        );
+
+        const expectedScript = OutScript.encode(Address(network).decode(btcDetails.lockupAddress));
+        if (!equalBytes(p2trScript(musig.aggPubkey), expectedScript))
+            throw new SwapError({ message: "Boltz is trying to scam us (invalid BTC address)" });
+
+        const boltzXOnly = toXOnly(hex.decode(btcDetails.serverPublicKey));
+        const userXOnly = toXOnly(ephemeralPub);
+        try {
+            assertChainHtlcLeaves(swapTree, {
+                preimageHash160: ripemd160(hex.decode(swap.request.preimageHash)),
+                claimXOnly: to === "ARK" ? boltzXOnly : userXOnly,
+                refundXOnly: to === "ARK" ? userXOnly : boltzXOnly,
+                timeoutBlockHeight: btcDetails.timeoutBlockHeight,
+            });
+        } catch (err) {
+            throw new SwapError({
+                message: `Boltz is trying to scam us (invalid BTC HTLC: ${(err as Error).message})`,
+            });
+        }
     }
 
     /**

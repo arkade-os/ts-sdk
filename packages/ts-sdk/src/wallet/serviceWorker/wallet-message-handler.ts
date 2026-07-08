@@ -1708,32 +1708,21 @@ export class WalletMessageHandler
         return filteredVtxos;
     }
 
+    /** Tear down handler subscriptions, then delegate the full wipe to the wallet. */
     private async clear() {
-        if (!this.readonlyWallet) return;
-        if (this.incomingFundsSubscription) this.incomingFundsSubscription();
+        const wallet = this.wallet ?? this.readonlyWallet;
+        if (!wallet) return;
+
+        if (this.incomingFundsSubscription) {
+            this.incomingFundsSubscription();
+            this.incomingFundsSubscription = undefined;
+        }
         if (this.contractEventsSubscription) {
             this.contractEventsSubscription();
             this.contractEventsSubscription = undefined;
         }
 
-        // Dispose the wallet to stop the ContractWatcher (and its polling
-        // intervals) before clearing the repositories, otherwise the poller
-        // will hit a closing IndexedDB connection.
-        try {
-            if (this.wallet) {
-                await this.wallet.dispose();
-            } else {
-                await this.readonlyWallet.dispose();
-            }
-        } catch (_) {
-            // best-effort teardown
-        }
-
-        try {
-            await this.walletRepository?.clear();
-        } catch (_) {
-            console.warn("Failed to clear vtxos from wallet repository");
-        }
+        await wallet.clear();
 
         this.wallet = undefined;
         this.readonlyWallet = undefined;
