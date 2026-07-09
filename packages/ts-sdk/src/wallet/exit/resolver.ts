@@ -1,10 +1,12 @@
-import { ChainTx } from "../../providers/indexer";
+import { ChainTx, IndexerProvider } from "../../providers/indexer";
 import {
     ChainedTxType,
     VirtualTx,
     VirtualTxRepository,
 } from "../../repositories/virtualTxRepository";
 import { Outpoint } from "../index";
+import { IndexerExitDataSource } from "./indexerSource";
+import { RepositoryExitDataSource } from "./repositorySource";
 
 /**
  * A source of unilateral-exit chain data for a set of VTXOs. Sources are tried
@@ -81,4 +83,21 @@ export class OrderedExitChainResolver implements ExitChainResolver {
         }
         return [...found.values()];
     }
+}
+
+/**
+ * Assemble the standard exit-data resolver: local repo (if configured) → any
+ * extra sources (e.g. a future provider) → indexer. Read-through persists to the
+ * repository. With no repository this is exactly the indexer path (a no-op seam).
+ */
+export function createExitChainResolver(params: {
+    indexer: IndexerProvider;
+    repository?: VirtualTxRepository;
+    extraSources?: ExitDataSource[];
+}): ExitChainResolver {
+    const sources: ExitDataSource[] = [];
+    if (params.repository) sources.push(new RepositoryExitDataSource(params.repository));
+    if (params.extraSources) sources.push(...params.extraSources);
+    sources.push(new IndexerExitDataSource(params.indexer));
+    return new OrderedExitChainResolver(sources, params.repository);
 }

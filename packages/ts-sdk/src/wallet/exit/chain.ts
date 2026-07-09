@@ -1,6 +1,6 @@
-import { DEFAULT_PAGE_SIZE } from "../../contracts/constants";
-import { ChainTx, ChainTxType, IndexerProvider } from "../../providers/indexer";
+import { ChainTx, ChainTxType } from "../../providers/indexer";
 import { OnchainProvider } from "../../providers/onchain";
+import { ExitChainResolver } from "./resolver";
 
 export type DagNode = {
     txid: string;
@@ -25,32 +25,22 @@ const isCommitment = (t: ChainTxType) =>
  */
 export async function buildExitDag(params: {
     vtxos: { txid: string; vout: number }[];
-    indexer: IndexerProvider;
+    chain: Pick<ExitChainResolver, "getVtxoChain">;
     onchain: OnchainProvider;
 }): Promise<DagNode[]> {
     const byTxid = new Map<string, ChainTx & { forVtxos: Set<string> }>();
 
     for (const vtxo of params.vtxos) {
         const outpoint = `${vtxo.txid}:${vtxo.vout}`;
-        // The chain endpoint is paginated; a deep chain can span pages, so walk
-        // them all — a short page (or absent page metadata) means end of history.
-        let pageIndex = 0;
-        let hasMore = true;
-        while (hasMore) {
-            const { chain, page } = await params.indexer.getVtxoChain(
-                { txid: vtxo.txid, vout: vtxo.vout },
-                { pageIndex, pageSize: DEFAULT_PAGE_SIZE },
-            );
-            for (const chainTx of chain) {
-                const existing = byTxid.get(chainTx.txid);
-                if (existing) {
-                    existing.forVtxos.add(outpoint);
-                } else {
-                    byTxid.set(chainTx.txid, { ...chainTx, forVtxos: new Set([outpoint]) });
-                }
+        // The resolver returns the full chain (all pages merged, local-first).
+        const chain = await params.chain.getVtxoChain({ txid: vtxo.txid, vout: vtxo.vout });
+        for (const chainTx of chain) {
+            const existing = byTxid.get(chainTx.txid);
+            if (existing) {
+                existing.forVtxos.add(outpoint);
+            } else {
+                byTxid.set(chainTx.txid, { ...chainTx, forVtxos: new Set([outpoint]) });
             }
-            hasMore = page ? chain.length === DEFAULT_PAGE_SIZE : false;
-            pageIndex++;
         }
     }
 

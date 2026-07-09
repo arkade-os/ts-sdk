@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { ExitDataSource, OrderedExitChainResolver } from "../src/wallet/exit/resolver";
+import {
+    createExitChainResolver,
+    ExitDataSource,
+    OrderedExitChainResolver,
+} from "../src/wallet/exit/resolver";
+import { InMemoryVirtualTxRepository } from "../src/repositories/inMemory/virtualTxRepository";
 import { ChainTx, ChainTxType } from "../src/providers/indexer";
 
 const chainTx = (txid: string): ChainTx => ({
@@ -64,5 +69,20 @@ describe("OrderedExitChainResolver", () => {
         };
         const r = new OrderedExitChainResolver([throwing]);
         await expect(r.getVtxoChain({ txid: "aa", vout: 0 })).rejects.toThrow(/indexer down/);
+    });
+
+    it("createExitChainResolver serves a pre-seeded repo without hitting the indexer", async () => {
+        const repo = new InMemoryVirtualTxRepository();
+        await repo.upsertVirtualTxs([{ txid: "z1", psbt: "P", expiresAt: null, type: 2 }]);
+        const indexer = {
+            getVirtualTxs: async () => {
+                throw new Error("indexer must not be called");
+            },
+            getVtxoChain: async () => {
+                throw new Error("indexer must not be called");
+            },
+        } as any;
+        const resolver = createExitChainResolver({ indexer, repository: repo });
+        expect(await resolver.getVirtualTxs(["z1"])).toEqual(["P"]);
     });
 });
