@@ -9,6 +9,31 @@ export class ArkError extends Error {
     }
 }
 
+/** Which remote dependency a {@link ProviderUnavailableError} refers to. */
+export type ProviderKind = "arkade" | "indexer";
+
+/**
+ * A remote provider (Arkade operator or its indexer) is temporarily
+ * unreachable. This is a *retryable* condition — transport failure, request
+ * timeout, or a 5xx/429-style temporary HTTP response — as opposed to a
+ * terminal configuration/authorization/schema error, which stays a plain
+ * `Error`/{@link ArkError}. The original low-level error is preserved as
+ * {@link Error.cause}.
+ */
+export class ProviderUnavailableError extends Error {
+    /** Always `true`: this error type only ever wraps retryable conditions. */
+    readonly retryable = true;
+
+    constructor(
+        readonly kind: ProviderKind,
+        message: string,
+        options?: { cause?: unknown },
+    ) {
+        super(message, { cause: options?.cause });
+        this.name = "ProviderUnavailableError";
+    }
+}
+
 /**
  * Try to convert an error to an ArkError class, returning undefined if the error is not an ArkError
  * @param error - The error to parse

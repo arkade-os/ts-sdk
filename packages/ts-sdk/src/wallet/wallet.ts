@@ -86,6 +86,11 @@ import {
 } from "./exit/capture";
 import { createExitChainResolver, ExitDataSource } from "./exit/resolver";
 import { ArkError } from "../providers/errors";
+import {
+    resolveArkInfo,
+    saveValidatedArkInfoSnapshot,
+    type ServerInfoSource,
+} from "./arkInfoSnapshot";
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
 import { DelegateProvider } from "../providers/delegate";
@@ -415,6 +420,19 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     protected _arkServerPublicKey: Bytes;
 
+    /**
+     * Whether this wallet was constructed from live operator server-info
+     * (`"live"`) or from a cached snapshot because the operator was unreachable
+     * (`"cache"`). Minimal internal freshness signal for offline-degradation
+     * diagnostics; the composed provider-connection state lands in Scope 5.
+     */
+    protected _serverInfoSource: ServerInfoSource = "live";
+
+    /** @see {@link _serverInfoSource} */
+    get serverInfoSource(): ServerInfoSource {
+        return this._serverInfoSource;
+    }
+
     protected constructor(
         readonly identity: ReadonlyIdentity,
         readonly network: Network,
@@ -616,7 +634,25 @@ export class ReadonlyWallet implements IReadonlyWallet {
             indexerProvider = new RestIndexerProvider(indexerUrl);
         }
 
-        const info = await arkProvider.getInfo();
+        // Instantiate the repositories BEFORE the first required server-info
+        // fetch so boot can read a cached snapshot and fall back to it when the
+        // operator is unreachable, instead of failing construction outright.
+        const walletRepository =
+            config.storage?.walletRepository ?? new IndexedDBWalletRepository();
+
+        const contractRepository =
+            config.storage?.contractRepository ?? new IndexedDBContractRepository();
+
+        // Live server-info wins; a retryable failure falls back to the cached
+        // snapshot (or throws a typed unavailable error when none exists), and
+        // terminal failures propagate unchanged. The cache is NOT written here:
+        // persistence is deferred to after construction validates the response
+        // (see saveValidatedArkInfoSnapshot in the create() paths) so a terminal
+        // live response can't poison the cache before construction fails.
+        const { info, source: serverInfoSource } = await resolveArkInfo(
+            arkProvider,
+            walletRepository,
+        );
 
         const network = getNetwork(info.network as NetworkName);
 
@@ -722,12 +758,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
             csvTimelock: timelockToSequence(boardingTimelock).toString(),
         });
 
-        const walletRepository =
-            config.storage?.walletRepository ?? new IndexedDBWalletRepository();
-
-        const contractRepository =
-            config.storage?.contractRepository ?? new IndexedDBContractRepository();
-
         return {
             arkProvider,
             indexerProvider,
@@ -741,6 +771,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             walletRepository,
             contractRepository,
             info,
+            serverInfoSource,
             delegateProvider: config.delegateProvider || config.delegatorProvider,
             /** @deprecated alias for `delegateProvider` */
             delegatorProvider: config.delegateProvider || config.delegatorProvider,
@@ -780,7 +811,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
         wallet.intentRepository = config.storage?.intentRepository;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
         wallet.exitDataCapture = config.storage?.exitDataCapture;
+        wallet._serverInfoSource = setup.serverInfoSource;
         wallet.refreshDeprecatedSigners(setup.info);
+        // Construction validated the live response (network, signer, address
+        // params); only now is it safe to refresh the cached snapshot.
+        if (setup.serverInfoSource === "live") {
+            await saveValidatedArkInfoSnapshot(setup.walletRepository, setup.info, Date.now());
+        }
         return wallet;
     }
 
@@ -2580,7 +2617,14 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             boot?.rotator,
             boot?.provider,
         );
+        wallet._serverInfoSource = setup.serverInfoSource;
         wallet.refreshDeprecatedSigners(setup.info);
+        // The response cleared construction validation — network/signer in
+        // setupWalletConfig plus the checkpoint/forfeit parsing above — so it is
+        // now safe to refresh the cached snapshot from live server-info.
+        if (setup.serverInfoSource === "live") {
+            await saveValidatedArkInfoSnapshot(setup.walletRepository, setup.info, Date.now());
+        }
         // Mid-session signer-rotation detection: when the arkProvider detects a
         // stale-info DIGEST_MISMATCH and refetches info, re-derive the wallet's
         // signer-dependent state. Duck-typed: only RestArkProvider implements it.

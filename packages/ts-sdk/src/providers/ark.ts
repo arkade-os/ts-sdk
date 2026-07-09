@@ -3,7 +3,7 @@ import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
 import { Vtxo } from "./indexer";
 import { eventSourceIterator, isEventSourceError } from "./utils";
-import { maybeArkError } from "./errors";
+import { maybeArkError, ProviderUnavailableError } from "./errors";
 import type { IntentFeeConfig } from "../arkfee";
 import { Intent } from "../intent";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
@@ -370,6 +370,17 @@ export class RestArkProvider implements ArkProvider {
         const url = `${this.serverUrl}/v1/info`;
         const response = await fetch(url);
         if (!response.ok) {
+            // A 429 or 5xx means the operator is up but temporarily unable to
+            // serve — a retryable availability failure, not a config/auth error.
+            // Surface it as a typed unavailable error so wallet boot can fall
+            // back to a cached server-info snapshot. `fetch` transport failures
+            // (server unreachable) are already surfaced as FetchError upstream.
+            if (response.status === 429 || response.status >= 500) {
+                throw new ProviderUnavailableError(
+                    "arkade",
+                    `Arkade server info unavailable: ${response.status} ${response.statusText}`,
+                );
+            }
             const errorText = await response.text();
             handleError(errorText, `Failed to get server info: ${response.statusText}`);
         }
