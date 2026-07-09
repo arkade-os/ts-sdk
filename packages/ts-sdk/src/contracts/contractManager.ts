@@ -1207,44 +1207,51 @@ export class ContractManager implements IContractManager {
         if (now - this.lastReconcileAt < RECONCILE_MIN_INTERVAL_MS) return;
         this.lastReconcileAt = now;
 
-        const owned: { contract: Contract; unspent: ExtendedVirtualCoin[] }[] = [];
-        const toCheck: ExtendedVirtualCoin[] = [];
-        for (const contract of contracts) {
-            const stored = await getVtxosForContract(this.config.walletRepository, contract);
-            const unspent = stored.filter((v) => !v.isSpent);
-            if (unspent.length > 0) {
-                owned.push({ contract, unspent });
-                toCheck.push(...unspent);
-            }
-        }
-        if (toCheck.length === 0) return;
-
-        let present: Set<string>;
         try {
-            present = await this.fetchPresentOutpoints(toCheck);
-        } catch {
-            return;
-        }
+            const owned: { contract: Contract; unspent: ExtendedVirtualCoin[] }[] = [];
+            const toCheck: ExtendedVirtualCoin[] = [];
+            for (const contract of contracts) {
+                const stored = await getVtxosForContract(this.config.walletRepository, contract);
+                const unspent: ExtendedVirtualCoin[] = [];
+                for (const v of stored) {
+                    if (v.isSpent) {
+                        // Now-spent coin left the unspent set; drop any stale absence counter.
+                        this.vanishMissCounts.delete(vtxoOutpoint(v));
+                    } else {
+                        unspent.push(v);
+                    }
+                }
+                if (unspent.length > 0) {
+                    owned.push({ contract, unspent });
+                    toCheck.push(...unspent);
+                }
+            }
+            if (toCheck.length === 0) return;
 
-        for (const { contract, unspent } of owned) {
-            const vanished: ExtendedVirtualCoin[] = [];
-            for (const v of unspent) {
-                const key = vtxoOutpoint(v);
-                if (present.has(key)) {
-                    this.vanishMissCounts.delete(key);
-                    continue;
+            const present = await this.fetchPresentOutpoints(toCheck);
+
+            for (const { contract, unspent } of owned) {
+                const vanished: ExtendedVirtualCoin[] = [];
+                for (const v of unspent) {
+                    const key = vtxoOutpoint(v);
+                    if (present.has(key)) {
+                        this.vanishMissCounts.delete(key);
+                        continue;
+                    }
+                    const misses = (this.vanishMissCounts.get(key) ?? 0) + 1;
+                    if (misses >= RECONCILE_ABSENCE_THRESHOLD) {
+                        this.vanishMissCounts.delete(key);
+                        vanished.push(v);
+                    } else {
+                        this.vanishMissCounts.set(key, misses);
+                    }
                 }
-                const misses = (this.vanishMissCounts.get(key) ?? 0) + 1;
-                if (misses >= RECONCILE_ABSENCE_THRESHOLD) {
-                    this.vanishMissCounts.delete(key);
-                    vanished.push(v);
-                } else {
-                    this.vanishMissCounts.set(key, misses);
+                if (vanished.length > 0) {
+                    await deleteVtxosForContract(this.config.walletRepository, contract, vanished);
                 }
             }
-            if (vanished.length > 0) {
-                await deleteVtxosForContract(this.config.walletRepository, contract, vanished);
-            }
+        } catch (error) {
+            console.error("reconcileVanishedVtxos: vanished-vtxo reconciliation failed:", error);
         }
     }
 
