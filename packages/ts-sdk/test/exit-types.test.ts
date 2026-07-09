@@ -71,4 +71,9 @@ describe("exit package codec", () => {
         };
         expect(() => deserializeExitPackage(JSON.stringify(bad))).toThrow(/invalid step/i);
     });
+
+    it("rejects malformed totals", () => {
+        const bad = { ...validPkg, totals: { txCount: 4 } };
+        expect(() => deserializeExitPackage(JSON.stringify(bad))).toThrow(/malformed totals/i);
+    });
 });

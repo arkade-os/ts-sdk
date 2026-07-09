@@ -125,6 +125,9 @@ export function deserializeExitPackage(json: string): ExitPackage {
     if (!Array.isArray(data.steps) || !Array.isArray(data.vtxos)) {
         throw new Error("invalid exit package: steps and vtxos must be arrays");
     }
+    if (!isValidTotals(data.totals)) {
+        throw new Error("invalid exit package: malformed totals");
+    }
     for (const step of data.steps) {
         if (!isValidStep(step)) {
             throw new Error(`invalid step: ${JSON.stringify(step)}`);
@@ -139,6 +142,18 @@ function isValidDelay(d: unknown): d is ExitDelay {
         !!delay &&
         (delay.type === "blocks" || delay.type === "seconds") &&
         typeof delay.value === "number"
+    );
+}
+
+function isValidTotals(t: unknown): t is ExitTotals {
+    const totals = t as ExitTotals;
+    return (
+        !!totals &&
+        typeof totals === "object" &&
+        typeof totals.txCount === "number" &&
+        typeof totals.totalFeeSats === "number" &&
+        typeof totals.fundingRequiredSats === "number" &&
+        typeof totals.recoveredSats === "number"
     );
 }
 

@@ -71,11 +71,13 @@ export async function prepare(opts: ExitOptions): Promise<ExitPackage> {
                 delay: sweep.delay,
             });
         } catch (e) {
-            const info = layout.infos.find((i) => i.outpoint === outpoint)!;
-            info.skipped = e instanceof Error ? e.message : String(e);
-            delete info.sweepFee;
-            delete info.path;
-            delete info.delay;
+            const info = layout.infos.find((i) => i.outpoint === outpoint);
+            if (info) {
+                info.skipped = e instanceof Error ? e.message : String(e);
+                delete info.sweepFee;
+                delete info.path;
+                delete info.delay;
+            }
         }
     }
 
@@ -165,6 +167,16 @@ export async function prepare(opts: ExitOptions): Promise<ExitPackage> {
         }
         const inputSum = selected.inputs.reduce((s, c) => s + c.value, 0);
         const change = BigInt(inputSum - fundingTotal - splitterFee);
+        if (change < 0n) {
+            // The fee loop hit its iteration cap without converging: the coins
+            // selected for the previous (smaller) fee no longer cover the final
+            // fee. Refuse to broadcast an underfunded splitter.
+            throw new Error(
+                `insufficient confirmed onchain funds for the splitter fee: need ` +
+                    `${fundingTotal + splitterFee} sats, have ${inputSum} ` +
+                    `(deposit the shortfall to ${onchainWallet.address})`,
+            );
+        }
         if (change >= BigInt(DUST_AMOUNT)) {
             splitter.addOutputAddress(onchainWallet.address, change, wallet.network);
         } else if (change > 0n) {
