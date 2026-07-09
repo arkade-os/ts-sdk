@@ -251,8 +251,8 @@ export type StorageConfig = {
     virtualTxRepository?: VirtualTxRepository;
     /**
      * Optional exit-data capture settings (only in effect when
-     * `virtualTxRepository` is set). `mode` "full" (default) stores PSBTs so a
-     * unilateral exit needs no Ark indexer; "lite" stores structure only.
+     * `virtualTxRepository` is set). `mode` "lite" (default) stores structure
+     * only; "full" stores PSBTs so a unilateral exit needs no Ark indexer.
      * `minExitWorthSats` (default 1000) skips dust. `sources` are extra
      * `ExitDataSource`s (e.g. a wallet-provider) tried before the indexer for
      * both capture and exit reads.

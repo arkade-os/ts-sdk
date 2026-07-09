@@ -16,6 +16,10 @@ export type ExitCaptureMode = "lite" | "full";
 /** BTC-value floor for capture; below it, exit fees would exceed the VTXO (NArk parity). */
 export const DEFAULT_MIN_EXIT_WORTH_SATS = 1000;
 
+/** Default capture mode: Lite (structure only). Full (store PSBTs) is opt-in for
+ *  wallets that want indexer-independent exit — most VTXOs never exit (NArk parity). */
+export const DEFAULT_EXIT_CAPTURE_MODE: ExitCaptureMode = "lite";
+
 /** ChainTxType (indexer string enum) → ChainedTxType (repo numeric enum).
  *  Duplicated from unroll.ts:27 to keep the exit path free of a cross-module dep. */
 function chainTxTypeToChainedExit(t: ChainTxType): ChainedTxType {

@@ -79,6 +79,7 @@ import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
 import { extendCoinWithTapscript, validateRecipients } from "./utils";
 import {
     captureExitBranch,
+    DEFAULT_EXIT_CAPTURE_MODE,
     DEFAULT_MIN_EXIT_WORTH_SATS,
     ExitCaptureMode,
     pruneExitBranches,
@@ -1551,7 +1552,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                         repository: virtualTxRepository,
                         vtxo: { txid: v.txid, vout: v.vout },
                         value: v.value,
-                        mode: capture?.mode ?? "full",
+                        mode: capture?.mode ?? DEFAULT_EXIT_CAPTURE_MODE,
                         minExitWorthSats: capture?.minExitWorthSats ?? DEFAULT_MIN_EXIT_WORTH_SATS,
                     }).catch(() => {
                         // capture is best-effort

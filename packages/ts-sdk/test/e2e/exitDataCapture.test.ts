@@ -11,7 +11,10 @@ describe("exit-data capture (e2e)", () => {
         { timeout: 180_000 },
         async () => {
             const repo = new InMemoryVirtualTxRepository();
-            const alice = await createTestArkWallet({ virtualTxRepository: repo });
+            const alice = await createTestArkWallet({
+                virtualTxRepository: repo,
+                exitDataCapture: { mode: "full" },
+            });
             const address = await alice.wallet.getAddress();
 
             // A settled VTXO, then an off-chain self-send so the surviving VTXO has
