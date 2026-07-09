@@ -85,4 +85,39 @@ describe("OrderedExitChainResolver", () => {
         const resolver = createExitChainResolver({ indexer, repository: repo });
         expect(await resolver.getVirtualTxs(["z1"])).toEqual(["P"]);
     });
+
+    it("createExitChainResolver orders sources repo -> extraSources -> indexer", async () => {
+        const repo = new InMemoryVirtualTxRepository();
+        await repo.upsertVirtualTxs([{ txid: "r1", psbt: "R", expiresAt: null, type: 2 }]);
+        const calls: string[] = [];
+        const extra: ExitDataSource = {
+            name: "provider",
+            getVtxoChain: async () => {
+                calls.push("extra");
+                return null;
+            },
+            getVirtualTxs: async () => {
+                calls.push("extra");
+                return new Map();
+            },
+        };
+        const indexer = {
+            getVtxoChain: async () => ({ chain: [] }),
+            getVirtualTxs: async () => {
+                calls.push("indexer");
+                return { txs: [] };
+            },
+        } as any;
+        const resolver = createExitChainResolver({
+            indexer,
+            repository: repo,
+            extraSources: [extra],
+        });
+        // repo answers first — extra + indexer are not consulted
+        expect(await resolver.getVirtualTxs(["r1"])).toEqual(["R"]);
+        expect(calls).toEqual([]);
+        // a miss falls through repo -> extra -> indexer, in that order
+        await resolver.getVirtualTxs(["miss"]);
+        expect(calls).toEqual(["extra", "indexer"]);
+    });
 });

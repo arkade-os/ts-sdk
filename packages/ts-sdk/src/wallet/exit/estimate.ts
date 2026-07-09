@@ -145,6 +145,7 @@ export async function computeExitLayout(opts: ExitOptions, feeRate: number): Pro
     const resolver = createExitChainResolver({
         indexer: wallet.indexerProvider,
         repository: wallet.virtualTxRepository,
+        extraSources: wallet.exitDataCapture?.sources,
     });
     const dag = await buildExitDag({
         vtxos,

@@ -1253,6 +1253,13 @@ export class ContractManager implements IContractManager {
                 contract,
                 filtered as ExtendedVirtualCoin[],
             );
+            if (this.config.onVtxosPersisted) {
+                try {
+                    await this.config.onVtxosPersisted(contract, filtered as ExtendedVirtualCoin[]);
+                } catch {
+                    // capture is best-effort; never block reconciliation
+                }
+            }
         }
     }
 

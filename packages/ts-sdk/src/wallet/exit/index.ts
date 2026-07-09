@@ -8,6 +8,9 @@ export { ExitPathError, resolveUnilateralPath } from "./path";
 export type { ResolvedExitPath } from "./path";
 export type { ExecutorEvent, ExitFeeWallet } from "./executor";
 export type { ExitOptions } from "./estimate";
+export type { ExitCaptureMode } from "./capture";
+export type { ExitChainResolver, ExitDataSource } from "./resolver";
+export { createExitChainResolver } from "./resolver";
 
 /**
  * Pre-signed unilateral exit.
