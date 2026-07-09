@@ -8,7 +8,7 @@ import { Transaction } from "../../utils/transaction";
 import { TxWeightEstimator } from "../../utils/txSizeEstimator";
 import { OnchainWallet } from "../onchain";
 import type { Wallet } from "../wallet";
-import { buildExitDag, DagNode } from "./chain";
+import { buildExitDag, DagNode, topoSortByDeps } from "./chain";
 import { finalizeVirtualTx } from "./finalizeVirtualTx";
 import { ExitPathError, ResolvedExitPath, resolveUnilateralPath } from "./path";
 import { sweepFeeFor } from "./sweep";
@@ -164,7 +164,7 @@ export async function computeExitLayout(opts: ExitOptions, feeRate: number): Pro
             .vsize().value,
     );
 
-    const steps: ExitStepPlan[] = pendingNodes.map((node) => {
+    const rawSteps: ExitStepPlan[] = pendingNodes.map((node) => {
         const psbt = psbts.get(node.txid);
         if (!psbt) {
             throw new Error(`indexer did not return virtual tx ${node.txid}`);
@@ -173,6 +173,24 @@ export async function computeExitLayout(opts: ExitOptions, feeRate: number): Pro
         const stepFee = Math.ceil(feeRate * (parent.vsize + childVsize));
         return { node, parent, stepFee, funding: stepFundingAmount(stepFee) };
     });
+    // Re-sort by the finalized txs' real inputs. buildExitDag orders by the
+    // indexer's logical vtxo chain; for offchain send chains the physical
+    // inputs diverge (an ARK tx spends a checkpoint output, not its logical
+    // parent), and the sequential executor deadlocks unless a step's inputs
+    // are already onchain when it is reached.
+    const parentInputTxids = (tx: Transaction): string[] => {
+        const ids: string[] = [];
+        for (let i = 0; i < tx.inputsLength; i++) {
+            const txid = tx.getInput(i).txid;
+            if (txid) ids.push(hex.encode(txid));
+        }
+        return ids;
+    };
+    const steps = topoSortByDeps(
+        rawSteps,
+        (s) => s.parent.id,
+        (s) => parentInputTxids(s.parent),
+    );
 
     // Per-VTXO sweep resolution.
     const walletPubKeyHex = hex.encode((await wallet.identity.xOnlyPublicKey())!);

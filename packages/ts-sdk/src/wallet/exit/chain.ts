@@ -97,3 +97,45 @@ export async function buildExitDag(params: {
     }
     return nodes;
 }
+
+/**
+ * Order `items` so every dependency precedes its dependents. `depsOf` returns
+ * the ids an item depends on; ids not produced by any item are treated as
+ * already-satisfied roots (e.g. an already-onchain ancestor). Independent items
+ * keep their incoming order, so output is deterministic. Throws on a cycle or an
+ * unsatisfiable dependency.
+ *
+ * `buildExitDag` sorts by the indexer's *logical* vtxo chain, but the finalized
+ * unroll txs' *physical* inputs can diverge (checkpoint spends), and the keyless
+ * executor broadcasts those physical txs strictly in array order without
+ * skipping ahead — so the steps must be re-sorted by their real inputs or a deep
+ * chain deadlocks on the first step whose input is not yet onchain.
+ */
+export function topoSortByDeps<T>(
+    items: T[],
+    idOf: (t: T) => string,
+    depsOf: (t: T) => string[],
+): T[] {
+    const produced = new Set(items.map(idOf));
+    const emitted = new Set<string>();
+    const ordered: T[] = [];
+    let remaining = items;
+    while (remaining.length > 0) {
+        const next: T[] = [];
+        let progress = false;
+        for (const item of remaining) {
+            if (depsOf(item).every((d) => !produced.has(d) || emitted.has(d))) {
+                ordered.push(item);
+                emitted.add(idOf(item));
+                progress = true;
+            } else {
+                next.push(item);
+            }
+        }
+        if (!progress) {
+            throw new Error("topological sort: cycle or unsatisfiable dependency");
+        }
+        remaining = next;
+    }
+    return ordered;
+}
