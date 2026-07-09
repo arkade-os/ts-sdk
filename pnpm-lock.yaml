@@ -86,8 +86,8 @@ importers:
         specifier: 3.1.7
         version: 3.1.7
       '@marcbachmann/cel-js':
-        specifier: 7.3.1
-        version: 7.3.1
+        specifier: 8.0.0
+        version: 8.0.0
       '@noble/curves':
         specifier: 2.0.1
         version: 2.0.1
@@ -1182,8 +1182,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@marcbachmann/cel-js@7.3.1':
-    resolution: {integrity: sha512-P6o26TvjStT8V8+8EF+yq9Pp7ZFV00bpiUMbssr76XbIZGxaB+NNWeBp6WNxOrR9gp0JPzvJueCKHpOs5LE9PQ==}
+  '@marcbachmann/cel-js@8.0.0':
+    resolution: {integrity: sha512-oaTrAziGr3zDLFiMt/yLU3nZuRMawyWQB5X1a0I7s9eGy3JYzX9l8ZXXHyMd64nzbeVFZTewuUShwsZQdK6UCA==}
     engines: {node: '>=20.19.0'}
     hasBin: true
 
@@ -5118,7 +5118,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@marcbachmann/cel-js@7.3.1': {}
+  '@marcbachmann/cel-js@8.0.0': {}
 
   '@noble/curves@2.0.1':
     dependencies:

@@ -105,6 +105,54 @@ export const ArkContractSchema = {
     },
 } as const;
 
+export const ArkIntentSchema = {
+    name: "ArkIntent",
+    primaryKey: "intentTxId",
+    properties: {
+        intentTxId: "string",
+        intentId: "string?",
+        state: { type: "string", indexed: true },
+        validFrom: "int?",
+        validUntil: "int?",
+        createdAt: "int",
+        updatedAt: "int",
+        registerProof: "string",
+        registerProofMessage: "string",
+        deleteProof: "string",
+        deleteProofMessage: "string",
+        batchId: "string?",
+        commitmentTransactionId: "string?",
+        cancellationReason: "string?",
+        partialForfeitsJson: "string",
+        signerDescriptor: "string?",
+        intentVtxosJson: "string",
+    },
+} as const;
+
+export const ArkVirtualTxSchema = {
+    name: "ArkVirtualTx",
+    primaryKey: "txid",
+    properties: {
+        txid: "string",
+        psbt: "string?",
+        expiresAt: "int?",
+        type: "int",
+    },
+} as const;
+
+export const ArkVtxoBranchSchema = {
+    name: "ArkVtxoBranch",
+    primaryKey: "pk",
+    properties: {
+        pk: "string", // `${vtxoTxid}:${vtxoVout}:${position}`
+        vtxoKey: { type: "string", indexed: true }, // `${vtxoTxid}:${vtxoVout}`
+        vtxoTxid: "string",
+        vtxoVout: "int",
+        virtualTxid: { type: "string", indexed: true },
+        position: "int",
+    },
+} as const;
+
 /**
  * All Realm schemas needed by the Arkade wallet repositories.
  * Pass this array to your Realm configuration's `schema` property.
@@ -115,6 +163,25 @@ export const ArkRealmSchemas = [
     ArkTransactionSchema,
     ArkWalletStateSchema,
     ArkContractSchema,
+];
+
+/**
+ * @experimental Schemas for the inert intent/virtualtx persistence layer.
+ *
+ * Deliberately kept OUT of {@link ArkRealmSchemas} and {@link
+ * ARK_REALM_SCHEMA_VERSION} so upgrading the SDK never migrates an existing
+ * consumer's Realm. A consumer opting in must register these schemas and bump
+ * their own `schemaVersion` themselves:
+ *
+ * ```ts
+ * schema: [...ArkRealmSchemas, ...ArkExperimentalRealmSchemas],
+ * schemaVersion: Math.max(ARK_REALM_SCHEMA_VERSION + 1, yourSchemaVersion),
+ * ```
+ */
+export const ArkExperimentalRealmSchemas = [
+    ArkIntentSchema,
+    ArkVirtualTxSchema,
+    ArkVtxoBranchSchema,
 ];
 
 /**
@@ -138,6 +205,13 @@ export const ArkRealmSchemas = [
  *   - v1: initial ArkVtxo/ArkUtxo/... schemas, `script` nullable.
  *   - v2: ArkVtxo.script becomes required; NULL values are backfilled from
  *     the owning Ark address during migration.
+ *
+ * The intent/virtualtx schemas ({@link ArkExperimentalRealmSchemas}) are NOT
+ * counted here: they are experimental and inert, so the advertised version
+ * stays at v2 and upgrading the SDK never triggers a Realm migration for a
+ * consumer using the default {@link ArkRealmSchemas} set. `runArkRealmMigrations`
+ * still carries the intent-schema migration steps (guarded per-schema) for
+ * consumers who opt in and bump their own version.
  */
 export const ARK_REALM_SCHEMA_VERSION = 2;
 
@@ -151,12 +225,30 @@ export const ARK_REALM_SCHEMA_VERSION = 2;
  * Arkade v1→v2 script backfill when the row has never been populated.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function runArkRealmMigrations(_oldRealm: any, newRealm: any): void {
+export function runArkRealmMigrations(oldRealm: any, newRealm: any): void {
     const newVtxos = newRealm.objects("ArkVtxo");
     for (let i = 0; i < newVtxos.length; i++) {
         const newVtxo = newVtxos[i];
         if (!newVtxo.script) {
             newVtxo.script = scriptFromArkAddress(newVtxo.address);
+        }
+    }
+
+    // v3 → v4: ArkVirtualTx.hex was renamed to psbt (both hold the same
+    // serialized tx payload). A rename is drop-old + add-new, so the value
+    // would be lost unless we copy it across. Guard on the old schema actually
+    // defining ArkVirtualTx — a v1/v2 realm never had it, and reading objects
+    // of an unknown type throws.
+    const oldHasVirtualTx =
+        Array.isArray(oldRealm?.schema) &&
+        oldRealm.schema.some((s: { name: string }) => s.name === "ArkVirtualTx");
+    if (oldHasVirtualTx) {
+        const oldTxs = oldRealm.objects("ArkVirtualTx");
+        const newTxs = newRealm.objects("ArkVirtualTx");
+        for (let i = 0; i < newTxs.length; i++) {
+            if (newTxs[i].psbt == null && oldTxs[i].hex != null) {
+                newTxs[i].psbt = oldTxs[i].hex;
+            }
         }
     }
 }

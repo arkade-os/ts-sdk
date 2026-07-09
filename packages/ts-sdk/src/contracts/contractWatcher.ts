@@ -607,11 +607,11 @@ export class ContractWatcher {
         } catch (error) {
             // If we sent a stale subscription ID that the server no longer
             // recognises, clear it and retry to create a fresh subscription.
-            // The server currently returns HTTP 500 with a JSON body whose
-            // message field looks like "subscription <uuid> not found".
+            // Match both server phrasings: "subscription <uuid> not found" and
+            // "subscription not found: <uuid>".
             // All other errors (network failures, parse errors, etc.) are rethrown.
             const isStale =
-                error instanceof Error && /subscription\s+\S+\s+not\s+found/i.test(error.message);
+                error instanceof Error && /subscription\b.*\bnot\s+found/i.test(error.message);
             if (this.subscriptionId && isStale) {
                 this.subscriptionId = undefined;
                 this.subscriptionId =

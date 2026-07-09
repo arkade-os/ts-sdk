@@ -451,6 +451,7 @@ export class ArkadeSwaps {
         return {
             amount: pendingSwap.response.onchainAmount,
             expiry: decodedInvoice.expiry,
+            timestamp: decodedInvoice.timestamp,
             invoice: pendingSwap.response.invoice,
             paymentHash: decodedInvoice.paymentHash,
             pendingSwap,

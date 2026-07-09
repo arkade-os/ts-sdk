@@ -1,6 +1,6 @@
 {
     "name": "@arkade-os/sdk",
-    "version": "0.4.41",
+    "version": "0.4.43",
     "description": "TypeScript SDK for building Bitcoin wallets using the Arkade protocol",
     "type": "module",
     "main": "./dist/index.cjs",
@@ -163,7 +163,7 @@
     },
     "dependencies": {
         "@bitcoinerlab/descriptors-scure": "3.1.7",
-        "@marcbachmann/cel-js": "7.3.1",
+        "@marcbachmann/cel-js": "8.0.0",
         "@noble/curves": "2.0.1",
         "@noble/secp256k1": "3.0.0",
         "@scure/base": "2.0.0",

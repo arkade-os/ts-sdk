@@ -155,12 +155,16 @@ function createMigrationMockWallet(opts: MigrationMockOptions) {
         (opts.boardingGroups ?? []).filter((g) => allowed.has(g.serverPubKey)),
     );
     const getInfo = vi.fn().mockResolvedValue(opts.info);
+    // The migration pass refreshes the wallet's deprecated-signer cache from the
+    // fresh info snapshot (the real Wallet inherits this from ReadonlyWallet).
+    const refreshDeprecatedSigners = vi.fn();
 
     const wallet = {
         get arkServerPublicKey() {
             return arkServerPublicKey;
         },
         arkProvider: { getInfo },
+        refreshDeprecatedSigners,
         rotateServerSigner,
         getContractManager: vi.fn().mockResolvedValue({
             getContractsWithVtxos,
@@ -191,6 +195,7 @@ function createMigrationMockWallet(opts: MigrationMockOptions) {
         getContractsWithVtxos,
         getBoardingUtxosForSigners,
         getInfo,
+        refreshDeprecatedSigners,
     };
 }
 
@@ -426,6 +431,61 @@ describe("VtxoManager - deprecated-signer migration", () => {
         expect(byKey.get(DEP_A)?.vtxoCount).toBe(2);
         expect(byKey.get(DEP_A)?.totalValue).toBe(5000);
         expect(byKey.get(DEP_EXPIRED)?.status).toBe("EXPIRED");
+    });
+
+    it("refreshes the wallet's deprecated-signer cache from the fresh info snapshot", async () => {
+        // Bug #589: a consumer running its own renewal loop needs a migrate pass
+        // to also update the wallet's deprecated-signer filter, so a subsequent
+        // settle() excludes EXPIRED deprecated-signer inputs instead of jamming.
+        // migrateCore proves this by pushing the fresh info into
+        // refreshDeprecatedSigners (which drives that filter) before classifying.
+        const info = makeInfo(ACTIVE, [
+            { pubkey: DEP_DUE },
+            { pubkey: DEP_EXPIRED, cutoffDate: BigInt(NOW_S - 100) },
+        ]);
+        const { wallet, refreshDeprecatedSigners, sendSelectedVtxosToSelf } =
+            createMigrationMockWallet({
+                info,
+                contractsWithVtxos: [
+                    cwv(DEP_DUE, [makeVtxo("default-" + DEP_DUE, 5000)]),
+                    cwv(DEP_EXPIRED, [makeVtxo("default-" + DEP_EXPIRED, 9000)]),
+                ],
+            });
+        const manager = newManager(wallet);
+
+        await manager.migrateDeprecatedSignerVtxos();
+
+        // Refreshed exactly once, from the SAME fresh snapshot the pass fetched…
+        expect(refreshDeprecatedSigners).toHaveBeenCalledTimes(1);
+        expect(refreshDeprecatedSigners.mock.calls[0][0]).toBe(info);
+        // …which carries the now-EXPIRED signer that the settle() filter excludes.
+        const refreshed = refreshDeprecatedSigners.mock.calls[0][0] as ArkInfo;
+        expect(refreshed.deprecatedSigners.map((s) => s.pubkey)).toContain(DEP_EXPIRED);
+        // The refresh lands before the migration leg builds inputs, so the whole
+        // pass sees a consistent cache.
+        expect(refreshDeprecatedSigners.mock.invocationCallOrder[0]).toBeLessThan(
+            sendSelectedVtxosToSelf.mock.invocationCallOrder[0],
+        );
+    });
+
+    it("refreshes (and empties) the cache even on the cheap no-deprecated early-exit", async () => {
+        // The refresh sits before the nothing-deprecated early-exit, so a pass
+        // that finds nothing deprecated still clears any stale cached signers
+        // rather than leaving the settle() filter out of date.
+        const info = makeInfo(ACTIVE, []);
+        const { wallet, refreshDeprecatedSigners, getContractsWithVtxos } =
+            createMigrationMockWallet({ info, contractsWithVtxos: [] });
+        const manager = newManager(wallet);
+
+        const report = await manager.migrateDeprecatedSignerVtxos();
+
+        // Cheap exit still taken — no indexer sweep, nothing to migrate…
+        expect(getContractsWithVtxos).not.toHaveBeenCalled();
+        expect(report.signers).toHaveLength(0);
+        // …but the cache was refreshed from fresh (now empty) info.
+        expect(refreshDeprecatedSigners).toHaveBeenCalledWith(info);
+        const refreshed = refreshDeprecatedSigners.mock.calls[0][0] as ArkInfo;
+        expect(refreshed.deprecatedSigners).toHaveLength(0);
     });
 });
 
@@ -754,6 +814,7 @@ function createPollableWallet() {
     const wallet = {
         arkServerPublicKey: hex.decode(ACTIVE),
         arkProvider: { getInfo },
+        refreshDeprecatedSigners: vi.fn(),
         rotateServerSigner: vi.fn().mockResolvedValue(undefined),
         getVtxos: vi.fn().mockResolvedValue([]),
         getAddress: vi.fn().mockResolvedValue(ARK_ADDRESS),
@@ -871,6 +932,7 @@ function createRecoveryMockWallet(opts: RecoveryMockOptions) {
             return arkServerPublicKey;
         },
         arkProvider: { getInfo: vi.fn().mockResolvedValue(opts.info) },
+        refreshDeprecatedSigners: vi.fn(),
         rotateServerSigner,
         getVtxos,
         getAddress,

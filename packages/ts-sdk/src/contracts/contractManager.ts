@@ -18,7 +18,8 @@ import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
 import { ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
 import { extendVirtualCoinForContract, type ContractTapscriptCache } from "../wallet/utils";
-import { ContractFilter, ContractRepository } from "../repositories";
+import { ContractFilter, ContractRepository, IntentRepository } from "../repositories";
+import { reconcileIntents } from "../wallet/intentReconciliation";
 import {
     advanceSyncCursor,
     computeSyncWindow,
@@ -343,6 +344,14 @@ export interface ContractManagerConfig {
     /** The wallet repository for virtual output storage (single source of truth) */
     walletRepository: WalletRepository;
 
+    /**
+     * Optional intent store. When present, the online sync path reconciles
+     * persisted non-terminal settlement intents against authoritative indexer
+     * state (crash recovery) on boot and reconnect — see
+     * {@link reconcileIntents}. Absent ⇒ no-op.
+     */
+    intentRepository?: IntentRepository;
+
     /** Watcher configuration */
     watcherConfig?: Partial<ContractWatcherConfig>;
 }
@@ -479,6 +488,27 @@ export class ContractManager implements IContractManager {
         const watched = this.watcher.getWatchedContracts();
         if (watched.length > 0) {
             await this.reconcilePendingFrontier(watched);
+        }
+        await this.reconcileStaleIntents();
+    }
+
+    /**
+     * Crash-recovery for persisted settlement intents: reconcile any
+     * non-terminal intent left behind by a mid-settle crash against
+     * authoritative indexer state (see {@link reconcileIntents}). Runs on the
+     * online sync path only — boot and subscription reconnect — never from a
+     * wallet read API. Best-effort: intent recovery is not a sync invariant, so
+     * a failure is logged and sync continues. No-op without an intent store.
+     */
+    private async reconcileStaleIntents(): Promise<void> {
+        if (!this.config.intentRepository) return;
+        try {
+            await reconcileIntents({
+                intentRepository: this.config.intentRepository,
+                indexerProvider: this.config.indexerProvider,
+            });
+        } catch (e) {
+            console.error("ContractManager: intent reconciliation failed", e);
         }
     }
 

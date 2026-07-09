@@ -6,6 +6,7 @@ import type { SQLExecutor } from "../src/repositories/sqlite/types";
 import type { ExtendedVirtualCoin, ExtendedCoin, ArkTransaction, TxType } from "../src/wallet";
 import type { TapLeafScript } from "../src/script/base";
 import type { WalletState } from "../src/repositories/walletRepository";
+import { createMockSQLExecutor } from "./helpers/mockSqlExecutor";
 
 // ── Mock SQLExecutor ────────────────────────────────────────────────────
 // A lightweight in-memory SQL engine that supports the subset of SQL
