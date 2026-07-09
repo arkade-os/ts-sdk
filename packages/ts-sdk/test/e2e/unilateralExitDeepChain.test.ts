@@ -92,10 +92,21 @@ describe("unilateral exit — deep chain ordering", () => {
 
             // Step 0 spends a confirmed on-chain output (the root anchor). Before
             // the fix this could land mid-array, deadlocking the executor at step 0.
-            const rootStatus = await feeWallet.provider
-                .getTxStatus(firstInputTxid(bumps[0].parentHex))
-                .catch(() => undefined);
-            expect(rootStatus?.confirmed).toBe(true);
+            // Poll until the root confirms — mining nudges a mempool-only root
+            // through and gives Esplora time to index it; a single-shot check
+            // flaked on CI's slower indexer (root read back as still unconfirmed).
+            const rootTxid = firstInputTxid(bumps[0].parentHex);
+            await waitFor(
+                async () => {
+                    const st = await feeWallet.provider
+                        .getTxStatus(rootTxid)
+                        .catch(() => undefined);
+                    if (st?.confirmed) return true;
+                    mineBlocks(1);
+                    return false;
+                },
+                { timeout: 60_000 },
+            );
         },
     );
 });
