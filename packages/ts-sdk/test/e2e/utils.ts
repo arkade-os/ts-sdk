@@ -15,6 +15,7 @@ import {
     ContractRepository,
     WalletMode,
     RestDelegateProvider,
+    VirtualTxRepository,
 } from "../../src";
 import { execSync } from "child_process";
 import { hex } from "@scure/base";
@@ -80,7 +81,9 @@ export async function createTestOnchainWallet(): Promise<TestOnchainWallet> {
     };
 }
 
-export async function createTestArkWallet(): Promise<TestArkWallet> {
+export async function createTestArkWallet(opts?: {
+    virtualTxRepository?: VirtualTxRepository;
+}): Promise<TestArkWallet> {
     const identity = createTestIdentity();
 
     const wallet = await Wallet.create({
@@ -93,6 +96,7 @@ export async function createTestArkWallet(): Promise<TestArkWallet> {
         storage: {
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
+            virtualTxRepository: opts?.virtualTxRepository,
         },
         settlementConfig: false,
     });
