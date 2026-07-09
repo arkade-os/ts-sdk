@@ -299,6 +299,12 @@ export interface ResolvedArkInfo {
     info: ArkInfo;
     /** `live` when fetched from the operator, `cache` when hydrated offline. */
     source: ServerInfoSource;
+    /**
+     * Epoch-ms of the last known live operator contact: the cached snapshot's
+     * `savedAt` on the `cache` path, `undefined` on the `live` path (the caller
+     * stamps "now" after it persists the validated snapshot).
+     */
+    lastOnlineAt?: number;
 }
 
 /**
@@ -337,7 +343,7 @@ export async function resolveArkInfo(
                 { cause: err },
             );
         }
-        return { info: hydrateArkInfo(snapshot), source: "cache" };
+        return { info: hydrateArkInfo(snapshot), source: "cache", lastOnlineAt: snapshot.savedAt };
     }
     return { info, source: "live" };
 }

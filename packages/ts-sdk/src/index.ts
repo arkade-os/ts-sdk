@@ -246,6 +246,8 @@ import { ArkError, maybeArkError, ProviderUnavailableError } from "./providers/e
 import type { ProviderKind } from "./providers/errors";
 import { isRetryableProviderError } from "./providers/availability";
 import type { ServerInfoSource } from "./wallet/arkInfoSnapshot";
+import type { ProviderConnectionState } from "./wallet/wallet";
+import type { ContractSyncState } from "./contracts/contractManager";
 import { validateVtxoTxGraph, validateConnectorsTxGraph } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
 import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
@@ -662,6 +664,8 @@ export type {
     // Provider availability
     ProviderKind,
     ServerInfoSource,
+    ProviderConnectionState,
+    ContractSyncState,
 
     // Asset types
     IReadonlyAssetManager,

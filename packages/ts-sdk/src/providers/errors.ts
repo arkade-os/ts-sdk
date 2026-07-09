@@ -1,3 +1,5 @@
+import { FetchError } from "../utils/fetch";
+
 export class ArkError extends Error {
     constructor(
         readonly code: number,
@@ -32,6 +34,35 @@ export class ProviderUnavailableError extends Error {
         super(message, { cause: options?.cause });
         this.name = "ProviderUnavailableError";
     }
+}
+
+/**
+ * Throw a typed {@link ProviderUnavailableError} for a temporary HTTP response
+ * (429 rate-limit or any 5xx), otherwise return. `fetch()` resolves — rather
+ * than rejects — on HTTP error status, so status-code classification has to live
+ * at each provider's non-2xx branch, not in the transport wrapper. 4xx and other
+ * responses are left to the caller to treat as terminal.
+ */
+export function throwIfHttpUnavailable(response: Response, kind: ProviderKind): void {
+    if (response.status === 429 || response.status >= 500) {
+        throw new ProviderUnavailableError(
+            kind,
+            `${kind} unavailable: ${response.status} ${response.statusText}`,
+        );
+    }
+}
+
+/**
+ * Map a transport-level {@link FetchError} (server unreachable) to a typed
+ * {@link ProviderUnavailableError}, preserving the original as `cause`; return
+ * any other error unchanged. Returns the error to `throw` rather than throwing,
+ * so a `catch` block can `throw toProviderUnavailable(err, kind)`.
+ */
+export function toProviderUnavailable(err: unknown, kind: ProviderKind): unknown {
+    if (err instanceof FetchError) {
+        return new ProviderUnavailableError(kind, `${kind} request failed`, { cause: err });
+    }
+    return err;
 }
 
 /**

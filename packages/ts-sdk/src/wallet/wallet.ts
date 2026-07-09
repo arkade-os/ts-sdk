@@ -77,7 +77,8 @@ import { isTerminalIntentState } from "../repositories/intentRepository";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
 import { extendCoinWithTapscript, validateRecipients } from "./utils";
-import { ArkError } from "../providers/errors";
+import { ArkError, type ProviderKind } from "../providers/errors";
+import { isRetryableProviderError } from "../providers/availability";
 import {
     resolveArkInfo,
     saveValidatedArkInfoSnapshot,
@@ -339,6 +340,22 @@ export interface BoardingUtxoGroup {
     coins: ExtendedCoin[];
 }
 
+/**
+ * Freshness of the wallet's provider-backed sync, composed from the boot
+ * server-info source and the contract-manager's indexer-sync health. It
+ * describes only how fresh provider data is — never the wallet balances/VTXOs
+ * themselves, which are always served from the repository (system of record).
+ */
+export type ProviderConnectionState =
+    | { mode: "online"; source: "live"; lastOnlineAt: number }
+    | {
+          mode: "degraded";
+          source: "cache" | "repository";
+          provider: ProviderKind;
+          reason: string;
+          lastOnlineAt?: number;
+      };
+
 export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManager?: ContractManager;
     private _contractManagerInitializing?: Promise<ContractManager>;
@@ -409,14 +426,61 @@ export class ReadonlyWallet implements IReadonlyWallet {
     /**
      * Whether this wallet was constructed from live operator server-info
      * (`"live"`) or from a cached snapshot because the operator was unreachable
-     * (`"cache"`). Minimal internal freshness signal for offline-degradation
-     * diagnostics; the composed provider-connection state lands in Scope 5.
+     * (`"cache"`). Freshness signal for {@link getProviderConnectionState}.
      */
     protected _serverInfoSource: ServerInfoSource = "live";
+
+    /**
+     * Epoch-ms of the last known live operator contact: construction time on the
+     * `live` boot path, the cached snapshot's `savedAt` on the `cache` path.
+     */
+    protected _serverInfoLastOnlineAt?: number;
 
     /** @see {@link _serverInfoSource} */
     get serverInfoSource(): ServerInfoSource {
         return this._serverInfoSource;
+    }
+
+    /**
+     * Composed provider-connection freshness: the boot server-info source
+     * (Arkade) combined with the contract-manager's indexer-sync health, if the
+     * manager has been initialized. Reads no live provider state — it never
+     * forces a `ContractManager` to construct — so it is safe for readonly
+     * callers that only use address/balance APIs.
+     *
+     *  - Boot fell back to a cached snapshot → degraded on `arkade` (`cache`).
+     *  - Otherwise, if the contract manager has degraded to repository data →
+     *    degraded on `indexer` (`repository`).
+     *  - Otherwise online.
+     *
+     * This only describes sync freshness; wallet balances/VTXOs are always read
+     * from the repository regardless of this state.
+     */
+    getProviderConnectionState(): ProviderConnectionState {
+        if (this._serverInfoSource === "cache") {
+            return {
+                mode: "degraded",
+                source: "cache",
+                provider: "arkade",
+                reason: "constructed from cached server-info; operator was unreachable at boot",
+                lastOnlineAt: this._serverInfoLastOnlineAt,
+            };
+        }
+        const sync = this._contractManager?.getSyncState();
+        if (sync?.mode === "degraded") {
+            return {
+                mode: "degraded",
+                source: "repository",
+                provider: "indexer",
+                reason: sync.reason,
+                lastOnlineAt: sync.lastSyncedAt ?? this._serverInfoLastOnlineAt,
+            };
+        }
+        return {
+            mode: "online",
+            source: "live",
+            lastOnlineAt: sync?.lastSyncedAt ?? this._serverInfoLastOnlineAt ?? 0,
+        };
     }
 
     protected constructor(
@@ -635,10 +699,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // persistence is deferred to after construction validates the response
         // (see saveValidatedArkInfoSnapshot in the create() paths) so a terminal
         // live response can't poison the cache before construction fails.
-        const { info, source: serverInfoSource } = await resolveArkInfo(
-            arkProvider,
-            walletRepository,
-        );
+        const {
+            info,
+            source: serverInfoSource,
+            lastOnlineAt: serverInfoLastOnlineAt,
+        } = await resolveArkInfo(arkProvider, walletRepository);
 
         const network = getNetwork(info.network as NetworkName);
 
@@ -758,6 +823,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             contractRepository,
             info,
             serverInfoSource,
+            serverInfoLastOnlineAt,
             delegateProvider: config.delegateProvider || config.delegatorProvider,
             /** @deprecated alias for `delegateProvider` */
             delegatorProvider: config.delegateProvider || config.delegatorProvider,
@@ -797,12 +863,16 @@ export class ReadonlyWallet implements IReadonlyWallet {
         wallet.intentRepository = config.storage?.intentRepository;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
         wallet._serverInfoSource = setup.serverInfoSource;
-        wallet.refreshDeprecatedSigners(setup.info);
         // Construction validated the live response (network, signer, address
         // params); only now is it safe to refresh the cached snapshot.
         if (setup.serverInfoSource === "live") {
-            await saveValidatedArkInfoSnapshot(setup.walletRepository, setup.info, Date.now());
+            const now = Date.now();
+            await saveValidatedArkInfoSnapshot(setup.walletRepository, setup.info, now);
+            wallet._serverInfoLastOnlineAt = now;
+        } else {
+            wallet._serverInfoLastOnlineAt = setup.serverInfoLastOnlineAt;
         }
+        wallet.refreshDeprecatedSigners(setup.info);
         return wallet;
     }
 
@@ -981,7 +1051,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const getTxCreatedAt = (txid: string) =>
             this.indexerProvider
                 .getVtxos({ outpoints: [{ txid, vout: 0 }] })
-                .then((res) => res.vtxos[0]?.createdAt.getTime());
+                .then((res) => res.vtxos[0]?.createdAt.getTime())
+                // Best-effort createdAt enrichment: when the indexer is
+                // unavailable, leave it undefined (history still builds from
+                // repository VTXOs) rather than failing the whole read. Terminal
+                // failures still propagate.
+                .catch((err) => {
+                    if (isRetryableProviderError(err)) return undefined;
+                    throw err;
+                });
 
         return buildTransactionHistory(allVtxos, boardingTxs, commitmentsToIgnore, getTxCreatedAt);
     }
@@ -2572,13 +2650,17 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             boot?.provider,
         );
         wallet._serverInfoSource = setup.serverInfoSource;
-        wallet.refreshDeprecatedSigners(setup.info);
         // The response cleared construction validation — network/signer in
         // setupWalletConfig plus the checkpoint/forfeit parsing above — so it is
         // now safe to refresh the cached snapshot from live server-info.
         if (setup.serverInfoSource === "live") {
-            await saveValidatedArkInfoSnapshot(setup.walletRepository, setup.info, Date.now());
+            const now = Date.now();
+            await saveValidatedArkInfoSnapshot(setup.walletRepository, setup.info, now);
+            wallet._serverInfoLastOnlineAt = now;
+        } else {
+            wallet._serverInfoLastOnlineAt = setup.serverInfoLastOnlineAt;
         }
+        wallet.refreshDeprecatedSigners(setup.info);
         // Mid-session signer-rotation detection: when the arkProvider detects a
         // stale-info DIGEST_MISMATCH and refetches info, re-derive the wallet's
         // signer-dependent state. Duck-typed: only RestArkProvider implements it.

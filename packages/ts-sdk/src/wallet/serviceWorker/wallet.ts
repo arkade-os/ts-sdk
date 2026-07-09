@@ -127,6 +127,7 @@ import type {
     PathSelection,
 } from "../../contracts";
 import type {
+    ContractSyncState,
     CreateContractParams,
     GetAllSpendingPathsOptions,
     GetSpendablePathsOptions,
@@ -1166,6 +1167,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 } catch (e) {
                     throw new Error("Failed to get contracts with vtxos");
                 }
+            },
+
+            getSyncState(): ContractSyncState {
+                // The worker owns the authoritative sync state; the proxy reports
+                // online by default (degradation is not surfaced across the
+                // worker message boundary yet).
+                return { mode: "online" };
             },
 
             async annotateVtxos(vtxos: VirtualCoin[]): Promise<ExtendedVirtualCoin[]> {
