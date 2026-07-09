@@ -801,7 +801,8 @@ await Unroll.completeUnroll(
 
 `Unroll.Session` requires the wallet (keys + indexer access) to stay online for the whole
 multi-day exit. `UnilateralExit` removes that requirement: it pre-signs **every** transaction
-needed to land the funds onchain and emits a versioned JSON package that anything with an
+needed to unroll a VTXO's offchain transaction chain onchain **and** sweep each matured output
+to an address you solely control, then emits a versioned JSON package that anything with an
 Esplora-compatible endpoint can execute — no keys, no Arkade infrastructure.
 
 The flow is **quote → fund → prepare → execute**:
@@ -833,6 +834,13 @@ for await (const event of executor) {
   console.log(event.stepIndex, event.kind, event.status)
 }
 ```
+
+Every exit terminates in a **sweep**. Unrolling only lands a VTXO back onchain still encumbered
+by its Arkade script; the funds become yours unilaterally only once a sweep spends that output
+through the CSV-timelocked exit path to `sweepAddress`. So the package always pairs each exited
+VTXO with a pre-signed sweep, and `totals.recoveredSats` is what arrives at `sweepAddress` after
+the timelocks mature. A VTXO whose sweep cannot be signed — e.g. a contract path that needs
+another party — is dropped from the package rather than left half-exited onchain.
 
 Key properties:
 
