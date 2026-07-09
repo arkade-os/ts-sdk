@@ -805,6 +805,9 @@ needed to unroll a VTXO's offchain transaction chain onchain **and** sweep each 
 to an address you solely control, then emits a versioned JSON package that anything with an
 Esplora-compatible endpoint can execute — no keys, no Arkade infrastructure.
 
+> **Note:** Unilateral exit handles **BTC value only** and does not represent any assets a
+> VTXO carries — do not pass asset-bearing VTXOs (those with a non-empty `assets` field).
+
 The flow is **quote → fund → prepare → execute**:
 
 ```typescript

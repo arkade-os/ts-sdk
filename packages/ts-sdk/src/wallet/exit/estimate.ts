@@ -1,5 +1,6 @@
 import { base64, hex } from "@scure/base";
 import type { Outpoint, VirtualCoin } from "..";
+import { DEFAULT_PAGE_SIZE } from "../../contracts/constants";
 import { contractHandlers } from "../../contracts/handlers";
 import { NetworkName } from "../../networks";
 import { VtxoScript } from "../../script/base";
@@ -150,9 +151,22 @@ export async function computeExitLayout(opts: ExitOptions, feeRate: number): Pro
     const pendingNodes = dag.filter((n) => !n.confirmed);
     const psbts = new Map<string, string>();
     if (pendingNodes.length > 0) {
-        const res = await wallet.indexerProvider.getVirtualTxs(pendingNodes.map((n) => n.txid));
-        for (const psbt of res.txs) {
-            psbts.set(Transaction.fromPSBT(base64.decode(psbt)).id, psbt);
+        // getVirtualTxs is paginated; a deep chain can exceed one page, so fetch
+        // every page or a later psbt lookup throws "indexer did not return virtual
+        // tx". A short page (or absent page metadata) means end of history.
+        const txids = pendingNodes.map((n) => n.txid);
+        let pageIndex = 0;
+        let hasMore = true;
+        while (hasMore) {
+            const { txs, page } = await wallet.indexerProvider.getVirtualTxs(txids, {
+                pageIndex,
+                pageSize: DEFAULT_PAGE_SIZE,
+            });
+            for (const psbt of txs) {
+                psbts.set(Transaction.fromPSBT(base64.decode(psbt)).id, psbt);
+            }
+            hasMore = page ? txs.length === DEFAULT_PAGE_SIZE : false;
+            pageIndex++;
         }
     }
 
