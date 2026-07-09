@@ -344,6 +344,20 @@ export interface ContractManagerConfig {
      */
     intentRepository?: IntentRepository;
 
+    /**
+     * Optional exit-data capture hook. Fired best-effort after VTXOs are
+     * persisted so a configured virtualTxRepository can store each one's
+     * unilateral-exit branch. Absent ⇒ no-op.
+     */
+    onVtxosPersisted?: (contract: Contract, vtxos: ExtendedVirtualCoin[]) => Promise<void>;
+
+    /**
+     * Optional exit-data prune hook. Fired best-effort with the spent outpoints
+     * on `vtxo_spent` so a configured virtualTxRepository can drop their branch.
+     * Absent ⇒ no-op.
+     */
+    onVtxosSpent?: (vtxos: Outpoint[]) => Promise<void>;
+
     /** Watcher configuration */
     watcherConfig?: Partial<ContractWatcherConfig>;
 }
@@ -1094,8 +1108,19 @@ export class ContractManager implements IContractManager {
         switch (event.type) {
             // Delta-sync only the changed virtual outputs for this contract.
             case "vtxo_received":
+                await this.syncContracts({ contracts: [event.contract] });
+                break;
             case "vtxo_spent":
                 await this.syncContracts({ contracts: [event.contract] });
+                if (this.config.onVtxosSpent) {
+                    try {
+                        await this.config.onVtxosSpent(
+                            event.vtxos.map((v) => ({ txid: v.txid, vout: v.vout })),
+                        );
+                    } catch {
+                        // prune is best-effort; never block the spend event
+                    }
+                }
                 break;
             case "connection_reset":
                 // Same recovery path as boot: delta-sync the watched set
@@ -1253,6 +1278,16 @@ export class ContractManager implements IContractManager {
                     contract,
                     filtered as ExtendedVirtualCoin[],
                 );
+                if (this.config.onVtxosPersisted) {
+                    try {
+                        await this.config.onVtxosPersisted(
+                            contract,
+                            filtered as ExtendedVirtualCoin[],
+                        );
+                    } catch {
+                        // capture is best-effort; never block sync
+                    }
+                }
             }
         }
         return result;
