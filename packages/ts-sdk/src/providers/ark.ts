@@ -3,7 +3,7 @@ import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
 import { Vtxo } from "./indexer";
 import { eventSourceIterator, isEventSourceError } from "./utils";
-import { maybeArkError, ProviderUnavailableError } from "./errors";
+import { maybeArkError, throwIfHttpUnavailable, toProviderUnavailable } from "./errors";
 import type { IntentFeeConfig } from "../arkfee";
 import { Intent } from "../intent";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
@@ -332,8 +332,19 @@ export class RestArkProvider implements ArkProvider {
             ...(init.headers as Record<string, string> | undefined),
         };
         if (digest) headers["X-Digest"] = digest;
-        const response = await fetch(url, { ...init, headers });
+        let response: Response;
+        try {
+            response = await fetch(url, { ...init, headers });
+        } catch (err) {
+            // Server unreachable: surface a typed retryable unavailable error so
+            // cooperative flows fail with it rather than leaking a raw FetchError.
+            throw toProviderUnavailable(err, "arkade");
+        }
         if (response.ok) return response;
+        // A 429/5xx means the operator is temporarily unable to serve; classify
+        // it as retryable before the digest-mismatch check (which is a 4xx-class
+        // rejection, so the two never overlap).
+        throwIfHttpUnavailable(response, "arkade");
         let body: string;
         try {
             body = await response.clone().text();
@@ -375,12 +386,7 @@ export class RestArkProvider implements ArkProvider {
             // Surface it as a typed unavailable error so wallet boot can fall
             // back to a cached server-info snapshot. `fetch` transport failures
             // (server unreachable) are already surfaced as FetchError upstream.
-            if (response.status === 429 || response.status >= 500) {
-                throw new ProviderUnavailableError(
-                    "arkade",
-                    `Arkade server info unavailable: ${response.status} ${response.statusText}`,
-                );
-            }
+            throwIfHttpUnavailable(response, "arkade");
             const errorText = await response.text();
             handleError(errorText, `Failed to get server info: ${response.statusText}`);
         }
