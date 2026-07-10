@@ -6,6 +6,7 @@ import { VtxoScript } from "../../script/base";
 import { sequenceToTimelock } from "../../utils/timelock";
 import { Transaction } from "../../utils/transaction";
 import { TxWeightEstimator } from "../../utils/txSizeEstimator";
+import { isOperatorUnreachable } from "../../utils/operatorReachability";
 import { OnchainWallet } from "../onchain";
 import type { Wallet } from "../wallet";
 import { buildExitDag, DagNode, topoSortByDeps } from "./chain";
@@ -73,17 +74,49 @@ export async function resolveFeeRate(opts: ExitOptions): Promise<number> {
 /** The VTXO shape the exit flow needs — a coin plus its taproot tree. */
 export type ExitVtxo = Pick<VirtualCoin, "txid" | "vout" | "value"> & { tapTree: Uint8Array };
 
+/**
+ * Resolve the raw VTXO rows for an explicit set of exit outpoints.
+ *
+ * Tries the indexer first (authoritative, and reaches contract VTXOs the wallet
+ * does not itself track). On a network-level operator failure it degrades to the
+ * wallet's offline-first `getVtxos()` (backed by the local repository — see the
+ * operator-offline resilience work), filtered to the requested outpoints, so an
+ * explicit-outpoint exit can be built with the indexer down. Non-network errors
+ * (e.g. a malformed response) propagate.
+ *
+ * Offline caveat: only VTXOs present in the local cache are returned — an
+ * untracked contract VTXO cannot be exited via this path while the indexer is
+ * unreachable.
+ */
+export async function resolveExplicitOutpointVtxos(
+    wallet: Wallet,
+    outpoints: Outpoint[],
+): Promise<Pick<VirtualCoin, "txid" | "vout" | "value" | "script" | "isSpent">[]> {
+    try {
+        const res = await wallet.indexerProvider.getVtxos({ outpoints });
+        return res.vtxos;
+    } catch (err) {
+        if (!isOperatorUnreachable(err)) {
+            throw err;
+        }
+        const wanted = new Set(outpoints.map((o) => `${o.txid}:${o.vout}`));
+        const cached = await wallet.getVtxos();
+        return cached.filter((v) => wanted.has(`${v.txid}:${v.vout}`));
+    }
+}
+
 export async function selectExitVtxos(opts: ExitOptions): Promise<ExitVtxo[]> {
     if (!opts.vtxos) return opts.wallet.getVtxos();
 
     // Explicit outpoints are resolved from the indexer plus the registered
     // contract row (tap tree derived via the contract handler). This
     // deliberately bypasses the wallet's own VTXO listing, so contract
-    // VTXOs the wallet does not track are exitable too.
-    const res = await opts.wallet.indexerProvider.getVtxos({ outpoints: opts.vtxos });
+    // VTXOs the wallet does not track are exitable too. With the indexer
+    // unreachable, resolveExplicitOutpointVtxos degrades to the local cache.
+    const resolved = await resolveExplicitOutpointVtxos(opts.wallet, opts.vtxos);
     const tapTrees = new Map<string, Uint8Array>();
     const out: ExitVtxo[] = [];
-    for (const vtxo of res.vtxos) {
+    for (const vtxo of resolved) {
         if (vtxo.isSpent) continue;
         let tapTree = tapTrees.get(vtxo.script);
         if (!tapTree) {
