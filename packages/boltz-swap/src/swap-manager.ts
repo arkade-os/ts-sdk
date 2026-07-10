@@ -1157,6 +1157,97 @@ export class SwapManager implements SwapManagerClient {
     }
 
     /**
+     * Trigger the claim action for a swap whose tracked VHTLC lockup was
+     * observed FUNDED via a `vtxo_received` `ContractManager` event — ahead
+     * of Boltz's own status feed reporting the swap claimable (
+     * `isReverseClaimableStatus`/`isChainClaimableStatus`). Intended to be
+     * wired as `SwapStatusReconciler`'s `onSwapFunded` dependency (see
+     * swap-status-reconciler.ts and `ArkadeSwaps.startSwapManager`).
+     *
+     * Boltz's own status-driven path ({@link executeAutonomousAction}, via
+     * WS push or poll) remains the failsafe and is untouched by this method.
+     * Both share the same `swapsInProgress` lock (via {@link
+     * runFundedClaim}), so whichever fires first wins the claim and the
+     * other becomes a no-op — this method never fakes `swap.status` to force
+     * `executeAutonomousAction`'s own dispatch to run early.
+     *
+     * Reuses the same per-type claim helpers `executeAutonomousAction` calls
+     * (`executeClaimAction`/`executeClaimArkAction`) — only the *trigger
+     * condition* differs (VTXO signal vs. Boltz status), not the claim
+     * itself.
+     *
+     * Only claims where the wallet is the VHTLC *receiver* on the tracked
+     * contract are reachable this way — mirrors the role table in
+     * `extractSwapVhtlcInputs` (swap-contract.ts):
+     * - reverse: wallet is always receiver -> {@link executeClaimAction}.
+     * - chain, `request.to === "ARK"` (BTC→ARK): wallet is receiver on the
+     *   tracked ARK-side VHTLC -> {@link executeClaimArkAction}.
+     * - submarine, and chain `request.to === "BTC"` (ARK→BTC): wallet is the
+     *   *sender* on the tracked VHTLC — a `vtxo_received` there is our own
+     *   funding transaction, not Boltz's, so there is nothing to claim. For
+     *   ARK→BTC specifically, the actual claim (`claimBtc`) spends a BTC-side
+     *   HTLC that isn't an Ark contract at all and so never emits a VTXO
+     *   event — it remains reachable only via Boltz's own status. Both are
+     *   no-ops here; these swaps complete via the spent-driven resolver
+     *   instead (see {@link resolveSwapFromVtxo}).
+     *
+     * No-op if the swap is already in the action log (claimed or refunded —
+     * already resolved by an earlier funded event or the Boltz-triggered
+     * path) or already being processed (`swapsInProgress`).
+     */
+    async triggerClaimFromVtxo(swap: BoltzSwap): Promise<void> {
+        if (this.claimedSwapIds.has(swap.id) || this.refundedSwapIds.has(swap.id)) return;
+
+        if (isPendingReverseSwap(swap)) {
+            // Mirrors executeAutonomousAction's restored-swap guard: cannot
+            // claim without the preimage.
+            if (!swap.preimage || swap.preimage.length === 0) {
+                logger.log(
+                    `Skipping VTXO-triggered claim for swap ${swap.id}: missing preimage (restored swap)`,
+                );
+                return;
+            }
+            await this.runFundedClaim(swap, () => this.executeClaimAction(swap), "claim");
+            return;
+        }
+
+        if (isPendingChainSwap(swap) && swap.request.to === "ARK") {
+            await this.runFundedClaim(swap, () => this.executeClaimArkAction(swap), "claimArk");
+            return;
+        }
+
+        // submarine, and chain request.to === "BTC": no VTXO-driven claim
+        // applies here — see docstring.
+    }
+
+    /**
+     * Lock/execute/emit wrapper shared by both {@link triggerClaimFromVtxo}
+     * branches. Mirrors the `swapsInProgress` locking and
+     * actionExecuted/swapFailed emission shape of {@link
+     * executeAutonomousAction} — the SAME guard `Set`, so a claim already
+     * running via the Boltz-status path (or a previous funded event) makes
+     * this a no-op.
+     */
+    private async runFundedClaim(
+        swap: BoltzSwap,
+        claim: () => Promise<void>,
+        action: Actions,
+    ): Promise<void> {
+        if (this.swapsInProgress.has(swap.id)) return;
+        this.swapsInProgress.add(swap.id);
+        try {
+            logger.log(`Swap ${swap.id}: VTXO funded — claiming ahead of Boltz status`);
+            await claim();
+            this.actionExecutedListeners.forEach((listener) => listener(swap, action));
+        } catch (error) {
+            logger.error(`Failed to execute VTXO-triggered claim for swap ${swap.id}:`, error);
+            this.swapFailedListeners.forEach((listener) => listener(swap, error as Error));
+        } finally {
+            this.swapsInProgress.delete(swap.id);
+        }
+    }
+
+    /**
      * Schedule another `executeAutonomousAction` run for a chain swap whose
      * refund left VTXOs deferred. After the retry completes, if no further
      * deferral was reported, finalize monitoring cleanup.

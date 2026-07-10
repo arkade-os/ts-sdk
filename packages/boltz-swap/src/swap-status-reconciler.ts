@@ -160,6 +160,17 @@ export interface SwapStatusReconcilerDeps {
      * {@link SwapState} (`"Settled"`, `"Refunded"`, or `"Failed"`).
      */
     onSwapResolved(swap: BoltzSwap, state: SwapState): void;
+    /**
+     * Invoked when a `vtxo_received` event funds a known swap's tracked
+     * VHTLC and the derived state is not (yet) terminal — i.e. the lockup is
+     * merely funded, not finalized. Lets a swap's claim action run as soon
+     * as the lockup is observed on-chain, without waiting for Boltz's own
+     * status feed to report the swap claimable — see
+     * `SwapManager.triggerClaimFromVtxo`. A no-op there for swap
+     * types/directions where the wallet isn't the VHTLC claimer (e.g.
+     * submarine) is expected, not an error.
+     */
+    onSwapFunded(swap: BoltzSwap): void;
 }
 
 /**
@@ -171,6 +182,16 @@ export interface SwapStatusReconcilerDeps {
  * swap's current {@link SwapState} via {@link deriveSwapState} and reports it
  * through {@link SwapStatusReconcilerDeps.onSwapResolved} whenever that state
  * is terminal.
+ *
+ * A `vtxo_received` event that does NOT resolve to a terminal state (the
+ * common case — the lockup is merely funded, not yet finalized) is reported
+ * through {@link SwapStatusReconcilerDeps.onSwapFunded} instead, so a claim
+ * can run ahead of Boltz's own status feed for swap types/directions where
+ * the wallet is the VHTLC claimer.
+ *
+ * Once a script's swap resolves to a terminal state, its `scriptToSwapId`
+ * entry is pruned (via {@link removeSwapScript}) — left unpruned, the
+ * mapping would otherwise grow for the lifetime of the process.
  *
  * `connection_reset` events are intentionally ignored here: they carry no
  * `contractScript`, and `ContractManager` re-establishes VTXO state on
@@ -221,6 +242,22 @@ export class SwapStatusReconciler {
 
             if (state === "Settled" || state === "Refunded" || state === "Failed") {
                 this.deps.onSwapResolved(swap, state);
+                // Finalized — this script has no further use; leaving it
+                // mapped would grow scriptToSwapId unboundedly (see class
+                // docstring).
+                this.removeSwapScript(event.contractScript);
+                return;
+            }
+
+            // Not (yet) terminal. A funded lockup is worth acting on
+            // immediately for swap types/directions where the wallet is the
+            // VHTLC claimer — see SwapManager.triggerClaimFromVtxo. There is
+            // no equivalent action for a non-terminal "spent" signal (the
+            // only way deriveSwapState returns non-terminal for "spent" is
+            // the genuinely-ambiguous malformed-direction fallback), so this
+            // is gated to the funded signal only.
+            if (signal === "funded") {
+                this.deps.onSwapFunded(swap);
             }
         } catch (error) {
             logger.error("SwapStatusReconciler: error handling contract event:", error);

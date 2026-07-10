@@ -255,8 +255,14 @@ describe("SwapStatusReconciler", () => {
         const getSwap = vi.fn((id: string) => (id === swap.id ? swap : undefined));
         const getActionLog = vi.fn(() => actionLog);
         const onSwapResolved = vi.fn();
-        const reconciler = new SwapStatusReconciler({ getSwap, getActionLog, onSwapResolved });
-        return { reconciler, getSwap, getActionLog, onSwapResolved };
+        const onSwapFunded = vi.fn();
+        const reconciler = new SwapStatusReconciler({
+            getSwap,
+            getActionLog,
+            onSwapResolved,
+            onSwapFunded,
+        });
+        return { reconciler, getSwap, getActionLog, onSwapResolved, onSwapFunded };
     }
 
     it("addSwapScript + vtxo_spent for a swap we claimed -> onSwapResolved(swap, Settled)", () => {
@@ -312,6 +318,7 @@ describe("SwapStatusReconciler", () => {
             getSwap,
             getActionLog: () => claimedLog(swap.id),
             onSwapResolved,
+            onSwapFunded: vi.fn(),
         });
         reconciler.addSwapScript("script-throws", swap.id);
 
@@ -333,17 +340,46 @@ describe("SwapStatusReconciler", () => {
         errorSpy.mockRestore();
     });
 
-    it("vtxo_received (funded) with no terminal Boltz status -> Pending, onSwapResolved not called", () => {
+    it("vtxo_received (funded) with no terminal Boltz status -> onSwapFunded called, onSwapResolved not called", () => {
         const swap: BoltzSwap = {
             ...makeReverseSwapFixture(arkInfo),
             status: "transaction.mempool",
         };
-        const { reconciler, onSwapResolved } = makeReconciler(swap);
+        const { reconciler, onSwapResolved, onSwapFunded } = makeReconciler(swap);
 
         reconciler.addSwapScript("script-funded", swap.id);
         reconciler.onContractEvent(makeVtxoEvent("vtxo_received", "script-funded"));
 
         expect(onSwapResolved).not.toHaveBeenCalled();
+        expect(onSwapFunded).toHaveBeenCalledTimes(1);
+        expect(onSwapFunded).toHaveBeenCalledWith(swap);
+    });
+
+    it("vtxo_received where Boltz status is already terminal -> onSwapResolved called (failsafe), onSwapFunded NOT called", () => {
+        const swap: BoltzSwap = {
+            ...makeReverseSwapFixture(arkInfo),
+            status: "invoice.settled",
+        };
+        const { reconciler, onSwapResolved, onSwapFunded } = makeReconciler(swap);
+
+        reconciler.addSwapScript("script-already-terminal", swap.id);
+        reconciler.onContractEvent(makeVtxoEvent("vtxo_received", "script-already-terminal"));
+
+        expect(onSwapResolved).toHaveBeenCalledWith(swap, "Settled" satisfies SwapState);
+        expect(onSwapFunded).not.toHaveBeenCalled();
+    });
+
+    it("vtxo_spent -> never calls onSwapFunded (only a funded signal can)", () => {
+        const swap: BoltzSwap = {
+            ...makeSubmarineSwapFixture(arkInfo),
+            status: "invoice.pending",
+        };
+        const { reconciler, onSwapFunded } = makeReconciler(swap, EMPTY_LOG);
+
+        reconciler.addSwapScript("script-spent-only", swap.id);
+        reconciler.onContractEvent(makeVtxoEvent("vtxo_spent", "script-spent-only"));
+
+        expect(onSwapFunded).not.toHaveBeenCalled();
     });
 
     it("ignores connection_reset events", () => {
@@ -367,6 +403,29 @@ describe("SwapStatusReconciler", () => {
 
         reconciler.onContractEvent(makeVtxoEvent("vtxo_spent", "script-removed"));
 
+        expect(onSwapResolved).not.toHaveBeenCalled();
+    });
+
+    it("resolving to a terminal state auto-prunes the script mapping (map does not grow unboundedly)", () => {
+        const swap: BoltzSwap = {
+            ...makeReverseSwapFixture(arkInfo),
+            status: "transaction.confirmed",
+        };
+        const { reconciler, onSwapResolved, getSwap } = makeReconciler(swap, claimedLog(swap.id));
+        reconciler.addSwapScript("script-auto-pruned", swap.id);
+
+        reconciler.onContractEvent(makeVtxoEvent("vtxo_spent", "script-auto-pruned"));
+        expect(onSwapResolved).toHaveBeenCalledTimes(1);
+
+        // A second event for the same script, after resolution, must be a
+        // no-op — the script's swapId mapping was pruned as part of
+        // resolving, so the lookup fails before getSwap/onSwapResolved run
+        // again (same observable shape as the "unknown contractScript" test).
+        getSwap.mockClear();
+        onSwapResolved.mockClear();
+        reconciler.onContractEvent(makeVtxoEvent("vtxo_spent", "script-auto-pruned"));
+
+        expect(getSwap).not.toHaveBeenCalled();
         expect(onSwapResolved).not.toHaveBeenCalled();
     });
 });

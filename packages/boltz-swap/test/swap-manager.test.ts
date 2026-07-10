@@ -2290,4 +2290,163 @@ describe("SwapManager", () => {
             expect(onSwapFailed).not.toHaveBeenCalled();
         });
     });
+
+    /**
+     * `triggerClaimFromVtxo` is the SwapManager-side hook a
+     * `SwapStatusReconciler` calls (as `onSwapFunded`) when a swap's tracked
+     * VHTLC lockup is observed FUNDED (`vtxo_received`) — see
+     * swap-status-reconciler.ts. Unlike the Boltz-status-driven claim path
+     * (`executeAutonomousAction`, gated on `isReverseClaimableStatus`/
+     * `isChainClaimableStatus`), it acts purely on the VTXO signal and never
+     * touches `swap.status`.
+     */
+    describe("triggerClaimFromVtxo (VTXO-funded claim, ahead of Boltz status)", () => {
+        beforeEach(() => {
+            swapManager = new SwapManager(swapProvider, swapManagerConfig);
+        });
+
+        it("reverse: claims immediately even though Boltz status is not yet claimable", async () => {
+            const claimCallback = vi.fn();
+            swapManager.setCallbacks(makeCallbacks({ claim: claimCallback }));
+
+            const swap = { ...mockReverseSwap, status: "swap.created" as const };
+            await swapManager.start([swap]);
+
+            await swapManager.triggerClaimFromVtxo(swap);
+
+            expect(claimCallback).toHaveBeenCalledWith(swap);
+            expect(swapManager.getActionLog().claimed.has(swap.id)).toBe(true);
+            // The claim ran off the VTXO signal, not because Boltz's status
+            // became claimable — status is untouched by this path.
+            expect(swap.status).toBe("swap.created");
+        });
+
+        it("reverse: skips a restored swap without a preimage (mirrors executeAutonomousAction's guard)", async () => {
+            const claimCallback = vi.fn();
+            swapManager.setCallbacks(makeCallbacks({ claim: claimCallback }));
+
+            const swap = { ...mockReverseSwap, status: "swap.created" as const, preimage: "" };
+            await swapManager.start([swap]);
+
+            await swapManager.triggerClaimFromVtxo(swap);
+
+            expect(claimCallback).not.toHaveBeenCalled();
+            expect(swapManager.getActionLog().claimed.has(swap.id)).toBe(false);
+        });
+
+        it('chain BTC->ARK (request.to === "ARK"): claims the ARK side immediately', async () => {
+            const claimArk = vi.fn();
+            swapManager.setCallbacks(makeCallbacks({ claimArk }));
+
+            const swap: BoltzChainSwap = {
+                ...mockChainSwap,
+                status: "swap.created",
+                request: { ...mockChainSwap.request, from: "BTC", to: "ARK" },
+            };
+            await swapManager.start([swap]);
+
+            await swapManager.triggerClaimFromVtxo(swap);
+
+            expect(claimArk).toHaveBeenCalledWith(swap);
+            expect(swapManager.getActionLog().claimed.has(swap.id)).toBe(true);
+        });
+
+        it('chain ARK->BTC (request.to === "BTC"): no-op — wallet is sender on the tracked VHTLC', async () => {
+            const claimBtc = vi.fn();
+            swapManager.setCallbacks(makeCallbacks({ claimBtc }));
+
+            // mockChainSwap.request is already {from: "ARK", to: "BTC"}.
+            const swap: BoltzChainSwap = { ...mockChainSwap, status: "swap.created" };
+            await swapManager.start([swap]);
+
+            await swapManager.triggerClaimFromVtxo(swap);
+
+            expect(claimBtc).not.toHaveBeenCalled();
+            expect(swapManager.getActionLog().claimed.has(swap.id)).toBe(false);
+        });
+
+        it("submarine: no-op — wallet is sender on the tracked VHTLC (Boltz is the claimer)", async () => {
+            const refundCallback = vi.fn();
+            swapManager.setCallbacks(makeCallbacks({ refund: refundCallback }));
+
+            const swap = { ...mockSubmarineSwap, status: "invoice.set" as const };
+            await swapManager.start([swap]);
+
+            await swapManager.triggerClaimFromVtxo(swap);
+
+            expect(refundCallback).not.toHaveBeenCalled();
+            expect(swapManager.getActionLog().claimed.has(swap.id)).toBe(false);
+            expect(swapManager.getActionLog().refunded.has(swap.id)).toBe(false);
+        });
+
+        it("does not re-claim a swap already recorded as claimed (duplicate funded event)", async () => {
+            const claimCallback = vi.fn();
+            swapManager.setCallbacks(makeCallbacks({ claim: claimCallback }));
+
+            const swap = { ...mockReverseSwap, status: "swap.created" as const };
+            await swapManager.start([swap]);
+            (swapManager as any).claimedSwapIds.add(swap.id);
+
+            await swapManager.triggerClaimFromVtxo(swap);
+
+            expect(claimCallback).not.toHaveBeenCalled();
+        });
+
+        it("does not claim a swap already recorded as refunded", async () => {
+            const claimCallback = vi.fn();
+            swapManager.setCallbacks(makeCallbacks({ claim: claimCallback }));
+
+            const swap = { ...mockReverseSwap, status: "swap.created" as const };
+            await swapManager.start([swap]);
+            (swapManager as any).refundedSwapIds.add(swap.id);
+
+            await swapManager.triggerClaimFromVtxo(swap);
+
+            expect(claimCallback).not.toHaveBeenCalled();
+        });
+
+        it("does not claim while a claim/refund is already in progress (swapsInProgress guard shared with executeAutonomousAction)", async () => {
+            const claimCallback = vi.fn();
+            swapManager.setCallbacks(makeCallbacks({ claim: claimCallback }));
+
+            const swap = { ...mockReverseSwap, status: "swap.created" as const };
+            await swapManager.start([swap]);
+            // Simulate a concurrent Boltz-triggered executeAutonomousAction
+            // (or an earlier funded event) already holding the lock.
+            (swapManager as any).swapsInProgress.add(swap.id);
+
+            await swapManager.triggerClaimFromVtxo(swap);
+
+            expect(claimCallback).not.toHaveBeenCalled();
+        });
+
+        it('fires actionExecuted(swap, "claim") on success', async () => {
+            const onActionExecuted = vi.fn();
+            await swapManager.onActionExecuted(onActionExecuted);
+            swapManager.setCallbacks(makeCallbacks({ claim: vi.fn() }));
+
+            const swap = { ...mockReverseSwap, status: "swap.created" as const };
+            await swapManager.start([swap]);
+
+            await swapManager.triggerClaimFromVtxo(swap);
+
+            expect(onActionExecuted).toHaveBeenCalledWith(swap, "claim");
+        });
+
+        it("releases the lock and fires onSwapFailed when the claim callback throws, without recording the claim", async () => {
+            const claimCallback = vi.fn().mockRejectedValue(new Error("claim failed"));
+            const onSwapFailed = vi.fn();
+            await swapManager.onSwapFailed(onSwapFailed);
+            swapManager.setCallbacks(makeCallbacks({ claim: claimCallback }));
+
+            const swap = { ...mockReverseSwap, status: "swap.created" as const };
+            await swapManager.start([swap]);
+
+            await swapManager.triggerClaimFromVtxo(swap);
+
+            expect(onSwapFailed).toHaveBeenCalledWith(swap, expect.any(Error));
+            expect(swapManager.getActionLog().claimed.has(swap.id)).toBe(false);
+            expect(await swapManager.isProcessing(swap.id)).toBe(false);
+        });
+    });
 });

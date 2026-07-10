@@ -486,8 +486,11 @@ export class ArkadeSwaps {
         // swap's terminal state can be derived from an on-chain signal even
         // when Boltz's own status feed goes silent — see
         // swap-status-reconciler.ts and SwapManager.resolveSwapFromVtxo.
-        // Exempt when contractManager is absent (Expo-background monitor
-        // path), same guard as the migration above.
+        // Also drives a swap's claim as soon as its lockup is observed
+        // FUNDED, ahead of Boltz's own status feed — see
+        // SwapManager.triggerClaimFromVtxo. Exempt when contractManager is
+        // absent (Expo-background monitor path), same guard as the
+        // migration above.
         if (this.contractManager) {
             const contractManager = this.contractManager;
             const swapManager = this.swapManager;
@@ -496,23 +499,37 @@ export class ArkadeSwaps {
             // would otherwise leak the previous subscription.
             this.reconcilerUnsubscribe?.();
 
-            const vhtlcContracts = await contractManager.getContracts({ type: "vhtlc" });
-            const reconciler = new SwapStatusReconciler({
-                getSwap: swapManager.getSwap.bind(swapManager),
-                getActionLog: swapManager.getActionLog.bind(swapManager),
-                onSwapResolved: swapManager.resolveSwapFromVtxo.bind(swapManager),
-            });
-            for (const contract of vhtlcContracts) {
-                const swapId = contract.metadata?.swapId;
-                if (typeof swapId === "string") {
-                    reconciler.addSwapScript(contract.script, swapId);
+            try {
+                const vhtlcContracts = await contractManager.getContracts({ type: "vhtlc" });
+                const reconciler = new SwapStatusReconciler({
+                    getSwap: swapManager.getSwap.bind(swapManager),
+                    getActionLog: swapManager.getActionLog.bind(swapManager),
+                    onSwapResolved: swapManager.resolveSwapFromVtxo.bind(swapManager),
+                    onSwapFunded: swapManager.triggerClaimFromVtxo.bind(swapManager),
+                });
+                for (const contract of vhtlcContracts) {
+                    const swapId = contract.metadata?.swapId;
+                    if (typeof swapId === "string") {
+                        reconciler.addSwapScript(contract.script, swapId);
+                    }
                 }
-            }
 
-            this.reconciler = reconciler;
-            this.reconcilerUnsubscribe = contractManager.onContractEvent((event) =>
-                reconciler.onContractEvent(event),
-            );
+                this.reconciler = reconciler;
+                this.reconcilerUnsubscribe = contractManager.onContractEvent((event) =>
+                    reconciler.onContractEvent(event),
+                );
+            } catch (error) {
+                // A transient contract-repo read (or wiring) failure must not
+                // take down swap monitoring — log and continue without
+                // VTXO-driven resolution/claims for this run; Boltz's own
+                // status feed remains the failsafe.
+                logger.error(
+                    "startSwapManager: failed to wire SwapStatusReconciler to ContractManager events:",
+                    error,
+                );
+                this.reconciler = undefined;
+                this.reconcilerUnsubscribe = undefined;
+            }
         }
 
         // Load all pending swaps from the swap repository

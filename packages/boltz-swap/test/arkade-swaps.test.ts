@@ -5567,6 +5567,148 @@ describe("ArkadeSwaps", () => {
             await expect(completion).rejects.toThrow();
         });
 
+        it("offline proof: Boltz mocked DOWN — a funded VTXO drives the claim, and a subsequent spent VTXO resolves Settled from VTXO events alone", async () => {
+            const swap: BoltzReverseSwap = {
+                ...mockReverseSwap,
+                status: "swap.created", // well before Boltz's own "transaction.mempool"
+            };
+            const swapContractScript = `offline-proof-script:${swap.id}`;
+
+            // Boltz mocked DOWN: getSwapStatus (polling) always rejects; the
+            // only Boltz call the flow ever makes is the post-hoc txid
+            // lookup waitForSwapCompletion needs once the swap is already
+            // known (from VTXO events alone) to be settled — never a status
+            // call.
+            vi.spyOn(swapProvider, "getSwapStatus").mockRejectedValue(
+                new Error("Boltz is unreachable (offline proof)"),
+            );
+            vi.spyOn(swapProvider, "getReverseSwapTxId").mockResolvedValue({
+                id: "vtxo-derived-txid",
+                timeoutBlockHeight: 10,
+            });
+
+            mockContractManager.getContracts.mockResolvedValue([
+                {
+                    type: "vhtlc",
+                    script: swapContractScript,
+                    address: "mock-vhtlc-address",
+                    state: "active",
+                    params: {},
+                    createdAt: 0,
+                    metadata: { swapId: swap.id, swapType: swap.type, source: `swap:${swap.id}` },
+                },
+            ]);
+
+            const swapsWithManager = new ArkadeSwaps({
+                wallet,
+                arkProvider,
+                swapProvider,
+                indexerProvider,
+                swapRepository: mockSwapRepository,
+                swapManager: { autoStart: false },
+                contractManager: mockContractManager,
+            });
+            const internalManager = (swapsWithManager as any).swapManager;
+            // Boltz mocked DOWN, continued: start() is stubbed exactly as in
+            // the other reconciler-wiring tests above, so the real WebSocket
+            // never connects and polling never begins — start() is never
+            // meaningfully invoked for the rest of this test.
+            vi.spyOn(internalManager, "start").mockResolvedValue(undefined);
+            mockSwapRepository.getAllSwaps.mockResolvedValue([]);
+
+            // Isolate the wiring under test from the real claim
+            // implementation (claimVHTLC's on-chain mechanics are covered by
+            // dedicated tests elsewhere in this file).
+            const claimSpy = vi.spyOn(swapsWithManager, "claimVHTLC").mockResolvedValue(undefined);
+
+            await swapsWithManager.startSwapManager();
+            await internalManager.addSwap(swap);
+
+            const completion = internalManager.waitForSwapCompletion(swap.id);
+
+            const eventCallback = mockContractManager.onContractEvent.mock.calls[0][0];
+
+            // 1) FUNDED — the claim runs immediately, off the VTXO signal
+            // alone. isReverseClaimableStatus's claimable set is
+            // {transaction.mempool, transaction.confirmed}; swap.status is
+            // still "swap.created", nowhere near it — proving Boltz status
+            // was never consulted to trigger this claim.
+            eventCallback({
+                type: "vtxo_received",
+                contractScript: swapContractScript,
+                vtxos: [],
+                contract: {},
+                timestamp: Date.now(),
+            });
+            // onSwapFunded -> triggerClaimFromVtxo is fire-and-forget from
+            // the reconciler's synchronous event callback (same shape as
+            // onSwapResolved -> resolveSwapFromVtxo elsewhere in this
+            // describe block); flush the microtask queue so the awaited
+            // claim() resolves before asserting on it.
+            await new Promise((resolve) => setTimeout(resolve, 0));
+
+            expect(claimSpy).toHaveBeenCalledTimes(1);
+            expect(claimSpy).toHaveBeenCalledWith(swap);
+            expect(internalManager.getActionLog().claimed.has(swap.id)).toBe(true);
+            expect(swap.status).toBe("swap.created"); // untouched by the VTXO-driven claim
+
+            // Duplicate FUNDED event for the same swap — must NOT re-claim.
+            eventCallback({
+                type: "vtxo_received",
+                contractScript: swapContractScript,
+                vtxos: [],
+                contract: {},
+                timestamp: Date.now(),
+            });
+            await new Promise((resolve) => setTimeout(resolve, 0));
+
+            expect(claimSpy).toHaveBeenCalledTimes(1);
+
+            // 2) SPENT (our own claim spent the lockup) — resolves the swap
+            // to Settled from the VTXO signal + action log alone; Boltz
+            // still never reported a terminal status.
+            eventCallback({
+                type: "vtxo_spent",
+                contractScript: swapContractScript,
+                vtxos: [],
+                contract: {},
+                timestamp: Date.now(),
+            });
+
+            expect(swap.status).toBe("invoice.settled");
+            expect(await internalManager.hasSwap(swap.id)).toBe(false);
+            await expect(completion).resolves.toEqual({ txid: "vtxo-derived-txid" });
+        });
+
+        it("a transient contract-repo read failure is logged and does not prevent swap monitoring from starting", async () => {
+            const readError = new Error("contract repo unavailable");
+            mockContractManager.getContracts.mockRejectedValue(readError);
+            const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+
+            const swapsWithManager = new ArkadeSwaps({
+                wallet,
+                arkProvider,
+                swapProvider,
+                indexerProvider,
+                swapRepository: mockSwapRepository,
+                swapManager: { autoStart: false },
+                contractManager: mockContractManager,
+            });
+            const internalManager = (swapsWithManager as any).swapManager;
+            const startSpy = vi.spyOn(internalManager, "start").mockResolvedValue(undefined);
+            mockSwapRepository.getAllSwaps.mockResolvedValue([]);
+
+            await expect(swapsWithManager.startSwapManager()).resolves.toBeUndefined();
+
+            expect(startSpy).toHaveBeenCalledTimes(1);
+            expect(errorSpy).toHaveBeenCalledWith(
+                expect.stringContaining("SwapStatusReconciler"),
+                readError,
+            );
+
+            errorSpy.mockRestore();
+        });
+
         it("dispose() calls the ContractManager unsubscribe", async () => {
             const unsubscribe = vi.fn();
             mockContractManager.onContractEvent.mockReturnValue(unsubscribe);
