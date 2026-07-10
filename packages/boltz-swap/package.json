@@ -88,6 +88,7 @@
     "license": "MIT",
     "dependencies": {
         "@arkade-os/sdk": "workspace:*",
+        "@noble/ciphers": "2.2.0",
         "@noble/curves": "2.0.1",
         "@noble/hashes": "2.0.1",
         "@scure/base": "2.0.0",

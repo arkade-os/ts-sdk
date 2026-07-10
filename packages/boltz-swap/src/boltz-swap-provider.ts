@@ -463,6 +463,17 @@ export type CreateReverseSwapRequest = {
      * or the other, never both; when set, `description` is omitted.
      */
     descriptionHash?: string;
+    /**
+     * Optional non-interactive claim config (Ark reverse swaps only). When set,
+     * Boltz builds the VHTLC with a covenant claim leaf so a covclaimd daemon
+     * can sweep it on the client's behalf.
+     */
+    nonInteractiveClaim?: {
+        /** Ark address the solver must pay when claiming. */
+        claimReceiverAddress: string;
+        /** Compressed (33-byte) secp256k1 emulator public key, hex-encoded. */
+        emulatorPublicKey: string;
+    };
 };
 
 /** Response from creating a reverse swap. */
@@ -1139,6 +1150,7 @@ export class BoltzSwapProvider {
         preimageHash,
         description,
         descriptionHash,
+        nonInteractiveClaim,
     }: CreateReverseSwapRequest): Promise<CreateReverseSwapResponse> {
         // claimPublicKey must be in compressed version (33 bytes / 66 hex chars)
         if (claimPublicKey.length != 66) {
@@ -1163,6 +1175,7 @@ export class BoltzSwapProvider {
             ...(descriptionHash
                 ? { descriptionHash }
                 : { description: description?.trim() || "Send to Arkade address" }),
+            ...(nonInteractiveClaim ? { nonInteractiveClaim } : {}),
             ...(this.referralId ? { referralId: this.referralId } : {}),
         };
 

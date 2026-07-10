@@ -36,6 +36,8 @@ import { ripemd160 } from "@noble/hashes/legacy.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { Address, OutScript, Script, ScriptNum } from "@scure/btc-signer";
 import { decodeInvoice } from "../src/utils/decoding";
+import { CovclaimdProvider } from "../src/covclaimd-provider";
+import { eciesDecrypt } from "../src/utils/covclaimd-ecies";
 import { logger } from "../src/logger";
 import { pubECDSA } from "@scure/btc-signer/utils.js";
 import { create as createMusig } from "../src/utils/musig";
@@ -867,6 +869,55 @@ describe("ArkadeSwaps", () => {
                     descriptionHash: "",
                 });
                 expect(spy.mock.calls[0]![0]).not.toHaveProperty("description");
+            });
+
+            it("delegates the claim to covclaimd for a nonInteractive reverse swap", async () => {
+                // covclaimd claims the VHTLC server-side, so the funds are
+                // recovered even with the app closed. At creation we hand it the
+                // preimage encrypted to its key; prove the reveal packet decrypts
+                // back to this swap's preimage — all covclaimd needs to claim.
+                const covSwaps = new ArkadeSwaps({
+                    wallet,
+                    arkProvider,
+                    swapProvider,
+                    indexerProvider,
+                    swapRepository: mockSwapRepository,
+                    swapManager: false,
+                    covclaimdUrl: "http://cov:7071",
+                });
+
+                const covclaimdSecretKey = schnorr.utils.randomSecretKey();
+                const covclaimdPubKey = secp256k1.getPublicKey(covclaimdSecretKey, true);
+                const emulatorPubKey = secp256k1.getPublicKey(
+                    schnorr.utils.randomSecretKey(),
+                    true,
+                );
+                vi.spyOn(CovclaimdProvider.prototype, "getPubKeys").mockResolvedValue({
+                    covclaimdPubKey,
+                    emulatorPubKey,
+                });
+                const revealSpy = vi
+                    .spyOn(CovclaimdProvider.prototype, "reveal")
+                    .mockResolvedValue(undefined);
+                vi.mocked(wallet.getAddress).mockResolvedValue(mock.address.ark);
+                const createSpy = vi
+                    .spyOn(swapProvider, "createReverseSwap")
+                    .mockImplementationOnce(reverseSwapResponseFor(createReverseSwapResponse));
+
+                const pendingSwap = await covSwaps.createReverseSwap({
+                    amount: mock.invoice.amount,
+                    nonInteractive: true,
+                });
+
+                expect(createSpy.mock.calls[0]![0].nonInteractiveClaim!.emulatorPublicKey).toBe(
+                    hex.encode(emulatorPubKey),
+                );
+                expect(revealSpy).toHaveBeenCalledOnce();
+                const revealArg = revealSpy.mock.calls[0]![0];
+                expect(revealArg.swapAddress).toBe(mock.lockupAddress);
+                expect(eciesDecrypt(covclaimdSecretKey, revealArg.ciphertext)).toEqual(
+                    hex.decode(pendingSwap.preimage!),
+                );
             });
         });
 

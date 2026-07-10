@@ -23,6 +23,7 @@ import {
     getNetwork,
     type NetworkName,
 } from "@arkade-os/sdk";
+import { eciesEncrypt } from "./utils/covclaimd-ecies";
 import type {
     Chain,
     Network,
@@ -99,6 +100,7 @@ import { logger } from "./logger";
 import { IndexedDbSwapRepository } from "./repositories/IndexedDb/swap-repository";
 import { SwapRepository } from "./repositories/swap-repository";
 import { claimVHTLCIdentity } from "./utils/identity";
+import { CovclaimdProvider } from "./covclaimd-provider";
 import {
     candidateServerPubkeys,
     claimVHTLCwithOffchainTx,
@@ -226,6 +228,8 @@ export class ArkadeSwaps {
     readonly swapManager: SwapManager | null = null;
     /** Storage backend for persisting swap data. */
     readonly swapRepository: SwapRepository;
+    /** Client for a covclaimd daemon, enabling non-interactive reverse swaps. */
+    private readonly covclaimd?: CovclaimdProvider;
 
     /**
      * Creates an ArkadeSwaps instance, auto-detecting the network from the wallet's Ark server.
@@ -275,6 +279,10 @@ export class ArkadeSwaps {
         this.indexerProvider = indexerProvider;
 
         this.swapProvider = config.swapProvider;
+
+        this.covclaimd = config.covclaimdUrl
+            ? new CovclaimdProvider(config.covclaimdUrl)
+            : undefined;
 
         // Initialize SwapRepository
         if (config.swapRepository) {
@@ -487,6 +495,22 @@ export class ArkadeSwaps {
         // Gate on `!== undefined` (not truthiness) so a present-but-invalid
         // hash like "" is forwarded and rejected by the provider's hex check,
         // rather than silently falling back to the description.
+        let nonInteractiveClaim: CreateReverseSwapRequest["nonInteractiveClaim"];
+        let covPubKeys: { covclaimdPubKey: Uint8Array; emulatorPubKey: Uint8Array } | undefined;
+        let claimReceiverAddress: string | undefined;
+        if (args.nonInteractive) {
+            if (!this.covclaimd)
+                throw new SwapError({
+                    message: "nonInteractive requires covclaimdUrl in ArkadeSwaps config",
+                });
+            covPubKeys = await this.covclaimd.getPubKeys();
+            claimReceiverAddress = await this.wallet.getAddress();
+            nonInteractiveClaim = {
+                claimReceiverAddress,
+                emulatorPublicKey: hex.encode(covPubKeys.emulatorPubKey),
+            };
+        }
+
         const swapRequest: CreateReverseSwapRequest = {
             invoiceAmount: args.amount,
             claimPublicKey,
@@ -496,6 +520,7 @@ export class ArkadeSwaps {
                 : args.description?.trim()
                   ? { description: args.description.trim() }
                   : {}),
+            ...(nonInteractiveClaim ? { nonInteractiveClaim } : {}),
         };
 
         // make reverse swap request
@@ -518,6 +543,17 @@ export class ArkadeSwaps {
 
         // save pending swap to storage
         await this.savePendingReverseSwap(pendingSwap);
+
+        if (covPubKeys && claimReceiverAddress && this.covclaimd) {
+            if (!swapResponse.lockupAddress)
+                throw new SwapError({ message: "reverse swap response missing lockupAddress" });
+            const receiverTapKey = ArkAddress.decode(claimReceiverAddress).vtxoTaprootKey;
+            await this.covclaimd.reveal({
+                swapAddress: swapResponse.lockupAddress,
+                ciphertext: eciesEncrypt(covPubKeys.covclaimdPubKey, preimage),
+                arkadeScript: enforcePayTo(receiverTapKey),
+            });
+        }
 
         // Add to swap manager if enabled
         if (this.swapManager) {
@@ -3350,4 +3386,23 @@ export interface IArkadeSwaps extends AsyncDisposable {
      */
     reset(): Promise<void>;
     dispose(): Promise<void>;
+}
+
+function enforcePayTo(receiverTapKey: Uint8Array): Uint8Array {
+    if (receiverTapKey.length !== 32)
+        throw new Error(`enforcePayTo: expected 32-byte tap key, got ${receiverTapKey.length}`);
+    return new Uint8Array([
+        0xcd, // OP_PUSHCURRENTINPUTINDEX
+        0x76, // OP_DUP
+        0xd1, // OP_INSPECTOUTPUTSCRIPTPUBKEY
+        0x51, // OP_1 (taproot version)
+        0x88, // OP_EQUALVERIFY
+        0x20, // push 32 bytes
+        ...receiverTapKey,
+        0x88, // OP_EQUALVERIFY
+        0xcf, // OP_INSPECTOUTPUTVALUE
+        0xcd, // OP_PUSHCURRENTINPUTINDEX
+        0xc9, // OP_INSPECTINPUTVALUE
+        0xa2, // OP_GREATERTHANOREQUAL
+    ]);
 }
