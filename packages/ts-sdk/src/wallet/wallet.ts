@@ -797,7 +797,16 @@ export class ReadonlyWallet implements IReadonlyWallet {
     async getBalance(): Promise<WalletBalance> {
         const [boardingUtxos, vtxos, pendingOutpoints] = await Promise.all([
             this.getBoardingUtxos(),
-            this.getVtxos(),
+            // Scoped to the wallet's own receiving contracts (default +
+            // delegate), same as getWalletScripts(). Excludes external
+            // contract types such as "vhtlc": an in-flight swap's escrow
+            // is not spendable wallet balance until it's claimed (or
+            // refunded back) into a wallet-owned contract.
+            this.getVtxos({
+                withRecoverable: true,
+                withUnrolled: false,
+                type: ["default", "delegate"],
+            }),
             this.pendingRecoveryOutpoints(),
         ]);
         const isPendingRecovery = (coin: ExtendedVirtualCoin) =>
@@ -890,12 +899,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
     /**
      * Return virtual outputs tracked by the wallet.
      *
-     * @param filter - Optional flags controlling whether recoverable or unrolled VTXOs are included
+     * @param filter - Optional flags controlling whether recoverable or unrolled VTXOs are included, and which contract type(s) to scope to
      */
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
         const f = filter ?? { withRecoverable: true, withUnrolled: false };
         const contractManager = await this.getContractManager();
-        const vtxos = await contractManager.getContractsWithVtxos();
+        const vtxos = await contractManager.getContractsWithVtxos(
+            f.type ? { type: f.type } : undefined,
+        );
 
         return vtxos
             .flatMap((_) => _.vtxos)
