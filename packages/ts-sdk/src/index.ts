@@ -229,6 +229,19 @@ import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
 import { TxWeightEstimator, type VSize } from "./utils/txSizeEstimator";
 import { Unroll } from "./wallet/unroll";
+import { UnilateralExit, deserializeExitPackage, serializeExitPackage } from "./wallet/exit";
+import type {
+    ExitDelay,
+    ExitMode,
+    ExitPackage,
+    ExitQuote,
+    ExitStep,
+    ExitTotals,
+    ExitVtxoInfo,
+    ExitOptions,
+    ExecutorEvent,
+    ExitFeeWallet,
+} from "./wallet/exit";
 import { ArkError, maybeArkError } from "./providers/errors";
 import { validateVtxoTxGraph, validateConnectorsTxGraph } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
@@ -487,6 +500,9 @@ export {
     // Anchor
     P2A,
     Unroll,
+    UnilateralExit,
+    serializeExitPackage,
+    deserializeExitPackage,
     Transaction,
     TxWeightEstimator,
     timelockToSequence,
@@ -664,6 +680,18 @@ export type {
     // Anchor
     AnchorBumper,
     VSize,
+
+    // Unilateral exit packages
+    ExitDelay,
+    ExitMode,
+    ExitPackage,
+    ExitQuote,
+    ExitStep,
+    ExitTotals,
+    ExitVtxoInfo,
+    ExitOptions,
+    ExecutorEvent,
+    ExitFeeWallet,
 
     // Storage
     StorageConfig,

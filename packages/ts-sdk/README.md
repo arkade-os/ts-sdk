@@ -797,6 +797,71 @@ await Unroll.completeUnroll(
 - The `completeUnroll` method can only be called after all virtual outputs are fully unrolled and the timelock has expired
 - You need sufficient onchain funds in the `OnchainWallet` to pay for P2A transaction fees
 
+### Unilateral Exit Packages (pre-signed)
+
+`Unroll.Session` requires the wallet (keys + indexer access) to stay online for the whole
+multi-day exit. `UnilateralExit` removes that requirement: it pre-signs **every** transaction
+needed to unroll a VTXO's offchain transaction chain onchain **and** sweep each matured output
+to an address you solely control, then emits a versioned JSON package that anything with an
+Esplora-compatible endpoint can execute — no keys, no Arkade infrastructure.
+
+> **Note:** Unilateral exit handles **BTC value only** and does not represent any assets a
+> VTXO carries — do not pass asset-bearing VTXOs (those with a non-empty `assets` field).
+
+The flow is **quote → fund → prepare → execute**:
+
+```typescript
+import { UnilateralExit, OnchainWallet, serializeExitPackage } from '@arkade-os/sdk'
+
+const onchainWallet = await OnchainWallet.create(identity, 'mainnet')
+
+// 1. Quote: how many txs, how many sats (no funds needed, nothing signed)
+const quote = await UnilateralExit.estimate({
+  wallet,
+  onchainWallet,
+  sweepAddress: 'bc1p...',      // where the exited funds land
+  // feeRate: 2,                // sat/vB — defaults to the provider estimate
+})
+console.log(quote.totals.txCount, quote.totals.fundingRequiredSats, quote.shortfallSats)
+
+// 2. Deposit quote.shortfallSats to quote.fundingAddress, wait for confirmation
+
+// 3. Prepare: signs everything and broadcasts the fee-funding splitter,
+//    reserving the fee budget onchain
+const pkg = await UnilateralExit.prepare({ wallet, onchainWallet, sweepAddress: 'bc1p...' })
+const json = serializeExitPackage(pkg) // hand this to any executor
+
+// 4. Execute anywhere — here, or on a machine that has only an Esplora URL
+const executor = new UnilateralExit.Executor(pkg, wallet.onchainProvider)
+for await (const event of executor) {
+  console.log(event.stepIndex, event.kind, event.status)
+}
+```
+
+Every exit terminates in a **sweep**. Unrolling only lands a VTXO back onchain still encumbered
+by its Arkade script; the funds become yours unilaterally only once a sweep spends that output
+through the CSV-timelocked exit path to `sweepAddress`. So the package always pairs each exited
+VTXO with a pre-signed sweep, and `totals.recoveredSats` is what arrives at `sweepAddress` after
+the timelocks mature. A VTXO whose sweep cannot be signed — e.g. a contract path that needs
+another party — is dropped from the package rather than left half-exited onchain.
+
+Key properties:
+
+- **Contract-aware**: exit paths are resolved through the contract handler registry, so
+  contract VTXOs (e.g. a VHTLC whose preimage is in the contract params) are pre-signable
+  too — paths needing other parties' signatures are skipped with a reason.
+- **Shared ancestors are paid once**: VTXOs under the same commitment share tree
+  transactions; the package contains one step (and one fee) per unique transaction.
+- **Idempotent execution**: the executor re-checks the chain before every action, so it can
+  be killed, moved, and re-run at any point; already-confirmed steps are skipped.
+- **Per-VTXO isolation**: one sweep per VTXO plus fan-out fee funding means one failed
+  branch never blocks the others.
+- **Confidentiality**: packages contain no key material, but sweeps of condition paths embed
+  the condition witness (e.g. a VHTLC preimage) — treat the file as confidential until
+  broadcast.
+- `validUntil` carries the earliest batch expiry: execute before it, or the operator may
+  sweep the expired batch first.
+
 ### Running the wallet in a service worker
 
 The SDK provides a `MessageBus` orchestrator that runs inside a service worker
