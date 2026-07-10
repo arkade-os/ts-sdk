@@ -15,12 +15,14 @@
  * sender (refund path, after timeout) — so if it wasn't us, it must have
  * been the other one.
  */
+import type { ContractEvent } from "@arkade-os/sdk";
 import {
     isChainFinalStatus,
     isReverseFinalStatus,
     isSubmarineFailedStatus,
     isSubmarineFinalStatus,
 } from "./boltz-swap-provider";
+import { logger } from "./logger";
 import { BoltzSwap } from "./types";
 
 /** Domain swap lifecycle state, derived from Boltz status + VTXO signal + action log. */
@@ -144,5 +146,84 @@ function deriveSpentByOthersState(swap: BoltzSwap): SwapState {
             if (swap.request.from === "ARK") return "Settled";
             if (swap.request.to === "ARK") return "Failed";
             return "Pending"; // genuinely ambiguous / malformed direction
+    }
+}
+
+/** Dependencies injected into {@link SwapStatusReconciler}. */
+export interface SwapStatusReconcilerDeps {
+    /** Looks up a currently-monitored swap by id, or `undefined` if unknown. */
+    getSwap(id: string): BoltzSwap | undefined;
+    /** Returns the current action log — see {@link SwapManager.getActionLog}. */
+    getActionLog(): SwapActionLog;
+    /**
+     * Invoked when a `ContractEvent` resolves a swap to a terminal
+     * {@link SwapState} (`"Settled"`, `"Refunded"`, or `"Failed"`).
+     */
+    onSwapResolved(swap: BoltzSwap, state: SwapState): void;
+}
+
+/**
+ * Bridges `ContractManager` VTXO events to swap-lifecycle resolution.
+ *
+ * Maintains a `contractScript -> swapId` index — populated by whoever
+ * registers a swap's tracked `vhtlc` contract (see `swap-contract.ts`) — and,
+ * on each `vtxo_received`/`vtxo_spent` event for a known script, derives the
+ * swap's current {@link SwapState} via {@link deriveSwapState} and reports it
+ * through {@link SwapStatusReconcilerDeps.onSwapResolved} whenever that state
+ * is terminal.
+ *
+ * `connection_reset` events are intentionally ignored here: they carry no
+ * `contractScript`, and `ContractManager` re-establishes VTXO state on
+ * reconnect by re-emitting `vtxo_received`/`vtxo_spent` for anything that
+ * changed, so a dropped-and-restored connection still converges without
+ * special-casing it in this class.
+ */
+export class SwapStatusReconciler {
+    private readonly scriptToSwapId = new Map<string, string>();
+
+    constructor(private readonly deps: SwapStatusReconcilerDeps) {}
+
+    /** Start resolving VTXO events on `contractScript` against `swapId`. */
+    addSwapScript(contractScript: string, swapId: string): void {
+        this.scriptToSwapId.set(contractScript, swapId);
+    }
+
+    /** Stop resolving VTXO events on `contractScript` (e.g. swap finalized). */
+    removeSwapScript(contractScript: string): void {
+        this.scriptToSwapId.delete(contractScript);
+    }
+
+    /**
+     * Handles a single `ContractManager` event. Intended to be wired as the
+     * `ContractEventCallback` passed to `contractManager.onContractEvent`,
+     * e.g. `contractManager.onContractEvent((event) =>
+     * reconciler.onContractEvent(event))`.
+     *
+     * Never throws: a malformed event, an unregistered script, or an error
+     * thrown while deriving state is logged and swallowed so one bad event
+     * can never tear down the caller's event subscription.
+     */
+    onContractEvent(event: ContractEvent): void {
+        try {
+            if (event.type !== "vtxo_received" && event.type !== "vtxo_spent") {
+                // "connection_reset" — ignored, see class docstring.
+                return;
+            }
+
+            const swapId = this.scriptToSwapId.get(event.contractScript);
+            if (!swapId) return;
+
+            const swap = this.deps.getSwap(swapId);
+            if (!swap) return;
+
+            const signal: VtxoSignal = event.type === "vtxo_received" ? "funded" : "spent";
+            const state = deriveSwapState(swap, signal, this.deps.getActionLog());
+
+            if (state === "Settled" || state === "Refunded" || state === "Failed") {
+                this.deps.onSwapResolved(swap, state);
+            }
+        } catch (error) {
+            logger.error("SwapStatusReconciler: error handling contract event:", error);
+        }
     }
 }

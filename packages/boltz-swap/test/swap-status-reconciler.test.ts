@@ -1,5 +1,11 @@
-import { describe, it, expect } from "vitest";
-import { deriveSwapState, SwapActionLog } from "../src/swap-status-reconciler";
+import { describe, it, expect, vi } from "vitest";
+import type { ContractEvent } from "@arkade-os/sdk";
+import {
+    deriveSwapState,
+    SwapActionLog,
+    SwapState,
+    SwapStatusReconciler,
+} from "../src/swap-status-reconciler";
 import { BoltzSwap } from "../src/types";
 import {
     makeArkInfoFixture,
@@ -212,5 +218,138 @@ describe("deriveSwapState", () => {
             };
             expect(deriveSwapState(malformed, "spent", EMPTY_LOG)).toBe("Pending");
         });
+    });
+});
+
+/** Minimal, well-typed `ContractEvent` fixture — only `type`/`contractScript` matter to the reconciler. */
+const makeVtxoEvent = (
+    type: "vtxo_received" | "vtxo_spent",
+    contractScript: string,
+): ContractEvent => ({
+    type,
+    contractScript,
+    vtxos: [],
+    contract: {
+        type: "vhtlc",
+        params: {},
+        script: contractScript,
+        address: "ark1test",
+        state: "active",
+        createdAt: 0,
+    },
+    timestamp: Date.now(),
+});
+
+const CONNECTION_RESET_EVENT: ContractEvent = { type: "connection_reset", timestamp: Date.now() };
+
+describe("SwapStatusReconciler", () => {
+    const arkInfo = makeArkInfoFixture();
+    const EMPTY_LOG: SwapActionLog = { claimed: new Set(), refunded: new Set() };
+    const claimedLog = (id: string): SwapActionLog => ({
+        claimed: new Set([id]),
+        refunded: new Set(),
+    });
+
+    /** Builds a reconciler wired to a single swap, with mockable deps. */
+    function makeReconciler(swap: BoltzSwap, actionLog: SwapActionLog = EMPTY_LOG) {
+        const getSwap = vi.fn((id: string) => (id === swap.id ? swap : undefined));
+        const getActionLog = vi.fn(() => actionLog);
+        const onSwapResolved = vi.fn();
+        const reconciler = new SwapStatusReconciler({ getSwap, getActionLog, onSwapResolved });
+        return { reconciler, getSwap, getActionLog, onSwapResolved };
+    }
+
+    it("addSwapScript + vtxo_spent for a swap we claimed -> onSwapResolved(swap, Settled)", () => {
+        const swap: BoltzSwap = {
+            ...makeReverseSwapFixture(arkInfo),
+            status: "transaction.confirmed",
+        };
+        const { reconciler, onSwapResolved } = makeReconciler(swap, claimedLog(swap.id));
+
+        reconciler.addSwapScript("script-claimed", swap.id);
+        reconciler.onContractEvent(makeVtxoEvent("vtxo_spent", "script-claimed"));
+
+        expect(onSwapResolved).toHaveBeenCalledTimes(1);
+        expect(onSwapResolved).toHaveBeenCalledWith(swap, "Settled" satisfies SwapState);
+    });
+
+    it("submarine vtxo_spent we did NOT refund -> onSwapResolved(swap, Settled) (Boltz claimed after paying invoice)", () => {
+        const swap: BoltzSwap = { ...makeSubmarineSwapFixture(arkInfo), status: "invoice.pending" };
+        const { reconciler, onSwapResolved } = makeReconciler(swap, EMPTY_LOG);
+
+        reconciler.addSwapScript("script-submarine", swap.id);
+        reconciler.onContractEvent(makeVtxoEvent("vtxo_spent", "script-submarine"));
+
+        expect(onSwapResolved).toHaveBeenCalledWith(swap, "Settled" satisfies SwapState);
+    });
+
+    it("unknown contractScript -> no-op, does not throw, does not resolve", () => {
+        const swap = makeReverseSwapFixture(arkInfo);
+        const { reconciler, onSwapResolved, getSwap } = makeReconciler(swap);
+
+        expect(() =>
+            reconciler.onContractEvent(makeVtxoEvent("vtxo_spent", "never-registered")),
+        ).not.toThrow();
+        expect(getSwap).not.toHaveBeenCalled();
+        expect(onSwapResolved).not.toHaveBeenCalled();
+    });
+
+    it("swallows and logs an internal error instead of throwing", () => {
+        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+        const swap = makeReverseSwapFixture(arkInfo);
+        const onSwapResolved = vi.fn();
+        const reconciler = new SwapStatusReconciler({
+            getSwap: () => {
+                throw new Error("boom");
+            },
+            getActionLog: () => EMPTY_LOG,
+            onSwapResolved,
+        });
+        reconciler.addSwapScript("script-throws", swap.id);
+
+        expect(() =>
+            reconciler.onContractEvent(makeVtxoEvent("vtxo_spent", "script-throws")),
+        ).not.toThrow();
+        expect(onSwapResolved).not.toHaveBeenCalled();
+        expect(errorSpy).toHaveBeenCalledTimes(1);
+
+        errorSpy.mockRestore();
+    });
+
+    it("vtxo_received (funded) with no terminal Boltz status -> Pending, onSwapResolved not called", () => {
+        const swap: BoltzSwap = {
+            ...makeReverseSwapFixture(arkInfo),
+            status: "transaction.mempool",
+        };
+        const { reconciler, onSwapResolved } = makeReconciler(swap);
+
+        reconciler.addSwapScript("script-funded", swap.id);
+        reconciler.onContractEvent(makeVtxoEvent("vtxo_received", "script-funded"));
+
+        expect(onSwapResolved).not.toHaveBeenCalled();
+    });
+
+    it("ignores connection_reset events", () => {
+        const swap = makeReverseSwapFixture(arkInfo);
+        const { reconciler, onSwapResolved, getSwap } = makeReconciler(swap);
+        reconciler.addSwapScript("script-reset", swap.id);
+
+        expect(() => reconciler.onContractEvent(CONNECTION_RESET_EVENT)).not.toThrow();
+        expect(getSwap).not.toHaveBeenCalled();
+        expect(onSwapResolved).not.toHaveBeenCalled();
+    });
+
+    it("removeSwapScript stops resolving further events for that script", () => {
+        const swap: BoltzSwap = {
+            ...makeReverseSwapFixture(arkInfo),
+            status: "transaction.confirmed",
+        };
+        const { reconciler, onSwapResolved } = makeReconciler(swap, claimedLog(swap.id));
+        reconciler.addSwapScript("script-removed", swap.id);
+        reconciler.removeSwapScript("script-removed");
+
+        reconciler.onContractEvent(makeVtxoEvent("vtxo_spent", "script-removed"));
+
+        expect(onSwapResolved).not.toHaveBeenCalled();
     });
 });

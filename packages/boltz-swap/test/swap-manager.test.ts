@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { SwapManager, SwapManagerConfig } from "../src/swap-manager";
+import { SwapManager, SwapManagerClient, SwapManagerConfig } from "../src/swap-manager";
 import { BoltzSwapProvider } from "../src/boltz-swap-provider";
 import { BoltzChainSwap, BoltzReverseSwap, BoltzSubmarineSwap } from "../src/types";
+import { SwapError } from "../src/errors";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -2083,6 +2084,130 @@ describe("SwapManager", () => {
             expect(claimCallback).toHaveBeenCalled();
             expect(onSwapFailed).toHaveBeenCalled();
             expect(swapManager.getActionLog().claimed.has("reverse-swap-1")).toBe(false);
+        });
+    });
+
+    /**
+     * `resolveSwapFromVtxo` is the SwapManager-side hook a `SwapStatusReconciler`
+     * calls (as `onSwapResolved`) once a VTXO event derives a swap's terminal
+     * `SwapState` — see swap-status-reconciler.ts. Unlike the Boltz-status-driven
+     * finalize path, it never touches `swap.status`.
+     */
+    describe("resolveSwapFromVtxo (VTXO-driven finalize)", () => {
+        beforeEach(() => {
+            swapManager = new SwapManager(swapProvider, swapManagerConfig);
+            swapManager.setCallbacks(makeCallbacks());
+        });
+
+        it("exposes getActionLog on the SwapManagerClient interface (M2)", () => {
+            const client: SwapManagerClient = swapManager;
+            const log = client.getActionLog();
+            expect(log.claimed).toBeInstanceOf(Set);
+            expect(log.refunded).toBeInstanceOf(Set);
+        });
+
+        it("finalizes on Settled: removes from monitoring and fires onSwapCompleted", async () => {
+            const onSwapCompleted = vi.fn();
+            await swapManager.onSwapCompleted(onSwapCompleted);
+
+            const swap = { ...mockReverseSwap, status: "swap.created" as const };
+            await swapManager.start([swap]);
+            expect(await swapManager.hasSwap(swap.id)).toBe(true);
+
+            swapManager.resolveSwapFromVtxo(swap, "Settled");
+
+            expect(await swapManager.hasSwap(swap.id)).toBe(false);
+            expect(onSwapCompleted).toHaveBeenCalledWith(swap);
+        });
+
+        it("finalizes on Refunded: removes from monitoring and fires onSwapCompleted", async () => {
+            const onSwapCompleted = vi.fn();
+            await swapManager.onSwapCompleted(onSwapCompleted);
+
+            const swap = { ...mockSubmarineSwap, status: "invoice.set" as const };
+            await swapManager.start([swap]);
+
+            swapManager.resolveSwapFromVtxo(swap, "Refunded");
+
+            expect(await swapManager.hasSwap(swap.id)).toBe(false);
+            expect(onSwapCompleted).toHaveBeenCalledWith(swap);
+        });
+
+        it("finalizes on Failed: removes from monitoring and fires onSwapFailed with a SwapError", async () => {
+            const onSwapFailed = vi.fn();
+            await swapManager.onSwapFailed(onSwapFailed);
+
+            const swap = { ...mockReverseSwap, status: "swap.created" as const };
+            await swapManager.start([swap]);
+
+            swapManager.resolveSwapFromVtxo(swap, "Failed");
+
+            expect(await swapManager.hasSwap(swap.id)).toBe(false);
+            expect(onSwapFailed).toHaveBeenCalledTimes(1);
+            const [failedSwap, error] = onSwapFailed.mock.calls[0];
+            expect(failedSwap).toBe(swap);
+            expect(error).toBeInstanceOf(SwapError);
+            expect((error as Error).message).toContain(swap.id);
+        });
+
+        it("is idempotent: a second call after finalization is a no-op", async () => {
+            const onSwapCompleted = vi.fn();
+            await swapManager.onSwapCompleted(onSwapCompleted);
+
+            const swap = { ...mockReverseSwap, status: "swap.created" as const };
+            await swapManager.start([swap]);
+
+            swapManager.resolveSwapFromVtxo(swap, "Settled");
+            swapManager.resolveSwapFromVtxo(swap, "Settled");
+
+            expect(onSwapCompleted).toHaveBeenCalledTimes(1);
+        });
+
+        it("does not act on a swap the manager never monitored", async () => {
+            const onSwapCompleted = vi.fn();
+            const onSwapFailed = vi.fn();
+            await swapManager.onSwapCompleted(onSwapCompleted);
+            await swapManager.onSwapFailed(onSwapFailed);
+
+            // Note: swap is never passed to start(), so it's not in monitoredSwaps.
+            const swap = { ...mockReverseSwap, status: "swap.created" as const };
+
+            swapManager.resolveSwapFromVtxo(swap, "Settled");
+
+            expect(onSwapCompleted).not.toHaveBeenCalled();
+            expect(onSwapFailed).not.toHaveBeenCalled();
+        });
+
+        it("does not finalize while executeAutonomousAction is mid-flight (swapsInProgress guard)", async () => {
+            const onSwapCompleted = vi.fn();
+            await swapManager.onSwapCompleted(onSwapCompleted);
+
+            const swap = { ...mockReverseSwap, status: "swap.created" as const };
+            await swapManager.start([swap]);
+
+            // Simulate an in-progress autonomous action without actually running one.
+            (swapManager as any).swapsInProgress.add(swap.id);
+
+            swapManager.resolveSwapFromVtxo(swap, "Settled");
+
+            expect(await swapManager.hasSwap(swap.id)).toBe(true);
+            expect(onSwapCompleted).not.toHaveBeenCalled();
+        });
+
+        it("ignores a non-terminal derived state", async () => {
+            const onSwapCompleted = vi.fn();
+            const onSwapFailed = vi.fn();
+            await swapManager.onSwapCompleted(onSwapCompleted);
+            await swapManager.onSwapFailed(onSwapFailed);
+
+            const swap = { ...mockReverseSwap, status: "swap.created" as const };
+            await swapManager.start([swap]);
+
+            swapManager.resolveSwapFromVtxo(swap, "Pending");
+
+            expect(await swapManager.hasSwap(swap.id)).toBe(true);
+            expect(onSwapCompleted).not.toHaveBeenCalled();
+            expect(onSwapFailed).not.toHaveBeenCalled();
         });
     });
 });
