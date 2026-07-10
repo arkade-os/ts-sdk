@@ -38,35 +38,53 @@ describe("operator offline (e2e)", () => {
                 },
                 settlementConfig: false,
             });
-            expect(online.getProviderConnectionState().mode).toBe("online");
+            let onlineDisposed = false;
+            let offline: Wallet | undefined;
+            try {
+                expect(online.getProviderConnectionState().mode).toBe("online");
 
-            await createVtxo({ wallet: online, identity }, 100_000);
-            await waitFor(async () => (await online.getVtxos()).length >= 1, { timeout: 30_000 });
-            const cachedVtxos = await online.getVtxos();
-            expect(cachedVtxos.length).toBeGreaterThan(0);
+                await createVtxo({ wallet: online, identity }, 100_000);
+                await waitFor(async () => (await online.getVtxos()).length >= 1, {
+                    timeout: 30_000,
+                });
+                const cachedVtxos = await online.getVtxos();
+                expect(cachedVtxos.length).toBeGreaterThan(0);
 
-            // 2) Re-create the SAME wallet (same identity + repos) pointed at an
-            //    unreachable operator. Port 9 is deterministically unreachable
-            //    (undici rejects it), so every request rejects as a retryable
-            //    provider error. Create must SUCCEED from the cached snapshot.
-            const offline = await Wallet.create({
-                identity,
-                arkServerUrl: "http://127.0.0.1:9",
-                onchainProvider: onchain(),
-                storage: {
-                    walletRepository: repos.walletRepository,
-                    contractRepository: repos.contractRepository,
-                },
-                settlementConfig: false,
-            });
+                // Dispose the online wallet before re-creating offline: its live
+                // ContractManager/subscriptions would otherwise keep writing to
+                // the shared repos while the offline wallet reads them. InMemory
+                // repos survive dispose(), so the cached snapshot + VTXO set
+                // persist for the offline boot below.
+                await online.dispose();
+                onlineDisposed = true;
 
-            // 3) Reads serve cached state; the connection state reports degraded.
-            const offlineVtxos = await offline.getVtxos();
-            expect(offlineVtxos.map((v) => `${v.txid}:${v.vout}`).sort()).toEqual(
-                cachedVtxos.map((v) => `${v.txid}:${v.vout}`).sort(),
-            );
-            expect(offline.getProviderConnectionState().mode).toBe("degraded");
-            expect(offline.serverInfoSource).toBe("cache");
+                // 2) Re-create the SAME wallet (same identity + repos) pointed at
+                //    an unreachable operator. Port 9 is on the Fetch bad-ports
+                //    blocklist, so `fetch` rejects before dialing; the rejection is
+                //    classified as a retryable provider error, so create must
+                //    SUCCEED from the cached snapshot.
+                offline = await Wallet.create({
+                    identity,
+                    arkServerUrl: "http://127.0.0.1:9",
+                    onchainProvider: onchain(),
+                    storage: {
+                        walletRepository: repos.walletRepository,
+                        contractRepository: repos.contractRepository,
+                    },
+                    settlementConfig: false,
+                });
+
+                // 3) Reads serve cached state; the connection state reports degraded.
+                const offlineVtxos = await offline.getVtxos();
+                expect(offlineVtxos.map((v) => `${v.txid}:${v.vout}`).sort()).toEqual(
+                    cachedVtxos.map((v) => `${v.txid}:${v.vout}`).sort(),
+                );
+                expect(offline.getProviderConnectionState().mode).toBe("degraded");
+                expect(offline.serverInfoSource).toBe("cache");
+            } finally {
+                if (!onlineDisposed) await online.dispose().catch(() => undefined);
+                await offline?.dispose().catch(() => undefined);
+            }
         },
     );
 });
