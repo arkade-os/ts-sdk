@@ -184,10 +184,7 @@ describe("resolveArkInfo", () => {
         const repo = new InMemoryWalletRepository();
         const info = makeArkInfo();
         await saveArkInfoSnapshot(repo, info, 700);
-        const resolved = await resolveArkInfo(
-            failing(new ProviderUnavailableError("arkade", "503")),
-            repo,
-        );
+        const resolved = await resolveArkInfo(failing(new ProviderUnavailableError("503")), repo);
         expect(resolved.source).toBe("cache");
         expect(resolved.info).toEqual({ ...info, serviceStatus: {} });
     });
@@ -205,7 +202,7 @@ describe("resolveArkInfo", () => {
     it("throws a typed unavailable error on retryable failure with no cache", async () => {
         const repo = new InMemoryWalletRepository();
         await expect(
-            resolveArkInfo(failing(new ProviderUnavailableError("arkade", "503")), repo),
+            resolveArkInfo(failing(new ProviderUnavailableError("503")), repo),
         ).rejects.toBeInstanceOf(ProviderUnavailableError);
     });
 
@@ -220,7 +217,7 @@ describe("resolveArkInfo", () => {
         const repo = new InMemoryWalletRepository();
         await repo.saveWalletState({ settings: { [ARK_INFO_SNAPSHOT_KEY]: { version: 9 } } });
         await expect(
-            resolveArkInfo(failing(new ProviderUnavailableError("arkade", "503")), repo),
+            resolveArkInfo(failing(new ProviderUnavailableError("503")), repo),
         ).rejects.toThrow(MalformedArkInfoSnapshotError);
     });
 });
@@ -244,7 +241,7 @@ describe("saveValidatedArkInfoSnapshot", () => {
 
 describe("isRetryableProviderError", () => {
     it("classifies unavailable + transport errors as retryable, others terminal", () => {
-        expect(isRetryableProviderError(new ProviderUnavailableError("indexer", "x"))).toBe(true);
+        expect(isRetryableProviderError(new ProviderUnavailableError("x"))).toBe(true);
         expect(isRetryableProviderError(new FetchError("x", { url: "y" }))).toBe(true);
         expect(isRetryableProviderError(new Error("400"))).toBe(false);
         expect(isRetryableProviderError(new MalformedArkInfoSnapshotError("x"))).toBe(false);
@@ -292,7 +289,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
 
         // Operator now unreachable → construct from the snapshot written above.
         const offline = await createWallet(async () => {
-            throw new ProviderUnavailableError("arkade", "operator down");
+            throw new ProviderUnavailableError("operator down");
         }, repos);
         expect(offline.serverInfoSource).toBe("cache");
         expect(offline.arkAddress.encode()).toBe(onlineAddress);
@@ -307,7 +304,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         };
         await expect(
             createWallet(async () => {
-                throw new ProviderUnavailableError("arkade", "operator down");
+                throw new ProviderUnavailableError("operator down");
             }, repos),
         ).rejects.toBeInstanceOf(ProviderUnavailableError);
     });
@@ -321,7 +318,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         await saveArkInfoSnapshot(repos.walletRepository, makeArkInfo({ network: "bogusnet" }), 1);
         await expect(
             createWallet(async () => {
-                throw new ProviderUnavailableError("arkade", "operator down");
+                throw new ProviderUnavailableError("operator down");
             }, repos),
         ).rejects.toThrow(/Unsupported network/);
     });

@@ -338,7 +338,6 @@ export async function resolveArkInfo(
         const snapshot = await loadArkInfoSnapshot(walletRepository);
         if (!snapshot) {
             throw new ProviderUnavailableError(
-                "arkade",
                 "Arkade server info is unavailable and no cached snapshot exists",
                 { cause: err },
             );

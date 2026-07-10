@@ -62,9 +62,7 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         const walletRepo = new InMemoryWalletRepository();
         await contractRepo.saveContract(seededContract());
         const indexer = createMockIndexerProvider();
-        (indexer.getVtxos as any).mockRejectedValue(
-            new ProviderUnavailableError("indexer", "down"),
-        );
+        (indexer.getVtxos as any).mockRejectedValue(new ProviderUnavailableError("down"));
 
         const m = await create(indexer, contractRepo, walletRepo);
 
@@ -99,9 +97,7 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         await m.createContract(params());
         expect(m.getSyncState().mode).toBe("online");
 
-        (indexer.getVtxos as any).mockRejectedValue(
-            new ProviderUnavailableError("indexer", "down"),
-        );
+        (indexer.getVtxos as any).mockRejectedValue(new ProviderUnavailableError("down"));
         const result = await m.getContractsWithVtxos(); // must NOT throw
 
         expect(result).toHaveLength(1);
@@ -125,9 +121,7 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         const indexer = createMockIndexerProvider();
         const m = await create(indexer, contractRepo, walletRepo);
 
-        (indexer.getVtxos as any).mockRejectedValue(
-            new ProviderUnavailableError("indexer", "down"),
-        );
+        (indexer.getVtxos as any).mockRejectedValue(new ProviderUnavailableError("down"));
         const c = await m.createContract(params());
 
         expect(c.script).toBe(TEST_DEFAULT_SCRIPT);
@@ -140,9 +134,7 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         const walletRepo = new InMemoryWalletRepository();
         await contractRepo.saveContract(seededContract());
         const indexer = createMockIndexerProvider();
-        (indexer.getVtxos as any).mockRejectedValueOnce(
-            new ProviderUnavailableError("indexer", "down"),
-        );
+        (indexer.getVtxos as any).mockRejectedValueOnce(new ProviderUnavailableError("down"));
 
         const m = await create(indexer, contractRepo, walletRepo);
         expect(m.getSyncState().mode).toBe("degraded");
@@ -163,9 +155,7 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         // Operator degrades post-boot; the watcher fires connection_reset and the
         // recovery sync fails retryably. This must flip sync state to degraded
         // even though the watcher callback swallows the rejection.
-        (indexer.getVtxos as any).mockRejectedValue(
-            new ProviderUnavailableError("indexer", "down"),
-        );
+        (indexer.getVtxos as any).mockRejectedValue(new ProviderUnavailableError("down"));
         await (m as any).handleContractEvent({ type: "connection_reset", timestamp: 1 });
 
         expect(m.getSyncState().mode).toBe("degraded");
@@ -176,9 +166,7 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         const walletRepo = new InMemoryWalletRepository();
         await contractRepo.saveContract(seededContract());
         const indexer = createMockIndexerProvider();
-        (indexer.getVtxos as any).mockRejectedValueOnce(
-            new ProviderUnavailableError("indexer", "down"),
-        );
+        (indexer.getVtxos as any).mockRejectedValueOnce(new ProviderUnavailableError("down"));
         const m = await create(indexer, contractRepo, walletRepo);
         expect(m.getSyncState().mode).toBe("degraded");
 

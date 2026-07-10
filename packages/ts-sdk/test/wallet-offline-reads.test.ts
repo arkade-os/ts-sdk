@@ -41,7 +41,7 @@ const arkInfo = (): ArkInfo => ({
 const downIndexer = () =>
     ({
         getVtxos: async () => {
-            throw new ProviderUnavailableError("indexer", "operator down");
+            throw new ProviderUnavailableError("operator down");
         },
         subscribeForScripts: async () => "sub-1",
         unsubscribeForScripts: async () => undefined,
@@ -121,7 +121,7 @@ describe("provider connection state (Scope 5)", () => {
         const offline = await createWallet(healthyIndexer(), {
             storage,
             getInfo: async () => {
-                throw new ProviderUnavailableError("arkade", "operator down");
+                throw new ProviderUnavailableError("operator down");
             },
         });
         expect(offline.getProviderConnectionState()).toMatchObject({

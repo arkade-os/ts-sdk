@@ -11,7 +11,13 @@ export class ArkError extends Error {
     }
 }
 
-/** Which remote dependency a {@link ProviderUnavailableError} refers to. */
+/**
+ * Which remote dependency an availability failure refers to. Used to label the
+ * {@link ProviderUnavailableError} message and the wallet's
+ * `ProviderConnectionState`; it is deliberately *not* carried as a structured
+ * field on the error, since custom `Error` own-properties do not survive the
+ * service-worker `postMessage` boundary (only `name`/`message`/`cause` do).
+ */
 export type ProviderKind = "arkade" | "indexer";
 
 /**
@@ -26,11 +32,7 @@ export class ProviderUnavailableError extends Error {
     /** Always `true`: this error type only ever wraps retryable conditions. */
     readonly retryable = true;
 
-    constructor(
-        readonly kind: ProviderKind,
-        message: string,
-        options?: { cause?: unknown },
-    ) {
+    constructor(message: string, options?: { cause?: unknown }) {
         super(message, { cause: options?.cause });
         this.name = "ProviderUnavailableError";
     }
@@ -63,7 +65,6 @@ export function throwIfHttpUnavailable(
     if (body !== undefined && maybeArkError(new Error(body))) return;
     if (response.status === 429 || response.status >= 500) {
         throw new ProviderUnavailableError(
-            kind,
             `${kind} unavailable: ${response.status} ${response.statusText}`,
         );
     }
@@ -77,7 +78,7 @@ export function throwIfHttpUnavailable(
  */
 export function toProviderUnavailable(err: unknown, kind: ProviderKind): unknown {
     if (err instanceof FetchError) {
-        return new ProviderUnavailableError(kind, `${kind} request failed`, { cause: err });
+        return new ProviderUnavailableError(`${kind} request failed`, { cause: err });
     }
     return err;
 }

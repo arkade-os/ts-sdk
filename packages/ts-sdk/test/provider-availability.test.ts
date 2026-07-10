@@ -63,11 +63,10 @@ describe("throwIfHttpUnavailable", () => {
 });
 
 describe("toProviderUnavailable", () => {
-    it("maps a transport FetchError to a typed unavailable error with kind + cause", () => {
+    it("maps a transport FetchError to a typed unavailable error with cause", () => {
         const fe = new FetchError("net", { url: "u" });
         const mapped = toProviderUnavailable(fe, "indexer");
         expect(mapped).toBeInstanceOf(ProviderUnavailableError);
-        expect((mapped as ProviderUnavailableError).kind).toBe("indexer");
         expect((mapped as ProviderUnavailableError).cause).toBe(fe);
     });
 
@@ -89,7 +88,7 @@ describe("RestIndexerProvider availability classification", () => {
         });
         await expect(provider().getVtxos({ scripts: ["s"] })).rejects.toMatchObject({
             name: "ProviderUnavailableError",
-            kind: "indexer",
+            message: expect.stringContaining("indexer unavailable"),
         });
     });
 
@@ -124,7 +123,7 @@ describe("RestArkProvider availability classification", () => {
         });
         await expect(provider().getInfo()).rejects.toMatchObject({
             name: "ProviderUnavailableError",
-            kind: "arkade",
+            message: expect.stringContaining("arkade unavailable"),
         });
     });
 
@@ -145,7 +144,7 @@ describe("RestArkProvider availability classification", () => {
         });
         await expect(provider().submitTx("tx", [])).rejects.toMatchObject({
             name: "ProviderUnavailableError",
-            kind: "arkade",
+            message: expect.stringContaining("arkade unavailable"),
         });
     });
 
