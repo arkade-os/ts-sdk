@@ -22,7 +22,19 @@ async function indexerFetch(input: RequestInfo | URL, init?: RequestInit): Promi
     } catch (err) {
         throw toProviderUnavailable(err, "indexer");
     }
-    throwIfHttpUnavailable(res, "indexer");
+    if (!res.ok) {
+        // Pass the body so a 5xx carrying a structured arkd error (grpc-gateway
+        // maps gRPC INTERNAL -> HTTP 500) stays terminal instead of being
+        // misclassified as a retryable availability failure. If the body can't be
+        // read, fall back to status-only classification.
+        let body: string | undefined;
+        try {
+            body = await res.clone().text();
+        } catch {
+            body = undefined;
+        }
+        throwIfHttpUnavailable(res, "indexer", body);
+    }
     return res;
 }
 

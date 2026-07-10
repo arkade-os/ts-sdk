@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { RestIndexerProvider, RestArkProvider, ProviderUnavailableError } from "../src";
+import { RestIndexerProvider, RestArkProvider, ProviderUnavailableError, ArkError } from "../src";
 import { throwIfHttpUnavailable, toProviderUnavailable } from "../src/providers/errors";
 import { FetchError } from "../src/utils/fetch";
 
@@ -27,6 +27,38 @@ describe("throwIfHttpUnavailable", () => {
                 throwIfHttpUnavailable({ status, statusText: "x" } as Response, "arkade"),
             ).not.toThrow();
         }
+    });
+
+    it("keeps a 5xx that carries a structured arkd error terminal (grpc-gateway maps gRPC INTERNAL -> 500)", () => {
+        // arkd rejects a duplicate intent with INTERNAL_ERROR, which grpc-gateway
+        // renders as HTTP 500 with a structured ErrorDetails body. That is a
+        // deliberate application rejection, not an availability failure, so it must
+        // NOT be reclassified as ProviderUnavailableError.
+        const body = JSON.stringify({
+            message: "INTERNAL_ERROR (0): input already registered by another intent",
+            details: [
+                {
+                    "@type": "type.googleapis.com/ark.v1.ErrorDetails",
+                    code: 0,
+                    name: "INTERNAL_ERROR",
+                    message: "input already registered by another intent",
+                },
+            ],
+        });
+        expect(() =>
+            throwIfHttpUnavailable({ status: 500, statusText: "x" } as Response, "arkade", body),
+        ).not.toThrow();
+    });
+
+    it("still classifies a 5xx with a non-structured body as unavailable", () => {
+        // A bare proxy/gateway 5xx (no structured arkd error) stays retryable.
+        expect(() =>
+            throwIfHttpUnavailable(
+                { status: 503, statusText: "Service Unavailable" } as Response,
+                "arkade",
+                "<html>502 Bad Gateway</html>",
+            ),
+        ).toThrow(ProviderUnavailableError);
     });
 });
 
@@ -108,10 +140,45 @@ describe("RestArkProvider availability classification", () => {
             ok: false,
             status: 503,
             statusText: "Service Unavailable",
+            clone: () => ({ text: async () => "" }),
+            text: async () => "",
         });
         await expect(provider().submitTx("tx", [])).rejects.toMatchObject({
             name: "ProviderUnavailableError",
             kind: "arkade",
         });
+    });
+
+    it("cooperative submitTx keeps a structured 500 (gRPC INTERNAL) terminal, not unavailable", async () => {
+        // Regression: arkd rejects e.g. a duplicate intent with INTERNAL_ERROR,
+        // which grpc-gateway renders as HTTP 500 with a structured ErrorDetails
+        // body. authedFetch must NOT reclassify that as ProviderUnavailableError —
+        // it is a deliberate application rejection and must reach the caller as an
+        // ArkError.
+        const body = JSON.stringify({
+            message: "INTERNAL_ERROR (0): input already registered by another intent",
+            details: [
+                {
+                    "@type": "type.googleapis.com/ark.v1.ErrorDetails",
+                    code: 0,
+                    name: "INTERNAL_ERROR",
+                    message: "input already registered by another intent",
+                },
+            ],
+        });
+        mockFetch.mockResolvedValueOnce({
+            ok: false,
+            status: 500,
+            statusText: "Internal Server Error",
+            clone: () => ({ text: async () => body }),
+            text: async () => body,
+        });
+        const err = await provider()
+            .submitTx("tx", [])
+            .catch((e) => e);
+        expect(err).not.toBeInstanceOf(ProviderUnavailableError);
+        expect(err).toBeInstanceOf(ArkError);
+        expect(err.name).toBe("INTERNAL_ERROR");
+        expect(err.code).toBe(0);
     });
 });

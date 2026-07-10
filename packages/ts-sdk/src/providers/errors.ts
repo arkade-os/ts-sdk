@@ -42,8 +42,25 @@ export class ProviderUnavailableError extends Error {
  * than rejects — on HTTP error status, so status-code classification has to live
  * at each provider's non-2xx branch, not in the transport wrapper. 4xx and other
  * responses are left to the caller to treat as terminal.
+ *
+ * Status alone is not enough to classify an arkd response, though: arkd sits
+ * behind grpc-gateway, which maps application-level gRPC errors onto HTTP status
+ * codes across the whole range — gRPC INTERNAL becomes HTTP 500, for instance. So
+ * a 5xx does not by itself mean the operator is unavailable: a 500 whose body
+ * carries a structured arkd error (e.g. `INTERNAL_ERROR (0): ...already registered
+ * by another intent`) is a deliberate, terminal rejection that must reach the
+ * caller as an {@link ArkError}, never be retried. When `body` is provided and
+ * decodes to a structured arkd error, this returns without throwing; classify by
+ * status only for a bodyless call or a non-structured body (a bare proxy/gateway
+ * failure). Mirrors NArk's BuildVersionHandler, which branches on body content,
+ * not status.
  */
-export function throwIfHttpUnavailable(response: Response, kind: ProviderKind): void {
+export function throwIfHttpUnavailable(
+    response: Response,
+    kind: ProviderKind,
+    body?: string,
+): void {
+    if (body !== undefined && maybeArkError(new Error(body))) return;
     if (response.status === 429 || response.status >= 500) {
         throw new ProviderUnavailableError(
             kind,

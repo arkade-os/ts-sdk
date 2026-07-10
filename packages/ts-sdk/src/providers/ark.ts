@@ -341,19 +341,21 @@ export class RestArkProvider implements ArkProvider {
             throw toProviderUnavailable(err, "arkade");
         }
         if (response.ok) return response;
-        // A 429/5xx means the operator is temporarily unable to serve; classify
-        // it as retryable before the digest-mismatch check (which is a 4xx-class
-        // rejection, so the two never overlap).
-        throwIfHttpUnavailable(response, "arkade");
+        // Read the body first: error classification must branch on its content,
+        // not just the HTTP status. arkd is behind grpc-gateway, which renders
+        // application-level errors across the 4xx AND 5xx range (gRPC INTERNAL ->
+        // HTTP 500), so status alone can't tell a terminal rejection apart from a
+        // genuine availability failure.
         let body: string;
         try {
             body = await response.clone().text();
         } catch (e) {
             // Couldn't read the body to classify it (e.g. the connection dropped
-            // mid-body). Detection is only deferred to the next getInfo(), not
-            // lost — but surface it rather than swallowing silently. Return the
-            // original response so the caller still sees the underlying error.
+            // mid-body). Fall back to status-only classification so a genuine
+            // 429/5xx still surfaces as retryable; digest detection is only
+            // deferred to the next getInfo(), not lost.
             console.warn("authedFetch could not read response body for digest check", e);
+            throwIfHttpUnavailable(response, "arkade");
             return response;
         }
         // Only arkd's *structured* digest error counts: a grpc-gateway
@@ -361,7 +363,13 @@ export class RestArkProvider implements ArkProvider {
         // v0.9.9-rc.1 #1104), parsed via the shared maybeArkError. A raw
         // substring match would let an unrelated error body that merely mentions
         // the token trigger a spurious refresh + signer rotation.
-        if (maybeArkError(new Error(body))?.name !== "DIGEST_MISMATCH") return response;
+        const arkError = maybeArkError(new Error(body));
+        // A structured arkd error means the operator is up and deliberately
+        // rejecting the request — terminal, even when grpc-gateway renders it as a
+        // 5xx. Only a non-structured 429/5xx (a bare proxy/gateway failure) is a
+        // retryable availability condition.
+        if (!arkError) throwIfHttpUnavailable(response, "arkade");
+        if (arkError?.name !== "DIGEST_MISMATCH") return response;
         // arkd rejected this request because our cached server info is stale
         // (e.g. the operator rotated its signer). Mirror NArk's BuildVersionHandler
         // (dotnet-sdk #131): clear the digest, refetch info, fire onServerInfoChanged
@@ -381,13 +389,16 @@ export class RestArkProvider implements ArkProvider {
         const url = `${this.serverUrl}/v1/info`;
         const response = await fetch(url);
         if (!response.ok) {
+            const errorText = await response.text();
             // A 429 or 5xx means the operator is up but temporarily unable to
             // serve — a retryable availability failure, not a config/auth error.
             // Surface it as a typed unavailable error so wallet boot can fall
-            // back to a cached server-info snapshot. `fetch` transport failures
-            // (server unreachable) are already surfaced as FetchError upstream.
-            throwIfHttpUnavailable(response, "arkade");
-            const errorText = await response.text();
+            // back to a cached server-info snapshot. Pass the body so a 5xx that
+            // actually carries a structured arkd error (grpc-gateway maps gRPC
+            // INTERNAL -> HTTP 500) stays terminal instead. `fetch` transport
+            // failures (server unreachable) are already surfaced as FetchError
+            // upstream.
+            throwIfHttpUnavailable(response, "arkade", errorText);
             handleError(errorText, `Failed to get server info: ${response.statusText}`);
         }
         const fromServer = await response.json();
