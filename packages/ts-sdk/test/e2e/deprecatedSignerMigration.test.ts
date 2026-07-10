@@ -218,7 +218,16 @@ describe("deprecated-signer migration (real rotation)", () => {
 
                     // Wallet re-derived onto the active (B) signer; nothing left under A.
                     expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
-                    const postStatus = await vtxoManager.getDeprecatedSignerStatus();
+                    // The migration's spend reaches the repository via a fresh
+                    // indexer sync that lags the just-submitted ark tx (the sync
+                    // re-writes VTXO rows indexer-wins), so poll until no
+                    // spendable VTXO remains under the deprecated signer.
+                    const postStatus = await poll(async () => {
+                        const s = await vtxoManager.getDeprecatedSignerStatus();
+                        return s.some((x) => x.signerPubKey === fromX && x.vtxoCount > 0)
+                            ? null
+                            : s;
+                    });
                     expect(
                         postStatus.some((s) => s.signerPubKey === fromX && s.vtxoCount > 0),
                     ).toBe(false);
@@ -295,7 +304,16 @@ describe("deprecated-signer migration (real rotation)", () => {
                     expect(report.vtxos?.migrated[0].cutoffDate).toBe(BigInt(cutoff));
 
                     expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
-                    const postStatus = await vtxoManager.getDeprecatedSignerStatus();
+                    // The migration's spend reaches the repository via a fresh
+                    // indexer sync that lags the just-submitted ark tx (the sync
+                    // re-writes VTXO rows indexer-wins), so poll until no
+                    // spendable VTXO remains under the deprecated signer.
+                    const postStatus = await poll(async () => {
+                        const s = await vtxoManager.getDeprecatedSignerStatus();
+                        return s.some((x) => x.signerPubKey === fromX && x.vtxoCount > 0)
+                            ? null
+                            : s;
+                    });
                     expect(
                         postStatus.some((s) => s.signerPubKey === fromX && s.vtxoCount > 0),
                     ).toBe(false);
