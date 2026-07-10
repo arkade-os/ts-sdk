@@ -250,7 +250,12 @@ import type {
     ExitChainResolver,
     ExitDataSource,
 } from "./wallet/exit";
-import { ArkError, maybeArkError } from "./providers/errors";
+import { ArkError, maybeArkError, ProviderUnavailableError } from "./providers/errors";
+import type { ProviderKind } from "./providers/errors";
+import { isRetryableProviderError } from "./providers/availability";
+import type { ServerInfoSource } from "./wallet/arkInfoSnapshot";
+import type { ProviderConnectionState } from "./wallet/wallet";
+import type { ContractSyncState } from "./contracts/contractManager";
 import { validateVtxoTxGraph, validateConnectorsTxGraph } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
 import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
@@ -520,6 +525,8 @@ export {
     // Errors
     ArkError,
     maybeArkError,
+    ProviderUnavailableError,
+    isRetryableProviderError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 
@@ -662,6 +669,12 @@ export type {
     SignerStatus,
     SignerClassification,
     SignerSet,
+
+    // Provider availability
+    ProviderKind,
+    ServerInfoSource,
+    ProviderConnectionState,
+    ContractSyncState,
 
     // Asset types
     IReadonlyAssetManager,

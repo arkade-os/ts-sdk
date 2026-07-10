@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import { Wallet } from "../wallet";
+import { Wallet, type ProviderConnectionState } from "../wallet";
 import type { Activity, ActivityRegistry } from "../activity";
 import { RestArkProvider } from "../../providers/ark";
 import type {
@@ -326,6 +326,16 @@ export class ExpoWallet implements IWallet {
 
     getContractManager(): Promise<IContractManager> {
         return this.wallet.getContractManager();
+    }
+
+    /**
+     * Wallet-level provider-connection freshness, delegated to the wrapped
+     * in-process wallet. Synchronous because the Expo foreground wallet is
+     * in-process (no worker boundary). Foreground-only: it does not imply any
+     * background task can read live foreground state.
+     */
+    getProviderConnectionState(): ProviderConnectionState {
+        return this.wallet.getProviderConnectionState();
     }
 
     getDelegateManager(): Promise<IDelegateManager | undefined> {
