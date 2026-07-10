@@ -1900,4 +1900,189 @@ describe("SwapManager", () => {
             }
         });
     });
+
+    describe("Action Log", () => {
+        beforeEach(() => {
+            // Mock fetch for polling (needed once the WebSocket connects).
+            global.fetch = vi.fn(() =>
+                Promise.resolve({
+                    ok: true,
+                    json: () => Promise.resolve({ status: "swap.created" }),
+                    headers: new Headers({ "content-length": "100" }),
+                } as Response),
+            );
+        });
+
+        it("records the swapId in claimed after a successful reverse claim", async () => {
+            const claimCallback = vi.fn();
+            swapManager = new SwapManager(swapProvider, swapManagerConfig);
+            swapManager.setCallbacks(makeCallbacks({ claim: claimCallback }));
+
+            await swapManager.start([{ ...mockReverseSwap, status: "swap.created" }]);
+            mockWebSocket.onopen();
+
+            await mockWebSocket.onmessage({
+                data: JSON.stringify({
+                    event: "update",
+                    args: [{ id: "reverse-swap-1", status: "transaction.confirmed" }],
+                }),
+            });
+
+            expect(claimCallback).toHaveBeenCalled();
+            const log = swapManager.getActionLog();
+            expect(log.claimed.has("reverse-swap-1")).toBe(true);
+            expect(log.refunded.has("reverse-swap-1")).toBe(false);
+        });
+
+        it("records the swapId in refunded after a successful submarine refund", async () => {
+            const refundCallback = vi.fn();
+            swapManager = new SwapManager(swapProvider, swapManagerConfig);
+            swapManager.setCallbacks(makeCallbacks({ refund: refundCallback }));
+
+            const refundableSwap: BoltzSubmarineSwap = {
+                ...mockSubmarineSwap,
+                status: "invoice.set",
+            };
+            await swapManager.start([refundableSwap]);
+            mockWebSocket.onopen();
+
+            await mockWebSocket.onmessage({
+                data: JSON.stringify({
+                    event: "update",
+                    args: [{ id: "submarine-swap-1", status: "invoice.failedToPay" }],
+                }),
+            });
+
+            expect(refundCallback).toHaveBeenCalled();
+            const log = swapManager.getActionLog();
+            expect(log.refunded.has("submarine-swap-1")).toBe(true);
+            expect(log.claimed.has("submarine-swap-1")).toBe(false);
+        });
+
+        it("records the swapId in claimed after a successful chain ARK claim (BTC->ARK)", async () => {
+            const claimArk = vi.fn();
+            swapManager = new SwapManager(swapProvider, swapManagerConfig);
+            swapManager.setCallbacks(makeCallbacks({ claimArk }));
+
+            const btcToArkSwap: BoltzChainSwap = {
+                ...mockChainSwap,
+                status: "swap.created",
+                request: { ...mockChainSwap.request, from: "BTC", to: "ARK" },
+            };
+            await swapManager.start([btcToArkSwap]);
+            mockWebSocket.onopen();
+
+            await mockWebSocket.onmessage({
+                data: JSON.stringify({
+                    event: "update",
+                    args: [{ id: btcToArkSwap.id, status: "transaction.server.mempool" }],
+                }),
+            });
+
+            expect(claimArk).toHaveBeenCalled();
+            expect(swapManager.getActionLog().claimed.has(btcToArkSwap.id)).toBe(true);
+        });
+
+        it("records the swapId in claimed after a successful chain BTC claim (ARK->BTC)", async () => {
+            const claimBtc = vi.fn();
+            swapManager = new SwapManager(swapProvider, swapManagerConfig);
+            swapManager.setCallbacks(makeCallbacks({ claimBtc }));
+
+            // mockChainSwap.request is already {from: "ARK", to: "BTC"}.
+            const arkToBtcSwap: BoltzChainSwap = { ...mockChainSwap, status: "swap.created" };
+            await swapManager.start([arkToBtcSwap]);
+            mockWebSocket.onopen();
+
+            await mockWebSocket.onmessage({
+                data: JSON.stringify({
+                    event: "update",
+                    args: [{ id: arkToBtcSwap.id, status: "transaction.server.mempool" }],
+                }),
+            });
+
+            expect(claimBtc).toHaveBeenCalled();
+            expect(swapManager.getActionLog().claimed.has(arkToBtcSwap.id)).toBe(true);
+        });
+
+        it("records the swapId in refunded when refundArk fully sweeps (skipped: 0)", async () => {
+            const refundArk = vi.fn().mockResolvedValue({ swept: 1, skipped: 0 });
+            swapManager = new SwapManager(swapProvider, swapManagerConfig);
+            swapManager.setCallbacks(makeCallbacks({ refundArk, saveSwap: vi.fn() }));
+
+            const arkToBtcSwap: BoltzChainSwap = { ...mockChainSwap, status: "swap.created" };
+            await swapManager.start([arkToBtcSwap]);
+            mockWebSocket.onopen();
+
+            await mockWebSocket.onmessage({
+                data: JSON.stringify({
+                    event: "update",
+                    args: [{ id: arkToBtcSwap.id, status: "swap.expired" }],
+                }),
+            });
+
+            expect(refundArk).toHaveBeenCalled();
+            expect(swapManager.getActionLog().refunded.has(arkToBtcSwap.id)).toBe(true);
+        });
+
+        it("does NOT record when refundArk reports a partial sweep (skipped > 0)", async () => {
+            const refundArk = vi.fn().mockResolvedValue({ swept: 0, skipped: 2 });
+            swapManager = new SwapManager(swapProvider, swapManagerConfig);
+            swapManager.setCallbacks(makeCallbacks({ refundArk, saveSwap: vi.fn() }));
+
+            const arkToBtcSwap: BoltzChainSwap = { ...mockChainSwap, status: "swap.created" };
+            await swapManager.start([arkToBtcSwap]);
+            mockWebSocket.onopen();
+
+            await mockWebSocket.onmessage({
+                data: JSON.stringify({
+                    event: "update",
+                    args: [{ id: arkToBtcSwap.id, status: "swap.expired" }],
+                }),
+            });
+
+            expect(refundArk).toHaveBeenCalled();
+            expect(swapManager.getActionLog().refunded.has(arkToBtcSwap.id)).toBe(false);
+        });
+
+        it("does not record when the claim callback is not set (skipped)", async () => {
+            swapManager = new SwapManager(swapProvider, swapManagerConfig);
+            // setCallbacks() intentionally never called — claimCallback stays null.
+
+            await swapManager.start([{ ...mockReverseSwap, status: "swap.created" }]);
+            mockWebSocket.onopen();
+
+            await mockWebSocket.onmessage({
+                data: JSON.stringify({
+                    event: "update",
+                    args: [{ id: "reverse-swap-1", status: "transaction.confirmed" }],
+                }),
+            });
+
+            expect(swapManager.getActionLog().claimed.has("reverse-swap-1")).toBe(false);
+        });
+
+        it("does not record when the claim callback throws", async () => {
+            const claimCallback = vi.fn().mockRejectedValue(new Error("claim failed"));
+            const onSwapFailed = vi.fn();
+            swapManager = new SwapManager(swapProvider, {
+                ...swapManagerConfig,
+                events: { onSwapFailed },
+            });
+            swapManager.setCallbacks(makeCallbacks({ claim: claimCallback }));
+
+            await swapManager.start([{ ...mockReverseSwap, status: "swap.created" }]);
+            mockWebSocket.onopen();
+
+            await mockWebSocket.onmessage({
+                data: JSON.stringify({
+                    event: "update",
+                    args: [{ id: "reverse-swap-1", status: "transaction.confirmed" }],
+                }),
+            });
+
+            expect(claimCallback).toHaveBeenCalled();
+            expect(onSwapFailed).toHaveBeenCalled();
+            expect(swapManager.getActionLog().claimed.has("reverse-swap-1")).toBe(false);
+        });
+    });
 });

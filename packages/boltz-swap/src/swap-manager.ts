@@ -22,6 +22,7 @@ import {
 } from "./types";
 import { NetworkError, SwapError, SwapNotFoundError } from "./errors";
 import { logger } from "./logger";
+import { SwapActionLog } from "./swap-status-reconciler";
 
 /**
  * Swap action types emitted by SwapManager.
@@ -228,6 +229,14 @@ export class SwapManager implements SwapManagerClient {
     // Race condition prevention
     private swapsInProgress = new Set<string>();
 
+    // Action log: swap IDs whose claim/refund WE personally completed via
+    // the callbacks below (populated at the end of the execute*Action
+    // helpers, success only). Consumed by deriveSwapState
+    // (swap-status-reconciler.ts) to disambiguate "spent, but by whom" when
+    // reconciling swap status from VTXO events.
+    private claimedSwapIds = new Set<string>();
+    private refundedSwapIds = new Set<string>();
+
     // Per-swap subscriptions for UI hooks
     private swapSubscriptions = new Map<string, Set<SwapUpdateCallback>>();
 
@@ -299,6 +308,16 @@ export class SwapManager implements SwapManagerClient {
         this.refundArkCallback = callbacks.refundArk;
         this.signServerClaimCallback = callbacks.signServerClaim ?? null;
         this.saveSwapCallback = callbacks.saveSwap;
+    }
+
+    /**
+     * Returns the local action log: swap IDs whose claim/refund this manager
+     * has personally completed (see the execute*Action methods). Used by
+     * deriveSwapState (swap-status-reconciler.ts) to disambiguate a VTXO
+     * observed spent when Boltz hasn't (yet) reported a terminal status.
+     */
+    getActionLog(): SwapActionLog {
+        return { claimed: this.claimedSwapIds, refunded: this.refundedSwapIds };
     }
 
     /**
@@ -1160,6 +1179,7 @@ export class SwapManager implements SwapManagerClient {
         }
 
         await this.claimCallback(swap);
+        this.claimedSwapIds.add(swap.id);
     }
 
     /**
@@ -1172,6 +1192,7 @@ export class SwapManager implements SwapManagerClient {
         }
 
         await this.refundCallback(swap);
+        this.refundedSwapIds.add(swap.id);
     }
 
     /**
@@ -1186,6 +1207,7 @@ export class SwapManager implements SwapManagerClient {
         const claimPromise = this.claimArkCallback(swap);
         this.rememberChainClaim(swap.id, claimPromise);
         await claimPromise;
+        this.claimedSwapIds.add(swap.id);
     }
 
     /**
@@ -1200,6 +1222,7 @@ export class SwapManager implements SwapManagerClient {
         const claimPromise = this.claimBtcCallback(swap);
         this.rememberChainClaim(swap.id, claimPromise);
         await claimPromise;
+        this.claimedSwapIds.add(swap.id);
     }
 
     /**
@@ -1231,7 +1254,16 @@ export class SwapManager implements SwapManagerClient {
             return;
         }
 
-        return this.refundArkCallback(swap);
+        const outcome = await this.refundArkCallback(swap);
+        // Only record when nothing was left outstanding (mirrors the
+        // `outcome.skipped > 0` retry gate above in executeAutonomousAction):
+        // a partial sweep means the refund is not actually complete yet, so
+        // recording it here would let a later "already refunded" check skip
+        // the still-pending retry and strand the remaining VTXOs.
+        if (outcome.skipped === 0) {
+            this.refundedSwapIds.add(swap.id);
+        }
+        return outcome;
     }
 
     /**
