@@ -95,7 +95,7 @@ import { DelegateVtxo } from "../script/delegate";
 import { DelegateManagerImpl, findDestinationOutputIndex, IDelegateManager } from "./delegate";
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
-import type { CreateContractParams } from "../contracts/contractManager";
+import type { ContractSyncState, CreateContractParams } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
 import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { timelockToSequence } from "../utils/timelock";
@@ -481,6 +481,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
             source: "live",
             lastOnlineAt: sync?.lastSyncedAt ?? this._serverInfoLastOnlineAt ?? 0,
         };
+    }
+
+    /**
+     * The contract-manager's current provider-sync health **without forcing it
+     * to initialize** — reads the already-constructed manager, or reports
+     * `online` when none exists yet. Unlike {@link getContractManager}, this
+     * never triggers a remote sync, so it is safe on a pure diagnostics path
+     * (e.g. the service-worker sync-state message).
+     */
+    getContractSyncState(): ContractSyncState {
+        return this._contractManager?.getSyncState() ?? { mode: "online" };
     }
 
     protected constructor(
