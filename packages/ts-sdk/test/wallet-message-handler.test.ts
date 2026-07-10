@@ -255,10 +255,16 @@ describe("WalletMessageHandler handleMessage", () => {
 
     it("handles GET_STATUS messages", async () => {
         const pubkey = new Uint8Array([1, 2, 3]);
+        const providerConnectionState = {
+            mode: "online",
+            source: "live",
+            lastOnlineAt: 123,
+        };
         (updater as any).readonlyWallet = {
             identity: {
                 xOnlyPublicKey: vi.fn().mockResolvedValue(pubkey),
             },
+            getProviderConnectionState: vi.fn().mockReturnValue(providerConnectionState),
         };
 
         const response = await updater.handleMessage({
@@ -272,8 +278,29 @@ describe("WalletMessageHandler handleMessage", () => {
             payload: {
                 walletInitialized: true,
                 xOnlyPublicKey: pubkey,
+                providerConnectionState,
             },
         });
+    });
+
+    it("handles GET_CONTRACT_SYNC_STATE by reading the manager state without forcing init", async () => {
+        const syncState = { mode: "degraded", reason: "indexer down", lastSyncedAt: 5 };
+        const getContractSyncState = vi.fn().mockReturnValue(syncState);
+        (updater as any).readonlyWallet = { getContractSyncState };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_CONTRACT_SYNC_STATE",
+        } as any);
+
+        expect(response).toMatchObject({
+            tag: updater.messageTag,
+            type: "CONTRACT_SYNC_STATE",
+            payload: { syncState },
+        });
+        // Diagnostics path must not go through getContractManager() (which would
+        // initialize the manager and trigger a remote sync).
+        expect(getContractSyncState).toHaveBeenCalledTimes(1);
     });
 
     it("handles CLEAR messages", async () => {
@@ -472,6 +499,9 @@ describe("WalletMessageHandler handleMessage", () => {
             getContractManager: vi.fn().mockResolvedValue({
                 getContracts: vi.fn().mockResolvedValue([]),
             }),
+            getProviderConnectionState: vi
+                .fn()
+                .mockReturnValue({ mode: "online", source: "live", lastOnlineAt: 0 }),
             identity: {
                 xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array([1])),
             },

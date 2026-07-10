@@ -44,6 +44,7 @@ import {
     RequestAnnotateVtxos,
     RequestGetContracts,
     RequestGetContractsWithVtxos,
+    RequestGetContractSyncState,
     RequestGetStatus,
     RequestGetSpendablePaths,
     RequestGetTransactionHistory,
@@ -65,6 +66,7 @@ import {
     ResponseGetBoardingUtxos,
     ResponseGetContracts,
     ResponseGetContractsWithVtxos,
+    ResponseGetContractSyncState,
     ResponseGetStatus,
     ResponseGetSpendablePaths,
     ResponseGetTransactionHistory,
@@ -154,7 +156,7 @@ import {
     MESSAGE_BUS_NOT_INITIALIZED,
     ServiceWorkerTimeoutError,
 } from "../../worker/errors";
-import { getArkadeServerUrl } from "../wallet";
+import { getArkadeServerUrl, type ProviderConnectionState } from "../wallet";
 
 function isMessageBusNotInitializedError(error: unknown): boolean {
     return error instanceof Error && error.message.includes(MESSAGE_BUS_NOT_INITIALIZED);
@@ -185,6 +187,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     GET_BALANCE: 10_000,
     GET_BOARDING_ADDRESS: 10_000,
     GET_STATUS: 10_000,
+    GET_CONTRACT_SYNC_STATE: 10_000,
     GET_DELEGATE_INFO: 10_000,
     IS_CONTRACT_MANAGER_WATCHING: 10_000,
 
@@ -1058,6 +1061,20 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         }
     }
 
+    /**
+     * Wallet-level provider-connection freshness, delegated to the worker via
+     * `GET_STATUS`. Async by necessity (the worker boundary is asynchronous); no
+     * synchronous variant is offered because it would have the same transport
+     * mismatch as the contract-manager proxy's cached `getSyncState()`.
+     */
+    async getProviderConnectionState(): Promise<ProviderConnectionState> {
+        const { providerConnectionState } = await this.getStatus();
+        if (!providerConnectionState) {
+            throw new Error("Worker did not report provider connection state");
+        }
+        return providerConnectionState;
+    }
+
     async getActivityHistory(): Promise<Activity[]> {
         return buildActivities(await this.getTransactionHistory(), this.activity.all());
     }
@@ -1123,6 +1140,35 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         const messageTag = this.messageTag;
 
+        // Page-side cache of the worker-owned ContractManager's sync health. The
+        // worker remains the authoritative owner (see the file-level ownership
+        // rules); this proxy is a cached VIEW refreshed at call boundaries, never
+        // a second source of truth. Synchronous IContractManager.getSyncState()
+        // reads this cache; async operations refresh it.
+        const fetchSyncState = async (): Promise<ContractSyncState> => {
+            const message: RequestGetContractSyncState = {
+                type: "GET_CONTRACT_SYNC_STATE",
+                id: getRandomId(),
+                tag: messageTag,
+            };
+            const response = await sendContractMessage(message);
+            return (response as ResponseGetContractSyncState).payload.syncState;
+        };
+        let syncState: ContractSyncState = { mode: "online" };
+        const refreshSyncState = async (): Promise<void> => {
+            // Best-effort: a failed diagnostics refresh must never mask the
+            // caller's operation result/error, and must leave the last known
+            // state in place rather than throwing.
+            try {
+                syncState = await fetchSyncState();
+            } catch {
+                // keep the previous cached value
+            }
+        };
+        // Seed the cache before returning the proxy (best-effort — never blocks
+        // or fails construction on a diagnostics hiccup).
+        await refreshSyncState();
+
         const manager: IContractManager = {
             async createContract(params: CreateContractParams): Promise<Contract> {
                 const message: RequestCreateContract = {
@@ -1133,6 +1179,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 };
                 try {
                     const response = await sendContractMessage(message);
+                    // Hydration may have degraded the worker manager (or cleared
+                    // a prior degradation) — refresh the cached view.
+                    await refreshSyncState();
                     return (response as ResponseCreateContract).payload.contract;
                 } catch (e) {
                     throw new Error("Failed to create contract");
@@ -1163,6 +1212,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 };
                 try {
                     const response = await sendContractMessage(message);
+                    // A best-effort sync ran on the worker; it may have degraded
+                    // to repository data or recovered — refresh the cached view.
+                    await refreshSyncState();
                     return (response as ResponseGetContractsWithVtxos).payload.contracts;
                 } catch (e) {
                     throw new Error("Failed to get contracts with vtxos");
@@ -1170,10 +1222,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             },
 
             getSyncState(): ContractSyncState {
-                // The worker owns the authoritative sync state; the proxy reports
-                // online by default (degradation is not surfaced across the
-                // worker message boundary yet).
-                return { mode: "online" };
+                // Synchronous read of the page-side cache, seeded at proxy
+                // construction and refreshed after operations that can move the
+                // worker manager between online and degraded.
+                return syncState;
             },
 
             async annotateVtxos(vtxos: VirtualCoin[]): Promise<ExtendedVirtualCoin[]> {
@@ -1298,7 +1350,14 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     tag: messageTag,
                     payload: opts,
                 };
-                await sendContractMessage(message);
+                // Explicit remote refresh: it surfaces its own retryable error to
+                // the caller, but the proxy cache is refreshed either way so it
+                // doesn't stay stale after a thrown provider failure.
+                try {
+                    await sendContractMessage(message);
+                } finally {
+                    await refreshSyncState();
+                }
             },
 
             async refreshOutpoints(outpoints: { txid: string; vout: number }[]): Promise<void> {
@@ -1308,7 +1367,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     tag: messageTag,
                     payload: { outpoints },
                 };
-                await sendContractMessage(message);
+                try {
+                    await sendContractMessage(message);
+                } finally {
+                    await refreshSyncState();
+                }
             },
 
             scanContracts(): Promise<ScanResult> {

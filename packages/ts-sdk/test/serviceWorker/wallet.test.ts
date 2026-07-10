@@ -9,6 +9,7 @@ import {
     MnemonicIdentity,
     SeedIdentity,
     ReadonlyDescriptorIdentity,
+    type ContractSyncState,
 } from "../../src";
 import { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -44,9 +45,14 @@ function structuredCloneResponse(response: any): any {
 
 const createServiceWorkerHarness = (
     responder?: (message: any) => any,
-    options?: { handlePing?: boolean; getStatusKey?: Uint8Array | null },
+    options?: {
+        handlePing?: boolean;
+        getStatusKey?: Uint8Array | null;
+        contractSyncState?: ContractSyncState;
+    },
 ) => {
     const handlePing = options?.handlePing ?? true;
+    const contractSyncState: ContractSyncState = options?.contractSyncState ?? { mode: "online" };
     // Auto-answer GET_STATUS with this x-only key when the responder does not
     // handle it, so the create()/reinitialize() identity assertion can pass.
     // Pass `null` to disable the auto-answer (e.g. to exercise a worker that
@@ -91,6 +97,21 @@ const createServiceWorkerHarness = (
                                 walletInitialized: true,
                                 xOnlyPublicKey: getStatusKey,
                             },
+                        },
+                    }),
+                );
+            }
+            // Auto-answer the contract-manager proxy's construction-time /
+            // refresh sync-state probe so tests that don't care about sync state
+            // don't hang. Tests that assert degraded state pass a `responder`.
+            if (message.type === "GET_CONTRACT_SYNC_STATE") {
+                listeners.forEach((handler) =>
+                    handler({
+                        data: {
+                            id: message.id,
+                            tag: message.tag,
+                            type: "CONTRACT_SYNC_STATE",
+                            payload: { syncState: contractSyncState },
                         },
                     }),
                 );
@@ -330,6 +351,61 @@ describe("ServiceWorkerReadonlyWallet", () => {
 
         expect(callback).toHaveBeenCalledTimes(1);
         expect(listeners.size).toBe(0);
+    });
+
+    it("seeds the contract-manager proxy sync cache from the worker (degraded, not the online stub)", async () => {
+        const degraded: ContractSyncState = {
+            mode: "degraded",
+            reason: "indexer down",
+            lastSyncedAt: 7,
+        };
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness(undefined, {
+            contractSyncState: degraded,
+        });
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        const manager = await wallet.getContractManager();
+
+        expect(manager.getSyncState()).toEqual(degraded);
+    });
+
+    it("refreshes the proxy sync cache after getContractsWithVtxos", async () => {
+        let syncProbe = 0;
+        const responder = (message: any) => {
+            if (message.type === "GET_CONTRACTS_WITH_VTXOS") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "CONTRACTS_WITH_VTXOS",
+                    payload: { contracts: [] },
+                };
+            }
+            if (message.type === "GET_CONTRACT_SYNC_STATE") {
+                syncProbe += 1;
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "CONTRACT_SYNC_STATE",
+                    payload: {
+                        syncState:
+                            syncProbe === 1
+                                ? { mode: "online" }
+                                : { mode: "degraded", reason: "indexer down" },
+                    },
+                };
+            }
+            return null;
+        };
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness(responder);
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        const manager = await wallet.getContractManager(); // probe #1 → online
+        expect(manager.getSyncState()).toEqual({ mode: "online" });
+
+        await manager.getContractsWithVtxos({} as any); // worker degraded → probe #2
+        expect(manager.getSyncState()).toMatchObject({ mode: "degraded", reason: "indexer down" });
     });
 });
 
