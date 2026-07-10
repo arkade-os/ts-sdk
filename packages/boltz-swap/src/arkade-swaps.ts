@@ -242,8 +242,9 @@ export class ArkadeSwaps {
 
     /**
      * Guards against running the one-shot swap→contract migration more than
-     * once per process. Set to true after the first successful call to
-     * `startSwapManager`.
+     * once per instance. Set to true up front (so concurrent
+     * `startSwapManager` calls don't double-run it) and reset to false if the
+     * migration throws, so a transient failure stays retryable.
      */
     private swapsMigrated = false;
 
@@ -463,22 +464,30 @@ export class ArkadeSwaps {
         // Run the one-shot swap→contract migration once per process.
         // Exempt when contractManager is absent (Expo-background monitor path).
         if (this.contractManager && !this.swapsMigrated) {
+            // Set the re-entrancy guard up front so concurrent startSwapManager
+            // calls don't double-run migration, but reset it on failure below
+            // so a transient error (e.g. a getInfo network blip) stays retryable.
             this.swapsMigrated = true;
-            const arkInfo = await this.arkProvider.getInfo();
-            const isTerminal = (swap: BoltzSwap): boolean => {
-                if (swap.type === "reverse") return isReverseFinalStatus(swap.status);
-                if (swap.type === "submarine") return isSubmarineFinalStatus(swap.status);
-                if (swap.type === "chain") return isChainFinalStatus(swap.status);
-                return false;
-            };
-            const { migrated, failed } = await migrateSwapsToContracts({
-                swapRepository: this.swapRepository,
-                contractManager: this.contractManager,
-                arkInfo,
-                isTerminal,
-            });
-            if (migrated > 0 || failed > 0) {
-                logger.log(`migrateSwapsToContracts: migrated=${migrated}, failed=${failed}`);
+            try {
+                const arkInfo = await this.arkProvider.getInfo();
+                const isTerminal = (swap: BoltzSwap): boolean => {
+                    if (swap.type === "reverse") return isReverseFinalStatus(swap.status);
+                    if (swap.type === "submarine") return isSubmarineFinalStatus(swap.status);
+                    if (swap.type === "chain") return isChainFinalStatus(swap.status);
+                    return false;
+                };
+                const { migrated, failed } = await migrateSwapsToContracts({
+                    swapRepository: this.swapRepository,
+                    contractManager: this.contractManager,
+                    arkInfo,
+                    isTerminal,
+                });
+                if (migrated > 0 || failed > 0) {
+                    logger.log(`migrateSwapsToContracts: migrated=${migrated}, failed=${failed}`);
+                }
+            } catch (err) {
+                this.swapsMigrated = false;
+                throw err;
             }
         }
 

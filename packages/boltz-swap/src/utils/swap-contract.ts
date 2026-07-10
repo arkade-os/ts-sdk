@@ -99,9 +99,9 @@ const extractSwapVhtlcInputs = (swap: BoltzSwap): SwapVhtlcInputs => {
             if (isFromArk) {
                 // ARK → BTC: user sends ARK, Boltz claims; user is sender, Boltz server is receiver.
                 const { lockupDetails } = swap.response;
-                if (!lockupDetails.timeouts) {
+                if (!lockupDetails?.timeouts) {
                     throw new Error(
-                        `Swap ${swap.id}: missing timeouts in lockupDetails for ARK→BTC chain swap`,
+                        `Swap ${swap.id}: missing lockupDetails or timeouts for ARK→BTC chain swap`,
                     );
                 }
                 return {
@@ -114,9 +114,9 @@ const extractSwapVhtlcInputs = (swap: BoltzSwap): SwapVhtlcInputs => {
             } else {
                 // BTC → ARK: Boltz locks on BTC side; user claims on ARK side (claimDetails).
                 const { claimDetails } = swap.response;
-                if (!claimDetails.timeouts) {
+                if (!claimDetails?.timeouts) {
                     throw new Error(
-                        `Swap ${swap.id}: missing timeouts in claimDetails for BTC→ARK chain swap`,
+                        `Swap ${swap.id}: missing claimDetails or timeouts for BTC→ARK chain swap`,
                     );
                 }
                 return {
