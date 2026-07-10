@@ -2114,10 +2114,12 @@ describe("SwapManager", () => {
             await swapManager.start([swap]);
             expect(await swapManager.hasSwap(swap.id)).toBe(true);
 
-            swapManager.resolveSwapFromVtxo(swap, "Settled");
+            await swapManager.resolveSwapFromVtxo(swap, "Settled");
 
             expect(await swapManager.hasSwap(swap.id)).toBe(false);
             expect(onSwapCompleted).toHaveBeenCalledWith(swap);
+            // reverse + Settled -> "invoice.settled" (isReverseFinalStatus ✓).
+            expect(swap.status).toBe("invoice.settled");
         });
 
         it("finalizes on Refunded: removes from monitoring and fires onSwapCompleted", async () => {
@@ -2127,10 +2129,15 @@ describe("SwapManager", () => {
             const swap = { ...mockSubmarineSwap, status: "invoice.set" as const };
             await swapManager.start([swap]);
 
-            swapManager.resolveSwapFromVtxo(swap, "Refunded");
+            await swapManager.resolveSwapFromVtxo(swap, "Refunded");
 
             expect(await swapManager.hasSwap(swap.id)).toBe(false);
             expect(onSwapCompleted).toHaveBeenCalledWith(swap);
+            // Submarine has no first-class "refunded" Boltz status
+            // (isSubmarineFinalStatus never includes "transaction.refunded"),
+            // so "swap.expired" is used instead — see
+            // terminalStatusForVtxoState in swap-manager.ts.
+            expect(swap.status).toBe("swap.expired");
         });
 
         it("finalizes on Failed: removes from monitoring and fires onSwapFailed with a SwapError", async () => {
@@ -2140,7 +2147,7 @@ describe("SwapManager", () => {
             const swap = { ...mockReverseSwap, status: "swap.created" as const };
             await swapManager.start([swap]);
 
-            swapManager.resolveSwapFromVtxo(swap, "Failed");
+            await swapManager.resolveSwapFromVtxo(swap, "Failed");
 
             expect(await swapManager.hasSwap(swap.id)).toBe(false);
             expect(onSwapFailed).toHaveBeenCalledTimes(1);
@@ -2148,6 +2155,64 @@ describe("SwapManager", () => {
             expect(failedSwap).toBe(swap);
             expect(error).toBeInstanceOf(SwapError);
             expect((error as Error).message).toContain(swap.id);
+            expect(swap.status).toBe("transaction.failed");
+        });
+
+        it("maps a chain swap's Settled/Refunded/Failed states to the matching terminal BoltzSwapStatus", async () => {
+            const settledSwap = {
+                ...mockChainSwap,
+                id: "chain-settled",
+                status: "swap.created" as const,
+            };
+            const refundedSwap = {
+                ...mockChainSwap,
+                id: "chain-refunded",
+                status: "swap.created" as const,
+            };
+            const failedSwap = {
+                ...mockChainSwap,
+                id: "chain-failed",
+                status: "swap.created" as const,
+            };
+            await swapManager.start([settledSwap, refundedSwap, failedSwap]);
+
+            await swapManager.resolveSwapFromVtxo(settledSwap, "Settled");
+            await swapManager.resolveSwapFromVtxo(refundedSwap, "Refunded");
+            await swapManager.resolveSwapFromVtxo(failedSwap, "Failed");
+
+            expect(settledSwap.status).toBe("transaction.claimed");
+            expect(refundedSwap.status).toBe("transaction.refunded");
+            expect(failedSwap.status).toBe("transaction.failed");
+        });
+
+        it("maps submarine Failed to invoice.failedToPay (distinct from the Refunded mapping)", async () => {
+            const swap = { ...mockSubmarineSwap, status: "invoice.set" as const };
+            await swapManager.start([swap]);
+
+            await swapManager.resolveSwapFromVtxo(swap, "Failed");
+
+            expect(swap.status).toBe("invoice.failedToPay");
+        });
+
+        it("resolves a pending waitForSwapCompletion when the VTXO signal settles the swap", async () => {
+            // Regression: resolveSwapFromVtxo used to drop the swap from
+            // monitoredSwaps without touching swap.status or firing the
+            // update listeners/per-swap subscriptions waitForSwapCompletion
+            // depends on — a waiter would hang forever. Mirrors the
+            // markSwapAsUnknownToProvider regression test above (~line 1545).
+            vi.spyOn(swapProvider, "getReverseSwapTxId").mockResolvedValue({
+                id: "vtxo-derived-txid",
+                timeoutBlockHeight: 10,
+            });
+
+            const swap = { ...mockReverseSwap, status: "transaction.confirmed" as const };
+            await swapManager.start([swap]);
+
+            const completion = swapManager.waitForSwapCompletion(swap.id);
+
+            await swapManager.resolveSwapFromVtxo(swap, "Settled");
+
+            await expect(completion).resolves.toEqual({ txid: "vtxo-derived-txid" });
         });
 
         it("is idempotent: a second call after finalization is a no-op", async () => {
@@ -2157,10 +2222,25 @@ describe("SwapManager", () => {
             const swap = { ...mockReverseSwap, status: "swap.created" as const };
             await swapManager.start([swap]);
 
-            swapManager.resolveSwapFromVtxo(swap, "Settled");
-            swapManager.resolveSwapFromVtxo(swap, "Settled");
+            const first = swapManager.resolveSwapFromVtxo(swap, "Settled");
+            const second = swapManager.resolveSwapFromVtxo(swap, "Settled");
+            await Promise.all([first, second]);
 
             expect(onSwapCompleted).toHaveBeenCalledTimes(1);
+        });
+
+        it("is idempotent: a second call after Failed finalization is a no-op", async () => {
+            const onSwapFailed = vi.fn();
+            await swapManager.onSwapFailed(onSwapFailed);
+
+            const swap = { ...mockReverseSwap, status: "swap.created" as const };
+            await swapManager.start([swap]);
+
+            const first = swapManager.resolveSwapFromVtxo(swap, "Failed");
+            const second = swapManager.resolveSwapFromVtxo(swap, "Failed");
+            await Promise.all([first, second]);
+
+            expect(onSwapFailed).toHaveBeenCalledTimes(1);
         });
 
         it("does not act on a swap the manager never monitored", async () => {
@@ -2172,7 +2252,7 @@ describe("SwapManager", () => {
             // Note: swap is never passed to start(), so it's not in monitoredSwaps.
             const swap = { ...mockReverseSwap, status: "swap.created" as const };
 
-            swapManager.resolveSwapFromVtxo(swap, "Settled");
+            await swapManager.resolveSwapFromVtxo(swap, "Settled");
 
             expect(onSwapCompleted).not.toHaveBeenCalled();
             expect(onSwapFailed).not.toHaveBeenCalled();
@@ -2188,7 +2268,7 @@ describe("SwapManager", () => {
             // Simulate an in-progress autonomous action without actually running one.
             (swapManager as any).swapsInProgress.add(swap.id);
 
-            swapManager.resolveSwapFromVtxo(swap, "Settled");
+            await swapManager.resolveSwapFromVtxo(swap, "Settled");
 
             expect(await swapManager.hasSwap(swap.id)).toBe(true);
             expect(onSwapCompleted).not.toHaveBeenCalled();
@@ -2203,7 +2283,7 @@ describe("SwapManager", () => {
             const swap = { ...mockReverseSwap, status: "swap.created" as const };
             await swapManager.start([swap]);
 
-            swapManager.resolveSwapFromVtxo(swap, "Pending");
+            await swapManager.resolveSwapFromVtxo(swap, "Pending");
 
             expect(await swapManager.hasSwap(swap.id)).toBe(true);
             expect(onSwapCompleted).not.toHaveBeenCalled();

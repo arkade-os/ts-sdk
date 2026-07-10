@@ -131,6 +131,13 @@ export interface SwapManagerClient {
      * Boltz hasn't (yet) reported a terminal status.
      */
     getActionLog(): SwapActionLog;
+    /**
+     * Synchronous lookup of a currently-monitored swap by id, or `undefined`
+     * if unknown. Used by `SwapStatusReconciler.deriveSwapState`, which must
+     * resolve a swap's derived state synchronously inside `onContractEvent`
+     * (see swap-status-reconciler.ts).
+     */
+    getSwap(id: string): BoltzSwap | undefined;
     onSwapUpdate(listener: SwapUpdateListener): Promise<() => void>;
     onSwapCompleted(listener: SwapCompletedListener): Promise<() => void>;
     onSwapFailed(listener: SwapFailedListener): Promise<() => void>;
@@ -325,6 +332,14 @@ export class SwapManager implements SwapManagerClient {
      */
     getActionLog(): SwapActionLog {
         return { claimed: this.claimedSwapIds, refunded: this.refundedSwapIds };
+    }
+
+    /**
+     * Synchronous lookup of a currently-monitored swap by id. See
+     * {@link SwapManagerClient.getSwap}.
+     */
+    getSwap(id: string): BoltzSwap | undefined {
+        return this.monitoredSwaps.get(id);
     }
 
     /**
@@ -989,11 +1004,14 @@ export class SwapManager implements SwapManagerClient {
      * (subscriptions, in-flight chain-claim promise, poll/refund retry
      * timers). Returns `false` (no-op) if the swap was already finalized.
      *
-     * Deliberately does NOT touch `swapUpdateListeners`/per-swap
-     * `swapSubscriptions` callbacks — those report a `BoltzSwapStatus`
-     * transition, which callers of this helper (see
-     * {@link finalizeMonitoredSwap}, {@link resolveSwapFromVtxo}) may not
-     * have (a VTXO-derived finalize never mutates `swap.status`).
+     * Deliberately does NOT fire `swapUpdateListeners`/per-swap
+     * `swapSubscriptions` callbacks itself — those report a `BoltzSwapStatus`
+     * transition and must fire with the swap's `oldStatus`, which only the
+     * caller has (see {@link finalizeMonitoredSwap}, {@link
+     * resolveSwapFromVtxo}). A caller that needs subscribers notified must
+     * capture `swapSubscriptions.get(swap.id)` BEFORE calling this method —
+     * the captured `Set` reference stays valid after its map entry is
+     * deleted here, so it can still be iterated afterwards.
      */
     private stopMonitoring(swap: BoltzSwap): boolean {
         if (!this.monitoredSwaps.has(swap.id)) return false;
@@ -1025,41 +1043,108 @@ export class SwapManager implements SwapManagerClient {
     }
 
     /**
+     * Maps a terminal `SwapState` derived from an on-chain VTXO signal (see
+     * `deriveSwapState` in swap-status-reconciler.ts) to a concrete
+     * `BoltzSwapStatus` for `swap.status`. Every branch is chosen so the
+     * corresponding `is*FinalStatus` predicate accepts it — that's what
+     * {@link isFinalStatus} gates `waitForSwapCompletion`/
+     * `subscribeToSwapUpdates` on, so an unrecognized status here would
+     * silently defeat the whole point of {@link resolveSwapFromVtxo}.
+     *
+     * Submarine has no first-class "refunded" Boltz status: unlike
+     * reverse/chain, `isSubmarineFinalStatus` never includes
+     * `"transaction.refunded"` — this mirrors `deriveTerminalState`'s
+     * submarine branch in swap-status-reconciler.ts, which likewise only
+     * ever derives `"Failed"`/`"Settled"` from Boltz's own reported
+     * statuses, never `"Refunded"`. `"swap.expired"` is used instead: it's
+     * already the status `isSubmarineRefundableStatus` associates with the
+     * one non-final refundable status this case arises from
+     * (`"transaction.lockupFailed"` — the swap sat refundable-but-pending
+     * until our own refund tx spent the VHTLC), and it satisfies both
+     * `isSubmarineFinalStatus` and `isSubmarineFailedStatus`.
+     */
+    private terminalStatusForVtxoState(
+        swap: BoltzSwap,
+        state: "Settled" | "Refunded" | "Failed",
+    ): BoltzSwapStatus {
+        switch (swap.type) {
+            case "reverse":
+                if (state === "Settled") return "invoice.settled"; // isReverseFinalStatus ✓
+                if (state === "Refunded") return "transaction.refunded"; // isReverseFinalStatus ✓
+                return "transaction.failed"; // Failed; isReverseFinalStatus ✓
+            case "submarine":
+                if (state === "Settled") return "transaction.claimed"; // isSubmarineFinalStatus ✓
+                if (state === "Refunded") return "swap.expired"; // isSubmarineFinalStatus ✓ (see docstring)
+                return "invoice.failedToPay"; // Failed; isSubmarineFinalStatus ✓
+            case "chain":
+                if (state === "Settled") return "transaction.claimed"; // isChainFinalStatus ✓
+                if (state === "Refunded") return "transaction.refunded"; // isChainFinalStatus ✓
+                return "transaction.failed"; // Failed; isChainFinalStatus ✓
+        }
+    }
+
+    /**
      * Finalize a swap whose terminal lifecycle state was derived from an
      * on-chain VTXO signal rather than a Boltz-reported status — see
      * `SwapStatusReconciler`/`deriveSwapState` in swap-status-reconciler.ts.
      * Designed to be wired as the reconciler's `onSwapResolved` callback.
      *
-     * Reuses the same cleanup and terminal-event emission as
-     * {@link finalizeMonitoredSwap}: `"Settled"`/`"Refunded"` route to the
-     * `onSwapCompleted` listeners (matching how the Boltz-status-driven path
-     * treats any terminal outcome reached without an autonomous-action
-     * exception), `"Failed"` routes to `onSwapFailed` with a `SwapError`
-     * describing the VTXO-derived outcome.
+     * Sets `swap.status` to a concrete terminal `BoltzSwapStatus` (see
+     * {@link terminalStatusForVtxoState}) and fires the same update
+     * listeners and per-swap subscriptions a Boltz-status-driven transition
+     * would (see {@link handleSwapStatusUpdate}/{@link
+     * markSwapAsUnknownToProvider}) — this is what wakes a pending
+     * `waitForSwapCompletion`/`subscribeToSwapUpdates` waiter, which
+     * otherwise gates purely on `isFinalStatus(swap)` (itself keyed
+     * entirely off `BoltzSwapStatus`) and would hang forever on a swap only
+     * ever resolved through this VTXO-driven path.
      *
-     * Idempotent: a swap no longer in `monitoredSwaps` (e.g. already
-     * finalized by a Boltz status update that raced this VTXO event) is a
-     * no-op. Also a no-op while {@link executeAutonomousAction} is mid-flight
-     * for this swap (`swapsInProgress`), so this method can never pull a
-     * swap out from under an in-progress claim/refund — that action will
-     * reach its own terminal status shortly and finalize through the normal
-     * path instead.
+     * `"Settled"`/`"Refunded"` route to the `onSwapCompleted` listeners
+     * (matching how the Boltz-status-driven path treats any terminal
+     * outcome reached without an autonomous-action exception), `"Failed"`
+     * routes to `onSwapFailed` with a `SwapError` describing the
+     * VTXO-derived outcome.
      *
-     * Does NOT mutate `swap.status` or persist anything (this task adds no
-     * persisted derived-state field). Consequently, `waitForSwapCompletion`
-     * and per-swap `subscribeToSwapUpdates` subscribers — which gate on
-     * `isFinalStatus(swap)`, itself keyed entirely off `BoltzSwapStatus` —
-     * do not observe a resolution reached only through this path; they keep
-     * waiting for Boltz's own status feed, exactly as before this method
-     * existed. Known limitation, flagged for whoever wires this into a live
-     * ContractManager subscription.
+     * Idempotent: removal from `monitoredSwaps` happens synchronously, up
+     * front (via `stopMonitoring`, mirroring `markSwapAsUnknownToProvider`),
+     * so a duplicate or overlapping call for the same swap — including one
+     * that arrives while an earlier call is still awaiting `saveSwap` — is
+     * a no-op. Also a no-op while {@link executeAutonomousAction} is
+     * mid-flight for this swap (`swapsInProgress`), so this method can
+     * never pull a swap out from under an in-progress claim/refund — that
+     * action will reach its own terminal status shortly and finalize
+     * through the normal path instead.
      */
-    resolveSwapFromVtxo(swap: BoltzSwap, state: SwapState): void {
+    async resolveSwapFromVtxo(swap: BoltzSwap, state: SwapState): Promise<void> {
         if (state !== "Settled" && state !== "Refunded" && state !== "Failed") return;
         if (this.swapsInProgress.has(swap.id)) return;
 
+        // Capture the per-swap subscriber set (if any) before stopMonitoring
+        // deletes its map entry — see stopMonitoring's docstring.
+        const subscribers = this.swapSubscriptions.get(swap.id);
+        if (!this.stopMonitoring(swap)) return;
+
+        const oldStatus = swap.status;
+        swap.status = this.terminalStatusForVtxoState(swap, state);
+
+        this.swapUpdateListeners.forEach((listener) => listener(swap, oldStatus));
+        if (subscribers) {
+            subscribers.forEach((callback) => {
+                try {
+                    callback(swap, oldStatus);
+                } catch (error) {
+                    logger.error(`Error in swap subscription callback for ${swap.id}:`, error);
+                }
+            });
+        }
+
+        try {
+            await this.saveSwap(swap);
+        } catch (saveError) {
+            logger.error(`Failed to persist VTXO-derived status for swap ${swap.id}:`, saveError);
+        }
+
         if (state === "Failed") {
-            if (!this.stopMonitoring(swap)) return;
             const error = new SwapError({
                 message: `Swap ${swap.id} resolved as failed from an on-chain VTXO signal`,
                 pendingSwap: swap,
@@ -1068,7 +1153,7 @@ export class SwapManager implements SwapManagerClient {
             return;
         }
 
-        this.finalizeMonitoredSwap(swap);
+        this.swapCompletedListeners.forEach((listener) => listener(swap));
     }
 
     /**

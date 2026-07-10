@@ -335,14 +335,18 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
                     }
                 ).payload;
             },
-            // `getActionLog` is synchronous by contract (SwapStatusReconciler
-            // calls it inline from a sync ContractEventCallback), which a
-            // postMessage round trip to the service worker cannot honor —
-            // same constraint as createVHTLCScript/joinBatch below. The
-            // reconciler is wired in-process alongside the real SwapManager
-            // instance, never through this proxy.
+            // `getActionLog`/`getSwap` are synchronous by contract
+            // (SwapStatusReconciler calls them inline from a sync
+            // ContractEventCallback), which a postMessage round trip to the
+            // service worker cannot honor — same constraint as
+            // createVHTLCScript/joinBatch below. The reconciler is wired
+            // in-process alongside the real SwapManager instance, never
+            // through this proxy.
             getActionLog: (): SwapActionLog => {
                 throw new Error("getActionLog is not supported via service worker");
+            },
+            getSwap: (): BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap | undefined => {
+                throw new Error("getSwap is not supported via service worker");
             },
             waitForSwapCompletion: async (swapId: string) => {
                 const res = await send({

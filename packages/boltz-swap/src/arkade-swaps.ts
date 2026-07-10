@@ -88,6 +88,7 @@ import { decodeInvoice, getInvoicePaymentHash } from "./utils/decoding";
 import { normalizeToXOnlyKey } from "./utils/signatures";
 import { extractInvoiceAmount, resolveVhtlcTimeouts } from "./utils/restoration";
 import { SwapManager, SwapManagerClient } from "./swap-manager";
+import { SwapStatusReconciler } from "./swap-status-reconciler";
 import {
     saveSwap,
     updateReverseSwapStatus,
@@ -247,6 +248,17 @@ export class ArkadeSwaps {
     private swapsMigrated = false;
 
     /**
+     * Bridges ContractManager VTXO events to swap-lifecycle resolution —
+     * see swap-status-reconciler.ts. Constructed in `startSwapManager`,
+     * alongside `contractManager` (Expo-background exemption: both are
+     * unset when `contractManager` is absent).
+     */
+    private reconciler: SwapStatusReconciler | undefined;
+
+    /** Unsubscribes `reconciler` from `contractManager.onContractEvent`. Called by `dispose`. */
+    private reconcilerUnsubscribe: (() => void) | undefined;
+
+    /**
      * Creates an ArkadeSwaps instance, auto-detecting the network from the wallet's Ark server.
      * If no `swapProvider` is given, one is created automatically using the detected network.
      *
@@ -381,11 +393,17 @@ export class ArkadeSwaps {
      * undefined (that path never calls create methods, so this is defensive).
      * Logs and rethrows on failure — do NOT swallow; a registration failure
      * surfaces to the caller so the create promise rejects.
+     *
+     * On success, routes the new contract's script to `reconciler` (if wired)
+     * so a swap created after `startSwapManager` — which only seeds the
+     * reconciler from contracts that already existed at that point — is
+     * still resolved by a later VTXO event.
      */
     private async registerSwapContractSafe(swap: BoltzSwap, arkInfo: ArkInfo): Promise<void> {
         if (!this.contractManager) return;
         try {
-            await registerSwapContract(this.contractManager, swap, arkInfo);
+            const contract = await registerSwapContract(this.contractManager, swap, arkInfo);
+            this.reconciler?.addSwapScript(contract.script, swap.id);
         } catch (err) {
             logger.error(`Failed to register contract for swap ${swap.id}:`, err);
             throw err;
@@ -464,6 +482,39 @@ export class ArkadeSwaps {
             }
         }
 
+        // Wire a SwapStatusReconciler to ContractManager VTXO events, so a
+        // swap's terminal state can be derived from an on-chain signal even
+        // when Boltz's own status feed goes silent — see
+        // swap-status-reconciler.ts and SwapManager.resolveSwapFromVtxo.
+        // Exempt when contractManager is absent (Expo-background monitor
+        // path), same guard as the migration above.
+        if (this.contractManager) {
+            const contractManager = this.contractManager;
+            const swapManager = this.swapManager;
+
+            // A restart (startSwapManager called again after stopSwapManager)
+            // would otherwise leak the previous subscription.
+            this.reconcilerUnsubscribe?.();
+
+            const vhtlcContracts = await contractManager.getContracts({ type: "vhtlc" });
+            const reconciler = new SwapStatusReconciler({
+                getSwap: swapManager.getSwap.bind(swapManager),
+                getActionLog: swapManager.getActionLog.bind(swapManager),
+                onSwapResolved: swapManager.resolveSwapFromVtxo.bind(swapManager),
+            });
+            for (const contract of vhtlcContracts) {
+                const swapId = contract.metadata?.swapId;
+                if (typeof swapId === "string") {
+                    reconciler.addSwapScript(contract.script, swapId);
+                }
+            }
+
+            this.reconciler = reconciler;
+            this.reconcilerUnsubscribe = contractManager.onContractEvent((event) =>
+                reconciler.onContractEvent(event),
+            );
+        }
+
         // Load all pending swaps from the swap repository
         const allSwaps = await this.swapRepository.getAllSwaps();
 
@@ -503,6 +554,7 @@ export class ArkadeSwaps {
     }
 
     async dispose(): Promise<void> {
+        this.reconcilerUnsubscribe?.();
         if (this.swapManager) {
             await this.stopSwapManager();
         }

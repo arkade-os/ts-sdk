@@ -294,15 +294,23 @@ describe("SwapStatusReconciler", () => {
         expect(onSwapResolved).not.toHaveBeenCalled();
     });
 
-    it("swallows and logs an internal error instead of throwing", () => {
+    it("swallows and logs an internal error instead of throwing, and keeps handling later events", () => {
         const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-        const swap = makeReverseSwapFixture(arkInfo);
+        const swap: BoltzSwap = {
+            ...makeReverseSwapFixture(arkInfo),
+            status: "transaction.confirmed",
+        };
         const onSwapResolved = vi.fn();
+        // First call throws (simulating an internal error); later calls
+        // resolve normally, so the second onContractEvent below exercises a
+        // genuinely well-formed lookup rather than another swallowed error.
+        const getSwap = vi.fn((id: string) => (id === swap.id ? swap : undefined));
+        getSwap.mockImplementationOnce(() => {
+            throw new Error("boom");
+        });
         const reconciler = new SwapStatusReconciler({
-            getSwap: () => {
-                throw new Error("boom");
-            },
-            getActionLog: () => EMPTY_LOG,
+            getSwap,
+            getActionLog: () => claimedLog(swap.id),
             onSwapResolved,
         });
         reconciler.addSwapScript("script-throws", swap.id);
@@ -312,6 +320,15 @@ describe("SwapStatusReconciler", () => {
         ).not.toThrow();
         expect(onSwapResolved).not.toHaveBeenCalled();
         expect(errorSpy).toHaveBeenCalledTimes(1);
+
+        // Regression/depth: a thrown error inside one event's handling must
+        // not leave the reconciler's subscription broken for later events —
+        // fire a second, well-formed event on the SAME instance and confirm
+        // it's still handled (not just "didn't throw once").
+        reconciler.onContractEvent(makeVtxoEvent("vtxo_spent", "script-throws"));
+
+        expect(onSwapResolved).toHaveBeenCalledTimes(1);
+        expect(onSwapResolved).toHaveBeenCalledWith(swap, "Settled" satisfies SwapState);
 
         errorSpy.mockRestore();
     });
