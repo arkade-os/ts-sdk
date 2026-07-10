@@ -1,4 +1,5 @@
 import { ArkProvider, IndexerProvider, IWallet, NetworkName } from "@arkade-os/sdk";
+import type { IContractManager } from "@arkade-os/sdk";
 import {
     CreateReverseSwapResponse,
     CreateSubmarineSwapResponse,
@@ -311,6 +312,16 @@ export interface ArkadeSwapsConfig {
     swapProvider: BoltzSwapProvider;
     /** Explicit IndexerProvider. Falls back to wallet.indexerProvider if omitted. */
     indexerProvider?: IndexerProvider;
+    /**
+     * ContractManager from @arkade-os/sdk used to register VHTLC scripts as
+     * tracked contracts so the wallet monitors and annotates swap virtual outputs.
+     *
+     * Required for all public construction paths. The background swap-poll
+     * processor (swapsPollProcessor) is exempt: it only monitors/claims existing
+     * swaps and never creates them, so it never registers contracts. It
+     * constructs ArkadeSwaps without this field via an internal cast.
+     */
+    contractManager: IContractManager;
     /**
      * Background swap monitoring and autonomous actions (enabled by default).
      * - `undefined` or `true`: SwapManager enabled with default configuration

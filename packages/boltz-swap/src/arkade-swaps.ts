@@ -98,7 +98,9 @@ import {
 import { logger } from "./logger";
 import { IndexedDbSwapRepository } from "./repositories/IndexedDb/swap-repository";
 import { SwapRepository } from "./repositories/swap-repository";
+import { migrateSwapsToContracts } from "./repositories/migrateSwapsToContracts";
 import { claimVHTLCIdentity } from "./utils/identity";
+import { registerSwapContract } from "./utils/swap-contract";
 import {
     candidateServerPubkeys,
     claimVHTLCwithOffchainTx,
@@ -228,6 +230,23 @@ export class ArkadeSwaps {
     readonly swapRepository: SwapRepository;
 
     /**
+     * ContractManager for registering VHTLC scripts as tracked contracts.
+     *
+     * Optional internally: the background swapsPollProcessor constructs
+     * ArkadeSwaps without one (monitor-only, never creates swaps, never
+     * registers contracts). All registration code must guard `if
+     * (!this.contractManager) return;` before using it.
+     */
+    private readonly contractManager: import("@arkade-os/sdk").IContractManager | undefined;
+
+    /**
+     * Guards against running the one-shot swap→contract migration more than
+     * once per process. Set to true after the first successful call to
+     * `startSwapManager`.
+     */
+    private swapsMigrated = false;
+
+    /**
      * Creates an ArkadeSwaps instance, auto-detecting the network from the wallet's Ark server.
      * If no `swapProvider` is given, one is created automatically using the detected network.
      *
@@ -262,8 +281,14 @@ export class ArkadeSwaps {
     constructor(config: ArkadeSwapsConfig) {
         if (!config.wallet) throw new Error("Wallet is required.");
         if (!config.swapProvider) throw new Error("Swap provider is required.");
+        if (!config.contractManager)
+            throw new Error(
+                "ArkadeSwaps requires a contractManager. " +
+                    "Pass the ContractManager from your SDK wallet instance.",
+            );
 
         this.wallet = config.wallet;
+        this.contractManager = config.contractManager;
         // Prioritize wallet providers, fallback to config providers for backward compatibility
         const arkProvider = config.arkProvider ?? (config.wallet as any).arkProvider;
         if (!arkProvider) throw new Error("Ark provider is required either in wallet or config.");
@@ -332,6 +357,42 @@ export class ArkadeSwaps {
     }
 
     // =========================================================================
+    // ContractManager accessor
+    // =========================================================================
+
+    /**
+     * Returns the ContractManager if present, or undefined for the background
+     * poll path (which is exempt from contract registration).
+     *
+     * All callers that register contracts must guard: `if (!cm) return;`
+     *
+     * @internal Used by contract-registration helpers added in later phases.
+     */
+    protected getContractManager(): import("@arkade-os/sdk").IContractManager | undefined {
+        return this.contractManager;
+    }
+
+    /**
+     * Registers a swap's VHTLC as a tracked contract in ContractManager.
+     * Called by all three create paths (createReverseSwap, createSubmarineSwap,
+     * createChainSwap) immediately after persisting the swap to the repository.
+     *
+     * Guards against the Expo-background monitor path where contractManager is
+     * undefined (that path never calls create methods, so this is defensive).
+     * Logs and rethrows on failure — do NOT swallow; a registration failure
+     * surfaces to the caller so the create promise rejects.
+     */
+    private async registerSwapContractSafe(swap: BoltzSwap, arkInfo: ArkInfo): Promise<void> {
+        if (!this.contractManager) return;
+        try {
+            await registerSwapContract(this.contractManager, swap, arkInfo);
+        } catch (err) {
+            logger.error(`Failed to register contract for swap ${swap.id}:`, err);
+            throw err;
+        }
+    }
+
+    // =========================================================================
     // Storage helpers
     // =========================================================================
 
@@ -379,6 +440,28 @@ export class ArkadeSwaps {
             throw new Error(
                 "SwapManager is not enabled. Provide 'swapManager' config in ArkadeSwapsConfig.",
             );
+        }
+
+        // Run the one-shot swap→contract migration once per process.
+        // Exempt when contractManager is absent (Expo-background monitor path).
+        if (this.contractManager && !this.swapsMigrated) {
+            this.swapsMigrated = true;
+            const arkInfo = await this.arkProvider.getInfo();
+            const isTerminal = (swap: BoltzSwap): boolean => {
+                if (swap.type === "reverse") return isReverseFinalStatus(swap.status);
+                if (swap.type === "submarine") return isSubmarineFinalStatus(swap.status);
+                if (swap.type === "chain") return isChainFinalStatus(swap.status);
+                return false;
+            };
+            const { migrated, failed } = await migrateSwapsToContracts({
+                swapRepository: this.swapRepository,
+                contractManager: this.contractManager,
+                arkInfo,
+                isTerminal,
+            });
+            if (migrated > 0 || failed > 0) {
+                logger.log(`migrateSwapsToContracts: migrated=${migrated}, failed=${failed}`);
+            }
         }
 
         // Load all pending swaps from the swap repository
@@ -518,6 +601,12 @@ export class ArkadeSwaps {
 
         // save pending swap to storage
         await this.savePendingReverseSwap(pendingSwap);
+
+        // Register the VHTLC as a tracked contract so the SDK can watch it.
+        // Fetched here (not before the save) so a registration failure doesn't
+        // orphan an unregistered swap — the init migration backfills on next run.
+        const arkInfo = await this.arkProvider.getInfo();
+        await this.registerSwapContractSafe(pendingSwap, arkInfo);
 
         // Add to swap manager if enabled
         if (this.swapManager) {
@@ -874,11 +963,17 @@ export class ArkadeSwaps {
         // make submarine swap request
         const swapResponse = await this.swapProvider.createSubmarineSwap(swapRequest);
 
+        // Extract the preimage hash from the invoice so it's durably stored on
+        // the swap object — required by extractSwapVhtlcInputs (submarine branch)
+        // for VHTLC construction and contract registration.
+        const preimageHash = getInvoicePaymentHash(invoice);
+
         // create pending swap object
         const pendingSwap: BoltzSubmarineSwap = {
             id: swapResponse.id,
             type: "submarine",
             createdAt: Math.floor(Date.now() / 1000),
+            preimageHash,
             request: swapRequest,
             response: swapResponse,
             status: "invoice.set",
@@ -886,6 +981,10 @@ export class ArkadeSwaps {
 
         // save pending swap to storage
         await this.savePendingSubmarineSwap(pendingSwap);
+
+        // Register the VHTLC as a tracked contract so the SDK can watch it.
+        const arkInfo = await this.arkProvider.getInfo();
+        await this.registerSwapContractSafe(pendingSwap, arkInfo);
 
         // Add to swap manager if enabled
         if (this.swapManager) {
@@ -2361,6 +2460,10 @@ export class ArkadeSwaps {
         };
 
         await this.savePendingChainSwap(pendingSwap);
+
+        // Register the VHTLC as a tracked contract so the SDK can watch it.
+        const arkInfo = await this.arkProvider.getInfo();
+        await this.registerSwapContractSafe(pendingSwap, arkInfo);
 
         this.swapManager?.addSwap(pendingSwap);
 

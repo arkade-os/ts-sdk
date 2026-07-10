@@ -61,6 +61,31 @@ vi.mock("@arkade-os/sdk", async () => {
     };
 });
 
+// Mock swap-contract: let registerSwapContract forward to contractManager.createContract
+// with a minimal valid shape so existing tests don't need real VHTLC addresses,
+// while still verifying that createContract is called with the right metadata.
+vi.mock("../src/utils/swap-contract", () => ({
+    registerSwapContract: vi.fn(
+        async (
+            contractManager: import("@arkade-os/sdk").IContractManager,
+            swap: import("../src/types").BoltzSwap,
+        ) => {
+            await contractManager.createContract({
+                type: "vhtlc",
+                script: "aa",
+                address: "mock-vhtlc-address",
+                state: "active",
+                params: {},
+                metadata: {
+                    swapId: swap.id,
+                    swapType: swap.type,
+                    source: `swap:${swap.id}`,
+                },
+            });
+        },
+    ),
+}));
+
 // Mock vhtlc utils — passthrough except the offchain-tx helpers, which
 // touch real Ark protocol APIs we can't reach in unit tests.
 vi.mock("../src/utils/vhtlc", async () => {
@@ -198,6 +223,7 @@ describe("ArkadeSwaps", () => {
     let identity: Identity;
     let wallet: Wallet;
     let mockSwapRepository: any;
+    let mockContractManager: any;
 
     const seckeys = {
         alice: schnorr.utils.randomSecretKey(),
@@ -584,7 +610,9 @@ describe("ArkadeSwaps", () => {
 
         // Create mock providers first
         arkProvider = {
-            getInfo: vi.fn(),
+            // Default: resolve with mockArkInfo so contract registration in create
+            // paths doesn't throw (individual tests override with mockResolvedValueOnce).
+            getInfo: vi.fn().mockResolvedValue(mockArkInfo),
             submitTx: vi.fn(),
             finalizeTx: vi.fn(),
         } as any;
@@ -600,6 +628,11 @@ describe("ArkadeSwaps", () => {
             getAllSwaps: vi.fn(),
             clear: vi.fn(),
             [Symbol.asyncDispose]: vi.fn(),
+        };
+
+        // Create fake ContractManager (captures createContract calls; dedup is done by the real impl)
+        mockContractManager = {
+            createContract: vi.fn().mockResolvedValue({ state: "active", createdAt: 0 }),
         };
 
         // Mock wallet with necessary methods and providers
@@ -623,6 +656,7 @@ describe("ArkadeSwaps", () => {
             indexerProvider,
             swapRepository: mockSwapRepository,
             swapManager: false,
+            contractManager: mockContractManager,
         });
     });
 
@@ -642,6 +676,7 @@ describe("ArkadeSwaps", () => {
                 swapProvider,
                 arkProvider,
                 indexerProvider,
+                contractManager: mockContractManager,
             };
             expect(
                 () =>
@@ -652,12 +687,20 @@ describe("ArkadeSwaps", () => {
             ).toThrow("Swap provider is required.");
         });
 
+        it("requires a contractManager", () => {
+            expect(
+                // @ts-expect-error contractManager is required
+                () => new ArkadeSwaps({ wallet, swapProvider, arkProvider, indexerProvider }),
+            ).toThrow(/contractManager/i);
+        });
+
         it("should default to wallet instances without required config", async () => {
             const params: ArkadeSwapsConfig = {
                 wallet,
                 swapProvider,
                 arkProvider,
                 indexerProvider,
+                contractManager: mockContractManager,
             };
             expect(() => new ArkadeSwaps({ ...params })).not.toThrow();
             expect(() => new ArkadeSwaps({ ...params, arkProvider: null as any })).not.toThrow();
@@ -766,6 +809,16 @@ describe("ArkadeSwaps", () => {
                     reverseSwapResponseFor(createReverseSwapResponse),
                 );
 
+                // I1: track save-before-register ordering
+                const order: string[] = [];
+                mockSwapRepository.saveSwap.mockImplementation(async () => {
+                    order.push("save");
+                });
+                mockContractManager.createContract.mockImplementation(async () => {
+                    order.push("register");
+                    return { state: "active", createdAt: 0 };
+                });
+
                 // act
                 const pendingSwap = await swaps.createReverseSwap({
                     amount: mock.invoice.amount,
@@ -779,6 +832,22 @@ describe("ArkadeSwaps", () => {
                 expect(pendingSwap.response.onchainAmount).toBe(mock.invoice.amount);
                 expect(pendingSwap.response.refundPublicKey).toBe(compressedPubkeys.boltz);
                 expect(pendingSwap.status).toEqual("swap.created");
+                // I1: save must precede register
+                expect(order.indexOf("save")).toBeLessThan(order.indexOf("register"));
+            });
+
+            it("should propagate registration failure to caller (reverse)", async () => {
+                // I2: if createContract rejects, createReverseSwap must reject (not swallow)
+                // and saveSwap must have been called first (save-then-register ordering)
+                vi.spyOn(swapProvider, "createReverseSwap").mockImplementationOnce(
+                    reverseSwapResponseFor(createReverseSwapResponse),
+                );
+                mockContractManager.createContract.mockRejectedValue(new Error("boom"));
+
+                await expect(
+                    swaps.createReverseSwap({ amount: mock.invoice.amount }),
+                ).rejects.toThrow("boom");
+                expect(mockSwapRepository.saveSwap).toHaveBeenCalledOnce();
             });
 
             it("should get correct swap status", async () => {
@@ -1042,9 +1111,11 @@ describe("ArkadeSwaps", () => {
                 });
 
                 // Mock monitorSwap to directly trigger the invoice.settled case
-                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(async (swapId, update) => {
-                    setTimeout(() => update("invoice.settled"), 10);
-                });
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
+                    async (_swapId, update) => {
+                        setTimeout(() => update("invoice.settled"), 10);
+                    },
+                );
 
                 // act
                 const result = await swaps.waitAndClaim(pendingSwap);
@@ -1074,9 +1145,11 @@ describe("ArkadeSwaps", () => {
                 });
 
                 // Mock monitorSwap to directly trigger the invoice.settled case
-                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(async (swapId, update) => {
-                    setTimeout(() => update("invoice.settled"), 10);
-                });
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
+                    async (_swapId, update) => {
+                        setTimeout(() => update("invoice.settled"), 10);
+                    },
+                );
 
                 // act & assert
                 await expect(swaps.waitAndClaim(pendingSwap)).rejects.toThrow(
@@ -1094,6 +1167,16 @@ describe("ArkadeSwaps", () => {
                     createSubmarineSwapResponse,
                 );
 
+                // I1: track save-before-register ordering
+                const order: string[] = [];
+                mockSwapRepository.saveSwap.mockImplementation(async () => {
+                    order.push("save");
+                });
+                mockContractManager.createContract.mockImplementation(async () => {
+                    order.push("register");
+                    return { state: "active", createdAt: 0 };
+                });
+
                 // act
                 const pendingSwap = await swaps.createSubmarineSwap({
                     invoice: mock.invoice.address,
@@ -1103,6 +1186,22 @@ describe("ArkadeSwaps", () => {
                 expect(pendingSwap.status).toEqual("invoice.set");
                 expect(pendingSwap.request).toEqual(createSubmarineSwapRequest);
                 expect(pendingSwap.response).toEqual(createSubmarineSwapResponse);
+                // I1: save must precede register
+                expect(order.indexOf("save")).toBeLessThan(order.indexOf("register"));
+            });
+
+            it("should propagate registration failure to caller (submarine)", async () => {
+                // I2: if createContract rejects, createSubmarineSwap must reject (not swallow)
+                // and saveSwap must have been called first (save-then-register ordering)
+                vi.spyOn(swapProvider, "createSubmarineSwap").mockResolvedValueOnce(
+                    createSubmarineSwapResponse,
+                );
+                mockContractManager.createContract.mockRejectedValue(new Error("boom"));
+
+                await expect(
+                    swaps.createSubmarineSwap({ invoice: mock.invoice.address }),
+                ).rejects.toThrow("boom");
+                expect(mockSwapRepository.saveSwap).toHaveBeenCalledOnce();
             });
 
             it("should get correct swap status", async () => {
@@ -1586,6 +1685,16 @@ describe("ArkadeSwaps", () => {
                     createArkBtcChainSwapResponse,
                 );
 
+                // I1: track save-before-register ordering
+                const order: string[] = [];
+                mockSwapRepository.saveSwap.mockImplementation(async () => {
+                    order.push("save");
+                });
+                mockContractManager.createContract.mockImplementation(async () => {
+                    order.push("register");
+                    return { state: "active", createdAt: 0 };
+                });
+
                 // act
                 const pendingSwap = await swaps.createChainSwap({
                     to: "BTC",
@@ -1604,6 +1713,28 @@ describe("ArkadeSwaps", () => {
                 expect(pendingSwap.response.lockupDetails.lockupAddress).toBe(mock.address.ark);
                 expect(pendingSwap.status).toEqual("swap.created");
                 expect(pendingSwap.toAddress).toBe(mock.address.btc);
+                // I1: save must precede register
+                expect(order.indexOf("save")).toBeLessThan(order.indexOf("register"));
+            });
+
+            it("should propagate registration failure to caller (chain)", async () => {
+                // I2: if createContract rejects, createChainSwap must reject (not swallow)
+                // and saveSwap must have been called first (save-then-register ordering)
+                vi.spyOn(swapProvider, "createChainSwap").mockResolvedValueOnce(
+                    createArkBtcChainSwapResponse,
+                );
+                mockContractManager.createContract.mockRejectedValue(new Error("boom"));
+
+                await expect(
+                    swaps.createChainSwap({
+                        to: "BTC",
+                        from: "ARK",
+                        feeSatsPerByte: 1,
+                        senderLockAmount: mock.amount,
+                        toAddress: mock.address.btc,
+                    }),
+                ).rejects.toThrow("boom");
+                expect(mockSwapRepository.saveSwap).toHaveBeenCalledOnce();
             });
         });
 
@@ -5113,6 +5244,176 @@ describe("ArkadeSwaps", () => {
             await expect(
                 swaps.verifyChainSwap({ to: "ARK", from: "BTC", swap: bad, arkInfo: mockArkInfo }),
             ).rejects.toThrow(/invalid BTC address/);
+        });
+    });
+
+    // =========================================================================
+    // Contract registration on swap create
+    // =========================================================================
+    //
+    // registerSwapContract is mocked at module level (vi.mock above) to call
+    // contractManager.createContract directly with a typed shape, bypassing
+    // the real VHTLC address-matching in swapToContractParams. This keeps
+    // existing fixtures working while still verifying the wiring: that each
+    // create path calls registerSwapContract (and thus createContract) once
+    // with the correct type and swap-type metadata.
+
+    describe("startSwapManager migration", () => {
+        it("registers a pre-existing non-terminal swap as a contract on init", async () => {
+            // Arrange: build an ArkadeSwaps instance with autoStart:false so we
+            // control when startSwapManager is called.
+            const swapsWithManager = new ArkadeSwaps({
+                wallet,
+                arkProvider,
+                swapProvider,
+                indexerProvider,
+                swapRepository: mockSwapRepository,
+                swapManager: { autoStart: false },
+                contractManager: mockContractManager,
+            });
+
+            // Stub the internal SwapManager.start to avoid real network calls.
+            const internalManager = (swapsWithManager as any).swapManager;
+            const startSpy = vi.spyOn(internalManager, "start").mockResolvedValue(undefined);
+
+            // A non-terminal reverse swap already in the repository.
+            const preExistingSwap: BoltzReverseSwap = {
+                ...mockReverseSwap,
+                id: "pre-existing-reverse-swap",
+            };
+
+            // getAllSwaps is called twice by startSwapManager: once for migration
+            // (no filter) and once for loading all swaps (no filter).
+            mockSwapRepository.getAllSwaps.mockResolvedValue([preExistingSwap]);
+
+            // Act
+            await swapsWithManager.startSwapManager();
+
+            // Assert: the pre-existing swap's contract was registered.
+            expect(mockContractManager.createContract).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    type: "vhtlc",
+                    metadata: expect.objectContaining({
+                        swapId: "pre-existing-reverse-swap",
+                        swapType: "reverse",
+                    }),
+                }),
+            );
+
+            // SwapManager.start was still called (swap loading is unaffected).
+            expect(startSpy).toHaveBeenCalledOnce();
+        });
+
+        it("does not run migration when contractManager is absent (Expo-background exemption)", async () => {
+            // Build a swaps instance without contractManager — mirroring the
+            // Expo-background monitor path. startSwapManager should not attempt
+            // migration (would throw on undefined.createContract).
+            //
+            // Note: the ArkadeSwaps constructor enforces contractManager, so we
+            // bypass that guard via `as any` to simulate the background path.
+            const swapsNoContract = new ArkadeSwaps({
+                wallet,
+                arkProvider,
+                swapProvider,
+                indexerProvider,
+                swapRepository: mockSwapRepository,
+                swapManager: { autoStart: false },
+                contractManager: mockContractManager, // provide to pass constructor
+            });
+            // Overwrite with undefined post-construction to simulate the exempt path.
+            (swapsNoContract as any).contractManager = undefined;
+
+            const internalManager = (swapsNoContract as any).swapManager;
+            vi.spyOn(internalManager, "start").mockResolvedValue(undefined);
+
+            mockSwapRepository.getAllSwaps.mockResolvedValue([mockReverseSwap]);
+
+            await swapsNoContract.startSwapManager();
+
+            // With contractManager undefined the migration is skipped entirely.
+            expect(mockContractManager.createContract).not.toHaveBeenCalled();
+        });
+
+        it("does not run migration twice if startSwapManager is called again", async () => {
+            const swapsWithManager = new ArkadeSwaps({
+                wallet,
+                arkProvider,
+                swapProvider,
+                indexerProvider,
+                swapRepository: mockSwapRepository,
+                swapManager: { autoStart: false },
+                contractManager: mockContractManager,
+            });
+
+            const internalManager = (swapsWithManager as any).swapManager;
+            vi.spyOn(internalManager, "start").mockResolvedValue(undefined);
+
+            mockSwapRepository.getAllSwaps.mockResolvedValue([mockReverseSwap]);
+
+            await swapsWithManager.startSwapManager();
+            await swapsWithManager.startSwapManager();
+
+            // createContract is called once per run (the migration ran only on
+            // the first startSwapManager call), but SwapManager.start ran twice.
+            // The first call registered the swap; the second skipped migration.
+            const migrateCallCount = mockContractManager.createContract.mock.calls.length;
+            // Only 1 migration run (from the first startSwapManager) × 1 swap
+            expect(migrateCallCount).toBe(1);
+        });
+    });
+
+    describe("contract registration on swap create", () => {
+        it("createReverseSwap calls contractManager.createContract with type:vhtlc and swapType:reverse", async () => {
+            vi.spyOn(swapProvider, "createReverseSwap").mockImplementationOnce(
+                reverseSwapResponseFor(createReverseSwapResponse),
+            );
+
+            await swaps.createReverseSwap({ amount: mock.invoice.amount });
+
+            expect(mockContractManager.createContract).toHaveBeenCalledOnce();
+            expect(mockContractManager.createContract).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    type: "vhtlc",
+                    metadata: expect.objectContaining({ swapType: "reverse" }),
+                }),
+            );
+        });
+
+        it("createSubmarineSwap calls contractManager.createContract with type:vhtlc and swapType:submarine", async () => {
+            vi.spyOn(swapProvider, "createSubmarineSwap").mockResolvedValueOnce(
+                createSubmarineSwapResponse,
+            );
+
+            await swaps.createSubmarineSwap({ invoice: mock.invoice.address });
+
+            expect(mockContractManager.createContract).toHaveBeenCalledOnce();
+            expect(mockContractManager.createContract).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    type: "vhtlc",
+                    metadata: expect.objectContaining({ swapType: "submarine" }),
+                }),
+            );
+        });
+
+        it("createChainSwap (ARK→BTC) calls contractManager.createContract with type:vhtlc and swapType:chain", async () => {
+            vi.spyOn(swapProvider, "createChainSwap").mockResolvedValueOnce(
+                createArkBtcChainSwapResponse,
+            );
+
+            await swaps.createChainSwap({
+                to: "BTC",
+                from: "ARK",
+                senderLockAmount: mock.amount,
+                toAddress: mock.address.btc,
+            });
+
+            expect(mockContractManager.createContract).toHaveBeenCalledOnce();
+            expect(mockContractManager.createContract).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    type: "vhtlc",
+                    metadata: expect.objectContaining({ swapType: "chain" }),
+                }),
+            );
         });
     });
 });

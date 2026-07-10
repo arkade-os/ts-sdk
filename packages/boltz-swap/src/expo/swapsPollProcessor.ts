@@ -55,7 +55,11 @@ export const swapsPollProcessor: TaskProcessor<SwapTaskDependencies> = {
         let refunded = 0;
         let errors = 0;
 
-        // Create a temporary ArkadeSwaps without SwapManager for claim/refund logic
+        // Create a temporary ArkadeSwaps without SwapManager for claim/refund logic.
+        // contractManager is intentionally omitted: the background poll processor only
+        // monitors and claims existing swaps — it never creates new ones, so it never
+        // needs to register contracts. The cast bypasses the required-field check;
+        // all registration code in ArkadeSwaps guards `if (!this.contractManager) return`.
         const tempSwaps = new ArkadeSwaps({
             wallet,
             arkProvider,
@@ -63,7 +67,7 @@ export const swapsPollProcessor: TaskProcessor<SwapTaskDependencies> = {
             swapProvider,
             swapManager: false,
             swapRepository,
-        });
+        } as any);
 
         try {
             for (const swap of pendingSwaps) {

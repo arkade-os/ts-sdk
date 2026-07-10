@@ -17,6 +17,7 @@ import {
     ArkNote,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    type IContractManager,
 } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
@@ -183,6 +184,7 @@ describe("ArkadeSwaps", () => {
     let aliceSecKey: Uint8Array;
     let aliceCompressedPubKey: string;
     let fundedWallet: Wallet;
+    let contractManager: IContractManager;
 
     const arkUrl = "http://localhost:7070";
 
@@ -261,6 +263,8 @@ describe("ArkadeSwaps", () => {
             }),
         });
 
+        contractManager = await wallet.getContractManager();
+
         // Create ArkadeSwaps instance (disable SwapManager for manual swap tests).
         // Use a fresh in-memory swap repo per test so state doesn't leak across
         // describes via the shared fake-indexeddb (the default backend).
@@ -269,6 +273,7 @@ describe("ArkadeSwaps", () => {
             swapProvider,
             arkProvider,
             indexerProvider,
+            contractManager,
             swapRepository: new InMemorySwapRepository(),
             swapManager: false,
         });
@@ -286,6 +291,7 @@ describe("ArkadeSwaps", () => {
                         arkProvider,
                         swapProvider,
                         indexerProvider,
+                        contractManager,
                     }),
             ).not.toThrow();
         });
@@ -296,6 +302,7 @@ describe("ArkadeSwaps", () => {
                 arkProvider,
                 swapProvider,
                 indexerProvider,
+                contractManager,
             };
 
             expect(
@@ -313,6 +320,14 @@ describe("ArkadeSwaps", () => {
                         swapProvider: null as any,
                     }),
             ).toThrow("Swap provider is required.");
+
+            expect(
+                () =>
+                    new ArkadeSwaps({
+                        ...config,
+                        contractManager: null as any,
+                    }),
+            ).toThrow("ArkadeSwaps requires a contractManager");
         });
 
         it("should default to wallet instances without required config", async () => {
@@ -322,6 +337,7 @@ describe("ArkadeSwaps", () => {
                         wallet,
                         swapProvider,
                         indexerProvider,
+                        contractManager,
                         arkProvider: null as any,
                     }),
             ).not.toThrow();
@@ -331,6 +347,7 @@ describe("ArkadeSwaps", () => {
                         wallet,
                         arkProvider,
                         swapProvider,
+                        contractManager,
                         indexerProvider: null as any,
                     }),
             ).not.toThrow();
@@ -1438,6 +1455,7 @@ describe("ArkadeSwaps", () => {
                         swapProvider,
                         arkProvider: new RestArkProvider(arkUrl),
                         indexerProvider: new RestIndexerProvider(arkUrl),
+                        contractManager: await defaultWallet.getContractManager(),
                         swapManager: false,
                     });
 
@@ -1512,6 +1530,7 @@ describe("ArkadeSwaps", () => {
                         swapProvider,
                         arkProvider: new RestArkProvider(arkUrl),
                         indexerProvider: new RestIndexerProvider(arkUrl),
+                        contractManager: await defaultWallet.getContractManager(),
                         swapManager: false,
                     });
 
