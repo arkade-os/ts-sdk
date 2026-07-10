@@ -1181,29 +1181,44 @@ export class ContractManager implements IContractManager {
      * Handle events from the watcher.
      */
     private async handleContractEvent(event: ContractEvent) {
-        switch (event.type) {
-            // Delta-sync only the changed virtual outputs for this contract.
-            case "vtxo_received":
-                await this.syncContracts({ contracts: [event.contract] });
-                break;
-            case "vtxo_spent":
-                await this.syncContracts({ contracts: [event.contract] });
-                if (this.config.onVtxosSpent) {
-                    try {
-                        await this.config.onVtxosSpent(
-                            event.vtxos.map((v) => ({ txid: v.txid, vout: v.vout })),
-                        );
-                    } catch {
-                        // prune is best-effort; never block the spend event
+        // Watcher-driven syncs update provider-sync health the same way the boot
+        // and read paths do (initialize / getContractsWithVtxos): a retryable
+        // indexer/operator failure here — notably the post-boot connection_reset
+        // recovery — must record degraded state rather than being swallowed by
+        // the startWatching callback's `.catch`, or diagnostics would keep
+        // reporting online after a real degradation. Terminal failures still
+        // propagate. The event is forwarded to subscribers either way.
+        try {
+            switch (event.type) {
+                // Delta-sync only the changed virtual outputs for this contract.
+                case "vtxo_received":
+                    await this.syncContracts({ contracts: [event.contract] });
+                    this.markSyncOnline();
+                    break;
+                case "vtxo_spent":
+                    await this.syncContracts({ contracts: [event.contract] });
+                    this.markSyncOnline();
+                    if (this.config.onVtxosSpent) {
+                        try {
+                            await this.config.onVtxosSpent(
+                                event.vtxos.map((v) => ({ txid: v.txid, vout: v.vout })),
+                            );
+                        } catch {
+                            // prune is best-effort; never block the spend event
+                        }
                     }
-                }
-                break;
-            case "connection_reset":
-                // Same recovery path as boot: delta-sync the watched set
-                // and reconcile the pending frontier. `advanceSyncCursor`
-                // is monotonic so this never rewinds the cursor.
-                await this.reconcileWatched();
-                break;
+                    break;
+                case "connection_reset":
+                    // Same recovery path as boot: delta-sync the watched set
+                    // and reconcile the pending frontier. `advanceSyncCursor`
+                    // is monotonic so this never rewinds the cursor.
+                    await this.reconcileWatched();
+                    this.markSyncOnline();
+                    break;
+            }
+        } catch (err) {
+            if (!isRetryableProviderError(err)) throw err;
+            this.markSyncDegraded(err);
         }
 
         // Forward to all callbacks

@@ -151,4 +151,51 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         await m.getContractsWithVtxos();
         expect(m.getSyncState().mode).toBe("online");
     });
+
+    it("marks degraded when a connection_reset recovery hits a retryable failure", async () => {
+        const contractRepo = new InMemoryContractRepository();
+        const walletRepo = new InMemoryWalletRepository();
+        await contractRepo.saveContract(seededContract());
+        const indexer = createMockIndexerProvider(); // boot online (getVtxos → [])
+        const m = await create(indexer, contractRepo, walletRepo);
+        expect(m.getSyncState().mode).toBe("online");
+
+        // Operator degrades post-boot; the watcher fires connection_reset and the
+        // recovery sync fails retryably. This must flip sync state to degraded
+        // even though the watcher callback swallows the rejection.
+        (indexer.getVtxos as any).mockRejectedValue(
+            new ProviderUnavailableError("indexer", "down"),
+        );
+        await (m as any).handleContractEvent({ type: "connection_reset", timestamp: 1 });
+
+        expect(m.getSyncState().mode).toBe("degraded");
+    });
+
+    it("clears degraded when a later connection_reset recovery succeeds", async () => {
+        const contractRepo = new InMemoryContractRepository();
+        const walletRepo = new InMemoryWalletRepository();
+        await contractRepo.saveContract(seededContract());
+        const indexer = createMockIndexerProvider();
+        (indexer.getVtxos as any).mockRejectedValueOnce(
+            new ProviderUnavailableError("indexer", "down"),
+        );
+        const m = await create(indexer, contractRepo, walletRepo);
+        expect(m.getSyncState().mode).toBe("degraded");
+
+        // Operator recovers; the next connection_reset recovery succeeds.
+        await (m as any).handleContractEvent({ type: "connection_reset", timestamp: 2 });
+        expect(m.getSyncState().mode).toBe("online");
+    });
+
+    it("rethrows a terminal connection_reset recovery failure", async () => {
+        const contractRepo = new InMemoryContractRepository();
+        await contractRepo.saveContract(seededContract());
+        const indexer = createMockIndexerProvider();
+        const m = await create(indexer, contractRepo, new InMemoryWalletRepository());
+
+        (indexer.getVtxos as any).mockRejectedValue(new Error("schema violation"));
+        await expect(
+            (m as any).handleContractEvent({ type: "connection_reset", timestamp: 3 }),
+        ).rejects.toThrow("schema violation");
+    });
 });

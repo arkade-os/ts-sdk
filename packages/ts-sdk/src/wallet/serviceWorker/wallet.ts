@@ -1154,15 +1154,28 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             const response = await sendContractMessage(message);
             return (response as ResponseGetContractSyncState).payload.syncState;
         };
-        let syncState: ContractSyncState = { mode: "online" };
+        // Start degraded/unknown — NOT online — so a probe that times out, hits
+        // an old worker, or errors is never reported as fresh. Only a successful
+        // probe establishes a real state; after that, a failed probe preserves
+        // the last known good value (best-effort) rather than fabricating one.
+        const UNKNOWN_STATE: ContractSyncState = {
+            mode: "degraded",
+            reason: "contract sync state unavailable from the worker",
+        };
+        let syncState: ContractSyncState = UNKNOWN_STATE;
+        let everProbed = false;
         const refreshSyncState = async (): Promise<void> => {
             // Best-effort: a failed diagnostics refresh must never mask the
-            // caller's operation result/error, and must leave the last known
-            // state in place rather than throwing.
+            // caller's operation result/error, and must never throw.
             try {
                 syncState = await fetchSyncState();
+                everProbed = true;
             } catch {
-                // keep the previous cached value
+                // Keep the last known good state only once we've had one; before
+                // any successful probe, stay degraded/unknown instead of online.
+                if (!everProbed) {
+                    syncState = UNKNOWN_STATE;
+                }
             }
         };
         // Seed the cache before returning the proxy (best-effort — never blocks
