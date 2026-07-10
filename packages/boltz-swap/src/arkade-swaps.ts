@@ -758,6 +758,13 @@ export class ArkadeSwaps {
             if (rawVtxos.length === 0) {
                 throw new Error(`Swap ${pendingSwap.id}: no spendable virtual coins found`);
             }
+            // The reconciler's VTXO-driven claim (or the Boltz-status-driven
+            // autonomous path) may have already claimed this VHTLC — both
+            // funnel through SwapManager's action log before we get here.
+            // Idempotent no-op instead of surfacing that race as a failure.
+            if (this.swapManager?.getActionLog().claimed.has(pendingSwap.id)) {
+                return;
+            }
             throw new Error(`Swap ${pendingSwap.id}: VHTLC is already spent`);
         }
 
@@ -1267,6 +1274,12 @@ export class ArkadeSwaps {
                 );
             }
             if (diagnostic.allSpent) {
+                // Already refunded via SwapManager's autonomous (Boltz-status)
+                // path before our manual call got here — idempotent no-op
+                // rather than surfacing that race as a failure.
+                if (this.swapManager?.getActionLog().refunded.has(pendingSwap.id)) {
+                    return { swept: 0, skipped: 0 };
+                }
                 throw new Error(`Swap ${pendingSwap.id}: VHTLC is already spent`);
             }
             throw new Error(`Swap ${pendingSwap.id}: VHTLC has no refundable VTXOs yet`);
@@ -2043,6 +2056,12 @@ export class ArkadeSwaps {
 
         const unspentVtxos = vtxos.filter((vtxo) => !vtxo.isSpent);
         if (unspentVtxos.length === 0) {
+            // Already refunded via SwapManager's autonomous (Boltz-status)
+            // path before our manual call got here — idempotent no-op rather
+            // than surfacing that race as a failure.
+            if (this.swapManager?.getActionLog().refunded.has(pendingSwap.id)) {
+                return { swept: 0, skipped: 0 };
+            }
             throw new Error(`Swap ${pendingSwap.id}: VHTLC is already spent`);
         }
 
