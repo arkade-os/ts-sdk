@@ -862,6 +862,41 @@ Key properties:
 - `validUntil` carries the earliest batch expiry: execute before it, or the operator may
   sweep the expired batch first.
 
+### Exit data available offline
+
+The exit above resolves a VTXO's transaction chain from the Ark **indexer** at
+exit time. To make a unilateral exit work even when the indexer is unreachable,
+configure a `virtualTxRepository` (SQLite / Realm / IndexedDB / InMemory): the
+wallet then captures each received VTXO's exit branch locally and prunes it on
+spend, and `estimate` / `prepare` read that data **local-first**, falling back to
+the indexer only on a miss.
+
+```typescript
+import { Wallet, InMemoryVirtualTxRepository } from '@arkade-os/sdk'
+
+const wallet = await Wallet.create({
+  identity,
+  storage: {
+    walletRepository,
+    contractRepository,
+    virtualTxRepository: new InMemoryVirtualTxRepository(),
+    // Optional. `mode` defaults to "lite" (structure only, cheap — most VTXOs
+    // never exit). Use "full" to also store the pre-signed PSBTs, so an exit
+    // needs no Ark indexer (only an Esplora endpoint to broadcast).
+    exitDataCapture: { mode: 'full' },
+  },
+})
+```
+
+- **Lite (default)** stores only the chain structure; an exit still fetches PSBTs
+  from the indexer. **Full** stores the PSBTs too, so the exit is fully
+  indexer-independent. `minExitWorthSats` (default 1000) skips dust VTXOs.
+- Capture and prune are best-effort — a persistence failure never blocks sync or
+  the exit. Pruning is ref-counted, so tree ancestors shared by other VTXOs survive.
+- **Provider tier:** pass extra sources via `exitDataCapture.sources` to resolve
+  exit data from your own service before the indexer — implement the
+  `ExitDataSource` interface (`getVtxoChain` / `getVirtualTxs`).
+
 ### Running the wallet in a service worker
 
 The SDK provides a `MessageBus` orchestrator that runs inside a service worker

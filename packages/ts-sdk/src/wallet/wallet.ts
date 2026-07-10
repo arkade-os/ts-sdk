@@ -77,6 +77,14 @@ import { isTerminalIntentState } from "../repositories/intentRepository";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
 import { extendCoinWithTapscript, validateRecipients } from "./utils";
+import {
+    captureExitBranch,
+    DEFAULT_EXIT_CAPTURE_MODE,
+    DEFAULT_MIN_EXIT_WORTH_SATS,
+    ExitCaptureMode,
+    pruneExitBranches,
+} from "./exit/capture";
+import { createExitChainResolver, ExitDataSource } from "./exit/resolver";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
@@ -89,7 +97,7 @@ import { DelegateVtxo } from "../script/delegate";
 import { DelegateManagerImpl, findDestinationOutputIndex, IDelegateManager } from "./delegate";
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
-import type { CreateContractParams } from "../contracts/contractManager";
+import type { ContractManagerConfig, CreateContractParams } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
 import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { timelockToSequence } from "../utils/timelock";
@@ -353,6 +361,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * (ContractManager isn't given it); `undefined` ⇒ no-op.
      */
     public virtualTxRepository?: VirtualTxRepository;
+    /** Opt-in exit-data capture settings; see {@link StorageConfig.exitDataCapture}. */
+    public exitDataCapture?: {
+        mode?: ExitCaptureMode;
+        minExitWorthSats?: number;
+        sources?: ExitDataSource[];
+    };
     private readonly _assetManager: IReadonlyAssetManager;
     readonly walletContractTimelocks: RelativeTimelock[];
     // Outpoints ("txid:vout") committed to an in-flight settle/send. Filtered
@@ -765,6 +779,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         );
         wallet.intentRepository = config.storage?.intentRepository;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
+        wallet.exitDataCapture = config.storage?.exitDataCapture;
         wallet.refreshDeprecatedSigners(setup.info);
         return wallet;
     }
@@ -1517,11 +1532,42 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     private async initializeContractManager(): Promise<ContractManager> {
+        // When a virtualTxRepository is configured, capture each received VTXO's
+        // unilateral-exit branch and prune it on spend (both best-effort).
+        const virtualTxRepository = this.virtualTxRepository;
+        let onVtxosPersisted: ContractManagerConfig["onVtxosPersisted"];
+        let onVtxosSpent: ContractManagerConfig["onVtxosSpent"];
+        if (virtualTxRepository) {
+            const capture = this.exitDataCapture;
+            const resolver = createExitChainResolver({
+                indexer: this.indexerProvider,
+                repository: virtualTxRepository,
+                extraSources: capture?.sources,
+            });
+            onVtxosPersisted = async (_contract, vtxos) => {
+                for (const v of vtxos) {
+                    if (v.virtualStatus.state === "spent") continue;
+                    await captureExitBranch({
+                        resolver,
+                        repository: virtualTxRepository,
+                        vtxo: { txid: v.txid, vout: v.vout },
+                        value: v.value,
+                        mode: capture?.mode ?? DEFAULT_EXIT_CAPTURE_MODE,
+                        minExitWorthSats: capture?.minExitWorthSats ?? DEFAULT_MIN_EXIT_WORTH_SATS,
+                    }).catch(() => {
+                        // capture is best-effort
+                    });
+                }
+            };
+            onVtxosSpent = (vtxos) => pruneExitBranches(virtualTxRepository, vtxos);
+        }
         const manager = await ContractManager.create({
             indexerProvider: this.indexerProvider,
             contractRepository: this.contractRepository,
             walletRepository: this.walletRepository,
             intentRepository: this.intentRepository,
+            onVtxosPersisted,
+            onVtxosSpent,
             watcherConfig: this.watcherConfig,
         });
 
@@ -2580,6 +2626,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         wallet.intentRepository = config.storage?.intentRepository;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
+        wallet.exitDataCapture = config.storage?.exitDataCapture;
 
         await wallet.getVtxoManager();
         return wallet;

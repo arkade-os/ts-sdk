@@ -11,6 +11,7 @@ import { CSVMultisigTapscript } from "../src/script/tapscript";
 import { P2A } from "../src/utils/anchor";
 import { Transaction } from "../src/utils/transaction";
 import { buildExitDag } from "../src/wallet/exit/chain";
+import { IndexerExitDataSource } from "../src/wallet/exit/indexerSource";
 import { CHILD_OUTPUT_DUST, estimate } from "../src/wallet/exit/estimate";
 import type { ExitOptions } from "../src/wallet/exit/estimate";
 
@@ -51,7 +52,9 @@ describe("buildExitDag", () => {
                 { txid: LEAF_A, vout: 0 },
                 { txid: LEAF_B, vout: 0 },
             ],
-            indexer: fakeIndexer({ [LEAF_A]: chainOf(LEAF_A), [LEAF_B]: chainOf(LEAF_B) }),
+            chain: new IndexerExitDataSource(
+                fakeIndexer({ [LEAF_A]: chainOf(LEAF_A), [LEAF_B]: chainOf(LEAF_B) }),
+            ),
             onchain: fakeOnchain(new Set([COMMIT])),
         });
         expect(dag.map((n) => n.txid)).toEqual([SHARED, LEAF_A, LEAF_B]);
@@ -62,7 +65,7 @@ describe("buildExitDag", () => {
     it("marks already-confirmed nodes", async () => {
         const dag = await buildExitDag({
             vtxos: [{ txid: LEAF_A, vout: 0 }],
-            indexer: fakeIndexer({ [LEAF_A]: chainOf(LEAF_A) }),
+            chain: new IndexerExitDataSource(fakeIndexer({ [LEAF_A]: chainOf(LEAF_A) })),
             onchain: fakeOnchain(new Set([COMMIT, SHARED])),
         });
         expect(dag.find((n) => n.txid === SHARED)!.confirmed).toBe(true);
@@ -77,7 +80,7 @@ describe("buildExitDag", () => {
         await expect(
             buildExitDag({
                 vtxos: [{ txid: LEAF_A, vout: 0 }],
-                indexer: fakeIndexer({ [LEAF_A]: cyclic }),
+                chain: new IndexerExitDataSource(fakeIndexer({ [LEAF_A]: cyclic })),
                 onchain: fakeOnchain(new Set()),
             }),
         ).rejects.toThrow(/inconsistent/i);

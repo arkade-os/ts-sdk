@@ -1,6 +1,5 @@
 import { base64, hex } from "@scure/base";
 import type { Outpoint, VirtualCoin } from "..";
-import { DEFAULT_PAGE_SIZE } from "../../contracts/constants";
 import { contractHandlers } from "../../contracts/handlers";
 import { NetworkName } from "../../networks";
 import { VtxoScript } from "../../script/base";
@@ -10,6 +9,7 @@ import { TxWeightEstimator } from "../../utils/txSizeEstimator";
 import { OnchainWallet } from "../onchain";
 import type { Wallet } from "../wallet";
 import { buildExitDag, DagNode, topoSortByDeps } from "./chain";
+import { createExitChainResolver } from "./resolver";
 import { finalizeVirtualTx } from "./finalizeVirtualTx";
 import { ExitPathError, ResolvedExitPath, resolveUnilateralPath } from "./path";
 import { sweepFeeFor } from "./sweep";
@@ -140,9 +140,16 @@ export async function computeExitLayout(opts: ExitOptions, feeRate: number): Pro
     const vtxos = await selectExitVtxos(opts);
     if (vtxos.length === 0) throw new Error("no vtxos to exit");
 
+    // Resolve exit chain data local-first (repo → indexer), read-through cached.
+    // With no virtualTxRepository this is exactly the indexer-only path.
+    const resolver = createExitChainResolver({
+        indexer: wallet.indexerProvider,
+        repository: wallet.virtualTxRepository,
+        extraSources: wallet.exitDataCapture?.sources,
+    });
     const dag = await buildExitDag({
         vtxos,
-        indexer: wallet.indexerProvider,
+        chain: resolver,
         onchain: wallet.onchainProvider,
     });
 
@@ -151,22 +158,9 @@ export async function computeExitLayout(opts: ExitOptions, feeRate: number): Pro
     const pendingNodes = dag.filter((n) => !n.confirmed);
     const psbts = new Map<string, string>();
     if (pendingNodes.length > 0) {
-        // getVirtualTxs is paginated; a deep chain can exceed one page, so fetch
-        // every page or a later psbt lookup throws "indexer did not return virtual
-        // tx". A short page (or absent page metadata) means end of history.
-        const txids = pendingNodes.map((n) => n.txid);
-        let pageIndex = 0;
-        let hasMore = true;
-        while (hasMore) {
-            const { txs, page } = await wallet.indexerProvider.getVirtualTxs(txids, {
-                pageIndex,
-                pageSize: DEFAULT_PAGE_SIZE,
-            });
-            for (const psbt of txs) {
-                psbts.set(Transaction.fromPSBT(base64.decode(psbt)).id, psbt);
-            }
-            hasMore = page ? txs.length === DEFAULT_PAGE_SIZE : false;
-            pageIndex++;
+        const txs = await resolver.getVirtualTxs(pendingNodes.map((n) => n.txid));
+        for (const psbt of txs) {
+            psbts.set(Transaction.fromPSBT(base64.decode(psbt)).id, psbt);
         }
     }
 
