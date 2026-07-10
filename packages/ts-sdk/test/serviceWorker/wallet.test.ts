@@ -407,6 +407,95 @@ describe("ServiceWorkerReadonlyWallet", () => {
         await manager.getContractsWithVtxos({} as any); // worker degraded → probe #2
         expect(manager.getSyncState()).toMatchObject({ mode: "degraded", reason: "indexer down" });
     });
+
+    it("reports degraded (never a fabricated online) when the initial sync-state probe fails", async () => {
+        // Probe fails (error response) — models a timeout / old worker / error.
+        const responder = (message: any) => {
+            if (message.type === "GET_CONTRACT_SYNC_STATE") {
+                return { id: message.id, tag: messageTag, error: new Error("probe failed") };
+            }
+            return null;
+        };
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness(responder);
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        const manager = await wallet.getContractManager();
+
+        expect(manager.getSyncState().mode).toBe("degraded");
+    });
+
+    it("recovers from a failed initial probe once an operation refresh succeeds", async () => {
+        let probe = 0;
+        const responder = (message: any) => {
+            if (message.type === "GET_CONTRACTS_WITH_VTXOS") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "CONTRACTS_WITH_VTXOS",
+                    payload: { contracts: [] },
+                };
+            }
+            if (message.type === "GET_CONTRACT_SYNC_STATE") {
+                probe += 1;
+                // Construction probe fails; the post-operation probe succeeds.
+                return probe === 1
+                    ? { id: message.id, tag: messageTag, error: new Error("probe failed") }
+                    : {
+                          id: message.id,
+                          tag: messageTag,
+                          type: "CONTRACT_SYNC_STATE",
+                          payload: { syncState: { mode: "online" } },
+                      };
+            }
+            return null;
+        };
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness(responder);
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        const manager = await wallet.getContractManager();
+        expect(manager.getSyncState().mode).toBe("degraded"); // initial probe failed
+
+        await manager.getContractsWithVtxos({} as any); // refresh succeeds
+        expect(manager.getSyncState()).toEqual({ mode: "online" });
+    });
+
+    it("preserves the last known state when a refresh fails after a prior success", async () => {
+        let probe = 0;
+        const responder = (message: any) => {
+            if (message.type === "GET_CONTRACTS_WITH_VTXOS") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "CONTRACTS_WITH_VTXOS",
+                    payload: { contracts: [] },
+                };
+            }
+            if (message.type === "GET_CONTRACT_SYNC_STATE") {
+                probe += 1;
+                // Construction probe succeeds (online); the post-operation probe fails.
+                return probe === 1
+                    ? {
+                          id: message.id,
+                          tag: messageTag,
+                          type: "CONTRACT_SYNC_STATE",
+                          payload: { syncState: { mode: "online" } },
+                      }
+                    : { id: message.id, tag: messageTag, error: new Error("probe failed") };
+            }
+            return null;
+        };
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness(responder);
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        const manager = await wallet.getContractManager();
+        expect(manager.getSyncState()).toEqual({ mode: "online" });
+
+        await manager.getContractsWithVtxos({} as any); // refresh fails → keep last known
+        expect(manager.getSyncState()).toEqual({ mode: "online" });
+    });
 });
 
 const createSWWallet = (
