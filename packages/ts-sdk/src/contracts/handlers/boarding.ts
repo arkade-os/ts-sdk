@@ -6,6 +6,7 @@ import { DefaultContractHandler, DefaultContractParams } from "./default";
 import { deriveDescriptorLeafPubKey } from "../../identity/descriptor";
 import { timelockToSequence } from "../../utils/timelock";
 import { WALLET_RECEIVE_SOURCE } from "../metadata";
+import type { ContractTapscripts } from "../../wallet/utils";
 
 /**
  * Typed parameters for boarding contracts.
@@ -80,6 +81,10 @@ export const BoardingContractHandler: ContractHandler<BoardingContractParams, De
 
     deserializeParams(params: Record<string, string>): BoardingContractParams {
         return DefaultContractHandler.deserializeParams(params);
+    },
+
+    getContractTapscripts(params: Record<string, string>): ContractTapscripts {
+        return DefaultContractHandler.getContractTapscripts(params);
     },
 
     selectPath(
