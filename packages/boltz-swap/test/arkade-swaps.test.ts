@@ -77,7 +77,7 @@ vi.mock("../src/utils/swap-contract", () => ({
                 type: "vhtlc",
                 script: `mock-vhtlc-script:${swap.id}`,
                 address: "mock-vhtlc-address",
-                state: "active",
+                state: "active" as const,
                 params: {},
                 metadata: {
                     swapId: swap.id,
