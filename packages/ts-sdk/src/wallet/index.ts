@@ -17,6 +17,8 @@ import {
 import { IContractManager } from "../contracts/contractManager";
 import { IDelegateManager } from "./delegate";
 import type { Activity, ActivityRegistry } from "./activity";
+import type { ExitCaptureMode } from "./exit/capture";
+import type { ExitDataSource } from "./exit/resolver";
 export {
     ActivityRegistry,
     boardingResolver,
@@ -247,6 +249,19 @@ export type StorageConfig = {
      * option as experimental until those paths land. Absent ⇒ no-op.
      */
     virtualTxRepository?: VirtualTxRepository;
+    /**
+     * Optional exit-data capture settings (only in effect when
+     * `virtualTxRepository` is set). `mode` "lite" (default) stores structure
+     * only; "full" stores PSBTs so a unilateral exit needs no Ark indexer.
+     * `minExitWorthSats` (default 1000) skips dust. `sources` are extra
+     * `ExitDataSource`s (e.g. a wallet-provider) tried before the indexer for
+     * both capture and exit reads.
+     */
+    exitDataCapture?: {
+        mode?: ExitCaptureMode;
+        minExitWorthSats?: number;
+        sources?: ExitDataSource[];
+    };
 };
 
 /**

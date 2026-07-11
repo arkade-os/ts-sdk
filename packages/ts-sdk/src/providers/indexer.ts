@@ -5,6 +5,38 @@ import { eventSourceIterator, isEventSourceError } from "./utils";
 import { MetadataList } from "../extension/asset";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 import { baseFetch } from "../utils/fetch";
+import { throwIfHttpUnavailable, toProviderUnavailable } from "./errors";
+
+/**
+ * `baseFetch` for indexer requests with availability classification: a transport
+ * failure (server unreachable) or a 429/5xx response becomes a typed
+ * {@link ProviderUnavailableError} of kind `"indexer"`, so offline-first read
+ * paths can catch it and fall back to repository state. Other non-2xx responses
+ * are returned unchanged for each method to reject with its descriptive
+ * (terminal) error.
+ */
+async function indexerFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    let res: Response;
+    try {
+        res = await baseFetch(input, init);
+    } catch (err) {
+        throw toProviderUnavailable(err, "indexer");
+    }
+    if (!res.ok) {
+        // Pass the body so a 5xx carrying a structured arkd error (grpc-gateway
+        // maps gRPC INTERNAL -> HTTP 500) stays terminal instead of being
+        // misclassified as a retryable availability failure. If the body can't be
+        // read, fall back to status-only classification.
+        let body: string | undefined;
+        try {
+            body = await res.clone().text();
+        } catch {
+            body = undefined;
+        }
+        throwIfHttpUnavailable(res, "indexer", body);
+    }
+    return res;
+}
 
 export type PaginationOptions = {
     pageIndex?: number;
@@ -314,7 +346,7 @@ export class RestIndexerProvider implements IndexerProvider {
         if (params.toString()) {
             url += "?" + params.toString();
         }
-        const res = await baseFetch(url);
+        const res = await indexerFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch vtxo tree: ${res.statusText}`);
         }
@@ -345,7 +377,7 @@ export class RestIndexerProvider implements IndexerProvider {
         if (params.toString()) {
             url += "?" + params.toString();
         }
-        const res = await baseFetch(url);
+        const res = await indexerFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch vtxo tree leaves: ${res.statusText}`);
         }
@@ -358,7 +390,7 @@ export class RestIndexerProvider implements IndexerProvider {
 
     async getBatchSweepTransactions(batchOutpoint: Outpoint): Promise<{ sweptBy: string[] }> {
         const url = `${this.serverUrl}/v1/indexer/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/sweepTxs`;
-        const res = await baseFetch(url);
+        const res = await indexerFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch batch sweep transactions: ${res.statusText}`);
         }
@@ -371,7 +403,7 @@ export class RestIndexerProvider implements IndexerProvider {
 
     async getCommitmentTx(txid: string): Promise<CommitmentTx> {
         const url = `${this.serverUrl}/v1/indexer/commitmentTx/${txid}`;
-        const res = await baseFetch(url);
+        const res = await indexerFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch commitment tx: ${res.statusText}`);
         }
@@ -397,7 +429,7 @@ export class RestIndexerProvider implements IndexerProvider {
         if (params.toString()) {
             url += "?" + params.toString();
         }
-        const res = await baseFetch(url);
+        const res = await indexerFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch commitment tx connectors: ${res.statusText}`);
         }
@@ -428,7 +460,7 @@ export class RestIndexerProvider implements IndexerProvider {
         if (params.toString()) {
             url += "?" + params.toString();
         }
-        const res = await baseFetch(url);
+        const res = await indexerFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch commitment tx forfeitTxs: ${res.statusText}`);
         }
@@ -532,7 +564,7 @@ export class RestIndexerProvider implements IndexerProvider {
         if (params.toString()) {
             url += "?" + params.toString();
         }
-        const res = await baseFetch(url);
+        const res = await indexerFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch virtual txs: ${res.statusText}`);
         }
@@ -554,7 +586,7 @@ export class RestIndexerProvider implements IndexerProvider {
         if (params.toString()) {
             url += "?" + params.toString();
         }
-        const res = await baseFetch(url);
+        const res = await indexerFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch vtxo chain: ${res.statusText}`);
         }
@@ -631,7 +663,7 @@ export class RestIndexerProvider implements IndexerProvider {
         if (params.toString()) {
             url += "?" + params.toString();
         }
-        const res = await baseFetch(url);
+        const res = await indexerFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch vtxos: ${res.statusText}`);
         }
@@ -647,7 +679,7 @@ export class RestIndexerProvider implements IndexerProvider {
 
     async getAssetDetails(assetId: string): Promise<AssetDetails> {
         const url = `${this.serverUrl}/v1/indexer/asset/${encodeURIComponent(assetId)}`;
-        const res = await baseFetch(url);
+        const res = await indexerFetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch asset details: ${res.statusText}`);
         }
@@ -666,7 +698,7 @@ export class RestIndexerProvider implements IndexerProvider {
 
     async subscribeForScripts(scripts: string[], subscriptionId?: string): Promise<string> {
         const url = `${this.serverUrl}/v1/indexer/script/subscribe`;
-        const res = await baseFetch(url, {
+        const res = await indexerFetch(url, {
             headers: {
                 "Content-Type": "application/json",
             },
@@ -684,7 +716,7 @@ export class RestIndexerProvider implements IndexerProvider {
 
     async unsubscribeForScripts(subscriptionId: string, scripts?: string[]): Promise<void> {
         const url = `${this.serverUrl}/v1/indexer/script/unsubscribe`;
-        const res = await baseFetch(url, {
+        const res = await indexerFetch(url, {
             headers: {
                 "Content-Type": "application/json",
             },

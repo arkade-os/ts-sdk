@@ -77,7 +77,21 @@ import { isTerminalIntentState } from "../repositories/intentRepository";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
 import { extendCoinWithTapscript, validateRecipients } from "./utils";
-import { ArkError } from "../providers/errors";
+import {
+    captureExitBranch,
+    DEFAULT_EXIT_CAPTURE_MODE,
+    DEFAULT_MIN_EXIT_WORTH_SATS,
+    ExitCaptureMode,
+    pruneExitBranches,
+} from "./exit/capture";
+import { createExitChainResolver, ExitDataSource } from "./exit/resolver";
+import { ArkError, type ProviderKind } from "../providers/errors";
+import { isRetryableProviderError } from "../providers/availability";
+import {
+    resolveArkInfo,
+    saveValidatedArkInfoSnapshot,
+    type ServerInfoSource,
+} from "./arkInfoSnapshot";
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
 import { DelegateProvider } from "../providers/delegate";
@@ -89,7 +103,11 @@ import { DelegateVtxo } from "../script/delegate";
 import { DelegateManagerImpl, findDestinationOutputIndex, IDelegateManager } from "./delegate";
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
-import type { CreateContractParams } from "../contracts/contractManager";
+import type {
+    ContractManagerConfig,
+    ContractSyncState,
+    CreateContractParams,
+} from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
 import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { timelockToSequence } from "../utils/timelock";
@@ -334,6 +352,22 @@ export interface BoardingUtxoGroup {
     coins: ExtendedCoin[];
 }
 
+/**
+ * Freshness of the wallet's provider-backed sync, composed from the boot
+ * server-info source and the contract-manager's indexer-sync health. It
+ * describes only how fresh provider data is — never the wallet balances/VTXOs
+ * themselves, which are always served from the repository (system of record).
+ */
+export type ProviderConnectionState =
+    | { mode: "online"; source: "live"; lastOnlineAt: number }
+    | {
+          mode: "degraded";
+          source: "cache" | "repository";
+          provider: ProviderKind;
+          reason: string;
+          lastOnlineAt?: number;
+      };
+
 export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManager?: ContractManager;
     private _contractManagerInitializing?: Promise<ContractManager>;
@@ -353,6 +387,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * (ContractManager isn't given it); `undefined` ⇒ no-op.
      */
     public virtualTxRepository?: VirtualTxRepository;
+    /** Opt-in exit-data capture settings; see {@link StorageConfig.exitDataCapture}. */
+    public exitDataCapture?: {
+        mode?: ExitCaptureMode;
+        minExitWorthSats?: number;
+        sources?: ExitDataSource[];
+    };
     private readonly _assetManager: IReadonlyAssetManager;
     readonly walletContractTimelocks: RelativeTimelock[];
     // Outpoints ("txid:vout") committed to an in-flight settle/send. Filtered
@@ -400,6 +440,77 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * construction-time snapshot for their lifetime.
      */
     protected _arkServerPublicKey: Bytes;
+
+    /**
+     * Whether this wallet was constructed from live operator server-info
+     * (`"live"`) or from a cached snapshot because the operator was unreachable
+     * (`"cache"`). Freshness signal for {@link getProviderConnectionState}.
+     */
+    protected _serverInfoSource: ServerInfoSource = "live";
+
+    /**
+     * Epoch-ms of the last known live operator contact: construction time on the
+     * `live` boot path, the cached snapshot's `savedAt` on the `cache` path.
+     */
+    protected _serverInfoLastOnlineAt?: number;
+
+    /** @see {@link _serverInfoSource} */
+    get serverInfoSource(): ServerInfoSource {
+        return this._serverInfoSource;
+    }
+
+    /**
+     * Composed provider-connection freshness: the boot server-info source
+     * (Arkade) combined with the contract-manager's indexer-sync health, if the
+     * manager has been initialized. Reads no live provider state — it never
+     * forces a `ContractManager` to construct — so it is safe for readonly
+     * callers that only use address/balance APIs.
+     *
+     *  - Boot fell back to a cached snapshot → degraded on `arkade` (`cache`).
+     *  - Otherwise, if the contract manager has degraded to repository data →
+     *    degraded on `indexer` (`repository`).
+     *  - Otherwise online.
+     *
+     * This only describes sync freshness; wallet balances/VTXOs are always read
+     * from the repository regardless of this state.
+     */
+    getProviderConnectionState(): ProviderConnectionState {
+        if (this._serverInfoSource === "cache") {
+            return {
+                mode: "degraded",
+                source: "cache",
+                provider: "arkade",
+                reason: "constructed from cached server-info; operator was unreachable at boot",
+                lastOnlineAt: this._serverInfoLastOnlineAt,
+            };
+        }
+        const sync = this._contractManager?.getSyncState();
+        if (sync?.mode === "degraded") {
+            return {
+                mode: "degraded",
+                source: "repository",
+                provider: "indexer",
+                reason: sync.reason,
+                lastOnlineAt: sync.lastSyncedAt ?? this._serverInfoLastOnlineAt,
+            };
+        }
+        return {
+            mode: "online",
+            source: "live",
+            lastOnlineAt: sync?.lastSyncedAt ?? this._serverInfoLastOnlineAt ?? 0,
+        };
+    }
+
+    /**
+     * The contract-manager's current provider-sync health **without forcing it
+     * to initialize** — reads the already-constructed manager, or reports
+     * `online` when none exists yet. Unlike {@link getContractManager}, this
+     * never triggers a remote sync, so it is safe on a pure diagnostics path
+     * (e.g. the service-worker sync-state message).
+     */
+    getContractSyncState(): ContractSyncState {
+        return this._contractManager?.getSyncState() ?? { mode: "online" };
+    }
 
     protected constructor(
         readonly identity: ReadonlyIdentity,
@@ -602,7 +713,26 @@ export class ReadonlyWallet implements IReadonlyWallet {
             indexerProvider = new RestIndexerProvider(indexerUrl);
         }
 
-        const info = await arkProvider.getInfo();
+        // Instantiate the repositories BEFORE the first required server-info
+        // fetch so boot can read a cached snapshot and fall back to it when the
+        // operator is unreachable, instead of failing construction outright.
+        const walletRepository =
+            config.storage?.walletRepository ?? new IndexedDBWalletRepository();
+
+        const contractRepository =
+            config.storage?.contractRepository ?? new IndexedDBContractRepository();
+
+        // Live server-info wins; a retryable failure falls back to the cached
+        // snapshot (or throws a typed unavailable error when none exists), and
+        // terminal failures propagate unchanged. The cache is NOT written here:
+        // persistence is deferred to after construction validates the response
+        // (see saveValidatedArkInfoSnapshot in the create() paths) so a terminal
+        // live response can't poison the cache before construction fails.
+        const {
+            info,
+            source: serverInfoSource,
+            lastOnlineAt: serverInfoLastOnlineAt,
+        } = await resolveArkInfo(arkProvider, walletRepository);
 
         const network = getNetwork(info.network as NetworkName);
 
@@ -708,12 +838,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
             csvTimelock: timelockToSequence(boardingTimelock).toString(),
         });
 
-        const walletRepository =
-            config.storage?.walletRepository ?? new IndexedDBWalletRepository();
-
-        const contractRepository =
-            config.storage?.contractRepository ?? new IndexedDBContractRepository();
-
         return {
             arkProvider,
             indexerProvider,
@@ -727,6 +851,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
             walletRepository,
             contractRepository,
             info,
+            serverInfoSource,
+            serverInfoLastOnlineAt,
             delegateProvider: config.delegateProvider || config.delegatorProvider,
             /** @deprecated alias for `delegateProvider` */
             delegatorProvider: config.delegateProvider || config.delegatorProvider,
@@ -765,6 +891,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
         );
         wallet.intentRepository = config.storage?.intentRepository;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
+        wallet.exitDataCapture = config.storage?.exitDataCapture;
+        wallet._serverInfoSource = setup.serverInfoSource;
+        // Construction validated the live response (network, signer, address
+        // params); only now is it safe to refresh the cached snapshot.
+        if (setup.serverInfoSource === "live") {
+            const now = Date.now();
+            await saveValidatedArkInfoSnapshot(setup.walletRepository, setup.info, now);
+            wallet._serverInfoLastOnlineAt = now;
+        } else {
+            wallet._serverInfoLastOnlineAt = setup.serverInfoLastOnlineAt;
+        }
         wallet.refreshDeprecatedSigners(setup.info);
         return wallet;
     }
@@ -944,7 +1081,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const getTxCreatedAt = (txid: string) =>
             this.indexerProvider
                 .getVtxos({ outpoints: [{ txid, vout: 0 }] })
-                .then((res) => res.vtxos[0]?.createdAt.getTime());
+                .then((res) => res.vtxos[0]?.createdAt.getTime())
+                // Best-effort createdAt enrichment: when the indexer is
+                // unavailable, leave it undefined (history still builds from
+                // repository VTXOs) rather than failing the whole read. Terminal
+                // failures still propagate.
+                .catch((err) => {
+                    if (isRetryableProviderError(err)) return undefined;
+                    throw err;
+                });
 
         return buildTransactionHistory(allVtxos, boardingTxs, commitmentsToIgnore, getTxCreatedAt);
     }
@@ -1517,11 +1662,42 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     private async initializeContractManager(): Promise<ContractManager> {
+        // When a virtualTxRepository is configured, capture each received VTXO's
+        // unilateral-exit branch and prune it on spend (both best-effort).
+        const virtualTxRepository = this.virtualTxRepository;
+        let onVtxosPersisted: ContractManagerConfig["onVtxosPersisted"];
+        let onVtxosSpent: ContractManagerConfig["onVtxosSpent"];
+        if (virtualTxRepository) {
+            const capture = this.exitDataCapture;
+            const resolver = createExitChainResolver({
+                indexer: this.indexerProvider,
+                repository: virtualTxRepository,
+                extraSources: capture?.sources,
+            });
+            onVtxosPersisted = async (_contract, vtxos) => {
+                for (const v of vtxos) {
+                    if (v.virtualStatus.state === "spent") continue;
+                    await captureExitBranch({
+                        resolver,
+                        repository: virtualTxRepository,
+                        vtxo: { txid: v.txid, vout: v.vout },
+                        value: v.value,
+                        mode: capture?.mode ?? DEFAULT_EXIT_CAPTURE_MODE,
+                        minExitWorthSats: capture?.minExitWorthSats ?? DEFAULT_MIN_EXIT_WORTH_SATS,
+                    }).catch(() => {
+                        // capture is best-effort
+                    });
+                }
+            };
+            onVtxosSpent = (vtxos) => pruneExitBranches(virtualTxRepository, vtxos);
+        }
         const manager = await ContractManager.create({
             indexerProvider: this.indexerProvider,
             contractRepository: this.contractRepository,
             walletRepository: this.walletRepository,
             intentRepository: this.intentRepository,
+            onVtxosPersisted,
+            onVtxosSpent,
             watcherConfig: this.watcherConfig,
         });
 
@@ -2534,6 +2710,17 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             boot?.rotator,
             boot?.provider,
         );
+        wallet._serverInfoSource = setup.serverInfoSource;
+        // The response cleared construction validation — network/signer in
+        // setupWalletConfig plus the checkpoint/forfeit parsing above — so it is
+        // now safe to refresh the cached snapshot from live server-info.
+        if (setup.serverInfoSource === "live") {
+            const now = Date.now();
+            await saveValidatedArkInfoSnapshot(setup.walletRepository, setup.info, now);
+            wallet._serverInfoLastOnlineAt = now;
+        } else {
+            wallet._serverInfoLastOnlineAt = setup.serverInfoLastOnlineAt;
+        }
         wallet.refreshDeprecatedSigners(setup.info);
         // Mid-session signer-rotation detection: when the arkProvider detects a
         // stale-info DIGEST_MISMATCH and refetches info, re-derive the wallet's
@@ -2580,6 +2767,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         wallet.intentRepository = config.storage?.intentRepository;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
+        wallet.exitDataCapture = config.storage?.exitDataCapture;
 
         await wallet.getVtxoManager();
         return wallet;
