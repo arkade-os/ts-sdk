@@ -900,18 +900,15 @@ describe("ArkadeSwaps", () => {
                     .spyOn(CovclaimdProvider.prototype, "reveal")
                     .mockResolvedValue(undefined);
                 vi.mocked(wallet.getAddress).mockResolvedValue(mock.address.ark);
-                const createSpy = vi
-                    .spyOn(swapProvider, "createReverseSwap")
-                    .mockImplementationOnce(reverseSwapResponseFor(createReverseSwapResponse));
+                vi.spyOn(swapProvider, "createReverseSwap").mockImplementationOnce(
+                    reverseSwapResponseFor(createReverseSwapResponse),
+                );
 
                 const pendingSwap = await covSwaps.createReverseSwap({
                     amount: mock.invoice.amount,
                     nonInteractive: true,
                 });
 
-                expect(createSpy.mock.calls[0]![0].nonInteractiveClaim!.emulatorPublicKey).toBe(
-                    hex.encode(emulatorPubKey),
-                );
                 expect(revealSpy).toHaveBeenCalledOnce();
                 const revealArg = revealSpy.mock.calls[0]![0];
                 expect(revealArg.swapAddress).toBe(mock.lockupAddress);

@@ -468,12 +468,18 @@ export type CreateReverseSwapRequest = {
      * Boltz builds the VHTLC with a covenant claim leaf so a covclaimd daemon
      * can sweep it on the client's behalf.
      */
-    nonInteractiveClaim?: {
-        /** Ark address the solver must pay when claiming. */
-        claimReceiverAddress: string;
-        /** Compressed (33-byte) secp256k1 emulator public key, hex-encoded. */
-        emulatorPublicKey: string;
-    };
+    nonInteractiveClaim?: NonInteractiveClaimConfig;
+};
+
+/**
+ * Non-interactive claim config. When set on an Ark-receiving swap, Boltz builds
+ * the VHTLC with a covenant claim leaf so a covclaimd daemon can sweep it on the
+ * client's behalf. The emulator key is configured on Boltz's fulmine, not sent
+ * per request.
+ */
+export type NonInteractiveClaimConfig = {
+    /** Ark address the solver must pay when claiming. */
+    claimReceiverAddress: string;
 };
 
 /** Response from creating a reverse swap. */
@@ -678,6 +684,7 @@ export type CreateChainSwapRequest = {
     userLockAmount?: number;
     /** Optional referral ID. */
     referralId?: string;
+    nonInteractiveClaim?: NonInteractiveClaimConfig;
 };
 
 /** Response from creating a chain swap. */
@@ -1201,6 +1208,7 @@ export class BoltzSwapProvider {
         refundPublicKey,
         serverLockAmount,
         userLockAmount,
+        nonInteractiveClaim,
     }: CreateChainSwapRequest): Promise<CreateChainSwapResponse> {
         // validate direction
         if (["BTC", "ARK"].indexOf(to) === -1)
@@ -1254,6 +1262,7 @@ export class BoltzSwapProvider {
             serverLockAmount,
             userLockAmount,
             ...(this.referralId ? { referralId: this.referralId } : {}),
+            ...(nonInteractiveClaim ? { nonInteractiveClaim } : {}),
         };
 
         const response = await this.request<CreateChainSwapResponse>(
