@@ -769,7 +769,8 @@ export function isExpired(vtxo: VirtualCoin): boolean {
  *
  * @see isRecoverable
  */
-export function isSubdust(vtxo: VirtualCoin, dust: bigint): boolean {
+export function isSubdust(vtxo: { value: number } | bigint, dust: bigint): boolean {
+    if (typeof vtxo === "bigint") return vtxo < dust;
     return vtxo.value < dust;
 }
 
