@@ -3071,7 +3071,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             output.amount -= BigInt(outputFee.satoshis);
 
-            if (output.amount <= this.dustAmount) {
+            if (isSubdust(output.amount, this.dustAmount)) {
                 throw new Error("Output amount is below dust limit");
             }
 
