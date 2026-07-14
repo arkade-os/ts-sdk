@@ -479,7 +479,7 @@ export type CreateReverseSwapRequest = {
  */
 export type NonInteractiveClaimConfig = {
     /** Ark address the solver must pay when claiming. */
-    claimReceiverAddress: string;
+    claimAddress: string;
 };
 
 /** Response from creating a reverse swap. */

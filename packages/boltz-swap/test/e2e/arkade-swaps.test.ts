@@ -1729,9 +1729,7 @@ describe("ArkadeSwaps", () => {
                     amount: 10_000,
                     nonInteractive: true,
                 });
-                expect(pendingSwap.request.nonInteractiveClaim?.claimReceiverAddress).toBe(
-                    receiver,
-                );
+                expect(pendingSwap.request.nonInteractiveClaim?.claimAddress).toBe(receiver);
 
                 await payInvoice(pendingSwap.response.invoice).catch(() => {});
 

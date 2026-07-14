@@ -83,7 +83,7 @@ export const createVHTLCScript = (args: {
     timeoutBlockHeights: VhtlcTimeouts;
     nonInteractiveClaim?: {
         emulatorPublicKey: string;
-        claimReceiverAddress: string;
+        claimAddress: string;
     };
 }): { vhtlcScript: VHTLC.Script; vhtlcAddress: string } => {
     const {
@@ -127,9 +127,7 @@ export const createVHTLCScript = (args: {
         return { vhtlcScript, vhtlcAddress };
     }
 
-    const receiverTapKey = ArkAddress.decode(
-        nonInteractiveClaim.claimReceiverAddress,
-    ).vtxoTaprootKey;
+    const receiverTapKey = ArkAddress.decode(nonInteractiveClaim.claimAddress).vtxoTaprootKey;
     const enforcement = enforcePayTo(receiverTapKey);
     const emulatorTweaked = computeArkadeScriptPublicKey(
         hex.decode(nonInteractiveClaim.emulatorPublicKey),

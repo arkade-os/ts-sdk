@@ -497,17 +497,15 @@ export class ArkadeSwaps {
         // rather than silently falling back to the description.
         let nonInteractiveClaim: CreateReverseSwapRequest["nonInteractiveClaim"];
         let covPubKeys: { covclaimdPubKey: Uint8Array; emulatorPubKey: Uint8Array } | undefined;
-        let claimReceiverAddress: string | undefined;
+        let claimAddress: string | undefined;
         if (args.nonInteractive) {
             if (!this.covclaimd)
                 throw new SwapError({
                     message: "nonInteractive requires covclaimdUrl in ArkadeSwaps config",
                 });
             covPubKeys = await this.covclaimd.getPubKeys();
-            claimReceiverAddress = await this.wallet.getAddress();
-            nonInteractiveClaim = {
-                claimReceiverAddress,
-            };
+            claimAddress = await this.wallet.getAddress();
+            nonInteractiveClaim = { claimAddress };
         }
 
         const swapRequest: CreateReverseSwapRequest = {
@@ -543,10 +541,10 @@ export class ArkadeSwaps {
         // save pending swap to storage
         await this.savePendingReverseSwap(pendingSwap);
 
-        if (covPubKeys && claimReceiverAddress && this.covclaimd) {
+        if (covPubKeys && claimAddress && this.covclaimd) {
             if (!swapResponse.lockupAddress)
                 throw new SwapError({ message: "reverse swap response missing lockupAddress" });
-            const receiverTapKey = ArkAddress.decode(claimReceiverAddress).vtxoTaprootKey;
+            const receiverTapKey = ArkAddress.decode(claimAddress).vtxoTaprootKey;
             await this.covclaimd.reveal({
                 swapAddress: swapResponse.lockupAddress,
                 ciphertext: eciesEncrypt(covPubKeys.covclaimdPubKey, preimage),
@@ -2393,7 +2391,7 @@ export class ArkadeSwaps {
             refundPublicKey,
             serverLockAmount,
             userLockAmount,
-            ...(covPubKeys ? { nonInteractiveClaim: { claimReceiverAddress: toAddress } } : {}),
+            ...(covPubKeys ? { nonInteractiveClaim: { claimAddress: toAddress } } : {}),
         };
 
         const swapResponse = await this.swapProvider.createChainSwap(swapRequest);
@@ -2482,9 +2480,7 @@ export class ArkadeSwaps {
                 ? swap.response.claimDetails.timeouts!
                 : swap.response.lockupDetails.timeouts!;
 
-        let nonInteractiveClaim:
-            | { emulatorPublicKey: string; claimReceiverAddress: string }
-            | undefined;
+        let nonInteractiveClaim: { emulatorPublicKey: string; claimAddress: string } | undefined;
         if (to === "ARK" && swap.request.nonInteractiveClaim) {
             if (!this.covclaimd)
                 throw new SwapError({
@@ -2494,7 +2490,7 @@ export class ArkadeSwaps {
             const { emulatorPubKey } = await this.covclaimd.getPubKeys();
             nonInteractiveClaim = {
                 emulatorPublicKey: hex.encode(emulatorPubKey),
-                claimReceiverAddress: swap.request.nonInteractiveClaim.claimReceiverAddress,
+                claimAddress: swap.request.nonInteractiveClaim.claimAddress,
             };
         }
 
@@ -2922,7 +2918,7 @@ export class ArkadeSwaps {
         timeoutBlockHeights: VhtlcTimeouts;
         nonInteractiveClaim?: {
             emulatorPublicKey: string;
-            claimReceiverAddress: string;
+            claimAddress: string;
         };
     }): { vhtlcScript: VHTLC.Script; vhtlcAddress: string } {
         return createVHTLCScript(args);
@@ -3420,7 +3416,7 @@ export interface IArkadeSwaps extends AsyncDisposable {
         timeoutBlockHeights: VhtlcTimeouts;
         nonInteractiveClaim?: {
             emulatorPublicKey: string;
-            claimReceiverAddress: string;
+            claimAddress: string;
         };
     }): { vhtlcScript: VHTLC.Script; vhtlcAddress: string };
     getFees(): Promise<FeesResponse>;
