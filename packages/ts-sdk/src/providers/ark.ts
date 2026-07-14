@@ -3,7 +3,13 @@ import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
 import { Vtxo } from "./indexer";
 import { eventSourceIterator, isEventSourceError } from "./utils";
-import { maybeArkError, throwIfHttpUnavailable, toProviderUnavailable } from "./errors";
+import {
+    ArkErrorName,
+    isArkError,
+    maybeArkError,
+    throwIfHttpUnavailable,
+    toProviderUnavailable,
+} from "./errors";
 import type { IntentFeeConfig } from "../arkfee";
 import { Intent } from "../intent";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
@@ -369,7 +375,7 @@ export class RestArkProvider implements ArkProvider {
         // 5xx. Only a non-structured 429/5xx (a bare proxy/gateway failure) is a
         // retryable availability condition.
         if (!arkError) throwIfHttpUnavailable(response, "arkade");
-        if (arkError?.name !== "DIGEST_MISMATCH") return response;
+        if (!isArkError(arkError, ArkErrorName.DIGEST_MISMATCH)) return response;
         // arkd rejected this request because our cached server info is stale
         // (e.g. the operator rotated its signer). Mirror NArk's BuildVersionHandler
         // (dotnet-sdk #131): clear the digest, refetch info, fire onServerInfoChanged
