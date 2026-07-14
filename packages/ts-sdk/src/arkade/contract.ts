@@ -27,11 +27,23 @@
  * in a variable, annotate it with `satisfies Program` to preserve the literal
  * type (a plain `: Program` annotation would widen it away).
  *
+ * Constructor `params` follow the same convention: bare name strings are
+ * documentation only, while typed descriptors `{ name, type }` (the form the
+ * ArkadeScript compiler emits) make the list authoritative — every declared
+ * param must be bound, every `$name` reference must be declared, and bound
+ * values are validated against their type at compilation.
+ *
  * @example
  * ```typescript
  * const htlcProgram = {
  *     version: 0,
- *     params: ["hash", "receiver", "amount", "server"],
+ *     name: "htlc", // metadata only — round-tripped, never compiled
+ *     params: [
+ *         { name: "hash", type: "hash" },
+ *         { name: "receiver", type: "pubkey" },
+ *         { name: "amount", type: "int" },
+ *         { name: "server", type: "pubkey" },
+ *     ],
  *     functions: {
  *         claim: {
  *             inputs: [{ name: "preimage", type: "bytes" }],
@@ -107,6 +119,7 @@ export {
     parseArtifact,
     resolveAsm,
     stringifyArtifact,
+    validateProgram,
     SUPPORTED_PROGRAM_VERSION,
     ArkadeProgramScript,
     type ArkadeContractParams,
@@ -323,10 +336,11 @@ export class Arkade {
         program: P,
         args: Record<string, ArkadeParamValue> = {},
     ): ArkadeContract<P> {
-        if (program.params?.includes("server") && args.server === undefined) {
+        const declared = (program.params ?? []).map(inputName);
+        if (declared.includes("server") && args.server === undefined) {
             args = { ...args, server: this.serverKey };
         }
-        if (program.params?.includes("user") && args.user === undefined && this.userKey) {
+        if (declared.includes("user") && args.user === undefined && this.userKey) {
             args = { ...args, user: this.userKey };
         }
         return new ArkadeContract(this, program, args);

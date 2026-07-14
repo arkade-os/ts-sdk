@@ -13,6 +13,7 @@ import { extractPubKey, isDescriptor } from "../../identity/descriptor";
 import {
     ArkadeProgramScript,
     deserializeArkadeContractParams,
+    resolveTimelockValue,
     serializeArkadeContractParams,
     witnessRefToBytes,
     type ArkadeContractParams,
@@ -101,8 +102,15 @@ function pathsFor(
             continue;
         }
 
-        const csv = fn.def.tapscript.csv;
-        const cltv = fn.def.tapscript.cltv;
+        // `$param` timelock values resolved against the constructor args.
+        const csvDef = fn.def.tapscript.csv;
+        const csv = csvDef
+            ? { type: csvDef.type, value: resolveTimelockValue(csvDef.value, script.args) }
+            : undefined;
+        const cltv =
+            fn.def.tapscript.cltv !== undefined
+                ? resolveTimelockValue(fn.def.tapscript.cltv, script.args)
+                : undefined;
 
         if (context.collaborative) {
             // CSV leaves are unilateral-exit paths by convention.
