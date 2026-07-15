@@ -3071,7 +3071,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             output.amount -= BigInt(outputFee.satoshis);
 
-            if (output.amount <= this.dustAmount) {
+            if (isSubdust(output.amount, this.dustAmount)) {
                 throw new Error("Output amount is below dust limit");
             }
 
@@ -3412,7 +3412,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 continue;
             }
 
-            if (isRecoverable(input) || isSubdust(input, this.dustAmount)) {
+            if (isRecoverable(input) || isSubdust({ value: input.value }, this.dustAmount)) {
                 // recoverable or subdust coin, we don't need to create a forfeit tx
                 continue;
             }
