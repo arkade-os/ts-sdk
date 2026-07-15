@@ -171,6 +171,8 @@ export type GetVtxosOptions = PaginationOptions & {
     recoverableOnly?: boolean;
     /** Only return pending/preconfirmed virtual outputs. */
     pendingOnly?: boolean;
+    /** Only return renewable virtual outputs (the union of the spendable and recoverable sets). */
+    renewableOnly?: boolean;
     /** Only return virtual outputs created after this timestamp. */
     after?: number;
     /** Only return virtual outputs created before this timestamp. */
@@ -610,12 +612,17 @@ export class RestIndexerProvider implements IndexerProvider {
             throw new Error("Either scripts or outpoints must be provided");
         }
 
-        const filterCount = [opts?.spendableOnly, opts?.spentOnly, opts?.recoverableOnly].filter(
-            Boolean,
-        ).length;
+        // The server treats these state filters as mutually exclusive.
+        const filterCount = [
+            opts?.spendableOnly,
+            opts?.spentOnly,
+            opts?.recoverableOnly,
+            opts?.pendingOnly,
+            opts?.renewableOnly,
+        ].filter(Boolean).length;
         if (filterCount > 1) {
             throw new Error(
-                "spendableOnly, spentOnly, and recoverableOnly are mutually exclusive options",
+                "spendableOnly, spentOnly, recoverableOnly, pendingOnly, and renewableOnly are mutually exclusive options",
             );
         }
 
@@ -654,6 +661,8 @@ export class RestIndexerProvider implements IndexerProvider {
                 params.append("recoverableOnly", opts.recoverableOnly.toString());
             if (opts.pendingOnly !== undefined)
                 params.append("pendingOnly", opts.pendingOnly.toString());
+            if (opts.renewableOnly !== undefined)
+                params.append("renewableOnly", opts.renewableOnly.toString());
             if (opts.after !== undefined) params.append("after", opts.after.toString());
             if (opts.before !== undefined) params.append("before", opts.before.toString());
             if (opts.pageIndex !== undefined)

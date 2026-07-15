@@ -250,7 +250,13 @@ import type {
     ExitChainResolver,
     ExitDataSource,
 } from "./wallet/exit";
-import { ArkError, maybeArkError, ProviderUnavailableError } from "./providers/errors";
+import {
+    ArkError,
+    ArkErrorName,
+    isArkError,
+    maybeArkError,
+    ProviderUnavailableError,
+} from "./providers/errors";
 import type { ProviderKind } from "./providers/errors";
 import { isRetryableProviderError } from "./providers/availability";
 import type { ServerInfoSource } from "./wallet/arkInfoSnapshot";
@@ -524,6 +530,8 @@ export {
 
     // Errors
     ArkError,
+    ArkErrorName,
+    isArkError,
     maybeArkError,
     ProviderUnavailableError,
     isRetryableProviderError,
