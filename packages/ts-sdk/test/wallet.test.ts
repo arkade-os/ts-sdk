@@ -966,7 +966,6 @@ describe("Wallet", () => {
                 arkTxId: "",
                 createdAt: new Date("2026-01-01T00:00:00.000Z"),
                 isUnrolled: false,
-                isSpent: false,
                 script,
             };
         }
@@ -1130,7 +1129,6 @@ describe("Wallet", () => {
                 arkTxId: "",
                 createdAt: new Date("2026-01-01T00:00:00.000Z"),
                 isUnrolled: false,
-                isSpent: false,
                 script,
             };
         }

@@ -150,8 +150,8 @@ async function main() {
         script: contract.script,
     });
     console.log("\nChecking contract VTXOs:");
+    const now = { timestamp: new Date() };
     contractWithVtxos.vtxos.forEach((vtxo) => {
-        const now = { timestamp: new Date() };
         console.log(`\t\t- ${vtxo.txid}:${vtxo.vout} (${vtxo.value}sats)`);
         console.log(`\t\t\t status: ${JSON.stringify(vtxo.status)}`);
         console.log(`\t\t\t isSpent: ${vtxo.isSpent} isSwept: ${vtxo.isSwept}`);

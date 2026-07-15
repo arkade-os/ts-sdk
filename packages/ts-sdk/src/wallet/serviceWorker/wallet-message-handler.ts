@@ -1378,13 +1378,21 @@ export class WalletMessageHandler
         let pendingRecovery = 0;
         // Past-cutoff (EXPIRED) deprecated-signer funds not yet swept are NOT
         // spendable — bucket them under pendingRecovery, out of settled/preconfirmed.
+        //
+        // Pending is tested first, and before expiry: such funds cannot be renewed until they
+        // recover, so once their batch expiry passes `canRecoverOnchain` would otherwise claim
+        // them and report them as renewable-right-now. The buckets are disjoint by construction,
+        // so `totalOffchain` below counts each VTXO once.
         for (const vtxo of allVtxos) {
-            if (canRecoverOnchain(vtxo, now)) {
+            // Not implied by the predicates once `pendingOutpoints` is consulted first: it is
+            // supplied by the wallet, so the loop must not depend on how it filters.
+            if (hasTerminalSpend(vtxo)) continue;
+            if (pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
+                pendingRecovery += vtxo.value;
+            } else if (canRecoverOnchain(vtxo, now)) {
                 recoverable += vtxo.value;
             } else if (canSpendOffchain(vtxo, now)) {
-                if (pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
-                    pendingRecovery += vtxo.value;
-                } else if (vtxo.isPreconfirmed) {
+                if (vtxo.isPreconfirmed) {
                     preconfirmed += vtxo.value;
                 } else {
                     settled += vtxo.value;

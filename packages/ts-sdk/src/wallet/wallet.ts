@@ -1077,8 +1077,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const available = unlockedVtxos
             .filter((coin) => canSpendOffchain(coin, now) && !isPendingRecovery(coin))
             .reduce((sum, coin) => sum + coin.value, 0);
+        // `!isPendingRecovery` keeps the buckets disjoint, so `totalOffchain` counts each VTXO
+        // once: a pending-recovery VTXO whose batch expiry has passed satisfies
+        // `canRecoverOnchain` too, and it belongs to `pendingRecovery` — it cannot be renewed
+        // until it recovers.
         recoverable = vtxos
-            .filter((coin) => canRecoverOnchain(coin, now))
+            .filter((coin) => canRecoverOnchain(coin, now) && !isPendingRecovery(coin))
             .reduce((sum, coin) => sum + coin.value, 0);
         pendingRecovery = vtxos
             .filter(isPendingRecovery)

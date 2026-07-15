@@ -246,7 +246,15 @@ export function byExpiryAscending(
         return Infinity;
     };
 
-    return [...vtxos].sort((a, b) => expiryKey(a) - expiryKey(b));
+    // Compared rather than subtracted: two swept VTXOs (both `-Infinity`), or two without a
+    // wall-clock expiry (both `Infinity`), subtract to NaN, and a NaN comparator leaves the order
+    // unspecified — the urgent-first guarantee would hold only by luck.
+    return [...vtxos].sort((a, b) => {
+        const ka = expiryKey(a);
+        const kb = expiryKey(b);
+        if (ka === kb) return 0;
+        return ka < kb ? -1 : 1;
+    });
 }
 
 /**
@@ -1227,6 +1235,20 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * ```
      */
     async getExpiringVtxos(thresholdMs?: number): Promise<NormalizedExtendedVirtualCoin[]> {
+        return this.selectExpiringVtxos(thresholdMs);
+    }
+
+    /**
+     * {@link getExpiringVtxos}, against a caller-supplied chain tip.
+     *
+     * The settle paths select, re-select after pre-flight, and sort by expiry within one pass;
+     * each of those judges expiry, so they share one tip rather than fetching (and possibly
+     * disagreeing on) one apiece. Fetches its own when `now` is omitted.
+     */
+    private async selectExpiringVtxos(
+        thresholdMs?: number,
+        now?: TimeHeight,
+    ): Promise<NormalizedExtendedVirtualCoin[]> {
         // If settlementConfig is explicitly false and no override provided, renewal is disabled
         if (this.settlementConfig === false && thresholdMs === undefined) {
             return [];
@@ -1252,7 +1274,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             vtxos,
             threshold,
             getDustAmount(this.wallet),
-            await fetchTimeHeight(this.wallet),
+            now ?? (await fetchTimeHeight(this.wallet)),
         );
     }
 
@@ -1329,7 +1351,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             } else {
                 threshold = DEFAULT_RENEWAL_CONFIG.thresholdMs;
             }
-            let vtxos = await this.getExpiringVtxos(threshold);
+            // One chain tip for the whole pass: selection, pre-flight re-selection and the
+            // expiry sort below must judge every VTXO against the same height.
+            const now = await fetchTimeHeight(this.wallet);
+            let vtxos = await this.selectExpiringVtxos(threshold, now);
 
             if (vtxos.length === 0) {
                 throw new Error("No VTXOs available to renew");
@@ -1342,7 +1367,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // cache forever; settling against it yields a guaranteed
             // VTXO_ALREADY_SPENT 400. Refreshing the candidates here
             // catches that BEFORE the network round-trip.
-            vtxos = await this.revalidateBeforeSettle(vtxos, threshold);
+            vtxos = await this.revalidateBeforeSettle(vtxos, threshold, now);
             if (vtxos.length === 0) {
                 throw new Error("No VTXOs available to renew");
             }
@@ -1357,10 +1382,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // renewed on the next cycle.
             const info = await this.getInfoProvider()?.getInfo();
             const vtxoMaxAmount = info?.vtxoMaxAmount ?? -1n;
-            const capped = capSettlementBatch(
-                byExpiryAscending(vtxos, await fetchTimeHeight(this.wallet)),
-                vtxoMaxAmount,
-            );
+            const capped = capSettlementBatch(byExpiryAscending(vtxos, now), vtxoMaxAmount);
             if (vtxoMaxAmount >= 0n) {
                 // A VTXO whose value alone exceeds the per-output ceiling can
                 // never be renewed by this path (the server would reject it) and
@@ -2457,6 +2479,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     private async revalidateBeforeSettle(
         candidates: NormalizedExtendedVirtualCoin[],
         thresholdMs?: number,
+        now?: TimeHeight,
     ): Promise<NormalizedExtendedVirtualCoin[]> {
         if (candidates.length === 0) return candidates;
         try {
@@ -2470,7 +2493,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // selected but spent gets filtered out by the standard
         // `isSpendable`/`isSpent` checks inside getVtxos / getExpiringVtxos.
         try {
-            const refreshed = await this.getExpiringVtxos(thresholdMs);
+            const refreshed = await this.selectExpiringVtxos(thresholdMs, now);
             const candidateKeys = new Set(candidates.map((v) => `${v.txid}:${v.vout}`));
             // Restrict to vtxos that were also in the original candidate set
             // — `getExpiringVtxos` may surface NEW vtxos and we don't want
@@ -2642,15 +2665,19 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // Collect near-expiry VTXOs unless the event-driven path is mid-renewal.
         // Skipping when renewalInProgress avoids double-submitting the same VTXOs.
         let expiringVtxos: NormalizedExtendedVirtualCoin[] = [];
+        // One chain tip for the whole pass, shared with the expiry sort below. Fetched here
+        // rather than at the top of the method so a boarding-only pass stays offline.
+        let now: TimeHeight | undefined;
         if (!this.renewalInProgress) {
             try {
-                expiringVtxos = await this.getExpiringVtxos();
+                now = await fetchTimeHeight(this.wallet);
+                expiringVtxos = await this.selectExpiringVtxos(undefined, now);
                 // Pre-flight validation: see comment in `renewVtxos`. The
                 // local cache may carry vtxos that the indexer already
                 // marks spent because the cursor-derived delta sync only
                 // catches `created_at`-recent updates, not status changes
                 // for older VTXOs.
-                expiringVtxos = await this.revalidateBeforeSettle(expiringVtxos);
+                expiringVtxos = await this.revalidateBeforeSettle(expiringVtxos, undefined, now);
             } catch (e) {
                 // Non-fatal: fall back to boarding-only settle.
                 console.error("Error fetching expiring VTXOs:", e);
@@ -2711,7 +2738,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // needed to settle that, which is out of scope here). Any overflow is
         // settled on the next cycle.
         const filteredVtxos: NormalizedExtendedVirtualCoin[] = [];
-        for (const v of byExpiryAscending(expiringVtxos, await fetchTimeHeight(this.wallet))) {
+        // `now` is unset only when the selection block above was skipped, which leaves
+        // `expiringVtxos` empty — nothing to sort, so the fallback tip is never read.
+        for (const v of byExpiryAscending(expiringVtxos, now ?? { timestamp: new Date() })) {
             if (filteredVtxos.length >= MAX_VTXOS_PER_SETTLEMENT) {
                 break;
             }

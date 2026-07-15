@@ -94,7 +94,10 @@ export function parseLegacyExpiry(batchExpiry: number | undefined): {
     expiresAt?: Date;
     expiresAtHeight?: number;
 } {
-    if (batchExpiry === undefined) return {};
+    // `<= 0` is guarded for the same reason as in `parseWireExpiry`: it would otherwise yield
+    // `expiresAtHeight: 0`, which every chain tip is past — a VTXO with no expiry would read as
+    // permanently expired.
+    if (batchExpiry === undefined || batchExpiry <= 0) return {};
     if (batchExpiry >= EXPIRY_MIN_PLAUSIBLE_MS) return { expiresAt: new Date(batchExpiry) };
     return { expiresAtHeight: batchExpiry / 1000 };
 }
