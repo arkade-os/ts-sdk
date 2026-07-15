@@ -309,7 +309,7 @@ export function toOffchainInputFeeParams(vtxo: NormalizedVirtualCoin): {
  * The `typeof` guard is load-bearing — `settle` accepts arknote strings, and `in` throws a
  * `TypeError` on a primitive rather than returning false.
  */
-export function isVirtualCoin(input: unknown): input is VirtualCoin {
+export function isVirtualCoin<T>(input: T): input is T & VirtualCoin {
     return (
         typeof input === "object" &&
         input !== null &&

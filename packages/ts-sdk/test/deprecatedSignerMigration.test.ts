@@ -105,6 +105,11 @@ function makeVtxo(
         value,
         contractScript,
         isSpent,
+        isSwept: state === "swept",
+        isPreconfirmed: state === "preconfirmed",
+        spentBy: "",
+        commitmentTxIds: [],
+        expiresAt: new Date(DEFAULT_BATCH_EXPIRY),
         status: { confirmed: true },
         createdAt: new Date(),
         isUnrolled: false,
@@ -296,6 +301,7 @@ describe("VtxoManager - deprecated-signer migration", () => {
         // classification must leave it out while still migrating the valid ones.
         const script = "default-" + DEP_DUE;
         const noExpiry = makeVtxo(script, 4000);
+        noExpiry.expiresAt = undefined;
         (noExpiry.virtualStatus as { batchExpiry?: number }).batchExpiry = undefined;
         const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
             info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
@@ -886,6 +892,11 @@ function makeVtxoWithExpiry(
         value,
         contractScript,
         isSpent: false,
+        isSwept: state === "swept",
+        isPreconfirmed: state === "preconfirmed",
+        spentBy: "",
+        commitmentTxIds: [],
+        expiresAt: new Date(batchExpiry),
         status: { confirmed: true },
         createdAt: new Date(),
         isUnrolled: false,

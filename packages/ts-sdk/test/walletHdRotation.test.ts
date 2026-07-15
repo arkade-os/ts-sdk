@@ -979,6 +979,10 @@ describe("Wallet HD rotation", () => {
                 createdAt: new Date(),
                 isUnrolled: false,
                 isSpent: false,
+                isSwept: false,
+                isPreconfirmed: false,
+                spentBy: "",
+                commitmentTxIds: [],
                 script: hex.encode(tapscript.pkScript),
                 forfeitTapLeafScript: tapscript.forfeit(),
                 intentTapLeafScript: tapscript.forfeit(),
@@ -1479,6 +1483,10 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
             createdAt: new Date(),
             isUnrolled: false,
             isSpent: false,
+            isSwept: false,
+            isPreconfirmed: false,
+            spentBy: "",
+            commitmentTxIds: [],
             script: hex.encode(tapscript.pkScript),
             forfeitTapLeafScript: tapscript.forfeit(),
             intentTapLeafScript: tapscript.forfeit(),
@@ -1718,10 +1726,12 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         extra: Partial<ExtendedVirtualCoin> = {},
     ): ExtendedVirtualCoin {
         const base = makeBaselineCoin(wallet);
+        const batchExpiry = Date.now() + 7 * 24 * 3600 * 1000;
         return {
             ...base,
-            // A real (post-2025) ms timestamp so isExpired treats it as live.
-            virtualStatus: { state: "settled", batchExpiry: Date.now() + 7 * 24 * 3600 * 1000 },
+            // A real (post-2025) wall-clock expiry, so the coin reads as live.
+            virtualStatus: { state: "settled", batchExpiry },
+            expiresAt: new Date(batchExpiry),
             ...extra,
         };
     }
@@ -1806,7 +1816,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         const coin = makeBaselineCoin(wallet);
         const { submitSpy } = stubSendRoundTrip(wallet);
 
-        await expect(wallet.sendSelectedVtxosToSelf([coin])).rejects.toThrow(/batchExpiry/);
+        await expect(wallet.sendSelectedVtxosToSelf([coin])).rejects.toThrow(/batch expiry/);
         // Validation happens before any submission.
         expect(submitSpy).not.toHaveBeenCalled();
 

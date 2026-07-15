@@ -908,6 +908,11 @@ describe("Wallet", () => {
                     commitmentTxIds: ["22".repeat(32)],
                     batchExpiry: 1767225600000,
                 },
+                isSpent: false,
+                isSwept: false,
+                isPreconfirmed: true,
+                commitmentTxIds: ["22".repeat(32)],
+                expiresAt: new Date(1767225600000),
                 spentBy: "",
                 settledBy: undefined,
                 arkTxId: "",
@@ -1068,6 +1073,11 @@ describe("Wallet", () => {
                     commitmentTxIds: ["22".repeat(32)],
                     batchExpiry: 1767225600000,
                 },
+                isSpent: false,
+                isSwept: false,
+                isPreconfirmed: true,
+                commitmentTxIds: ["22".repeat(32)],
+                expiresAt: new Date(1767225600000),
                 spentBy: "",
                 arkTxId: "",
                 createdAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -1153,11 +1163,8 @@ describe("Wallet", () => {
             const vtxoInput = {
                 txid: "a".repeat(64),
                 vout: 0,
-                virtualStatus: {
-                    state: "preconfirmed",
-                    commitmentTxIds: [],
-                    batchExpiry: 0,
-                },
+                script: "51".repeat(17),
+                isPreconfirmed: true,
             };
             const boardingInput = {
                 txid: "b".repeat(64),
@@ -1180,11 +1187,8 @@ describe("Wallet", () => {
             const vtxoInput = {
                 txid: "a".repeat(64),
                 vout: 0,
-                virtualStatus: {
-                    state: "preconfirmed",
-                    commitmentTxIds: [],
-                    batchExpiry: 0,
-                },
+                script: "51".repeat(17),
+                isPreconfirmed: true,
             };
 
             (Wallet.prototype as any)._removePendingSpends.call(thisArg, [vtxoInput]);
@@ -1970,6 +1974,11 @@ describe("Wallet._settleImpl", () => {
                     batchExpiry: Date.now() + 60 * 60 * 1000,
                 },
                 isSpent: false,
+                isSwept: false,
+                isPreconfirmed: false,
+                spentBy: "",
+                commitmentTxIds: [],
+                expiresAt: new Date(Date.now() + 60 * 60 * 1000),
                 status: { confirmed: true },
                 createdAt: new Date(),
                 isUnrolled: false,
@@ -2244,6 +2253,11 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         createdAt: new Date(),
         isUnrolled: false,
         isSpent: false,
+        isSwept: false,
+        isPreconfirmed: true,
+        spentBy: "",
+        commitmentTxIds: [],
+        expiresAtHeight: 1_700_000,
         script,
     });
 
@@ -2475,6 +2489,11 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
             createdAt: new Date(),
             isUnrolled: false,
             isSpent: false,
+            isSwept: false,
+            isPreconfirmed: true,
+            spentBy: "",
+            commitmentTxIds: [],
+            expiresAtHeight: 1_700_000,
             script: SPEND_SCRIPT,
         };
         const annotatedInput: any = {
@@ -2653,7 +2672,11 @@ describe("Wallet.updateDbAfterSettle", () => {
         const [addr, vtxos] = saveVtxos.mock.calls[0];
         expect(addr).toBe(PRIMARY_ADDR);
         expect(vtxos).toHaveLength(1);
-        expect(vtxos[0].virtualStatus.state).toBe("settled");
+        // Consumed by settlement, so `isSpent`/`settledBy` are set and the legacy projection
+        // follows its precedence: "spent" outranks "settled". `settledBy` names the commitment
+        // tx that consumed this vtxo — it is not a live batch leaf. This is also what the
+        // indexer reports for the same vtxo on re-fetch.
+        expect(vtxos[0].virtualStatus.state).toBe("spent");
         expect(vtxos[0].settledBy).toBe("commitment-tx");
         expect(vtxos[0].isSpent).toBe(true);
     });

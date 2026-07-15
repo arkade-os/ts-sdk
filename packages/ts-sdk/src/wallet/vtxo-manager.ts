@@ -3,13 +3,21 @@ import {
     ExtendedVirtualCoin,
     IWallet,
     IReadonlyWallet,
-    isExpired,
-    isRecoverable,
-    isSpendable,
     isSubdust,
     Outpoint,
     VirtualCoin,
 } from ".";
+import {
+    canRecoverOnchain,
+    canSpendOffchain,
+    hasTerminalSpend,
+    isPastExpiry,
+    normalizeVtxo,
+    toBatchExpiry,
+    toOffchainInputFeeParams,
+    type NormalizedExtendedVirtualCoin,
+    type TimeHeight,
+} from "./vtxo";
 import { ArkInfo, ArkProvider, SettlementEvent } from "../providers/ark";
 import { ArkErrorName, isArkError, maybeArkError } from "../providers/errors";
 import type { BoardingUtxoGroup } from "./wallet";
@@ -64,7 +72,7 @@ export function selectPendingRecoveryOutpoints(
             continue;
         }
         for (const v of vtxos) {
-            if (isSpendable(v) && !isRecoverable(v)) out.add(`${v.txid}:${v.vout}`);
+            if (!hasTerminalSpend(v) && !v.isSwept) out.add(`${v.txid}:${v.vout}`);
         }
     }
     return out;
@@ -189,6 +197,28 @@ export function byValueDescending<T extends { value: number }>(vtxos: T[]): T[] 
 }
 
 /**
+ * The `TimeHeight` for one expiry-driven pass.
+ *
+ * Fetched once per pass and reused for every VTXO in it, so the pass sees a consistent tip. A
+ * tip-fetch failure degrades to timestamp-only rather than blocking: height-encoded expiry then
+ * reads as not expired, which is what the whole SDK did before heights were evaluated at all.
+ * Recovery must not become unavailable because Esplora is down.
+ */
+async function fetchTimeHeight(wallet: IReadonlyWallet): Promise<TimeHeight> {
+    const timestamp = new Date();
+    // `onchainProvider` lives on the concrete wallets, not on IReadonlyWallet.
+    const provider = (wallet as Partial<SweepCapableWallet>).onchainProvider;
+    if (!provider) return { timestamp };
+    try {
+        const tip = await provider.getChainTip();
+        return { timestamp, height: tip.height };
+    } catch (e) {
+        console.warn("Failed to fetch chain tip; height-based expiry will not be evaluated", e);
+        return { timestamp };
+    }
+}
+
+/**
  * Order VTXOs so the soonest-expiring ones come first. New array; input
  * untouched. Already recoverable/expired VTXOs sort first. VTXOs without a
  * batch expiry, or with a block-height-looking expiry value, sort last because
@@ -199,21 +229,21 @@ export function byValueDescending<T extends { value: number }>(vtxos: T[]): T[] 
  * the most urgent VTXOs must make the cut so none miss their renewal window
  * and get forced into a unilateral exit.
  */
-export function byExpiryAscending(vtxos: ExtendedVirtualCoin[]): ExtendedVirtualCoin[] {
-    const expiryKey = (vtxo: ExtendedVirtualCoin) => {
-        if (isRecoverable(vtxo)) return -Infinity;
-
-        const batchExpiry = vtxo.virtualStatus.batchExpiry;
-
-        if (isExpired(vtxo)) return batchExpiry ?? -Infinity;
-        if (!batchExpiry) return Infinity;
-
-        // Some regtest-like indexers return a block height here instead of a
-        // timestamp. Match isVtxoExpiringSoon/isExpired and avoid treating that
-        // as the most urgent wall-clock expiry.
-        if (new Date(batchExpiry).getFullYear() < 2025) return Infinity;
-
-        return batchExpiry;
+export function byExpiryAscending(
+    vtxos: NormalizedExtendedVirtualCoin[],
+    now: TimeHeight,
+): NormalizedExtendedVirtualCoin[] {
+    const expiryKey = (vtxo: NormalizedExtendedVirtualCoin) => {
+        // Swept: maximally urgent, and carries no wall-clock instant to order by.
+        if (vtxo.isSwept) return -Infinity;
+        // Past or future, both orderable on one scale.
+        if (vtxo.expiresAt !== undefined) return vtxo.expiresAt.getTime();
+        // A height-encoded expiry has no place on the millisecond scale, so it can only be
+        // ranked as urgent or not. Needs `now.height`; without one it reads as not expired.
+        if (vtxo.expiresAtHeight !== undefined) {
+            return isPastExpiry(vtxo, now) ? -Infinity : Infinity;
+        }
+        return Infinity;
     };
 
     return [...vtxos].sort((a, b) => expiryKey(a) - expiryKey(b));
@@ -440,22 +470,18 @@ export const DEFAULT_SETTLEMENT_CONFIG: Required<SettlementConfig> = {
  * @returns Array of recoverable virtual outputs
  */
 function getRecoverableVtxos(
-    vtxos: ExtendedVirtualCoin[],
+    vtxos: NormalizedExtendedVirtualCoin[],
     dustAmount: bigint,
-): ExtendedVirtualCoin[] {
+    now: TimeHeight,
+): NormalizedExtendedVirtualCoin[] {
     return vtxos.filter((vtxo) => {
-        // Always recover swept virtual outputs
-        if (isRecoverable(vtxo)) {
-            return true;
-        }
-
-        // also include virtual outputs that are not swept but expired
-        if (isSpendable(vtxo) && isExpired(vtxo)) {
+        // Swept, or past expiry but not yet swept — both recover the same way.
+        if (canRecoverOnchain(vtxo, now)) {
             return true;
         }
 
         // Recover preconfirmed subdust to consolidate small amounts
-        if (vtxo.virtualStatus.state === "preconfirmed" && isSubdust(vtxo, dustAmount)) {
+        if (canSpendOffchain(vtxo, now) && vtxo.isPreconfirmed && isSubdust(vtxo, dustAmount)) {
             return true;
         }
 
@@ -474,18 +500,19 @@ function getRecoverableVtxos(
  * @returns Object containing recoverable virtual outputs and whether subdust should be included
  */
 function getRecoverableWithSubdust(
-    vtxos: ExtendedVirtualCoin[],
+    vtxos: NormalizedExtendedVirtualCoin[],
     dustAmount: bigint,
+    now: TimeHeight,
 ): {
-    vtxosToRecover: ExtendedVirtualCoin[];
+    vtxosToRecover: NormalizedExtendedVirtualCoin[];
     includesSubdust: boolean;
     totalAmount: bigint;
 } {
-    const recoverableVtxos = getRecoverableVtxos(vtxos, dustAmount);
+    const recoverableVtxos = getRecoverableVtxos(vtxos, dustAmount, now);
 
     // Separate subdust from regular recoverable
-    const subdust: ExtendedVirtualCoin[] = [];
-    const regular: ExtendedVirtualCoin[] = [];
+    const subdust: NormalizedExtendedVirtualCoin[] = [];
+    const regular: NormalizedExtendedVirtualCoin[] = [];
 
     for (const vtxo of recoverableVtxos) {
         if (isSubdust(vtxo, dustAmount)) {
@@ -526,18 +553,13 @@ export function isVtxoExpiringSoon(
 ): boolean {
     const realThresholdMs = thresholdMs <= 100 ? DEFAULT_THRESHOLD_MS : thresholdMs;
 
-    const { batchExpiry } = vtxo.virtualStatus;
-
-    if (!batchExpiry) return false; // it doesn't expire
-
-    // we use this as a workaround to avoid issue on regtest where expiry date is
-    // expressed in blockheight instead of timestamp. If expiry, as Date, is before 2025,
-    // then we admit it's too small to be a timestamp
-    // TODO: API should return the expiry unit
-    const expireAt = new Date(batchExpiry);
-    if (expireAt.getFullYear() < 2025) return false;
+    // Being synchronous, this has no chain tip to compare a height-encoded expiry against, so
+    // `expiresAtHeight` reads as "doesn't expire" — as it always has.
+    const expiresAt = normalizeVtxo(vtxo).expiresAt;
+    if (expiresAt === undefined) return false;
 
     const now = Date.now();
+    const batchExpiry = expiresAt.getTime();
 
     if (batchExpiry <= now) return false; // already expired
 
@@ -553,15 +575,15 @@ export function isVtxoExpiringSoon(
  * @returns Array of virtual outputs expiring within threshold
  */
 export function getExpiringAndRecoverableVtxos(
-    vtxos: ExtendedVirtualCoin[],
+    vtxos: NormalizedExtendedVirtualCoin[],
     thresholdMs: number,
     dustAmount: bigint,
-): ExtendedVirtualCoin[] {
+    now: TimeHeight,
+): NormalizedExtendedVirtualCoin[] {
     return vtxos.filter(
         (vtxo) =>
             isVtxoExpiringSoon(vtxo, thresholdMs) ||
-            isRecoverable(vtxo) ||
-            (isSpendable(vtxo) && isExpired(vtxo)) ||
+            canRecoverOnchain(vtxo, now) ||
             isSubdust(vtxo, dustAmount),
     );
 }
@@ -854,7 +876,7 @@ function mergeSignerReports(...reportLists: DeprecatedSignerReport[][]): Depreca
  * - **Expiry monitoring**: Check for virtual outputs that are expiring soon
  *
  * Virtual outputs become recoverable when:
- * - The Arkade server sweeps them (virtualStatus.state === "swept") and they remain spendable
+ * - The Arkade server sweeps them (`isSwept`) and they remain spendable
  * - They are preconfirmed subdust (to consolidate small amounts without locking liquidity on settled virtual outputs)
  *
  * @example
@@ -1062,7 +1084,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const dustAmount = getDustAmount(this.wallet);
 
         // Filter recoverable virtual outputs and handle subdust logic
-        let { vtxosToRecover, totalAmount } = getRecoverableWithSubdust(allVtxos, dustAmount);
+        const now = await fetchTimeHeight(this.wallet);
+        let { vtxosToRecover, totalAmount } = getRecoverableWithSubdust(allVtxos, dustAmount, now);
 
         if (vtxosToRecover.length === 0) {
             throw new Error("No recoverable VTXOs found");
@@ -1083,7 +1106,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const capped = capSettlementBatch(byValueDescending(vtxosToRecover), vtxoMaxAmount);
         if (capped.length < vtxosToRecover.length) {
             const recoverableCount = vtxosToRecover.length;
-            ({ vtxosToRecover, totalAmount } = getRecoverableWithSubdust(capped, dustAmount));
+            ({ vtxosToRecover, totalAmount } = getRecoverableWithSubdust(capped, dustAmount, now));
             if (vtxosToRecover.length === 0) {
                 // Recoverable VTXOs exist, but the highest-value subset that
                 // fits in one settlement stays below dust, so submitting it
@@ -1163,6 +1186,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const { vtxosToRecover, includesSubdust, totalAmount } = getRecoverableWithSubdust(
             allVtxos,
             dustAmount,
+            await fetchTimeHeight(this.wallet),
         );
 
         // Calculate subdust amount separately for reporting
@@ -1202,7 +1226,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * }
      * ```
      */
-    async getExpiringVtxos(thresholdMs?: number): Promise<ExtendedVirtualCoin[]> {
+    async getExpiringVtxos(thresholdMs?: number): Promise<NormalizedExtendedVirtualCoin[]> {
         // If settlementConfig is explicitly false and no override provided, renewal is disabled
         if (this.settlementConfig === false && thresholdMs === undefined) {
             return [];
@@ -1224,7 +1248,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             threshold = this.renewalConfig?.thresholdMs ?? DEFAULT_RENEWAL_CONFIG.thresholdMs;
         }
 
-        return getExpiringAndRecoverableVtxos(vtxos, threshold, getDustAmount(this.wallet));
+        return getExpiringAndRecoverableVtxos(
+            vtxos,
+            threshold,
+            getDustAmount(this.wallet),
+            await fetchTimeHeight(this.wallet),
+        );
     }
 
     /**
@@ -1328,7 +1357,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // renewed on the next cycle.
             const info = await this.getInfoProvider()?.getInfo();
             const vtxoMaxAmount = info?.vtxoMaxAmount ?? -1n;
-            const capped = capSettlementBatch(byExpiryAscending(vtxos), vtxoMaxAmount);
+            const capped = capSettlementBatch(
+                byExpiryAscending(vtxos, await fetchTimeHeight(this.wallet)),
+                vtxoMaxAmount,
+            );
             if (vtxoMaxAmount >= 0n) {
                 // A VTXO whose value alone exceeds the per-output ceiling can
                 // never be renewed by this path (the server would reject it) and
@@ -1873,8 +1905,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // are exactly the funds already draining into the active signer, so
             // the report still counts them (recoverableCount) alongside the
             // not-yet-swept holdings (awaitingSweepCount) (Section 6 / post-cutoff).
-            const recoverable = vtxos.filter((v) => isRecoverable(v));
-            const spendable = vtxos.filter((v) => isSpendable(v) && !isRecoverable(v));
+            const recoverable = vtxos.filter((v) => v.isSwept && !hasTerminalSpend(v));
+            const spendable = vtxos.filter((v) => !hasTerminalSpend(v) && !v.isSwept);
 
             const value = spendable.reduce((sum, v) => sum + v.value, 0);
 
@@ -1893,7 +1925,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 awaitingSweepCount = spendable.length;
                 awaitingSweepValue = value;
                 for (const v of spendable) {
-                    const exp = v.virtualStatus.batchExpiry;
+                    const exp = toBatchExpiry(v);
                     if (exp !== undefined && (nextSweepEta === undefined || exp < nextSweepEta)) {
                         nextSweepEta = exp;
                     }
@@ -1941,7 +1973,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                     // VTXO leg. Such holdings stay counted in the per-signer report
                     // above; they exit via on-chain/recovery paths, not cooperative
                     // send.
-                    if (!v.virtualStatus.batchExpiry) continue;
+                    if (v.expiresAt === undefined && v.expiresAtHeight === undefined) continue;
                     migratable.push({ vtxo: v, classification: cls });
                 }
             } else if (cls.status === "EXPIRED") {
@@ -2423,9 +2455,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * handle whatever slipped through.
      */
     private async revalidateBeforeSettle(
-        candidates: ExtendedVirtualCoin[],
+        candidates: NormalizedExtendedVirtualCoin[],
         thresholdMs?: number,
-    ): Promise<ExtendedVirtualCoin[]> {
+    ): Promise<NormalizedExtendedVirtualCoin[]> {
         if (candidates.length === 0) return candidates;
         try {
             const cm = await this.wallet.getContractManager();
@@ -2609,7 +2641,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         // Collect near-expiry VTXOs unless the event-driven path is mid-renewal.
         // Skipping when renewalInProgress avoids double-submitting the same VTXOs.
-        let expiringVtxos: ExtendedVirtualCoin[] = [];
+        let expiringVtxos: NormalizedExtendedVirtualCoin[] = [];
         if (!this.renewalInProgress) {
             try {
                 expiringVtxos = await this.getExpiringVtxos();
@@ -2678,20 +2710,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // server rejects the over-limit output — a multi-output split would be
         // needed to settle that, which is out of scope here). Any overflow is
         // settled on the next cycle.
-        const filteredVtxos: ExtendedVirtualCoin[] = [];
-        for (const v of byExpiryAscending(expiringVtxos)) {
+        const filteredVtxos: NormalizedExtendedVirtualCoin[] = [];
+        for (const v of byExpiryAscending(expiringVtxos, await fetchTimeHeight(this.wallet))) {
             if (filteredVtxos.length >= MAX_VTXOS_PER_SETTLEMENT) {
                 break;
             }
-            const inputFee = estimator.evalOffchainInput({
-                amount: BigInt(v.value),
-                type: v.virtualStatus.state === "swept" ? "recoverable" : "vtxo",
-                weight: 0,
-                birth: v.createdAt,
-                expiry: v.virtualStatus.batchExpiry
-                    ? new Date(v.virtualStatus.batchExpiry)
-                    : undefined,
-            });
+            const inputFee = estimator.evalOffchainInput(toOffchainInputFeeParams(v));
             if (inputFee.satoshis >= v.value) {
                 continue;
             }

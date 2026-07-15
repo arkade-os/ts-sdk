@@ -23,7 +23,20 @@ import { buildForfeitTx } from "../forfeit";
 import { validateConnectorsTxGraph, validateVtxoTxGraph } from "../tree/validation";
 import { validateBatchRecipients } from "./validation";
 import { Identity, ReadonlyIdentity, isBatchSignable } from "../identity";
-import { getNormalizedVtxos, type NormalizedExtendedVirtualCoin } from "./vtxo";
+import {
+    canRecoverOnchain,
+    canSpendOffchain,
+    getNormalizedVtxos,
+    hasTerminalSpend,
+    isVirtualCoin,
+    normalizeVtxo,
+    parseLegacyExpiry,
+    toBatchExpiry,
+    toOffchainInputFeeParams,
+    toVirtualStatus,
+    type NormalizedExtendedVirtualCoin,
+    type NormalizedVirtualCoin,
+} from "./vtxo";
 import {
     ArkTransaction,
     Asset,
@@ -34,9 +47,6 @@ import {
     IAssetManager,
     IReadonlyAssetManager,
     IReadonlyWallet,
-    isExpired,
-    isRecoverable,
-    isSpendable,
     isSubdust,
     IWallet,
     Outpoint,
@@ -1042,29 +1052,33 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // offchain
         let recoverable = 0;
         let pendingRecovery = 0;
+        // Buckets read the same capability the send path does, so nothing counted as available can
+        // be refused by `send`. No chain tip here: balance is an offline-first read and must not
+        // gain a network dependency, so height-encoded expiry reads as not expired — the send
+        // filter deliberately makes the same choice.
+        const now = { timestamp: new Date() };
         // Funds under a past-cutoff (EXPIRED) deprecated signer that are not yet
         // swept are NOT spendable — excluded from settled/preconfirmed/available
         // and surfaced under `pendingRecovery` (they still count toward `total`).
         const settled = vtxos
-            .filter((coin) => coin.virtualStatus.state === "settled" && !isPendingRecovery(coin))
+            .filter(
+                (coin) =>
+                    canSpendOffchain(coin, now) && !coin.isPreconfirmed && !isPendingRecovery(coin),
+            )
             .reduce((sum, coin) => sum + coin.value, 0);
         const preconfirmed = vtxos
             .filter(
-                (coin) => coin.virtualStatus.state === "preconfirmed" && !isPendingRecovery(coin),
+                (coin) =>
+                    canSpendOffchain(coin, now) && coin.isPreconfirmed && !isPendingRecovery(coin),
             )
             .reduce((sum, coin) => sum + coin.value, 0);
-        // Spendable-right-now subset: the same settled+preconfirmed rule, but
-        // over VTXOs not currently locked by an in-flight intent.
+        // Spendable-right-now subset: the same rule, but over VTXOs not
+        // currently locked by an in-flight intent.
         const available = unlockedVtxos
-            .filter(
-                (coin) =>
-                    (coin.virtualStatus.state === "settled" ||
-                        coin.virtualStatus.state === "preconfirmed") &&
-                    !isPendingRecovery(coin),
-            )
+            .filter((coin) => canSpendOffchain(coin, now) && !isPendingRecovery(coin))
             .reduce((sum, coin) => sum + coin.value, 0);
         recoverable = vtxos
-            .filter((coin) => isSpendable(coin) && coin.virtualStatus.state === "swept")
+            .filter((coin) => canRecoverOnchain(coin, now))
             .reduce((sum, coin) => sum + coin.value, 0);
         pendingRecovery = vtxos
             .filter(isPendingRecovery)
@@ -1076,7 +1090,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // aggregate asset balances from spendable virtual outputs
         const assetBalances = new Map<string, bigint>();
         for (const vtxo of vtxos) {
-            if (!isSpendable(vtxo)) continue;
+            if (hasTerminalSpend(vtxo)) continue;
             if (vtxo.assets) {
                 for (const a of vtxo.assets) {
                     const current = assetBalances.get(a.assetId) ?? 0n;
@@ -1115,14 +1129,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const contractManager = await this.getContractManager();
         const vtxos = await contractManager.getContractsWithVtxos();
 
+        // No chain tip: this is an offline-first repository read. Balance makes the same choice, and
+        // the two must agree — see getBalance.
+        const now = { timestamp: new Date() };
         return vtxos
             .flatMap((_) => _.vtxos)
             .filter((vtxo) => {
                 if (this._pendingSpendOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
                     return false;
                 }
-                if (isSpendable(vtxo)) {
-                    if (!f.withRecoverable && (isRecoverable(vtxo) || isExpired(vtxo))) {
+                if (!hasTerminalSpend(vtxo)) {
+                    if (!f.withRecoverable && canRecoverOnchain(vtxo, now)) {
                         return false;
                     }
                     return true;
@@ -1221,7 +1238,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         boardingTxs: ArkTransaction[];
         commitmentsToIgnore: Set<string>;
     }> {
-        const utxos: VirtualCoin[] = [];
+        const utxos: NormalizedVirtualCoin[] = [];
         const commitmentsToIgnore = new Set<string>();
         const tapscripts = await this.getBoardingTapscripts(this.watchedBoardingSigners());
 
@@ -1271,6 +1288,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
                             commitmentsToIgnore.add(commitmentTxid);
                         }
 
+                        const boardingFacts = {
+                            isSpent: spent,
+                            isSwept: false,
+                            isPreconfirmed: false,
+                            commitmentTxIds: spent && commitmentTxid ? [commitmentTxid] : [],
+                        };
                         utxos.push({
                             txid: tx.txid,
                             vout: i,
@@ -1280,11 +1303,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
                                 block_time: tx.status.block_time,
                             },
                             isUnrolled: true,
-                            virtualStatus: {
-                                state: spent ? "spent" : "settled",
-                                commitmentTxIds:
-                                    spent && commitmentTxid ? [commitmentTxid] : undefined,
-                            },
+                            ...boardingFacts,
+                            virtualStatus: toVirtualStatus(boardingFacts),
+                            spentBy: "",
                             createdAt: tx.status.confirmed
                                 ? new Date(tx.status.block_time * 1000)
                                 : new Date(0),
@@ -1302,12 +1323,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
             const tx: ArkTransaction = {
                 key: {
                     boardingTxid: utxo.txid,
-                    commitmentTxid: utxo.virtualStatus.commitmentTxIds?.[0] ?? "",
+                    commitmentTxid: utxo.commitmentTxIds[0] ?? "",
                     arkTxid: "",
                 },
                 amount: utxo.value,
                 type: TxType.TxReceived,
-                settled: utxo.virtualStatus.state === "spent",
+                settled: utxo.isSpent,
                 createdAt: utxo.status.block_time
                     ? new Date(utxo.status.block_time * 1000).getTime()
                     : 0,
@@ -1634,8 +1655,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return vtxos
             .filter(
                 (vtxo) =>
-                    vtxo.virtualStatus.state !== "swept" &&
-                    vtxo.virtualStatus.state !== "settled" &&
+                    (vtxo.isSpent || (vtxo.isPreconfirmed && !vtxo.isSwept)) &&
                     vtxo.arkTxId !== undefined,
             )
             .map((_) => _.arkTxId!);
@@ -1756,7 +1776,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             });
             onVtxosPersisted = async (_contract, vtxos) => {
                 for (const v of vtxos) {
-                    if (v.virtualStatus.state === "spent") continue;
+                    if (v.isSpent) continue;
                     await captureExitBranch({
                         resolver,
                         repository: virtualTxRepository,
@@ -2389,7 +2409,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
     private _addPendingSpends(inputs: readonly ExtendedCoin[]): void {
         for (const input of inputs) {
-            if ("virtualStatus" in input) {
+            if (isVirtualCoin(input)) {
                 this._pendingSpendOutpoints.add(`${input.txid}:${input.vout}`);
             }
         }
@@ -2397,7 +2417,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
     private _removePendingSpends(inputs: readonly ExtendedCoin[]): void {
         for (const input of inputs) {
-            if ("virtualStatus" in input) {
+            if (isVirtualCoin(input)) {
                 this._pendingSpendOutpoints.delete(`${input.txid}:${input.vout}`);
             }
         }
@@ -3098,15 +3118,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 if (filteredVtxos.length >= MAX_VTXOS_PER_SETTLEMENT) {
                     break;
                 }
-                const inputFee = estimator.evalOffchainInput({
-                    amount: BigInt(vtxo.value),
-                    type: vtxo.virtualStatus.state === "swept" ? "recoverable" : "vtxo",
-                    weight: 0,
-                    birth: vtxo.createdAt,
-                    expiry: vtxo.virtualStatus.batchExpiry
-                        ? new Date(vtxo.virtualStatus.batchExpiry)
-                        : undefined,
-                });
+                const inputFee = estimator.evalOffchainInput(toOffchainInputFeeParams(vtxo));
                 if (inputFee.satoshis >= vtxo.value) {
                     // skip if fees are greater than the virtual output value
                     continue;
@@ -3408,7 +3420,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * renewal / offboard) is not a board and leaves the boarding address
      * untouched.
      *
-     * Boarding inputs are the non-VTXO coins (no `virtualStatus`), the same
+     * Boarding inputs are the non-VTXO coins (no `script`), the same
      * discriminator {@link handleSettlementFinalizationEvent} uses; the
      * `typeof` guard skips arknote string inputs before the `in` test.
      *
@@ -3422,8 +3434,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      */
     private async maybeRotateBoardingAfterBoard(inputs: SettleParams["inputs"]): Promise<void> {
         if (!this._descriptorProvider) return;
+        // `typeof` first: settle historically tolerates arknote strings here, and an arknote is
+        // not a boarding input.
         const consumedBoarding = inputs.some(
-            (input) => typeof input !== "string" && !("virtualStatus" in input),
+            (input) => typeof input !== "string" && !isVirtualCoin(input),
         );
         if (!consumedBoarding) return;
         try {
@@ -3442,9 +3456,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // the signed forfeits transactions to submit
         const signedForfeits: string[] = [];
 
-        const isVtxo = (input: ExtendedCoin): input is ExtendedVirtualCoin =>
-            "virtualStatus" in input;
-
         let settlementPsbt = Transaction.fromPSBT(base64.decode(event.commitmentTx));
         let hasBoardingUtxos = false;
 
@@ -3454,7 +3465,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         for (const input of inputs) {
             // boarding input, we need to sign the settlement tx
-            if (!isVtxo(input)) {
+            if (!isVirtualCoin(input)) {
                 for (let i = 0; i < settlementPsbt.inputsLength; i++) {
                     const settlementInput = settlementPsbt.getInput(i);
 
@@ -3492,7 +3503,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 continue;
             }
 
-            if (isRecoverable(input) || isSubdust({ value: input.value }, this.dustAmount)) {
+            if (
+                canRecoverOnchain(input, { timestamp: new Date() }) ||
+                isSubdust({ value: input.value }, this.dustAmount)
+            ) {
                 // recoverable or subdust coin, we don't need to create a forfeit tx
                 continue;
             }
@@ -3929,10 +3943,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 const vtxoScript = scriptMap.get(vtxo.script);
                 if (!vtxoScript) continue;
 
-                if (
-                    vtxo.virtualStatus.state === "swept" ||
-                    vtxo.virtualStatus.state === "settled"
-                ) {
+                if (!vtxo.isSpent && !(vtxo.isPreconfirmed && !vtxo.isSwept)) {
                     continue;
                 }
 
@@ -4755,14 +4766,14 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             // path, and the DB-update path only persists a wallet-owned output
             // when an input batch expiry exists (unrolled inputs carry none).
             for (const input of inputs) {
-                if (!isSpendable(input) || isRecoverable(input)) {
+                if (!canSpendOffchain(input, { timestamp: new Date() })) {
                     throw new Error(
                         `sendSelectedVtxosToSelf: input ${input.txid}:${input.vout} is not cooperatively spendable`,
                     );
                 }
-                if (!input.virtualStatus.batchExpiry) {
+                if (input.expiresAt === undefined && input.expiresAtHeight === undefined) {
                     throw new Error(
-                        `sendSelectedVtxosToSelf: input ${input.txid}:${input.vout} has no batchExpiry`,
+                        `sendSelectedVtxosToSelf: input ${input.txid}:${input.vout} has no batch expiry`,
                     );
                 }
             }
@@ -4948,40 +4959,32 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             const cm = await this.getContractManager();
             const annotatedInputs = await cm.annotateVtxos(inputs);
             for (const [inputIndex, vtxo] of annotatedInputs.entries()) {
+                const spentFacts = { ...vtxo, isSpent: true };
                 if (inputIndex < safeLength && signedCheckpointTxs[inputIndex]) {
                     const checkpoint = Transaction.fromPSBT(
                         base64.decode(signedCheckpointTxs[inputIndex]),
                     );
 
                     spentVtxos.push({
-                        ...vtxo,
-                        virtualStatus: {
-                            ...vtxo.virtualStatus,
-                            state: "spent",
-                        },
+                        ...spentFacts,
+                        virtualStatus: toVirtualStatus(spentFacts),
                         spentBy: checkpoint.id,
                         arkTxId: arkTxid,
-                        isSpent: true,
                     });
                 } else {
                     spentVtxos.push({
-                        ...vtxo,
-                        virtualStatus: {
-                            ...vtxo.virtualStatus,
-                            state: "spent",
-                        },
+                        ...spentFacts,
+                        virtualStatus: toVirtualStatus(spentFacts),
                         arkTxId: arkTxid,
-                        isSpent: true,
                     });
                 }
 
-                if (vtxo.virtualStatus.commitmentTxIds) {
-                    for (const id of vtxo.virtualStatus.commitmentTxIds) {
-                        commitmentTxIds.add(id);
-                    }
+                for (const id of vtxo.commitmentTxIds) {
+                    commitmentTxIds.add(id);
                 }
-                if (vtxo.virtualStatus.batchExpiry) {
-                    batchExpiry = Math.min(batchExpiry, vtxo.virtualStatus.batchExpiry);
+                const vtxoExpiry = toBatchExpiry(vtxo);
+                if (vtxoExpiry) {
+                    batchExpiry = Math.min(batchExpiry, vtxoExpiry);
                 }
             }
 
@@ -4989,8 +4992,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             // Only save a change virtual output for preconfirmed coins (those with a batchExpiry).
             // Inputs without a batchExpiry are already settled/unrolled and don't need tracking.
-            let changeVtxo: ExtendedVirtualCoin | undefined;
+            let changeVtxo: NormalizedExtendedVirtualCoin | undefined;
             if (changeAmount > 0n && batchExpiry !== Number.MAX_SAFE_INTEGER) {
+                const changeFacts = {
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: true,
+                    commitmentTxIds: Array.from(commitmentTxIds),
+                    ...parseLegacyExpiry(batchExpiry),
+                };
                 changeVtxo = {
                     txid: arkTxid,
                     vout: changeVout,
@@ -4998,14 +5008,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     forfeitTapLeafScript: offchainTapscript.forfeit(),
                     intentTapLeafScript: offchainTapscript.forfeit(),
                     isUnrolled: false,
-                    isSpent: false,
                     tapTree: offchainTapscript.encode(),
                     value: Number(changeAmount),
-                    virtualStatus: {
-                        state: "preconfirmed",
-                        commitmentTxIds: Array.from(commitmentTxIds),
-                        batchExpiry,
-                    },
+                    ...changeFacts,
+                    virtualStatus: toVirtualStatus(changeFacts),
+                    spentBy: "",
                     status: {
                         confirmed: false,
                     },
@@ -5096,28 +5103,22 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             // the current `getBoardingAddress()` bucket (plan §6-III.4).
             const boardingRemovalsByAddress = new Map<string, Set<string>>();
 
-            const isVtxo = (input: ExtendedCoin): input is ExtendedVirtualCoin =>
-                "virtualStatus" in input;
-
-            const vtxoInputs = inputs.filter(isVtxo);
+            const vtxoInputs = inputs.filter(isVirtualCoin);
             const cm = await this.getContractManager();
             const annotatedVtxos = await cm.annotateVtxos(vtxoInputs);
             const annotatedByKey = new Map(annotatedVtxos.map((v) => [`${v.txid}:${v.vout}`, v]));
             for (const input of inputs) {
-                if (isVtxo(input)) {
+                if (isVirtualCoin(input)) {
                     // virtual output = mark it settled
                     const vtxo = annotatedByKey.get(`${input.txid}:${input.vout}`)!;
                     if (vtxo.arkTxId) {
                         inputArkTxIds.add(vtxo.arkTxId);
                     }
+                    const settledFacts = { ...vtxo, isSpent: true };
                     spentVtxos.push({
-                        ...vtxo,
-                        virtualStatus: {
-                            ...vtxo.virtualStatus,
-                            state: "settled",
-                        },
+                        ...settledFacts,
+                        virtualStatus: toVirtualStatus(settledFacts),
                         settledBy: commitmentTxid,
-                        isSpent: true,
                     });
                 } else {
                     // boarding input = remove it from the bucket of the
@@ -5213,11 +5214,12 @@ export function selectVirtualCoins(
     inputs: ExtendedVirtualCoin[];
     changeAmount: bigint;
 } {
-    // Sort virtual outputs by expiry (ascending) and amount (descending)
-    const sortedCoins = [...coins].sort((a, b) => {
+    // Sort virtual outputs by expiry (ascending) and amount (descending). Normalized once up
+    // front rather than per comparison, which would be O(n log n) normalizations.
+    const sortedCoins = coins.map(normalizeVtxo).sort((a, b) => {
         // First sort by expiry if available
-        const expiryA = a.virtualStatus.batchExpiry || Number.MAX_SAFE_INTEGER;
-        const expiryB = b.virtualStatus.batchExpiry || Number.MAX_SAFE_INTEGER;
+        const expiryA = toBatchExpiry(a) || Number.MAX_SAFE_INTEGER;
+        const expiryB = toBatchExpiry(b) || Number.MAX_SAFE_INTEGER;
         if (expiryA !== expiryB) {
             return expiryA - expiryB; // Earlier expiry first
         }

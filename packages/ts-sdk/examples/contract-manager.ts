@@ -20,6 +20,8 @@ import {
     SingleKey,
     Wallet,
     VHTLC,
+    canRecoverOnchain,
+    canSpendOffchain,
     networks,
 } from "../src/index";
 import { hash160, randomPrivateKeyBytes } from "@scure/btc-signer/utils.js";
@@ -149,10 +151,14 @@ async function main() {
     });
     console.log("\nChecking contract VTXOs:");
     contractWithVtxos.vtxos.forEach((vtxo) => {
+        const now = { timestamp: new Date() };
         console.log(`\t\t- ${vtxo.txid}:${vtxo.vout} (${vtxo.value}sats)`);
-        console.log(`\t\t\t virtualStatus: ${JSON.stringify(vtxo.virtualStatus)}`);
         console.log(`\t\t\t status: ${JSON.stringify(vtxo.status)}`);
-        console.log(`\t\t\t isSpent: ${JSON.stringify(vtxo.isSpent)}`);
+        console.log(`\t\t\t isSpent: ${vtxo.isSpent} isSwept: ${vtxo.isSwept}`);
+        console.log(`\t\t\t isPreconfirmed: ${vtxo.isPreconfirmed}`);
+        console.log(`\t\t\t expiresAt: ${vtxo.expiresAt?.toISOString() ?? "-"}`);
+        console.log(`\t\t\t canSpendOffchain: ${canSpendOffchain(vtxo, now)}`);
+        console.log(`\t\t\t canRecoverOnchain: ${canRecoverOnchain(vtxo, now)}`);
     });
 
     // Check spendable paths (Alice is sender, no preimage yet)
