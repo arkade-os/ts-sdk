@@ -29,10 +29,14 @@ export type ArkErrorName = (typeof ArkErrorName)[keyof typeof ArkErrorName];
  * Type guard for a structured {@link ArkError}, optionally narrowing to a specific
  * `name`. Prefer it over comparing `err.name` literals.
  *
+ * `name` accepts only cataloged {@link ArkErrorName} values; to branch on a name the
+ * catalog does not cover, either add it there or compare `err.name` after guarding
+ * with the one-argument form.
+ *
  * @example
  * if (isArkError(maybeArkError(err), ArkErrorName.DIGEST_MISMATCH)) { ... }
  */
-export function isArkError(error: unknown, name?: string): error is ArkError {
+export function isArkError(error: unknown, name?: ArkErrorName): error is ArkError {
     return error instanceof ArkError && (name === undefined || error.name === name);
 }
 
