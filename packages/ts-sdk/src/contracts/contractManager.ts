@@ -18,6 +18,11 @@ import {
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
 import { ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
+import {
+    getNormalizedVtxos,
+    normalizeVtxo,
+    type NormalizedExtendedVirtualCoin,
+} from "../wallet/vtxo";
 import { extendVirtualCoinForContract, type ContractTapscriptCache } from "../wallet/utils";
 import { ContractFilter, ContractRepository, IntentRepository } from "../repositories";
 import { reconcileIntents } from "../wallet/intentReconciliation";
@@ -213,7 +218,7 @@ export interface IContractManager extends Disposable {
      * in wallet/handler code, and keeps the wallet from silently stamping the
      * default tapscript onto a non-default vtxo.
      */
-    annotateVtxos(vtxos: VirtualCoin[]): Promise<ExtendedVirtualCoin[]>;
+    annotateVtxos(vtxos: VirtualCoin[]): Promise<NormalizedExtendedVirtualCoin[]>;
 
     /**
      * Update mutable contract fields.
@@ -898,7 +903,7 @@ export class ContractManager implements IContractManager {
         }));
     }
 
-    async annotateVtxos(vtxos: VirtualCoin[]): Promise<ExtendedVirtualCoin[]> {
+    async annotateVtxos(vtxos: VirtualCoin[]): Promise<NormalizedExtendedVirtualCoin[]> {
         if (vtxos.length === 0) return [];
 
         const scripts = Array.from(new Set(vtxos.map((v) => v.script)));
@@ -916,7 +921,11 @@ export class ContractManager implements IContractManager {
         // contract to avoid rebuilding the taproot tree once per VTXO — the
         // dominant cost when annotating long spent/swept histories (see #521).
         const tapscriptCache: ContractTapscriptCache = new Map();
-        return vtxos.map((vtxo) => extendVirtualCoinForContract(vtxo, byScript, tapscriptCache));
+        // `vtxos` is caller-supplied, so normalize before annotating: the annotated coins flow on
+        // into forfeit construction and repository writes.
+        return vtxos.map((vtxo) =>
+            extendVirtualCoinForContract(normalizeVtxo(vtxo), byScript, tapscriptCache),
+        );
     }
 
     private buildContractsDbFilter(filter: GetContractsFilter): ContractFilter {
@@ -1121,7 +1130,7 @@ export class ContractManager implements IContractManager {
     async refreshOutpoints(outpoints: Outpoint[]): Promise<void> {
         if (outpoints.length === 0) return;
 
-        const { vtxos } = await this.config.indexerProvider.getVtxos({
+        const { vtxos } = await getNormalizedVtxos(this.config.indexerProvider, {
             outpoints,
         });
         if (vtxos.length === 0) return;
@@ -1304,7 +1313,7 @@ export class ContractManager implements IContractManager {
         const scripts = contracts.map((c) => c.script);
         const scriptToContract = new Map<string, Contract>(contracts.map((c) => [c.script, c]));
 
-        const { vtxos } = await this.config.indexerProvider.getVtxos({
+        const { vtxos } = await getNormalizedVtxos(this.config.indexerProvider, {
             scripts,
             pendingOnly: true,
         });
@@ -1424,7 +1433,7 @@ export class ContractManager implements IContractManager {
         let hasMore = true;
 
         while (hasMore) {
-            const { vtxos, page } = await this.config.indexerProvider.getVtxos({
+            const { vtxos, page } = await getNormalizedVtxos(this.config.indexerProvider, {
                 scripts,
                 ...windowOpts,
                 pageIndex,

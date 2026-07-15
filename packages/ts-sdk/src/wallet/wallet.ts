@@ -23,6 +23,7 @@ import { buildForfeitTx } from "../forfeit";
 import { validateConnectorsTxGraph, validateVtxoTxGraph } from "../tree/validation";
 import { validateBatchRecipients } from "./validation";
 import { Identity, ReadonlyIdentity, isBatchSignable } from "../identity";
+import { getNormalizedVtxos, type NormalizedExtendedVirtualCoin } from "./vtxo";
 import {
     ArkTransaction,
     Asset,
@@ -1109,7 +1110,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      *
      * @param filter - Optional flags controlling whether recoverable or unrolled VTXOs are included
      */
-    async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
+    async getVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
         const f = filter ?? { withRecoverable: true, withUnrolled: false };
         const contractManager = await this.getContractManager();
         const vtxos = await contractManager.getContractsWithVtxos();
@@ -1159,8 +1160,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const { boardingTxs, commitmentsToIgnore } = await this.getBoardingTxs();
 
         const getTxCreatedAt = (txid: string) =>
-            this.indexerProvider
-                .getVtxos({ outpoints: [{ txid, vout: 0 }] })
+            getNormalizedVtxos(this.indexerProvider, { outpoints: [{ txid, vout: 0 }] })
                 .then((res) => res.vtxos[0]?.createdAt.getTime())
                 // Best-effort createdAt enrichment: when the indexer is
                 // unavailable, leave it undefined (history still builds from
@@ -1628,7 +1628,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     async fetchPendingTxs(): Promise<string[]> {
         // get non-swept virtual outputs, rely on the indexer only in case DB doesn't have the right state
         const scripts = await this.getWalletScripts();
-        let { vtxos } = await this.indexerProvider.getVtxos({
+        let { vtxos } = await getNormalizedVtxos(this.indexerProvider, {
             scripts,
         });
         return vtxos
@@ -3921,7 +3921,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             const allExtended: ExtendedVirtualCoin[] = [];
 
             const allScripts = [...scriptMap.keys()];
-            const { vtxos: fetchedVtxos } = await this.indexerProvider.getVtxos({
+            const { vtxos: fetchedVtxos } = await getNormalizedVtxos(this.indexerProvider, {
                 scripts: allScripts,
             });
 

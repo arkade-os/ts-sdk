@@ -763,12 +763,17 @@ describe("Wallet", () => {
                     commitmentTxIds: ["22".repeat(32)],
                     batchExpiry: mockBatchExpiry,
                 },
+                // `settledBy` is the commitment tx that *consumed* this vtxo, so a live batch leaf
+                // has none — arkd only ever writes it together with `spent = true`.
                 spentBy: "",
-                settledBy: state === "settled" ? "33".repeat(32) : undefined,
                 arkTxId: "",
                 createdAt: new Date("2026-01-01T00:00:00.000Z"),
                 isUnrolled: false,
                 isSpent: false,
+                isSwept: false,
+                isPreconfirmed: state === "preconfirmed",
+                commitmentTxIds: ["22".repeat(32)],
+                expiresAt: new Date(mockBatchExpiry),
                 script,
             };
         }

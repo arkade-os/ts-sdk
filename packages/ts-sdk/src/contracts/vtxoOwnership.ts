@@ -1,4 +1,5 @@
-import type { ExtendedVirtualCoin, VirtualCoin } from "../wallet";
+import type { ExtendedVirtualCoin, NormalizedExtendedVirtualCoin, VirtualCoin } from "../wallet";
+import { normalizeVtxo } from "../wallet/vtxo";
 import type { WalletRepository } from "../repositories/walletRepository";
 import type { Contract } from "./types";
 
@@ -73,14 +74,20 @@ export function validateVtxosForScript(
 /**
  * Tier 2 dispatch helpers: route to script-scoped repository methods when
  * available, falling back to Tier 1 address-based filtering otherwise.
+ *
+ * This is also normalization boundary #3: `WalletRepository` is a public interface, so rows may
+ * arrive legacy-shaped from any backend — including consumer-implemented ones and `InMemory`, which
+ * stores by reference and never runs a deserializer. Normalizing here rather than in each backend
+ * is what makes the guarantee implementation-agnostic.
  */
 export async function getVtxosForContract(
     repo: WalletRepository,
     contract: Pick<Contract, "script" | "address">,
-): Promise<ExtendedVirtualCoin[]> {
-    return repo.getVtxosForScript
-        ? repo.getVtxosForScript(contract.script)
+): Promise<NormalizedExtendedVirtualCoin[]> {
+    const vtxos = repo.getVtxosForScript
+        ? await repo.getVtxosForScript(contract.script)
         : filterVtxosForScript(await repo.getVtxos(contract.address), contract.script);
+    return vtxos.map(normalizeVtxo);
 }
 
 export async function saveVtxosForContract(

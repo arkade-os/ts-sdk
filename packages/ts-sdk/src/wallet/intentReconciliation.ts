@@ -7,6 +7,7 @@ import {
     isTerminalIntentState,
 } from "../repositories/intentRepository";
 import type { Outpoint, VirtualCoin } from ".";
+import { getNormalizedVtxos } from "./vtxo";
 
 /**
  * Intent states a persisted intent can be stuck in after a crash: none of
@@ -119,7 +120,7 @@ export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<
     let vtxosByOutpoint = new Map<string, VirtualCoin>();
     if (outpoints.length > 0) {
         try {
-            const { vtxos } = await deps.indexerProvider.getVtxos({ outpoints });
+            const { vtxos } = await getNormalizedVtxos(deps.indexerProvider, { outpoints });
             vtxosByOutpoint = new Map(vtxos.map((v) => [outpointKey(v), v]));
         } catch (e) {
             console.error("reconcileIntents: failed to fetch input VTXO state", e);

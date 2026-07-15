@@ -36,6 +36,7 @@ import {
     WalletBalance,
 } from "../index";
 import { DelegateInfo } from "../../providers/delegate";
+import { getNormalizedVtxos, type NormalizedExtendedVirtualCoin } from "../vtxo";
 import { ReadonlyWallet, Wallet, type ProviderConnectionState } from "../wallet";
 import type {
     DeprecatedSignerMigrationReport,
@@ -51,7 +52,6 @@ import { MessageHandler, RequestEnvelope, ResponseEnvelope } from "../../worker/
 import { Transaction } from "../../utils/transaction";
 import { buildTransactionHistory } from "../../utils/transactionHistory";
 import {
-    filterVtxosForScript,
     getVtxosForContract,
     saveVtxosForContract,
     warnAndFilterVtxosForScript,
@@ -1761,12 +1761,12 @@ export class WalletMessageHandler
      * Read all virtual outputs from the repository, aggregated across all contract
      * addresses and the wallet's primary address, with deduplication.
      */
-    private async getVtxosFromRepo(): Promise<ExtendedVirtualCoin[]> {
+    private async getVtxosFromRepo(): Promise<NormalizedExtendedVirtualCoin[]> {
         if (!this.walletRepository || !this.readonlyWallet) return [];
         const seen = new Set<string>();
-        const allVtxos: ExtendedVirtualCoin[] = [];
+        const allVtxos: NormalizedExtendedVirtualCoin[] = [];
 
-        const addVtxos = (vtxos: ExtendedVirtualCoin[]) => {
+        const addVtxos = (vtxos: NormalizedExtendedVirtualCoin[]) => {
             for (const vtxo of vtxos) {
                 const key = `${vtxo.txid}:${vtxo.vout}`;
                 if (!seen.has(key)) {
@@ -1800,8 +1800,15 @@ export class WalletMessageHandler
                 `WalletMessageHandler.getVtxosFromRepo: failed to derive script from wallet address ${walletAddress}: ${e instanceof Error ? e.message : String(e)}`,
             );
         }
-        const walletVtxos = await this.walletRepository.getVtxos(walletAddress);
-        addVtxos(filterVtxosForScript(walletVtxos, walletScript));
+        // Routed through the same helper as the contract buckets rather than reading the
+        // repository directly, so this bucket normalizes too — one boundary is easier to keep true
+        // than two.
+        addVtxos(
+            await getVtxosForContract(this.walletRepository, {
+                script: walletScript,
+                address: walletAddress,
+            }),
+        );
 
         return allVtxos;
     }
@@ -1852,7 +1859,7 @@ export class WalletMessageHandler
                 }));
                 const BATCH_SIZE = 100;
                 for (let i = 0; i < outpoints.length; i += BATCH_SIZE) {
-                    const res = await this.indexerProvider.getVtxos({
+                    const res = await getNormalizedVtxos(this.indexerProvider, {
                         outpoints: outpoints.slice(i, i + BATCH_SIZE),
                     });
                     for (const v of res.vtxos) {

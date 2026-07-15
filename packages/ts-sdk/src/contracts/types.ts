@@ -1,6 +1,7 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { EncodedVtxoScript, TapLeafScript, VtxoScript } from "../script/base";
 import { ExtendedVirtualCoin, VirtualCoin, TapLeaves } from "../wallet";
+import type { NormalizedExtendedVirtualCoin } from "../wallet/vtxo";
 import { ContractFilter } from "../repositories";
 import type { RelativeTimelock } from "../script/tapscript";
 import type { IndexerProvider } from "../providers/indexer";
@@ -100,7 +101,7 @@ export type ContractVtxo = VirtualCoin &
  * should enforce that annotation has happened — e.g. `saveVtxos` and
  * forfeit transaction construction.
  */
-export type ExtendedContractVtxo = ExtendedVirtualCoin & {
+export type ExtendedContractVtxo = NormalizedExtendedVirtualCoin & {
     contractScript: string;
 };
 
