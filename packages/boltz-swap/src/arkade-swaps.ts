@@ -2701,20 +2701,14 @@ export class ArkadeSwaps {
     }
 
     /**
-     * {@link settleRefundWithoutReceiver}, treating the server's "CLTV not mature yet"
-     * rejection as a deferral rather than a failure.
+     * {@link settleRefundWithoutReceiver}, deferring instead of failing when the server
+     * rejects the spend as CLTV-immature ({@link ArkErrorName.FORFEIT_CLOSURE_LOCKED}):
+     * we gate on the local wall clock, the server on the chain tip's, which lags. The
+     * server-authoritative sibling of the wall-clock deferral the pre-CLTV branches
+     * already implement. Anything else propagates.
      *
-     * Our callers gate on the local wall clock, but the server does not: arkd validates
-     * a seconds-CLTV against the **chain tip block's timestamp**, which advances only
-     * when a block is mined. Tip time therefore lags wall clock by however long since
-     * the last block (~10 min on average, routinely more), so a refund attempted
-     * promptly at maturity is *expected* to be rejected until a block lands bearing a
-     * timestamp past the locktime. That is self-healing — the caller retries later — so
-     * it must not surface as a swap failure. This is the server-authoritative sibling of
-     * the wall-clock deferral the pre-CLTV branches already implement.
-     *
-     * Only `submitTx` can raise it; the batch-round path never does, making this a
-     * pass-through for recoverable VTXOs. Anything else propagates.
+     * Only `submitTx` can raise it, so this is a pass-through for recoverable VTXOs,
+     * which settle via a batch round.
      *
      * @returns `true` if settled, `false` if the server deferred it.
      */
@@ -2745,11 +2739,10 @@ export class ArkadeSwaps {
      * Refund every VTXO at a swap's VHTLC address back to the wallet, shared by
      * {@link ArkadeSwaps.refundVHTLC} (submarine) and {@link ArkadeSwaps.refundArk}
      * (chain). Path selection per VTXO:
-     * - CLTV elapsed → `refundWithoutReceiver` (offchain for a live VTXO, via a
-     *   batch round for a swept one — see {@link settleRefundWithoutReceiver}).
-     *   "Elapsed" here is a local wall-clock judgement, so the server may still
-     *   defer the spend as immature — also skipped, see
-     *   {@link trySettleRefundWithoutReceiver}.
+     * - CLTV elapsed by our wall clock → `refundWithoutReceiver` (offchain for a
+     *   live VTXO, via a batch round for a swept one — see
+     *   {@link settleRefundWithoutReceiver}), or skipped if the server defers it as
+     *   still immature (see {@link trySettleRefundWithoutReceiver}).
      * - Pre-CLTV recoverable → skipped (Boltz can't co-sign a swept-batch refund).
      * - Pre-CLTV non-recoverable → cooperative 3-of-3 refund via Boltz, falling
      *   back to `refundWithoutReceiver` offchain if Boltz rejects after the

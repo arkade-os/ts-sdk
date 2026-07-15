@@ -26,10 +26,9 @@ export const ArkErrorName = {
      * `submitTx` (never `finalizeTx`), with metadata
      * `{ locktime, current_locktime, type: "height" | "time" }`.
      *
-     * Self-healing, so callers should defer and retry rather than fail: the server
-     * compares a seconds-locktime against the **chain tip block's timestamp**, not its
-     * wall clock, so a spend attempted promptly at maturity is rejected until a block
-     * lands carrying a timestamp past the locktime.
+     * Self-healing, so defer and retry rather than fail: the server matures a
+     * seconds-locktime against the **chain tip block's timestamp**, not its wall clock,
+     * so a spend attempted promptly at maturity is rejected until a later block lands.
      */
     FORFEIT_CLOSURE_LOCKED: "FORFEIT_CLOSURE_LOCKED",
 } as const;

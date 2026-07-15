@@ -3701,18 +3701,14 @@ describe("ArkadeSwaps", () => {
             });
 
             describe("server-side CLTV deferral (FORFEIT_CLOSURE_LOCKED)", () => {
-                // Our locktime gate reads the wall clock, but arkd validates a
-                // seconds-CLTV against the chain tip *block's* timestamp, which only
-                // advances when a block is mined. So the server routinely rejects a
-                // refund we consider mature, until a block lands carrying a timestamp
-                // past the locktime. That is self-healing — it must be recorded as a
-                // deferral the caller retries, never as a swap failure.
+                // Our locktime gate reads the wall clock, arkd's reads the lagging
+                // chain tip, so it routinely rejects a refund we consider mature. That
+                // is self-healing: a deferral the caller retries, never a swap failure.
 
                 /**
-                 * Build the error as the wire delivers it: arkd attaches
-                 * `ark.v1.ErrorDetails` to the gRPC status, grpc-gateway renders it
-                 * into the HTTP body, and `RestArkProvider.submitTx` feeds that body
-                 * through `maybeArkError`. Going through the real parser pins the wire
+                 * Build the error as the wire delivers it — through the same
+                 * `maybeArkError` parse of arkd's `ark.v1.ErrorDetails` that
+                 * `RestArkProvider.submitTx` performs — so the fixture pins the wire
                  * contract, which a hand-rolled `ArkError` would let drift.
                  */
                 const wireArkError = (args: {
@@ -3744,9 +3740,8 @@ describe("ArkadeSwaps", () => {
                     return parsed;
                 };
 
-                // `type: "time"` matches the boltz VHTLC's seconds-based CLTV.
-                // `current_locktime` is the tip block's timestamp — behind the
-                // locktime, which is exactly why this fires despite our clock.
+                // `type: "time"` matches the boltz VHTLC's seconds CLTV;
+                // `current_locktime` is the lagging tip timestamp.
                 const forfeitClosureLocked = (locktime: number) =>
                     wireArkError({
                         name: "FORFEIT_CLOSURE_LOCKED",

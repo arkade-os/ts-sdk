@@ -261,8 +261,7 @@ describe("vhtlc", () => {
     // before its locktime used to poison its own txid: the offchain-tx aggregate
     // treated `Failed` as sticky, so the post-maturity retry — byte-identical, hence
     // the same txid — got a *success* response while event replay skipped the
-    // projections. The input stayed spendable and no output was created: a silent
-    // double-spend hazard.
+    // projections, leaving the input spendable and no output created.
     it(
         "should refund without receiver on a post-maturity retry of a rejected CLTV tx",
         { timeout: 120_000 },
@@ -274,10 +273,9 @@ describe("vhtlc", () => {
             const indexerProvider = new RestIndexerProvider("http://localhost:7070");
             const onchainProvider = new EsploraProvider("http://localhost:3000/api");
 
-            // A block-height CLTV matures deterministically under mineBlocks(). A
-            // seconds-CLTV could not: arkd matures it against the chain tip block's
-            // *timestamp*, needing both wall-clock passage and a later block to carry
-            // that time forward — mining alone can't do it, waiting alone can't either.
+            // A block-height CLTV matures deterministically under mineBlocks(); a
+            // seconds-CLTV would need both wall-clock passage and a later block to
+            // carry that time forward, so neither mining nor waiting alone gets there.
             const { height } = await onchainProvider.getChainTip();
             const refundLocktime = BigInt(height + 5);
 
@@ -310,8 +308,7 @@ describe("vhtlc", () => {
                 hex.decode(info.checkpointTapscript),
             );
 
-            // refundWithoutReceiver is the VHTLC's CLTV leaf (sender + server). The
-            // output goes back to the same script, as the claim test above does —
+            // Output goes back to the same script, as the claim test above does —
             // where the funds land is irrelevant to this regression.
             const buildRefund = () =>
                 buildOffchainTx(
@@ -359,19 +356,16 @@ describe("vhtlc", () => {
 
             // Test-validity guard, not a nicety: the identical txid *is* #1146. A
             // retry carrying a different txid never touches the sticky-`Failed`
-            // aggregate, so it would pass vacuously against a broken server. The txid
-            // is stable by construction — a taproot txid is computed pre-witness, and
-            // everything it commits to here (version, the CLTV leaf's locktime,
-            // sequence, the input outpoint, one full-value output plus the anchor) is
-            // fixed, with no nonce anywhere.
+            // aggregate, so it would pass vacuously against a broken server. Stable by
+            // construction — a taproot txid is computed pre-witness, and everything it
+            // commits to here is fixed, with no nonce anywhere.
             expect(second.arkTx.id).toBe(txid1);
 
             const signedSecond = await alice.sign(second.arkTx);
 
             // arkd reads the tip through nbxplorer, which lags the mined block by a
-            // moment. Retry only while it still reports the CLTV immature — this is
-            // exactly the retry-after-maturity behaviour under test; anything else
-            // fails the test.
+            // moment. Retry only while it still reports the CLTV immature — the
+            // retry-after-maturity behaviour under test; anything else fails.
             const deadline = Date.now() + 30_000;
             let submitted: Awaited<ReturnType<typeof arkProvider.submitTx>> | undefined;
             while (!submitted) {
@@ -397,8 +391,8 @@ describe("vhtlc", () => {
             );
             await arkProvider.finalizeTx(submitted.arkTxid, finalCheckpoints);
 
-            // The actual regression: the old server reported success above while
-            // dropping the projections, leaving the input spendable and no output.
+            // The regression itself: the old server reported success above while
+            // dropping these projections.
             await waitFor(async () => {
                 const { vtxos } = await indexerProvider.getVtxos({
                     outpoints: [{ txid: vtxo.txid, vout: vtxo.vout }],
