@@ -880,6 +880,54 @@ describe("Wallet", () => {
             expect(cached).toHaveLength(1);
             expect(cached[0].isSpent).toBe(true);
         });
+
+        it("normalizes VTXOs from a legacy-only custom indexer provider", async () => {
+            // A consumer-implemented provider is under no obligation to populate the canonical
+            // facts, so legacy-shaped coins enter through the front door, not just from old rows.
+            let walletScript = "";
+            const getVtxos = vi
+                .fn<IndexerProvider["getVtxos"]>()
+                .mockImplementation(async (opts) => {
+                    if (!walletScript && opts?.scripts?.[0]) walletScript = opts.scripts[0];
+                    const {
+                        isSpent,
+                        isSwept,
+                        isPreconfirmed,
+                        commitmentTxIds,
+                        expiresAt,
+                        ...rest
+                    } = createMockVtxo(walletScript);
+                    return { vtxos: [rest as typeof rest & { isSpent?: boolean }] };
+                });
+
+            const { wallet } = await createReadonlyTestWallet(getVtxos);
+            const [vtxo] = await wallet.getVtxos();
+
+            expect(vtxo.isPreconfirmed).toBe(true);
+            expect(vtxo.isSwept).toBe(false);
+            expect(vtxo.isSpent).toBe(false);
+            expect(vtxo.commitmentTxIds).toEqual(["22".repeat(32)]);
+            expect(vtxo.expiresAt).toBeInstanceOf(Date);
+        });
+
+        it("egress: Wallet.getVtxos returns virtualStatus and spentBy === '' on unspent coins", async () => {
+            // The compatibility guarantees are properties of the normalized shape itself — there
+            // is no egress projection, so they must hold on what getVtxos hands back directly.
+            let walletScript = "";
+            const getVtxos = vi
+                .fn<IndexerProvider["getVtxos"]>()
+                .mockImplementation(async (opts) => {
+                    if (!walletScript && opts?.scripts?.[0]) walletScript = opts.scripts[0];
+                    return { vtxos: [createMockVtxo(walletScript)] };
+                });
+
+            const { wallet } = await createReadonlyTestWallet(getVtxos);
+            const [vtxo] = await wallet.getVtxos();
+
+            expect(vtxo.virtualStatus).toBeDefined();
+            expect(vtxo.virtualStatus.state).toBe("preconfirmed");
+            expect(vtxo.spentBy).toBe("");
+        });
     });
 
     describe("clear", () => {
