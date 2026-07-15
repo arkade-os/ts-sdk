@@ -109,7 +109,7 @@
     },
     "devDependencies": {
         "@types/ws": "^8.18.1",
-        "vite": "^7.3.2"
+        "vite": "^7.3.6"
     },
     "publishConfig": {
         "access": "public",
