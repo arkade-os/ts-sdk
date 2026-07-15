@@ -6,6 +6,11 @@ import type { RelativeTimelock } from "../script/tapscript";
 import type { IndexerProvider } from "../providers/indexer";
 import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
+// `import type` only — `wallet/utils.ts` imports `contractHandlers` (this
+// module's handler registry) as a value, so a value-level import here would
+// create a runtime cycle. The type-only import is erased by `isolatedModules`
+// and carries no such risk.
+import type { ContractTapscripts } from "../wallet/utils";
 
 /**
  * Contract state indicating whether it should be actively monitored.
@@ -198,6 +203,24 @@ export interface ContractHandler<P = Record<string, unknown>, S extends VtxoScri
      * @returns Contract script instance
      */
     createScript(params: Record<string, string>): S;
+
+    /**
+     * Derive the contract's forfeit/intent tapscripts and tap tree, purely
+     * from its serialized params (no VTXO-specific data — every VTXO locked
+     * to the same contract shares this data).
+     *
+     * Replaces the old pattern of casting `createScript(params)`'s result to
+     * a concrete `VtxoScript` subclass and calling `.forfeit()` on it
+     * directly: that assumed every contract type's script exposes a single
+     * `.forfeit()` leaf, which is only true for `default`/`delegate`/
+     * `boarding` — `VHTLC.Script` has no `.forfeit()` at all (see the
+     * `vhtlc` handler for what it returns instead and why). Handlers own
+     * the mapping from their own script shape to these fields.
+     *
+     * @param params - Serialized contract parameters
+     * @returns The contract's forfeit/intent tapscripts and tap tree
+     */
+    getContractTapscripts(params: Record<string, string>): ContractTapscripts;
 
     /**
      * Serialize typed parameters to string key-value pairs.

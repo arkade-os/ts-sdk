@@ -17,7 +17,7 @@ function createFetchResponse(mockData: any) {
             return { ...this };
         },
         headers: {
-            get: (arg: string) => "mock-header-value",
+            get: (_arg: string) => "mock-header-value",
         },
     });
 }
@@ -866,10 +866,8 @@ describe("BoltzSwapProvider", () => {
 
     describe("monitorSwap", () => {
         let mockWebSocket: any;
-        let webSocketCallbacks: any;
 
         beforeEach(() => {
-            webSocketCallbacks = {};
             mockWebSocket = {
                 send: vi.fn(),
                 close: vi.fn(),

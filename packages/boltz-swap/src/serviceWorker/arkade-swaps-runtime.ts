@@ -83,6 +83,7 @@ import {
     enrichSubmarineSwapInvoice as _enrichSubmarineSwapInvoice,
 } from "../utils/swap-helpers";
 import type { Actions, SwapManagerClient } from "../swap-manager";
+import type { SwapActionLog } from "../swap-status-reconciler";
 
 // Check by error message content instead of instanceof because postMessage uses the
 // structured clone algorithm which strips the prototype chain — the page
@@ -333,6 +334,19 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
                         };
                     }
                 ).payload;
+            },
+            // `getActionLog`/`getSwap` are synchronous by contract
+            // (SwapStatusReconciler calls them inline from a sync
+            // ContractEventCallback), which a postMessage round trip to the
+            // service worker cannot honor — same constraint as
+            // createVHTLCScript/joinBatch below. The reconciler is wired
+            // in-process alongside the real SwapManager instance, never
+            // through this proxy.
+            getActionLog: (): SwapActionLog => {
+                throw new Error("getActionLog is not supported via service worker");
+            },
+            getSwap: (): BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap | undefined => {
+                throw new Error("getSwap is not supported via service worker");
             },
             waitForSwapCompletion: async (swapId: string) => {
                 const res = await send({

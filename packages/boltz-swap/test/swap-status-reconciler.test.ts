@@ -1,0 +1,431 @@
+import { describe, it, expect, vi } from "vitest";
+import type { ContractEvent } from "@arkade-os/sdk";
+import {
+    deriveSwapState,
+    SwapActionLog,
+    SwapState,
+    SwapStatusReconciler,
+} from "../src/swap-status-reconciler";
+import { BoltzSwap } from "../src/types";
+import {
+    makeArkInfoFixture,
+    makeReverseSwapFixture,
+    makeSubmarineSwapFixture,
+    makeChainSwapFixture,
+    makeChainSwapFromArkFixture,
+} from "./fixtures/swaps";
+
+const EMPTY_LOG: SwapActionLog = { claimed: new Set(), refunded: new Set() };
+const claimedLog = (id: string): SwapActionLog => ({ claimed: new Set([id]), refunded: new Set() });
+const refundedLog = (id: string): SwapActionLog => ({
+    claimed: new Set(),
+    refunded: new Set([id]),
+});
+
+describe("deriveSwapState", () => {
+    const arkInfo = makeArkInfoFixture();
+
+    describe("reverse swap (wallet is VHTLC receiver — only the wallet can claim)", () => {
+        const swap = makeReverseSwapFixture(arkInfo);
+
+        it.each([
+            ["invoice.settled", "Settled"],
+            ["transaction.refunded", "Refunded"],
+            ["invoice.expired", "Failed"],
+            ["transaction.failed", "Failed"],
+            ["swap.expired", "Failed"],
+        ] as const)(
+            "terminal status %s -> %s (failsafe, regardless of signal/log)",
+            (status, expected) => {
+                const terminalSwap: BoltzSwap = { ...swap, status };
+                // A contradicting signal/log must not override a terminal Boltz status.
+                expect(deriveSwapState(terminalSwap, "none", EMPTY_LOG)).toBe(expected);
+                expect(deriveSwapState(terminalSwap, "spent", claimedLog("other-id"))).toBe(
+                    expected,
+                );
+            },
+        );
+
+        it("spent + we claimed -> Settled", () => {
+            const pending: BoltzSwap = { ...swap, status: "transaction.confirmed" };
+            expect(deriveSwapState(pending, "spent", claimedLog(swap.id))).toBe("Settled");
+        });
+
+        it("spent + we refunded -> Refunded", () => {
+            const pending: BoltzSwap = { ...swap, status: "transaction.confirmed" };
+            expect(deriveSwapState(pending, "spent", refundedLog(swap.id))).toBe("Refunded");
+        });
+
+        it("spent + neither -> Failed (only we can claim; spent-without-us = Boltz refunded its lockup)", () => {
+            const pending: BoltzSwap = { ...swap, status: "transaction.confirmed" };
+            expect(deriveSwapState(pending, "spent", EMPTY_LOG)).toBe("Failed");
+        });
+
+        it("funded, no terminal status -> Pending", () => {
+            const pending: BoltzSwap = { ...swap, status: "transaction.mempool" };
+            expect(deriveSwapState(pending, "funded", EMPTY_LOG)).toBe("Pending");
+        });
+
+        it("none, no terminal status -> Pending", () => {
+            const pending: BoltzSwap = { ...swap, status: "swap.created" };
+            expect(deriveSwapState(pending, "none", EMPTY_LOG)).toBe("Pending");
+        });
+    });
+
+    describe("submarine swap (wallet is VHTLC sender — only the wallet can refund)", () => {
+        const swap = makeSubmarineSwapFixture(arkInfo);
+
+        it.each([
+            ["transaction.claimed", "Settled"],
+            ["invoice.failedToPay", "Failed"],
+            ["swap.expired", "Failed"],
+        ] as const)(
+            "terminal status %s -> %s (failsafe, regardless of signal/log)",
+            (status, expected) => {
+                const terminalSwap: BoltzSwap = { ...swap, status };
+                expect(deriveSwapState(terminalSwap, "none", EMPTY_LOG)).toBe(expected);
+                expect(deriveSwapState(terminalSwap, "spent", claimedLog("other-id"))).toBe(
+                    expected,
+                );
+            },
+        );
+
+        it("transaction.lockupFailed is NOT terminal (negotiable) -> falls through to operational Pending", () => {
+            const negotiable: BoltzSwap = { ...swap, status: "transaction.lockupFailed" };
+            expect(deriveSwapState(negotiable, "none", EMPTY_LOG)).toBe("Pending");
+        });
+
+        it("spent + we claimed -> Settled", () => {
+            const pending: BoltzSwap = { ...swap, status: "invoice.pending" };
+            expect(deriveSwapState(pending, "spent", claimedLog(swap.id))).toBe("Settled");
+        });
+
+        it("spent + we refunded -> Refunded", () => {
+            const pending: BoltzSwap = { ...swap, status: "invoice.pending" };
+            expect(deriveSwapState(pending, "spent", refundedLog(swap.id))).toBe("Refunded");
+        });
+
+        it("spent + neither -> Settled (Boltz claimed our lockup after paying the invoice)", () => {
+            const pending: BoltzSwap = { ...swap, status: "invoice.pending" };
+            expect(deriveSwapState(pending, "spent", EMPTY_LOG)).toBe("Settled");
+        });
+
+        it("funded, no terminal status -> Pending", () => {
+            const pending: BoltzSwap = { ...swap, status: "transaction.mempool" };
+            expect(deriveSwapState(pending, "funded", EMPTY_LOG)).toBe("Pending");
+        });
+
+        it("none, no terminal status -> Pending", () => {
+            const pending: BoltzSwap = { ...swap, status: "swap.created" };
+            expect(deriveSwapState(pending, "none", EMPTY_LOG)).toBe("Pending");
+        });
+    });
+
+    describe("chain swap BTC->ARK (wallet is VHTLC receiver on the ARK lockup — same role shape as reverse)", () => {
+        const swap = makeChainSwapFixture(arkInfo); // request: {from: "BTC", to: "ARK"}
+
+        it.each([
+            ["transaction.claimed", "Settled"],
+            ["transaction.refunded", "Refunded"],
+            ["transaction.failed", "Failed"],
+            ["swap.expired", "Failed"],
+        ] as const)(
+            "terminal status %s -> %s (failsafe, regardless of signal/log)",
+            (status, expected) => {
+                const terminalSwap: BoltzSwap = { ...swap, status };
+                expect(deriveSwapState(terminalSwap, "none", EMPTY_LOG)).toBe(expected);
+                expect(deriveSwapState(terminalSwap, "spent", claimedLog("other-id"))).toBe(
+                    expected,
+                );
+            },
+        );
+
+        it("spent + we claimed -> Settled", () => {
+            const pending: BoltzSwap = { ...swap, status: "transaction.server.mempool" };
+            expect(deriveSwapState(pending, "spent", claimedLog(swap.id))).toBe("Settled");
+        });
+
+        it("spent + we refunded -> Refunded", () => {
+            const pending: BoltzSwap = { ...swap, status: "transaction.server.mempool" };
+            expect(deriveSwapState(pending, "spent", refundedLog(swap.id))).toBe("Refunded");
+        });
+
+        it("spent + neither -> Failed (wallet is receiver; spent-without-us = Boltz refunded its lockup)", () => {
+            const pending: BoltzSwap = { ...swap, status: "transaction.server.mempool" };
+            expect(deriveSwapState(pending, "spent", EMPTY_LOG)).toBe("Failed");
+        });
+
+        it("funded, no terminal status -> Pending", () => {
+            const pending: BoltzSwap = { ...swap, status: "transaction.mempool" };
+            expect(deriveSwapState(pending, "funded", EMPTY_LOG)).toBe("Pending");
+        });
+
+        it("none, no terminal status -> Pending", () => {
+            const pending: BoltzSwap = { ...swap, status: "swap.created" };
+            expect(deriveSwapState(pending, "none", EMPTY_LOG)).toBe("Pending");
+        });
+    });
+
+    describe("chain swap ARK->BTC (wallet is VHTLC sender on the ARK lockup — same role shape as submarine)", () => {
+        const swap = makeChainSwapFromArkFixture(arkInfo); // request: {from: "ARK", to: "BTC"}
+
+        it.each([
+            ["transaction.claimed", "Settled"],
+            ["transaction.refunded", "Refunded"],
+            ["transaction.failed", "Failed"],
+            ["swap.expired", "Failed"],
+        ] as const)(
+            "terminal status %s -> %s (failsafe, regardless of signal/log)",
+            (status, expected) => {
+                const terminalSwap: BoltzSwap = { ...swap, status };
+                expect(deriveSwapState(terminalSwap, "none", EMPTY_LOG)).toBe(expected);
+                expect(deriveSwapState(terminalSwap, "spent", claimedLog("other-id"))).toBe(
+                    expected,
+                );
+            },
+        );
+
+        it("spent + we claimed -> Settled", () => {
+            const pending: BoltzSwap = { ...swap, status: "swap.created" };
+            expect(deriveSwapState(pending, "spent", claimedLog(swap.id))).toBe("Settled");
+        });
+
+        it("spent + we refunded -> Refunded", () => {
+            const pending: BoltzSwap = { ...swap, status: "swap.created" };
+            expect(deriveSwapState(pending, "spent", refundedLog(swap.id))).toBe("Refunded");
+        });
+
+        it("spent + neither -> Settled (wallet is sender; spent-without-us = Boltz claimed our lockup)", () => {
+            const pending: BoltzSwap = { ...swap, status: "swap.created" };
+            expect(deriveSwapState(pending, "spent", EMPTY_LOG)).toBe("Settled");
+        });
+
+        it("funded, no terminal status -> Pending", () => {
+            const pending: BoltzSwap = { ...swap, status: "transaction.mempool" };
+            expect(deriveSwapState(pending, "funded", EMPTY_LOG)).toBe("Pending");
+        });
+
+        it("none, no terminal status -> Pending", () => {
+            const pending: BoltzSwap = { ...swap, status: "swap.created" };
+            expect(deriveSwapState(pending, "none", EMPTY_LOG)).toBe("Pending");
+        });
+
+        it("spent + neither, malformed non-ARK/non-ARK direction -> Pending (genuinely ambiguous fallback)", () => {
+            const malformed: BoltzSwap = {
+                ...swap,
+                status: "swap.created",
+                request: { ...swap.request, from: "BTC", to: "BTC" },
+            };
+            expect(deriveSwapState(malformed, "spent", EMPTY_LOG)).toBe("Pending");
+        });
+    });
+});
+
+/** Minimal, well-typed `ContractEvent` fixture — only `type`/`contractScript` matter to the reconciler. */
+const makeVtxoEvent = (
+    type: "vtxo_received" | "vtxo_spent",
+    contractScript: string,
+): ContractEvent => ({
+    type,
+    contractScript,
+    vtxos: [],
+    contract: {
+        type: "vhtlc",
+        params: {},
+        script: contractScript,
+        address: "ark1test",
+        state: "active",
+        createdAt: 0,
+    },
+    timestamp: Date.now(),
+});
+
+const CONNECTION_RESET_EVENT: ContractEvent = { type: "connection_reset", timestamp: Date.now() };
+
+describe("SwapStatusReconciler", () => {
+    const arkInfo = makeArkInfoFixture();
+    const EMPTY_LOG: SwapActionLog = { claimed: new Set(), refunded: new Set() };
+    const claimedLog = (id: string): SwapActionLog => ({
+        claimed: new Set([id]),
+        refunded: new Set(),
+    });
+
+    /** Builds a reconciler wired to a single swap, with mockable deps. */
+    function makeReconciler(swap: BoltzSwap, actionLog: SwapActionLog = EMPTY_LOG) {
+        const getSwap = vi.fn((id: string) => (id === swap.id ? swap : undefined));
+        const getActionLog = vi.fn(() => actionLog);
+        const onSwapResolved = vi.fn();
+        const onSwapFunded = vi.fn();
+        const reconciler = new SwapStatusReconciler({
+            getSwap,
+            getActionLog,
+            onSwapResolved,
+            onSwapFunded,
+        });
+        return { reconciler, getSwap, getActionLog, onSwapResolved, onSwapFunded };
+    }
+
+    it("addSwapScript + vtxo_spent for a swap we claimed -> onSwapResolved(swap, Settled)", () => {
+        const swap: BoltzSwap = {
+            ...makeReverseSwapFixture(arkInfo),
+            status: "transaction.confirmed",
+        };
+        const { reconciler, onSwapResolved } = makeReconciler(swap, claimedLog(swap.id));
+
+        reconciler.addSwapScript("script-claimed", swap.id);
+        reconciler.onContractEvent(makeVtxoEvent("vtxo_spent", "script-claimed"));
+
+        expect(onSwapResolved).toHaveBeenCalledTimes(1);
+        expect(onSwapResolved).toHaveBeenCalledWith(swap, "Settled" satisfies SwapState);
+    });
+
+    it("submarine vtxo_spent we did NOT refund -> onSwapResolved(swap, Settled) (Boltz claimed after paying invoice)", () => {
+        const swap: BoltzSwap = { ...makeSubmarineSwapFixture(arkInfo), status: "invoice.pending" };
+        const { reconciler, onSwapResolved } = makeReconciler(swap, EMPTY_LOG);
+
+        reconciler.addSwapScript("script-submarine", swap.id);
+        reconciler.onContractEvent(makeVtxoEvent("vtxo_spent", "script-submarine"));
+
+        expect(onSwapResolved).toHaveBeenCalledWith(swap, "Settled" satisfies SwapState);
+    });
+
+    it("unknown contractScript -> no-op, does not throw, does not resolve", () => {
+        const swap = makeReverseSwapFixture(arkInfo);
+        const { reconciler, onSwapResolved, getSwap } = makeReconciler(swap);
+
+        expect(() =>
+            reconciler.onContractEvent(makeVtxoEvent("vtxo_spent", "never-registered")),
+        ).not.toThrow();
+        expect(getSwap).not.toHaveBeenCalled();
+        expect(onSwapResolved).not.toHaveBeenCalled();
+    });
+
+    it("swallows and logs an internal error instead of throwing, and keeps handling later events", () => {
+        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+        const swap: BoltzSwap = {
+            ...makeReverseSwapFixture(arkInfo),
+            status: "transaction.confirmed",
+        };
+        const onSwapResolved = vi.fn();
+        // First call throws (simulating an internal error); later calls
+        // resolve normally, so the second onContractEvent below exercises a
+        // genuinely well-formed lookup rather than another swallowed error.
+        const getSwap = vi.fn((id: string) => (id === swap.id ? swap : undefined));
+        getSwap.mockImplementationOnce(() => {
+            throw new Error("boom");
+        });
+        const reconciler = new SwapStatusReconciler({
+            getSwap,
+            getActionLog: () => claimedLog(swap.id),
+            onSwapResolved,
+            onSwapFunded: vi.fn(),
+        });
+        reconciler.addSwapScript("script-throws", swap.id);
+
+        expect(() =>
+            reconciler.onContractEvent(makeVtxoEvent("vtxo_spent", "script-throws")),
+        ).not.toThrow();
+        expect(onSwapResolved).not.toHaveBeenCalled();
+        expect(errorSpy).toHaveBeenCalledTimes(1);
+
+        // Regression/depth: a thrown error inside one event's handling must
+        // not leave the reconciler's subscription broken for later events —
+        // fire a second, well-formed event on the SAME instance and confirm
+        // it's still handled (not just "didn't throw once").
+        reconciler.onContractEvent(makeVtxoEvent("vtxo_spent", "script-throws"));
+
+        expect(onSwapResolved).toHaveBeenCalledTimes(1);
+        expect(onSwapResolved).toHaveBeenCalledWith(swap, "Settled" satisfies SwapState);
+
+        errorSpy.mockRestore();
+    });
+
+    it("vtxo_received (funded) with no terminal Boltz status -> onSwapFunded called, onSwapResolved not called", () => {
+        const swap: BoltzSwap = {
+            ...makeReverseSwapFixture(arkInfo),
+            status: "transaction.mempool",
+        };
+        const { reconciler, onSwapResolved, onSwapFunded } = makeReconciler(swap);
+
+        reconciler.addSwapScript("script-funded", swap.id);
+        reconciler.onContractEvent(makeVtxoEvent("vtxo_received", "script-funded"));
+
+        expect(onSwapResolved).not.toHaveBeenCalled();
+        expect(onSwapFunded).toHaveBeenCalledTimes(1);
+        expect(onSwapFunded).toHaveBeenCalledWith(swap);
+    });
+
+    it("vtxo_received where Boltz status is already terminal -> onSwapResolved called (failsafe), onSwapFunded NOT called", () => {
+        const swap: BoltzSwap = {
+            ...makeReverseSwapFixture(arkInfo),
+            status: "invoice.settled",
+        };
+        const { reconciler, onSwapResolved, onSwapFunded } = makeReconciler(swap);
+
+        reconciler.addSwapScript("script-already-terminal", swap.id);
+        reconciler.onContractEvent(makeVtxoEvent("vtxo_received", "script-already-terminal"));
+
+        expect(onSwapResolved).toHaveBeenCalledWith(swap, "Settled" satisfies SwapState);
+        expect(onSwapFunded).not.toHaveBeenCalled();
+    });
+
+    it("vtxo_spent -> never calls onSwapFunded (only a funded signal can)", () => {
+        const swap: BoltzSwap = {
+            ...makeSubmarineSwapFixture(arkInfo),
+            status: "invoice.pending",
+        };
+        const { reconciler, onSwapFunded } = makeReconciler(swap, EMPTY_LOG);
+
+        reconciler.addSwapScript("script-spent-only", swap.id);
+        reconciler.onContractEvent(makeVtxoEvent("vtxo_spent", "script-spent-only"));
+
+        expect(onSwapFunded).not.toHaveBeenCalled();
+    });
+
+    it("ignores connection_reset events", () => {
+        const swap = makeReverseSwapFixture(arkInfo);
+        const { reconciler, onSwapResolved, getSwap } = makeReconciler(swap);
+        reconciler.addSwapScript("script-reset", swap.id);
+
+        expect(() => reconciler.onContractEvent(CONNECTION_RESET_EVENT)).not.toThrow();
+        expect(getSwap).not.toHaveBeenCalled();
+        expect(onSwapResolved).not.toHaveBeenCalled();
+    });
+
+    it("removeSwapScript stops resolving further events for that script", () => {
+        const swap: BoltzSwap = {
+            ...makeReverseSwapFixture(arkInfo),
+            status: "transaction.confirmed",
+        };
+        const { reconciler, onSwapResolved } = makeReconciler(swap, claimedLog(swap.id));
+        reconciler.addSwapScript("script-removed", swap.id);
+        reconciler.removeSwapScript("script-removed");
+
+        reconciler.onContractEvent(makeVtxoEvent("vtxo_spent", "script-removed"));
+
+        expect(onSwapResolved).not.toHaveBeenCalled();
+    });
+
+    it("resolving to a terminal state auto-prunes the script mapping (map does not grow unboundedly)", () => {
+        const swap: BoltzSwap = {
+            ...makeReverseSwapFixture(arkInfo),
+            status: "transaction.confirmed",
+        };
+        const { reconciler, onSwapResolved, getSwap } = makeReconciler(swap, claimedLog(swap.id));
+        reconciler.addSwapScript("script-auto-pruned", swap.id);
+
+        reconciler.onContractEvent(makeVtxoEvent("vtxo_spent", "script-auto-pruned"));
+        expect(onSwapResolved).toHaveBeenCalledTimes(1);
+
+        // A second event for the same script, after resolution, must be a
+        // no-op — the script's swapId mapping was pruned as part of
+        // resolving, so the lookup fails before getSwap/onSwapResolved run
+        // again (same observable shape as the "unknown contractScript" test).
+        getSwap.mockClear();
+        onSwapResolved.mockClear();
+        reconciler.onContractEvent(makeVtxoEvent("vtxo_spent", "script-auto-pruned"));
+
+        expect(getSwap).not.toHaveBeenCalled();
+        expect(onSwapResolved).not.toHaveBeenCalled();
+    });
+});

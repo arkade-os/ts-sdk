@@ -9,7 +9,6 @@ import {
 import type { Contract } from "../contracts/types";
 import { contractHandlers } from "../contracts/handlers";
 import { DefaultVtxo } from "../script/default";
-import { DelegateVtxo } from "../script/delegate";
 import type { ReadonlyWallet } from "./wallet";
 import { hex } from "@scure/base";
 import { Bytes } from "@scure/btc-signer/utils.js";
@@ -83,14 +82,7 @@ function deriveContractTapscripts(contract: Contract): ContractTapscripts {
     if (!handler) {
         throw new Error(`No handler for contract type '${contract.type}'`);
     }
-    const script = handler.createScript(contract.params) as
-        | DefaultVtxo.Script
-        | DelegateVtxo.Script;
-    return {
-        forfeitTapLeafScript: script.forfeit(),
-        intentTapLeafScript: script.forfeit(),
-        tapTree: script.encode(),
-    };
+    return handler.getContractTapscripts(contract.params);
 }
 
 function cloneTapLeafScript([

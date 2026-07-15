@@ -106,7 +106,7 @@ function createMockRealm() {
         delete(obj: Record<string, unknown> | Record<string, unknown>[]): void {
             // Handle both single objects and collections (arrays)
             const items = Array.isArray(obj) ? obj : [obj];
-            for (const [schemaName, table] of store.entries()) {
+            for (const [, table] of store.entries()) {
                 for (const item of items) {
                     const pk = item.id as string;
                     if (pk !== undefined) {

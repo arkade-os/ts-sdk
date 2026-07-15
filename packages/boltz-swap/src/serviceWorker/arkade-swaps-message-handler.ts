@@ -65,7 +65,10 @@ export type RequestInitArkSwaps = RequestEnvelope & {
     type: "INIT_ARKADE_SWAPS";
     payload: Omit<
         ArkadeSwapsConfig,
-        "wallet" | "swapRepository" | "swapProvider" | "indexerProvider"
+        // contractManager is not postMessage-serializable; the service-worker
+        // handler reconstructs ArkadeSwaps in its own worker context without
+        // one (monitor-only, same exemption as swapsPollProcessor).
+        "wallet" | "swapRepository" | "swapProvider" | "indexerProvider" | "contractManager"
     > & {
         network: Network;
         arkServerUrl: string;
@@ -1223,6 +1226,11 @@ export class ArkadeSwapsMessageHandler
             referralId: payload.referralId,
         });
 
+        // contractManager is intentionally omitted: the service-worker handler
+        // runs in a separate JS context and cannot receive the main-thread
+        // ContractManager across postMessage. It monitors/claims existing swaps
+        // and never creates new ones, so it is exempt from contract registration.
+        // All registration code in ArkadeSwaps guards `if (!this.contractManager) return`.
         const handler = new ArkadeSwaps({
             wallet: this.wallet,
             arkProvider: this.arkProvider,
@@ -1230,7 +1238,7 @@ export class ArkadeSwapsMessageHandler
             indexerProvider: this.indexerProvider,
             swapRepository: this.swapRepository,
             swapManager: payload.swapManager,
-        });
+        } as any);
         this.handler = handler;
 
         const sm = handler.getSwapManager();

@@ -4,6 +4,7 @@ import { RelativeTimelock } from "../../script/tapscript";
 import { Contract, ContractHandler, PathContext, PathSelection } from "../types";
 import { isCltvSatisfied, isCsvSpendable, resolveRole } from "./helpers";
 import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
+import type { ContractTapscripts } from "../../wallet/utils";
 
 /**
  * Typed parameters for VHTLC contracts.
@@ -69,6 +70,54 @@ export const VHTLCContractHandler: ContractHandler<VHTLCContractParams, VHTLC.Sc
             unilateralRefundWithoutReceiverDelay: sequenceToTimelock(
                 Number(params.refundNoReceiverDelay),
             ),
+        };
+    },
+
+    /**
+     * VHTLC has no single (owner + server) "forfeit" leaf like
+     * `default`/`delegate`/`boarding` — it exposes 6 role- and
+     * condition-gated paths (claim / refund / refundWithoutReceiver, each
+     * with a unilateral variant), and which one applies depends on
+     * `contract.params` (role, preimage) and timing, not just the script.
+     *
+     * Swap VHTLC VTXOs are NOT spent through this generic forfeit/intent
+     * path: the swap layer resolves its own role-specific leaf and signs it
+     * directly — see `packages/boltz-swap/src/utils/vhtlc.ts` (`joinBatch`,
+     * `claimVHTLCwithOffchainTx`, `refundVHTLCwithOffchainTx`), which builds
+     * `ArkTxInput.tapLeafScript` from `vhtlcScript.claim()` /
+     * `.refund()` / `.refundWithoutReceiver()` directly and never reads
+     * `ExtendedVirtualCoin.forfeitTapLeafScript`/`intentTapLeafScript`. These
+     * fields exist here only so `ContractWatcher`/`ContractManager.annotateVtxos`
+     * don't crash on a registered `vhtlc` contract and so a valid `tapTree` is
+     * available for encoding/inspection.
+     *
+     * We return `claim()` — the receiver+server path gated on a HASH160
+     * preimage — specifically because it CANNOT be completed by the wallet's
+     * *other* generic forfeit-signing path,
+     * `Wallet.handleSettlementFinalizationEvent` (`wallet/wallet.ts`), which
+     * never supplies the required preimage witness element. That path is
+     * reachable from `wallet.settle()` (called with no params) and
+     * `VtxoManager.recoverVtxos()`, and — unlike `getWalletScripts()` /
+     * `getScriptMap()`, which deliberately scope to
+     * `type: ["default", "delegate"]` — `Wallet.getVtxos()` /
+     * `ContractManager.getContractsWithVtxos()` do NOT filter by contract
+     * type, so a live `vhtlc` contract's VTXO is a candidate input there
+     * today. Picking `claim()` makes any such accidental inclusion fail
+     * closed (invalid/incomplete witness) instead of risking a leaf that
+     * could be fully signed (e.g. `refundWithoutReceiver()`, if the wallet
+     * happens to hold the "sender" role's key for a submarine swap).
+     *
+     * This is a mitigation, not a fix — see the task report
+     * (task-core-annotation-report.md) for the recommended follow-up
+     * (excluding non-wallet-owned contract types from the generic
+     * settle/recovery input set).
+     */
+    getContractTapscripts(params: Record<string, string>): ContractTapscripts {
+        const script = this.createScript(params);
+        return {
+            forfeitTapLeafScript: script.claim(),
+            intentTapLeafScript: script.claim(),
+            tapTree: script.encode(),
         };
     },
 

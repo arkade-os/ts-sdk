@@ -7,10 +7,9 @@ import {
     Wallet,
     SingleKey,
     EsploraProvider,
+    type IContractManager,
 } from "@arkade-os/sdk";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { hex } from "@scure/base";
-import { pubECDSA } from "@scure/btc-signer/utils.js";
 import { BoltzSwapProvider } from "../../src";
 
 describe("SwapManager", () => {
@@ -21,16 +20,15 @@ describe("SwapManager", () => {
     let swaps: ArkadeSwaps;
     let identity: Identity;
     let wallet: Wallet;
+    let contractManager: IContractManager;
 
     let aliceSecKey: Uint8Array;
-    let aliceCompressedPubKey: string;
 
     beforeEach(async () => {
         const arkUrl = "http://localhost:7070";
 
         // Create identity
         aliceSecKey = schnorr.utils.randomSecretKey();
-        aliceCompressedPubKey = hex.encode(pubECDSA(aliceSecKey, true));
         identity = SingleKey.fromPrivateKey(aliceSecKey);
 
         // Create providers
@@ -48,12 +46,15 @@ describe("SwapManager", () => {
             }),
         });
 
+        contractManager = await wallet.getContractManager();
+
         // Create ArkadeSwaps instance without SwapManager (for baseline tests)
         swaps = new ArkadeSwaps({
             wallet,
             swapProvider,
             arkProvider,
             indexerProvider,
+            contractManager,
             swapManager: false,
         });
 
@@ -76,6 +77,7 @@ describe("SwapManager", () => {
                 arkProvider,
                 swapProvider,
                 indexerProvider,
+                contractManager,
                 swapManager: true,
             });
 
@@ -90,6 +92,7 @@ describe("SwapManager", () => {
                 arkProvider,
                 swapProvider,
                 indexerProvider,
+                contractManager,
                 swapManager: {
                     enableAutoActions: false,
                     pollInterval: 60000,
@@ -107,6 +110,7 @@ describe("SwapManager", () => {
                 arkProvider,
                 swapProvider,
                 indexerProvider,
+                contractManager,
                 swapManager: false,
             });
 
@@ -126,6 +130,7 @@ describe("SwapManager", () => {
                 arkProvider,
                 swapProvider,
                 indexerProvider,
+                contractManager,
                 swapManager: true,
             });
 
@@ -161,6 +166,7 @@ describe("SwapManager", () => {
                 arkProvider,
                 swapProvider,
                 indexerProvider,
+                contractManager,
                 swapManager: {
                     autoStart: false,
                 },
@@ -203,6 +209,7 @@ describe("SwapManager", () => {
                 arkProvider,
                 swapProvider,
                 indexerProvider,
+                contractManager,
                 swapManager: {
                     autoStart: false,
                 },
@@ -229,6 +236,7 @@ describe("SwapManager", () => {
                 arkProvider,
                 swapProvider,
                 indexerProvider,
+                contractManager,
                 swapManager: {
                     autoStart: false,
                 },
@@ -254,6 +262,7 @@ describe("SwapManager", () => {
                 arkProvider,
                 swapProvider,
                 indexerProvider,
+                contractManager,
                 swapManager: {
                     autoStart: false,
                 },
@@ -279,6 +288,7 @@ describe("SwapManager", () => {
                 arkProvider,
                 swapProvider,
                 indexerProvider,
+                contractManager,
                 swapManager: {
                     autoStart: false,
                 },
@@ -304,6 +314,7 @@ describe("SwapManager", () => {
                 arkProvider,
                 swapProvider,
                 indexerProvider,
+                contractManager,
                 swapManager: {
                     autoStart: false,
                 },
@@ -325,6 +336,7 @@ describe("SwapManager", () => {
                 arkProvider,
                 swapProvider,
                 indexerProvider,
+                contractManager,
                 swapManager: {
                     autoStart: false,
                 },
@@ -346,6 +358,7 @@ describe("SwapManager", () => {
                 arkProvider,
                 swapProvider,
                 indexerProvider,
+                contractManager,
                 swapManager: {
                     autoStart: false,
                 },
@@ -367,6 +380,7 @@ describe("SwapManager", () => {
                 arkProvider,
                 swapProvider,
                 indexerProvider,
+                contractManager,
                 swapManager: {
                     autoStart: false,
                 },
@@ -390,6 +404,7 @@ describe("SwapManager", () => {
                 arkProvider,
                 swapProvider,
                 indexerProvider,
+                contractManager,
                 swapManager: true,
             });
 
@@ -409,6 +424,7 @@ describe("SwapManager", () => {
                 arkProvider,
                 swapProvider,
                 indexerProvider,
+                contractManager,
                 swapManager: {
                     reconnectDelayMs: 2000,
                 },
@@ -428,6 +444,7 @@ describe("SwapManager", () => {
                 arkProvider,
                 swapProvider,
                 indexerProvider,
+                contractManager,
                 swapManager: {
                     pollRetryDelayMs: 10000,
                 },
@@ -452,6 +469,7 @@ describe("SwapManager", () => {
                 arkProvider,
                 swapProvider,
                 indexerProvider,
+                contractManager,
                 swapManager: {
                     events: {
                         onSwapUpdate,

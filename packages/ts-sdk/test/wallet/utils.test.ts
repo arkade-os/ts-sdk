@@ -1,12 +1,17 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { hex } from "@scure/base";
 
 import type { Contract } from "../../src/contracts/types";
 import { contractHandlers } from "../../src/contracts/handlers";
+import { VHTLCContractHandler } from "../../src/contracts/handlers/vhtlc";
 import { extendVirtualCoinForContract, type ContractTapscriptCache } from "../../src/wallet/utils";
+import { timelockToSequence } from "../../src/utils/timelock";
 import {
     createDefaultContractParams,
     createDelegateContractParams,
     createMockVtxo,
+    testDefaultScript,
+    testDelegateScript,
     TEST_DEFAULT_SCRIPT,
     TEST_DELEGATE_SCRIPT,
 } from "../contracts/helpers";
@@ -25,6 +30,30 @@ const delegateContract: Contract = {
     params: createDelegateContractParams(),
     script: TEST_DELEGATE_SCRIPT,
     address: "ark1delegate",
+    state: "active",
+    createdAt: Date.now(),
+};
+
+// Same test keys/params shape used by test/contracts/handlers.test.ts's
+// VHTLCContractHandler suite.
+const vhtlcParams = {
+    sender: "0192e796452d6df9697c280542e1560557bcf79a347d925895043136225c7cb4",
+    receiver: "1e1bb85455fe3f5aed60d101aa4dbdb9e7714f6226769a97a17a5331dadcd53b",
+    server: "aad52d58162e9eefeafc7ad8a1cdca8060b5f01df1e7583362d052e266208f88",
+    hash: "4d487dd3753a89bc9fe98401d1196523058251fc",
+    refundLocktime: "800000",
+    claimDelay: timelockToSequence({ type: "blocks", value: 17n }).toString(),
+    refundDelay: timelockToSequence({ type: "blocks", value: 144n }).toString(),
+    refundNoReceiverDelay: timelockToSequence({ type: "blocks", value: 144n }).toString(),
+};
+const vhtlcScript = VHTLCContractHandler.createScript(vhtlcParams);
+const TEST_VHTLC_SCRIPT = hex.encode(vhtlcScript.pkScript);
+
+const vhtlcContract: Contract = {
+    type: "vhtlc",
+    params: vhtlcParams,
+    script: TEST_VHTLC_SCRIPT,
+    address: "ark1vhtlc",
     state: "active",
     createdAt: Date.now(),
 };
@@ -102,6 +131,83 @@ describe("extendVirtualCoinForContract", () => {
         const map = new Map<string, Contract>([[bogus.script, bogus]]);
 
         expect(() => extendVirtualCoinForContract(vtxo, map)).toThrow(/handler/);
+    });
+});
+
+describe("extendVirtualCoinForContract - vhtlc contracts (regression: VHTLC has no forfeit())", () => {
+    it("annotates a vhtlc-contract vtxo without throwing", () => {
+        // Before the fix, deriveContractTapscripts cast every contract's
+        // script to `DefaultVtxo.Script | DelegateVtxo.Script` and called
+        // `.forfeit()` on it unconditionally. VHTLC.Script has no `.forfeit()`,
+        // so this crashed with "script.forfeit is not a function" the moment a
+        // Boltz swap's VHTLC VTXO was registered as a contract and annotated
+        // by ContractWatcher.emitVtxoEvent / ContractManager.annotateVtxos —
+        // this is that exact crash path.
+        const vtxo = createMockVtxo({ script: TEST_VHTLC_SCRIPT });
+
+        expect(() => extendVirtualCoinForContract(vtxo, vhtlcContract)).not.toThrow();
+    });
+
+    it("returns a valid tapTree and structurally-valid forfeit/intent leaves", () => {
+        const vtxo = createMockVtxo({ script: TEST_VHTLC_SCRIPT });
+
+        const extended = extendVirtualCoinForContract(vtxo, vhtlcContract);
+
+        expect(extended.tapTree).toEqual(vhtlcScript.encode());
+        expect(extended.forfeitTapLeafScript).toBeDefined();
+        expect(extended.intentTapLeafScript).toBeDefined();
+        // Structurally valid: one of the VHTLC script's own registered
+        // leaves (findLeaf would throw on a fabricated/unregistered script),
+        // not an empty or made-up placeholder.
+        expect(extended.forfeitTapLeafScript[1]).toEqual(vhtlcScript.claim()[1]);
+        expect(extended.intentTapLeafScript[1]).toEqual(vhtlcScript.claim()[1]);
+    });
+
+    it("resolves via map the same way as a direct Contract", () => {
+        const vtxo = createMockVtxo({ script: TEST_VHTLC_SCRIPT });
+        const map = new Map<string, Contract>([[vhtlcContract.script, vhtlcContract]]);
+
+        expect(() => extendVirtualCoinForContract(vtxo, map)).not.toThrow();
+    });
+});
+
+describe("extendVirtualCoinForContract - default/delegate/boarding stay forfeit-based (no regression)", () => {
+    it("default contract still returns the forfeit leaf", () => {
+        const vtxo = createMockVtxo({ script: TEST_DEFAULT_SCRIPT });
+
+        const extended = extendVirtualCoinForContract(vtxo, defaultContract);
+
+        expect(extended.forfeitTapLeafScript).toEqual(testDefaultScript.forfeit());
+        expect(extended.intentTapLeafScript).toEqual(testDefaultScript.forfeit());
+        expect(extended.tapTree).toEqual(testDefaultScript.encode());
+    });
+
+    it("delegate contract still returns the forfeit leaf", () => {
+        const vtxo = createMockVtxo({ script: TEST_DELEGATE_SCRIPT });
+
+        const extended = extendVirtualCoinForContract(vtxo, delegateContract);
+
+        expect(extended.forfeitTapLeafScript).toEqual(testDelegateScript.forfeit());
+        expect(extended.intentTapLeafScript).toEqual(testDelegateScript.forfeit());
+        expect(extended.tapTree).toEqual(testDelegateScript.encode());
+    });
+
+    it("boarding contract still returns the forfeit leaf (shares DefaultVtxo.Script)", () => {
+        const boardingContract: Contract = {
+            type: "boarding",
+            params: createDefaultContractParams(),
+            script: TEST_DEFAULT_SCRIPT,
+            address: "ark1boarding",
+            state: "active",
+            createdAt: Date.now(),
+        };
+        const vtxo = createMockVtxo({ script: TEST_DEFAULT_SCRIPT });
+
+        const extended = extendVirtualCoinForContract(vtxo, boardingContract);
+
+        expect(extended.forfeitTapLeafScript).toEqual(testDefaultScript.forfeit());
+        expect(extended.intentTapLeafScript).toEqual(testDefaultScript.forfeit());
+        expect(extended.tapTree).toEqual(testDefaultScript.encode());
     });
 });
 

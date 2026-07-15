@@ -11,6 +11,7 @@ import {
     deriveDescriptorLeafPubKey,
 } from "../../identity/descriptor";
 import { WALLET_RECEIVE_SOURCE } from "../metadata";
+import type { ContractTapscripts } from "../../wallet/utils";
 
 /**
  * Typed parameters for DefaultVtxo contracts.
@@ -65,6 +66,15 @@ export const DefaultContractHandler: ContractHandler<DefaultContractParams, Defa
             pubKey: extractPubKeyBytes(params.pubKey),
             serverPubKey: extractPubKeyBytes(params.serverPubKey),
             csvTimelock,
+        };
+    },
+
+    getContractTapscripts(params: Record<string, string>): ContractTapscripts {
+        const script = this.createScript(params);
+        return {
+            forfeitTapLeafScript: script.forfeit(),
+            intentTapLeafScript: script.forfeit(),
+            tapTree: script.encode(),
         };
     },
 

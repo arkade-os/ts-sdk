@@ -7,6 +7,7 @@ import { isCsvSpendable, detectUsedScripts } from "./helpers";
 import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
 import { deriveDescriptorLeafPubKey } from "../../identity/descriptor";
 import { WALLET_RECEIVE_SOURCE } from "../metadata";
+import type { ContractTapscripts } from "../../wallet/utils";
 
 /**
  * Typed parameters for DelegateVtxo contracts.
@@ -51,6 +52,15 @@ export const DelegateContractHandler: ContractHandler<DelegateContractParams, De
             serverPubKey: hex.decode(params.serverPubKey),
             delegatePubKey: hex.decode(params.delegatePubKey),
             csvTimelock,
+        };
+    },
+
+    getContractTapscripts(params: Record<string, string>): ContractTapscripts {
+        const script = this.createScript(params);
+        return {
+            forfeitTapLeafScript: script.forfeit(),
+            intentTapLeafScript: script.forfeit(),
+            tapTree: script.encode(),
         };
     },
 

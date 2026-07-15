@@ -785,6 +785,13 @@ export type GetVtxosFilter = {
 
     /** Include virtual outputs that have been unrolled onchain. */
     withUnrolled?: boolean;
+
+    /**
+     * Restrict to virtual outputs owned by contract(s) of the given type(s)
+     * (e.g. "default", "delegate", "vhtlc"). Defaults to every contract type
+     * when omitted.
+     */
+    type?: string | string[];
 };
 
 /**
