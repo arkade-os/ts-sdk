@@ -1,5 +1,6 @@
 import { hex } from "@scure/base";
 import { IndexerProvider } from "../providers/indexer";
+import { isRetryableProviderError } from "../providers/availability";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
     Contract,
@@ -153,6 +154,17 @@ export interface ScanContractsOptions {
     deps: DiscoveryDeps;
 }
 
+/**
+ * Freshness of the ContractManager's provider-backed sync. `degraded` means the
+ * most recent sync (boot, best-effort read, or contract hydration) hit a
+ * retryable indexer/operator failure and the manager is serving repository
+ * state; it returns to `online` on the next successful sync. This only
+ * describes sync freshness — never wallet data itself.
+ */
+export type ContractSyncState =
+    | { mode: "online"; lastSyncedAt?: number }
+    | { mode: "degraded"; reason: string; lastSyncedAt?: number };
+
 export interface IContractManager extends Disposable {
     /**
      * Create and register a new contract.
@@ -182,6 +194,12 @@ export interface IContractManager extends Disposable {
      * If no filter is provided, returns all contracts with their virtual outputs.
      */
     getContractsWithVtxos(filter?: GetContractsFilter): Promise<ContractWithVtxos[]>;
+
+    /**
+     * Latest provider-sync health (online vs. degraded to repository data).
+     * See {@link ContractSyncState}.
+     */
+    getSyncState(): ContractSyncState;
 
     /**
      * Stamp raw virtual outputs with the correct per-contract tapscripts
@@ -344,6 +362,20 @@ export interface ContractManagerConfig {
      */
     intentRepository?: IntentRepository;
 
+    /**
+     * Optional exit-data capture hook. Fired best-effort after VTXOs are
+     * persisted so a configured virtualTxRepository can store each one's
+     * unilateral-exit branch. Absent ⇒ no-op.
+     */
+    onVtxosPersisted?: (contract: Contract, vtxos: ExtendedVirtualCoin[]) => Promise<void>;
+
+    /**
+     * Optional exit-data prune hook. Fired best-effort with the spent outpoints
+     * on `vtxo_spent` so a configured virtualTxRepository can drop their branch.
+     * Absent ⇒ no-op.
+     */
+    onVtxosSpent?: (vtxos: Outpoint[]) => Promise<void>;
+
     /** Watcher configuration */
     watcherConfig?: Partial<ContractWatcherConfig>;
 }
@@ -409,6 +441,10 @@ export class ContractManager implements IContractManager {
     private initialized = false;
     private eventCallbacks: Set<ContractEventCallback> = new Set();
     private stopWatcherFn?: () => void;
+    /** `undefined` while online; the failure reason once a sync degrades. */
+    private syncDegradedReason?: string;
+    /** Epoch-ms of the last successful provider sync, if any. */
+    private lastSyncedAt?: number;
 
     private constructor(config: ContractManagerConfig) {
         this.config = config;
@@ -436,6 +472,31 @@ export class ContractManager implements IContractManager {
         return cm;
     }
 
+    /**
+     * Latest provider-sync health. See {@link ContractSyncState}. Degradation is
+     * recorded by {@link initialize}, {@link getContractsWithVtxos}, and
+     * {@link createContract}; it flips back to `online` on the next successful
+     * sync. Purely a freshness signal — not a source of truth for wallet data.
+     */
+    getSyncState(): ContractSyncState {
+        return this.syncDegradedReason === undefined
+            ? { mode: "online", lastSyncedAt: this.lastSyncedAt }
+            : {
+                  mode: "degraded",
+                  reason: this.syncDegradedReason,
+                  lastSyncedAt: this.lastSyncedAt,
+              };
+    }
+
+    private markSyncOnline(): void {
+        this.syncDegradedReason = undefined;
+        this.lastSyncedAt = Date.now();
+    }
+
+    private markSyncDegraded(err: unknown): void {
+        this.syncDegradedReason = err instanceof Error ? err.message : String(err);
+    }
+
     private async initialize(): Promise<void> {
         if (this.initialized) {
             return;
@@ -451,7 +512,17 @@ export class ContractManager implements IContractManager {
             await this.watcher.addContract(contract);
         }
 
-        await this.reconcileWatched();
+        // Best-effort boot sync: a retryable indexer/operator failure must not
+        // fail construction. Record degraded state and continue with repository
+        // data — the watcher still starts below and reconciles when the operator
+        // returns. Terminal failures still propagate.
+        try {
+            await this.reconcileWatched();
+            this.markSyncOnline();
+        } catch (err) {
+            if (!isRetryableProviderError(err)) throw err;
+            this.markSyncDegraded(err);
+        }
 
         this.initialized = true;
 
@@ -511,8 +582,17 @@ export class ContractManager implements IContractManager {
     async createContract(params: CreateContractParams): Promise<Contract> {
         const { contract, persisted } = await this.upsertContract(params);
         if (persisted) {
-            // fetch all virtual outputs (including spent/swept) for this contract
-            await this.fetchContractVxosFromIndexer([contract]);
+            // Best-effort VTXO hydration (including spent/swept): on a retryable
+            // indexer failure the contract stays persisted and is still watched,
+            // so it hydrates on the next reconcile — wallet construction (which
+            // registers baseline contracts) survives an offline operator.
+            try {
+                await this.fetchContractVxosFromIndexer([contract]);
+                this.markSyncOnline();
+            } catch (err) {
+                if (!isRetryableProviderError(err)) throw err;
+                this.markSyncDegraded(err);
+            }
             await this.watcher.addContract(contract);
         }
         return contract;
@@ -800,7 +880,17 @@ export class ContractManager implements IContractManager {
         pageSize?: number,
     ): Promise<ContractWithVtxos[]> {
         const contracts = await this.getContracts(filter);
-        await this.syncContracts({ contracts, pageSize });
+        // Best-effort opportunistic sync: on a retryable indexer/operator
+        // failure, serve repository state rather than failing the read. The
+        // failed sync writes no partial state and does not advance the cursor
+        // (targeted subset queries never do). Terminal failures still propagate.
+        try {
+            await this.syncContracts({ contracts, pageSize });
+            this.markSyncOnline();
+        } catch (err) {
+            if (!isRetryableProviderError(err)) throw err;
+            this.markSyncDegraded(err);
+        }
         const vtxos = await this.getVtxosForContracts(contracts);
         return contracts.map((contract) => ({
             contract,
@@ -1091,18 +1181,44 @@ export class ContractManager implements IContractManager {
      * Handle events from the watcher.
      */
     private async handleContractEvent(event: ContractEvent) {
-        switch (event.type) {
-            // Delta-sync only the changed virtual outputs for this contract.
-            case "vtxo_received":
-            case "vtxo_spent":
-                await this.syncContracts({ contracts: [event.contract] });
-                break;
-            case "connection_reset":
-                // Same recovery path as boot: delta-sync the watched set
-                // and reconcile the pending frontier. `advanceSyncCursor`
-                // is monotonic so this never rewinds the cursor.
-                await this.reconcileWatched();
-                break;
+        // Watcher-driven syncs update provider-sync health the same way the boot
+        // and read paths do (initialize / getContractsWithVtxos): a retryable
+        // indexer/operator failure here — notably the post-boot connection_reset
+        // recovery — must record degraded state rather than being swallowed by
+        // the startWatching callback's `.catch`, or diagnostics would keep
+        // reporting online after a real degradation. Terminal failures still
+        // propagate. The event is forwarded to subscribers either way.
+        try {
+            switch (event.type) {
+                // Delta-sync only the changed virtual outputs for this contract.
+                case "vtxo_received":
+                    await this.syncContracts({ contracts: [event.contract] });
+                    this.markSyncOnline();
+                    break;
+                case "vtxo_spent":
+                    await this.syncContracts({ contracts: [event.contract] });
+                    this.markSyncOnline();
+                    if (this.config.onVtxosSpent) {
+                        try {
+                            await this.config.onVtxosSpent(
+                                event.vtxos.map((v) => ({ txid: v.txid, vout: v.vout })),
+                            );
+                        } catch {
+                            // prune is best-effort; never block the spend event
+                        }
+                    }
+                    break;
+                case "connection_reset":
+                    // Same recovery path as boot: delta-sync the watched set
+                    // and reconcile the pending frontier. `advanceSyncCursor`
+                    // is monotonic so this never rewinds the cursor.
+                    await this.reconcileWatched();
+                    this.markSyncOnline();
+                    break;
+            }
+        } catch (err) {
+            if (!isRetryableProviderError(err)) throw err;
+            this.markSyncDegraded(err);
         }
 
         // Forward to all callbacks
@@ -1228,6 +1344,13 @@ export class ContractManager implements IContractManager {
                 contract,
                 filtered as ExtendedVirtualCoin[],
             );
+            if (this.config.onVtxosPersisted) {
+                try {
+                    await this.config.onVtxosPersisted(contract, filtered as ExtendedVirtualCoin[]);
+                } catch {
+                    // capture is best-effort; never block reconciliation
+                }
+            }
         }
     }
 
@@ -1253,6 +1376,16 @@ export class ContractManager implements IContractManager {
                     contract,
                     filtered as ExtendedVirtualCoin[],
                 );
+                if (this.config.onVtxosPersisted) {
+                    try {
+                        await this.config.onVtxosPersisted(
+                            contract,
+                            filtered as ExtendedVirtualCoin[],
+                        );
+                    } catch {
+                        // capture is best-effort; never block sync
+                    }
+                }
             }
         }
         return result;

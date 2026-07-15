@@ -229,7 +229,39 @@ import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
 import { TxWeightEstimator, type VSize } from "./utils/txSizeEstimator";
 import { Unroll } from "./wallet/unroll";
-import { ArkError, maybeArkError } from "./providers/errors";
+import {
+    UnilateralExit,
+    createExitChainResolver,
+    deserializeExitPackage,
+    serializeExitPackage,
+} from "./wallet/exit";
+import type {
+    ExitDelay,
+    ExitMode,
+    ExitPackage,
+    ExitQuote,
+    ExitStep,
+    ExitTotals,
+    ExitVtxoInfo,
+    ExitOptions,
+    ExecutorEvent,
+    ExitFeeWallet,
+    ExitCaptureMode,
+    ExitChainResolver,
+    ExitDataSource,
+} from "./wallet/exit";
+import {
+    ArkError,
+    ArkErrorName,
+    isArkError,
+    maybeArkError,
+    ProviderUnavailableError,
+} from "./providers/errors";
+import type { ProviderKind } from "./providers/errors";
+import { isRetryableProviderError } from "./providers/availability";
+import type { ServerInfoSource } from "./wallet/arkInfoSnapshot";
+import type { ProviderConnectionState } from "./wallet/wallet";
+import type { ContractSyncState } from "./contracts/contractManager";
 import { validateVtxoTxGraph, validateConnectorsTxGraph } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
 import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
@@ -487,6 +519,10 @@ export {
     // Anchor
     P2A,
     Unroll,
+    UnilateralExit,
+    createExitChainResolver,
+    serializeExitPackage,
+    deserializeExitPackage,
     Transaction,
     TxWeightEstimator,
     timelockToSequence,
@@ -494,7 +530,11 @@ export {
 
     // Errors
     ArkError,
+    ArkErrorName,
+    isArkError,
     maybeArkError,
+    ProviderUnavailableError,
+    isRetryableProviderError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 
@@ -638,6 +678,12 @@ export type {
     SignerClassification,
     SignerSet,
 
+    // Provider availability
+    ProviderKind,
+    ServerInfoSource,
+    ProviderConnectionState,
+    ContractSyncState,
+
     // Asset types
     IReadonlyAssetManager,
     IAssetManager,
@@ -664,6 +710,21 @@ export type {
     // Anchor
     AnchorBumper,
     VSize,
+
+    // Unilateral exit packages
+    ExitCaptureMode,
+    ExitChainResolver,
+    ExitDataSource,
+    ExitDelay,
+    ExitMode,
+    ExitPackage,
+    ExitQuote,
+    ExitStep,
+    ExitTotals,
+    ExitVtxoInfo,
+    ExitOptions,
+    ExecutorEvent,
+    ExitFeeWallet,
 
     // Storage
     StorageConfig,

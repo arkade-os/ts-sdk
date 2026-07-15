@@ -12,6 +12,7 @@ import {
     Identity,
     Intent,
     isRecoverable,
+    isSubdust,
     MultisigTapscript,
     Outpoint,
     Recipient,
@@ -308,13 +309,13 @@ async function delegate(
         );
     }, 0);
 
-    if (amount - BigInt(outputFee) <= dust) {
+    if (isSubdust(amount - BigInt(outputFee), dust)) {
         throw new Error("Amount is below dust limit, cannot delegate");
     }
     amount -= BigInt(outputFee);
 
     amount -= delegateFee;
-    if (amount <= dust) {
+    if (isSubdust(amount, dust)) {
         throw new Error("Amount is below dust limit, cannot delegate");
     }
 
