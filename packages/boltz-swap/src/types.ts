@@ -226,6 +226,16 @@ export interface SubmarineRecoveryInfo {
     error?: string;
 }
 
+/**
+ * Earliest Unix timestamp (seconds) at which retrying the deferred VTXOs could
+ * make progress, or `undefined` when nothing was deferred. Deferrals do not all
+ * last the same time — a server-side CLTV rejection clears as soon as a later
+ * block carries the locktime, whereas a pre-CLTV VTXO must wait out the whole
+ * refund locktime — so callers schedule from this instead of polling at a fixed
+ * interval. It is a lower bound, not a promise: a retry may defer again.
+ */
+type RefundRetryAt = number | undefined;
+
 /** Outcome of a single `refundVHTLC` call: how many VTXOs were swept vs. deferred. */
 export interface SubmarineRefundOutcome {
     /** Number of VTXOs successfully refunded (joined a batch or via Boltz co-sign). */
@@ -236,6 +246,8 @@ export interface SubmarineRefundOutcome {
      * is expected to retry these later.
      */
     skipped: number;
+    /** When a retry could first succeed; see {@link RefundRetryAt}. */
+    retryAt?: RefundRetryAt;
 }
 
 /** Outcome of a single `refundArk` call: how many VTXOs were swept vs. deferred. */
@@ -248,6 +260,8 @@ export interface ChainArkRefundOutcome {
      * is expected to retry these later.
      */
     skipped: number;
+    /** When a retry could first succeed; see {@link RefundRetryAt}. */
+    retryAt?: RefundRetryAt;
 }
 
 /** Per-swap outcome of a bulk recovery call. */

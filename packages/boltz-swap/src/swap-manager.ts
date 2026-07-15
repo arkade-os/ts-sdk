@@ -19,6 +19,7 @@ import {
     BoltzSubmarineSwap,
     BoltzSwap,
     ChainArkRefundOutcome,
+    SubmarineRefundOutcome,
 } from "./types";
 import { NetworkError, SwapError, SwapNotFoundError } from "./errors";
 import { logger } from "./logger";
@@ -140,7 +141,14 @@ export interface SwapManagerClient {
 /** Internal callbacks wired by ArkadeSwaps to perform claim/refund/save operations. */
 export interface SwapManagerCallbacks {
     claim: (swap: BoltzReverseSwap) => Promise<void>;
-    refund: (swap: BoltzSubmarineSwap) => Promise<void>;
+    /**
+     * Refund a submarine swap's VHTLC.
+     *
+     * Returns the outcome so the manager can re-arm a deferred refund: every
+     * refundable submarine status except `transaction.lockupFailed` is also
+     * final, so Boltz sends no further update to re-trigger one.
+     */
+    refund: (swap: BoltzSubmarineSwap) => Promise<SubmarineRefundOutcome>;
     /**
      * Claim the ARK side of a BTC→ARK chain swap.
      *
@@ -180,12 +188,21 @@ export class SwapManager implements SwapManagerClient {
     private static readonly NOT_FOUND_THRESHOLD = 10;
 
     /**
-     * Delay between re-attempts of a chain refund that left VTXOs deferred
-     * (e.g. pre-CLTV recoverable VTXO, or Boltz 3-of-3 rejected before CLTV
-     * has elapsed). Boltz won't send another status update once the swap
-     * is `swap.expired`, so the manager owns the local retry cadence.
+     * Floor on the delay between re-attempts of a refund that left VTXOs
+     * deferred, and the delay used when the outcome names no retry time. Boltz
+     * won't send another status update once the swap is refundable-and-final,
+     * so the manager owns the local retry cadence.
      */
     private static readonly REFUND_RETRY_DELAY_MS = 60_000;
+
+    /**
+     * Ceiling on that delay. A deferral can be hours out (a pre-CLTV VTXO waits
+     * out the whole refund locktime), and `setTimeout` fires *immediately* past
+     * its 32-bit millisecond range, so long waits are broken into re-armed
+     * hops. Re-attempting costs an indexer lookup and re-defers, which also lets
+     * the cadence recover from a suspended device or a clock jump.
+     */
+    private static readonly MAX_REFUND_RETRY_DELAY_MS = 60 * 60_000;
 
     private readonly swapProvider: BoltzSwapProvider;
     private readonly config: SwapManagerConfig;
@@ -241,7 +258,8 @@ export class SwapManager implements SwapManagerClient {
 
     // Action callbacks (injected via setCallbacks)
     private claimCallback: ((swap: BoltzReverseSwap) => Promise<void>) | null = null;
-    private refundCallback: ((swap: BoltzSubmarineSwap) => Promise<void>) | null = null;
+    private refundCallback: ((swap: BoltzSubmarineSwap) => Promise<SubmarineRefundOutcome>) | null =
+        null;
     private claimArkCallback: ((swap: BoltzChainSwap) => Promise<{ txid: string }>) | null = null;
     private claimBtcCallback: ((swap: BoltzChainSwap) => Promise<{ txid: string }>) | null = null;
     private refundArkCallback: ((swap: BoltzChainSwap) => Promise<ChainArkRefundOutcome>) | null =
@@ -982,11 +1000,25 @@ export class SwapManager implements SwapManagerClient {
     }
 
     /**
-     * Schedule another `executeAutonomousAction` run for a chain swap whose
-     * refund left VTXOs deferred. After the retry completes, if no further
-     * deferral was reported, finalize monitoring cleanup.
+     * How long to wait before re-attempting a refund, given the `retryAt`
+     * (Unix seconds) the outcome reported. Clamped at both ends: see
+     * {@link SwapManager.REFUND_RETRY_DELAY_MS} and
+     * {@link SwapManager.MAX_REFUND_RETRY_DELAY_MS}.
      */
-    private scheduleRefundRetry(swap: BoltzChainSwap, delayMs: number): void {
+    private static refundRetryDelayMs(retryAt?: number): number {
+        if (retryAt === undefined) return SwapManager.REFUND_RETRY_DELAY_MS;
+        return Math.min(
+            Math.max(retryAt * 1000 - Date.now(), SwapManager.REFUND_RETRY_DELAY_MS),
+            SwapManager.MAX_REFUND_RETRY_DELAY_MS,
+        );
+    }
+
+    /**
+     * Schedule another `executeAutonomousAction` run for a swap whose refund
+     * left VTXOs deferred. After the retry completes, if no further deferral
+     * was reported, finalize monitoring cleanup.
+     */
+    private scheduleRefundRetry(swap: BoltzSwap, delayMs: number): void {
         const existing = this.refundRetryTimers.get(swap.id);
         if (existing) clearTimeout(existing);
         this.refundRetryTimers.set(
@@ -994,20 +1026,29 @@ export class SwapManager implements SwapManagerClient {
             setTimeout(async () => {
                 this.refundRetryTimers.delete(swap.id);
                 if (!this.isRunning) return;
-                if (!this.monitoredSwaps.has(swap.id)) return;
+                // Re-read rather than reuse the swap captured at scheduling
+                // time: a submarine swap can advance invoice.failedToPay →
+                // swap.expired while the retry is pending, and finalization
+                // below must report the status it actually ended on.
+                const current = this.monitoredSwaps.get(swap.id);
+                if (!current) return;
+                let ran = false;
                 try {
-                    // `swap` is captured at scheduling time; its fields
-                    // are stable for chain refunds because swap.expired
-                    // is terminal and Boltz won't transition it again,
-                    // so the snapshot remains accurate across retries.
-                    await this.executeAutonomousAction(swap);
+                    ran = await this.executeAutonomousAction(current);
                 } finally {
-                    // The retry callback either re-scheduled itself (still
-                    // deferred) or finished the work; in the latter case
-                    // we owe the terminal-status finalization that
-                    // handleSwapStatusUpdate skipped.
-                    if (!this.refundRetryTimers.has(swap.id) && this.isFinalStatus(swap)) {
-                        this.finalizeMonitoredSwap(swap);
+                    // The retry either re-scheduled itself (still deferred) or
+                    // finished the work; in the latter case we owe the
+                    // terminal-status finalization that handleSwapStatusUpdate
+                    // skipped. Only when it actually ran, though: this timer
+                    // has already removed itself, so finalizing on a call that
+                    // was skipped for a concurrent action would drop the swap
+                    // mid-refund and strand whatever that action defers.
+                    if (
+                        ran &&
+                        !this.refundRetryTimers.has(current.id) &&
+                        this.isFinalStatus(current)
+                    ) {
+                        this.finalizeMonitoredSwap(current);
                     }
                 }
             }, delayMs),
@@ -1017,12 +1058,17 @@ export class SwapManager implements SwapManagerClient {
     /**
      * Execute autonomous action based on swap status
      * Uses locking to prevent race conditions with manual operations
+     *
+     * @returns `false` when another action for this swap already held the lock
+     * and this call did nothing, `true` when it ran. Callers that finalize on
+     * the result must not act on `false`: the in-flight action owns the swap's
+     * outcome and will re-arm or finalize from its own result.
      */
-    private async executeAutonomousAction(swap: BoltzSwap): Promise<void> {
+    private async executeAutonomousAction(swap: BoltzSwap): Promise<boolean> {
         // Skip if already processing this swap
         if (this.swapsInProgress.has(swap.id)) {
             logger.log(`Swap ${swap.id} is already being processed, skipping autonomous action`);
-            return;
+            return false;
         }
 
         try {
@@ -1035,7 +1081,7 @@ export class SwapManager implements SwapManagerClient {
                     logger.log(
                         `Skipping claim for swap ${swap.id}: missing preimage (restored swap)`,
                     );
-                    return;
+                    return true;
                 }
                 // Claim reverse swap if status is claimable
                 if (isReverseClaimableStatus(swap.status)) {
@@ -1050,12 +1096,27 @@ export class SwapManager implements SwapManagerClient {
                     logger.log(
                         `Skipping refund for swap ${swap.id}: missing invoice (restored swap)`,
                     );
-                    return;
+                    return true;
                 }
                 // Refund submarine swap if status is refundable
                 if (isSubmarineRefundableStatus(swap.status)) {
                     logger.log(`Auto-refunding submarine swap ${swap.id}`);
-                    await this.executeRefundAction(swap);
+                    // invoice.failedToPay and swap.expired are refundable *and*
+                    // final, so a deferred refund left alone would be dropped
+                    // from monitoring with funds still locked and no further
+                    // Boltz update to re-trigger it. Only a partial outcome
+                    // schedules a retry: a throw is a genuine failure (already
+                    // spent, VHTLC not found) that retrying can't clear, so it
+                    // propagates to the catch below and stays loud.
+                    const outcome = await this.executeRefundAction(swap);
+                    if (outcome && outcome.skipped > 0) {
+                        const delayMs = SwapManager.refundRetryDelayMs(outcome.retryAt);
+                        logger.log(
+                            `Submarine swap ${swap.id}: ${outcome.skipped} VTXO(s) deferred — ` +
+                                `scheduling refund retry in ${Math.round(delayMs / 1000)}s`,
+                        );
+                        this.scheduleRefundRetry(swap, delayMs);
+                    }
                     // Emit action executed event to all listeners
                     this.actionExecutedListeners.forEach((listener) => listener(swap, "refund"));
                 }
@@ -1093,10 +1154,12 @@ export class SwapManager implements SwapManagerClient {
                         try {
                             const outcome = await this.executeRefundArkAction(swap);
                             if (outcome && outcome.skipped > 0) {
+                                const delayMs = SwapManager.refundRetryDelayMs(outcome.retryAt);
                                 logger.log(
-                                    `Chain swap ${swap.id}: ${outcome.skipped} VTXO(s) deferred — scheduling refund retry`,
+                                    `Chain swap ${swap.id}: ${outcome.skipped} VTXO(s) deferred — ` +
+                                        `scheduling refund retry in ${Math.round(delayMs / 1000)}s`,
                                 );
-                                this.scheduleRefundRetry(swap, SwapManager.REFUND_RETRY_DELAY_MS);
+                                this.scheduleRefundRetry(swap, delayMs);
                             }
                             this.actionExecutedListeners.forEach((listener) =>
                                 listener(swap, "refundArk"),
@@ -1148,6 +1211,7 @@ export class SwapManager implements SwapManagerClient {
             // Always release the lock
             this.swapsInProgress.delete(swap.id);
         }
+        return true;
     }
 
     /**
@@ -1164,14 +1228,18 @@ export class SwapManager implements SwapManagerClient {
 
     /**
      * Execute refund action for submarine swap
+     *
+     * @returns The refund outcome, or `undefined` if no callback is wired.
      */
-    private async executeRefundAction(swap: BoltzSubmarineSwap): Promise<void> {
+    private async executeRefundAction(
+        swap: BoltzSubmarineSwap,
+    ): Promise<SubmarineRefundOutcome | undefined> {
         if (!this.refundCallback) {
             logger.error("Refund callback not set");
             return;
         }
 
-        await this.refundCallback(swap);
+        return this.refundCallback(swap);
     }
 
     /**

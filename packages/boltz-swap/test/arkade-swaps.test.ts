@@ -3761,9 +3761,16 @@ describe("ArkadeSwaps", () => {
                         forfeitClosureLocked(refundableSwap.response.timeoutBlockHeights!.refund),
                     );
 
+                    const nowSec = Math.floor(Date.now() / 1000);
                     const outcome = await swaps.refundVHTLC(refundableSwap);
 
-                    expect(outcome).toEqual({ swept: 0, skipped: 1 });
+                    expect(outcome.swept).toBe(0);
+                    expect(outcome.skipped).toBe(1);
+                    // A server-side rejection clears once a later block carries
+                    // the locktime, so the retry is a block interval away — not
+                    // the locktime itself, which has already passed here.
+                    expect(outcome.retryAt).toBeGreaterThanOrEqual(nowSec);
+                    expect(outcome.retryAt).toBeLessThanOrEqual(nowSec + 60);
                     // The throw used to escape past this write, so the swap was never
                     // marked refundable for a later retry to pick up.
                     expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
@@ -3786,13 +3793,19 @@ describe("ArkadeSwaps", () => {
                     // Boltz rejection falls through to refundWithoutReceiver. This
                     // site sits inside a catch block — an inline try/catch here would
                     // throw straight past the enclosing handler.
+                    const nowSec = Math.floor(Date.now() / 1000);
                     const dateSpy = vi.spyOn(Date, "now");
                     dateSpy.mockReturnValueOnce((futureRefundTimestamp - 60) * 1000);
                     dateSpy.mockReturnValueOnce((futureRefundTimestamp + 60) * 1000);
 
                     const outcome = await swaps.refundVHTLC(refundableSwapPreCltv);
 
-                    expect(outcome).toEqual({ swept: 0, skipped: 1 });
+                    expect(outcome.swept).toBe(0);
+                    expect(outcome.skipped).toBe(1);
+                    // Deferred by the server, not by the locktime, so the retry
+                    // is a block interval out rather than at futureRefundTimestamp.
+                    expect(outcome.retryAt).toBeGreaterThanOrEqual(nowSec);
+                    expect(outcome.retryAt).toBeLessThanOrEqual(nowSec + 60);
                     expect(refundWithoutReceiverVHTLCwithOffchainTx).toHaveBeenCalledOnce();
                 });
 
@@ -4927,11 +4940,14 @@ describe("ArkadeSwaps", () => {
                 vtxos: vtxos as any,
             });
 
-            const outcome = await swaps.refundArk(buildSwap(futureRefund()));
+            const refundLocktime = futureRefund();
+            const outcome = await swaps.refundArk(buildSwap(refundLocktime));
 
             expect(refundVHTLCwithOffchainTx).not.toHaveBeenCalled();
             expect((swaps as any).joinBatch).not.toHaveBeenCalled();
-            expect(outcome).toEqual({ swept: 0, skipped: 2 });
+            // Both VTXOs must wait out the whole locktime, so retrying any
+            // sooner cannot make progress.
+            expect(outcome).toEqual({ swept: 0, skipped: 2, retryAt: refundLocktime });
         });
 
         it("still throttles the next Boltz call by 2s after a BoltzRefundError on the previous VTXO", async () => {
@@ -4951,7 +4967,8 @@ describe("ArkadeSwaps", () => {
                     .mockRejectedValueOnce(new BoltzRefundError("outpoint mismatch"))
                     .mockResolvedValueOnce(undefined);
 
-                const promise = swaps.refundArk(buildSwap(futureRefund()));
+                const refundLocktime = futureRefund();
+                const promise = swaps.refundArk(buildSwap(refundLocktime));
                 promise.catch(() => {});
 
                 // Drain microtasks so the first call lands.
@@ -4967,7 +4984,7 @@ describe("ArkadeSwaps", () => {
                 expect(mockRefund).toHaveBeenCalledTimes(2);
 
                 const outcome = await promise;
-                expect(outcome).toEqual({ swept: 1, skipped: 1 });
+                expect(outcome).toEqual({ swept: 1, skipped: 1, retryAt: refundLocktime });
             } finally {
                 vi.useRealTimers();
             }
@@ -5009,10 +5026,11 @@ describe("ArkadeSwaps", () => {
                 new BoltzRefundError("outpoint mismatch"),
             );
 
-            const outcome = await swaps.refundArk(buildSwap(futureRefund()));
+            const refundLocktime = futureRefund();
+            const outcome = await swaps.refundArk(buildSwap(refundLocktime));
 
             expect((swaps as any).joinBatch).not.toHaveBeenCalled();
-            expect(outcome).toEqual({ swept: 0, skipped: 1 });
+            expect(outcome).toEqual({ swept: 0, skipped: 1, retryAt: refundLocktime });
         });
 
         it("re-throws non-Boltz errors from the refund offchain tx", async () => {

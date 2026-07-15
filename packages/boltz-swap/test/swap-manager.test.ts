@@ -1900,4 +1900,227 @@ describe("SwapManager", () => {
             }
         });
     });
+
+    describe("Submarine refund partial-outcome retry", () => {
+        const refundableSubmarineSwap: BoltzSubmarineSwap = {
+            ...mockSubmarineSwap,
+            status: "swap.expired",
+        };
+
+        const triggerStatus = async (status: string) => {
+            await mockWebSocket.onmessage({
+                data: JSON.stringify({
+                    event: "update",
+                    args: [{ id: refundableSubmarineSwap.id, status }],
+                }),
+            });
+        };
+
+        beforeEach(() => {
+            global.fetch = vi.fn(() =>
+                Promise.resolve({
+                    ok: true,
+                    json: () => Promise.resolve({ status: "swap.expired" }),
+                    headers: new Headers({ "content-length": "100" }),
+                } as Response),
+            );
+        });
+
+        afterEach(() => {
+            delete (global as { fetch?: unknown }).fetch;
+        });
+
+        const startWith = async (refund: ReturnType<typeof vi.fn>, events = {}) => {
+            swapManager = new SwapManager(swapProvider, { ...swapManagerConfig, events });
+            swapManager.setCallbacks(makeCallbacks({ refund, saveSwap: vi.fn() }));
+            await swapManager.start([{ ...refundableSubmarineSwap, status: "invoice.set" }]);
+            mockWebSocket.onopen();
+        };
+
+        it("keeps the swap monitored and schedules a retry when refund reports skipped > 0", async () => {
+            vi.useFakeTimers();
+            try {
+                // swap.expired is refundable *and* final: without a local retry
+                // the swap would be dropped here with funds still locked.
+                const refund = vi.fn().mockResolvedValueOnce({ swept: 0, skipped: 1 });
+                const onSwapCompleted = vi.fn();
+                await startWith(refund, { onSwapCompleted });
+                await triggerStatus("swap.expired");
+
+                expect(refund).toHaveBeenCalledTimes(1);
+                const stats = await swapManager.getStats();
+                expect(stats.monitoredSwaps).toBe(1);
+                expect(onSwapCompleted).not.toHaveBeenCalled();
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("re-invokes refund after the retry delay until it sweeps the remaining VTXOs", async () => {
+            vi.useFakeTimers();
+            try {
+                const refund = vi
+                    .fn()
+                    .mockResolvedValueOnce({ swept: 0, skipped: 1 })
+                    .mockResolvedValueOnce({ swept: 1, skipped: 0 });
+                const onSwapCompleted = vi.fn();
+                await startWith(refund, { onSwapCompleted });
+                await triggerStatus("swap.expired");
+
+                await vi.advanceTimersByTimeAsync(60_001);
+
+                expect(refund).toHaveBeenCalledTimes(2);
+                const stats = await swapManager.getStats();
+                expect(stats.monitoredSwaps).toBe(0);
+                expect(onSwapCompleted).toHaveBeenCalledTimes(1);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("waits until the reported retryAt instead of polling every minute", async () => {
+            vi.useFakeTimers();
+            try {
+                // A pre-CLTV VTXO cannot clear until its locktime, so retrying
+                // at the 60s floor would spin for hours to no purpose.
+                const retryAt = Math.floor(Date.now() / 1000) + 30 * 60;
+                const refund = vi
+                    .fn()
+                    .mockResolvedValueOnce({ swept: 0, skipped: 1, retryAt })
+                    .mockResolvedValueOnce({ swept: 1, skipped: 0 });
+                await startWith(refund);
+                await triggerStatus("swap.expired");
+
+                await vi.advanceTimersByTimeAsync(60_001);
+                expect(refund).toHaveBeenCalledTimes(1);
+
+                // Only once the locktime lands does the retry fire.
+                await vi.advanceTimersByTimeAsync(30 * 60_000);
+                expect(refund).toHaveBeenCalledTimes(2);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("caps the wait so a far-future retryAt cannot overflow setTimeout", async () => {
+            vi.useFakeTimers();
+            try {
+                // Past setTimeout's 32-bit range a timer fires immediately;
+                // the cap must re-arm in hops instead.
+                const retryAt = Math.floor(Date.now() / 1000) + 90 * 24 * 60 * 60;
+                const refund = vi.fn().mockResolvedValue({ swept: 0, skipped: 1, retryAt });
+                await startWith(refund);
+                await triggerStatus("swap.expired");
+                expect(refund).toHaveBeenCalledTimes(1);
+
+                // Not fired early despite the 90-day target...
+                await vi.advanceTimersByTimeAsync(59 * 60_000);
+                expect(refund).toHaveBeenCalledTimes(1);
+
+                // ...and re-attempted at the 1h ceiling.
+                await vi.advanceTimersByTimeAsync(60_001);
+                expect(refund).toHaveBeenCalledTimes(2);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("drops the swap and emits completed when refund sweeps everything", async () => {
+            const refund = vi.fn().mockResolvedValue({ swept: 1, skipped: 0 });
+            const onSwapCompleted = vi.fn();
+            await startWith(refund, { onSwapCompleted });
+            await triggerStatus("swap.expired");
+
+            expect(refund).toHaveBeenCalledTimes(1);
+            const stats = await swapManager.getStats();
+            expect(stats.monitoredSwaps).toBe(0);
+            expect(onSwapCompleted).toHaveBeenCalledTimes(1);
+        });
+
+        it("does not retry when refund throws — a hard failure stays loud", async () => {
+            vi.useFakeTimers();
+            try {
+                // Unlike a deferral, "already spent" / "VHTLC not found" cannot
+                // clear by waiting, so retrying would spin forever.
+                const refund = vi.fn().mockRejectedValue(new Error("VHTLC is already spent"));
+                const onSwapFailed = vi.fn();
+                await startWith(refund, { onSwapFailed });
+                await triggerStatus("swap.expired");
+
+                expect(refund).toHaveBeenCalledTimes(1);
+                expect(onSwapFailed).toHaveBeenCalledTimes(1);
+
+                await vi.advanceTimersByTimeAsync(120_000);
+                expect(refund).toHaveBeenCalledTimes(1);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("clears the pending retry on stop()", async () => {
+            vi.useFakeTimers();
+            try {
+                const refund = vi.fn().mockResolvedValueOnce({ swept: 0, skipped: 1 });
+                await startWith(refund);
+                await triggerStatus("swap.expired");
+                expect(refund).toHaveBeenCalledTimes(1);
+
+                await swapManager.stop();
+                await vi.advanceTimersByTimeAsync(120_000);
+                expect(refund).toHaveBeenCalledTimes(1);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("does not finalize when the retry fires while another refund is in flight", async () => {
+            vi.useFakeTimers();
+            try {
+                // transaction.lockupFailed is refundable but *not* final, so a
+                // deferral there arms a retry that is still pending when
+                // swap.expired arrives — the one refundable→refundable
+                // transition submarine swaps have, and chain swaps don't.
+                // The retry must not finalize on a call the lock made a no-op:
+                // the in-flight refund is still holding deferred VTXOs.
+                let releaseInFlight: (v: unknown) => void = () => {};
+                const inFlight = new Promise((resolve) => {
+                    releaseInFlight = resolve;
+                });
+                const refund = vi
+                    .fn()
+                    .mockResolvedValueOnce({ swept: 0, skipped: 1 })
+                    .mockImplementationOnce(() => inFlight.then(() => ({ swept: 0, skipped: 1 })))
+                    .mockResolvedValue({ swept: 1, skipped: 0 });
+                const onSwapCompleted = vi.fn();
+                await startWith(refund, { onSwapCompleted });
+
+                await triggerStatus("transaction.lockupFailed");
+                expect(refund).toHaveBeenCalledTimes(1);
+
+                // swap.expired lands and its refund hangs, holding the lock.
+                const expired = triggerStatus("swap.expired");
+                await vi.advanceTimersByTimeAsync(0);
+                expect(refund).toHaveBeenCalledTimes(2);
+
+                // The pending retry fires into the held lock and must no-op.
+                await vi.advanceTimersByTimeAsync(60_001);
+                expect(onSwapCompleted).not.toHaveBeenCalled();
+                expect((await swapManager.getStats()).monitoredSwaps).toBe(1);
+
+                // The in-flight refund resolves still-deferred and re-arms.
+                releaseInFlight(undefined);
+                await expired;
+                expect((await swapManager.getStats()).monitoredSwaps).toBe(1);
+                expect(onSwapCompleted).not.toHaveBeenCalled();
+
+                // That retry lands, sweeps the rest, and only then completes.
+                await vi.advanceTimersByTimeAsync(60_001);
+                expect(refund).toHaveBeenCalledTimes(3);
+                expect((await swapManager.getStats()).monitoredSwaps).toBe(0);
+                expect(onSwapCompleted).toHaveBeenCalledTimes(1);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+    });
 });
