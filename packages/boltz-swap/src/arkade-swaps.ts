@@ -11,8 +11,10 @@ import {
 } from "./errors";
 import {
     ArkAddress,
+    ArkErrorName,
     ArkProvider,
     IndexerProvider,
+    isArkError,
     IWallet,
     VHTLC,
     ArkInfo,
@@ -2699,11 +2701,55 @@ export class ArkadeSwaps {
     }
 
     /**
+     * {@link settleRefundWithoutReceiver}, treating the server's "CLTV not mature yet"
+     * rejection as a deferral rather than a failure.
+     *
+     * Our callers gate on the local wall clock, but the server does not: arkd validates
+     * a seconds-CLTV against the **chain tip block's timestamp**, which advances only
+     * when a block is mined. Tip time therefore lags wall clock by however long since
+     * the last block (~10 min on average, routinely more), so a refund attempted
+     * promptly at maturity is *expected* to be rejected until a block lands bearing a
+     * timestamp past the locktime. That is self-healing — the caller retries later — so
+     * it must not surface as a swap failure. This is the server-authoritative sibling of
+     * the wall-clock deferral the pre-CLTV branches already implement.
+     *
+     * Only `submitTx` can raise it; the batch-round path never does, making this a
+     * pass-through for recoverable VTXOs. Anything else propagates.
+     *
+     * @returns `true` if settled, `false` if the server deferred it.
+     */
+    private async trySettleRefundWithoutReceiver(
+        swapId: string,
+        ctx: RefundWithoutReceiverContext,
+        vtxo: VirtualCoin,
+    ): Promise<boolean> {
+        try {
+            await this.settleRefundWithoutReceiver(ctx, vtxo);
+            return true;
+        } catch (error) {
+            if (!isArkError(error, ArkErrorName.FORFEIT_CLOSURE_LOCKED)) throw error;
+
+            logger.warn(
+                `Swap ${swapId}: server deferred refundWithoutReceiver for VTXO ` +
+                    `${vtxo.txid}:${vtxo.vout} — refund locktime has not matured against ` +
+                    `the chain tip (locktime=${error.metadata?.locktime}, ` +
+                    `currentLocktime=${error.metadata?.current_locktime}, ` +
+                    `type=${error.metadata?.type}). ` +
+                    `Refund will be retried once a later block carries the locktime.`,
+            );
+            return false;
+        }
+    }
+
+    /**
      * Refund every VTXO at a swap's VHTLC address back to the wallet, shared by
      * {@link ArkadeSwaps.refundVHTLC} (submarine) and {@link ArkadeSwaps.refundArk}
      * (chain). Path selection per VTXO:
      * - CLTV elapsed → `refundWithoutReceiver` (offchain for a live VTXO, via a
      *   batch round for a swept one — see {@link settleRefundWithoutReceiver}).
+     *   "Elapsed" here is a local wall-clock judgement, so the server may still
+     *   defer the spend as immature — also skipped, see
+     *   {@link trySettleRefundWithoutReceiver}.
      * - Pre-CLTV recoverable → skipped (Boltz can't co-sign a swept-batch refund).
      * - Pre-CLTV non-recoverable → cooperative 3-of-3 refund via Boltz, falling
      *   back to `refundWithoutReceiver` offchain if Boltz rejects after the
@@ -2745,8 +2791,11 @@ export class ArkadeSwaps {
             // refundWithoutReceiver leaf is spendable — settle it offchain for a
             // live VTXO, or via a batch round for a swept one.
             if (isSubmarineRefundLocktimeReached(refundLocktime)) {
-                await this.settleRefundWithoutReceiver(refundContext, vtxo);
-                sweptCount++;
+                if (await this.trySettleRefundWithoutReceiver(swapId, refundContext, vtxo)) {
+                    sweptCount++;
+                } else {
+                    skippedCount++;
+                }
                 continue;
             }
 
@@ -2818,8 +2867,11 @@ export class ArkadeSwaps {
                 );
                 // Past CLTV and non-recoverable (recoverable VTXOs are skipped
                 // pre-CLTV) → settle offchain, same as the primary post-CLTV path.
-                await this.settleRefundWithoutReceiver(refundContext, vtxo);
-                sweptCount++;
+                if (await this.trySettleRefundWithoutReceiver(swapId, refundContext, vtxo)) {
+                    sweptCount++;
+                } else {
+                    skippedCount++;
+                }
             }
         }
 

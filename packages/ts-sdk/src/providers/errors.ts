@@ -21,6 +21,17 @@ export const ArkErrorName = {
     VTXO_ALREADY_SPENT: "VTXO_ALREADY_SPENT",
     INVALID_TX_FILTER: "INVALID_TX_FILTER",
     TX_FILTERS_LIMIT_EXCEEDED: "TX_FILTERS_LIMIT_EXCEEDED",
+    /**
+     * A CLTV closure was spent before its absolute locktime matured. Raised only by
+     * `submitTx` (never `finalizeTx`), with metadata
+     * `{ locktime, current_locktime, type: "height" | "time" }`.
+     *
+     * Self-healing, so callers should defer and retry rather than fail: the server
+     * compares a seconds-locktime against the **chain tip block's timestamp**, not its
+     * wall clock, so a spend attempted promptly at maturity is rejected until a block
+     * lands carrying a timestamp past the locktime.
+     */
+    FORFEIT_CLOSURE_LOCKED: "FORFEIT_CLOSURE_LOCKED",
 } as const;
 
 export type ArkErrorName = (typeof ArkErrorName)[keyof typeof ArkErrorName];

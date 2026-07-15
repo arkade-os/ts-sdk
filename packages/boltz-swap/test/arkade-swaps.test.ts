@@ -26,6 +26,7 @@ import {
     SingleKey,
     ArkInfo,
     getNetwork,
+    maybeArkError,
 } from "@arkade-os/sdk";
 import { VHTLC } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
@@ -3697,6 +3698,121 @@ describe("ArkadeSwaps", () => {
                 await expect(swaps.refundVHTLC(refundableSwapPreCltv)).rejects.toThrow(
                     /local signing failure/,
                 );
+            });
+
+            describe("server-side CLTV deferral (FORFEIT_CLOSURE_LOCKED)", () => {
+                // Our locktime gate reads the wall clock, but arkd validates a
+                // seconds-CLTV against the chain tip *block's* timestamp, which only
+                // advances when a block is mined. So the server routinely rejects a
+                // refund we consider mature, until a block lands carrying a timestamp
+                // past the locktime. That is self-healing — it must be recorded as a
+                // deferral the caller retries, never as a swap failure.
+
+                /**
+                 * Build the error as the wire delivers it: arkd attaches
+                 * `ark.v1.ErrorDetails` to the gRPC status, grpc-gateway renders it
+                 * into the HTTP body, and `RestArkProvider.submitTx` feeds that body
+                 * through `maybeArkError`. Going through the real parser pins the wire
+                 * contract, which a hand-rolled `ArkError` would let drift.
+                 */
+                const wireArkError = (args: {
+                    name: string;
+                    code: number;
+                    metadata?: Record<string, string>;
+                }) => {
+                    const message = `${args.name} (${args.code}): rejected by the server`;
+                    const parsed = maybeArkError(
+                        new Error(
+                            JSON.stringify({
+                                code: 9, // gRPC FailedPrecondition -> HTTP 400
+                                message,
+                                details: [
+                                    {
+                                        "@type": "type.googleapis.com/ark.v1.ErrorDetails",
+                                        code: args.code,
+                                        name: args.name,
+                                        message,
+                                        ...(args.metadata ? { metadata: args.metadata } : {}),
+                                    },
+                                ],
+                            }),
+                        ),
+                    );
+                    if (!parsed) {
+                        throw new Error(`fixture: ${args.name} did not parse as an ArkError`);
+                    }
+                    return parsed;
+                };
+
+                // `type: "time"` matches the boltz VHTLC's seconds-based CLTV.
+                // `current_locktime` is the tip block's timestamp — behind the
+                // locktime, which is exactly why this fires despite our clock.
+                const forfeitClosureLocked = (locktime: number) =>
+                    wireArkError({
+                        name: "FORFEIT_CLOSURE_LOCKED",
+                        code: 11,
+                        metadata: {
+                            locktime: String(locktime),
+                            current_locktime: String(locktime - 600),
+                            type: "time",
+                        },
+                    });
+
+                it("defers rather than throwing when the server rejects the primary post-CLTV settle", async () => {
+                    const vtxo = makeNonRecoverableVtxo(lockupTxid, 0);
+                    mockRefundSelection({ spendable: [vtxo] });
+
+                    vi.mocked(refundWithoutReceiverVHTLCwithOffchainTx).mockRejectedValueOnce(
+                        forfeitClosureLocked(refundableSwap.response.timeoutBlockHeights!.refund),
+                    );
+
+                    const outcome = await swaps.refundVHTLC(refundableSwap);
+
+                    expect(outcome).toEqual({ swept: 0, skipped: 1 });
+                    // The throw used to escape past this write, so the swap was never
+                    // marked refundable for a later retry to pick up.
+                    expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                        expect.objectContaining({ refundable: true, refunded: false }),
+                    );
+                });
+
+                it("defers when the server rejects the Boltz-rejection fallback settle", async () => {
+                    const vtxo = makeNonRecoverableVtxo(lockupTxid, 0);
+                    mockRefundSelection({ spendable: [vtxo] });
+
+                    vi.mocked(refundVHTLCwithOffchainTx).mockRejectedValueOnce(
+                        new BoltzRefundError("outpoint mismatch"),
+                    );
+                    vi.mocked(refundWithoutReceiverVHTLCwithOffchainTx).mockRejectedValueOnce(
+                        forfeitClosureLocked(futureRefundTimestamp),
+                    );
+
+                    // Pre-CLTV on the first check, post-CLTV on the re-check, so the
+                    // Boltz rejection falls through to refundWithoutReceiver. This
+                    // site sits inside a catch block — an inline try/catch here would
+                    // throw straight past the enclosing handler.
+                    const dateSpy = vi.spyOn(Date, "now");
+                    dateSpy.mockReturnValueOnce((futureRefundTimestamp - 60) * 1000);
+                    dateSpy.mockReturnValueOnce((futureRefundTimestamp + 60) * 1000);
+
+                    const outcome = await swaps.refundVHTLC(refundableSwapPreCltv);
+
+                    expect(outcome).toEqual({ swept: 0, skipped: 1 });
+                    expect(refundWithoutReceiverVHTLCwithOffchainTx).toHaveBeenCalledOnce();
+                });
+
+                it("propagates an Ark error that is not FORFEIT_CLOSURE_LOCKED", async () => {
+                    const vtxo = makeNonRecoverableVtxo(lockupTxid, 0);
+                    mockRefundSelection({ spendable: [vtxo] });
+
+                    vi.mocked(refundWithoutReceiverVHTLCwithOffchainTx).mockRejectedValueOnce(
+                        wireArkError({ name: "VTXO_ALREADY_SPENT", code: 24 }),
+                    );
+
+                    await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
+                        /VTXO_ALREADY_SPENT/,
+                    );
+                });
             });
         });
 
