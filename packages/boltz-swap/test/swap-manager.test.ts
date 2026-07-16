@@ -4,6 +4,7 @@ import { BoltzSwapProvider } from "../src/boltz-swap-provider";
 import { BoltzChainSwap, BoltzReverseSwap, BoltzSubmarineSwap } from "../src/types";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 describe("SwapManager", () => {
     let swapProvider: BoltzSwapProvider;
@@ -1731,6 +1732,50 @@ describe("SwapManager", () => {
             }
         });
 
+        it("re-arms a persisted deferred refund after restart", async () => {
+            vi.useFakeTimers();
+            try {
+                let persisted: BoltzChainSwap | undefined;
+                const saveSwap = vi.fn(async (swap: BoltzChainSwap) => {
+                    persisted = clone(swap);
+                });
+                const refundArk = vi
+                    .fn()
+                    .mockResolvedValueOnce({ swept: 0, skipped: 1 })
+                    .mockResolvedValueOnce({ swept: 1, skipped: 0 });
+
+                swapManager = new SwapManager(swapProvider, swapManagerConfig);
+                swapManager.setCallbacks(makeCallbacks({ refundArk, saveSwap }));
+
+                await swapManager.start([{ ...refundableChainSwap, status: "swap.created" }]);
+                mockWebSocket.onopen();
+                await triggerSwapExpired();
+
+                expect(refundArk).toHaveBeenCalledTimes(1);
+                expect(persisted?.refundRetry).toEqual(
+                    expect.objectContaining({ pending: true, nextRetryAt: expect.any(Number) }),
+                );
+
+                await swapManager.stop();
+
+                const restarted = new SwapManager(swapProvider, swapManagerConfig);
+                restarted.setCallbacks(makeCallbacks({ refundArk, saveSwap }));
+                swapManager = restarted;
+                await swapManager.start([clone(persisted!)]);
+
+                expect(refundArk).toHaveBeenCalledTimes(1);
+                expect((await swapManager.getStats()).monitoredSwaps).toBe(1);
+
+                await vi.advanceTimersByTimeAsync(61_000);
+
+                expect(refundArk).toHaveBeenCalledTimes(2);
+                expect((await swapManager.getStats()).monitoredSwaps).toBe(0);
+                expect(persisted?.refundRetry).toBeUndefined();
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
         it("removes the swap immediately and emits completed when refundArk reports no skipped VTXOs", async () => {
             const refundArk = vi.fn().mockResolvedValue({
                 swept: 1,
@@ -1973,6 +2018,50 @@ describe("SwapManager", () => {
                 const stats = await swapManager.getStats();
                 expect(stats.monitoredSwaps).toBe(0);
                 expect(onSwapCompleted).toHaveBeenCalledTimes(1);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("re-arms a persisted deferred refund after restart", async () => {
+            vi.useFakeTimers();
+            try {
+                let persisted: BoltzSubmarineSwap | undefined;
+                const saveSwap = vi.fn(async (swap: BoltzSubmarineSwap) => {
+                    persisted = clone(swap);
+                });
+                const refund = vi
+                    .fn()
+                    .mockResolvedValueOnce({ swept: 0, skipped: 1 })
+                    .mockResolvedValueOnce({ swept: 1, skipped: 0 });
+
+                swapManager = new SwapManager(swapProvider, swapManagerConfig);
+                swapManager.setCallbacks(makeCallbacks({ refund, saveSwap }));
+
+                await swapManager.start([{ ...refundableSubmarineSwap, status: "invoice.set" }]);
+                mockWebSocket.onopen();
+                await triggerStatus("swap.expired");
+
+                expect(refund).toHaveBeenCalledTimes(1);
+                expect(persisted?.refundRetry).toEqual(
+                    expect.objectContaining({ pending: true, nextRetryAt: expect.any(Number) }),
+                );
+
+                await swapManager.stop();
+
+                const restarted = new SwapManager(swapProvider, swapManagerConfig);
+                restarted.setCallbacks(makeCallbacks({ refund, saveSwap }));
+                swapManager = restarted;
+                await swapManager.start([clone(persisted!)]);
+
+                expect(refund).toHaveBeenCalledTimes(1);
+                expect((await swapManager.getStats()).monitoredSwaps).toBe(1);
+
+                await vi.advanceTimersByTimeAsync(61_000);
+
+                expect(refund).toHaveBeenCalledTimes(2);
+                expect((await swapManager.getStats()).monitoredSwaps).toBe(0);
+                expect(persisted?.refundRetry).toBeUndefined();
             } finally {
                 vi.useRealTimers();
             }

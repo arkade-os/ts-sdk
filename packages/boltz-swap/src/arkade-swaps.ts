@@ -1140,6 +1140,8 @@ export class ArkadeSwaps {
         // failure-refund statuses still update normally.
         if (!isSubmarineSuccessStatus(pendingSwap.status)) {
             const fullyRefunded = outcome.skipped === 0;
+            pendingSwap.refundable = true;
+            pendingSwap.refunded = fullyRefunded;
             await updateSubmarineSwapStatus(
                 pendingSwap,
                 pendingSwap.status, // Keep current status
@@ -1909,10 +1911,8 @@ export class ArkadeSwaps {
 
         // update the pending swap on storage
         const finalStatus = await this.getSwapStatus(pendingSwap.id);
-        await this.savePendingChainSwap({
-            ...pendingSwap,
-            status: finalStatus.status,
-        });
+        pendingSwap.status = finalStatus.status;
+        await this.savePendingChainSwap(pendingSwap);
 
         return outcome;
     }

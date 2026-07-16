@@ -141,6 +141,14 @@ export interface OptimisticSendLightningPaymentResponse {
     txid: string;
 }
 
+/** Persisted state for a locally deferred refund retry. */
+export interface RefundRetryState {
+    /** True while SwapManager still needs to retry the local refund path. */
+    pending: true;
+    /** Unix timestamp (seconds) for the next retry attempt. */
+    nextRetryAt: number;
+}
+
 /** Tracks an in-progress reverse swap (Lightning → Arkade). */
 export interface BoltzReverseSwap {
     /** Unique swap ID from Boltz. */
@@ -175,6 +183,8 @@ export interface BoltzSubmarineSwap {
     refunded?: boolean;
     /** Whether the swap is eligible for refund. */
     refundable?: boolean;
+    /** Deferred local refund retry state, if any. */
+    refundRetry?: RefundRetryState;
     /** Current Boltz swap status. */
     status: BoltzSwapStatus;
     /** The original request sent to Boltz. */
@@ -296,6 +306,8 @@ export interface BoltzChainSwap {
     feeSatsPerByte: number;
     /** Current Boltz swap status. */
     status: BoltzSwapStatus;
+    /** Deferred local ARK refund retry state, if any. */
+    refundRetry?: RefundRetryState;
     /** The original chain swap request sent to Boltz. */
     request: CreateChainSwapRequest;
     /** Boltz API response with lockup and claim details. */

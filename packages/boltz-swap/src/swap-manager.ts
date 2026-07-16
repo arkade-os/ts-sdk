@@ -167,6 +167,11 @@ export interface SwapManagerCallbacks {
     saveSwap: (swap: BoltzSwap) => Promise<void>;
 }
 
+type RefundRetryableSwap = BoltzSubmarineSwap | BoltzChainSwap;
+type RefundRetryableSwapWithRetry = RefundRetryableSwap & {
+    refundRetry: NonNullable<RefundRetryableSwap["refundRetry"]>;
+};
+
 /**
  * Background swap monitor with WebSocket + polling fallback.
  *
@@ -223,10 +228,9 @@ export class SwapManager implements SwapManagerClient {
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private initialPollTimer: ReturnType<typeof setTimeout> | null = null;
     private pollRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
-    // Per-swap retry timers for chain refunds that left work undone
-    // (refundArk returned `skipped > 0`). The swap is held in
-    // `monitoredSwaps` past its terminal Boltz status until the local
-    // refund completes or the manager stops.
+    // Per-swap retry timers for deferred refunds that left local work undone.
+    // The swap is held in `monitoredSwaps` past its terminal Boltz status
+    // until the local refund completes or the manager stops.
     private refundRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
     // Per-swap counter of consecutive `SwapNotFoundError` responses from
     // `getSwapStatus`. Reset on any successful poll. Once a swap reaches
@@ -426,15 +430,19 @@ export class SwapManager implements SwapManagerClient {
             this.initialSwaps.set(swap.id, swap);
         }
 
-        // Load pending swaps into monitoring map (only non-final swaps)
+        // Load active swaps plus terminal swaps with persisted deferred refunds.
         for (const swap of pendingSwaps) {
-            if (!this.isFinalStatus(swap)) {
+            if (this.shouldMonitorOnStart(swap)) {
                 this.monitoredSwaps.set(swap.id, swap);
             }
         }
 
         // Try to connect WebSocket; method handles runtime detection + fallback.
         await this.tryConnectWebSocket();
+
+        // Re-arm persisted deferred refund retries before normal action resume,
+        // so restart honors the saved next retry time instead of retrying early.
+        this.resumePersistedRefundRetries();
 
         // Resume any actionable swaps immediately
         await this.resumeActionableSwaps();
@@ -541,6 +549,7 @@ export class SwapManager implements SwapManagerClient {
      * Remove a swap from monitoring
      */
     async removeSwap(swapId: string): Promise<void> {
+        const swap = this.monitoredSwaps.get(swapId);
         this.monitoredSwaps.delete(swapId);
         this.swapSubscriptions.delete(swapId);
         this.chainClaimPromises.delete(swapId);
@@ -553,6 +562,9 @@ export class SwapManager implements SwapManagerClient {
         if (refundRetryTimer) {
             clearTimeout(refundRetryTimer);
             this.refundRetryTimers.delete(swapId);
+        }
+        if (swap) {
+            await this.clearRefundRetry(swap);
         }
         this.notFoundCounts.delete(swapId);
         logger.log(`Removed swap ${swapId} from monitoring`);
@@ -999,6 +1011,20 @@ export class SwapManager implements SwapManagerClient {
         this.swapCompletedListeners.forEach((listener) => listener(swap));
     }
 
+    private static isRefundRetryableSwap(swap: BoltzSwap): swap is RefundRetryableSwap {
+        return isPendingSubmarineSwap(swap) || isPendingChainSwap(swap);
+    }
+
+    private static hasPendingRefundRetry(swap: BoltzSwap): swap is RefundRetryableSwapWithRetry {
+        if (!SwapManager.isRefundRetryableSwap(swap)) return false;
+        return swap.refundRetry?.pending === true && Number.isFinite(swap.refundRetry.nextRetryAt);
+    }
+
+    private shouldMonitorOnStart(swap: BoltzSwap): boolean {
+        if (!this.isFinalStatus(swap)) return true;
+        return this.config.enableAutoActions === true && SwapManager.hasPendingRefundRetry(swap);
+    }
+
     /**
      * How long to wait before re-attempting a refund, given the `retryAt`
      * (Unix seconds) the outcome reported. Clamped at both ends: see
@@ -1013,12 +1039,50 @@ export class SwapManager implements SwapManagerClient {
         );
     }
 
+    private static persistedRefundRetryDelayMs(nextRetryAt: number): number {
+        return Math.min(
+            Math.max(nextRetryAt * 1000 - Date.now(), 0),
+            SwapManager.MAX_REFUND_RETRY_DELAY_MS,
+        );
+    }
+
+    private static nextRefundRetryAt(delayMs: number): number {
+        return Math.ceil((Date.now() + delayMs) / 1000);
+    }
+
+    private async clearRefundRetry(swap: BoltzSwap): Promise<void> {
+        if (!SwapManager.isRefundRetryableSwap(swap) || swap.refundRetry === undefined) return;
+        delete swap.refundRetry;
+        await this.saveSwap(swap);
+    }
+
+    private resumePersistedRefundRetries(): void {
+        if (!this.config.enableAutoActions) return;
+        for (const swap of this.monitoredSwaps.values()) {
+            if (!SwapManager.hasPendingRefundRetry(swap)) continue;
+            const delayMs = SwapManager.persistedRefundRetryDelayMs(swap.refundRetry.nextRetryAt);
+            logger.log(
+                `Swap ${swap.id}: resuming deferred refund retry in ${Math.round(delayMs / 1000)}s`,
+            );
+            this.armRefundRetryTimer(swap, delayMs);
+        }
+    }
+
     /**
      * Schedule another `executeAutonomousAction` run for a swap whose refund
-     * left VTXOs deferred. After the retry completes, if no further deferral
-     * was reported, finalize monitoring cleanup.
+     * left VTXOs deferred. The pending retry and its next attempt time are saved
+     * with the swap so stop/start and application restart can re-arm it.
      */
-    private scheduleRefundRetry(swap: BoltzSwap, delayMs: number): void {
+    private async scheduleRefundRetry(swap: RefundRetryableSwap, delayMs: number): Promise<void> {
+        swap.refundRetry = {
+            pending: true,
+            nextRetryAt: SwapManager.nextRefundRetryAt(delayMs),
+        };
+        await this.saveSwap(swap);
+        this.armRefundRetryTimer(swap, delayMs);
+    }
+
+    private armRefundRetryTimer(swap: RefundRetryableSwap, delayMs: number): void {
         const existing = this.refundRetryTimers.get(swap.id);
         if (existing) clearTimeout(existing);
         this.refundRetryTimers.set(
@@ -1027,7 +1091,7 @@ export class SwapManager implements SwapManagerClient {
                 this.refundRetryTimers.delete(swap.id);
                 if (!this.isRunning) return;
                 // Re-read rather than reuse the swap captured at scheduling
-                // time: a submarine swap can advance invoice.failedToPay →
+                // time: a submarine swap can advance invoice.failedToPay ->
                 // swap.expired while the retry is pending, and finalization
                 // below must report the status it actually ended on.
                 const current = this.monitoredSwaps.get(swap.id);
@@ -1108,14 +1172,22 @@ export class SwapManager implements SwapManagerClient {
                     // schedules a retry: a throw is a genuine failure (already
                     // spent, VHTLC not found) that retrying can't clear, so it
                     // propagates to the catch below and stays loud.
-                    const outcome = await this.executeRefundAction(swap);
+                    let outcome: SubmarineRefundOutcome | undefined;
+                    try {
+                        outcome = await this.executeRefundAction(swap);
+                    } catch (error) {
+                        await this.clearRefundRetry(swap);
+                        throw error;
+                    }
                     if (outcome && outcome.skipped > 0) {
                         const delayMs = SwapManager.refundRetryDelayMs(outcome.retryAt);
                         logger.log(
                             `Submarine swap ${swap.id}: ${outcome.skipped} VTXO(s) deferred — ` +
                                 `scheduling refund retry in ${Math.round(delayMs / 1000)}s`,
                         );
-                        this.scheduleRefundRetry(swap, delayMs);
+                        await this.scheduleRefundRetry(swap, delayMs);
+                    } else if (outcome) {
+                        await this.clearRefundRetry(swap);
                     }
                     // Emit action executed event to all listeners
                     this.actionExecutedListeners.forEach((listener) => listener(swap, "refund"));
@@ -1159,7 +1231,9 @@ export class SwapManager implements SwapManagerClient {
                                     `Chain swap ${swap.id}: ${outcome.skipped} VTXO(s) deferred — ` +
                                         `scheduling refund retry in ${Math.round(delayMs / 1000)}s`,
                                 );
-                                this.scheduleRefundRetry(swap, delayMs);
+                                await this.scheduleRefundRetry(swap, delayMs);
+                            } else if (outcome) {
+                                await this.clearRefundRetry(swap);
                             }
                             this.actionExecutedListeners.forEach((listener) =>
                                 listener(swap, "refundArk"),
@@ -1172,7 +1246,7 @@ export class SwapManager implements SwapManagerClient {
                             this.swapFailedListeners.forEach((listener) =>
                                 listener(swap, error as Error),
                             );
-                            this.scheduleRefundRetry(swap, SwapManager.REFUND_RETRY_DELAY_MS);
+                            await this.scheduleRefundRetry(swap, SwapManager.REFUND_RETRY_DELAY_MS);
                         }
                     }
                     if (swap.request.from === "BTC") {
@@ -1340,6 +1414,7 @@ export class SwapManager implements SwapManagerClient {
         }
 
         for (const swap of this.monitoredSwaps.values()) {
+            if (this.refundRetryTimers.has(swap.id)) continue;
             try {
                 // Check if swap needs action based on current status
                 if (isPendingReverseSwap(swap) && isReverseClaimableStatus(swap.status)) {
