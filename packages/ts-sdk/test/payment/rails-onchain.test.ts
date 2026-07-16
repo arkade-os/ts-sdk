@@ -26,19 +26,19 @@ describe("onchainRail (collaborative exit)", () => {
 
     it("matches a bare BTC address and the on-chain part of a BIP21 URI", () => {
         const r = onchainRail();
-        expect(r.match(btcAddr, ctx({}))).toBe(true);
-        expect(r.match(`bitcoin:${btcAddr}?ark=${arkAddr}`, ctx({}))).toBe(true);
+        expect(r.match({ raw: btcAddr }, ctx({}))).toBe(true);
+        expect(r.match({ raw: `bitcoin:${btcAddr}?ark=${arkAddr}` }, ctx({}))).toBe(true);
     });
 
     it("does not match an ark address or a bolt11 invoice", () => {
         const r = onchainRail();
-        expect(r.match(arkAddr, ctx({}))).toBe(false);
-        expect(r.match("lnbc10n1pjexample", ctx({}))).toBe(false);
+        expect(r.match({ raw: arkAddr }, ctx({}))).toBe(false);
+        expect(r.match({ raw: "lnbc10n1pjexample" }, ctx({}))).toBe(false);
     });
 
     it("offboards the amount to the BTC address and surfaces the txid", async () => {
         const c = ctx({});
-        const q = await onchainRail().quote(btcAddr, 1000, c);
+        const q = await onchainRail().quote({ raw: btcAddr, amount: 1000 }, c);
         const h = await q.send();
 
         expect(await h.settled()).toMatchObject({ railId: "onchain", txid: "txEXIT" });
@@ -47,18 +47,18 @@ describe("onchainRail (collaborative exit)", () => {
     });
 
     it("falls back to the BIP21-encoded amount (BTC) converted to sats", async () => {
-        const q = await onchainRail().quote(
-            `bitcoin:${btcAddr}?amount=0.00001`,
-            undefined,
-            ctx({}),
-        );
+        const q = await onchainRail().quote({ raw: `bitcoin:${btcAddr}?amount=0.00001` }, ctx({}));
         expect(q.amount).toBe(1000);
         await q.send().then((h) => h.settled());
         expect(offboard).toHaveBeenCalledWith(btcAddr, fees, 1000n);
     });
 
     it("rejects a non-positive or fractional amount up front", async () => {
-        await expect(onchainRail().quote(btcAddr, 0, ctx({}))).rejects.toThrow(/invalid amount/i);
-        await expect(onchainRail().quote(btcAddr, 1.5, ctx({}))).rejects.toThrow(/invalid amount/i);
+        await expect(onchainRail().quote({ raw: btcAddr, amount: 0 }, ctx({}))).rejects.toThrow(
+            /invalid amount/i,
+        );
+        await expect(onchainRail().quote({ raw: btcAddr, amount: 1.5 }, ctx({}))).rejects.toThrow(
+            /invalid amount/i,
+        );
     });
 });

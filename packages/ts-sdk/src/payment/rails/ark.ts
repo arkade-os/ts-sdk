@@ -22,10 +22,10 @@ function arkTarget(raw: string): string | undefined {
 export function arkRail(): PaymentRail {
     return {
         id: "ark",
-        match: (raw) => arkTarget(raw) !== undefined,
-        quote: async (raw, amount, ctx: RouterContext) => {
-            const address = arkTarget(raw)!;
-            const amt = resolveSendAmount("ark", raw, amount);
+        match: (req) => arkTarget(req.raw) !== undefined,
+        quote: async (req, ctx: RouterContext) => {
+            const address = arkTarget(req.raw)!;
+            const amt = resolveSendAmount("ark", req.raw, req.amount);
             return {
                 railId: "ark",
                 amount: amt,

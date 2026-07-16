@@ -8,13 +8,13 @@ const btcAddr = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7k";
 describe("createDefaultPaymentRouter(wallet)", () => {
     it("registers ark + onchain rails, ranked by the default priority", async () => {
         const router = createDefaultPaymentRouter({} as any);
-        const opts = await router.options(`bitcoin:${btcAddr}?ark=${arkAddr}`);
+        const opts = await router.options({ raw: `bitcoin:${btcAddr}?ark=${arkAddr}` });
         expect(opts.map((o) => o.railId)).toEqual(["ark", "onchain"]);
     });
 
     it("routes a bare ark address to ark and a bare BTC address to onchain", async () => {
         const router = createDefaultPaymentRouter({} as any);
-        expect((await router.route(arkAddr, 500)).railId).toBe("ark");
-        expect((await router.route(btcAddr, 500)).railId).toBe("onchain");
+        expect((await router.route({ raw: arkAddr, amount: 500 })).railId).toBe("ark");
+        expect((await router.route({ raw: btcAddr, amount: 500 })).railId).toBe("onchain");
     });
 });

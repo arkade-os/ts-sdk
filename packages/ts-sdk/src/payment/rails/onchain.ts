@@ -25,12 +25,12 @@ function btcTarget(raw: string): string | undefined {
 export function onchainRail(): PaymentRail {
     return {
         id: "onchain",
-        match: (raw) => btcTarget(raw) !== undefined,
-        quote: async (raw, amount, ctx: RouterContext) => {
-            const address = btcTarget(raw)!;
+        match: (req) => btcTarget(req.raw) !== undefined,
+        quote: async (req, ctx: RouterContext) => {
+            const address = btcTarget(req.raw)!;
             // Reject missing/zero/fractional amounts up front: 0 sats would
             // silently settle nothing, and BigInt(amt) throws on non-integers.
-            const amt = resolveSendAmount("onchain", raw, amount);
+            const amt = resolveSendAmount("onchain", req.raw, req.amount);
             return {
                 railId: "onchain",
                 amount: amt,

@@ -1,6 +1,7 @@
 import type {
     PaymentRail,
     PaymentOption,
+    PaymentRequest,
     RouterPreferences,
     RouterContext,
     RouteQuote,
@@ -18,8 +19,9 @@ export class AmbiguousRouteError extends Error {
 /**
  * Registry-based payment router. Holds id-keyed {@link PaymentRail} entries
  * (mirroring `ActivityRegistry`): `use()` overwrites by id, `remove()` deletes.
- * It operates on the raw request string — rails self-extract their target via
- * the shared helpers. `options()` returns every matching+available rail ranked
+ * It operates on a {@link PaymentRequest} (raw target + optional amount) —
+ * rails self-extract their target via the shared helpers, and `available()`
+ * gates on the amount. `options()` returns every matching+available rail ranked
  * by preferences; `route()` is the "take the top" convenience.
  */
 export class PaymentRouter {
@@ -39,20 +41,20 @@ export class PaymentRouter {
         return this;
     }
 
-    /** Rails matching `raw`, filtered by `disabled`/`available()`, ranked by
+    /** Rails matching `req`, filtered by `disabled`/`available()`, ranked by
      *  `priority` (unlisted rails keep insertion order, after listed ones). */
-    async options(raw: string, prefs?: RouterPreferences): Promise<PaymentOption[]> {
+    async options(req: PaymentRequest, prefs?: RouterPreferences): Promise<PaymentOption[]> {
         const merged = { ...this.ctx.prefs, ...prefs };
         const ctx: RouterContext = { ...this.ctx, prefs: merged };
 
         const matched = [...this.rails.values()].filter(
-            (rail) => !merged.disabled?.includes(rail.id) && rail.match(raw, ctx),
+            (rail) => !merged.disabled?.includes(rail.id) && rail.match(req, ctx),
         );
 
         const available = (
             await Promise.all(
                 matched.map(async (rail) =>
-                    ((await rail.available?.(ctx)) ?? true) ? rail : null,
+                    ((await rail.available?.(req, ctx)) ?? true) ? rail : null,
                 ),
             )
         ).filter((rail): rail is PaymentRail => rail !== null);
@@ -65,22 +67,22 @@ export class PaymentRouter {
 
         return available.map((rail) => ({
             railId: rail.id,
-            quote: (amount?: number) => rail.quote(raw, amount, ctx),
+            quote: () => rail.quote(req, ctx),
         }));
     }
 
     /** Top-ranked option's quote. Throws when nothing routes, or
      *  {@link AmbiguousRouteError} when `tieBreak` is `"require-choice"` and
      *  more than one option survives. */
-    async route(raw: string, amount?: number, prefs?: RouterPreferences): Promise<RouteQuote> {
-        const options = await this.options(raw, prefs);
+    async route(req: PaymentRequest, prefs?: RouterPreferences): Promise<RouteQuote> {
+        const options = await this.options(req, prefs);
         if (options.length === 0) {
-            throw new Error(`no rail for: ${raw}`);
+            throw new Error(`no rail for: ${req.raw}`);
         }
         const tieBreak = { ...this.ctx.prefs, ...prefs }.tieBreak ?? "first";
         if (tieBreak === "require-choice" && options.length > 1) {
             throw new AmbiguousRouteError(options.map((o) => o.railId));
         }
-        return options[0].quote(amount);
+        return options[0].quote();
     }
 }

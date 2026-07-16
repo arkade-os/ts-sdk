@@ -35,10 +35,10 @@ function invoiceSats(invoice: string): number {
 export function lightningRail(): PaymentRail {
     return {
         id: "lightning",
-        match: (raw) => invoiceOf(raw) !== undefined,
-        available: (ctx) => ctx.swaps != null,
-        quote: async (raw, _amount, ctx: RouterContext) => {
-            const invoice = invoiceOf(raw)!;
+        match: (req) => invoiceOf(req.raw) !== undefined,
+        available: (_req, ctx) => ctx.swaps != null,
+        quote: async (req, ctx: RouterContext) => {
+            const invoice = invoiceOf(req.raw)!;
             // The bolt11 invoice carries the amount; reject amountless or
             // undecodable invoices instead of surfacing a `total: 0` quote.
             const amount = invoiceSats(invoice);

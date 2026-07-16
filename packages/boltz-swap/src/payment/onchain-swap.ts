@@ -23,11 +23,11 @@ function btcTarget(raw: string): string | undefined {
 export function onchainSwapRail(): PaymentRail {
     return {
         id: "onchain-swap",
-        match: (raw) => btcTarget(raw) !== undefined,
-        available: (ctx) => ctx.swaps != null,
-        quote: async (raw, amount, ctx: RouterContext) => {
-            const address = btcTarget(raw)!;
-            const amt = resolveSendAmount("onchain-swap", raw, amount);
+        match: (req) => btcTarget(req.raw) !== undefined,
+        available: (_req, ctx) => ctx.swaps != null,
+        quote: async (req, ctx: RouterContext) => {
+            const address = btcTarget(req.raw)!;
+            const amt = resolveSendAmount("onchain-swap", req.raw, req.amount);
             return {
                 railId: "onchain-swap",
                 amount: amt,

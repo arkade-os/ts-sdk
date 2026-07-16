@@ -12,14 +12,14 @@ const ctx = (swaps: unknown, wallet: unknown = {}): RouterContext => ({
 describe("onchainSwapRail", () => {
     it("matches a BTC address and the on-chain part of a BIP21 URI", () => {
         const r = onchainSwapRail();
-        expect(r.match(btcAddr, ctx({}))).toBe(true);
-        expect(r.match(`bitcoin:${btcAddr}?lightning=lnbc10n1pj`, ctx({}))).toBe(true);
-        expect(r.match("lnbc10n1pjexample", ctx({}))).toBe(false);
+        expect(r.match({ raw: btcAddr }, ctx({}))).toBe(true);
+        expect(r.match({ raw: `bitcoin:${btcAddr}?lightning=lnbc10n1pj` }, ctx({}))).toBe(true);
+        expect(r.match({ raw: "lnbc10n1pjexample" }, ctx({}))).toBe(false);
     });
 
     it("is unavailable until swaps are configured in the context", async () => {
-        expect(await onchainSwapRail().available?.(ctx(undefined))).toBe(false);
-        expect(await onchainSwapRail().available?.(ctx({}))).toBe(true);
+        expect(await onchainSwapRail().available?.({ raw: btcAddr }, ctx(undefined))).toBe(false);
+        expect(await onchainSwapRail().available?.({ raw: btcAddr }, ctx({}))).toBe(true);
     });
 
     it("send() creates the chain swap, funds the lockup, then claims BTC", async () => {
@@ -31,8 +31,7 @@ describe("onchainSwapRail", () => {
         const send = vi.fn().mockResolvedValue("fundTx");
 
         const q = await onchainSwapRail().quote(
-            btcAddr,
-            1000,
+            { raw: btcAddr, amount: 1000 },
             ctx({ arkToBtc, waitAndClaimBtc }, { send }),
         );
         expect(q.amount).toBe(1000);
@@ -49,14 +48,14 @@ describe("onchainSwapRail", () => {
     });
 
     it("rejects a missing, zero, or fractional amount at quote time", async () => {
-        await expect(onchainSwapRail().quote(btcAddr, undefined, ctx({}))).rejects.toThrow(
+        await expect(onchainSwapRail().quote({ raw: btcAddr }, ctx({}))).rejects.toThrow(
             /amount is required/i,
         );
-        await expect(onchainSwapRail().quote(btcAddr, 0, ctx({}))).rejects.toThrow(
+        await expect(onchainSwapRail().quote({ raw: btcAddr, amount: 0 }, ctx({}))).rejects.toThrow(
             /invalid amount/i,
         );
-        await expect(onchainSwapRail().quote(btcAddr, 1.5, ctx({}))).rejects.toThrow(
-            /invalid amount/i,
-        );
+        await expect(
+            onchainSwapRail().quote({ raw: btcAddr, amount: 1.5 }, ctx({})),
+        ).rejects.toThrow(/invalid amount/i);
     });
 });

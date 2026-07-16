@@ -64,13 +64,16 @@ export interface PaymentRequest {
 /** A payment rail — registered by id, mirrors the ActivityRegistry resolver shape. */
 export interface PaymentRail {
     id: string;
-    match(raw: string, ctx: RouterContext): boolean;
-    available?(ctx: RouterContext): boolean | Promise<boolean>;
-    quote(raw: string, amount: number | undefined, ctx: RouterContext): Promise<RouteQuote>;
+    /** Classification only — amount-blind; takes the request for uniformity. */
+    match(req: PaymentRequest, ctx: RouterContext): boolean;
+    /** Availability gate — where a rail drops itself for an out-of-limits amount. */
+    available?(req: PaymentRequest, ctx: RouterContext): boolean | Promise<boolean>;
+    quote(req: PaymentRequest, ctx: RouterContext): Promise<RouteQuote>;
 }
 
 export interface PaymentOption {
     railId: string;
-    /** Lazy — resolves fee/amount + prepares execution only when called. */
-    quote(amount?: number): Promise<RouteQuote>;
+    /** Lazy — resolves fee/amount + prepares execution only when called. The
+     *  amount is fixed by the request, so this is no-arg. */
+    quote(): Promise<RouteQuote>;
 }
