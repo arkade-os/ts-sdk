@@ -40,7 +40,7 @@ describe("swapActivityResolver", () => {
 
         expect(r.resolve(tx("txA"))).toEqual([
             {
-                groupId: "swap:s1",
+                groupId: "boltz:swap:s1",
                 label: "Chain swap",
                 kind: "swap",
                 metadata: { swapType: "chain", swapId: "s1", status: "transaction.claimed" },

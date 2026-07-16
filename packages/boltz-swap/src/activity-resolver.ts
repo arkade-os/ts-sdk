@@ -21,13 +21,15 @@ const SWAP_LABEL: Record<BoltzSwap["type"], string> = {
  * ```
  *
  * NOTE: only swaps whose `claimTxid` has been persisted at completion are
- * correlated. Chain-swap completion persists it; reverse/submarine and the other
- * chain completion paths still need the same one-line persist (see the PR).
+ * correlated. The manual monitor paths persist it for reverse, submarine, and chain
+ * swaps; when the SwapManager drives completion, the reverse (`claimVHTLC`) and
+ * chain-BTC (`claimBtc`) claim callbacks do not yet persist it, so those combinations
+ * are not correlated.
  */
 export function swapActivityResolver(swapRepo: SwapRepository): ActivityResolver {
     let byTxid = new Map<string, BoltzSwap>();
     return {
-        id: "swap",
+        id: "boltz:swap",
         async prepare(): Promise<void> {
             const swaps = await swapRepo.getAllSwaps<BoltzSwap>();
             byTxid = new Map(
@@ -42,7 +44,7 @@ export function swapActivityResolver(swapRepo: SwapRepository): ActivityResolver
             if (!swap) return undefined;
             return [
                 {
-                    groupId: `swap:${swap.id}`,
+                    groupId: `boltz:swap:${swap.id}`,
                     label: SWAP_LABEL[swap.type],
                     kind: "swap",
                     metadata: { swapType: swap.type, swapId: swap.id, status: swap.status },

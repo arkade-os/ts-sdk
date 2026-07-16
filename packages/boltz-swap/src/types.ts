@@ -183,7 +183,11 @@ export interface BoltzSubmarineSwap {
     request: CreateSubmarineSwapRequest;
     /** Boltz API response with payment address and expected amount. */
     response: CreateSubmarineSwapResponse;
-    /** On-chain claim/settlement txid once known; correlates to the wallet's ArkTransaction for activity history. */
+    /**
+     * Txid of the wallet ArkTransaction this swap corresponds to, used to correlate
+     * it in activity history. For submarine swaps this is the outgoing lockup/funding
+     * txid (not a claim), despite the field name.
+     */
     claimTxid?: string;
 }
 
