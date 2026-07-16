@@ -1,80 +1,112 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
-    branches: [ master, next ]
+    branches: [master, next]
+  # Run on all pull requests (not just those targeting master/next) so stacked
+  # PRs onto feature branches get CI checks too.
   pull_request:
-    branches: [ master, next ]
 
 jobs:
-  test:
+  check:
+    name: Lint, Test & Build
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '22.12.0'
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.25.0
 
-    - name: Install pnpm
-      uses: pnpm/action-setup@v4.2.0
-      with:
-        version: 10.25.0
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "pnpm"
 
-    - name: Get pnpm store directory
-      shell: bash
-      run: |
-        echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
-    - name: Setup pnpm cache
-      uses: actions/cache@v3
-      with:
-        path: ${{ env.STORE_PATH }}
-        key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-        restore-keys: |
-          ${{ runner.os }}-pnpm-store-
+      - name: Lint
+        run: pnpm run lint
 
-    - name: Install dependencies
-      run: pnpm install
+      - name: Type-check ts-sdk
+        run: pnpm -C packages/ts-sdk run typecheck
 
-    - name: Run linter
-      run: pnpm lint
+      - name: Build
+        run: pnpm run build
 
-    - name: Run unit tests
-      run: pnpm test:unit
+      - name: Type-check boltz-swap
+        run: pnpm -C packages/boltz-swap run typecheck
 
-    - name: Run Nigiri
-      uses: vulpemventures/nigiri-github-action@v1
-      with:
-        use_liquid: false
-        use_ln: false
+      - name: Smoke-test ts-sdk dist
+        run: pnpm -C packages/ts-sdk run smoke:dist
 
-    - name: Build arkd master
-      run: pnpm run test:build-docker
+      - name: Verify ts-sdk publish shape
+        run: cd packages/ts-sdk && npm pack --dry-run --ignore-scripts
 
-    - name: Run arkd master
-      run: pnpm run test:up-docker
+      - name: Smoke-test boltz-swap dist
+        run: pnpm -C packages/boltz-swap run smoke:dist
 
-    - name: Run setup script
-      run: pnpm test:setup-docker
+      - name: Verify boltz-swap publish shape
+        run: cd packages/boltz-swap && npm pack --dry-run --ignore-scripts
 
-    - name: Run integration tests
-      run: pnpm test:integration-docker
+      - name: Unit tests
+        run: pnpm run test:unit
 
-    - name: Capture arkd logs
-      if: failure()
-      run: |
-        docker logs arkd > arkd.log || true
-        if [ -f arkd.log ]; then
-          echo "=== arkd logs ==="
-          cat arkd.log
-        fi
+  integration:
+    name: Integration (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [ts-sdk, boltz-swap]
 
-    - name: Tear down arkd
-      run: pnpm run test:down-docker
-      if: always()
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
 
-    - name: Check TypeScript compilation
-      run: pnpm build
+      - uses: pnpm/action-setup@v4
+        with:
+            version: 10.25.0
+
+      - uses: actions/setup-node@v4
+        with:
+            node-version-file: ".nvmrc"
+            cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build ts-sdk
+        run: pnpm -C packages/ts-sdk build
+
+      - name: Make regtest controller executable
+        run: chmod +x scripts/regtest.sh
+
+      - name: Start regtest environment
+        run: pnpm run regtest:up:${{ matrix.package }}
+
+      - name: Setup test wallets
+        run: pnpm run regtest:setup:${{ matrix.package }}
+
+      - name: Run integration tests
+        run: pnpm run regtest:test:${{ matrix.package }}
+
+      - name: Capture logs on failure
+        if: failure()
+        run: |
+          docker logs arkd 2>&1 || true
+          docker logs arkd-wallet 2>&1 || true
+          docker logs boltz 2>&1 || true
+          docker logs boltz-lnd 2>&1 || true
+          docker logs boltz-fulmine 2>&1 || true
+
+      - name: Cleanup
+        if: always()
+        run: pnpm run regtest:reset:${{ matrix.package }}

@@ -1,0 +1,425 @@
+import { hex } from "@scure/base";
+import { SigHash, TaprootControlBlock } from "@scure/btc-signer";
+import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
+import { sequenceToTimelock } from "../utils/timelock";
+import { ChainTx, ChainTxType, IndexerProvider } from "../providers/indexer";
+import {
+    ChainedTxType,
+    type VirtualTx,
+    type VirtualTxRepository,
+} from "../repositories/virtualTxRepository";
+import { AnchorBumper } from "../utils/anchor";
+import { OnchainProvider } from "../providers/onchain";
+import { Outpoint } from ".";
+import { VtxoScript } from "../script/base";
+import { TxWeightEstimator } from "../utils/txSizeEstimator";
+import { Wallet } from "./wallet";
+import { Transaction } from "../utils/transaction";
+import { DUST_AMOUNT } from "./utils";
+import { finalizeVirtualTx } from "./exit/finalizeVirtualTx";
+import { resolveUnilateralPath } from "./exit/path";
+
+/**
+ * Local ChainTxType → ChainedTxType map. Duplicated (not imported from
+ * contractManager) deliberately: keeps the unilateral-exit path free of a
+ * cross-module dependency on the contract layer.
+ */
+function chainTxTypeToChainedExit(t: ChainTxType): ChainedTxType {
+    switch (t) {
+        case ChainTxType.COMMITMENT:
+            return ChainedTxType.Commitment;
+        case ChainTxType.ARK:
+            return ChainedTxType.Ark;
+        case ChainTxType.TREE:
+            return ChainedTxType.Tree;
+        case ChainTxType.CHECKPOINT:
+            return ChainedTxType.Checkpoint;
+        default:
+            return ChainedTxType.Unspecified;
+    }
+}
+
+export namespace Unroll {
+    export enum StepType {
+        UNROLL,
+        WAIT,
+        DONE,
+    }
+
+    /**
+     * Unroll step where the transaction has to be broadcasted in a 1C1P package
+     */
+    export type UnrollStep = {
+        tx: Transaction;
+        pkg: [parent: string, child: string];
+    };
+
+    /**
+     * Wait step where the transaction has to be confirmed onchain
+     */
+    export type WaitStep = {
+        txid: string;
+    };
+
+    /**
+     * Done step where the unrolling process is complete
+     */
+    export type DoneStep = {
+        vtxoTxid: string;
+    };
+
+    export type Step =
+        | ({
+              type: StepType.DONE;
+          } & DoneStep)
+        | ({
+              type: StepType.UNROLL;
+          } & UnrollStep)
+        | ({
+              type: StepType.WAIT;
+          } & WaitStep);
+
+    /**
+     * Manages the unrolling process of a virtual output back to the Bitcoin blockchain.
+     *
+     * The Session class implements an async iterator that processes the unrolling steps:
+     * 1. **WAIT**: Waits for a transaction to be confirmed onchain (if it's in mempool)
+     * 2. **UNROLL**: Broadcasts the next transaction in the chain to the blockchain
+     * 3. **DONE**: Indicates the unrolling process is complete
+     *
+     * The unrolling process works by traversing the transaction chain from the root (most recent)
+     * to the leaf (oldest), broadcasting each transaction that isn't already onchain.
+     *
+     * @example
+     * ```typescript
+     * const session = await Unroll.Session.create(vtxoOutpoint, bumper, explorer, indexer);
+     *
+     * // iterate over the steps
+     * for await (const doneStep of session) {
+     *   switch (doneStep.type) {
+     *     case Unroll.StepType.WAIT:
+     *       console.log(`Transaction ${doneStep.txid} confirmed`);
+     *       break;
+     *     case Unroll.StepType.UNROLL:
+     *       console.log(`Broadcasting transaction ${doneStep.tx.id}`);
+     *       break;
+     *     case Unroll.StepType.DONE:
+     *       console.log(`Unrolling complete for virtual output ${doneStep.vtxoTxid}`);
+     *       break;
+     *   }
+     * }
+     * ```
+     **/
+    export class Session implements AsyncIterable<Step> {
+        /** Create an unroll session from a virtual output outpoint and its dependency chain. */
+        constructor(
+            readonly toUnroll: Outpoint & { chain: ChainTx[] },
+            readonly bumper: AnchorBumper,
+            readonly explorer: OnchainProvider,
+            readonly indexer: IndexerProvider,
+            /**
+             * Optional virtual-tx repository. When provided, each step's raw
+             * tx is read from the repo first and fetched from the indexer on a
+             * miss, then cached best-effort for later exits. Omitted ⇒ exact
+             * previous behaviour (indexer only).
+             */
+            readonly virtualTxRepository?: VirtualTxRepository,
+        ) {}
+
+        /** Create an unroll session by loading the virtual output chain from the indexer. */
+        static async create(
+            toUnroll: Outpoint,
+            bumper: AnchorBumper,
+            explorer: OnchainProvider,
+            indexer: IndexerProvider,
+            virtualTxRepository?: VirtualTxRepository,
+        ): Promise<Session> {
+            const { chain } = await indexer.getVtxoChain(toUnroll);
+            return new Session(
+                { ...toUnroll, chain },
+                bumper,
+                explorer,
+                indexer,
+                virtualTxRepository,
+            );
+        }
+
+        /**
+         * Resolve a chain tx's raw PSBT (base64). Repo first when configured;
+         * indexer on a miss, then best-effort cached so a later exit doesn't
+         * re-fetch. Never throws from the cache
+         * write — exit correctness must not depend on persistence.
+         */
+        private async resolveVirtualTxBase64(next: ChainTx): Promise<string | undefined> {
+            const repo = this.virtualTxRepository;
+            if (repo) {
+                try {
+                    const stored = await repo.getVirtualTx(next.txid);
+                    if (stored?.psbt) return stored.psbt;
+                } catch {
+                    // fall through to the indexer
+                }
+            }
+            const fetched = await this.indexer.getVirtualTxs([next.txid]);
+            const psbt = fetched.txs[0];
+            if (psbt && repo) {
+                const cached: VirtualTx = {
+                    txid: next.txid,
+                    psbt,
+                    expiresAt: null,
+                    type: chainTxTypeToChainedExit(next.type),
+                };
+                try {
+                    await repo.upsertVirtualTxs([cached]);
+                } catch {
+                    // best-effort cache only
+                }
+            }
+            return psbt;
+        }
+
+        /**
+         * Get the next step to be executed
+         * @returns The next step to be executed + the function to execute it
+         */
+        async next(): Promise<Step & { do: () => Promise<void> }> {
+            let nextTxToBroadcast: ChainTx | undefined;
+
+            const chain = this.toUnroll.chain;
+
+            // Iterate through the chain from the end (root) to the beginning (leaf)
+            for (let i = chain.length - 1; i >= 0; i--) {
+                const chainTx = chain[i];
+
+                // Skip commitment transactions as they are always onchain
+                if (
+                    chainTx.type === ChainTxType.COMMITMENT ||
+                    chainTx.type === ChainTxType.UNSPECIFIED
+                ) {
+                    continue;
+                }
+
+                try {
+                    // Check if the transaction is confirmed onchain
+                    const txInfo = await this.explorer.getTxStatus(chainTx.txid);
+
+                    // If found but not confirmed, it means the tx is in the mempool
+                    // An unilateral exit is running, we must wait for it to be confirmed
+                    if (!txInfo.confirmed) {
+                        return {
+                            type: StepType.WAIT,
+                            txid: chainTx.txid,
+                            do: doWait(this.explorer, chainTx.txid),
+                        };
+                    }
+                } catch (e) {
+                    // If the tx is not found, it's offchain, let's break
+                    nextTxToBroadcast = chainTx;
+                    break;
+                }
+            }
+
+            if (!nextTxToBroadcast) {
+                return {
+                    type: StepType.DONE,
+                    vtxoTxid: this.toUnroll.txid,
+                    do: () => Promise.resolve(),
+                };
+            }
+
+            // Get the virtual transaction data (repo-first when configured).
+            const virtualTxBase64 = await this.resolveVirtualTxBase64(nextTxToBroadcast);
+
+            if (!virtualTxBase64) {
+                throw new Error(`Tx ${nextTxToBroadcast.txid} not found`);
+            }
+
+            // Repo-first virtual tx (master) finalized via the shared helper
+            // (extracted for reuse by the exit-package prepare flow).
+            const tx = finalizeVirtualTx(nextTxToBroadcast.type, virtualTxBase64);
+
+            const pkg = await this.bumper.bumpP2A(tx);
+            return {
+                type: StepType.UNROLL,
+                tx,
+                pkg,
+                do: doUnroll(this.explorer, pkg),
+            };
+        }
+
+        /**
+         * Iterate over the steps to be executed and execute them
+         * @returns An async iterator over the executed steps
+         */
+        async *[Symbol.asyncIterator](): AsyncIterator<Step> {
+            let lastStep: StepType | undefined;
+            do {
+                if (lastStep !== undefined) {
+                    // wait 1 second before trying the next step in order to give time to the
+                    // explorer to update the tx status
+                    await sleep(1_000);
+                }
+                const step = await this.next();
+                await step.do();
+                yield step;
+                lastStep = step.type;
+            } while (lastStep !== StepType.DONE);
+        }
+    }
+
+    /**
+     * Complete the unroll of a virtual output by broadcasting the transaction that spends the CSV path.
+     * @param wallet the wallet owning the virtual output(s)
+     * @param vtxoTxids the txids of the virtual output(s) to complete unroll
+     * @param outputAddress the address to send the unrolled funds to
+     * @throws if the virtual output(s) are not fully unrolled, if the txids are not found, if the tx is not confirmed, if no exit path is found or not available
+     * @returns the txid of the transaction spending the unrolled funds
+     */
+    export async function completeUnroll(
+        wallet: Wallet,
+        vtxoTxids: string[],
+        outputAddress: string,
+    ): Promise<string> {
+        const signedTx = await prepareUnrollTransaction(wallet, vtxoTxids, outputAddress);
+        await wallet.onchainProvider.broadcastTransaction(signedTx.hex);
+        return signedTx.id;
+    }
+}
+
+/**
+ * Prepares the transaction that spends the CSV path to complete unrolling a VTXO.
+ * @param wallet the wallet owning the VTXO(s)
+ * @param vtxoTxIds the txids of the VTXO(s) to complete unroll
+ * @param outputAddress the address to send the unrolled funds to
+ * @throws if the VTXO(s) are not fully unrolled, if the txids are not found, if the tx is not confirmed, if no exit path is found or not available
+ * @returns the transaction spending the unrolled funds
+ */
+export async function prepareUnrollTransaction(
+    wallet: Wallet,
+    vtxoTxIds: string[],
+    outputAddress: string,
+): Promise<Transaction> {
+    const chainTip = await wallet.onchainProvider.getChainTip();
+
+    let vtxos = await wallet.getVtxos({ withUnrolled: true });
+    vtxos = vtxos.filter((vtxo) => vtxoTxIds.includes(vtxo.txid));
+
+    if (vtxos.length === 0) {
+        throw new Error("No vtxos to complete unroll");
+    }
+
+    const inputs: TransactionInputUpdate[] = [];
+    let totalAmount = 0n;
+    const txWeightEstimator = TxWeightEstimator.create();
+    for (const vtxo of vtxos) {
+        if (!vtxo.isUnrolled) {
+            throw new Error(
+                `Vtxo ${vtxo.txid}:${vtxo.vout} is not fully unrolled, use unroll first`,
+            );
+        }
+
+        const txStatus = await wallet.onchainProvider.getTxStatus(vtxo.txid);
+        if (!txStatus.confirmed) {
+            throw new Error(`tx ${vtxo.txid} is not confirmed`);
+        }
+
+        const resolved = await resolveUnilateralPath({
+            vtxo,
+            scriptHex: hex.encode(VtxoScript.decode(vtxo.tapTree).pkScript),
+            contractRepository: wallet.contractRepository,
+            walletPubKeyHex: hex.encode((await wallet.identity.xOnlyPublicKey())!),
+            currentTime: Date.now(),
+        });
+        const spendingLeaf = resolved.selection.leaf;
+        const sequence = resolved.selection.sequence!;
+
+        // preserve the historical precondition: the sweep must be valid NOW
+        const timelock = sequenceToTimelock(sequence);
+        const elapsed =
+            timelock.type === "blocks"
+                ? chainTip.height >= txStatus.blockHeight + Number(timelock.value)
+                : chainTip.time >= txStatus.blockTime + Number(timelock.value);
+        if (!elapsed) {
+            throw new Error(`no available exit path found for vtxo ${vtxo.txid}:${vtxo.vout}`);
+        }
+
+        totalAmount += BigInt(vtxo.value);
+        inputs.push({
+            txid: vtxo.txid,
+            index: vtxo.vout,
+            tapLeafScript: [spendingLeaf],
+            sequence,
+            witnessUtxo: {
+                amount: BigInt(vtxo.value),
+                script: VtxoScript.decode(vtxo.tapTree).pkScript,
+            },
+            sighashType: SigHash.DEFAULT,
+        });
+        txWeightEstimator.addTapscriptInput(
+            64,
+            spendingLeaf[1].length,
+            TaprootControlBlock.encode(spendingLeaf[0]).length,
+        );
+    }
+
+    const tx = new Transaction({ version: 2 });
+    for (const input of inputs) {
+        tx.addInput(input);
+    }
+
+    txWeightEstimator.addOutputAddress(outputAddress, wallet.network);
+
+    let feeRate = await wallet.onchainProvider.getFeeRate();
+    if (!feeRate || feeRate < Wallet.MIN_FEE_RATE) {
+        feeRate = Wallet.MIN_FEE_RATE;
+    }
+    // Esplora returns a `number` and bitcoind regtest sometimes reports
+    // fractional sat/vB (e.g. 1.006). `BigInt(1.006)` throws RangeError
+    // — round up so we always pay AT LEAST the advertised rate and
+    // satisfy BigInt's integer requirement.
+    const feeAmount = txWeightEstimator.vsize().fee(BigInt(Math.ceil(feeRate)));
+    if (feeAmount > totalAmount) {
+        throw new Error("fee amount is greater than the total amount");
+    }
+
+    const sendAmount = totalAmount - feeAmount;
+    if (sendAmount < BigInt(DUST_AMOUNT)) {
+        throw new Error("send amount is less than dust amount");
+    }
+
+    tx.addOutputAddress(outputAddress, sendAmount, wallet.network);
+
+    const signedTx = await wallet.identity.sign(tx);
+    signedTx.finalize();
+    return signedTx;
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function doUnroll(
+    onchainProvider: OnchainProvider,
+    pkg: Unroll.UnrollStep["pkg"],
+): () => Promise<void> {
+    return () => onchainProvider.broadcastTransaction(...pkg).then(() => undefined);
+}
+
+function doWait(onchainProvider: OnchainProvider, txid: string): () => Promise<void> {
+    return () => {
+        return new Promise((resolve, reject) => {
+            const interval = setInterval(async () => {
+                try {
+                    const txInfo = await onchainProvider.getTxStatus(txid);
+                    if (txInfo.confirmed) {
+                        clearInterval(interval);
+                        resolve();
+                    }
+                } catch (e) {
+                    clearInterval(interval);
+                    reject(e);
+                }
+            }, 5_000);
+        });
+    };
+}

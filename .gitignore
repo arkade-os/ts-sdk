@@ -1,11 +1,29 @@
-node_modules/
-dist/
-docs/
-.mintlify-last
+node_modules
+*.log
+.DS_Store
+dist
+coverage
+.env
+!.env.regtest
 .idea
+.vscode
+.tmp
+.swp
+.nyc_output
 .claude/
 *.sqlite
+docs/
+
+# Debug
+*.har
+*.idb
 
 # AI
-CLAUDE.md
 TASKS.md
+CLAUDE.md
+.claude
+*.agents.md
+REVIEW.md
+
+# Per-package symlink to the shared regtest submodule (created by scripts/regtest.sh)
+packages/*/regtest

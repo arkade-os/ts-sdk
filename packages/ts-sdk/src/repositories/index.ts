@@ -1,0 +1,24 @@
+export * from "./walletRepository";
+export * from "./contractRepository";
+export * from "./intentRepository";
+export * from "./virtualTxRepository";
+export * from "./inMemory/intentRepository";
+export * from "./inMemory/virtualTxRepository";
+export * from "./indexedDB/virtualTxRepository";
+export * from "./indexedDB/intentRepository";
+export * from "./inMemory/walletRepository";
+export * from "./inMemory/contractRepository";
+export * from "./indexedDB/contractRepository";
+export * from "./indexedDB/walletRepository";
+export {
+    MIGRATION_KEY,
+    migrateWalletRepository,
+    requiresMigration,
+    getMigrationStatus,
+    rollbackMigration,
+    type MigrationStatus,
+} from "./migrations/fromStorageAdapter";
+
+// Deprecated
+export { WalletRepositoryImpl } from "./migrations/walletRepositoryImpl";
+export { ContractRepositoryImpl } from "./migrations/contractRepositoryImpl";

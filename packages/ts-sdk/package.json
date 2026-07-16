@@ -1,0 +1,224 @@
+{
+    "name": "@arkade-os/sdk",
+    "version": "0.4.46",
+    "description": "TypeScript SDK for building Bitcoin wallets using the Arkade protocol",
+    "type": "module",
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "sideEffects": [
+        "src/index.ts",
+        "src/contracts/handlers/index.ts",
+        "dist/index.js",
+        "dist/index.cjs",
+        "dist/contracts/handlers/index.js",
+        "dist/contracts/handlers/index.cjs"
+    ],
+    "exports": {
+        ".": {
+            "import": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.js"
+            },
+            "require": {
+                "types": "./dist/index.d.cts",
+                "default": "./dist/index.cjs"
+            }
+        },
+        "./adapters/expo": {
+            "import": {
+                "types": "./dist/adapters/expo.d.ts",
+                "default": "./dist/adapters/expo.js"
+            },
+            "require": {
+                "types": "./dist/adapters/expo.d.cts",
+                "default": "./dist/adapters/expo.cjs"
+            }
+        },
+        "./adapters/localStorage": {
+            "import": {
+                "types": "./dist/adapters/localStorage.d.ts",
+                "default": "./dist/adapters/localStorage.js"
+            },
+            "require": {
+                "types": "./dist/adapters/localStorage.d.cts",
+                "default": "./dist/adapters/localStorage.cjs"
+            }
+        },
+        "./adapters/fileSystem": {
+            "import": {
+                "types": "./dist/adapters/fileSystem.d.ts",
+                "default": "./dist/adapters/fileSystem.js"
+            },
+            "require": {
+                "types": "./dist/adapters/fileSystem.d.cts",
+                "default": "./dist/adapters/fileSystem.cjs"
+            }
+        },
+        "./adapters/indexedDB": {
+            "import": {
+                "types": "./dist/adapters/indexedDB.d.ts",
+                "default": "./dist/adapters/indexedDB.js"
+            },
+            "require": {
+                "types": "./dist/adapters/indexedDB.d.cts",
+                "default": "./dist/adapters/indexedDB.cjs"
+            }
+        },
+        "./adapters/asyncStorage": {
+            "import": {
+                "types": "./dist/adapters/asyncStorage.d.ts",
+                "default": "./dist/adapters/asyncStorage.js"
+            },
+            "require": {
+                "types": "./dist/adapters/asyncStorage.d.cts",
+                "default": "./dist/adapters/asyncStorage.cjs"
+            }
+        },
+        "./repositories/sqlite": {
+            "import": {
+                "types": "./dist/repositories/sqlite/index.d.ts",
+                "default": "./dist/repositories/sqlite/index.js"
+            },
+            "require": {
+                "types": "./dist/repositories/sqlite/index.d.cts",
+                "default": "./dist/repositories/sqlite/index.cjs"
+            }
+        },
+        "./repositories/realm": {
+            "import": {
+                "types": "./dist/repositories/realm/index.d.ts",
+                "default": "./dist/repositories/realm/index.js"
+            },
+            "require": {
+                "types": "./dist/repositories/realm/index.d.cts",
+                "default": "./dist/repositories/realm/index.cjs"
+            }
+        },
+        "./worker/expo": {
+            "import": {
+                "types": "./dist/worker/expo/index.d.ts",
+                "default": "./dist/worker/expo/index.js"
+            },
+            "require": {
+                "types": "./dist/worker/expo/index.d.cts",
+                "default": "./dist/worker/expo/index.cjs"
+            }
+        },
+        "./wallet/expo": {
+            "import": {
+                "types": "./dist/wallet/expo/index.d.ts",
+                "default": "./dist/wallet/expo/index.js"
+            },
+            "require": {
+                "types": "./dist/wallet/expo/index.d.cts",
+                "default": "./dist/wallet/expo/index.cjs"
+            }
+        },
+        "./wallet/expo/background": {
+            "import": {
+                "types": "./dist/wallet/expo/background.d.ts",
+                "default": "./dist/wallet/expo/background.js"
+            },
+            "require": {
+                "types": "./dist/wallet/expo/background.d.cts",
+                "default": "./dist/wallet/expo/background.cjs"
+            }
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "publishConfig": {
+        "access": "public",
+        "registry": "https://registry.npmjs.org/"
+    },
+    "engines": {
+        "node": ">=22.12.0 <25"
+    },
+    "scripts": {
+        "build": "tsup",
+        "smoke:dist": "node scripts/smoke-dist.mjs",
+        "typecheck": "tsc --noEmit",
+        "docs:build": "pnpm run typecheck && pnpm typedoc",
+        "docs:open": "open ../../docs/index.html",
+        "test": "vitest run",
+        "test:master": "ARK_ENV=master vitest run",
+        "test:unit": "vitest run --exclude test/e2e",
+        "test:setup": "node test/setup.mjs",
+        "regtest:start": "node ./regtest/regtest.mjs start",
+        "regtest:stop": "node ./regtest/regtest.mjs stop",
+        "regtest:clean": "node ./regtest/regtest.mjs clean",
+        "regtest": "pnpm regtest:clean && pnpm regtest:start && pnpm test:setup-docker",
+        "test:setup-docker": "node test/setup.mjs docker",
+        "test:integration": "vitest run test/e2e/**",
+        "test:integration-docker": "ARK_ENV=docker vitest run test/e2e/**",
+        "test:watch": "vitest",
+        "test:coverage": "vitest run --coverage",
+        "format": "prettier --write src test examples",
+        "lint": "prettier --check src test examples",
+        "audit": "pnpm audit",
+        "prepack": "pnpm run build",
+        "prepublishOnly": "pnpm run build"
+    },
+    "dependencies": {
+        "@bitcoinerlab/descriptors-scure": "3.1.7",
+        "@marcbachmann/cel-js": "8.0.0",
+        "@noble/curves": "2.0.1",
+        "@noble/secp256k1": "3.0.0",
+        "@scure/base": "2.0.0",
+        "@scure/bip39": "2.0.1",
+        "@scure/btc-signer": "2.0.1",
+        "bip68": "1.0.4",
+        "ws-electrumx-client": "1.0.5"
+    },
+    "devDependencies": {
+        "@types/better-sqlite3": "7.6.13",
+        "@vitest/coverage-v8": "3.2.7",
+        "better-sqlite3": "12.6.2",
+        "typedoc": "^0.28.19"
+    },
+    "peerDependencies": {
+        "@react-native-async-storage/async-storage": ">=1.0.0",
+        "expo": ">=54.0.0",
+        "expo-background-task": "~1.0.10 || >=55.0.0",
+        "expo-sqlite": "~16.0.10 || >=55.0.0",
+        "expo-task-manager": "~14.0.9 || >=55.0.0"
+    },
+    "peerDependenciesMeta": {
+        "expo": {
+            "optional": true
+        },
+        "expo-sqlite": {
+            "optional": true
+        },
+        "expo-background-task": {
+            "optional": true
+        },
+        "expo-task-manager": {
+            "optional": true
+        },
+        "@react-native-async-storage/async-storage": {
+            "optional": true
+        }
+    },
+    "keywords": [
+        "ark",
+        "arkade",
+        "bip39",
+        "bitcoin",
+        "btc",
+        "crypto",
+        "lightning",
+        "sdk",
+        "stablecoin",
+        "taproot",
+        "typescript",
+        "utxo",
+        "vtxo",
+        "wallet"
+    ],
+    "author": "Ark Labs",
+    "license": "MIT",
+    "packageManager": "pnpm@10.25.0"
+}
