@@ -4,8 +4,8 @@ import { arkRail } from "../../src/payment/rails/ark";
 import type { RouterContext } from "../../src/payment/types";
 
 const arkAddr = new ArkAddress(new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)).encode();
-const ctx = (sendBitcoin: any = vi.fn()): RouterContext => ({
-    wallet: { sendBitcoin } as any,
+const ctx = (send: any = vi.fn()): RouterContext => ({
+    wallet: { send } as any,
     prefs: {},
 });
 
@@ -22,25 +22,25 @@ describe("arkRail", () => {
         expect(r.match("lnbc10n1pjexample", ctx())).toBe(false);
     });
 
-    it("quote.send() calls wallet.sendBitcoin and settles with a txid result", async () => {
-        const sendBitcoin = vi.fn().mockResolvedValue("txABC");
-        const q = await arkRail().quote(arkAddr, 1000, ctx(sendBitcoin));
+    it("quote.send() calls wallet.send and settles with a txid result", async () => {
+        const send = vi.fn().mockResolvedValue("txABC");
+        const q = await arkRail().quote(arkAddr, 1000, ctx(send));
         expect(q.amount).toBe(1000);
         const h = await q.send();
         expect(await h.settled()).toMatchObject({ railId: "ark", txid: "txABC" });
-        expect(sendBitcoin).toHaveBeenCalledWith({ address: arkAddr, amount: 1000 });
+        expect(send).toHaveBeenCalledWith({ address: arkAddr, amount: 1000 });
     });
 
     it("falls back to the BIP21-encoded amount (BTC) converted to sats", async () => {
-        const sendBitcoin = vi.fn().mockResolvedValue("tx");
+        const send = vi.fn().mockResolvedValue("tx");
         const q = await arkRail().quote(
             `bitcoin:?ark=${arkAddr}&amount=0.0001`,
             undefined,
-            ctx(sendBitcoin),
+            ctx(send),
         );
         expect(q.amount).toBe(10000);
         await q.send();
-        expect(sendBitcoin).toHaveBeenCalledWith({ address: arkAddr, amount: 10000 });
+        expect(send).toHaveBeenCalledWith({ address: arkAddr, amount: 10000 });
     });
 
     it("rejects a missing, zero, or fractional amount at quote time", async () => {

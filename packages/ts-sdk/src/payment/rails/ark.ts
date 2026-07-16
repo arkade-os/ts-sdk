@@ -17,7 +17,7 @@ function arkTarget(raw: string): string | undefined {
 
 /**
  * Off-chain Arkade send. Matches a bare ark address or the `ark=` param of a
- * unified BIP21 URI, and settles via `Wallet.sendBitcoin`.
+ * unified BIP21 URI, and settles via `Wallet.send`.
  */
 export function arkRail(): PaymentRail {
     return {
@@ -33,7 +33,7 @@ export function arkRail(): PaymentRail {
                 total: amt,
                 send: async () =>
                     makeHandle("ark", async (emit) => {
-                        const txid = await ctx.wallet.sendBitcoin({ address, amount: amt });
+                        const txid = await ctx.wallet.send({ address, amount: amt });
                         const result = { railId: "ark", txid };
                         emit({ status: "settled", result });
                         return result;
