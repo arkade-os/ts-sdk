@@ -9,6 +9,7 @@ import type {
     PathSelection,
 } from "../../contracts";
 import type {
+    ContractSyncState,
     CreateContractParams,
     GetAllSpendingPathsOptions,
     GetSpendablePathsOptions,
@@ -35,7 +36,7 @@ import {
     WalletBalance,
 } from "../index";
 import { DelegateInfo } from "../../providers/delegate";
-import { ReadonlyWallet, Wallet } from "../wallet";
+import { ReadonlyWallet, Wallet, type ProviderConnectionState } from "../wallet";
 import type {
     DeprecatedSignerMigrationReport,
     DeprecatedSignerReport,
@@ -216,7 +217,20 @@ export type ResponseGetStatus = ResponseEnvelope & {
     payload: {
         walletInitialized: boolean;
         xOnlyPublicKey: Uint8Array | undefined;
+        // Wallet-level provider-connection freshness (boot server-info source
+        // composed with contract-manager sync health). Optional so a status
+        // response can predate a fully wired worker; always set for an
+        // initialized wallet.
+        providerConnectionState?: ProviderConnectionState;
     };
+};
+
+export type RequestGetContractSyncState = RequestEnvelope & {
+    type: "GET_CONTRACT_SYNC_STATE";
+};
+export type ResponseGetContractSyncState = ResponseEnvelope & {
+    type: "CONTRACT_SYNC_STATE";
+    payload: { syncState: ContractSyncState };
 };
 
 export type RequestClear = RequestEnvelope & { type: "CLEAR" };
@@ -686,6 +700,7 @@ export type WalletUpdaterRequest =
     | RequestGetBoardingUtxos
     | RequestGetTransactionHistory
     | RequestGetStatus
+    | RequestGetContractSyncState
     | RequestClear
     | RequestReloadWallet
     | RequestSignTransaction
@@ -730,6 +745,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseGetBoardingUtxos
         | ResponseGetTransactionHistory
         | ResponseGetStatus
+        | ResponseGetContractSyncState
         | ResponseClear
         | ResponseReloadWallet
         | ResponseUtxoUpdate
@@ -975,7 +991,18 @@ export class WalletMessageHandler
                         payload: {
                             walletInitialized: true,
                             xOnlyPublicKey: pubKey,
+                            providerConnectionState:
+                                this.readonlyWallet.getProviderConnectionState(),
                         },
+                    });
+                }
+                case "GET_CONTRACT_SYNC_STATE": {
+                    // Pure diagnostics read: report the manager's already-known
+                    // state without forcing initialization or a remote sync.
+                    return this.tagged({
+                        id,
+                        type: "CONTRACT_SYNC_STATE",
+                        payload: { syncState: this.readonlyWallet.getContractSyncState() },
                     });
                 }
                 case "CLEAR": {
@@ -1708,32 +1735,21 @@ export class WalletMessageHandler
         return filteredVtxos;
     }
 
+    /** Tear down handler subscriptions, then delegate the full wipe to the wallet. */
     private async clear() {
-        if (!this.readonlyWallet) return;
-        if (this.incomingFundsSubscription) this.incomingFundsSubscription();
+        const wallet = this.wallet ?? this.readonlyWallet;
+        if (!wallet) return;
+
+        if (this.incomingFundsSubscription) {
+            this.incomingFundsSubscription();
+            this.incomingFundsSubscription = undefined;
+        }
         if (this.contractEventsSubscription) {
             this.contractEventsSubscription();
             this.contractEventsSubscription = undefined;
         }
 
-        // Dispose the wallet to stop the ContractWatcher (and its polling
-        // intervals) before clearing the repositories, otherwise the poller
-        // will hit a closing IndexedDB connection.
-        try {
-            if (this.wallet) {
-                await this.wallet.dispose();
-            } else {
-                await this.readonlyWallet.dispose();
-            }
-        } catch (_) {
-            // best-effort teardown
-        }
-
-        try {
-            await this.walletRepository?.clear();
-        } catch (_) {
-            console.warn("Failed to clear vtxos from wallet repository");
-        }
+        await wallet.clear();
 
         this.wallet = undefined;
         this.readonlyWallet = undefined;

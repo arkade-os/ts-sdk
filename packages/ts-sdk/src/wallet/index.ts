@@ -8,10 +8,17 @@ import { RenewalConfig, SettlementConfig } from "./vtxo-manager";
 import { IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
 import { ContractWatcherConfig } from "../contracts/contractWatcher";
-import { ContractRepository, WalletRepository } from "../repositories";
+import {
+    ContractRepository,
+    WalletRepository,
+    IntentRepository,
+    VirtualTxRepository,
+} from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
 import { IDelegateManager } from "./delegate";
 import type { Activity, ActivityRegistry } from "./activity";
+import type { ExitCaptureMode } from "./exit/capture";
+import type { ExitDataSource } from "./exit/resolver";
 export {
     ActivityRegistry,
     boardingResolver,
@@ -226,6 +233,35 @@ export type StorageConfig = {
     walletRepository: WalletRepository;
     /** Contract-state repository implementation. */
     contractRepository: ContractRepository;
+    /**
+     * Optional intent-lifecycle repository. Opt-in: when present, the wallet
+     * persists settlement intents and excludes intent-locked VTXOs from
+     * spendable balance. Absent ⇒ those code paths are no-ops.
+     */
+    intentRepository?: IntentRepository;
+    /**
+     * **Experimental / inert.** Optional virtual-tx (exit-branch) repository.
+     * Today it is only a best-effort raw-PSBT cache that unilateral exit
+     * ({@link Unroll}) reads and writes when a caller passes it to
+     * `Unroll.Session.create`. Normal wallet/contract sync does NOT populate,
+     * maintain, or prune it, and {@link ContractManager} is never given it —
+     * branch/full-mode persistence is out of scope for this release. Treat this
+     * option as experimental until those paths land. Absent ⇒ no-op.
+     */
+    virtualTxRepository?: VirtualTxRepository;
+    /**
+     * Optional exit-data capture settings (only in effect when
+     * `virtualTxRepository` is set). `mode` "lite" (default) stores structure
+     * only; "full" stores PSBTs so a unilateral exit needs no Ark indexer.
+     * `minExitWorthSats` (default 1000) skips dust. `sources` are extra
+     * `ExitDataSource`s (e.g. a wallet-provider) tried before the indexer for
+     * both capture and exit reads.
+     */
+    exitDataCapture?: {
+        mode?: ExitCaptureMode;
+        minExitWorthSats?: number;
+        sources?: ExitDataSource[];
+    };
 };
 
 /**
@@ -266,7 +302,11 @@ export interface WalletBalance {
     settled: number;
     /** Spendable preconfirmed (unfinalized) balance. */
     preconfirmed: number;
-    /** Spendable offchain balance (`settled + preconfirmed`). */
+    /**
+     * Immediately spendable offchain balance: the `settled + preconfirmed`
+     * rule applied only to VTXOs not locked by an in-flight (non-terminal)
+     * intent. Equals `settled + preconfirmed` when nothing is intent-locked.
+     */
     available: number;
     /** Recoverable balance from subdust or expired (swept) virtual outputs. */
     recoverable: number;
@@ -729,7 +769,8 @@ export function isExpired(vtxo: VirtualCoin): boolean {
  *
  * @see isRecoverable
  */
-export function isSubdust(vtxo: VirtualCoin, dust: bigint): boolean {
+export function isSubdust(vtxo: { value: number } | bigint, dust: bigint): boolean {
+    if (typeof vtxo === "bigint") return vtxo < dust;
     return vtxo.value < dust;
 }
 
@@ -894,10 +935,10 @@ export interface IReadonlyWallet {
     /** @returns Wallet transaction history derived from boarding and Arkade activity. */
     getTransactionHistory(): Promise<ArkTransaction[]>;
 
-    /** Registry of resolvers that group/label {@link getActivityHistory} rows. */
+    /** Resolvers that group/label {@link getActivityHistory} rows. */
     readonly activity: ActivityRegistry;
 
-    /** @returns Wallet history grouped into logical activities via the registered resolvers. */
+    /** @returns Wallet history grouped into logical activities with signed net amounts. */
     getActivityHistory(): Promise<Activity[]>;
 
     /**
@@ -910,4 +951,10 @@ export interface IReadonlyWallet {
 
     /** Readonly asset manager bound to this wallet instance. */
     assetManager: IReadonlyAssetManager;
+
+    /**
+     * Wipe all locally persisted wallet data (VTXOs, UTXOs, history, sync
+     * cursor, contracts).
+     */
+    clear(): Promise<void>;
 }

@@ -66,14 +66,25 @@ export interface CreateLightningInvoiceRequest {
     amount: number;
     /** Optional description embedded in the BOLT11 invoice. */
     description?: string;
+    /**
+     * Optional SHA256 description hash (hex, 32 bytes) to commit into the
+     * BOLT11 invoice instead of a plaintext description. A BOLT11 invoice
+     * carries either a description or a description hash, never both, so when
+     * this is set `description` is ignored. Use this for flows that must bind
+     * the invoice to an external document — e.g. NIP-57 zaps, where the hash
+     * is SHA256 of the zap request and the receipt later proves the match.
+     */
+    descriptionHash?: string;
 }
 
 /** Response containing the created Lightning invoice and swap details. */
 export interface CreateLightningInvoiceResponse {
     /** The on-chain amount in satoshis (after Boltz fees). */
     amount: number;
-    /** Invoice expiry timestamp (Unix seconds). */
+    /** Invoice expiry: seconds from invoice creation (timestamp) until it expires. */
     expiry: number;
+    /** Invoice creation timestamp (Unix seconds). Always present in a valid BOLT11 invoice; `0` should not occur in practice. */
+    timestamp: number;
     /** The BOLT11-encoded Lightning invoice string. */
     invoice: string;
     /** The payment hash (hex-encoded). */
@@ -333,10 +344,14 @@ export type ArkadeSwapsCreateConfig = Omit<ArkadeSwapsConfig, "swapProvider"> & 
 export interface DecodedInvoice {
     /** Invoice expiry timestamp (Unix seconds). */
     expiry: number;
+    /** Invoice creation timestamp (Unix seconds). Always present in a valid BOLT11 invoice; `0` should not occur in practice. */
+    timestamp: number;
     /** Invoice amount in satoshis. */
     amountSats: number;
-    /** Invoice description string. */
+    /** Invoice description string (BOLT11 `d` field; "" if none). */
     description: string;
+    /** Invoice description hash (BOLT11 `h` field, hex; "" if none). */
+    descriptionHash: string;
     /** Payment hash (hex-encoded). */
     paymentHash: string;
 }

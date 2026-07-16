@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "fs";
-import { join } from "path";
+import { readFileSync, readdirSync } from "fs";
+import { createRequire } from "module";
+import { dirname, join } from "path";
 import {
     Estimator,
     type IntentFeeConfig,
@@ -246,7 +247,7 @@ describe("Estimator", () => {
                             convertJsonOutput,
                         );
 
-                        const result = estimator.eval(
+                        const result = estimator.evaluate(
                             offchainInputs,
                             onchainInputs,
                             offchainOutputs,
@@ -256,6 +257,23 @@ describe("Estimator", () => {
                     });
                 }
             });
+        }
+    });
+});
+
+// Regression guard for issue #580: the SES bundler used by MetaMask Snaps rejects
+// any bare `eval(` token. cel-js < 8 shipped an interpreter method literally named
+// `eval`, which the Estimator pulls into every consumer bundle. The pin must stay on
+// a cel-js version whose shipped sources contain no bare `eval(` token.
+describe("@marcbachmann/cel-js SES/Snap compatibility (issue #580)", () => {
+    it("resolved cel-js ships no bare eval( token", () => {
+        const require = createRequire(import.meta.url);
+        const libDir = dirname(require.resolve("@marcbachmann/cel-js"));
+        const jsFiles = readdirSync(libDir).filter((f) => f.endsWith(".js"));
+        expect(jsFiles.length).toBeGreaterThan(0);
+        for (const file of jsFiles) {
+            const src = readFileSync(join(libDir, file), "utf-8");
+            expect(/\beval\s*\(/.test(src), `bare eval( token found in ${file}`).toBe(false);
         }
     });
 });

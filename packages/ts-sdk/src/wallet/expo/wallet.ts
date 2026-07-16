@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import { Wallet } from "../wallet";
+import { Wallet, type ProviderConnectionState } from "../wallet";
 import type { Activity, ActivityRegistry } from "../activity";
 import { RestArkProvider } from "../../providers/ark";
 import type {
@@ -119,6 +119,8 @@ export class ExpoWallet implements IWallet {
     readonly indexerProvider: Wallet["indexerProvider"];
 
     private foregroundIntervalId?: ReturnType<typeof setInterval>;
+    private foregroundPollChain: Promise<void> = Promise.resolve();
+    private cleared = false;
 
     private constructor(
         private readonly wallet: Wallet,
@@ -208,11 +210,16 @@ export class ExpoWallet implements IWallet {
 
     private startForegroundPolling(intervalMs: number): void {
         this.foregroundIntervalId = setInterval(() => {
-            this.runForegroundPoll().catch(console.error);
+            // Serialize polls so clear() can await the in-flight one before wiping.
+            this.foregroundPollChain = this.foregroundPollChain
+                .then(() => this.runForegroundPoll())
+                .catch(console.error);
         }, intervalMs);
     }
 
     private async runForegroundPoll(): Promise<void> {
+        if (this.cleared) return;
+
         await runTasks(this.taskQueue, this.processors, this.deps);
 
         // Consume results immediately (no background handoff needed)
@@ -220,6 +227,8 @@ export class ExpoWallet implements IWallet {
         if (results.length > 0) {
             await this.taskQueue.acknowledgeResults(results.map((r) => r.id));
         }
+
+        if (this.cleared) return;
 
         // Re-seed for the next tick
         await this.seedContractPollTask();
@@ -236,6 +245,13 @@ export class ExpoWallet implements IWallet {
             createdAt: Date.now(),
         };
         await this.taskQueue.addTask(task);
+    }
+
+    private async removeContractPollTasks(): Promise<void> {
+        const tasks = await this.taskQueue.getTasks(CONTRACT_POLL_TASK_TYPE);
+        for (const task of tasks) {
+            await this.taskQueue.removeTask(task.id);
+        }
     }
 
     // ── Lifecycle ────────────────────────────────────────────────────
@@ -255,6 +271,23 @@ export class ExpoWallet implements IWallet {
         }
 
         await this.wallet.dispose();
+    }
+
+    /**
+     * Stop foreground polling and wipe all locally persisted wallet data.
+     * Does not unregister the OS background task or persisted queue config.
+     */
+    async clear(): Promise<void> {
+        this.cleared = true;
+
+        if (this.foregroundIntervalId) {
+            clearInterval(this.foregroundIntervalId);
+            this.foregroundIntervalId = undefined;
+        }
+
+        await this.foregroundPollChain;
+        await this.wallet.clear();
+        await this.removeContractPollTasks();
     }
 
     // ── IWallet delegation ───────────────────────────────────────────
@@ -293,6 +326,16 @@ export class ExpoWallet implements IWallet {
 
     getContractManager(): Promise<IContractManager> {
         return this.wallet.getContractManager();
+    }
+
+    /**
+     * Wallet-level provider-connection freshness, delegated to the wrapped
+     * in-process wallet. Synchronous because the Expo foreground wallet is
+     * in-process (no worker boundary). Foreground-only: it does not imply any
+     * background task can read live foreground state.
+     */
+    getProviderConnectionState(): ProviderConnectionState {
+        return this.wallet.getProviderConnectionState();
     }
 
     getDelegateManager(): Promise<IDelegateManager | undefined> {

@@ -24,6 +24,25 @@ describe("db manager", () => {
         expect(closedTwice).toBe(true);
     });
 
+    it("closes on versionchange so an external deleteDatabase is not blocked", async () => {
+        const dbName = getUniqueDbName("db-manager-delete");
+        const initDb = vi.fn();
+
+        await openDatabase(dbName, 1, initDb);
+
+        let blocked = false;
+        await new Promise<void>((resolve, reject) => {
+            const request = indexedDB.deleteDatabase(dbName);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+            request.onblocked = () => {
+                blocked = true;
+            };
+        });
+
+        expect(blocked).toBe(false);
+    });
+
     it("rejects opening a different version for the same DB name", async () => {
         const dbName = getUniqueDbName("db-manager-version");
         const initDb = vi.fn();

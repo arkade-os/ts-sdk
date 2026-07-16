@@ -418,6 +418,35 @@ describe("ArkadeSwaps", () => {
                 const decodeInvoiceResult = decodeInvoice(result.invoice);
                 expect(decodeInvoiceResult.amountSats).toBe(amount);
                 expect(decodeInvoiceResult.description).toBe(description);
+                // description only → no description hash
+                expect(decodeInvoiceResult.descriptionHash).toBe("");
+            });
+
+            it("should create a Lightning invoice with descriptionHash", async () => {
+                const amount = 1000;
+                const descriptionHash = "a".repeat(64);
+                const result = await swaps.createLightningInvoice({
+                    amount,
+                    descriptionHash,
+                });
+                const decoded = decodeInvoice(result.invoice);
+                expect(decoded.amountSats).toBe(amount);
+                expect(decoded.descriptionHash).toBe(descriptionHash);
+                // BOLT11 carries one or the other → no plaintext description
+                expect(decoded.description).toBe("");
+            });
+
+            it("should put only descriptionHash on the invoice when both are given", async () => {
+                const amount = 1000;
+                const descriptionHash = "b".repeat(64);
+                const result = await swaps.createLightningInvoice({
+                    amount,
+                    description: "ignored when hash present",
+                    descriptionHash,
+                });
+                const decoded = decodeInvoice(result.invoice);
+                expect(decoded.descriptionHash).toBe(descriptionHash);
+                expect(decoded.description).toBe("");
             });
 
             it("should return a valid response object", async () => {
@@ -996,14 +1025,13 @@ describe("ArkadeSwaps", () => {
                 );
 
                 const btcBalance = await getBtcAddressFunds(toAddress);
-                // serverLockAmount = receiverLockAmount + minerFees.user.claim grosses the
-                // estimated claim fee into the server lock-up. claimBtc subtracts the
-                // larger of that estimate and the actual claim-tx fee (sized at
-                // feeSatsPerByte), so the receiver nets exactly receiverLockAmount when the
-                // estimate covers the fee and a few sats less when the actual fee is higher.
-                // Assert that bound rather than an exact sat value.
+                // serverLockAmount = receiverLockAmount + minerFees.user.claim reserves the claim
+                // fee inside the server lock-up, and claimBtc pays max(that reservation, the
+                // claim's own vsize fee at feeSatsPerByte).
+                // This regtest Boltz reserves a sub-min-relay fee (~23 sats here),
+                // below the 99-sat min-relay fee of the 1-in P2TR / 1-out P2WPKH claim.
                 expect(btcBalance).toBeLessThanOrEqual(amountSats);
-                expect(btcBalance).toBeGreaterThan(amountSats - 200);
+                expect(btcBalance).toBeGreaterThanOrEqual(amountSats - 99);
             });
 
             it("should send less than amount to btc address", { timeout: 10_000 }, async () => {
