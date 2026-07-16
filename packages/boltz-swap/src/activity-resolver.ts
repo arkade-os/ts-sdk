@@ -20,11 +20,16 @@ const SWAP_LABEL: Record<BoltzSwap["type"], string> = {
  * wallet.activity.use(swapActivityResolver(swapRepository));
  * ```
  *
- * NOTE: only swaps whose `claimTxid` has been persisted at completion are
- * correlated. The manual monitor paths persist it for reverse, submarine, and chain
- * swaps; when the SwapManager drives completion, the reverse (`claimVHTLC`) and
- * chain-BTC (`claimBtc`) claim callbacks do not yet persist it, so those combinations
- * are not correlated.
+ * NOTE: correlation covers the directions whose completion produces an Ark
+ * transaction the wallet actually records — submarine (the outgoing lockup
+ * txid) and chain BTC→ARK (the ARK claim txid) — on both the manual and
+ * SwapManager paths. Reverse and chain ARK→BTC are intentionally not
+ * correlated: the only txids available at their completion (Boltz's VHTLC
+ * lockup for reverse, an on-chain BTC claim for ARK→BTC) never appear in the
+ * wallet's Ark history. Deterministic, restore-survivable, direction-complete
+ * correlation needs a VHTLC-script join against the indexer (re-deriving each
+ * swap's script and querying `getVtxos({ scripts })`), not a captured
+ * `claimTxid`.
  */
 export function swapActivityResolver(swapRepo: SwapRepository): ActivityResolver {
     let byTxid = new Map<string, BoltzSwap>();

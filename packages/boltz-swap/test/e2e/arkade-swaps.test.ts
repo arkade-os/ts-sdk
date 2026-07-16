@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
 import { ArkadeSwaps } from "../../src/arkade-swaps";
+import { swapActivityResolver } from "../../src/activity-resolver";
 import {
     BoltzSwapProvider,
     BoltzSwapStatus,
@@ -1688,5 +1689,125 @@ describe("ArkadeSwaps", () => {
                 }),
             ).toThrow(/VHTLC address mismatch/);
         }, 60_000);
+    });
+
+    // ==========================================
+    // Activity history correlation (Phase 0)
+    //
+    // End-to-end verification that a completed swap is labeled in the wallet's
+    // getActivityHistory() via swapActivityResolver. Covers the two directions
+    // whose completion produces an Ark tx the wallet records (submarine, chain
+    // BTC→ARK) and documents that reverse is NOT correlated — the only txid
+    // available at reverse-claim time is Boltz's VHTLC lockup, which never
+    // appears in Ark history.
+    // ==========================================
+
+    describe("Activity history correlation", () => {
+        type Activity = Awaited<ReturnType<typeof wallet.getActivityHistory>>[number];
+
+        // Poll getActivityHistory until an activity matches, tolerating the
+        // brief lag between a swap completing and its VTXO syncing into the
+        // wallet's contract manager. Returns undefined on timeout.
+        const getSwapActivity = async (
+            predicate: (a: Activity) => boolean,
+            timeout = 15_000,
+        ): Promise<Activity | undefined> => {
+            const deadline = Date.now() + timeout;
+            while (Date.now() < deadline) {
+                const match = (await wallet.getActivityHistory()).find(predicate);
+                if (match) return match;
+                await sleep(500);
+            }
+            return undefined;
+        };
+
+        it(
+            "labels a settled submarine swap (outgoing lockup txid)",
+            { timeout: 40_000 },
+            async () => {
+                wallet.activity.use(swapActivityResolver(swaps.swapRepository));
+
+                const amount = 1000;
+                await fundWallet(amount + 1000);
+                const { invoice } = await getNewLightningInvoice(amount);
+
+                const result = await swaps.sendLightningPayment({ invoice });
+
+                // The submarine swap persists the outgoing lockup (wallet.send) txid.
+                const [swap] = await swaps.swapRepository.getAllSwaps<BoltzSubmarineSwap>();
+                expect(swap.claimTxid).toBe(result.txid);
+
+                const activity = await getSwapActivity((a) => a.id === `boltz:swap:${swap.id}`);
+                expect(activity).toBeDefined();
+                expect(activity!.intent?.kind).toBe("swap");
+                expect(activity!.intent?.metadata?.swapType).toBe("submarine");
+                expect(activity!.txs.some((t) => t.key.arkTxid === result.txid)).toBe(true);
+            },
+        );
+
+        it(
+            "labels a completed BTC→ARK chain swap (ARK claim txid)",
+            { timeout: 40_000 },
+            async () => {
+                wallet.activity.use(swapActivityResolver(swaps.swapRepository));
+
+                const amountSats = 21000;
+                const { btcAddress, amountToPay, pendingSwap } = await swaps.btcToArk({
+                    receiverLockAmount: amountSats,
+                });
+
+                await fundBtcAddress(btcAddress, amountToPay);
+                const { txid } = await swaps.waitAndClaimArk(pendingSwap);
+                await waitForBalance(() => wallet.getBalance(), amountSats, 10_000);
+
+                const activity = await getSwapActivity(
+                    (a) => a.id === `boltz:swap:${pendingSwap.id}`,
+                );
+                expect(activity).toBeDefined();
+                expect(activity!.intent?.kind).toBe("swap");
+                expect(activity!.intent?.metadata?.swapType).toBe("chain");
+                expect(
+                    activity!.txs.some(
+                        (t) => t.key.arkTxid === txid || t.key.commitmentTxid === txid,
+                    ),
+                ).toBe(true);
+            },
+        );
+
+        it(
+            "does NOT label a reverse swap — only Boltz's lockup txid is available (documented gap)",
+            { timeout: 40_000 },
+            async () => {
+                wallet.activity.use(swapActivityResolver(swaps.swapRepository));
+
+                const amount = 1000;
+                const balanceBefore = await wallet.getBalance();
+                const pendingSwap = await swaps.createReverseSwap({ amount });
+
+                sleep(1000).then(() =>
+                    payInvoice(pendingSwap.response.invoice).catch((err) =>
+                        console.error("Error paying invoice:", err),
+                    ),
+                );
+
+                await swaps.waitAndClaim(pendingSwap);
+                await waitForBalance(
+                    () => wallet.getBalance(),
+                    balanceBefore.available + 1,
+                    10_000,
+                );
+
+                // Reverse persists no claimTxid: the wallet records the
+                // claim/receive txid, never Boltz's VHTLC lockup.
+                const [swap] = await swaps.swapRepository.getAllSwaps<BoltzReverseSwap>();
+                expect(swap.claimTxid).toBeUndefined();
+
+                const history = await wallet.getActivityHistory();
+                // No swap group for this reverse swap...
+                expect(history.some((a) => a.id === `boltz:swap:${pendingSwap.id}`)).toBe(false);
+                // ...but the inbound receive is present as a plain, untagged activity.
+                expect(history.some((a) => a.amount > 0 && !a.intent)).toBe(true);
+            },
+        );
     });
 });

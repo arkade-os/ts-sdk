@@ -157,7 +157,14 @@ export interface BoltzReverseSwap {
     request: CreateReverseSwapRequest;
     /** Boltz API response with lockup address, invoice, and timeout details. */
     response: CreateReverseSwapResponse;
-    /** On-chain claim/settlement txid once known; correlates to the wallet's ArkTransaction for activity history. */
+    /**
+     * Reserved for correlating this swap to its wallet ArkTransaction in
+     * activity history. Not populated by the SDK for reverse swaps: the only
+     * txid available at claim time is Boltz's VHTLC *lockup* txid, which the
+     * wallet's history never records (it records the claim/receive txid), so it
+     * could not correlate. Durable, restore-survivable reverse correlation
+     * needs a VHTLC-script join against the indexer rather than a captured txid.
+     */
     claimTxid?: string;
 }
 
@@ -298,7 +305,13 @@ export interface BoltzChainSwap {
     toAddress?: string;
     /** Swap amount in satoshis. */
     amount: number;
-    /** On-chain claim/settlement txid once known; correlates to the wallet's ArkTransaction for activity history. */
+    /**
+     * Txid of the wallet ArkTransaction this swap corresponds to, used to
+     * correlate it in activity history. Populated only for the BTC→ARK
+     * direction — the ARK claim txid set in `claimArk`. The ARK→BTC direction
+     * is not correlated: its completion is an on-chain BTC claim txid that
+     * never appears in the wallet's Ark history.
+     */
     claimTxid?: string;
 }
 

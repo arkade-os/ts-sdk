@@ -720,10 +720,13 @@ export class ArkadeSwaps {
                             break;
                         }
 
-                        pendingSwap.claimTxid = txid;
-                        await saveStatus().catch((err) =>
-                            logger.warn(`Swap ${pendingSwap.id}: failed to persist claimTxid`, err),
-                        );
+                        // Note: `txid` here is Boltz's VHTLC *lockup* txid
+                        // (getReverseSwapTxId), returned to the caller for
+                        // backwards compatibility. It is deliberately NOT
+                        // persisted as `claimTxid`: the wallet's activity
+                        // history records the *claim/receive* txid, never
+                        // Boltz's lockup, so it could never correlate. See the
+                        // activity resolver's NOTE for the durable approach.
                         resolve({ txid });
                         break;
                     }
@@ -1651,10 +1654,12 @@ export class ArkadeSwaps {
                             );
                             break;
                         }
-                        swap.claimTxid = txid;
-                        await this.savePendingChainSwap(swap).catch((err) =>
-                            logger.warn(`Swap ${swap.id}: failed to persist claimTxid`, err),
-                        );
+                        // Note: `txid` here is the on-chain BTC claim txid,
+                        // returned to the caller. It is deliberately NOT
+                        // persisted as `claimTxid`: this is an ARK→BTC swap, so
+                        // its completion is a Bitcoin transaction that never
+                        // appears in the wallet's Ark activity history and could
+                        // never correlate. See the activity resolver's NOTE.
                         resolve({ txid });
                         break;
                     }
