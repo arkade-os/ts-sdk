@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { ArkAddress } from "@arkade-os/sdk";
 import { createDefaultPaymentRouter } from "../../src/payment";
 
@@ -10,9 +10,21 @@ const INVOICE =
     "xv4jsxqzpuaztrnwngzn3kdzw5hydlzf03qdgm2hdq27cqv3agm2awhz5se903vruatfhq77w3ls4evs3ch9zw97j2" +
     "5emudupq63nyw24cg27h2rspfj9srp";
 
+// A swaps double whose limits/fees keep every routed amount comfortably in range,
+// so rail selection is exercised without hitting the network. Chain fees follow
+// the ChainFeesResponse shape read by the onchain-swap rail's available() gate.
+const swaps = () =>
+    ({
+        getLimits: vi.fn().mockResolvedValue({ min: 1000, max: 1_000_000 }),
+        getFees: vi.fn().mockResolvedValue({
+            percentage: 0.1,
+            minerFees: { server: 100, user: { claim: 50, lockup: 60 } },
+        }),
+    }) as any;
+
 describe("createDefaultPaymentRouter(wallet, swaps)", () => {
     it("fans a unified BIP21 URI out across all four rails, ranked by priority", async () => {
-        const router = createDefaultPaymentRouter({} as any, {} as any);
+        const router = createDefaultPaymentRouter({} as any, swaps());
         const opts = await router.options({
             raw: `bitcoin:${btcAddr}?ark=${arkAddr}&lightning=lnbc10n1pj`,
         });
@@ -20,17 +32,17 @@ describe("createDefaultPaymentRouter(wallet, swaps)", () => {
     });
 
     it("routes a bare bolt11 invoice to the lightning rail", async () => {
-        const router = createDefaultPaymentRouter({} as any, {} as any);
+        const router = createDefaultPaymentRouter({} as any, swaps());
         expect((await router.route({ raw: INVOICE })).railId).toBe("lightning");
     });
 
     it("prefers the chain swap for a bare BTC address (ark -> btc default)", async () => {
-        const router = createDefaultPaymentRouter({} as any, {} as any);
+        const router = createDefaultPaymentRouter({} as any, swaps());
         expect((await router.route({ raw: btcAddr, amount: 1000 })).railId).toBe("onchain-swap");
     });
 
     it("keeps collaborative exit selectable — preference, not restriction", async () => {
-        const router = createDefaultPaymentRouter({} as any, {} as any);
+        const router = createDefaultPaymentRouter({} as any, swaps());
         // both on-chain rails are surfaced, chain swap ranked first
         const opts = await router.options({ raw: btcAddr });
         expect(opts.map((o) => o.railId)).toEqual(["onchain-swap", "onchain"]);

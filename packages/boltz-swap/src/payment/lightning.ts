@@ -36,7 +36,15 @@ export function lightningRail(): PaymentRail {
     return {
         id: "lightning",
         match: (req) => invoiceOf(req.raw) !== undefined,
-        available: (_req, ctx) => ctx.swaps != null,
+        available: async (req, ctx) => {
+            if (ctx.swaps == null) return false;
+            const invoice = invoiceOf(req.raw);
+            if (!invoice) return false;
+            const amt = invoiceSats(invoice);
+            if (amt <= 0) return true; // amountless-invoice error deferred to quote()
+            const { min, max } = await (ctx.swaps as ArkadeSwaps).getLimits(); // submarine
+            return amt >= min && amt <= max;
+        },
         quote: async (req, ctx: RouterContext) => {
             const invoice = invoiceOf(req.raw)!;
             // The bolt11 invoice carries the amount; reject amountless or

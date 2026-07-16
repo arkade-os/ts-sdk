@@ -1,5 +1,11 @@
 import type { PaymentRail, RouterContext } from "@arkade-os/sdk";
-import { isBtcAddress, makeHandle, BIP21, resolveSendAmount } from "@arkade-os/sdk";
+import {
+    isBtcAddress,
+    makeHandle,
+    BIP21,
+    resolveSendAmount,
+    tryResolveSendAmount,
+} from "@arkade-os/sdk";
 import type { ArkadeSwaps } from "../arkade-swaps";
 
 /** The on-chain BTC address in `raw`: bare, or the address of a BIP21 URI. */
@@ -24,7 +30,30 @@ export function onchainSwapRail(): PaymentRail {
     return {
         id: "onchain-swap",
         match: (req) => btcTarget(req.raw) !== undefined,
-        available: (_req, ctx) => ctx.swaps != null,
+        available: async (req, ctx) => {
+            if (ctx.swaps == null) return false;
+            const amt = tryResolveSendAmount(req.raw, req.amount);
+            if (amt === undefined) return true; // amount-required deferred to quote()
+            const swaps = ctx.swaps as ArkadeSwaps;
+            const [{ min, max }, fees] = await Promise.all([
+                swaps.getLimits("ARK", "BTC"),
+                swaps.getFees("ARK", "BTC"),
+            ]);
+            // Boltz enforces the ARK→BTC limits on the *source* (user-lock)
+            // amount, not the receiver amount we know. Bracket the source:
+            // `serverLock` is a lower bound, and `userLock` — Boltz's percentage
+            // gross-up inverted (the fee is charged on the user-lock total, so
+            // divide by (1 - feeRate); adding feeRate * serverLock under-estimates
+            // near max) — is the upper bound. Gate min on the lower bound
+            // (conservative) and max on the upper bound; an amount in the
+            // ambiguous band self-heals to the `onchain` collaborative exit.
+            const serverLockAmount = amt + fees.minerFees.user.claim;
+            const feeRate = fees.percentage / 100;
+            const userLockAmount = Math.ceil(
+                (serverLockAmount + fees.minerFees.server) / (1 - feeRate),
+            );
+            return serverLockAmount >= min && userLockAmount <= max;
+        },
         quote: async (req, ctx: RouterContext) => {
             const address = btcTarget(req.raw)!;
             const amt = resolveSendAmount("onchain-swap", req.raw, req.amount);

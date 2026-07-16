@@ -23,7 +23,27 @@ describe("lightningRail", () => {
     it("is unavailable until swaps are configured in the context", async () => {
         const r = lightningRail();
         expect(await r.available?.({ raw: INVOICE }, ctx(undefined))).toBe(false);
-        expect(await r.available?.({ raw: INVOICE }, ctx({}))).toBe(true);
+    });
+
+    it("available() gates on submarine limits using the invoice amount", async () => {
+        // INVOICE decodes to 250_000 sats.
+        const r = lightningRail();
+        const withLimits = (min: number, max: number) => ({
+            getLimits: vi.fn().mockResolvedValue({ min, max }),
+        });
+        expect(await r.available?.({ raw: INVOICE }, ctx(withLimits(1000, 1_000_000)))).toBe(true);
+        expect(await r.available?.({ raw: INVOICE }, ctx(withLimits(300_000, 1_000_000)))).toBe(
+            false,
+        );
+        expect(await r.available?.({ raw: INVOICE }, ctx(withLimits(1000, 100_000)))).toBe(false);
+    });
+
+    it("available() defers an amountless / undecodable invoice to quote()", async () => {
+        const getLimits = vi.fn();
+        expect(await lightningRail().available?.({ raw: "lnbc1invalid" }, ctx({ getLimits }))).toBe(
+            true,
+        );
+        expect(getLimits).not.toHaveBeenCalled();
     });
 
     it("send() pays the invoice via sendLightningPayment and surfaces the preimage", async () => {

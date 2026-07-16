@@ -53,9 +53,15 @@ export class PaymentRouter {
 
         const available = (
             await Promise.all(
-                matched.map(async (rail) =>
-                    ((await rail.available?.(req, ctx)) ?? true) ? rail : null,
-                ),
+                matched.map(async (rail) => {
+                    try {
+                        return ((await rail.available?.(req, ctx)) ?? true) ? rail : null;
+                    } catch {
+                        // An availability-check failure (e.g. Boltz unreachable
+                        // during a limits fetch) drops the rail, never the router.
+                        return null;
+                    }
+                }),
             )
         ).filter((rail): rail is PaymentRail => rail !== null);
 

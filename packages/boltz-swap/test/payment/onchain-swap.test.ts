@@ -22,6 +22,39 @@ describe("onchainSwapRail", () => {
         expect(await onchainSwapRail().available?.({ raw: btcAddr }, ctx({}))).toBe(true);
     });
 
+    it("available() gates on the reconstructed source (user-lock) amount", async () => {
+        const r = onchainSwapRail();
+        // fees: 2% + server 1000 + user.claim 500; recipient amount 100_000
+        //   serverLock = 100_000 + 500              = 100_500 (min gate, lower bound)
+        //   userLock   = ceil((100_500 + 1000)/0.98) = 103_572 (max gate, upper bound)
+        const fees = {
+            percentage: 2,
+            minerFees: { server: 1000, user: { claim: 500, lockup: 60 } },
+        };
+        const swaps = (min: number, max: number) => ({
+            getLimits: vi.fn().mockResolvedValue({ min, max }),
+            getFees: vi.fn().mockResolvedValue(fees),
+        });
+        const req = { raw: btcAddr, amount: 100_000 };
+        // in range
+        expect(await r.available?.(req, ctx(swaps(1000, 1_000_000)))).toBe(true);
+        // below min: serverLock 100_500 < min 200_000
+        expect(await r.available?.(req, ctx(swaps(200_000, 1_000_000)))).toBe(false);
+        // above max via reconstruction: userLock 103_572 > max 102_000, even though
+        // the raw recipient amount 100_000 <= 102_000 — proves the gate brackets the source
+        expect(await r.available?.(req, ctx(swaps(1000, 102_000)))).toBe(false);
+        // exact upper-bound boundary
+        expect(await r.available?.(req, ctx(swaps(1000, 103_572)))).toBe(true);
+        expect(await r.available?.(req, ctx(swaps(1000, 103_571)))).toBe(false);
+    });
+
+    it("available() defers to quote() when no amount is present (no limit I/O)", async () => {
+        const swaps = { getLimits: vi.fn(), getFees: vi.fn() };
+        expect(await onchainSwapRail().available?.({ raw: btcAddr }, ctx(swaps))).toBe(true);
+        expect(swaps.getLimits).not.toHaveBeenCalled();
+        expect(swaps.getFees).not.toHaveBeenCalled();
+    });
+
     it("send() creates the chain swap, funds the lockup, then claims BTC", async () => {
         const pendingSwap = { id: "swap1" };
         const arkToBtc = vi

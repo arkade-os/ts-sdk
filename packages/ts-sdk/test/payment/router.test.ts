@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { PaymentRouter, AmbiguousRouteError } from "../../src/payment/router";
-import type { PaymentRail, RouterContext } from "../../src/payment/types";
+import type { PaymentRail, PaymentRequest, RouterContext } from "../../src/payment/types";
 
 /** A fake rail with no Wallet dependency — exercises the registry/ranking only. */
 const rail = (id: string, matches: boolean, avail = true): PaymentRail => ({
@@ -75,5 +75,46 @@ describe("PaymentRouter", () => {
         r.remove("onchain");
         const opts = await r.options({ raw: "x" });
         expect(opts.map((o) => o.railId)).toEqual([]);
+    });
+
+    it("passes the request (with amount) to available()", async () => {
+        let seen: PaymentRequest | undefined;
+        const probe: PaymentRail = {
+            id: "probe",
+            match: () => true,
+            available: (req) => {
+                seen = req;
+                return true;
+            },
+            quote: async () => ({
+                railId: "probe",
+                amount: 1,
+                fee: 0,
+                total: 1,
+                send: async () => ({ id: "probe", status: "pending" }) as any,
+            }),
+        };
+        await new PaymentRouter(ctx).use(probe).options({ raw: "x", amount: 4242 });
+        expect(seen).toEqual({ raw: "x", amount: 4242 });
+    });
+
+    it("drops a rail whose available() throws, keeping the next-priority rail", async () => {
+        const boom: PaymentRail = {
+            id: "boom",
+            match: () => true,
+            available: () => {
+                throw new Error("boltz unreachable");
+            },
+            quote: async () => ({
+                railId: "boom",
+                amount: 1,
+                fee: 0,
+                total: 1,
+                send: async () => ({ id: "boom", status: "pending" }) as any,
+            }),
+        };
+        const r = new PaymentRouter(ctx).use(boom).use(rail("ark", true));
+        const opts = await r.options({ raw: "x" }, { priority: ["boom", "ark"] });
+        expect(opts.map((o) => o.railId)).toEqual(["ark"]);
     });
 });
