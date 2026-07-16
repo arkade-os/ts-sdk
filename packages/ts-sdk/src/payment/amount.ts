@@ -23,3 +23,15 @@ export function resolveSendAmount(railId: string, raw: string, amount?: number):
     assertSendableAmount(railId, amt);
     return amt;
 }
+
+/**
+ * Non-throwing counterpart of {@link resolveSendAmount}, for availability
+ * checks that must not reject the router: returns the positive-integer sats
+ * from the explicit `amount` or the BIP21 `amount=` param, or `undefined` when
+ * none is present or the value is not a positive integer. The missing-vs-invalid
+ * distinction is left to `resolveSendAmount` at quote time.
+ */
+export function tryResolveSendAmount(raw: string, amount?: number): number | undefined {
+    const amt = amount ?? BIP21.amountSats(raw);
+    return amt !== undefined && Number.isInteger(amt) && amt > 0 ? amt : undefined;
+}

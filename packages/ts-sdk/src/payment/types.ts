@@ -51,6 +51,16 @@ export interface RouterContext {
     prefs: RouterPreferences;
 }
 
+/** A payment request: the raw target plus an optional explicit amount. Rails
+ *  self-extract their target from `raw` (bare address/invoice or a BIP21 URI);
+ *  `amount` supplements or overrides any amount encoded in `raw`. */
+export interface PaymentRequest {
+    /** Raw target: bare address/invoice, or a BIP21 URI. */
+    raw: string;
+    /** Explicit sats; supplements/overrides any amount encoded in `raw`. */
+    amount?: number;
+}
+
 /** A payment rail — registered by id, mirrors the ActivityRegistry resolver shape. */
 export interface PaymentRail {
     id: string;
