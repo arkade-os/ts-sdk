@@ -276,8 +276,15 @@ describe("vhtlc", () => {
             // A block-height CLTV matures deterministically under mineBlocks(); a
             // seconds-CLTV would need both wall-clock passage and a later block to
             // carry that time forward, so neither mining nor waiting alone gets there.
+            //
+            // The buffer is wide (not a tight +1) because `height` comes from
+            // EsploraProvider (mempool, polling Fulcrum every 2s), while arkd matures
+            // the CLTV against its own nbxplorer-derived tip — a separate indexing
+            // pipeline with no sync guarantee against mempool's. A thin margin here
+            // previously let indexer lag alone satisfy the locktime before the first
+            // submitTx below, failing this test's premature-rejection assertion.
             const { height } = await onchainProvider.getChainTip();
-            const refundLocktime = BigInt(height + 5);
+            const refundLocktime = BigInt(height + 30);
 
             const preimageHash = hash160(new TextEncoder().encode("preimage"));
             const vhtlcScript = new VHTLC.Script({
@@ -345,7 +352,7 @@ describe("vhtlc", () => {
             expect(isArkError(rejection, ArkErrorName.FORFEIT_CLOSURE_LOCKED)).toBe(true);
             expect((rejection as ArkError).metadata?.type).toBe("height");
 
-            mineBlocks(6);
+            mineBlocks(31);
             await waitFor(
                 async () => (await onchainProvider.getChainTip()).height >= Number(refundLocktime),
             );
