@@ -46,7 +46,12 @@ import {
     refundVHTLCwithOffchainTx,
     refundWithoutReceiverVHTLCwithOffchainTx,
 } from "../src/utils/vhtlc";
-import { BoltzRefundError, InvoiceFailedToPayError, SwapError } from "../src/errors";
+import {
+    BoltzRefundError,
+    InvoiceFailedToPayError,
+    SwapError,
+    TransactionFailedError,
+} from "../src/errors";
 
 // Mock the @arkade-os/sdk modules
 vi.mock("@arkade-os/sdk", async () => {
@@ -2095,7 +2100,7 @@ describe("ArkadeSwaps", () => {
                 await expect(resultPromise).rejects.toThrow("The swap has expired");
             });
 
-            it("should reject with TransactionFailedError when transaction fails", async () => {
+            it("should reject with a refundable TransactionFailedError carrying the pending swap", async () => {
                 // arrange
                 const pendingSwap: BoltzChainSwap = {
                     ...mockArkBtcChainSwap,
@@ -2106,10 +2111,13 @@ describe("ArkadeSwaps", () => {
                 });
 
                 // act
-                const resultPromise = swaps.waitAndClaimBtc(pendingSwap);
+                const error = await swaps.waitAndClaimBtc(pendingSwap).catch((e): SwapError => e);
 
-                // assert
-                await expect(resultPromise).rejects.toThrow("Error during swap.");
+                // assert — a no-manager caller recovers via the attached refund metadata
+                expect(error).toBeInstanceOf(TransactionFailedError);
+                expect(error.message).toBe("Error during swap.");
+                expect(error.isRefundable).toBe(true);
+                expect(error.pendingSwap).toMatchObject({ id: pendingSwap.id });
             });
 
             it("should reject with TransactionRefundedError when transaction is refunded", async () => {

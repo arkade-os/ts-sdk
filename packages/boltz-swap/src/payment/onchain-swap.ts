@@ -25,6 +25,20 @@ function btcTarget(raw: string): string | undefined {
  * (`arkToBtc`), fund the Ark lockup (`Wallet.send`), then claim BTC
  * (`waitAndClaimBtc`) — mirroring the wallet's `payBtc`. Reads the `ArkadeSwaps`
  * client from `ctx.swaps`, so it is unavailable until swaps are configured.
+ *
+ * `available()` gates on the ARK→BTC limits. Boltz bounds the *source* (user-lock)
+ * amount, which this receiver-exact rail doesn't know exactly, so the gate
+ * brackets it from the fee components (see the body). An amount outside the
+ * bracket drops the rail, and routing falls back to the `onchain` collaborative
+ * exit automatically.
+ *
+ * Refund is the monitor's job, never the send path's (matching NArk, where the
+ * `BoltzSwapProvider` poll-loop + sweeper own refunds). Construct `ArkadeSwaps`
+ * with a `SwapManager` — the TS analogue — and `waitAndClaimBtc` delegates to it
+ * for automatic cooperative/timelock refunds. Without one, a stranded lockup
+ * surfaces on the handle's `failed` event: when its `error` is a `SwapError` with
+ * `isRefundable === true` and a `pendingSwap`, the app calls
+ * `swaps.refundArk(pendingSwap)` itself.
  */
 export function onchainSwapRail(): PaymentRail {
     return {

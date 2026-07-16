@@ -19,6 +19,17 @@ export { onchainSwapRail } from "./onchain-swap";
  * both stay registered: the default is a *preference*, not a restriction —
  * `options()` surfaces both and an app/user can override `priority` (or
  * `disabled`) to force the collaborative exit.
+ *
+ * The preference also self-heals by amount. `onchain-swap.available()` gates on
+ * the ARK→BTC limits (bracketing the user-lock/source amount): when the
+ * reconstructed source amount is in range the chain swap wins, and when it is
+ * out of range (below min or above max) the rail drops and `onchain` wins
+ * automatically — graceful degradation, not a trap.
+ *
+ * For automatic refunds of a stranded chain-swap lockup, construct `swaps` with a
+ * `SwapManager` (the TS analogue of NArk's Boltz poll-loop/sweeper); `onchain-swap`
+ * then refunds via the monitor rather than inline. Without one, refund recovery is
+ * driven from the payment handle's `failed` event — see {@link onchainSwapRail}.
  */
 export function createDefaultPaymentRouter(wallet: Wallet, swaps: ArkadeSwaps): PaymentRouter {
     return new PaymentRouter({

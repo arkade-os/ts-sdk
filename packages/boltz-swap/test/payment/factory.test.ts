@@ -51,4 +51,17 @@ describe("createDefaultPaymentRouter(wallet, swaps)", () => {
             (await router.route({ raw: btcAddr, amount: 1000 }, { priority: ["onchain"] })).railId,
         ).toBe("onchain");
     });
+
+    it("degrades to onchain when the reconstructed source amount is below the swap minimum", async () => {
+        const s = swaps();
+        const router = createDefaultPaymentRouter({} as any, s);
+        // amount 500 → serverLock 550 < min 1000, so onchain-swap.available() drops
+        // the rail and the collaborative exit wins automatically.
+        const opts = await router.options({ raw: btcAddr, amount: 500 });
+        expect(opts.map((o) => o.railId)).toEqual(["onchain"]);
+        expect((await router.route({ raw: btcAddr, amount: 500 })).railId).toBe("onchain");
+        // fallback is caused by the limit gate, not a thrown incomplete mock
+        expect(s.getLimits).toHaveBeenCalledWith("ARK", "BTC");
+        expect(s.getFees).toHaveBeenCalledWith("ARK", "BTC");
+    });
 });

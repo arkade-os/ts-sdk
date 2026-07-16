@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { RouterContext } from "@arkade-os/sdk";
 import { onchainSwapRail } from "../../src/payment/onchain-swap";
+import { SwapError } from "../../src/errors";
 
 const btcAddr = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7k";
 const ctx = (swaps: unknown, wallet: unknown = {}): RouterContext => ({
@@ -78,6 +79,50 @@ describe("onchainSwapRail", () => {
         expect(arkToBtc).toHaveBeenCalledWith({ btcAddress: btcAddr, receiverLockAmount: 1000 });
         expect(send).toHaveBeenCalledWith({ address: "ark1lockup", amount: 1100 });
         expect(waitAndClaimBtc).toHaveBeenCalledWith(pendingSwap);
+    });
+
+    it("send() failure surfaces the exact original error on the handle's failed event", async () => {
+        const boom = new Error("boltz claim failed");
+        const arkToBtc = vi.fn().mockResolvedValue({
+            arkAddress: "ark1lockup",
+            amountToPay: 1100,
+            pendingSwap: { id: "swap1" },
+        });
+        const waitAndClaimBtc = vi.fn().mockRejectedValue(boom);
+        const send = vi.fn().mockResolvedValue("fundTx");
+        const q = await onchainSwapRail().quote(
+            { raw: btcAddr, amount: 1000 },
+            ctx({ arkToBtc, waitAndClaimBtc }, { send }),
+        );
+        const h = await q.send();
+        const failures: unknown[] = [];
+        h.subscribe((u) => {
+            if (u.status === "failed") failures.push(u.error);
+        });
+        await expect(h.settled()).rejects.toBe(boom);
+        expect(failures).toEqual([boom]); // the exact original error, not a wrapper
+    });
+
+    it("a refundable ARK→BTC failure surfaces isRefundable + pendingSwap for recovery", async () => {
+        const pendingSwap = { id: "swap1" };
+        const boom = new SwapError({ message: "lockup failed", isRefundable: true, pendingSwap });
+        const arkToBtc = vi
+            .fn()
+            .mockResolvedValue({ arkAddress: "ark1lockup", amountToPay: 1100, pendingSwap });
+        const waitAndClaimBtc = vi.fn().mockRejectedValue(boom);
+        const send = vi.fn().mockResolvedValue("fundTx");
+        const q = await onchainSwapRail().quote(
+            { raw: btcAddr, amount: 1000 },
+            ctx({ arkToBtc, waitAndClaimBtc }, { send }),
+        );
+        const h = await q.send();
+        let failed: SwapError | undefined;
+        h.subscribe((u) => {
+            if (u.status === "failed") failed = u.error as SwapError;
+        });
+        await h.settled().catch(() => {});
+        expect(failed?.isRefundable).toBe(true);
+        expect(failed?.pendingSwap).toBe(pendingSwap);
     });
 
     it("rejects a missing, zero, or fractional amount at quote time", async () => {

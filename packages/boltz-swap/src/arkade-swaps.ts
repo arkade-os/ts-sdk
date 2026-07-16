@@ -1672,10 +1672,14 @@ export class ArkadeSwaps {
                         break;
                     case "transaction.failed":
                         await updateSwapStatus();
+                        // Refundable terminal failure — attach the pending swap so a
+                        // no-manager caller can drive `refundArk(pendingSwap)` off the
+                        // handle's `failed` event (the SwapManager path refunds itself).
                         reject(
                             new TransactionFailedError({
                                 message: data.failureReason,
                                 isRefundable: true,
+                                pendingSwap: swap,
                             }),
                         );
                         break;
