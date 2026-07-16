@@ -978,6 +978,13 @@ export class BoltzSwapProvider {
     private readonly network: Network;
     private readonly referralId?: string;
     private readonly inflightGets = new Map<string, Promise<unknown>>();
+    /** In-memory TTL cache of validated Boltz pair-metadata responses, keyed by
+     *  endpoint path. Both limits and fees derive from these, so routing's
+     *  `available()` checks reuse one response instead of refetching per call. */
+    private readonly pairsCache = new Map<string, { at: number; value: unknown }>();
+
+    /** Pair-metadata cache lifetime — 15 min, matching NArk's `CachedBoltzClient`. */
+    private static readonly PAIRS_CACHE_TTL_MS = 15 * 60 * 1000;
 
     /** @param config Provider configuration with network and optional API URL. */
     constructor(config: SwapProviderConfig) {
@@ -1008,13 +1015,17 @@ export class BoltzSwapProvider {
     /** Returns current Lightning swap fees (submarine + reverse) from Boltz. */
     async getFees(): Promise<FeesResponse> {
         const [submarine, reverse] = await Promise.all([
-            this.request<GetSubmarinePairsResponse>("/v2/swap/submarine", "GET"),
-            this.request<GetReversePairsResponse>("/v2/swap/reverse", "GET"),
+            this.pairsMetadata(
+                "/v2/swap/submarine",
+                isGetSubmarinePairsResponse,
+                "error fetching submarine fees",
+            ),
+            this.pairsMetadata(
+                "/v2/swap/reverse",
+                isGetReversePairsResponse,
+                "error fetching reverse fees",
+            ),
         ]);
-        if (!isGetSubmarinePairsResponse(submarine))
-            throw new SchemaError({ message: "error fetching submarine fees" });
-        if (!isGetReversePairsResponse(reverse))
-            throw new SchemaError({ message: "error fetching reverse fees" });
         return {
             submarine: {
                 percentage: submarine.ARK.BTC.fees.percentage,
@@ -1029,9 +1040,11 @@ export class BoltzSwapProvider {
 
     /** Returns current Lightning swap min/max limits from Boltz. */
     async getLimits(): Promise<LimitsResponse> {
-        const response = await this.request<GetSubmarinePairsResponse>("/v2/swap/submarine", "GET");
-        if (!isGetSubmarinePairsResponse(response))
-            throw new SchemaError({ message: "error fetching limits" });
+        const response = await this.pairsMetadata(
+            "/v2/swap/submarine",
+            isGetSubmarinePairsResponse,
+            "error fetching limits",
+        );
         return {
             min: response.ARK.BTC.limits.minimal,
             max: response.ARK.BTC.limits.maximal,
@@ -1495,10 +1508,11 @@ export class BoltzSwapProvider {
             throw new SwapError({ message: "Invalid chain pair" });
         }
 
-        const response = await this.request<GetChainPairsResponse>("/v2/swap/chain", "GET");
-
-        if (!isGetChainPairsResponse(response))
-            throw new SchemaError({ message: "error fetching fees" });
+        const response = await this.pairsMetadata(
+            "/v2/swap/chain",
+            isGetChainPairsResponse,
+            "error fetching fees",
+        );
 
         if (!response[from]?.[to]) {
             throw new SchemaError({
@@ -1514,10 +1528,11 @@ export class BoltzSwapProvider {
             throw new SwapError({ message: "Invalid chain pair" });
         }
 
-        const response = await this.request<GetChainPairsResponse>("/v2/swap/chain", "GET");
-
-        if (!isGetChainPairsResponse(response))
-            throw new SchemaError({ message: "error fetching limits" });
+        const response = await this.pairsMetadata(
+            "/v2/swap/chain",
+            isGetChainPairsResponse,
+            "error fetching limits",
+        );
 
         if (!response[from]?.[to]) {
             throw new SchemaError({
@@ -1628,6 +1643,34 @@ export class BoltzSwapProvider {
                 message: "Invalid schema in response for swap restoration",
             });
 
+        return response;
+    }
+
+    /**
+     * Fetch a Boltz pair-metadata endpoint (`/v2/swap/{submarine,reverse,chain}`),
+     * validated and cached with a 15-minute TTL. Routing reads limits/fees on
+     * every `options()`/`route()`, so caching keeps that route-time I/O bounded
+     * and — for ARK→BTC — keeps the `available()` fee snapshot consistent with
+     * the `createChainSwap()` fee lookup when both land inside the TTL.
+     *
+     * Only successfully validated responses are cached; HTTP and schema failures
+     * refetch next time. The in-flight GET dedupe in {@link request} still applies
+     * on a cache miss, so concurrent first callers share a single fetch.
+     */
+    private async pairsMetadata<T>(
+        path: string,
+        validate: (data: any) => data is T,
+        schemaErrorMessage: string,
+    ): Promise<T> {
+        const cached = this.pairsCache.get(path);
+        if (cached && Date.now() - cached.at < BoltzSwapProvider.PAIRS_CACHE_TTL_MS) {
+            return cached.value as T;
+        }
+        const response = await this.request<unknown>(path, "GET");
+        if (!validate(response)) {
+            throw new SchemaError({ message: schemaErrorMessage });
+        }
+        this.pairsCache.set(path, { at: Date.now(), value: response });
         return response;
     }
 
