@@ -25,6 +25,9 @@ import {
     Transaction,
     WalletMode,
     RestDelegateProvider,
+    VirtualTxRepository,
+    ExitCaptureMode,
+    ExitDataSource,
 } from "../../src";
 import { ANCHOR_PKSCRIPT } from "../../src/utils/anchor";
 import type { ExtensionPacket } from "../../src/extension";
@@ -95,7 +98,14 @@ export async function createTestOnchainWallet(): Promise<TestOnchainWallet> {
     };
 }
 
-export async function createTestArkWallet(): Promise<TestArkWallet> {
+export async function createTestArkWallet(opts?: {
+    virtualTxRepository?: VirtualTxRepository;
+    exitDataCapture?: {
+        mode?: ExitCaptureMode;
+        minExitWorthSats?: number;
+        sources?: ExitDataSource[];
+    };
+}): Promise<TestArkWallet> {
     const identity = createTestIdentity();
 
     const wallet = await Wallet.create({
@@ -108,6 +118,8 @@ export async function createTestArkWallet(): Promise<TestArkWallet> {
         storage: {
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
+            virtualTxRepository: opts?.virtualTxRepository,
+            exitDataCapture: opts?.exitDataCapture,
         },
         settlementConfig: false,
     });

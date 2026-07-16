@@ -81,8 +81,10 @@ export interface CreateLightningInvoiceRequest {
 export interface CreateLightningInvoiceResponse {
     /** The on-chain amount in satoshis (after Boltz fees). */
     amount: number;
-    /** Invoice expiry timestamp (Unix seconds). */
+    /** Invoice expiry: seconds from invoice creation (timestamp) until it expires. */
     expiry: number;
+    /** Invoice creation timestamp (Unix seconds). Always present in a valid BOLT11 invoice; `0` should not occur in practice. */
+    timestamp: number;
     /** The BOLT11-encoded Lightning invoice string. */
     invoice: string;
     /** The payment hash (hex-encoded). */
@@ -336,6 +338,8 @@ export type ArkadeSwapsCreateConfig = Omit<ArkadeSwapsConfig, "swapProvider"> & 
 export interface DecodedInvoice {
     /** Invoice expiry timestamp (Unix seconds). */
     expiry: number;
+    /** Invoice creation timestamp (Unix seconds). Always present in a valid BOLT11 invoice; `0` should not occur in practice. */
+    timestamp: number;
     /** Invoice amount in satoshis. */
     amountSats: number;
     /** Invoice description string (BOLT11 `d` field; "" if none). */

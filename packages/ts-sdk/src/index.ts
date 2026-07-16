@@ -240,13 +240,62 @@ import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
 import { TxWeightEstimator, type VSize } from "./utils/txSizeEstimator";
 import { Unroll } from "./wallet/unroll";
-import { ArkError, maybeArkError } from "./providers/errors";
+import {
+    UnilateralExit,
+    createExitChainResolver,
+    deserializeExitPackage,
+    serializeExitPackage,
+} from "./wallet/exit";
+import type {
+    ExitDelay,
+    ExitMode,
+    ExitPackage,
+    ExitQuote,
+    ExitStep,
+    ExitTotals,
+    ExitVtxoInfo,
+    ExitOptions,
+    ExecutorEvent,
+    ExitFeeWallet,
+    ExitCaptureMode,
+    ExitChainResolver,
+    ExitDataSource,
+} from "./wallet/exit";
+import {
+    ArkError,
+    ArkErrorName,
+    isArkError,
+    maybeArkError,
+    ProviderUnavailableError,
+} from "./providers/errors";
+import type { ProviderKind } from "./providers/errors";
+import { isRetryableProviderError } from "./providers/availability";
+import type { ServerInfoSource } from "./wallet/arkInfoSnapshot";
+import type { ProviderConnectionState } from "./wallet/wallet";
+import type { ContractSyncState } from "./contracts/contractManager";
 import { validateVtxoTxGraph, validateConnectorsTxGraph } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
 import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
 import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
 import { InMemoryWalletRepository } from "./repositories/inMemory/walletRepository";
 import { InMemoryContractRepository } from "./repositories/inMemory/contractRepository";
+import { InMemoryIntentRepository } from "./repositories/inMemory/intentRepository";
+import { InMemoryVirtualTxRepository } from "./repositories/inMemory/virtualTxRepository";
+import { IndexedDBIntentRepository } from "./repositories/indexedDB/intentRepository";
+import { IndexedDBVirtualTxRepository } from "./repositories/indexedDB/virtualTxRepository";
+import { isTerminalIntentState, INTENT_TERMINAL_STATES } from "./repositories/intentRepository";
+import type {
+    IntentRepository,
+    ArkIntent,
+    ArkIntentState,
+    IntentFilter,
+} from "./repositories/intentRepository";
+import type {
+    VirtualTxRepository,
+    VirtualTx,
+    VtxoBranch,
+} from "./repositories/virtualTxRepository";
+import { ChainedTxType } from "./repositories/virtualTxRepository";
 import {
     MIGRATION_KEY,
     migrateWalletRepository,
@@ -326,7 +375,7 @@ import type {
 } from "./contracts/types";
 import type { ScanResult, ScanContractsOptions, HandlerError } from "./contracts/contractManager";
 import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
-import { buildVersion, sdkVersion } from "./utils/fetch";
+import { buildVersion, sdkVersion, FetchError } from "./utils/fetch";
 import { closeDatabase, openDatabase } from "./repositories/indexedDB/manager";
 import {
     WalletMessageHandler,
@@ -378,6 +427,7 @@ export {
     WsElectrumChainSource,
     RestArkProvider,
     DigestMismatchError,
+    FetchError,
     RestIndexerProvider,
     RestEmulatorProvider,
 
@@ -465,6 +515,13 @@ export {
     IndexedDBContractRepository,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    InMemoryIntentRepository,
+    InMemoryVirtualTxRepository,
+    IndexedDBIntentRepository,
+    IndexedDBVirtualTxRepository,
+    isTerminalIntentState,
+    INTENT_TERMINAL_STATES,
+    ChainedTxType,
     MIGRATION_KEY,
     migrateWalletRepository,
     requiresMigration,
@@ -485,6 +542,10 @@ export {
     // Anchor
     P2A,
     Unroll,
+    UnilateralExit,
+    createExitChainResolver,
+    serializeExitPackage,
+    deserializeExitPackage,
     Transaction,
     TxWeightEstimator,
     timelockToSequence,
@@ -492,7 +553,11 @@ export {
 
     // Errors
     ArkError,
+    ArkErrorName,
+    isArkError,
     maybeArkError,
+    ProviderUnavailableError,
+    isRetryableProviderError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 
@@ -642,6 +707,12 @@ export type {
     SignerClassification,
     SignerSet,
 
+    // Provider availability
+    ProviderKind,
+    ServerInfoSource,
+    ProviderConnectionState,
+    ContractSyncState,
+
     // Asset types
     IReadonlyAssetManager,
     IAssetManager,
@@ -668,6 +739,21 @@ export type {
     // Anchor
     AnchorBumper,
     VSize,
+
+    // Unilateral exit packages
+    ExitCaptureMode,
+    ExitChainResolver,
+    ExitDataSource,
+    ExitDelay,
+    ExitMode,
+    ExitPackage,
+    ExitQuote,
+    ExitStep,
+    ExitTotals,
+    ExitVtxoInfo,
+    ExitOptions,
+    ExecutorEvent,
+    ExitFeeWallet,
 
     // Storage
     StorageConfig,
@@ -723,4 +809,11 @@ export type {
     WalletRepository,
     ContractRepository,
     MigrationStatus,
+    IntentRepository,
+    ArkIntent,
+    ArkIntentState,
+    IntentFilter,
+    VirtualTxRepository,
+    VirtualTx,
+    VtxoBranch,
 };

@@ -60,6 +60,39 @@ describe("Indexer provider", () => {
         expect(leaves.leaves).toHaveLength(0);
     });
 
+    it("filters vtxos by renewableOnly", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const aliceOffchainAddress = await alice.wallet.getAddress();
+        expect(aliceOffchainAddress).toBeDefined();
+
+        const fundAmount = 1000;
+        faucetOffchain(aliceOffchainAddress!, fundAmount);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        const indexerProvider = new RestIndexerProvider("http://localhost:7070");
+        const scripts = [hex.encode(ArkAddress.decode(aliceOffchainAddress!).pkScript)];
+
+        // renewableOnly is the union of the spendable and recoverable sets. A freshly
+        // funded wallet has one spendable and zero recoverable vtxos, so renewableOnly
+        // matches spendableOnly here (the union-with-recoverable case needs a swept /
+        // subdust vtxo, which this fixture does not create).
+        const renewable = await indexerProvider.getVtxos({ scripts, renewableOnly: true });
+        const spendable = await indexerProvider.getVtxos({ scripts, spendableOnly: true });
+
+        expect(renewable.vtxos).toHaveLength(1);
+        expect(renewable.vtxos.map((v) => `${v.txid}:${v.vout}`).sort()).toEqual(
+            spendable.vtxos.map((v) => `${v.txid}:${v.vout}`).sort(),
+        );
+
+        // State filters are applied only when querying by scripts; the server ignores
+        // them for outpoint queries, so the vtxo still comes back.
+        const byOutpoint = await indexerProvider.getVtxos({
+            outpoints: [{ txid: renewable.vtxos[0].txid, vout: renewable.vtxos[0].vout }],
+            renewableOnly: true,
+        });
+        expect(byOutpoint.vtxos).toHaveLength(1);
+    });
+
     it("should inspect a commitment tx", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestArkWallet();

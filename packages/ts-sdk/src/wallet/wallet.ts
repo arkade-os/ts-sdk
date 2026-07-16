@@ -37,6 +37,7 @@ import {
     isSpendable,
     isSubdust,
     IWallet,
+    Outpoint,
     ReadonlyWalletConfig,
     Recipient,
     SendBitcoinParams,
@@ -71,8 +72,26 @@ import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
+import type { IntentRepository, ArkIntent, ArkIntentState } from "../repositories/intentRepository";
+import { isTerminalIntentState } from "../repositories/intentRepository";
+import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
+import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
 import { extendCoinWithTapscript, validateRecipients } from "./utils";
-import { ArkError } from "../providers/errors";
+import {
+    captureExitBranch,
+    DEFAULT_EXIT_CAPTURE_MODE,
+    DEFAULT_MIN_EXIT_WORTH_SATS,
+    ExitCaptureMode,
+    pruneExitBranches,
+} from "./exit/capture";
+import { createExitChainResolver, ExitDataSource } from "./exit/resolver";
+import { ArkError, type ProviderKind } from "../providers/errors";
+import { isRetryableProviderError } from "../providers/availability";
+import {
+    resolveArkInfo,
+    saveValidatedArkInfoSnapshot,
+    type ServerInfoSource,
+} from "./arkInfoSnapshot";
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
 import { DelegateProvider } from "../providers/delegate";
@@ -84,7 +103,11 @@ import { DelegateVtxo } from "../script/delegate";
 import { DelegateManagerImpl, findDestinationOutputIndex, IDelegateManager } from "./delegate";
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
-import type { CreateContractParams } from "../contracts/contractManager";
+import type {
+    ContractManagerConfig,
+    ContractSyncState,
+    CreateContractParams,
+} from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
 import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { timelockToSequence } from "../utils/timelock";
@@ -272,6 +295,45 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
 export { DescriptorSigningProviderMissingError, MissingSigningDescriptorError };
 
 /**
+ * Drop VTXOs whose outpoint is locked by a non-terminal intent. Returns the
+ * input array unchanged when nothing is locked (cheap no-op for the common
+ * case where no `intentRepository` is configured).
+ */
+export function excludeLockedOutpoints<T extends { txid: string; vout: number }>(
+    vtxos: T[],
+    locked: { txid: string; vout: number }[],
+): T[] {
+    if (locked.length === 0) return vtxos;
+    const lockedKeys = new Set(locked.map((o) => `${o.txid}:${o.vout}`));
+    return vtxos.filter((v) => !lockedKeys.has(`${v.txid}:${v.vout}`));
+}
+
+/**
+ * Spendable-balance view of `vtxos`: the same set minus any outpoint locked by
+ * a non-terminal settlement intent. Offline-first and best-effort — it only
+ * *reads* the intent store's lock set (never arkd/indexer, never a mutation),
+ * and **fails open** to the unfiltered VTXOs if that read rejects. A transient
+ * or corrupt intent-store read must not sink the wallet's whole balance; the
+ * cost of failing open is that a genuinely-locked VTXO can briefly re-appear as
+ * spendable until the store recovers, which is strictly safer than reporting no
+ * balance at all. No-op (same array) when no `intentRepository` is configured.
+ */
+export async function spendableVtxosExcludingLocked<T extends { txid: string; vout: number }>(
+    vtxos: T[],
+    intentRepository?: Pick<IntentRepository, "getLockedVtxoOutpoints">,
+): Promise<T[]> {
+    if (!intentRepository) return vtxos;
+    let locked: Outpoint[];
+    try {
+        locked = await intentRepository.getLockedVtxoOutpoints();
+    } catch (e) {
+        console.error("getLockedVtxoOutpoints failed; reporting unfiltered balance", e);
+        return vtxos;
+    }
+    return excludeLockedOutpoints(vtxos, locked);
+}
+
+/**
  * Boarding UTXOs grouped by the boarding address they sit on, carrying that
  * address's signer association explicitly. Returned by
  * {@link ReadonlyWallet.getBoardingUtxosForSigners} because a flat
@@ -290,10 +352,47 @@ export interface BoardingUtxoGroup {
     coins: ExtendedCoin[];
 }
 
+/**
+ * Freshness of the wallet's provider-backed sync, composed from the boot
+ * server-info source and the contract-manager's indexer-sync health. It
+ * describes only how fresh provider data is — never the wallet balances/VTXOs
+ * themselves, which are always served from the repository (system of record).
+ */
+export type ProviderConnectionState =
+    | { mode: "online"; source: "live"; lastOnlineAt: number }
+    | {
+          mode: "degraded";
+          source: "cache" | "repository";
+          provider: ProviderKind;
+          reason: string;
+          lastOnlineAt?: number;
+      };
+
 export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManager?: ContractManager;
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
+
+    /**
+     * Opt-in intent-lifecycle repository. Assigned by the `create()`
+     * factories from `config.storage.intentRepository`; `undefined` ⇒ all
+     * intent-persistence code paths are no-ops (default behaviour unchanged).
+     */
+    public intentRepository?: IntentRepository;
+    /**
+     * **Experimental / inert.** Opt-in virtual-tx / exit-branch repository,
+     * exposed so callers can pass it to {@link Unroll.Session.create} as a
+     * best-effort raw-tx cache. Assigned by `create()` from
+     * `config.storage.virtualTxRepository`. Normal sync never writes it
+     * (ContractManager isn't given it); `undefined` ⇒ no-op.
+     */
+    public virtualTxRepository?: VirtualTxRepository;
+    /** Opt-in exit-data capture settings; see {@link StorageConfig.exitDataCapture}. */
+    public exitDataCapture?: {
+        mode?: ExitCaptureMode;
+        minExitWorthSats?: number;
+        sources?: ExitDataSource[];
+    };
     private readonly _assetManager: IReadonlyAssetManager;
     readonly walletContractTimelocks: RelativeTimelock[];
     // Outpoints ("txid:vout") committed to an in-flight settle/send. Filtered
@@ -341,6 +440,77 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * construction-time snapshot for their lifetime.
      */
     protected _arkServerPublicKey: Bytes;
+
+    /**
+     * Whether this wallet was constructed from live operator server-info
+     * (`"live"`) or from a cached snapshot because the operator was unreachable
+     * (`"cache"`). Freshness signal for {@link getProviderConnectionState}.
+     */
+    protected _serverInfoSource: ServerInfoSource = "live";
+
+    /**
+     * Epoch-ms of the last known live operator contact: construction time on the
+     * `live` boot path, the cached snapshot's `savedAt` on the `cache` path.
+     */
+    protected _serverInfoLastOnlineAt?: number;
+
+    /** @see {@link _serverInfoSource} */
+    get serverInfoSource(): ServerInfoSource {
+        return this._serverInfoSource;
+    }
+
+    /**
+     * Composed provider-connection freshness: the boot server-info source
+     * (Arkade) combined with the contract-manager's indexer-sync health, if the
+     * manager has been initialized. Reads no live provider state — it never
+     * forces a `ContractManager` to construct — so it is safe for readonly
+     * callers that only use address/balance APIs.
+     *
+     *  - Boot fell back to a cached snapshot → degraded on `arkade` (`cache`).
+     *  - Otherwise, if the contract manager has degraded to repository data →
+     *    degraded on `indexer` (`repository`).
+     *  - Otherwise online.
+     *
+     * This only describes sync freshness; wallet balances/VTXOs are always read
+     * from the repository regardless of this state.
+     */
+    getProviderConnectionState(): ProviderConnectionState {
+        if (this._serverInfoSource === "cache") {
+            return {
+                mode: "degraded",
+                source: "cache",
+                provider: "arkade",
+                reason: "constructed from cached server-info; operator was unreachable at boot",
+                lastOnlineAt: this._serverInfoLastOnlineAt,
+            };
+        }
+        const sync = this._contractManager?.getSyncState();
+        if (sync?.mode === "degraded") {
+            return {
+                mode: "degraded",
+                source: "repository",
+                provider: "indexer",
+                reason: sync.reason,
+                lastOnlineAt: sync.lastSyncedAt ?? this._serverInfoLastOnlineAt,
+            };
+        }
+        return {
+            mode: "online",
+            source: "live",
+            lastOnlineAt: sync?.lastSyncedAt ?? this._serverInfoLastOnlineAt ?? 0,
+        };
+    }
+
+    /**
+     * The contract-manager's current provider-sync health **without forcing it
+     * to initialize** — reads the already-constructed manager, or reports
+     * `online` when none exists yet. Unlike {@link getContractManager}, this
+     * never triggers a remote sync, so it is safe on a pure diagnostics path
+     * (e.g. the service-worker sync-state message).
+     */
+    getContractSyncState(): ContractSyncState {
+        return this._contractManager?.getSyncState() ?? { mode: "online" };
+    }
 
     protected constructor(
         readonly identity: ReadonlyIdentity,
@@ -401,9 +571,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Refresh the cached deprecated-signer set from a fresh server-info
-     * snapshot. Called by the create() factories at construction and by the
-     * server-info-change handler mid-session. Lenient: a malformed deprecated
-     * entry is skipped, never fatal to wallet creation.
+     * snapshot. Called by the create() factories at construction, by the
+     * server-info-change handler mid-session, and by the deprecated-signer
+     * migration pass (`VtxoManager.migrateDeprecatedSignerVtxos`). This set feeds
+     * {@link pendingRecoveryOutpoints}, which drops EXPIRED (past-cutoff)
+     * deprecated-signer VTXOs from the wallet's own coin selection. Lenient: a
+     * malformed deprecated entry is skipped, never fatal to wallet creation.
      */
     refreshDeprecatedSigners(info: {
         deprecatedSigners?: readonly { pubkey?: string; cutoffDate?: bigint }[];
@@ -540,7 +713,26 @@ export class ReadonlyWallet implements IReadonlyWallet {
             indexerProvider = new RestIndexerProvider(indexerUrl);
         }
 
-        const info = await arkProvider.getInfo();
+        // Instantiate the repositories BEFORE the first required server-info
+        // fetch so boot can read a cached snapshot and fall back to it when the
+        // operator is unreachable, instead of failing construction outright.
+        const walletRepository =
+            config.storage?.walletRepository ?? new IndexedDBWalletRepository();
+
+        const contractRepository =
+            config.storage?.contractRepository ?? new IndexedDBContractRepository();
+
+        // Live server-info wins; a retryable failure falls back to the cached
+        // snapshot (or throws a typed unavailable error when none exists), and
+        // terminal failures propagate unchanged. The cache is NOT written here:
+        // persistence is deferred to after construction validates the response
+        // (see saveValidatedArkInfoSnapshot in the create() paths) so a terminal
+        // live response can't poison the cache before construction fails.
+        const {
+            info,
+            source: serverInfoSource,
+            lastOnlineAt: serverInfoLastOnlineAt,
+        } = await resolveArkInfo(arkProvider, walletRepository);
 
         const network = getNetwork(info.network as NetworkName);
 
@@ -646,12 +838,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
             csvTimelock: timelockToSequence(boardingTimelock).toString(),
         });
 
-        const walletRepository =
-            config.storage?.walletRepository ?? new IndexedDBWalletRepository();
-
-        const contractRepository =
-            config.storage?.contractRepository ?? new IndexedDBContractRepository();
-
         return {
             arkProvider,
             indexerProvider,
@@ -665,6 +851,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
             walletRepository,
             contractRepository,
             info,
+            serverInfoSource,
+            serverInfoLastOnlineAt,
             delegateProvider: config.delegateProvider || config.delegatorProvider,
             /** @deprecated alias for `delegateProvider` */
             delegatorProvider: config.delegateProvider || config.delegatorProvider,
@@ -701,6 +889,19 @@ export class ReadonlyWallet implements IReadonlyWallet {
             config.watcherConfig,
             setup.walletContractTimelocks,
         );
+        wallet.intentRepository = config.storage?.intentRepository;
+        wallet.virtualTxRepository = config.storage?.virtualTxRepository;
+        wallet.exitDataCapture = config.storage?.exitDataCapture;
+        wallet._serverInfoSource = setup.serverInfoSource;
+        // Construction validated the live response (network, signer, address
+        // params); only now is it safe to refresh the cached snapshot.
+        if (setup.serverInfoSource === "live") {
+            const now = Date.now();
+            await saveValidatedArkInfoSnapshot(setup.walletRepository, setup.info, now);
+            wallet._serverInfoLastOnlineAt = now;
+        } else {
+            wallet._serverInfoLastOnlineAt = setup.serverInfoLastOnlineAt;
+        }
         wallet.refreshDeprecatedSigners(setup.info);
         return wallet;
     }
@@ -739,6 +940,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const isPendingRecovery = (coin: ExtendedVirtualCoin) =>
             pendingOutpoints.has(`${coin.txid}:${coin.vout}`);
 
+        // `settled`/`preconfirmed`/`total` and the asset rollup count every
+        // spendable VTXO, including those locked by a non-terminal intent (still
+        // the wallet's funds); only `available` subtracts the locked ones. The
+        // lock read is offline-first and fails open — see
+        // {@link spendableVtxosExcludingLocked}.
+        const unlockedVtxos = await spendableVtxosExcludingLocked(vtxos, this.intentRepository);
+
         // boarding
         let confirmed = 0;
         let unconfirmed = 0;
@@ -751,19 +959,27 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
 
         // offchain
-        let settled = 0;
-        let preconfirmed = 0;
         let recoverable = 0;
         let pendingRecovery = 0;
         // Funds under a past-cutoff (EXPIRED) deprecated signer that are not yet
         // swept are NOT spendable — excluded from settled/preconfirmed/available
         // and surfaced under `pendingRecovery` (they still count toward `total`).
-        settled = vtxos
+        const settled = vtxos
             .filter((coin) => coin.virtualStatus.state === "settled" && !isPendingRecovery(coin))
             .reduce((sum, coin) => sum + coin.value, 0);
-        preconfirmed = vtxos
+        const preconfirmed = vtxos
             .filter(
                 (coin) => coin.virtualStatus.state === "preconfirmed" && !isPendingRecovery(coin),
+            )
+            .reduce((sum, coin) => sum + coin.value, 0);
+        // Spendable-right-now subset: the same settled+preconfirmed rule, but
+        // over VTXOs not currently locked by an in-flight intent.
+        const available = unlockedVtxos
+            .filter(
+                (coin) =>
+                    (coin.virtualStatus.state === "settled" ||
+                        coin.virtualStatus.state === "preconfirmed") &&
+                    !isPendingRecovery(coin),
             )
             .reduce((sum, coin) => sum + coin.value, 0);
         recoverable = vtxos
@@ -800,7 +1016,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             },
             settled,
             preconfirmed,
-            available: settled + preconfirmed,
+            available,
             recoverable,
             pendingRecovery,
             total: totalBoarding + totalOffchain,
@@ -865,7 +1081,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const getTxCreatedAt = (txid: string) =>
             this.indexerProvider
                 .getVtxos({ outpoints: [{ txid, vout: 0 }] })
-                .then((res) => res.vtxos[0]?.createdAt.getTime());
+                .then((res) => res.vtxos[0]?.createdAt.getTime())
+                // Best-effort createdAt enrichment: when the indexer is
+                // unavailable, leave it undefined (history still builds from
+                // repository VTXOs) rather than failing the whole read. Terminal
+                // failures still propagate.
+                .catch((err) => {
+                    if (isRetryableProviderError(err)) return undefined;
+                    throw err;
+                });
 
         return buildTransactionHistory(allVtxos, boardingTxs, commitmentsToIgnore, getTxCreatedAt);
     }
@@ -1438,10 +1662,42 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     private async initializeContractManager(): Promise<ContractManager> {
+        // When a virtualTxRepository is configured, capture each received VTXO's
+        // unilateral-exit branch and prune it on spend (both best-effort).
+        const virtualTxRepository = this.virtualTxRepository;
+        let onVtxosPersisted: ContractManagerConfig["onVtxosPersisted"];
+        let onVtxosSpent: ContractManagerConfig["onVtxosSpent"];
+        if (virtualTxRepository) {
+            const capture = this.exitDataCapture;
+            const resolver = createExitChainResolver({
+                indexer: this.indexerProvider,
+                repository: virtualTxRepository,
+                extraSources: capture?.sources,
+            });
+            onVtxosPersisted = async (_contract, vtxos) => {
+                for (const v of vtxos) {
+                    if (v.virtualStatus.state === "spent") continue;
+                    await captureExitBranch({
+                        resolver,
+                        repository: virtualTxRepository,
+                        vtxo: { txid: v.txid, vout: v.vout },
+                        value: v.value,
+                        mode: capture?.mode ?? DEFAULT_EXIT_CAPTURE_MODE,
+                        minExitWorthSats: capture?.minExitWorthSats ?? DEFAULT_MIN_EXIT_WORTH_SATS,
+                    }).catch(() => {
+                        // capture is best-effort
+                    });
+                }
+            };
+            onVtxosSpent = (vtxos) => pruneExitBranches(virtualTxRepository, vtxos);
+        }
         const manager = await ContractManager.create({
             indexerProvider: this.indexerProvider,
             contractRepository: this.contractRepository,
             walletRepository: this.walletRepository,
+            intentRepository: this.intentRepository,
+            onVtxosPersisted,
+            onVtxosSpent,
             watcherConfig: this.watcherConfig,
         });
 
@@ -2454,6 +2710,17 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             boot?.rotator,
             boot?.provider,
         );
+        wallet._serverInfoSource = setup.serverInfoSource;
+        // The response cleared construction validation — network/signer in
+        // setupWalletConfig plus the checkpoint/forfeit parsing above — so it is
+        // now safe to refresh the cached snapshot from live server-info.
+        if (setup.serverInfoSource === "live") {
+            const now = Date.now();
+            await saveValidatedArkInfoSnapshot(setup.walletRepository, setup.info, now);
+            wallet._serverInfoLastOnlineAt = now;
+        } else {
+            wallet._serverInfoLastOnlineAt = setup.serverInfoLastOnlineAt;
+        }
         wallet.refreshDeprecatedSigners(setup.info);
         // Mid-session signer-rotation detection: when the arkProvider detects a
         // stale-info DIGEST_MISMATCH and refetches info, re-derive the wallet's
@@ -2497,6 +2764,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 wallet.setBoardingTapscriptForRotation(resolvedBoarding);
             }
         }
+
+        wallet.intentRepository = config.storage?.intentRepository;
+        wallet.virtualTxRepository = config.storage?.virtualTxRepository;
+        wallet.exitDataCapture = config.storage?.exitDataCapture;
 
         await wallet.getVtxoManager();
         return wallet;
@@ -2800,7 +3071,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             output.amount -= BigInt(outputFee.satoshis);
 
-            if (output.amount <= this.dustAmount) {
+            if (isSubdust(output.amount, this.dustAmount)) {
                 throw new Error("Output amount is below dust limit");
             }
 
@@ -2899,6 +3170,26 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.makeDeleteIntentSignature(params.inputs),
         ]);
 
+        // Client-side intent key: the intent proof's txid (NArk parity).
+        // Falls back to a deterministic outpoint digest if the special
+        // intent PSBT can't be decoded — keeps persistence resilient.
+        let intentTxId: string;
+        try {
+            intentTxId = Transaction.fromPSBT(base64.decode(intent.proof)).id;
+        } catch {
+            intentTxId = params.inputs
+                .map((i) => `${i.txid}:${i.vout}`)
+                .sort()
+                .join("|");
+        }
+        await this.persistIntentSnapshot(
+            intentTxId,
+            "waiting_to_submit",
+            intent,
+            deleteIntent,
+            params.inputs,
+        );
+
         const topics = [
             ...signingPublicKeys,
             ...params.inputs.map((input) => `${input.txid}:${input.vout}`),
@@ -2906,6 +3197,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         const abortController = new AbortController();
         let stream: AsyncIterableIterator<SettlementEvent> | undefined;
+        // Set once Batch.join returns: the batch is committed on-chain and no
+        // local cleanup failure may cancel it. Authoritative in memory even if
+        // the hook's terminal repo write failed, which repo state can't tell us.
+        let committedTxid: string | undefined;
 
         // Optimistically hide these inputs from concurrent getVtxos() callers
         // while the settlement is in flight. Set before safeRegisterIntent so
@@ -2931,15 +3226,34 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             const intentId = await this.safeRegisterIntent(intent, params.inputs);
 
-            const handler = this.createBatchHandler(intentId, params.inputs, recipients, session);
+            await this.persistIntentSnapshot(
+                intentTxId,
+                "waiting_for_batch",
+                intent,
+                deleteIntent,
+                params.inputs,
+                { intentId },
+            );
+
+            // SDK-owned intent persistence runs from the awaited batch hooks;
+            // the caller's eventCallback stays purely observational.
+            const handler = wrapHandlerWithIntentPersistence(
+                this.createBatchHandler(intentId, params.inputs, recipients, session),
+                { intentRepository: this.intentRepository, intentTxId },
+            );
 
             const commitmentTxid = await Batch.join(primedStream, handler, {
                 abortController,
                 skipVtxoTreeSigning: !hasOffchainOutputs,
-                eventCallback: eventCallback
-                    ? (event) => Promise.resolve(eventCallback(event))
-                    : undefined,
+                // async so a synchronous throw becomes a rejection Batch.join
+                // swallows, keeping the observational callback off the stream path.
+                eventCallback:
+                    eventCallback &&
+                    (async (event) => {
+                        await eventCallback(event);
+                    }),
             });
+            committedTxid = commitmentTxid;
 
             await this.updateDbAfterSettle(params.inputs, commitmentTxid);
 
@@ -2955,10 +3269,23 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             return commitmentTxid;
         } catch (error) {
-            // delete the intent to not be stuck in the queue. If deletion fails
-            // the intent stays on the server and the next settle will hit
-            // "duplicated input" in safeRegisterIntent — surface the failure
-            // rather than silently swallowing it.
+            if (committedTxid !== undefined) {
+                // The batch committed and a later local step (updateDbAfterSettle,
+                // rotation) threw. The settlement stands — never delete or cancel
+                // it. Re-persist the terminal success in case the hook's write
+                // failed; persistIntentSnapshot no-ops if it already landed.
+                await this.persistIntentSnapshot(
+                    intentTxId,
+                    "batch_succeeded",
+                    intent,
+                    deleteIntent,
+                    params.inputs,
+                    { commitmentTransactionId: committedTxid },
+                );
+                throw error;
+            }
+            // Pre-commit failure: release the server intent so the next settle
+            // doesn't hit "duplicated input", and record the cancellation.
             const inputIds = params.inputs.map((i) => `${i.txid}:${i.vout}`).join(",");
             await this.arkProvider.deleteIntent(deleteIntent).catch((e) => {
                 console.warn(
@@ -2966,6 +3293,16 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     e,
                 );
             });
+            await this.persistIntentSnapshot(
+                intentTxId,
+                "cancelled",
+                intent,
+                deleteIntent,
+                params.inputs,
+                {
+                    cancellationReason: error instanceof Error ? error.message : String(error),
+                },
+            );
             throw error;
         } finally {
             // Clear state first so a synchronous handler firing from abort()
@@ -3075,7 +3412,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 continue;
             }
 
-            if (isRecoverable(input) || isSubdust(input, this.dustAmount)) {
+            if (isRecoverable(input) || isSubdust({ value: input.value }, this.dustAmount)) {
                 // recoverable or subdust coin, we don't need to create a forfeit tx
                 continue;
             }
@@ -3329,6 +3666,57 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             if (script) jobs.push({ index, lookupScript: script });
         }
         return jobs;
+    }
+
+    /**
+     * Best-effort upsert of the current settlement intent into the optional
+     * {@link intentRepository}. Never throws into the settle path — intent
+     * persistence is observational and must not break money flow. Preserves
+     * fields already written by the event reducer (state-event ordering).
+     */
+    private async persistIntentSnapshot(
+        intentTxId: string,
+        state: ArkIntentState,
+        intent: SignedIntent<Intent.RegisterMessage>,
+        deleteIntent: SignedIntent<Intent.DeleteMessage>,
+        inputs: ExtendedCoin[],
+        patch?: Partial<ArkIntent>,
+    ): Promise<void> {
+        const repo = this.intentRepository;
+        if (!repo) return;
+        try {
+            const now = Date.now();
+            const existing = (await repo.getIntents({ intentTxIds: [intentTxId] }))[0];
+            // Terminal stickiness: the event reducer (BatchFinalized/-Failed)
+            // drives the intent to a terminal state via `Batch.join`'s callback.
+            // A *later* try-block step (updateDbAfterSettle, boarding rotation)
+            // can still throw and route through settle()'s catch, which calls
+            // this with "cancelled". Writing `state` directly here would clobber
+            // a `batch_succeeded` whose money already moved. Terminal is sticky:
+            // never overwrite it — the reducer already recorded the outcome.
+            if (existing && isTerminalIntentState(existing.state)) {
+                return;
+            }
+            await repo.saveIntent({
+                ...(existing ?? {}),
+                intentTxId,
+                registerProof: intent.proof,
+                registerProofMessage: Intent.encodeMessage(intent.message),
+                deleteProof: deleteIntent.proof,
+                deleteProofMessage: Intent.encodeMessage(deleteIntent.message),
+                intentVtxos: inputs.map((i) => ({
+                    txid: i.txid,
+                    vout: i.vout,
+                })),
+                partialForfeits: existing?.partialForfeits ?? [],
+                createdAt: existing?.createdAt ?? now,
+                updatedAt: now,
+                state,
+                ...patch,
+            });
+        } catch (e) {
+            console.error(`Failed to persist intent ${intentTxId} (state=${state})`, e);
+        }
     }
 
     /**

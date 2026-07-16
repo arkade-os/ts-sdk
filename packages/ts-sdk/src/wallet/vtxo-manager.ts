@@ -11,7 +11,7 @@ import {
     VirtualCoin,
 } from ".";
 import { ArkInfo, ArkProvider, SettlementEvent } from "../providers/ark";
-import { maybeArkError } from "../providers/errors";
+import { ArkErrorName, isArkError, maybeArkError } from "../providers/errors";
 import type { BoardingUtxoGroup } from "./wallet";
 import type { ExtendedContractVtxo } from "../contracts/types";
 import {
@@ -734,6 +734,8 @@ interface MigrationCapableWallet {
     arkServerPublicKey: Uint8Array;
     onchainProvider: OnchainProvider;
     rotateServerSigner(newServerPubKey: Uint8Array, checkpointTapscript: string): Promise<void>;
+    /** Refresh the wallet's cached deprecated-signer set from a fresh {@link ArkInfo} snapshot. */
+    refreshDeprecatedSigners(info: ArkInfo): void;
     /**
      * Spend an explicit set of the wallet's own deprecated-signer VTXOs into a
      * single full-value active-signer output through the Ark send path (not
@@ -757,6 +759,8 @@ function isMigrationCapable(wallet: IWallet): wallet is IWallet & MigrationCapab
         "arkServerPublicKey" in wallet &&
         "onchainProvider" in wallet &&
         typeof (wallet as Partial<MigrationCapableWallet>).rotateServerSigner === "function" &&
+        typeof (wallet as Partial<MigrationCapableWallet>).refreshDeprecatedSigners ===
+            "function" &&
         typeof (wallet as Partial<MigrationCapableWallet>).sendSelectedVtxosToSelf === "function" &&
         typeof (wallet as Partial<MigrationCapableWallet>).getBoardingUtxosForSigners === "function"
     );
@@ -912,6 +916,11 @@ export interface IVtxoManager {
      *
      * Available regardless of the `deprecatedSignerMigration` config flag (that
      * flag only gates the automatic poll-loop pass).
+     *
+     * As a side effect, refreshes the wallet's cached deprecated-signer set from
+     * fresh server info, so a subsequent `settle()` correctly excludes EXPIRED
+     * deprecated-signer inputs. To refresh that filter without migrating, call
+     * `wallet.refreshDeprecatedSigners(await wallet.arkProvider.getInfo())` instead.
      *
      * @returns A report of what was migrated, skipped, expired, or failed.
      */
@@ -1614,6 +1623,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     ): Promise<DeprecatedSignerMigrationReport> {
         const wallet = this.requireMigrationCapableWallet();
         const info = await wallet.arkProvider.getInfo();
+        // Refresh the wallet's cached deprecated-signer set from this fresh
+        // snapshot before any classification or early-exit, so the spendability
+        // filter that excludes EXPIRED deprecated-signer inputs from settle() is
+        // consistent for the rest of this pass. Placed ahead of the no-deprecated
+        // exit so a pass that finds nothing deprecated still clears a stale cache.
+        wallet.refreshDeprecatedSigners(info);
         const signerSet = signerSetFromInfo(info);
         const nowSeconds = Math.floor(Date.now() / 1000);
 
@@ -2379,7 +2394,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      */
     private extractSpentOutpoint(error: unknown): Outpoint | undefined {
         const ark = maybeArkError(error);
-        if (!ark || ark.name !== "VTXO_ALREADY_SPENT") return undefined;
+        if (!isArkError(ark, ArkErrorName.VTXO_ALREADY_SPENT)) return undefined;
         const raw = ark.metadata?.vtxo_outpoint;
         if (typeof raw !== "string") return undefined;
         const [txid, voutStr] = raw.split(":");
