@@ -1464,7 +1464,12 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
                 contractRepository: contractRepo ?? new InMemoryContractRepository(),
             },
         });
-        return { wallet, identity, base };
+        const getChainTipSpy = vi.spyOn(wallet.onchainProvider, "getChainTip").mockResolvedValue({
+            height: 0,
+            time: 0,
+            hash: "00".repeat(32),
+        });
+        return { wallet, identity, base, getChainTipSpy };
     }
 
     function makeBaselineCoin(
@@ -1805,6 +1810,29 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
             { assetId: assetA, amount: 42n },
             { assetId: assetB, amount: 7n },
         ]);
+
+        await wallet.dispose();
+    });
+
+    it("sendSelectedVtxosToSelf rejects a height-expired input before submission", async () => {
+        const { wallet, getChainTipSpy } = await makeStaticBatchWallet();
+        getChainTipSpy.mockResolvedValueOnce({
+            height: 501,
+            time: 0,
+            hash: "00".repeat(32),
+        });
+        const coin = makeMigratableCoin(wallet, {
+            virtualStatus: { state: "settled", batchExpiry: 500_000 },
+            expiresAt: undefined,
+            expiresAtHeight: 500,
+        });
+        const { submitSpy } = stubSendRoundTrip(wallet);
+
+        await expect(wallet.sendSelectedVtxosToSelf([coin])).rejects.toThrow(
+            /not cooperatively spendable/,
+        );
+        expect(submitSpy).not.toHaveBeenCalled();
+        expect(getChainTipSpy).toHaveBeenCalled();
 
         await wallet.dispose();
     });

@@ -4769,8 +4769,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             // cooperatively: recoverable/swept inputs follow the recovery settle
             // path, and the DB-update path only persists a wallet-owned output
             // when an input batch expiry exists (unrolled inputs carry none).
+            const now = {
+                timestamp: new Date(),
+                height: (await this.onchainProvider.getChainTip()).height,
+            };
             for (const input of inputs) {
-                if (!canSpendOffchain(input, { timestamp: new Date() })) {
+                if (!canSpendOffchain(input, now)) {
                     throw new Error(
                         `sendSelectedVtxosToSelf: input ${input.txid}:${input.vout} is not cooperatively spendable`,
                     );
