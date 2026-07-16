@@ -1,6 +1,6 @@
 import type { PaymentHandle, PaymentStatus, RouteResult } from "./types";
 
-type Update = { status: PaymentStatus; result?: RouteResult };
+type Update = { status: PaymentStatus; result?: RouteResult; error?: unknown };
 
 /** Build an observable handle. `run` starts immediately and gets an `emit` to
  *  stream progress; its resolved value is the terminal result. */
@@ -26,9 +26,15 @@ export function makeHandle(
         for (const f of subs) notify(f, u);
     };
     const done = run(emit);
-    // Swallow the unhandled-rejection warning for fire-and-forget callers that
-    // never await settled(); awaiters still receive the original rejection.
-    done.catch(() => {});
+    // Surface a terminal failure on the observable stream: rails only emit() on
+    // success, so without this a subscribe-only consumer never learns a payment
+    // failed. The guard leaves an already-settled result intact if the run rejects
+    // afterwards. This also handles the unhandled-rejection warning for
+    // fire-and-forget callers; awaiters of settled() still receive the original
+    // rejection (settled() returns `done`, a separate branch off the same promise).
+    done.catch((error) => {
+        if (status !== "settled") emit({ status: "failed", error });
+    });
     return {
         id,
         get status() {

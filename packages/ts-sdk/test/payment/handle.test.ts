@@ -39,4 +39,33 @@ describe("makeHandle", () => {
         h.subscribe((u) => seen.push(u.status));
         expect(seen).toEqual(["pending"]);
     });
+
+    it("emits a terminal failed update carrying the error when the run rejects", async () => {
+        const boom = new Error("send failed");
+        const h = makeHandle("op4", () => Promise.reject(boom));
+        const seen: { status: string; error?: unknown }[] = [];
+        h.subscribe((u) => seen.push({ status: u.status, error: u.error }));
+
+        // settled() surfaces the original rejection to awaiters ...
+        await expect(h.settled()).rejects.toThrow("send failed");
+        // ... and the observable stream reaches "failed" with the error attached,
+        // so a subscribe-only consumer also learns the payment failed.
+        expect(h.status).toBe("failed");
+        const failed = seen.find((u) => u.status === "failed");
+        expect(failed?.error).toBe(boom);
+    });
+
+    it("keeps the settled status when the run rejects after emitting settled", async () => {
+        const h = makeHandle("op5", (emit) => {
+            emit({ status: "settled", result: { railId: "ark", txid: "tx" } });
+            return Promise.reject(new Error("late boom"));
+        });
+        const seen: string[] = [];
+        h.subscribe((u) => seen.push(u.status));
+        // flush the rejection + catch microtasks
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(h.status).toBe("settled");
+        expect(seen).not.toContain("failed");
+    });
 });

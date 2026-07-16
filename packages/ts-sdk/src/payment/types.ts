@@ -14,8 +14,12 @@ export interface RouteResult {
 export interface PaymentHandle {
     readonly id: string;
     readonly status: PaymentStatus;
-    /** Progress stream; returns an unsubscribe fn. Replays the latest update. */
-    subscribe(fn: (u: { status: PaymentStatus; result?: RouteResult }) => void): () => void;
+    /** Progress stream; returns an unsubscribe fn. Replays the latest update.
+     *  A terminal `"failed"` update carries the rejection in `error` (for swap rails
+     *  a `SwapError` whose `isRefundable`/`pendingSwap` drive recovery). */
+    subscribe(
+        fn: (u: { status: PaymentStatus; result?: RouteResult; error?: unknown }) => void,
+    ): () => void;
     /** OPTIONAL await — resolves on a terminal result, rejects on the timeout.
      *  Fire-and-forget rails may never resolve it; that is allowed. */
     settled(opts?: { timeoutMs?: number }): Promise<RouteResult>;
