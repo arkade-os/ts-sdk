@@ -11,7 +11,7 @@ import {
     VirtualCoin,
 } from ".";
 import { ArkInfo, ArkProvider, SettlementEvent } from "../providers/ark";
-import { maybeArkError } from "../providers/errors";
+import { ArkErrorName, isArkError, maybeArkError } from "../providers/errors";
 import type { BoardingUtxoGroup } from "./wallet";
 import type { ExtendedContractVtxo } from "../contracts/types";
 import {
@@ -2394,7 +2394,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      */
     private extractSpentOutpoint(error: unknown): Outpoint | undefined {
         const ark = maybeArkError(error);
-        if (!ark || ark.name !== "VTXO_ALREADY_SPENT") return undefined;
+        if (!isArkError(ark, ArkErrorName.VTXO_ALREADY_SPENT)) return undefined;
         const raw = ark.metadata?.vtxo_outpoint;
         if (typeof raw !== "string") return undefined;
         const [txid, voutStr] = raw.split(":");

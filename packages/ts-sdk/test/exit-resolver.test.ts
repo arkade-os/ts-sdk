@@ -1,0 +1,123 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+    createExitChainResolver,
+    ExitDataSource,
+    OrderedExitChainResolver,
+} from "../src/wallet/exit/resolver";
+import { InMemoryVirtualTxRepository } from "../src/repositories/inMemory/virtualTxRepository";
+import { ChainTx, ChainTxType } from "../src/providers/indexer";
+
+const chainTx = (txid: string): ChainTx => ({
+    txid,
+    expiresAt: "0",
+    type: ChainTxType.ARK,
+    spends: [],
+});
+
+// A fake source that answers only the keys it was seeded with.
+function fakeSource(
+    name: string,
+    chains: Record<string, ChainTx[]>,
+    psbts: Record<string, string>,
+): ExitDataSource {
+    return {
+        name,
+        getVtxoChain: async (vtxo) => chains[`${vtxo.txid}:${vtxo.vout}`] ?? null,
+        getVirtualTxs: async (txids) => {
+            const out = new Map<string, string>();
+            for (const t of txids) if (psbts[t]) out.set(t, psbts[t]);
+            return out;
+        },
+    };
+}
+
+describe("OrderedExitChainResolver", () => {
+    it("returns the first source that resolves the chain", async () => {
+        const local = fakeSource("local", {}, {});
+        const indexer = fakeSource("indexer", { "aa:0": [chainTx("t1")] }, {});
+        const r = new OrderedExitChainResolver([local, indexer]);
+        expect((await r.getVtxoChain({ txid: "aa", vout: 0 })).map((c) => c.txid)).toEqual(["t1"]);
+    });
+
+    it("merges partial PSBT hits across sources, local first", async () => {
+        const local = fakeSource("local", {}, { t1: "psbt1" });
+        const indexer = fakeSource("indexer", {}, { t1: "IGNORED", t2: "psbt2" });
+        const r = new OrderedExitChainResolver([local, indexer]);
+        const txs = await r.getVirtualTxs(["t1", "t2"]);
+        expect(new Set(txs)).toEqual(new Set(["psbt1", "psbt2"]));
+    });
+
+    it("read-through persists non-local PSBT hits, best-effort", async () => {
+        const persist = { upsertVirtualTxs: vi.fn(async () => {}) } as any;
+        const local = fakeSource("local", {}, {});
+        const indexer = fakeSource("indexer", {}, { t2: "psbt2" });
+        const r = new OrderedExitChainResolver([local, indexer], persist);
+        await r.getVirtualTxs(["t2"]);
+        expect(persist.upsertVirtualTxs).toHaveBeenCalledOnce();
+        expect(persist.upsertVirtualTxs.mock.calls[0][0]).toEqual([
+            { txid: "t2", psbt: "psbt2", expiresAt: null, type: 0 },
+        ]);
+    });
+
+    it("rethrows the last source error when nothing resolves the chain", async () => {
+        const throwing: ExitDataSource = {
+            name: "indexer",
+            getVtxoChain: async () => {
+                throw new Error("indexer down");
+            },
+            getVirtualTxs: async () => new Map(),
+        };
+        const r = new OrderedExitChainResolver([throwing]);
+        await expect(r.getVtxoChain({ txid: "aa", vout: 0 })).rejects.toThrow(/indexer down/);
+    });
+
+    it("createExitChainResolver serves a pre-seeded repo without hitting the indexer", async () => {
+        const repo = new InMemoryVirtualTxRepository();
+        await repo.upsertVirtualTxs([{ txid: "z1", psbt: "P", expiresAt: null, type: 2 }]);
+        const indexer = {
+            getVirtualTxs: async () => {
+                throw new Error("indexer must not be called");
+            },
+            getVtxoChain: async () => {
+                throw new Error("indexer must not be called");
+            },
+        } as any;
+        const resolver = createExitChainResolver({ indexer, repository: repo });
+        expect(await resolver.getVirtualTxs(["z1"])).toEqual(["P"]);
+    });
+
+    it("createExitChainResolver orders sources repo -> extraSources -> indexer", async () => {
+        const repo = new InMemoryVirtualTxRepository();
+        await repo.upsertVirtualTxs([{ txid: "r1", psbt: "R", expiresAt: null, type: 2 }]);
+        const calls: string[] = [];
+        const extra: ExitDataSource = {
+            name: "provider",
+            getVtxoChain: async () => {
+                calls.push("extra");
+                return null;
+            },
+            getVirtualTxs: async () => {
+                calls.push("extra");
+                return new Map();
+            },
+        };
+        const indexer = {
+            getVtxoChain: async () => ({ chain: [] }),
+            getVirtualTxs: async () => {
+                calls.push("indexer");
+                return { txs: [] };
+            },
+        } as any;
+        const resolver = createExitChainResolver({
+            indexer,
+            repository: repo,
+            extraSources: [extra],
+        });
+        // repo answers first — extra + indexer are not consulted
+        expect(await resolver.getVirtualTxs(["r1"])).toEqual(["R"]);
+        expect(calls).toEqual([]);
+        // a miss falls through repo -> extra -> indexer, in that order
+        await resolver.getVirtualTxs(["miss"]);
+        expect(calls).toEqual(["extra", "indexer"]);
+    });
+});

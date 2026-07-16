@@ -1,6 +1,6 @@
 {
     "name": "@arkade-os/sdk",
-    "version": "0.4.43",
+    "version": "0.4.45",
     "description": "TypeScript SDK for building Bitcoin wallets using the Arkade protocol",
     "type": "module",
     "main": "./dist/index.cjs",
@@ -174,7 +174,7 @@
     },
     "devDependencies": {
         "@types/better-sqlite3": "7.6.13",
-        "@vitest/coverage-v8": "3.2.4",
+        "@vitest/coverage-v8": "3.2.7",
         "better-sqlite3": "12.6.2",
         "typedoc": "^0.28.19"
     },
