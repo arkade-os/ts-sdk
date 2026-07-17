@@ -122,11 +122,71 @@ describe("KeyringDescriptorProvider", () => {
             );
         });
 
-        it("throws on corrupt persisted state rather than deriving garbage", async () => {
+        it("throws when `keys` is not an object", async () => {
             const repo = new InMemoryWalletRepository();
-            await repo.saveWalletState({ settings: { keyring: { keys: { abcd: "not-a-key" } } } });
+            await repo.saveWalletState({ settings: { keyring: { keys: "nope" } } });
 
-            await expect(makeProvider(repo)).rejects.toThrow(/Corrupt keyring settings/);
+            await expect(makeProvider(repo)).rejects.toThrow(/`keys` is not an object/);
+        });
+
+        it("throws on a private key that is not 32-byte hex", async () => {
+            const repo = new InMemoryWalletRepository();
+            await repo.saveWalletState({
+                settings: { keyring: { keys: { [xOnlyHex(FOREIGN_PRIVKEY)]: "not-a-key" } } },
+            });
+
+            await expect(makeProvider(repo)).rejects.toThrow(/not a 32-byte hex private key/);
+        });
+
+        it("throws on a map key that is not a 32-byte hex pubkey", async () => {
+            const repo = new InMemoryWalletRepository();
+            await repo.saveWalletState({
+                settings: { keyring: { keys: { abcd: hex.encode(FOREIGN_PRIVKEY) } } },
+            });
+
+            await expect(makeProvider(repo)).rejects.toThrow(/not a 32-byte hex x-only pubkey/);
+        });
+
+        it("throws when an entry is filed under a pubkey its private key does not derive", async () => {
+            // the mismatch isOurs() would otherwise assert away: claims the
+            // descriptor, then signs it with the wrong key
+            const repo = new InMemoryWalletRepository();
+            await repo.saveWalletState({
+                settings: {
+                    keyring: {
+                        keys: { [xOnlyHex(OTHER_FOREIGN_PRIVKEY)]: hex.encode(FOREIGN_PRIVKEY) },
+                    },
+                },
+            });
+
+            await expect(makeProvider(repo)).rejects.toThrow(/does not match its private key/);
+        });
+
+        it("throws on a private key outside the curve order", async () => {
+            const repo = new InMemoryWalletRepository();
+            await repo.saveWalletState({
+                settings: { keyring: { keys: { [xOnlyHex(FOREIGN_PRIVKEY)]: "00".repeat(32) } } },
+            });
+
+            await expect(makeProvider(repo)).rejects.toThrow(/not a valid private key/);
+        });
+
+        it("normalizes an uppercase persisted pubkey so lookups still resolve", async () => {
+            const repo = new InMemoryWalletRepository();
+            await repo.saveWalletState({
+                settings: {
+                    keyring: {
+                        keys: {
+                            [xOnlyHex(FOREIGN_PRIVKEY).toUpperCase()]: hex.encode(FOREIGN_PRIVKEY),
+                        },
+                    },
+                },
+            });
+
+            const { provider } = await makeProvider(repo);
+
+            expect(provider.hasKey(foreignDescriptor)).toBe(true);
+            expect(provider.listKeyringDescriptors()).toEqual([foreignDescriptor]);
         });
     });
 
