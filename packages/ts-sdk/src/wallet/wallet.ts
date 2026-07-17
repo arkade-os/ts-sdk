@@ -4185,13 +4185,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const cashScript = cash.vtxoScript;
         const cashAddress = cash.address(this.network.hrp);
         const cashPkScript = hex.encode(cashScript.pkScript);
-        const cashSubdustPkScript = hex.encode(cashAddress.subdustPkScript);
 
-        // One unfiltered query: the server's state filters are mutually
-        // exclusive, so any filter here would hide the very states this method
-        // reports. Both scripts are queried in the same call — subdust arkcash
-        // lives at the OP_RETURN script and would otherwise vanish silently.
-        const scripts = [cashPkScript, cashSubdustPkScript];
+        // One unfiltered query over the contract's P2TR script: the server's
+        // state filters are mutually exclusive, so any filter here would hide
+        // the very states this method reports. Only the P2TR script is queried —
+        // the indexer rejects a non-P2TR (OP_RETURN) script outright, so subdust
+        // arkcash, which lives at the OP_RETURN script, is not visible here and
+        // is simply not reported. `createCash`'s dust floor keeps it from being
+        // minted in the first place.
+        const scripts = [cashPkScript];
         let vtxos = await this.fetchAllVtxos(scripts);
 
         if (vtxos.length === 0) {
@@ -4199,10 +4201,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         }
 
         const myPkScript = ArkAddress.decode(await this.getAddress()).pkScript;
-        let { spendable, recoverable, unclaimed } = this.classifyCashVtxos(
-            vtxos,
-            cashSubdustPkScript,
-        );
+        let { spendable, recoverable, unclaimed } = this.classifyCashVtxos(vtxos);
         let swept = 0;
 
         // Drain first: a previous claim may have registered a sweep it never
@@ -4213,10 +4212,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // The candidate set is neither `spendable` nor everything. Registering
         // a sweep marks its input spent, so the very inputs needing a drain are
         // the ones classified `already-spent` — gating on `spendable` would
-        // skip the drain exactly when it is needed. Subdust must stay out
-        // regardless: the proof describes every input by the contract's own
-        // pkScript, which is a lie for an OP_RETURN outpoint and would have the
-        // server reject the whole proof.
+        // skip the drain exactly when it is needed. Every queried VTXO sits at
+        // the contract's own pkScript, so all of them are valid proof inputs.
         const drainable = vtxos.filter((vtxo) => vtxo.script === cashPkScript);
         if (drainable.length > 0) {
             let drained = { count: 0, swept: 0, claimed: new Set<string>() };
@@ -4238,10 +4235,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 // now stale: re-read it, or we would re-sweep an outpoint we
                 // just spent and report the rejection as a failure.
                 vtxos = await this.fetchAllVtxos(scripts);
-                ({ spendable, recoverable, unclaimed } = this.classifyCashVtxos(
-                    vtxos,
-                    cashSubdustPkScript,
-                ));
+                ({ spendable, recoverable, unclaimed } = this.classifyCashVtxos(vtxos));
 
                 // The drain moved these to this wallet, so they are swept by
                 // this call — the re-read above sees them spent and would
@@ -4410,10 +4404,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * through a recovery settlement (`recoverable`), and the ones that can
      * only be reported (`unclaimed`).
      */
-    private classifyCashVtxos(
-        vtxos: VirtualCoin[],
-        cashSubdustPkScript: string,
-    ): {
+    private classifyCashVtxos(vtxos: VirtualCoin[]): {
         spendable: VirtualCoin[];
         recoverable: VirtualCoin[];
         unclaimed: ArkCashUnclaimedVtxo[];
@@ -4425,11 +4416,14 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         for (const vtxo of vtxos) {
             if (!isSpendable(vtxo)) {
                 unclaimed.push(cashReport(vtxo, "already-spent"));
-            } else if (vtxo.script === cashSubdustPkScript || isSubdust(vtxo, this.dustAmount)) {
-                // Subdust sits at an OP_RETURN script: no forfeit leaf, nothing
-                // to spend, and no settlement can lift it out on its own.
-                // Checked before the swept case, which would otherwise claim
-                // these are recoverable. createCash now prevents minting them.
+            } else if (isSubdust(vtxo, this.dustAmount)) {
+                // A below-dust VTXO at the P2TR script cannot be swept or
+                // settled on its own. Subdust arkcash actually lives at an
+                // OP_RETURN script (not queried — the indexer rejects non-P2TR
+                // scripts), so this is a defensive guard; createCash's dust
+                // floor prevents minting subdust in the first place. Checked
+                // before the swept case, which would otherwise call it
+                // recoverable.
                 unclaimed.push(cashReport(vtxo, "subdust"));
             } else if (vtxo.assets && vtxo.assets.length > 0) {
                 // The thin sweep builds a BTC-only output; sweeping an
