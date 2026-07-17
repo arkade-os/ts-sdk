@@ -104,3 +104,6 @@ export { isHDCapableIdentity } from "./hdCapableIdentity";
 
 // Static descriptor provider (wrapper for legacy Identity)
 export { StaticDescriptorProvider } from "./staticDescriptorProvider";
+
+// Keyring descriptor provider (decorator adding raw external keys)
+export { KeyringDescriptorProvider } from "./keyringDescriptorProvider";
