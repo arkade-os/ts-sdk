@@ -87,10 +87,12 @@ import {
     ReadonlyWallet,
     waitForIncomingFunds,
     IncomingFunds,
+    selectVirtualCoins,
     BoardingUtxoGroup,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./wallet/wallet";
+import { createAssetPacket, selectCoinsWithAsset } from "./wallet/asset";
 import { TxTree, TxTreeNode } from "./tree/txTree";
 import { SignerSession, TreeNonces, TreePartialSigs } from "./tree/signingSession";
 import { DustChangeError, Ramps } from "./wallet/ramps";
@@ -194,6 +196,8 @@ import { getRandomId } from "./wallet/utils";
 import {
     VtxoTaprootTree,
     ConditionWitness,
+    PrevArkTxField,
+    PrevoutTxField,
     getArkPsbtFields,
     setArkPsbtField,
     ArkPsbtFieldCoder,
@@ -224,6 +228,13 @@ import {
     SubscriptionHeartbeat,
     SubscriptionEvent,
 } from "./providers/indexer";
+import {
+    RestEmulatorProvider,
+    type EmulatorProvider,
+    type EmulatorInfo,
+    type ConnectorTreeNode,
+} from "./providers/emulator";
+import type { ArkadeExtendedCoin } from "./arkade/batch";
 import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
@@ -305,7 +316,10 @@ import {
 } from "./wallet/delegate";
 
 export * from "./arkfee";
+export * from "./extension";
 export * as asset from "./extension/asset";
+export * as arkade from "./arkade";
+export * from "./extension/emulator";
 
 // Contracts
 // Side-effect import: registers the built-in handlers with `contractHandlers`.
@@ -332,6 +346,8 @@ import type { VHTLCContractParams } from "./contracts/handlers/vhtlc";
 import { isCsvSpendable, isCltvSatisfied } from "./contracts/handlers/helpers";
 import { BoardingContractHandler } from "./contracts/handlers/boarding";
 import type { BoardingContractParams } from "./contracts/handlers/boarding";
+import { ArkadeContractHandler } from "./contracts/handlers/arkade";
+import type { ArkadeContractParams } from "./arkade/program";
 import {
     encodeArkContract,
     decodeArkContract,
@@ -413,6 +429,7 @@ export {
     DigestMismatchError,
     FetchError,
     RestIndexerProvider,
+    RestEmulatorProvider,
 
     // Script-related
     ArkAddress,
@@ -463,7 +480,8 @@ export {
     VtxoTreeExpiry,
     VtxoTaprootTree,
     ConditionWitness,
-
+    PrevArkTxField,
+    PrevoutTxField,
     // Utils
     buildOffchainTx,
     verifyTapscriptSignatures,
@@ -475,6 +493,11 @@ export {
     getRandomId,
     buildVersion,
     sdkVersion,
+
+    // Asset utilities
+    createAssetPacket,
+    selectCoinsWithAsset,
+    selectVirtualCoins,
 
     // Arknote
     ArkNote,
@@ -557,6 +580,7 @@ export {
     DelegateContractHandler,
     VHTLCContractHandler,
     BoardingContractHandler,
+    ArkadeContractHandler,
     encodeArkContract,
     decodeArkContract,
     contractFromArkContract,
@@ -618,6 +642,11 @@ export type {
     Vtxo,
     VtxoChain,
     Tx,
+
+    // Emulator types
+    EmulatorProvider,
+    EmulatorInfo,
+    ConnectorTreeNode,
 
     // Provider types
     OnchainProvider,
@@ -750,6 +779,7 @@ export type {
     DelegateContractParams,
     VHTLCContractParams,
     BoardingContractParams,
+    ArkadeContractParams,
     Discoverable,
     DiscoveryDeps,
     DiscoveredContract,
@@ -763,6 +793,9 @@ export type {
     ResponseEnvelope,
     MessageTimeouts,
     ServiceWorkerWalletMode,
+
+    // Arkade types
+    ArkadeExtendedCoin,
 
     // Delegate types (Delegator* aliases deprecated)
     IDelegateManager,

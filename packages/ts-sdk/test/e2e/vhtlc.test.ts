@@ -407,10 +407,12 @@ describe("vhtlc", () => {
                 return vtxos[0]?.isSpent === true;
             });
 
-            const { vtxos: created } = await indexerProvider.getVtxos({
-                scripts: [hex.encode(vhtlcScript.pkScript)],
+            await waitFor(async () => {
+                const { vtxos } = await indexerProvider.getVtxos({
+                    scripts: [hex.encode(vhtlcScript.pkScript)],
+                });
+                return vtxos.some((v) => v.txid === txid1 && !v.isSpent);
             });
-            expect(created.some((v) => v.txid === txid1 && !v.isSpent)).toBe(true);
         },
     );
 });
