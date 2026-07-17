@@ -190,6 +190,7 @@ import {
     WalletCannotAllocateAddressError,
     resolveDescriptorSigner,
 } from "./hdWalletCapable";
+import { StaticDescriptorProvider } from "../identity/staticDescriptorProvider";
 import { deriveDescriptorLeafPubKey, identityDescriptor } from "../identity/descriptor";
 import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
 import {
@@ -199,6 +200,7 @@ import {
     DiscoveryDeps,
     GetContractsFilter,
     isContractVtxoEvent,
+    isRecoveryOnlyContract,
 } from "../contracts/types";
 import {
     gateExclusion,
@@ -367,7 +369,12 @@ export function filterSnapshotVtxos(
     pendingSpendOutpoints: ReadonlySet<string>,
 ): NormalizedExtendedVirtualCoin[] {
     return filterFlatVtxos(
-        snapshot.flatMap((contract) => contract.vtxos),
+        // Recovery-only contracts (claimCash's server-swept arkadeCash) settle in their own
+        // isolated intent; excluding them here keeps them out of balance, renewal, recovery and
+        // coin selection, so a persistently rejected recovery input can't poison those.
+        snapshot
+            .filter(({ contract }) => !isRecoveryOnlyContract(contract))
+            .flatMap((contract) => contract.vtxos),
         filter,
         pendingSpendOutpoints,
     );
@@ -539,10 +546,9 @@ export interface BoardingUtxoGroup {
 }
 
 /**
- * Why a VTXO at an arkadeCash address could not be swept by {@link Wallet.claimCash}.
+ * Why a VTXO at an arkadeCash address could neither be swept nor imported for
+ * recovery by {@link Wallet.claimCash}.
  *
- * - `swept` — the server swept the batch at expiry. Recoverable in principle,
- *   but only through a settlement, which the thin sweep cannot do.
  * - `subdust` — below dust, so it sits at an OP_RETURN script with no spendable
  *   leaf. Unspendable as cash; `createCash` prevents minting these.
  * - `already-spent` — someone else claimed it first.
@@ -550,14 +556,19 @@ export interface BoardingUtxoGroup {
  *   `Unroll.completeUnroll` is the remedy.
  * - `has-assets` — asset-bearing; the BTC-only sweep would burn the assets.
  * - `sweep-failed` — spendable, but its own sweep was rejected.
+ * - `recovery-failed` — server-swept and recoverable in principle, but the
+ *   import that hands it to the wallet's recovery machinery failed.
+ *
+ * A server-swept VTXO whose import *succeeds* is not reported here — it lands
+ * in {@link ArkadeCashClaimResult.recovering} instead.
  */
 export type ArkadeCashUnclaimedReason =
-    | "swept"
     | "subdust"
     | "already-spent"
     | "exited"
     | "has-assets"
-    | "sweep-failed";
+    | "sweep-failed"
+    | "recovery-failed";
 
 const cashReport = (
     vtxo: VirtualCoin,
@@ -569,24 +580,42 @@ const cashReport = (
     reason,
 });
 
-/** A VTXO {@link Wallet.claimCash} left behind, with the reason why. */
-export interface ArkadeCashUnclaimedVtxo {
+/** Minimal outpoint + value identifying a VTXO in a claim report. */
+export interface ArkadeCashVtxoRef {
     txid: string;
     vout: number;
     /** Value in satoshis. */
     value: number;
+}
+
+/** A VTXO {@link Wallet.claimCash} left behind, with the reason why. */
+export interface ArkadeCashUnclaimedVtxo extends ArkadeCashVtxoRef {
     reason: ArkadeCashUnclaimedReason;
 }
 
 /**
- * Outcome of {@link Wallet.claimCash}: what was swept, and what was not.
+ * Outcome of {@link Wallet.claimCash}: what was swept instantly, what was
+ * imported for background recovery, and what was left behind.
  *
- * The shape is open — further buckets may be added alongside `unclaimed` as
- * more of the non-sweepable states become claimable.
+ * The shape is open — further buckets may be added as more of the
+ * non-sweepable states become claimable.
  */
 export interface ArkadeCashClaimResult {
-    /** Satoshis swept to this wallet. */
+    /** Satoshis swept to this wallet instantly (the thin single-key sweep). */
     swept: number;
+    /**
+     * Server-swept VTXOs imported for recovery. These funds are not in the
+     * wallet yet: a swept VTXO can only move through a settlement, so
+     * `claimCash` imports it as a signable contract and hands it to the
+     * wallet's own recovery machinery, which settles it back (rotation-aware)
+     * on the normal retry cadence. The amount arrives as a fresh VTXO once
+     * that settlement finalizes.
+     */
+    recovering: {
+        /** Satoshis imported for recovery. */
+        amount: number;
+        vtxos: ArkadeCashVtxoRef[];
+    };
     unclaimed: {
         /** Satoshis left behind. */
         amount: number;
@@ -2201,6 +2230,27 @@ export class Wallet
      */
     private readonly _descriptorProvider?: DescriptorProvider;
 
+    /**
+     * Keyring holding foreign private keys imported outside the wallet's
+     * derivation tree (see {@link KeyringDescriptorProvider}). Wraps
+     * {@link _descriptorProvider} (or a {@link StaticDescriptorProvider}
+     * over the wallet identity when there is no HD provider) and is the
+     * descriptor provider {@link _signerRouter} actually signs through, so
+     * a contract carrying `metadata.signingDescriptor` for an imported key
+     * is signable by construction.
+     *
+     * Kept separate from {@link _descriptorProvider} on purpose: the latter
+     * still gates HD boarding/receive rotation (a `!provider` check means
+     * "static wallet, no rotation"), and wrapping it with a keyring for
+     * every wallet would break that gate. The keyring is orthogonal — it
+     * only ever adds foreign signable keys, never receive addresses.
+     *
+     * Populated for every {@link Wallet.create}d wallet; the constructor's
+     * param is optional so the router degrades to {@link _descriptorProvider}
+     * if a caller ever omits it.
+     */
+    private readonly _keyring?: KeyringDescriptorProvider;
+
     /** Per-side width of the HD look-ahead band. @see WalletConfig.lookAheadWindow */
     private readonly _lookAheadWindow: number;
 
@@ -2966,6 +3016,7 @@ export class Wallet
         walletContractTimelocks?: RelativeTimelock[],
         receiveRotator?: WalletReceiveRotator,
         descriptorProvider?: DescriptorProvider,
+        keyring?: KeyringDescriptorProvider,
         lookAheadWindow?: number,
         /** Overrides for the `batchExpiry` bounds; defaults derive from `network`. */
         protected readonly batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
@@ -2998,11 +3049,15 @@ export class Wallet
         this._serverUnrollScript = serverUnrollScript;
         this._receiveRotator = receiveRotator;
         this._descriptorProvider = descriptorProvider;
+        this._keyring = keyring;
         this._lookAheadWindow = lookAheadWindow ?? DEFAULT_LOOK_AHEAD_WINDOW;
         this._signerRouter = new InputSignerRouter({
             identity,
             contractRepository,
-            descriptorProvider,
+            // Sign through the keyring: it resolves the wrapped base
+            // provider's descriptors AND any imported foreign keys. Falls
+            // back to the bare base provider when no keyring was supplied.
+            descriptorProvider: keyring ?? descriptorProvider,
             boardingPkScript: boardingTapscript.pkScript,
         });
     }
@@ -3141,6 +3196,17 @@ export class Wallet
         // HD boot wiring; `getVtxoManager()` installs the rotator lazily.
         const boot = await WalletReceiveRotator.resolveBoot(config, setup);
 
+        // Wrap the resolved provider (or a static one over the wallet
+        // identity, for the common non-HD wallet) with a keyring so
+        // `claimCash` can import a foreign signable contract for recovery
+        // and the signer router can resolve it. This does NOT feed HD
+        // boarding/receive rotation — that still keys off `boot?.provider`
+        // below — so a static wallet keeps its single fixed address.
+        const keyring = await KeyringDescriptorProvider.create(
+            boot?.provider ?? (await StaticDescriptorProvider.create(config.identity)),
+            setup.walletRepository,
+        );
+
         const wallet = new this(
             config.identity,
             setup.network,
@@ -3162,6 +3228,7 @@ export class Wallet
             setup.walletContractTimelocks,
             boot?.rotator,
             boot?.provider,
+            keyring,
             config.lookAheadWindow,
             // Pinned at setup rather than refetched per round.
             {
@@ -4416,16 +4483,29 @@ export class Wallet
     }
 
     /**
-     * Claim an ArkadeCash bearer instrument: sweep each spendable VTXO to this wallet in its own
-     * offchain tx signed with the token's key, and report the rest in `unclaimed` with a
-     * per-VTXO reason. Nothing is persisted (no contract imported, key not stored).
+     * Claim an ArkadeCash bearer instrument: sweep what can be swept, recover what
+     * was swept by the server, report the rest.
      *
-     * The token is the recovery handle: re-running `claimCash` completes an interrupted claim by
-     * draining pending arkadeCash txs before sweeping.
+     * Every spendable VTXO at the arkadeCash address is swept to this wallet in
+     * its own offchain transaction, signed with the key carried by the arkadeCash
+     * string. A VTXO the server already swept at batch expiry cannot move
+     * through the thin sweep — only a settlement can lift it — so it is
+     * **imported** as a signable `default` contract (the arkadeCash key is filed
+     * in the keyring) and handed to the wallet's own recovery machinery, which
+     * settles it back on the normal retry cadence. That import is the only
+     * thing `claimCash` persists, and the key is purged once recovery
+     * completes. Anything neither sweepable nor recoverable — subdust, already
+     * claimed, or asset-bearing — is returned in `unclaimed` with a per-VTXO
+     * reason and otherwise ignored.
+     *
+     * The arkadeCash string is the recovery token: a claim interrupted between
+     * submit and finalize is completed by simply re-running `claimCash`, which
+     * drains any pending arkadeCash transaction on the server before sweeping.
+     * The import is idempotent, so re-running is always safe.
      *
      * @param cashStr - The encoded arkadeCash string (e.g., "arkadecash1...")
-     * @returns The swept total and the report of what was left behind. The
-     * shape is open: further buckets may be added alongside `unclaimed`.
+     * @returns What was swept instantly, what was imported for recovery, and
+     * what was left behind. The shape is open: further buckets may be added.
      */
     async claimCash(cashStr: string): Promise<ArkadeCashClaimResult> {
         const cash = ArkadeCash.fromString(cashStr);
@@ -4443,7 +4523,7 @@ export class Wallet
         }
 
         const myPkScript = ArkAddress.decode(await this.getAddress()).pkScript;
-        let { spendable, unclaimed } = this.classifyCashVtxos(vtxos);
+        let { spendable, recoverable, unclaimed } = this.classifyCashVtxos(vtxos);
         let swept = 0;
 
         // Drain a previously registered but unfinalized sweep, keyed to the cash key so
@@ -4469,7 +4549,7 @@ export class Wallet
             if (drained.count > 0) {
                 // Re-read, or we'd re-sweep an outpoint the drain just spent.
                 vtxos = await this.fetchAllVtxos(scripts);
-                ({ spendable, unclaimed } = this.classifyCashVtxos(vtxos));
+                ({ spendable, recoverable, unclaimed } = this.classifyCashVtxos(vtxos));
 
                 // Drained-to-us outpoints now read as spent but were claimed by this call;
                 // ones a drained tx paid to someone else stay reported.
@@ -4517,8 +4597,43 @@ export class Wallet
             }
         }
 
+        // Server-swept VTXOs can only move through a settlement, so import the
+        // arkadeCash key as a signable contract and let the wallet's recovery
+        // machinery settle it back. All recoverable VTXOs share the one arkadeCash
+        // script, so a single import covers them.
+        const recovering: ArkadeCashVtxoRef[] = [];
+        if (recoverable.length > 0) {
+            try {
+                await this.importArkadeCashForRecovery(
+                    cash,
+                    cashScript,
+                    cash.address(this.network.hrp),
+                );
+                for (const vtxo of recoverable) {
+                    recovering.push({ txid: vtxo.txid, vout: vtxo.vout, value: vtxo.value });
+                }
+                // Kick recovery promptly rather than waiting for the poll loop.
+                // Non-blocking: recovery is a full settlement (a batch round)
+                // retried on the wallet's normal cadence, so claimCash must not
+                // await it. A kick failure is harmless — the poll loop retries.
+                void this.kickImportedRecovery();
+            } catch (error) {
+                // The import is local (keyring + contract writes) and rarely
+                // fails; if it does, report the funds rather than dropping them
+                // silently. They stay recoverable in principle by re-running.
+                console.error("Failed to import swept arkadeCash for recovery:", error);
+                for (const vtxo of recoverable) {
+                    unclaimed.push(cashReport(vtxo, "recovery-failed"));
+                }
+            }
+        }
+
         return {
             swept,
+            recovering: {
+                amount: recovering.reduce((total, vtxo) => total + vtxo.value, 0),
+                vtxos: recovering,
+            },
             unclaimed: {
                 amount: unclaimed.reduce((total, vtxo) => total + vtxo.value, 0),
                 vtxos: unclaimed,
@@ -4527,14 +4642,92 @@ export class Wallet
     }
 
     /**
-     * Split the VTXOs at an arkadeCash address into the ones the thin sweep can
-     * move and the ones it can only report.
+     * Import an arkadeCash instrument as a signable, recovery-only contract so the
+     * wallet's own recovery machinery can settle its server-swept VTXOs back.
+     *
+     * Two writes, both idempotent so a re-run (or a resumed claim) is safe:
+     * - the arkadeCash private key is filed in the keyring, returning its
+     *   `tr(<pubkey>)` descriptor;
+     * - a `default` contract for the arkadeCash script is registered carrying that
+     *   descriptor as `metadata.signingDescriptor` (so the signer router can
+     *   sign the swept inputs) and `metadata.recoveryOnly` (so the contract is
+     *   settled in its own isolated intent, never bundled into the wallet's own
+     *   renewal/recovery — a persistently rejected input then dents only its
+     *   own recovery, never the wallet's funds).
+     */
+    private async importArkadeCashForRecovery(
+        cash: ArkadeCash,
+        cashScript: DefaultVtxo.Script,
+        cashAddress: ArkAddress,
+    ): Promise<void> {
+        if (!this._keyring) {
+            throw new Error("Cannot import arkadeCash for recovery: wallet has no keyring");
+        }
+        const descriptor = await this._keyring.importKey(cash.privateKey);
+
+        const manager = await this.getContractManager();
+        await manager.createContract({
+            type: "default",
+            params: {
+                pubKey: hex.encode(cash.publicKey),
+                serverPubKey: hex.encode(cash.serverPubKey),
+                csvTimelock: timelockToSequence(cash.csvTimelock).toString(),
+            },
+            script: hex.encode(cashScript.pkScript),
+            address: cashAddress.encode(),
+            state: "active",
+            metadata: {
+                signingDescriptor: descriptor,
+                recoveryOnly: true,
+            },
+        });
+    }
+
+    /** Best-effort, non-blocking trigger of the isolated imported-recovery pass. */
+    private async kickImportedRecovery(): Promise<void> {
+        try {
+            const manager = await this.getVtxoManager();
+            await manager.recoverImportedContracts();
+        } catch (error) {
+            console.error("Failed to kick imported arkadeCash recovery:", error);
+        }
+    }
+
+    /**
+     * Retire a contract imported for recovery once its funds have been settled
+     * back: purge the keyring key that backed it, then delete the contract row.
+     * Ends the key-at-rest window opened by {@link importArkadeCashForRecovery}.
+     *
+     * Scoped to recovery-only contracts as a safety guard — it will not touch a
+     * regular wallet contract — and idempotent: a second call (the contract
+     * already gone) is a no-op. Invoked by the isolated recovery pass in
+     * `VtxoManager` (see its `RecoveryContractCapableWallet` capability).
+     */
+    async removeRecoveryContract(script: string): Promise<void> {
+        const manager = await this.getContractManager();
+        const [contract] = await manager.getContracts({ script });
+        if (!contract || !isRecoveryOnlyContract(contract)) return;
+
+        const descriptor = contract.metadata?.signingDescriptor;
+        if (typeof descriptor === "string" && this._keyring) {
+            await this._keyring.deleteKey(descriptor);
+        }
+        await manager.deleteContract(script);
+    }
+
+    /**
+     * Split the VTXOs at an arkadeCash address into three buckets: the ones the
+     * thin sweep can move (`spendable`), the server-swept ones that must go
+     * through a recovery settlement (`recoverable`), and the ones that can
+     * only be reported (`unclaimed`).
      */
     private classifyCashVtxos(vtxos: NormalizedVirtualCoin[]): {
         spendable: NormalizedVirtualCoin[];
+        recoverable: NormalizedVirtualCoin[];
         unclaimed: ArkadeCashUnclaimedVtxo[];
     } {
         const spendable: NormalizedVirtualCoin[] = [];
+        const recoverable: NormalizedVirtualCoin[] = [];
         const unclaimed: ArkadeCashUnclaimedVtxo[] = [];
 
         for (const vtxo of vtxos) {
@@ -4547,17 +4740,28 @@ export class Wallet
                 // The indexer flags subdust swept, so it must be checked before the swept case,
                 // which would otherwise claim it is recoverable.
                 unclaimed.push(cashReport(vtxo, "subdust"));
-            } else if (vtxo.isSwept) {
-                // Bare `isSwept` on purpose: about sweptness, not past-expiry coins.
-                unclaimed.push(cashReport(vtxo, "swept"));
             } else if (vtxo.assets && vtxo.assets.length > 0) {
+                // The thin sweep builds a BTC-only output; sweeping an
+                // asset-bearing VTXO with it would burn the assets. Detected up
+                // front rather than left to a server rejection. Checked before
+                // the swept case: a swept asset VTXO must stay report-only, not
+                // ride the BTC-only recovery import.
                 unclaimed.push(cashReport(vtxo, "has-assets"));
+            } else if (vtxo.isSwept) {
+                // The server swept the batch at expiry. The funds are still
+                // owed, but only a settlement can move them — no sweep can. The
+                // caller imports these as a signable contract and hands them to
+                // the wallet's recovery machinery.
+                //
+                // Bare `isSwept`, not a recovery capability: this branch is
+                // about sweptness alone, not about past-expiry coins.
+                recoverable.push(vtxo);
             } else {
                 spendable.push(vtxo);
             }
         }
 
-        return { spendable, unclaimed };
+        return { spendable, recoverable, unclaimed };
     }
 
     /** Read every page of an unfiltered VTXO query for the given scripts. */
