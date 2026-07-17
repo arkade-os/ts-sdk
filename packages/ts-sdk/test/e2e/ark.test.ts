@@ -1,3 +1,4 @@
+import { hex, base64 } from "@scure/base";
 import { expect, describe, it, beforeEach } from "vitest";
 import {
     TxType,
@@ -35,7 +36,6 @@ import {
     setFees,
     waitFor,
 } from "./utils";
-import { hex, base64 } from "@scure/base";
 
 describe("Common", () => {
     beforeEach(beforeEachFaucet, 20000);

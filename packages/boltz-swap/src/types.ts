@@ -146,6 +146,14 @@ export interface OptimisticSendLightningPaymentResponse {
     txid: string;
 }
 
+/** Persisted state for a locally deferred refund retry. */
+export interface RefundRetryState {
+    /** True while SwapManager still needs to retry the local refund path. */
+    pending: true;
+    /** Unix timestamp (seconds) for the next retry attempt. */
+    nextRetryAt: number;
+}
+
 /** Tracks an in-progress reverse swap (Lightning → Arkade). */
 export interface BoltzReverseSwap {
     /** Unique swap ID from Boltz. */
@@ -180,6 +188,8 @@ export interface BoltzSubmarineSwap {
     refunded?: boolean;
     /** Whether the swap is eligible for refund. */
     refundable?: boolean;
+    /** Deferred local refund retry state, if any. */
+    refundRetry?: RefundRetryState;
     /** Current Boltz swap status. */
     status: BoltzSwapStatus;
     /** The original request sent to Boltz. */
@@ -231,6 +241,16 @@ export interface SubmarineRecoveryInfo {
     error?: string;
 }
 
+/**
+ * Earliest Unix timestamp (seconds) at which retrying the deferred VTXOs could
+ * make progress, or `undefined` when nothing was deferred. Deferrals do not all
+ * last the same time — a server-side CLTV rejection clears as soon as a later
+ * block carries the locktime, whereas a pre-CLTV VTXO must wait out the whole
+ * refund locktime — so callers schedule from this instead of polling at a fixed
+ * interval. It is a lower bound, not a promise: a retry may defer again.
+ */
+type RefundRetryAt = number | undefined;
+
 /** Outcome of a single `refundVHTLC` call: how many VTXOs were swept vs. deferred. */
 export interface SubmarineRefundOutcome {
     /** Number of VTXOs successfully refunded (joined a batch or via Boltz co-sign). */
@@ -241,6 +261,8 @@ export interface SubmarineRefundOutcome {
      * is expected to retry these later.
      */
     skipped: number;
+    /** When a retry could first succeed; see {@link RefundRetryAt}. */
+    retryAt?: RefundRetryAt;
 }
 
 /** Outcome of a single `refundArk` call: how many VTXOs were swept vs. deferred. */
@@ -253,6 +275,8 @@ export interface ChainArkRefundOutcome {
      * is expected to retry these later.
      */
     skipped: number;
+    /** When a retry could first succeed; see {@link RefundRetryAt}. */
+    retryAt?: RefundRetryAt;
 }
 
 /** Per-swap outcome of a bulk recovery call. */
@@ -287,6 +311,8 @@ export interface BoltzChainSwap {
     feeSatsPerByte: number;
     /** Current Boltz swap status. */
     status: BoltzSwapStatus;
+    /** Deferred local ARK refund retry state, if any. */
+    refundRetry?: RefundRetryState;
     /** The original chain swap request sent to Boltz. */
     request: CreateChainSwapRequest;
     /** Boltz API response with lockup and claim details. */
