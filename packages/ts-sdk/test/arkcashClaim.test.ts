@@ -258,15 +258,17 @@ describe("claimCash drain-pending accounting", () => {
         const finalizeTx = vi.fn(async () => {});
         const getPendingTxs = vi.fn(async () => []);
 
-        // Only a subdust VTXO (at the OP_RETURN script) is present: nothing is
-        // drainable, so no proof is ever built or submitted.
-        const cashSubdustPkScript = hex.encode(cash.address("tark").subdustPkScript);
+        // Only a subdust VTXO is present. The indexer keys it by the taproot
+        // key and reports it under the P2TR script (never the OP_RETURN form),
+        // flagged swept, with a below-dust value. It is excluded from the drain
+        // by value, so no proof is ever built or submitted.
+        const subdustValue = 500; // < info.dust (1000)
         const subdust: VirtualCoin = {
             ...spentCashVtxo(cashPkScript),
-            script: cashSubdustPkScript,
+            value: subdustValue,
             isSpent: false,
         };
-        const wallet = await makeWallet(cashIndexer(cashSubdustPkScript, [subdust]), {
+        const wallet = await makeWallet(cashIndexer(cashPkScript, [subdust]), {
             getPendingTxs,
             finalizeTx,
         });
@@ -277,7 +279,7 @@ describe("claimCash drain-pending accounting", () => {
         expect(finalizeTx).not.toHaveBeenCalled();
         expect(result.swept).toBe(0);
         expect(result.unclaimed.vtxos).toEqual([
-            { txid: CASH_TXID, vout: 0, value: CASH_VALUE, reason: "subdust" },
+            { txid: CASH_TXID, vout: 0, value: subdustValue, reason: "subdust" },
         ]);
     });
 });

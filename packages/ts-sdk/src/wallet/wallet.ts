@@ -4135,15 +4135,16 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     async claimCash(cashStr: string): Promise<ArkCashClaimResult> {
         const cash = ArkCash.fromString(cashStr);
         const cashScript = cash.vtxoScript;
-        const cashAddress = cash.address(this.network.hrp);
         const cashPkScript = hex.encode(cashScript.pkScript);
-        const cashSubdustPkScript = hex.encode(cashAddress.subdustPkScript);
 
         // One unfiltered query: the server's state filters are mutually
         // exclusive, so any filter here would hide the very states this method
-        // reports. Both scripts are queried in the same call — subdust arkcash
-        // lives at the OP_RETURN script and would otherwise vanish silently.
-        const scripts = [cashPkScript, cashSubdustPkScript];
+        // reports. Only the P2TR script is queried — the indexer rejects a
+        // non-P2TR (OP_RETURN) query script outright, and it keys every vtxo,
+        // subdust included, by its taproot key, so subdust arkcash comes back
+        // under this same script. It is told apart by its below-dust value, not
+        // by its script (the indexer always reports the P2TR form).
+        const scripts = [cashPkScript];
         let vtxos = await this.fetchAllVtxos(scripts);
 
         if (vtxos.length === 0) {
@@ -4151,7 +4152,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         }
 
         const myPkScript = ArkAddress.decode(await this.getAddress()).pkScript;
-        let { spendable, unclaimed } = this.classifyCashVtxos(vtxos, cashSubdustPkScript);
+        let { spendable, unclaimed } = this.classifyCashVtxos(vtxos);
         let swept = 0;
 
         // Drain first: a previous claim may have registered a sweep it never
@@ -4163,10 +4164,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // a sweep marks its input spent, so the very inputs needing a drain are
         // the ones classified `already-spent` — gating on `spendable` would
         // skip the drain exactly when it is needed. Subdust must stay out
-        // regardless: the proof describes every input by the contract's own
+        // regardless: the proof describes every input by the contract's P2TR
         // pkScript, which is a lie for an OP_RETURN outpoint and would have the
-        // server reject the whole proof.
-        const drainable = vtxos.filter((vtxo) => vtxo.script === cashPkScript);
+        // server reject the whole proof. It is excluded by value, since the
+        // indexer reports subdust under that same P2TR script.
+        const drainable = vtxos.filter((vtxo) => !isSubdust(vtxo, this.dustAmount));
         if (drainable.length > 0) {
             let drained = { count: 0, swept: 0, claimed: new Set<string>() };
             try {
@@ -4187,7 +4189,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 // now stale: re-read it, or we would re-sweep an outpoint we
                 // just spent and report the rejection as a failure.
                 vtxos = await this.fetchAllVtxos(scripts);
-                ({ spendable, unclaimed } = this.classifyCashVtxos(vtxos, cashSubdustPkScript));
+                ({ spendable, unclaimed } = this.classifyCashVtxos(vtxos));
 
                 // The drain moved these to this wallet, so they are swept by
                 // this call — the re-read above sees them spent and would
@@ -4249,21 +4251,23 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * Split the VTXOs at an arkcash address into the ones the thin sweep can
      * move and the ones it can only report.
      */
-    private classifyCashVtxos(
-        vtxos: VirtualCoin[],
-        cashSubdustPkScript: string,
-    ): { spendable: VirtualCoin[]; unclaimed: ArkCashUnclaimedVtxo[] } {
+    private classifyCashVtxos(vtxos: VirtualCoin[]): {
+        spendable: VirtualCoin[];
+        unclaimed: ArkCashUnclaimedVtxo[];
+    } {
         const spendable: VirtualCoin[] = [];
         const unclaimed: ArkCashUnclaimedVtxo[] = [];
 
         for (const vtxo of vtxos) {
             if (!isSpendable(vtxo)) {
                 unclaimed.push(cashReport(vtxo, "already-spent"));
-            } else if (vtxo.script === cashSubdustPkScript || isSubdust(vtxo, this.dustAmount)) {
-                // Subdust sits at an OP_RETURN script: no forfeit leaf, nothing
-                // to spend, and no settlement can lift it out on its own.
-                // Checked before the swept case, which would otherwise claim
-                // these are recoverable. createCash now prevents minting them.
+            } else if (isSubdust(vtxo, this.dustAmount)) {
+                // Subdust lives at an OP_RETURN output: no forfeit leaf, nothing
+                // to spend, and no settlement can lift it out on its own. The
+                // indexer reports it under the P2TR script and flags it swept,
+                // so it is told apart by value and checked before the swept
+                // case, which would otherwise claim it is recoverable.
+                // createCash now prevents minting them.
                 unclaimed.push(cashReport(vtxo, "subdust"));
             } else if (isRecoverable(vtxo)) {
                 // The server swept the batch at expiry. The funds are still
