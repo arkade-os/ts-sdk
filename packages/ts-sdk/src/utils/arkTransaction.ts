@@ -447,6 +447,18 @@ export async function submitOffchainTx(
         offchainTx.checkpoints,
     );
 
+    // The checkpoint set built here is the source of truth: every one of them
+    // must reach finalizeTx signed. Both the signer's array and the server's are
+    // therefore checked against it rather than against each other — two equally
+    // truncated arrays agree with each other while still dropping a checkpoint.
+    // A miscounting signer is caught before submitTx, so it fails outright
+    // instead of stranding a registered-but-unfinalizable tx on the server.
+    if (userSignedCheckpoints && userSignedCheckpoints.length !== offchainTx.checkpoints.length) {
+        throw new Error(
+            `signer returned ${userSignedCheckpoints.length} signed checkpoints, expected ${offchainTx.checkpoints.length}`,
+        );
+    }
+
     // Mark pending before submitting — if the caller crashes between submit and
     // finalize, its recovery hook can retry from persisted state.
     await hooks?.beforeSubmit?.();
@@ -456,17 +468,18 @@ export async function submitOffchainTx(
         offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT())),
     );
 
+    // The server returns one signed checkpoint per submitted checkpoint; both
+    // branches below pair them positionally. A short response would silently
+    // drop the tail (→ incomplete finalizeTx), a long one would carry
+    // checkpoints that were never built.
+    if (signedCheckpointTxs.length !== offchainTx.checkpoints.length) {
+        throw new Error(
+            `submitTx returned ${signedCheckpointTxs.length} checkpoints, expected ${offchainTx.checkpoints.length}`,
+        );
+    }
+
     let finalCheckpoints: string[];
     if (userSignedCheckpoints) {
-        // The server must return exactly one checkpoint per user-signed
-        // checkpoint: the merge pairs them by index, so a short response would
-        // silently drop the tail (→ incomplete finalizeTx) and a long one would
-        // throw a cryptic undefined access. Guard explicitly.
-        if (signedCheckpointTxs.length !== userSignedCheckpoints.length) {
-            throw new Error(
-                `submitTx returned ${signedCheckpointTxs.length} checkpoints, expected ${userSignedCheckpoints.length}`,
-            );
-        }
         finalCheckpoints = signedCheckpointTxs.map((c, i) => {
             const serverSigned = Transaction.fromPSBT(base64.decode(c));
             combineTapscriptSigs(userSignedCheckpoints[i], serverSigned);
