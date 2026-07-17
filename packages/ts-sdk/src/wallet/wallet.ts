@@ -53,9 +53,10 @@ import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { toXOnlySignerHex } from "./signerRotation";
 import {
     buildOffchainTx,
-    combineTapscriptSigs,
     hasBoardingTxExpired,
     isValidArkAddress,
+    submitOffchainTx,
+    type OffchainTxSigner,
 } from "../utils/arkTransaction";
 import {
     byValueDescending,
@@ -4381,98 +4382,70 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             index,
             lookupScript: VtxoScript.decode(input.tapTree).pkScript,
         }));
-        const checkpointJobs = offchainTx.checkpoints.map((c) =>
-            this.inputSigningJobsFromWitnessUtxos(c),
-        );
-
-        // Batch path: when every signable input across arkTx + checkpoints
-        // resolves to the baseline identity key, a `BatchSignableIdentity`
-        // can sign all N+1 PSBTs in a single wallet popup. Stash the
-        // user-signed checkpoints, submit the unsigned ones to the server
-        // for its share, then merge server + user tapscript sigs.
-        let signedVirtualTx: Transaction;
-        let userSignedCheckpoints: Transaction[] | undefined;
+        // Wallet signer: routes each input to its owning contract's key and,
+        // when eligible, batch-signs the arkTx + all checkpoints in one popup.
+        // The shared `submitOffchainTx` owns the submit → finalize sequence.
         const identity = this.identity;
-        const batchEligible =
-            isBatchSignable(identity) &&
-            (await this._signerRouter.canBatch(arkTxJobs, ...checkpointJobs));
-
-        if (batchEligible) {
-            // Clone so a misbehaving provider can't mutate the originals
-            // before submitTx. The contract on `signMultiple` is "one
-            // result per request, in input order" — validated below.
-            const requests = [
-                {
-                    tx: offchainTx.arkTx.clone(),
-                    inputIndexes: arkTxJobs.map((j) => j.index),
-                },
-                ...offchainTx.checkpoints.map((c, i) => ({
-                    tx: c.clone(),
-                    inputIndexes: checkpointJobs[i].map((j) => j.index),
-                })),
-            ];
-            const signed = await identity.signMultiple(requests);
-            if (signed.length !== requests.length) {
-                throw new Error(
-                    `signMultiple returned ${signed.length} transactions, expected ${requests.length}`,
+        const signer: OffchainTxSigner = {
+            signArkTx: async (arkTx, checkpoints) => {
+                const checkpointJobs = checkpoints.map((c) =>
+                    this.inputSigningJobsFromWitnessUtxos(c),
                 );
-            }
-            const [firstSignedTx, ...signedCheckpoints] = signed;
-            signedVirtualTx = firstSignedTx;
-            userSignedCheckpoints = signedCheckpoints;
-        } else {
-            signedVirtualTx = await this._signerRouter.sign(offchainTx.arkTx, arkTxJobs);
-        }
 
-        // Mark pending before submitting — if we crash between submit and
-        // finalize, the next init will recover via finalizePendingTxs.
-        await this.setPendingTxFlag(true);
+                // Batch path: when every signable input across arkTx +
+                // checkpoints resolves to the baseline identity key, a
+                // `BatchSignableIdentity` can sign all N+1 PSBTs in a single
+                // wallet popup. Return the user-signed checkpoints so
+                // `submitOffchainTx` merges them onto the server's shares.
+                const batchEligible =
+                    isBatchSignable(identity) &&
+                    (await this._signerRouter.canBatch(arkTxJobs, ...checkpointJobs));
 
-        const { arkTxid, signedCheckpointTxs } = await this.arkProvider.submitTx(
-            base64.encode(signedVirtualTx.toPSBT()),
-            offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT())),
-        );
+                if (batchEligible) {
+                    // Clone so a misbehaving provider can't mutate the originals
+                    // before submitTx. The contract on `signMultiple` is "one
+                    // result per request, in input order" — validated below.
+                    const requests = [
+                        {
+                            tx: arkTx.clone(),
+                            inputIndexes: arkTxJobs.map((j) => j.index),
+                        },
+                        ...checkpoints.map((c, i) => ({
+                            tx: c.clone(),
+                            inputIndexes: checkpointJobs[i].map((j) => j.index),
+                        })),
+                    ];
+                    const signed = await identity.signMultiple(requests);
+                    if (signed.length !== requests.length) {
+                        throw new Error(
+                            `signMultiple returned ${signed.length} transactions, expected ${requests.length}`,
+                        );
+                    }
+                    const [firstSignedTx, ...signedCheckpoints] = signed;
+                    return { arkTx: firstSignedTx, userSignedCheckpoints: signedCheckpoints };
+                }
 
-        let finalCheckpoints: string[];
-        if (userSignedCheckpoints) {
-            // The server must return exactly one checkpoint per user-signed
-            // checkpoint: the merge below pairs them by index, so a short
-            // response would silently drop the tail (→ incomplete finalizeTx)
-            // and a long one would throw a cryptic undefined access. Guard
-            // explicitly, mirroring the signMultiple length check above.
-            if (signedCheckpointTxs.length !== userSignedCheckpoints.length) {
-                throw new Error(
-                    `submitTx returned ${signedCheckpointTxs.length} checkpoints, expected ${userSignedCheckpoints.length}`,
-                );
-            }
-            // Merge stashed user sigs onto the server-signed checkpoints.
-            finalCheckpoints = signedCheckpointTxs.map((c, i) => {
-                const serverSigned = Transaction.fromPSBT(base64.decode(c));
-                combineTapscriptSigs(userSignedCheckpoints![i], serverSigned);
-                return base64.encode(serverSigned.toPSBT());
-            });
-        } else {
-            finalCheckpoints = await Promise.all(
-                signedCheckpointTxs.map(async (c) => {
-                    const tx = Transaction.fromPSBT(base64.decode(c));
-                    const signedCheckpoint = await this._signerRouter.sign(
-                        tx,
-                        this.inputSigningJobsFromWitnessUtxos(tx),
-                    );
-                    return base64.encode(signedCheckpoint.toPSBT());
-                }),
-            );
-        }
+                return { arkTx: await this._signerRouter.sign(arkTx, arkTxJobs) };
+            },
+            signCheckpoint: (checkpoint) =>
+                this._signerRouter.sign(
+                    checkpoint,
+                    this.inputSigningJobsFromWitnessUtxos(checkpoint),
+                ),
+        };
 
-        await this.arkProvider.finalizeTx(arkTxid, finalCheckpoints);
-
-        try {
-            await this.setPendingTxFlag(false);
-        } catch (error) {
-            console.error("Failed to clear pending tx flag:", error);
-        }
-
-        return { arkTxid, signedCheckpointTxs };
+        return submitOffchainTx(this.arkProvider, offchainTx, signer, {
+            // Mark pending before submitting — if we crash between submit and
+            // finalize, the next init recovers via finalizePendingTxs.
+            beforeSubmit: () => this.setPendingTxFlag(true),
+            afterFinalize: async () => {
+                try {
+                    await this.setPendingTxFlag(false);
+                } catch (error) {
+                    console.error("Failed to clear pending tx flag:", error);
+                }
+            },
+        });
     }
 
     // mark virtual outputs as spent, save change outputs if any.

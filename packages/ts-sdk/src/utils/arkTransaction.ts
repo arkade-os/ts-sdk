@@ -1,5 +1,5 @@
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { hex } from "@scure/base";
+import { base64, hex } from "@scure/base";
 import { DEFAULT_SEQUENCE, Script, SigHash } from "@scure/btc-signer";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
@@ -375,4 +375,146 @@ export function isValidArkAddress(address: string): boolean {
     } catch (e) {
         return false;
     }
+}
+
+/**
+ * Minimal Ark provider surface required to submit and finalize an offchain
+ * transaction. Both {@link ArkProvider} implementations satisfy it
+ * structurally, so declaring it here keeps this module free of a provider
+ * import (and of the dependency cycle that would create).
+ */
+export interface OffchainTxSubmitProvider {
+    submitTx(
+        signedArkTx: string,
+        checkpointTxs: string[],
+    ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }>;
+    finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void>;
+}
+
+/**
+ * Signing strategy for an offchain transaction, abstracting the two ways the
+ * owner's signatures are produced:
+ *
+ * - The wallet path routes each input to its owning contract's key
+ *   (`InputSignerRouter`) and, when every input resolves to the baseline key,
+ *   batch-signs the arkTx and all checkpoints in one popup — returning the
+ *   user-signed checkpoints from {@link signArkTx} so they are merged onto the
+ *   server's signatures.
+ * - A single-key spend (e.g. an ArkCash sweep) signs every input with one
+ *   identity and lets each server-returned checkpoint be signed afterwards via
+ *   {@link signCheckpoint}.
+ */
+export interface OffchainTxSigner {
+    /**
+     * Sign the ark (virtual) transaction. May optionally also return
+     * user-signed checkpoint transactions (batch path); when present, they are
+     * merged onto the server-signed checkpoints instead of calling
+     * {@link signCheckpoint}.
+     */
+    signArkTx(
+        arkTx: Transaction,
+        checkpoints: Transaction[],
+    ): Promise<{ arkTx: Transaction; userSignedCheckpoints?: Transaction[] }>;
+    /**
+     * Add the owner's signature to a single server-returned checkpoint
+     * transaction. Only invoked when {@link signArkTx} returned no
+     * `userSignedCheckpoints` (the non-batch path).
+     */
+    signCheckpoint(checkpoint: Transaction): Promise<Transaction>;
+}
+
+/**
+ * Submit a pre-built offchain transaction to the Ark server and finalize it.
+ *
+ * Owns the submit → checkpoint-sign → finalize sequence shared by every Ark
+ * spend path (the wallet send/migration path and the single-key ArkCash
+ * sweep). The signing strategy is injected via {@link OffchainTxSigner} so a
+ * caller holding a single key does not pull in the wallet's router/batch
+ * machinery. Optional {@link hooks} let the wallet mark/clear its pending-tx
+ * recovery flag around the network round-trip; a stateless caller omits them.
+ *
+ * @returns The Ark transaction id and the server-signed checkpoint PSBTs
+ * (the raw server response, for the wallet's bookkeeping).
+ */
+export async function submitOffchainTx(
+    provider: OffchainTxSubmitProvider,
+    offchainTx: OffchainTx,
+    signer: OffchainTxSigner,
+    hooks?: { beforeSubmit?: () => Promise<void>; afterFinalize?: () => Promise<void> },
+): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
+    const { arkTx: signedArkTx, userSignedCheckpoints } = await signer.signArkTx(
+        offchainTx.arkTx,
+        offchainTx.checkpoints,
+    );
+
+    // Mark pending before submitting — if the caller crashes between submit and
+    // finalize, its recovery hook can retry from persisted state.
+    await hooks?.beforeSubmit?.();
+
+    const { arkTxid, signedCheckpointTxs } = await provider.submitTx(
+        base64.encode(signedArkTx.toPSBT()),
+        offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT())),
+    );
+
+    let finalCheckpoints: string[];
+    if (userSignedCheckpoints) {
+        // The server must return exactly one checkpoint per user-signed
+        // checkpoint: the merge pairs them by index, so a short response would
+        // silently drop the tail (→ incomplete finalizeTx) and a long one would
+        // throw a cryptic undefined access. Guard explicitly.
+        if (signedCheckpointTxs.length !== userSignedCheckpoints.length) {
+            throw new Error(
+                `submitTx returned ${signedCheckpointTxs.length} checkpoints, expected ${userSignedCheckpoints.length}`,
+            );
+        }
+        finalCheckpoints = signedCheckpointTxs.map((c, i) => {
+            const serverSigned = Transaction.fromPSBT(base64.decode(c));
+            combineTapscriptSigs(userSignedCheckpoints[i], serverSigned);
+            return base64.encode(serverSigned.toPSBT());
+        });
+    } else {
+        finalCheckpoints = await Promise.all(
+            signedCheckpointTxs.map(async (c) => {
+                const tx = Transaction.fromPSBT(base64.decode(c));
+                const signed = await signer.signCheckpoint(tx);
+                return base64.encode(signed.toPSBT());
+            }),
+        );
+    }
+
+    await provider.finalizeTx(arkTxid, finalCheckpoints);
+    await hooks?.afterFinalize?.();
+
+    return { arkTxid, signedCheckpointTxs };
+}
+
+/**
+ * Build, sign, submit, and finalize an offchain transaction whose every input
+ * is controlled by a single key — the "thin signer" path.
+ *
+ * Needs no wallet, repository, or contract state: just an identity that can
+ * sign, an Ark provider, the inputs (already carrying their spend leaf and tap
+ * tree), the outputs, and the server unroll script. Used by the ArkCash sweep
+ * to move bearer coins to the receiver's address without spinning up a full
+ * background-managed wallet on shared repositories.
+ *
+ * @returns The Ark transaction id.
+ */
+export async function signAndSubmitOffchainTx(params: {
+    identity: { sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> };
+    provider: OffchainTxSubmitProvider;
+    inputs: ArkTxInput[];
+    outputs: TransactionOutput[];
+    serverUnrollScript: CSVMultisigTapscript.Type;
+}): Promise<string> {
+    const offchainTx = buildOffchainTx(params.inputs, params.outputs, params.serverUnrollScript);
+    // Single key: every input is signed by the same identity (all indexes), and
+    // each server-returned checkpoint is signed the same way. No router, no
+    // batch popup — signing is in-process and free.
+    const signer: OffchainTxSigner = {
+        signArkTx: async (arkTx) => ({ arkTx: await params.identity.sign(arkTx) }),
+        signCheckpoint: (checkpoint) => params.identity.sign(checkpoint),
+    };
+    const { arkTxid } = await submitOffchainTx(params.provider, offchainTx, signer);
+    return arkTxid;
 }
