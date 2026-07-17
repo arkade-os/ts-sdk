@@ -261,6 +261,16 @@ function keyOf(descriptor: string): string | undefined {
  * absent) and return a clone safe for the caller to mutate. Trusting
  * storage blindly would let a corrupted repo surface as a signing
  * failure deep in a settlement; fail loud at the boundary instead.
+ *
+ * Both halves of every entry are checked, including that the pubkey the
+ * entry is *filed under* is the one its private key actually derives.
+ * That correspondence is what `isOurs` implicitly asserts: a mismatched
+ * pair would have the provider claim a descriptor and then sign it with
+ * the wrong key — a failure that would otherwise only surface when the
+ * server rejected the resulting settlement.
+ *
+ * Pubkeys are normalized to lowercase so the stored map keys match the
+ * canonical form {@link keyOf} produces for lookups.
  */
 function parseSettings(state: WalletState): KeyringSettings {
     const stored = state.settings?.[KEYRING_SETTINGS_KEY] as KeyringSettings | undefined;
@@ -268,14 +278,42 @@ function parseSettings(state: WalletState): KeyringSettings {
     if (typeof stored.keys !== "object" || stored.keys === null) {
         throw new Error("Corrupt keyring settings: `keys` is not an object.");
     }
-    for (const [pubKeyHex, privKeyHex] of Object.entries(stored.keys)) {
+
+    const keys: Record<string, string> = {};
+    for (const [storedPubKeyHex, privKeyHex] of Object.entries(stored.keys)) {
+        const pubKeyHex = storedPubKeyHex.toLowerCase();
+        if (!isHexOfBytes(pubKeyHex, 32)) {
+            throw new Error(
+                `Corrupt keyring settings: "${storedPubKeyHex}" is not a 32-byte hex x-only pubkey.`,
+            );
+        }
         if (typeof privKeyHex !== "string" || !isHexOfBytes(privKeyHex, 32)) {
             throw new Error(
                 `Corrupt keyring settings: entry ${pubKeyHex} is not a 32-byte hex private key.`,
             );
         }
+
+        let derivedPubKeyHex: string;
+        try {
+            derivedPubKeyHex = hex.encode(pubSchnorr(hex.decode(privKeyHex)));
+        } catch (e) {
+            // pubSchnorr rejects a key outside the curve order.
+            throw new Error(
+                `Corrupt keyring settings: entry ${pubKeyHex} is not a valid private key.`,
+                { cause: e },
+            );
+        }
+        if (derivedPubKeyHex !== pubKeyHex) {
+            throw new Error(
+                `Corrupt keyring settings: entry ${pubKeyHex} does not match its private key ` +
+                    `(which derives ${derivedPubKeyHex}). Refusing to sign with a key the ` +
+                    `descriptor does not name.`,
+            );
+        }
+
+        keys[pubKeyHex] = privKeyHex;
     }
-    return { keys: { ...stored.keys } };
+    return { keys };
 }
 
 function isHexOfBytes(value: string, bytes: number): boolean {
