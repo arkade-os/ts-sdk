@@ -270,6 +270,87 @@ export function capSettlementBatch<T extends { value: number }>(
     return batch;
 }
 
+/**
+ * Enrol a claimer top-up so an isolated arkcash recovery settle whose recovery
+ * inputs sum below dust can clear the server's below-dust-output rejection.
+ *
+ * `recoveryBatch` is the already-capped, value-descending set of recovery
+ * inputs (all subdust here — if any were >= dust the total would already clear
+ * dust and no top-up would be needed). `candidates` is the claimer wallet's
+ * pool of available BTC VTXOs. The combined `recoveryInputs + topUp` list must
+ * respect BOTH the server's intent-size cap ({@link MAX_VTXOS_PER_SETTLEMENT})
+ * and, on the single combined output, the `vtxoMaxAmount` ceiling
+ * (`< 0` disables it — the server's `-1` "no limit" sentinel).
+ *
+ * Returns the (possibly trimmed) recovery inputs and the chosen top-up, or
+ * `null` when the claimer lacks enough spendable BTC to reach dust — the caller
+ * then defers this contract to a later cycle.
+ *
+ * Selection favours the fewest extra slots:
+ * 1. Since `deficit = dust - recoveryTotal < dust`, any single VTXO whose value
+ *    is `>= deficit` clears dust on its own — so prefer the smallest such
+ *    candidate (one slot; the common case).
+ * 2. Otherwise accumulate largest-first (slot-minimising) within the remaining
+ *    slot budget, skipping any candidate that would breach `vtxoMaxAmount`.
+ * 3. If the recovery batch already fills every slot, drop its smallest inputs to
+ *    free room — a dropped subdust input raises the deficit but keeps it below
+ *    dust, so one >= dust top-up still covers it; the dropped inputs defer to
+ *    the next cycle like any cap overflow.
+ */
+export function selectTopUpForRecovery<R extends { value: number }, C extends { value: number }>(
+    recoveryBatch: R[],
+    candidates: C[],
+    dustAmount: bigint,
+    vtxoMaxAmount: bigint,
+): { recoveryInputs: R[]; topUp: C[] } | null {
+    // Free at least one slot for a top-up input. recoveryBatch is
+    // value-descending, so the smallest inputs sit at the end. A dropped input
+    // is a subdust remainder that recovers next cycle.
+    const recoveryInputs = [...recoveryBatch];
+    while (recoveryInputs.length >= MAX_VTXOS_PER_SETTLEMENT) {
+        recoveryInputs.pop();
+    }
+
+    const recoveryTotal = recoveryInputs.reduce((sum, vtxo) => sum + BigInt(vtxo.value), 0n);
+    // Defensive: the caller only enrols a top-up below dust, but if the trim
+    // never happened and the batch already clears dust, no top-up is needed.
+    if (recoveryTotal >= dustAmount) return { recoveryInputs, topUp: [] };
+
+    const deficit = dustAmount - recoveryTotal;
+    const slotBudget = MAX_VTXOS_PER_SETTLEMENT - recoveryInputs.length;
+    const fitsCeiling = (topUpTotal: bigint) =>
+        vtxoMaxAmount < 0n || recoveryTotal + topUpTotal <= vtxoMaxAmount;
+
+    // 1. Smallest single candidate that covers the deficit — one slot, and the
+    //    combined output stays under the per-output ceiling.
+    const ascending = [...candidates].sort((a, b) => a.value - b.value);
+    for (const candidate of ascending) {
+        const value = BigInt(candidate.value);
+        if (value >= deficit && fitsCeiling(value)) {
+            return { recoveryInputs, topUp: [candidate] };
+        }
+    }
+
+    // 2. No single candidate suffices: accumulate largest-first within the slot
+    //    and ceiling budget, mirroring capSettlementBatch's skip semantics.
+    const descending = [...candidates].sort((a, b) => b.value - a.value);
+    const topUp: C[] = [];
+    let topUpTotal = 0n;
+    for (const candidate of descending) {
+        if (topUp.length >= slotBudget) break;
+        const next = topUpTotal + BigInt(candidate.value);
+        if (!fitsCeiling(next)) continue;
+        topUp.push(candidate);
+        topUpTotal = next;
+        if (recoveryTotal + topUpTotal >= dustAmount) {
+            return { recoveryInputs, topUp };
+        }
+    }
+
+    // The claimer cannot reach dust with its available funds this cycle.
+    return null;
+}
+
 /** Default renewal threshold in seconds (3 days). */
 export const DEFAULT_THRESHOLD_SECONDS = 259_200;
 
@@ -785,6 +866,12 @@ function isMigrationCapable(wallet: IWallet): wallet is IWallet & MigrationCapab
  */
 interface RecoveryContractCapableWallet {
     removeRecoveryContract(script: string): Promise<void>;
+    /**
+     * Outpoints of the wallet's own VTXOs that are unspendable because their
+     * signer is past its cutoff (see {@link Wallet.pendingRecoveryOutpoints}).
+     * Used to keep such coins out of the recovery top-up pool.
+     */
+    pendingRecoveryOutpoints(): Promise<Set<string>>;
 }
 
 /** Return whether a wallet can purge its imported recovery contracts. */
@@ -793,7 +880,9 @@ function isRecoveryContractCapable(
 ): wallet is IWallet & RecoveryContractCapableWallet {
     return (
         typeof (wallet as Partial<RecoveryContractCapableWallet>).removeRecoveryContract ===
-        "function"
+            "function" &&
+        typeof (wallet as Partial<RecoveryContractCapableWallet>).pendingRecoveryOutpoints ===
+            "function"
     );
 }
 
@@ -1304,10 +1393,15 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Settle one imported recovery contract's swept VTXOs back to the wallet,
-     * then purge the contract and its key once nothing spendable remains.
-     * Called only with a recovery-capable wallet (see
+     * Settle one imported recovery contract's swept/subdust VTXOs back to the
+     * wallet, then purge the contract and its key once nothing spendable
+     * remains. Called only with a recovery-capable wallet (see
      * {@link recoverImportedContracts}).
+     *
+     * A lone subdust note cannot settle on its own (the server rejects a
+     * below-dust output), so when the recovery inputs sum below dust this enrols
+     * a claimer top-up inside the same isolated intent to clear dust — parking
+     * at most a few of the claimer's own VTXOs for this one attempt.
      */
     private async recoverOneImportedContract(
         wallet: IWallet & RecoveryContractCapableWallet,
@@ -1316,37 +1410,82 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         info: ArkInfo | undefined,
         dustAmount: bigint,
     ): Promise<void> {
-        // Only swept-but-unspent VTXOs can be recovered; a re-run after a
-        // partial/complete recovery sees the rest already spent.
-        const recoverable = vtxos.filter((vtxo) => isRecoverable(vtxo));
+        // Recoverable = swept-but-unspent OR still-spendable subdust. A subdust
+        // note has no spendable leaf, so like a swept one it can only move
+        // through a settlement — and a recovery-only contract exists purely to
+        // be drained, so ALL live subdust qualifies regardless of confirmation
+        // state (deliberately bypassing the wallet's own preconfirmed-only
+        // subdust rule, which is liquidity policy, not a protocol limit). A
+        // re-run after a partial/complete recovery sees the rest already spent.
+        const recoverable = vtxos.filter(
+            (vtxo) => isRecoverable(vtxo) || (isSubdust(vtxo, dustAmount) && isSpendable(vtxo)),
+        );
 
         // Cap to the server's intent-size and per-output limits, highest-value
         // first (mirrors recoverVtxos); the overflow recovers next cycle. A
         // lone arkcash VTXO — the common case — is unaffected.
         const vtxoMaxAmount = info?.vtxoMaxAmount ?? -1n;
-        const batch =
+        let recoveryInputs: ExtendedContractVtxo[] =
             recoverable.length > 0
                 ? capSettlementBatch(byValueDescending(recoverable), vtxoMaxAmount)
                 : [];
+        let topUp: ExtendedVirtualCoin[] = [];
 
-        if (batch.length > 0) {
-            const totalAmount = batch.reduce((sum, vtxo) => sum + BigInt(vtxo.value), 0n);
-            // The highest-value fitting subset is still below dust — the server
-            // would reject it. Leave it for a later cycle. arkcash is >= dust by
-            // construction, so this only guards a pathological remainder.
-            if (totalAmount < dustAmount) return;
+        if (recoveryInputs.length > 0) {
+            let totalAmount = recoveryInputs.reduce((sum, vtxo) => sum + BigInt(vtxo.value), 0n);
 
-            // Rotation guard: if a swept input is under a now-deprecated signer
-            // and the wallet's own snapshot is that old signer, pin the wallet
-            // to the active signer BEFORE reading its address, so the recovered
-            // output re-mints under the current key (mirrors recoverVtxos).
+            if (totalAmount < dustAmount) {
+                // The recovery inputs alone are below dust (a lone/aggregated
+                // subdust note), which the server would reject. Enrol a claimer
+                // top-up so this isolated intent clears dust. The top-up is
+                // reserved and released by settle for this attempt only, so it
+                // never touches the wallet's own renewal/recovery bundle and
+                // parks nothing between attempts.
+                const candidates = await this.availableTopUpVtxos(wallet);
+                const selection = selectTopUpForRecovery(
+                    recoveryInputs,
+                    candidates,
+                    dustAmount,
+                    vtxoMaxAmount,
+                );
+                if (!selection) {
+                    // Insufficient claimer funds this cycle: leave the contract
+                    // imported and retry once the wallet is funded. The claim
+                    // already reported these under `recovering`.
+                    console.warn(
+                        `Imported arkcash recovery for contract ${contract.script}: ` +
+                            `recovery inputs total ${totalAmount} < dust ${dustAmount} and no ` +
+                            `claimer top-up is available; deferring to a later cycle`,
+                    );
+                    return;
+                }
+                recoveryInputs = selection.recoveryInputs;
+                topUp = selection.topUp;
+                totalAmount = [...recoveryInputs, ...topUp].reduce(
+                    (sum, vtxo) => sum + BigInt(vtxo.value),
+                    0n,
+                );
+            }
+
+            // Rotation guard: if a recovery input is under a now-deprecated
+            // signer and the wallet's own snapshot is that old signer, pin the
+            // wallet to the active signer BEFORE reading its address, so the
+            // recovered output re-mints under the current key (mirrors
+            // recoverVtxos). Only the recovery inputs can carry a foreign/old
+            // signer; the top-up is the wallet's own current-signer coin.
             if (info && isMigrationCapable(wallet)) {
-                await this.rotateForRecoverableInputs(batch, info);
+                await this.rotateForRecoverableInputs(recoveryInputs, info);
             }
 
             const arkAddress = await wallet.getAddress();
+            // Mixed signing is native: the router resolves each input by its
+            // owning contract — the keyring descriptor for the recovery inputs,
+            // the baseline identity for the top-up — and builds forfeits only
+            // for the top-up (swept/subdust skip them). The single combined
+            // output (>= dust by construction) is a self-transfer to the
+            // claimer's own address, so no split accounting is needed.
             await wallet.settle({
-                inputs: batch,
+                inputs: [...recoveryInputs, ...topUp],
                 outputs: [{ address: arkAddress, amount: totalAmount }],
             });
         }
@@ -1367,13 +1506,47 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // later cycle.
         if (vtxos.length === 0) return;
 
-        const spent = new Set(batch.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`));
+        // Only the recovery inputs (this contract's own VTXOs) count toward
+        // purge; the top-up is the wallet's own coin and never lives here. A
+        // subdust note still blocked on a top-up keeps isSpendable true, so the
+        // contract (and key) survive until its funds are actually settled.
+        const spent = new Set(recoveryInputs.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`));
         const stillSpendable = vtxos.some(
             (vtxo) => isSpendable(vtxo) && !spent.has(`${vtxo.txid}:${vtxo.vout}`),
         );
         if (!stillSpendable) {
             await wallet.removeRecoveryContract(contract.script);
         }
+    }
+
+    /**
+     * The claimer wallet's pool of BTC VTXOs eligible to top up an isolated
+     * arkcash recovery settle to dust.
+     *
+     * Mirrors the send path's availability filter and adds an asset guard:
+     * - `withRecoverable: false` excludes the wallet's own swept/expired coins
+     *   (recovery-bound funds must not be entangled in the arkcash intent);
+     * - past-cutoff deprecated-signer coins are dropped — the operator will not
+     *   co-sign them, so one would fail the recovery settle at submit and, under
+     *   indefinite retry, wedge the loop on the top-up selector's own choice;
+     * - asset-bearing VTXOs are dropped — the recovery output is a single BTC
+     *   output, so a top-up must never risk burning assets.
+     *
+     * Reserved (pending-spend) outpoints and recovery-only contracts are already
+     * excluded at the {@link Wallet.getVtxos} choke point.
+     */
+    private async availableTopUpVtxos(
+        wallet: IWallet & RecoveryContractCapableWallet,
+    ): Promise<ExtendedVirtualCoin[]> {
+        const available = await wallet.getVtxos({ withRecoverable: false });
+        const pendingRecovery = await wallet.pendingRecoveryOutpoints();
+        return available.filter((vtxo) => {
+            if (vtxo.assets && vtxo.assets.length > 0) return false;
+            if (pendingRecovery.size && pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`)) {
+                return false;
+            }
+            return true;
+        });
     }
 
     // ========== Renewal Methods ==========

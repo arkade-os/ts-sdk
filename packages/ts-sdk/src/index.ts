@@ -92,6 +92,7 @@ import {
     type ArkCashUnclaimedReason,
     type ArkCashUnclaimedVtxo,
     type ArkCashVtxoRef,
+    type ArkCashRecoveringVtxo,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./wallet/wallet";
@@ -685,6 +686,7 @@ export type {
     ArkCashUnclaimedReason,
     ArkCashUnclaimedVtxo,
     ArkCashVtxoRef,
+    ArkCashRecoveringVtxo,
     SettlementConfig,
     IVtxoManager,
     RenewVtxosOptions,

@@ -9,6 +9,7 @@ import {
     DEFAULT_THRESHOLD_MS,
     MAX_VTXOS_PER_SETTLEMENT,
     capSettlementBatch,
+    selectTopUpForRecovery,
     SettlementConfig,
 } from "../src/wallet/vtxo-manager";
 import { IWallet, ExtendedCoin, ExtendedVirtualCoin } from "../src/wallet";
@@ -159,6 +160,73 @@ describe("capSettlementBatch", () => {
         // Every candidate alone exceeds the ceiling — only reachable if the
         // server lowered it below all existing VTXOs.
         expect(capSettlementBatch(make([9000, 8000]), 5000n)).toEqual([]);
+    });
+});
+
+describe("selectTopUpForRecovery", () => {
+    const DUST = 1000n;
+    // Distinguishable outpoints so we can assert which candidate was chosen.
+    const rec = (values: number[]) => values.map((value, i) => ({ value, txid: `r${i}`, vout: 0 }));
+    const cand = (values: number[]) =>
+        values.map((value, i) => ({ value, txid: `c${i}`, vout: 0 }));
+
+    it("prefers the smallest single candidate that covers the deficit", () => {
+        // Recovery = 600 (deficit 400). Candidates 300 (<400), 500, 900 → pick
+        // 500 (smallest >= 400), one slot, even though 900 also covers it.
+        const result = selectTopUpForRecovery(rec([600]), cand([300, 900, 500]), DUST, -1n);
+        expect(result).not.toBeNull();
+        expect(result!.recoveryInputs.map((v) => v.value)).toEqual([600]);
+        expect(result!.topUp.map((v) => v.value)).toEqual([500]);
+    });
+
+    it("accumulates largest-first when no single candidate covers the deficit", () => {
+        // Recovery = 100 (deficit 900). No candidate alone >= 900. Largest-first
+        // 500 + 400 = 900 → total 1000 >= dust in two slots.
+        const result = selectTopUpForRecovery(rec([100]), cand([500, 400, 300, 200]), DUST, -1n);
+        expect(result).not.toBeNull();
+        expect(result!.topUp.map((v) => v.value)).toEqual([500, 400]);
+    });
+
+    it("returns null when the claimer cannot reach dust", () => {
+        // Recovery 100 + all candidates 100 + 100 = 300 < dust 1000.
+        expect(selectTopUpForRecovery(rec([100]), cand([100, 100]), DUST, -1n)).toBeNull();
+    });
+
+    it("returns null when there are no candidates", () => {
+        expect(selectTopUpForRecovery(rec([100]), cand([]), DUST, -1n)).toBeNull();
+    });
+
+    it("respects vtxoMaxAmount on the combined output in the single-candidate path", () => {
+        // Recovery 600, deficit 400, ceiling 1000. A single 900 covers the
+        // deficit but 600+900=1500 > 1000, so it is skipped for the 400 (which
+        // gives 1000, exactly the ceiling — accepted, strict > check).
+        const result = selectTopUpForRecovery(rec([600]), cand([400, 900]), DUST, 1000n);
+        expect(result).not.toBeNull();
+        expect(result!.topUp.map((v) => v.value)).toEqual([400]);
+    });
+
+    it("skips a ceiling-breaching candidate while accumulating", () => {
+        // Recovery 100, deficit 900, ceiling 1200. Largest-first 5000 breaches
+        // (100+5000 > 1200) and is skipped; 800 + 200 = 1000 → total 1100 <=
+        // 1200 and >= dust.
+        const result = selectTopUpForRecovery(rec([100]), cand([5000, 800, 200]), DUST, 1200n);
+        expect(result).not.toBeNull();
+        expect(result!.topUp.map((v) => v.value)).toEqual([800, 200]);
+    });
+
+    it("drops the smallest recovery inputs to free a slot when the batch fills the cap", () => {
+        // 50 subdust recovery inputs of 10 each (total 500 < dust). No slot is
+        // free for a top-up, so the smallest input is dropped to make room; one
+        // >= deficit candidate then clears dust.
+        const recovery = rec(Array.from({ length: MAX_VTXOS_PER_SETTLEMENT }, () => 10));
+        const result = selectTopUpForRecovery(recovery, cand([5000]), DUST, -1n);
+        expect(result).not.toBeNull();
+        expect(result!.recoveryInputs).toHaveLength(MAX_VTXOS_PER_SETTLEMENT - 1);
+        expect(result!.topUp.map((v) => v.value)).toEqual([5000]);
+        // Combined stays within the server's intent-size cap.
+        expect(result!.recoveryInputs.length + result!.topUp.length).toBeLessThanOrEqual(
+            MAX_VTXOS_PER_SETTLEMENT,
+        );
     });
 });
 
