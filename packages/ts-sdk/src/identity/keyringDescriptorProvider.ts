@@ -114,11 +114,14 @@ export class KeyringDescriptorProvider implements DescriptorProvider {
      * unchanged.
      */
     async importKey(privateKey: Uint8Array): Promise<string> {
-        const pubKeyHex = hex.encode(pubSchnorr(privateKey));
+        // Clone: SingleKey retains the array by reference, and an import
+        // API must not alias a buffer the caller may zeroize or reuse.
+        const keyBytes = new Uint8Array(privateKey);
+        const pubKeyHex = hex.encode(pubSchnorr(keyBytes));
         await this.mutate((settings) => {
-            settings.keys[pubKeyHex] = hex.encode(privateKey);
+            settings.keys[pubKeyHex] = hex.encode(keyBytes);
         });
-        this.keys.set(pubKeyHex, SingleKey.fromPrivateKey(privateKey));
+        this.keys.set(pubKeyHex, SingleKey.fromPrivateKey(keyBytes));
         return `tr(${pubKeyHex})`;
     }
 
