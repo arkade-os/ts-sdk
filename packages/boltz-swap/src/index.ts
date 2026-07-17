@@ -8,6 +8,12 @@ export const sdkVersion = `boltz-swap/${version}`;
 
 export { ArkadeSwaps } from "./arkade-swaps";
 export type { QuoteSwapOptions } from "./arkade-swaps";
+export { createNonInteractiveReverseSwap } from "./non-interactive-reverse-swap";
+export type {
+    CreateNonInteractiveReverseSwapArgs,
+    NonInteractiveReverseSwap,
+} from "./non-interactive-reverse-swap";
+export { CovclaimdProvider } from "./covclaimd-provider";
 export type { BoltzSwapStatus, SubmarineProgressionStatus } from "./boltz-swap-provider";
 export {
     BoltzSwapProvider,
