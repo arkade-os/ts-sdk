@@ -4116,7 +4116,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             throw new Error("No VTXOs found for this arkcash");
         }
 
+        const myPkScript = ArkAddress.decode(await this.getAddress()).pkScript;
         let { spendable, unclaimed } = this.classifyCashVtxos(vtxos, cashSubdustPkScript);
+        let swept = 0;
 
         // Drain first: a previous claim may have registered a sweep it never
         // finalized. That pending tx is keyed to the arkcash key, so this
@@ -4132,31 +4134,44 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // server reject the whole proof.
         const drainable = vtxos.filter((vtxo) => vtxo.script === cashPkScript);
         if (drainable.length > 0) {
-            let finalized = 0;
+            let drained = { count: 0, swept: 0, claimed: new Set<string>() };
             try {
-                finalized = await this.finalizePendingCashTxs(cash, drainable, cashScript);
+                drained = await this.finalizePendingCashTxs(
+                    cash,
+                    drainable,
+                    cashScript,
+                    myPkScript,
+                );
             } catch (error) {
                 // A drain that cannot run must not sink a claim that can still
                 // sweep: any VTXO still held by a pending tx simply fails its
                 // own sweep below and is reported.
                 console.error("Failed to drain pending arkcash txs:", error);
             }
-            if (finalized > 0) {
+            if (drained.count > 0) {
                 // A completed sweep spends its input, so the snapshot above is
                 // now stale: re-read it, or we would re-sweep an outpoint we
                 // just spent and report the rejection as a failure.
                 vtxos = await this.fetchAllVtxos(scripts);
                 ({ spendable, unclaimed } = this.classifyCashVtxos(vtxos, cashSubdustPkScript));
+
+                // The drain moved these to this wallet, so they are swept by
+                // this call — the re-read above sees them spent and would
+                // otherwise report the funds as left behind while they were in
+                // fact just claimed. Outpoints a drained tx paid to someone
+                // else stay reported: for this claimer they really are gone.
+                swept += drained.swept;
+                unclaimed = unclaimed.filter(
+                    (vtxo) => !drained.claimed.has(`${vtxo.txid}:${vtxo.vout}`),
+                );
             }
         }
 
-        let swept = 0;
         if (spendable.length > 0) {
             const info = await this.arkProvider.getInfo();
             const serverUnrollScript = CSVMultisigTapscript.decode(
                 hex.decode(info.checkpointTapscript),
             );
-            const myPkScript = ArkAddress.decode(await this.getAddress()).pkScript;
 
             // One tx per VTXO: a stale or rejected input then dents only its own
             // sweep instead of blocking the whole claim, and each output is one
@@ -4260,24 +4275,34 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * A thin variant of {@link finalizePendingTxs}, scoped to the arkcash key:
      * the intent is signed with it, and so are the returned checkpoints.
      *
+     * A drained sweep is not automatically *ours*. Whoever registered it chose
+     * the destination, so a tx a different claimer left half-finished pays that
+     * claimer — finalizing it is still right (the input is spent either way, and
+     * completing it unsticks the funds), but only the value it actually pays to
+     * `myPkScript` may be counted as claimed here.
+     *
      * @param vtxos - VTXOs at the arkcash contract's own pkScript, spent ones
      * included (a registered sweep marks its input spent). Any other outpoint —
      * subdust above all — would make the proof invalid, since it describes every
      * input by that pkScript.
-     * @returns How many pending transactions were finalized.
+     * @returns The number of pending txs finalized, the sats among them paid to
+     * this wallet, and the outpoints those txs consumed to pay it.
      */
     private async finalizePendingCashTxs(
         cash: ArkCash,
         vtxos: VirtualCoin[],
         cashScript: DefaultVtxo.Script,
-    ): Promise<number> {
+        myPkScript: Bytes,
+    ): Promise<{ count: number; swept: number; claimed: Set<string> }> {
+        const result = { count: 0, swept: 0, claimed: new Set<string>() };
+
         const inputs = vtxos.map((vtxo) => ({
             ...vtxo,
             forfeitTapLeafScript: cashScript.forfeit(),
             intentTapLeafScript: cashScript.forfeit(),
             tapTree: cashScript.encode(),
         }));
-        if (inputs.length === 0) return 0;
+        if (inputs.length === 0) return result;
 
         const identity = cash.identity;
         const message: Intent.GetPendingTxMessage = { type: "get-pending-tx", expire_at: 0 };
@@ -4296,27 +4321,55 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             message,
         });
 
-        let finalized = 0;
+        const myPkScriptHex = hex.encode(myPkScript);
+
         for (const pendingTx of pendingTxs) {
             try {
                 // These checkpoints already carry the server's signature; the
                 // arkcash key adds its own share in place.
+                const checkpointTxs = pendingTx.signedCheckpointTxs.map((checkpoint) =>
+                    Transaction.fromPSBT(base64.decode(checkpoint)),
+                );
                 const finalCheckpoints = await Promise.all(
-                    pendingTx.signedCheckpointTxs.map(async (checkpoint) => {
-                        const signed = await identity.sign(
-                            Transaction.fromPSBT(base64.decode(checkpoint)),
-                        );
-                        return base64.encode(signed.toPSBT());
-                    }),
+                    checkpointTxs.map(async (checkpoint) =>
+                        base64.encode((await identity.sign(checkpoint)).toPSBT()),
+                    ),
                 );
                 await this.arkProvider.finalizeTx(pendingTx.arkTxid, finalCheckpoints);
-                finalized++;
+                result.count++;
+
+                const paidToMe = this.arkTxAmountPaidTo(pendingTx.finalArkTx, myPkScriptHex);
+                if (paidToMe === 0) continue;
+
+                // The ark tx spends the checkpoints, not the arkcash VTXOs —
+                // the VTXOs are the checkpoints' own inputs, so that is where
+                // the outpoints this claim just consumed are read from.
+                result.swept += paidToMe;
+                for (const checkpoint of checkpointTxs) {
+                    for (let i = 0; i < checkpoint.inputsLength; i++) {
+                        const input = checkpoint.getInput(i);
+                        if (!input.txid) continue;
+                        result.claimed.add(`${hex.encode(input.txid)}:${input.index}`);
+                    }
+                }
             } catch (error) {
                 console.error(`Failed to finalize pending arkcash tx ${pendingTx.arkTxid}:`, error);
             }
         }
 
-        return finalized;
+        return result;
+    }
+
+    /** Sum the outputs of an ark tx PSBT that pay the given scriptPubKey. */
+    private arkTxAmountPaidTo(arkTxPsbt: string, pkScriptHex: string): number {
+        const arkTx = Transaction.fromPSBT(base64.decode(arkTxPsbt));
+        let total = 0;
+        for (let i = 0; i < arkTx.outputsLength; i++) {
+            const output = arkTx.getOutput(i);
+            if (!output.script || output.amount === undefined) continue;
+            if (hex.encode(output.script) === pkScriptHex) total += Number(output.amount);
+        }
+        return total;
     }
 
     /**
