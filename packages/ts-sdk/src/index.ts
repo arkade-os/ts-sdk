@@ -88,6 +88,9 @@ import {
     waitForIncomingFunds,
     IncomingFunds,
     BoardingUtxoGroup,
+    type ArkCashClaimResult,
+    type ArkCashUnclaimedReason,
+    type ArkCashUnclaimedVtxo,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./wallet/wallet";
@@ -205,6 +208,7 @@ import {
 import { Intent } from "./intent";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
+import { ArkCash } from "./arkcash";
 import { getNetwork, networks, Network, NetworkName } from "./networks";
 import {
     RestIndexerProvider,
@@ -479,6 +483,9 @@ export {
     // Arknote
     ArkNote,
 
+    // Arkcash
+    ArkCash,
+
     // Network
     getNetwork,
     networks,
@@ -664,6 +671,9 @@ export type {
     // Wallet types
     GetVtxosFilter,
     BoardingUtxoGroup,
+    ArkCashClaimResult,
+    ArkCashUnclaimedReason,
+    ArkCashUnclaimedVtxo,
     SettlementConfig,
     IVtxoManager,
     RenewVtxosOptions,

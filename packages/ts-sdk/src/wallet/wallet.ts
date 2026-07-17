@@ -55,6 +55,7 @@ import {
     buildOffchainTx,
     hasBoardingTxExpired,
     isValidArkAddress,
+    signAndSubmitOffchainTx,
     submitOffchainTx,
     type OffchainTxSigner,
 } from "../utils/arkTransaction";
@@ -68,6 +69,7 @@ import {
     selectPendingRecoveryOutpoints,
 } from "./vtxo-manager";
 import { ArkNote } from "../arknote";
+import { ArkCash } from "../arkcash";
 import { Intent } from "../intent";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
@@ -351,6 +353,56 @@ export interface BoardingUtxoGroup {
     /** CSV exit timelock decoded from THIS tapscript's exit leaf. */
     csvTimelock: RelativeTimelock;
     coins: ExtendedCoin[];
+}
+
+/**
+ * Why a VTXO at an arkcash address could not be swept by {@link Wallet.claimCash}.
+ *
+ * - `swept` — the server swept the batch at expiry. Recoverable in principle,
+ *   but only through a settlement, which the thin sweep cannot do.
+ * - `subdust` — below dust, so it sits at an OP_RETURN script with no spendable
+ *   leaf. Unspendable as cash; `createCash` prevents minting these.
+ * - `already-spent` — someone else claimed it first.
+ * - `has-assets` — asset-bearing; the BTC-only sweep would burn the assets.
+ * - `sweep-failed` — spendable, but its own sweep was rejected.
+ */
+export type ArkCashUnclaimedReason =
+    | "swept"
+    | "subdust"
+    | "already-spent"
+    | "has-assets"
+    | "sweep-failed";
+
+const cashReport = (vtxo: VirtualCoin, reason: ArkCashUnclaimedReason): ArkCashUnclaimedVtxo => ({
+    txid: vtxo.txid,
+    vout: vtxo.vout,
+    value: vtxo.value,
+    reason,
+});
+
+/** A VTXO {@link Wallet.claimCash} left behind, with the reason why. */
+export interface ArkCashUnclaimedVtxo {
+    txid: string;
+    vout: number;
+    /** Value in satoshis. */
+    value: number;
+    reason: ArkCashUnclaimedReason;
+}
+
+/**
+ * Outcome of {@link Wallet.claimCash}: what was swept, and what was not.
+ *
+ * The shape is open — further buckets may be added alongside `unclaimed` as
+ * more of the non-sweepable states become claimable.
+ */
+export interface ArkCashClaimResult {
+    /** Satoshis swept to this wallet. */
+    swept: number;
+    unclaimed: {
+        /** Satoshis left behind. */
+        amount: number;
+        vtxos: ArkCashUnclaimedVtxo[];
+    };
 }
 
 /**
@@ -3982,6 +4034,289 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             ...state,
             settings: { ...state.settings, hasPendingTx: value },
         }));
+    }
+
+    /**
+     * Create an ArkCash bearer instrument.
+     *
+     * Generates a fresh keypair, sends the specified amount to a DefaultVtxo
+     * controlled by the new key, and returns the encoded arkcash string.
+     * The receiver can claim the funds using `claimCash()` without ever
+     * sharing their address.
+     *
+     * ArkCash is a short-lived instrument: it carries a private key, so it is
+     * meant to be handed over and claimed promptly, not held. A note left
+     * unclaimed past its batch expiry is swept by the server and `claimCash`
+     * can only report it, not move it.
+     *
+     * @param amount - Amount in satoshis to send. Must be a whole number of
+     * sats at or above the dust threshold — a below-dust amount would mint an
+     * OP_RETURN output that is unspendable as cash.
+     * @returns The encoded arkcash string (e.g., "arkcash1...")
+     */
+    async createCash(amount: number): Promise<string> {
+        // A bare `amount < dust` guard would let NaN, Infinity and fractional
+        // amounts through (all compare false), and `send` itself defaults every
+        // falsy amount to a dust send rather than rejecting it.
+        if (!Number.isSafeInteger(amount) || amount < Number(this.dustAmount)) {
+            throw new Error(
+                `Invalid ArkCash amount ${amount}: must be a whole number of sats >= dust (${this.dustAmount})`,
+            );
+        }
+
+        // Derive HRP: ark→arkcash, tark→tarkcash, nark→narkcash
+        const cashHrp = this.network.hrp.replace(/ark$/, "arkcash");
+
+        const cash = ArkCash.generate(
+            this.arkServerPublicKey,
+            this.offchainTapscript.options.csvTimelock,
+            cashHrp,
+        );
+        const address = cash.address(this.network.hrp).encode();
+
+        await this.send({ address, amount });
+
+        return cash.toString();
+    }
+
+    /**
+     * Claim an ArkCash bearer instrument: sweep what can be swept, report the
+     * rest.
+     *
+     * Every spendable VTXO at the arkcash address is swept to this wallet in
+     * its own offchain transaction, signed with the key carried by the arkcash
+     * string. Nothing is ever persisted: no contract is imported, and the
+     * arkcash key is not stored. Anything that cannot be swept — server-swept,
+     * subdust, already claimed, or asset-bearing — is returned in `unclaimed`
+     * with a per-VTXO reason and otherwise ignored.
+     *
+     * The arkcash string is the recovery token: a claim interrupted between
+     * submit and finalize is completed by simply re-running `claimCash`, which
+     * drains any pending arkcash transaction on the server before sweeping.
+     *
+     * @param cashStr - The encoded arkcash string (e.g., "arkcash1...")
+     * @returns The swept total and the report of what was left behind. The
+     * shape is open: further buckets may be added alongside `unclaimed`.
+     */
+    async claimCash(cashStr: string): Promise<ArkCashClaimResult> {
+        const cash = ArkCash.fromString(cashStr);
+        const cashScript = cash.vtxoScript;
+        const cashAddress = cash.address(this.network.hrp);
+        const cashPkScript = hex.encode(cashScript.pkScript);
+        const cashSubdustPkScript = hex.encode(cashAddress.subdustPkScript);
+
+        // One unfiltered query: the server's state filters are mutually
+        // exclusive, so any filter here would hide the very states this method
+        // reports. Both scripts are queried in the same call — subdust arkcash
+        // lives at the OP_RETURN script and would otherwise vanish silently.
+        const scripts = [cashPkScript, cashSubdustPkScript];
+        let vtxos = await this.fetchAllVtxos(scripts);
+
+        if (vtxos.length === 0) {
+            throw new Error("No VTXOs found for this arkcash");
+        }
+
+        let { spendable, unclaimed } = this.classifyCashVtxos(vtxos, cashSubdustPkScript);
+
+        // Drain first: a previous claim may have registered a sweep it never
+        // finalized. That pending tx is keyed to the arkcash key, so this
+        // wallet's own finalizePendingTxs can never reach it — but we hold the
+        // key right now, so we run the same server-side recovery scoped to it.
+        //
+        // The candidate set is neither `spendable` nor everything. Registering
+        // a sweep marks its input spent, so the very inputs needing a drain are
+        // the ones classified `already-spent` — gating on `spendable` would
+        // skip the drain exactly when it is needed. Subdust must stay out
+        // regardless: the proof describes every input by the contract's own
+        // pkScript, which is a lie for an OP_RETURN outpoint and would have the
+        // server reject the whole proof.
+        const drainable = vtxos.filter((vtxo) => vtxo.script === cashPkScript);
+        if (drainable.length > 0) {
+            let finalized = 0;
+            try {
+                finalized = await this.finalizePendingCashTxs(cash, drainable, cashScript);
+            } catch (error) {
+                // A drain that cannot run must not sink a claim that can still
+                // sweep: any VTXO still held by a pending tx simply fails its
+                // own sweep below and is reported.
+                console.error("Failed to drain pending arkcash txs:", error);
+            }
+            if (finalized > 0) {
+                // A completed sweep spends its input, so the snapshot above is
+                // now stale: re-read it, or we would re-sweep an outpoint we
+                // just spent and report the rejection as a failure.
+                vtxos = await this.fetchAllVtxos(scripts);
+                ({ spendable, unclaimed } = this.classifyCashVtxos(vtxos, cashSubdustPkScript));
+            }
+        }
+
+        let swept = 0;
+        if (spendable.length > 0) {
+            const info = await this.arkProvider.getInfo();
+            const serverUnrollScript = CSVMultisigTapscript.decode(
+                hex.decode(info.checkpointTapscript),
+            );
+            const myPkScript = ArkAddress.decode(await this.getAddress()).pkScript;
+
+            // One tx per VTXO: a stale or rejected input then dents only its own
+            // sweep instead of blocking the whole claim, and each output is one
+            // VTXO's value — already within the server's per-output ceiling, so
+            // no consolidation can breach it.
+            for (const vtxo of spendable) {
+                try {
+                    await signAndSubmitOffchainTx({
+                        identity: cash.identity,
+                        provider: this.arkProvider,
+                        inputs: [
+                            {
+                                txid: vtxo.txid,
+                                vout: vtxo.vout,
+                                value: vtxo.value,
+                                tapLeafScript: cashScript.forfeit(),
+                                tapTree: cashScript.encode(),
+                            },
+                        ],
+                        outputs: [{ script: myPkScript, amount: BigInt(vtxo.value) }],
+                        serverUnrollScript,
+                    });
+                    swept += vtxo.value;
+                } catch (error) {
+                    console.error(`Failed to sweep arkcash VTXO ${vtxo.txid}:${vtxo.vout}:`, error);
+                    unclaimed.push(cashReport(vtxo, "sweep-failed"));
+                }
+            }
+        }
+
+        return {
+            swept,
+            unclaimed: {
+                amount: unclaimed.reduce((total, vtxo) => total + vtxo.value, 0),
+                vtxos: unclaimed,
+            },
+        };
+    }
+
+    /**
+     * Split the VTXOs at an arkcash address into the ones the thin sweep can
+     * move and the ones it can only report.
+     */
+    private classifyCashVtxos(
+        vtxos: VirtualCoin[],
+        cashSubdustPkScript: string,
+    ): { spendable: VirtualCoin[]; unclaimed: ArkCashUnclaimedVtxo[] } {
+        const spendable: VirtualCoin[] = [];
+        const unclaimed: ArkCashUnclaimedVtxo[] = [];
+
+        for (const vtxo of vtxos) {
+            if (!isSpendable(vtxo)) {
+                unclaimed.push(cashReport(vtxo, "already-spent"));
+            } else if (vtxo.script === cashSubdustPkScript || isSubdust(vtxo, this.dustAmount)) {
+                // Subdust sits at an OP_RETURN script: no forfeit leaf, nothing
+                // to spend, and no settlement can lift it out on its own.
+                // Checked before the swept case, which would otherwise claim
+                // these are recoverable. createCash now prevents minting them.
+                unclaimed.push(cashReport(vtxo, "subdust"));
+            } else if (isRecoverable(vtxo)) {
+                // The server swept the batch at expiry. The funds are still
+                // owed, but only a settlement can move them — no sweep can.
+                unclaimed.push(cashReport(vtxo, "swept"));
+            } else if (vtxo.assets && vtxo.assets.length > 0) {
+                // The thin sweep builds a BTC-only output; sweeping an
+                // asset-bearing VTXO with it would burn the assets. Detected up
+                // front rather than left to a server rejection.
+                unclaimed.push(cashReport(vtxo, "has-assets"));
+            } else {
+                spendable.push(vtxo);
+            }
+        }
+
+        return { spendable, unclaimed };
+    }
+
+    /** Read every page of an unfiltered VTXO query for the given scripts. */
+    private async fetchAllVtxos(scripts: string[]): Promise<VirtualCoin[]> {
+        const pageSize = 100;
+        const all: VirtualCoin[] = [];
+        const seen = new Set<string>();
+
+        for (let pageIndex = 0; ; pageIndex++) {
+            const { vtxos, page } = await this.indexerProvider.getVtxos({
+                scripts,
+                pageIndex,
+                pageSize,
+            });
+            for (const vtxo of vtxos) {
+                const outpoint = `${vtxo.txid}:${vtxo.vout}`;
+                if (seen.has(outpoint)) continue;
+                seen.add(outpoint);
+                all.push(vtxo);
+            }
+            if (!page || vtxos.length < pageSize) return all;
+        }
+    }
+
+    /**
+     * Complete any sweep a previous `claimCash` registered but never finalized.
+     * A thin variant of {@link finalizePendingTxs}, scoped to the arkcash key:
+     * the intent is signed with it, and so are the returned checkpoints.
+     *
+     * @param vtxos - VTXOs at the arkcash contract's own pkScript, spent ones
+     * included (a registered sweep marks its input spent). Any other outpoint —
+     * subdust above all — would make the proof invalid, since it describes every
+     * input by that pkScript.
+     * @returns How many pending transactions were finalized.
+     */
+    private async finalizePendingCashTxs(
+        cash: ArkCash,
+        vtxos: VirtualCoin[],
+        cashScript: DefaultVtxo.Script,
+    ): Promise<number> {
+        const inputs = vtxos.map((vtxo) => ({
+            ...vtxo,
+            forfeitTapLeafScript: cashScript.forfeit(),
+            intentTapLeafScript: cashScript.forfeit(),
+            tapTree: cashScript.encode(),
+        }));
+        if (inputs.length === 0) return 0;
+
+        const identity = cash.identity;
+        const message: Intent.GetPendingTxMessage = { type: "get-pending-tx", expire_at: 0 };
+        const proof = Intent.create(message, inputs, []);
+        // Every proof input is an arkcash input — index 0 is the synthetic
+        // BIP-322 toSpend reference mirroring input 1's script. Signing them by
+        // explicit index surfaces a failure instead of shipping a half-signed
+        // proof for the server to reject.
+        const signedProof = await identity.sign(
+            proof,
+            Array.from({ length: inputs.length + 1 }, (_, i) => i),
+        );
+
+        const pendingTxs = await this.arkProvider.getPendingTxs({
+            proof: base64.encode(signedProof.toPSBT()),
+            message,
+        });
+
+        let finalized = 0;
+        for (const pendingTx of pendingTxs) {
+            try {
+                // These checkpoints already carry the server's signature; the
+                // arkcash key adds its own share in place.
+                const finalCheckpoints = await Promise.all(
+                    pendingTx.signedCheckpointTxs.map(async (checkpoint) => {
+                        const signed = await identity.sign(
+                            Transaction.fromPSBT(base64.decode(checkpoint)),
+                        );
+                        return base64.encode(signed.toPSBT());
+                    }),
+                );
+                await this.arkProvider.finalizeTx(pendingTx.arkTxid, finalCheckpoints);
+                finalized++;
+            } catch (error) {
+                console.error(`Failed to finalize pending arkcash tx ${pendingTx.arkTxid}:`, error);
+            }
+        }
+
+        return finalized;
     }
 
     /**
