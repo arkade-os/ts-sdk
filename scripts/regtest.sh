@@ -30,6 +30,9 @@ fi
 PKG="$1"
 CMD="$2"
 shift 2
+if [ "${1:-}" = "--" ]; then
+  shift
+fi
 TEST_FILES=("$@")
 
 case "$PKG" in

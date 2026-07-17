@@ -133,7 +133,7 @@ jobs:
           TEST_FILES: ${{ matrix.test_files }}
         run: |
           if [ -n "$TEST_FILES" ]; then
-            pnpm run regtest:test:${{ matrix.package }} -- $TEST_FILES
+            pnpm run regtest:test:${{ matrix.package }} $TEST_FILES
           else
             pnpm run regtest:test:${{ matrix.package }}
           fi
