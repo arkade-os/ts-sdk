@@ -4,15 +4,19 @@ type PubKeys = { covclaimdPubKey: Uint8Array; emulatorPubKey: Uint8Array };
 
 export class CovclaimdProvider {
     private readonly baseUrl: string;
+    private readonly timeoutMs: number;
     private cachedKeys?: PubKeys;
 
-    constructor(baseUrl: string) {
+    constructor(baseUrl: string, timeoutMs = 30_000) {
         this.baseUrl = baseUrl.replace(/\/$/, "");
+        this.timeoutMs = timeoutMs;
     }
 
     async getPubKeys(): Promise<PubKeys> {
         if (this.cachedKeys) return this.cachedKeys;
-        const res = await fetch(`${this.baseUrl}/v1/preimage/covclaimd-pubkey`);
+        const res = await fetch(`${this.baseUrl}/v1/preimage/covclaimd-pubkey`, {
+            signal: AbortSignal.timeout(this.timeoutMs),
+        });
         if (!res.ok) throw new Error(`covclaimd getPubKeys failed: ${res.status}`);
         const body = (await res.json()) as { covclaimd_pub_key: string; emulator_pub_key: string };
         this.cachedKeys = {
@@ -37,6 +41,7 @@ export class CovclaimdProvider {
                     arkade_script: base64.encode(args.arkadeScript),
                 },
             }),
+            signal: AbortSignal.timeout(this.timeoutMs),
         });
         if (!res.ok) {
             const detail = await res.text().catch(() => "");
