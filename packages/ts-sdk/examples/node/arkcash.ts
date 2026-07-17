@@ -109,6 +109,11 @@ async function main() {
     console.log("[Bob]\tClaiming ArkCash...");
     const claim = await bobWallet.claimCash(cash);
     console.log("[Bob]\tSwept:", claim.swept, "sats");
+    if (claim.recovering.vtxos.length > 0) {
+        // Server-swept notes: imported for background recovery, arriving once
+        // the isolated recovery settlement finalizes.
+        console.log("[Bob]\tRecovering:", claim.recovering.amount, "sats", claim.recovering.vtxos);
+    }
     if (claim.unclaimed.vtxos.length > 0) {
         console.log("[Bob]\tUnclaimed:", claim.unclaimed.amount, "sats", claim.unclaimed.vtxos);
     }
