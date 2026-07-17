@@ -79,6 +79,19 @@ describe("KeyringDescriptorProvider", () => {
             expect(provider.hasKey(foreignDescriptor)).toBe(true);
             expect(provider.hasKey(`tr(${xOnlyHex(OTHER_FOREIGN_PRIVKEY)})`)).toBe(true);
         });
+
+        it("owns its copy — zeroizing the caller's buffer does not break signing", async () => {
+            const caller = new Uint8Array(FOREIGN_PRIVKEY);
+            const descriptor = await provider.importKey(caller);
+            caller.fill(0);
+
+            const message = new Uint8Array(32).fill(9);
+            const sig = await provider.signMessageWithDescriptor(descriptor, message);
+
+            expect(
+                await schnorr.verifyAsync(sig, message, schnorr.getPublicKey(FOREIGN_PRIVKEY)),
+            ).toBe(true);
+        });
     });
 
     describe("persistence", () => {
