@@ -27,6 +27,7 @@ import {
     ArkInfo,
     getNetwork,
     maybeArkError,
+    ArkAddress,
 } from "@arkade-os/sdk";
 import { VHTLC } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
@@ -39,6 +40,7 @@ import { Address, OutScript, Script, ScriptNum } from "@scure/btc-signer";
 import { decodeInvoice } from "../src/utils/decoding";
 import { CovclaimdProvider } from "../src/covclaimd-provider";
 import { eciesDecrypt } from "../src/utils/covclaimd-ecies";
+import { createNonInteractiveReverseSwap } from "../src/non-interactive-reverse-swap";
 import { logger } from "../src/logger";
 import { pubECDSA } from "@scure/btc-signer/utils.js";
 import { create as createMusig } from "../src/utils/musig";
@@ -48,6 +50,7 @@ import {
     createVHTLCScript as createVHTLCScriptReal,
     refundVHTLCwithOffchainTx,
     refundWithoutReceiverVHTLCwithOffchainTx,
+    enforcePayTo,
 } from "../src/utils/vhtlc";
 import { BoltzRefundError, InvoiceFailedToPayError, SwapError } from "../src/errors";
 
@@ -915,6 +918,63 @@ describe("ArkadeSwaps", () => {
                 expect(revealArg.swapAddress).toBe(mock.lockupAddress);
                 expect(eciesDecrypt(covclaimdSecretKey, revealArg.ciphertext)).toEqual(
                     hex.decode(pendingSwap.preimage!),
+                );
+            });
+
+            it("createNonInteractiveReverseSwap: walletless helper delegates an arbitrary receiver's claim to covclaimd", async () => {
+                // The lnurl-server case: a service mints an invoice for an offline
+                // user whose keys it does not hold. Prove Boltz is asked to pay the
+                // *user's* claim identity, and covclaimd gets a reveal packet that
+                // decrypts to this swap's preimage, constrained to pay the user.
+                const covclaimdSecretKey = schnorr.utils.randomSecretKey();
+                const covclaimdPubKey = secp256k1.getPublicKey(covclaimdSecretKey, true);
+                const emulatorPubKey = secp256k1.getPublicKey(
+                    schnorr.utils.randomSecretKey(),
+                    true,
+                );
+                vi.spyOn(CovclaimdProvider.prototype, "getPubKeys").mockResolvedValue({
+                    covclaimdPubKey,
+                    emulatorPubKey,
+                });
+                const revealSpy = vi
+                    .spyOn(CovclaimdProvider.prototype, "reveal")
+                    .mockResolvedValue(undefined);
+                const createSpy = vi
+                    .spyOn(swapProvider, "createReverseSwap")
+                    .mockImplementationOnce(reverseSwapResponseFor(createReverseSwapResponse));
+
+                const userClaimPublicKey = hex.encode(
+                    secp256k1.getPublicKey(schnorr.utils.randomSecretKey(), true),
+                );
+                const receiveAddress = mock.address.ark;
+
+                const result = await createNonInteractiveReverseSwap({
+                    swapProvider,
+                    covclaimd: new CovclaimdProvider("http://cov:7071"),
+                    amount: mock.invoice.amount,
+                    claimPublicKey: userClaimPublicKey,
+                    claimAddress: receiveAddress,
+                });
+
+                // Boltz was asked to pay the user, with the user's claim key — no wallet involved.
+                expect(createSpy).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        invoiceAmount: mock.invoice.amount,
+                        claimPublicKey: userClaimPublicKey,
+                        preimageHash: expect.any(String),
+                        nonInteractiveClaim: { claimAddress: receiveAddress },
+                    }),
+                );
+
+                // covclaimd received the encrypted preimage + the pay-to-receiver covenant.
+                expect(revealSpy).toHaveBeenCalledOnce();
+                const revealArg = revealSpy.mock.calls[0]![0];
+                expect(revealArg.swapAddress).toBe(mock.lockupAddress);
+                expect(eciesDecrypt(covclaimdSecretKey, revealArg.ciphertext)).toEqual(
+                    hex.decode(result.preimage),
+                );
+                expect(revealArg.arkadeScript).toEqual(
+                    enforcePayTo(ArkAddress.decode(receiveAddress).vtxoTaprootKey),
                 );
             });
         });
