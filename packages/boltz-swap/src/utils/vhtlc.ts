@@ -19,8 +19,8 @@ import {
     combineTapscriptSigs,
     Transaction,
     TapLeafScript,
+    arkade,
 } from "@arkade-os/sdk";
-import { computeArkadeScriptPublicKey, enforcePayTo } from "./arkade-tweak";
 import { logger } from "../logger";
 import { BoltzRefundError } from "../errors";
 import { hex, base64 } from "@scure/base";
@@ -129,7 +129,7 @@ export const createVHTLCScript = (args: {
 
     const receiverTapKey = ArkAddress.decode(nonInteractiveClaim.claimAddress).vtxoTaprootKey;
     const enforcement = enforcePayTo(receiverTapKey);
-    const emulatorTweaked = computeArkadeScriptPublicKey(
+    const emulatorTweaked = arkade.computeArkadeScriptPublicKey(
         hex.decode(nonInteractiveClaim.emulatorPublicKey),
         enforcement,
     );
@@ -541,4 +541,22 @@ export const refundVHTLCwithOffchainTx = async (
 
 function scriptFromTapLeafScript(leaf: TapLeafScript): Uint8Array {
     return leaf[1].subarray(0, leaf[1].length - 1); // remove the version byte
+}
+
+export function enforcePayTo(receiverTapKey: Uint8Array): Uint8Array {
+    if (receiverTapKey.length !== 32)
+        throw new Error(`enforcePayTo: expected 32-byte tap key, got ${receiverTapKey.length}`);
+    return arkade.ArkadeScript.encode([
+        "PUSHCURRENTINPUTINDEX",
+        "DUP",
+        "INSPECTOUTPUTSCRIPTPUBKEY",
+        1,
+        "EQUALVERIFY",
+        receiverTapKey,
+        "EQUALVERIFY",
+        "INSPECTOUTPUTVALUE",
+        "PUSHCURRENTINPUTINDEX",
+        "INSPECTINPUTVALUE",
+        "GREATERTHANOREQUAL",
+    ]);
 }
