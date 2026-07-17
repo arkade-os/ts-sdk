@@ -20,6 +20,7 @@ import {
     EsploraProvider,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    ArkCash,
     RestDelegateProvider,
 } from "../../src";
 import {
@@ -2381,4 +2382,92 @@ describe("Asset integration tests", () => {
             expect(delegateUnspent.length).toBeGreaterThan(0);
         },
     );
+});
+
+describe("ArkCash", () => {
+    beforeEach(beforeEachFaucet, 20000);
+
+    const fundedWallet = async (amount: number) => {
+        const w = await createTestArkWallet();
+        faucetOffchain(await w.wallet.getAddress(), amount);
+        await waitFor(async () => (await w.wallet.getVtxos()).length > 0);
+        return w;
+    };
+
+    it("should send and claim arkcash (happy path)", async () => {
+        const alice = await fundedWallet(10000);
+        const bob = await createTestArkWallet();
+
+        // Alice creates cash — Bob never shares an address
+        const cashStr = await alice.wallet.createCash(5000);
+        expect(cashStr).toMatch(/cash1/);
+
+        const result = await bob.wallet.claimCash(cashStr);
+        expect(result.swept).toBe(5000);
+        expect(result.unclaimed.amount).toBe(0);
+        expect(result.unclaimed.vtxos).toEqual([]);
+
+        await waitFor(async () => (await bob.wallet.getBalance()).total >= 5000);
+
+        // Sweep-or-report persists nothing: no arkcash contract may reach Bob's
+        // repository, or his own renewal/recovery would settle an input he
+        // cannot sign and reject the whole batch.
+        const manager = await bob.wallet.getContractManager();
+        const contracts = await manager.getContracts();
+        const cashScript = hex.encode(ArkCash.fromString(cashStr).vtxoScript.pkScript);
+        expect(contracts.some((c) => c.script === cashScript)).toBe(false);
+    }, 60_000);
+
+    it("should report an already-claimed arkcash instead of sweeping it", async () => {
+        const alice = await fundedWallet(10000);
+        const bob = await createTestArkWallet();
+        const charlie = await createTestArkWallet();
+
+        const cashStr = await alice.wallet.createCash(5000);
+
+        await bob.wallet.claimCash(cashStr);
+        await waitFor(async () => (await bob.wallet.getBalance()).total >= 5000);
+
+        // The VTXO still exists, it is just spent — Charlie is told it was
+        // already claimed rather than that the arkcash is unknown.
+        const result = await charlie.wallet.claimCash(cashStr);
+        expect(result.swept).toBe(0);
+        expect(result.unclaimed.amount).toBe(5000);
+        expect(result.unclaimed.vtxos).toHaveLength(1);
+        expect(result.unclaimed.vtxos[0].reason).toBe("already-spent");
+    }, 90_000);
+
+    it("should throw when the arkcash was never funded", async () => {
+        const alice = await fundedWallet(10000);
+        const info = await alice.wallet.arkProvider.getInfo();
+        const cash = ArkCash.generate(
+            hex.decode(info.signerPubkey).slice(1),
+            { type: "blocks", value: 144n },
+            "tarkcash",
+        );
+
+        await expect(alice.wallet.claimCash(cash.toString())).rejects.toThrow("No VTXOs found");
+    }, 30_000);
+
+    it("should reject invalid createCash amounts", async () => {
+        const alice = await fundedWallet(10000);
+
+        for (const amount of [0, -1, 0.5, NaN, Infinity, 1]) {
+            await expect(alice.wallet.createCash(amount)).rejects.toThrow("Invalid ArkCash amount");
+        }
+    }, 30_000);
+
+    it("should claim each arkcash independently", async () => {
+        const alice = await fundedWallet(30000);
+        const bob = await createTestArkWallet();
+
+        const cash1 = await alice.wallet.createCash(5000);
+        await waitFor(async () => (await alice.wallet.getVtxos()).length > 0);
+        const cash2 = await alice.wallet.createCash(3000);
+
+        expect((await bob.wallet.claimCash(cash1)).swept).toBe(5000);
+        expect((await bob.wallet.claimCash(cash2)).swept).toBe(3000);
+
+        await waitFor(async () => (await bob.wallet.getBalance()).total >= 8000);
+    }, 120_000);
 });
