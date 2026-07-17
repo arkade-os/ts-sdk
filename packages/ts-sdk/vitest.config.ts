@@ -2,9 +2,7 @@ import { defineConfig, mergeConfig } from "vitest/config";
 import { BaseSequencer, type TestSpecification } from "vitest/node";
 import base from "../../config/vitest.base";
 
-// deprecatedSignerMigration is restarting arkd and deprecate the signer key
-// we must ensure it runs after the other tests to not invalidate "old" signer public key 
-const RUN_LAST = [/deprecatedSignerMigration/i];
+const RUN_LAST = [/deprecatedSignerMigration/i, /digestMismatch/i];
 
 const isRunLast = (spec: TestSpecification): boolean =>
     RUN_LAST.some((re) => re.test(spec.moduleId));
