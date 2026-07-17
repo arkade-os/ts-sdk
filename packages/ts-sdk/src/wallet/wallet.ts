@@ -2628,7 +2628,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
     private async _runRestore(gapLimit: number): Promise<void> {
         const manager = await this.getContractManager();
-        const provider = this._descriptorProvider;
+        // Unwrap decorators before the HD check: a KeyringDescriptorProvider
+        // wrapping an HD provider is still an HD wallet for scan purposes,
+        // and the keyring's foreign keys are outside the derivation tree the
+        // gap scan walks — they contribute no indices to it.
+        const outer = this._descriptorProvider;
+        const provider = outer instanceof KeyringDescriptorProvider ? outer.base : outer;
         // Use `instanceof` rather than duck-typing the
         // materializeDescriptorAt / advanceLastIndexUsed surface: a
         // non-HD provider that happens to expose either method name
