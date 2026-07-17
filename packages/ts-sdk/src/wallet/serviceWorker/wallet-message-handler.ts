@@ -36,7 +36,13 @@ import {
     WalletBalance,
 } from "../index";
 import { DelegateInfo } from "../../providers/delegate";
-import { ReadonlyWallet, Wallet, type ProviderConnectionState } from "../wallet";
+import {
+    ReadonlyWallet,
+    Wallet,
+    ArkCashCreateError,
+    type ArkCashClaimResult,
+    type ProviderConnectionState,
+} from "../wallet";
 import type {
     DeprecatedSignerMigrationReport,
     DeprecatedSignerReport,
@@ -106,6 +112,49 @@ export function deserializeAggregateError(payload: SerializedAggregateError): Ag
         return err;
     });
     return new AggregateError(errs, payload.message);
+}
+
+/**
+ * Wire form of {@link ArkCashCreateError}. The `cash` token controls the funded
+ * output and is the only way to recover it, so it must cross the boundary that
+ * structured-clone would otherwise strip along with the error's prototype.
+ */
+export type SerializedArkCashCreateError = {
+    name: "ArkCashCreateError";
+    message: string;
+    cash: string;
+    cause?: { name: string; message: string };
+};
+
+export function isSerializedArkCashCreateError(
+    value: unknown,
+): value is SerializedArkCashCreateError {
+    if (!value || typeof value !== "object") return false;
+    const v = value as Partial<SerializedArkCashCreateError>;
+    return v.name === "ArkCashCreateError" && typeof v.cash === "string";
+}
+
+/** Worker-side serializer for {@link ArkCashCreateError}. */
+export function serializeArkCashCreateError(
+    error: ArkCashCreateError,
+): SerializedArkCashCreateError {
+    const cause =
+        error.cause instanceof Error
+            ? { name: error.cause.name, message: error.cause.message }
+            : error.cause !== undefined
+              ? { name: "Error", message: String(error.cause) }
+              : undefined;
+    return { name: "ArkCashCreateError", message: error.message, cash: error.cash, cause };
+}
+
+/** Page-side reconstructor: rebuild {@link ArkCashCreateError} from the wire form. */
+export function deserializeArkCashCreateError(
+    payload: SerializedArkCashCreateError,
+): ArkCashCreateError {
+    const cause = payload.cause
+        ? Object.assign(new Error(payload.cause.message), { name: payload.cause.name })
+        : undefined;
+    return new ArkCashCreateError(payload.cash, cause);
 }
 
 export class ReadonlyWalletError extends Error {
@@ -402,6 +451,24 @@ export type RequestSend = RequestEnvelope & {
 export type ResponseSend = ResponseEnvelope & {
     type: "SEND_SUCCESS";
     payload: { txid: string };
+};
+
+export type RequestCreateCash = RequestEnvelope & {
+    type: "CREATE_CASH";
+    payload: { amount: number };
+};
+export type ResponseCreateCash = ResponseEnvelope & {
+    type: "CREATE_CASH_SUCCESS";
+    payload: { cash: string };
+};
+
+export type RequestClaimCash = RequestEnvelope & {
+    type: "CLAIM_CASH";
+    payload: { cash: string };
+};
+export type ResponseClaimCash = ResponseEnvelope & {
+    type: "CLAIM_CASH_SUCCESS";
+    payload: { result: ArkCashClaimResult };
 };
 
 export type RequestGetAssetDetails = RequestEnvelope & {
@@ -716,6 +783,8 @@ export type WalletUpdaterRequest =
     | RequestRefreshVtxos
     | RequestRefreshOutpoints
     | RequestSend
+    | RequestCreateCash
+    | RequestClaimCash
     | RequestGetAssetDetails
     | RequestIssue
     | RequestReissue
@@ -764,6 +833,8 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseRefreshOutpoints
         | ResponseContractEvent
         | ResponseSend
+        | ResponseCreateCash
+        | ResponseClaimCash
         | ResponseGetAssetDetails
         | ResponseIssue
         | ResponseReissue
@@ -1136,6 +1207,37 @@ export class WalletMessageHandler
                         id,
                         type: "SEND_SUCCESS",
                         payload: { txid },
+                    });
+                }
+                case "CREATE_CASH": {
+                    const { amount } = (message as RequestCreateCash).payload;
+                    // ArkCashCreateError carries the recovery token; serialize it
+                    // explicitly so the token survives the postMessage boundary.
+                    let cash: string;
+                    try {
+                        cash = await this.requireWallet().createCash(amount);
+                    } catch (error) {
+                        if (error instanceof ArkCashCreateError) {
+                            return this.tagged({
+                                id,
+                                error: serializeArkCashCreateError(error) as unknown as Error,
+                            });
+                        }
+                        throw error;
+                    }
+                    return this.tagged({
+                        id,
+                        type: "CREATE_CASH_SUCCESS",
+                        payload: { cash },
+                    });
+                }
+                case "CLAIM_CASH": {
+                    const { cash } = (message as RequestClaimCash).payload;
+                    const result = await this.requireWallet().claimCash(cash);
+                    return this.tagged({
+                        id,
+                        type: "CLAIM_CASH_SUCCESS",
+                        payload: { result },
                     });
                 }
                 case "GET_ASSET_DETAILS": {

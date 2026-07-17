@@ -5,8 +5,10 @@ import {
     WalletMessageHandler,
     serializeMigrationReport,
     deserializeMigrationReport,
+    isSerializedArkCashCreateError,
+    deserializeArkCashCreateError,
 } from "../src/wallet/serviceWorker/wallet-message-handler";
-import { InMemoryWalletRepository } from "../src";
+import { InMemoryWalletRepository, ArkCashCreateError } from "../src";
 import {
     createMockExtendedVtxo,
     createMockIndexerProvider,
@@ -112,6 +114,67 @@ describe("WalletMessageHandler handleMessage", () => {
             tag: updater.messageTag,
             type: "SEND_BITCOIN_SUCCESS",
             payload: { txid: "tx" },
+        });
+    });
+
+    it("handles CREATE_CASH messages", async () => {
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            createCash: vi.fn().mockResolvedValue("arkcash1token"),
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "CREATE_CASH",
+            payload: { amount: 5000 },
+        } as any);
+
+        expect((updater as any).wallet.createCash).toHaveBeenCalledWith(5000);
+        expect(response).toMatchObject({
+            tag: updater.messageTag,
+            type: "CREATE_CASH_SUCCESS",
+            payload: { cash: "arkcash1token" },
+        });
+    });
+
+    it("serializes ArkCashCreateError so the recovery token survives", async () => {
+        (updater as any).readonlyWallet = {};
+        const original = new ArkCashCreateError("arkcash1recover", new Error("send blew up"));
+        (updater as any).wallet = {
+            createCash: vi.fn().mockRejectedValue(original),
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "CREATE_CASH",
+            payload: { amount: 5000 },
+        } as any);
+
+        expect(isSerializedArkCashCreateError(response.error)).toBe(true);
+
+        const rebuilt = deserializeArkCashCreateError(response.error as any);
+        expect(rebuilt).toBeInstanceOf(ArkCashCreateError);
+        expect(rebuilt.cash).toBe("arkcash1recover");
+    });
+
+    it("handles CLAIM_CASH messages", async () => {
+        (updater as any).readonlyWallet = {};
+        const result = { swept: 5000, unclaimed: { amount: 0, vtxos: [] } };
+        (updater as any).wallet = {
+            claimCash: vi.fn().mockResolvedValue(result),
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "CLAIM_CASH",
+            payload: { cash: "arkcash1token" },
+        } as any);
+
+        expect((updater as any).wallet.claimCash).toHaveBeenCalledWith("arkcash1token");
+        expect(response).toMatchObject({
+            tag: updater.messageTag,
+            type: "CLAIM_CASH_SUCCESS",
+            payload: { result },
         });
     });
 

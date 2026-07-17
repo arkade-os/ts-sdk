@@ -83,6 +83,10 @@ import {
     ResponseGetAllSpendingPaths,
     RequestSend,
     ResponseSend,
+    RequestCreateCash,
+    ResponseCreateCash,
+    RequestClaimCash,
+    ResponseClaimCash,
     RequestGetAssetDetails,
     ResponseGetAssetDetails,
     RequestIssue,
@@ -120,6 +124,8 @@ import {
     DEFAULT_MESSAGE_TAG,
     deserializeAggregateError,
     isSerializedAggregateError,
+    deserializeArkCashCreateError,
+    isSerializedArkCashCreateError,
 } from "./wallet-message-handler";
 import type {
     Contract,
@@ -156,7 +162,11 @@ import {
     MESSAGE_BUS_NOT_INITIALIZED,
     ServiceWorkerTimeoutError,
 } from "../../worker/errors";
-import { getArkadeServerUrl, type ProviderConnectionState } from "../wallet";
+import {
+    getArkadeServerUrl,
+    type ArkCashClaimResult,
+    type ProviderConnectionState,
+} from "../wallet";
 
 function isMessageBusNotInitializedError(error: unknown): boolean {
     return error instanceof Error && error.message.includes(MESSAGE_BUS_NOT_INITIALIZED);
@@ -213,6 +223,8 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     // are retained only for type completeness and are never enforced.
     SEND_BITCOIN: 50_000,
     SEND: 50_000,
+    CREATE_CASH: 50_000,
+    CLAIM_CASH: 50_000,
     SETTLE: 50_000,
     ISSUE: 50_000,
     REISSUE: 50_000,
@@ -1677,6 +1689,43 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
             return (response as ResponseSend).payload.txid;
         } catch (error) {
             throw new Error(`Send failed: ${error}`);
+        }
+    }
+
+    async createCash(amount: number): Promise<string> {
+        const message: RequestCreateCash = {
+            tag: this.messageTag,
+            type: "CREATE_CASH",
+            id: getRandomId(),
+            payload: { amount },
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseCreateCash).payload.cash;
+        } catch (error) {
+            // Rebuild the typed error before the generic wrap so the recovery
+            // token on `.cash` reaches the caller.
+            if (isSerializedArkCashCreateError(error)) {
+                throw deserializeArkCashCreateError(error);
+            }
+            throw new Error(`Failed to create ArkCash: ${error}`);
+        }
+    }
+
+    async claimCash(cash: string): Promise<ArkCashClaimResult> {
+        const message: RequestClaimCash = {
+            tag: this.messageTag,
+            type: "CLAIM_CASH",
+            id: getRandomId(),
+            payload: { cash },
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseClaimCash).payload.result;
+        } catch (error) {
+            throw new Error(`Failed to claim ArkCash: ${error}`);
         }
     }
 

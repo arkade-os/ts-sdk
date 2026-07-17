@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import { Wallet, type ProviderConnectionState } from "../wallet";
+import { Wallet, type ArkCashClaimResult, type ProviderConnectionState } from "../wallet";
 import type { Activity, ActivityRegistry } from "../activity";
 import { RestArkProvider } from "../../providers/ark";
 import type {
@@ -360,6 +360,14 @@ export class ExpoWallet implements IWallet {
 
     send(...recipients: [Recipient, ...Recipient[]]): Promise<string> {
         return this.wallet.send(...recipients);
+    }
+
+    createCash(amount: number): Promise<string> {
+        return this.wallet.createCash(amount);
+    }
+
+    claimCash(cashStr: string): Promise<ArkCashClaimResult> {
+        return this.wallet.claimCash(cashStr);
     }
 
     get assetManager(): IAssetManager {

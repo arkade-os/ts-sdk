@@ -9,6 +9,7 @@ import {
     MnemonicIdentity,
     SeedIdentity,
     ReadonlyDescriptorIdentity,
+    ArkCashCreateError,
     type ContractSyncState,
 } from "../../src";
 import { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
@@ -677,6 +678,83 @@ describe("ServiceWorkerWallet", () => {
         expect((agg.errors[0] as Error).name).toBe("HandlerAError");
         expect((agg.errors[0] as Error).message).toBe("handler-a-failed");
         expect((agg.errors[1] as Error).message).toBe("handler-b-failed");
+    });
+
+    it("createCash() forwards the amount and returns the token", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "CREATE_CASH") return null;
+            return {
+                id: message.id,
+                tag: messageTag,
+                type: "CREATE_CASH_SUCCESS",
+                payload: { cash: "arkcash1token" },
+            };
+        });
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        await expect(wallet.createCash(5000)).resolves.toBe("arkcash1token");
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tag: messageTag,
+                type: "CREATE_CASH",
+                payload: { amount: 5000 },
+            }),
+        );
+    });
+
+    it("createCash() reconstructs a worker-side ArkCashCreateError with its token", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "CREATE_CASH") return null;
+            return {
+                id: message.id,
+                tag: messageTag,
+                error: {
+                    name: "ArkCashCreateError",
+                    message: "send failed",
+                    cash: "arkcash1recover",
+                },
+            };
+        });
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        let caught: unknown;
+        try {
+            await wallet.createCash(5000);
+        } catch (err) {
+            caught = err;
+        }
+
+        expect(caught).toBeInstanceOf(ArkCashCreateError);
+        expect((caught as ArkCashCreateError).cash).toBe("arkcash1recover");
+    });
+
+    it("claimCash() forwards the token and returns the claim result", async () => {
+        const result = { swept: 5000, unclaimed: { amount: 0, vtxos: [] } };
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "CLAIM_CASH") return null;
+            return {
+                id: message.id,
+                tag: messageTag,
+                type: "CLAIM_CASH_SUCCESS",
+                payload: { result },
+            };
+        });
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        await expect(wallet.claimCash("arkcash1token")).resolves.toEqual(result);
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tag: messageTag,
+                type: "CLAIM_CASH",
+                payload: { cash: "arkcash1token" },
+            }),
+        );
     });
 
     it("restore() propagates non-AggregateError failures as-is", async () => {
