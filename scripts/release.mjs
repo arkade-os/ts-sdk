@@ -254,8 +254,9 @@ function parseArgs(argv) {
                 args.boltzBump = argv[++i];
                 break;
             case "--":
-                positional.push(...argv.slice(i + 1));
-                i = argv.length;
+                // pnpm forwards a literal "--" separator before script args; ignore it
+                // rather than treating the remainder as positional (that would swallow
+                // subsequent options like --preid).
                 break;
             default:
                 if (arg.startsWith("--")) die(`Unknown option: ${arg}`);
