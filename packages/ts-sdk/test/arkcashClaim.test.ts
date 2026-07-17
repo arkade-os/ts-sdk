@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { base64, hex } from "@scure/base";
-import { Wallet } from "../src/wallet/wallet";
+import { Transaction } from "@scure/btc-signer";
+import { Wallet, ArkCashCreateError } from "../src/wallet/wallet";
 import { InMemoryWalletRepository } from "../src/repositories/inMemory/walletRepository";
 import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
 import { SingleKey } from "../src/identity/singleKey";
@@ -104,6 +105,14 @@ function spentCashVtxo(cashPkScript: string): VirtualCoin {
     } as VirtualCoin;
 }
 
+/** A distinct spent arkcash VTXO, one per index, all at the same pkScript. */
+function spentCashVtxoAt(cashPkScript: string, index: number): VirtualCoin {
+    return {
+        ...spentCashVtxo(cashPkScript),
+        txid: index.toString(16).padStart(64, "0"),
+    };
+}
+
 /**
  * The pending sweep the crashed claim left on the server: the offchain tx it
  * built and submitted but never finalized, paying `destinationPkScript`.
@@ -188,6 +197,87 @@ describe("claimCash drain-pending accounting", () => {
         expect(result.swept).toBe(0);
         expect(result.unclaimed.vtxos).toEqual([
             { txid: CASH_TXID, vout: 0, value: CASH_VALUE, reason: "already-spent" },
+        ]);
+    });
+
+    it("chunks the drain proof into batches of at most 20 inputs", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const finalizeTx = vi.fn(async () => {});
+        const getPendingTxs = vi.fn();
+
+        // 45 spent inputs → 3 proofs (20 + 20 + 5). Each proof carries the
+        // batch's inputs plus the synthetic BIP-322 toSpend reference.
+        const drainable = Array.from({ length: 45 }, (_, i) => spentCashVtxoAt(cashPkScript, i));
+        const wallet = await makeWallet(cashIndexer(cashPkScript, drainable), {
+            getPendingTxs,
+            finalizeTx,
+        });
+
+        // Every batch surfaces the same pending sweep; dedup by arkTxid must
+        // collapse them so the tx is finalized exactly once.
+        const myPkScript = ArkAddress.decode(await wallet.getAddress()).pkScript;
+        getPendingTxs.mockResolvedValue([pendingSweep(cash, myPkScript)]);
+
+        await wallet.claimCash(cash.toString());
+
+        expect(getPendingTxs).toHaveBeenCalledTimes(3);
+        for (const [{ proof }] of getPendingTxs.mock.calls as [{ proof: string }][]) {
+            const inputs = Transaction.fromPSBT(base64.decode(proof), {
+                allowUnknown: true,
+            }).inputsLength;
+            expect(inputs).toBeLessThanOrEqual(20 + 1);
+        }
+        // Same arkTxid across all batches → finalized once, not three times.
+        expect(finalizeTx).toHaveBeenCalledOnce();
+    });
+
+    it("surfaces the recoverable token when the funding send fails", async () => {
+        const wallet = await makeWallet(cashIndexer("x", []), {});
+
+        // send fails after the note may already have been submitted; the token
+        // controlling the funded output must not be lost.
+        const sendError = new Error("submitted then crashed");
+        vi.spyOn(wallet, "send").mockRejectedValue(sendError);
+
+        const err = await wallet
+            .createCash(5000)
+            .then(() => null)
+            .catch((e) => e);
+
+        expect(err).toBeInstanceOf(ArkCashCreateError);
+        expect(err.cause).toBe(sendError);
+        // The carried token round-trips back to a usable arkcash note.
+        expect(() => ArkCash.fromString(err.cash)).not.toThrow();
+        expect(err.cash.startsWith("tarkcash1")).toBe(true);
+    });
+
+    it("preserves the empty-input behavior", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const finalizeTx = vi.fn(async () => {});
+        const getPendingTxs = vi.fn(async () => []);
+
+        // Only a subdust VTXO (at the OP_RETURN script) is present: nothing is
+        // drainable, so no proof is ever built or submitted.
+        const cashSubdustPkScript = hex.encode(cash.address("tark").subdustPkScript);
+        const subdust: VirtualCoin = {
+            ...spentCashVtxo(cashPkScript),
+            script: cashSubdustPkScript,
+            isSpent: false,
+        };
+        const wallet = await makeWallet(cashIndexer(cashSubdustPkScript, [subdust]), {
+            getPendingTxs,
+            finalizeTx,
+        });
+
+        const result = await wallet.claimCash(cash.toString());
+
+        expect(getPendingTxs).not.toHaveBeenCalled();
+        expect(finalizeTx).not.toHaveBeenCalled();
+        expect(result.swept).toBe(0);
+        expect(result.unclaimed.vtxos).toEqual([
+            { txid: CASH_TXID, vout: 0, value: CASH_VALUE, reason: "subdust" },
         ]);
     });
 });

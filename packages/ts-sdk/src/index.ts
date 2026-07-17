@@ -91,6 +91,7 @@ import {
     type ArkCashClaimResult,
     type ArkCashUnclaimedReason,
     type ArkCashUnclaimedVtxo,
+    ArkCashCreateError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./wallet/wallet";
@@ -485,6 +486,7 @@ export {
 
     // Arkcash
     ArkCash,
+    ArkCashCreateError,
 
     // Network
     getNetwork,

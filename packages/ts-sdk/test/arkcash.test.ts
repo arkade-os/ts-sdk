@@ -136,6 +136,54 @@ describe("ArkCash", () => {
         });
     });
 
+    describe("defensive key copies", () => {
+        it("is unaffected by mutating the buffers passed to the constructor", () => {
+            const priv = testPrivKey.slice();
+            const server = testServerPubKey.slice();
+            const cash = new ArkCash(priv, server, { type: "blocks", value: 144n });
+
+            const encodedBefore = cash.toString();
+            const pubBefore = hex.encode(cash.publicKey);
+
+            // Mutating the caller's buffers must not change the note.
+            priv.fill(0);
+            server.fill(0);
+
+            expect(cash.toString()).toBe(encodedBefore);
+            expect(hex.encode(cash.privateKey)).toBe(hex.encode(testPrivKey));
+            expect(hex.encode(cash.serverPubKey)).toBe(hex.encode(testServerPubKey));
+            expect(hex.encode(cash.publicKey)).toBe(pubBefore);
+        });
+
+        it("is unaffected by mutating the buffers returned from getters", () => {
+            const cash = new ArkCash(testPrivKey, testServerPubKey, {
+                type: "blocks",
+                value: 144n,
+            });
+
+            const encodedBefore = cash.toString();
+            cash.privateKey.fill(0);
+            cash.serverPubKey.fill(0);
+            cash.publicKey.fill(0);
+
+            expect(cash.toString()).toBe(encodedBefore);
+            expect(hex.encode(cash.privateKey)).toBe(hex.encode(testPrivKey));
+            expect(hex.encode(cash.serverPubKey)).toBe(hex.encode(testServerPubKey));
+            expect(hex.encode(cash.publicKey)).toBe(hex.encode(pubSchnorr(testPrivKey)));
+        });
+
+        it("returns a distinct copy on each getter access", () => {
+            const cash = new ArkCash(testPrivKey, testServerPubKey, {
+                type: "blocks",
+                value: 144n,
+            });
+
+            expect(cash.privateKey).not.toBe(cash.privateKey);
+            expect(cash.serverPubKey).not.toBe(cash.serverPubKey);
+            expect(cash.publicKey).not.toBe(cash.publicKey);
+        });
+    });
+
     describe("validation", () => {
         it("should throw on invalid private key length", () => {
             expect(

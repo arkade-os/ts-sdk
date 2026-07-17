@@ -19,11 +19,16 @@ export class ArkCash {
     static readonly Version = 0;
     static readonly PayloadLength = 1 + 32 + 32 + 4; // 69 bytes
 
-    readonly publicKey: Uint8Array;
+    // Keys are held as private copies so a caller mutating the array it passed
+    // in — or one it reads back from a getter — cannot alter this note's
+    // identity or the outputs derived from it.
+    private readonly _privateKey: Uint8Array;
+    private readonly _serverPubKey: Uint8Array;
+    private readonly _publicKey: Uint8Array;
 
     constructor(
-        readonly privateKey: Uint8Array,
-        readonly serverPubKey: Uint8Array,
+        privateKey: Uint8Array,
+        serverPubKey: Uint8Array,
         readonly csvTimelock: RelativeTimelock,
         readonly hrp: string = ArkCash.DefaultHRP,
     ) {
@@ -37,7 +42,24 @@ export class ArkCash {
                 `Invalid server public key length: expected 32 bytes, got ${serverPubKey.length}`,
             );
         }
-        this.publicKey = pubSchnorr(privateKey);
+        this._privateKey = privateKey.slice();
+        this._serverPubKey = serverPubKey.slice();
+        this._publicKey = pubSchnorr(this._privateKey);
+    }
+
+    /** The note's private key. Returns a fresh copy; mutating it is a no-op. */
+    get privateKey(): Uint8Array {
+        return this._privateKey.slice();
+    }
+
+    /** The server's public key. Returns a fresh copy; mutating it is a no-op. */
+    get serverPubKey(): Uint8Array {
+        return this._serverPubKey.slice();
+    }
+
+    /** The note's public key. Returns a fresh copy; mutating it is a no-op. */
+    get publicKey(): Uint8Array {
+        return this._publicKey.slice();
     }
 
     static generate(
@@ -77,8 +99,8 @@ export class ArkCash {
     toString(): string {
         const data = new Uint8Array(ArkCash.PayloadLength);
         data[0] = ArkCash.Version;
-        data.set(this.privateKey, 1);
-        data.set(this.serverPubKey, 33);
+        data.set(this._privateKey, 1);
+        data.set(this._serverPubKey, 33);
         const sequence = timelockToSequence(this.csvTimelock);
         new DataView(data.buffer, data.byteOffset + 65, 4).setUint32(0, sequence, false);
         const words = bech32m.toWords(data);
@@ -86,18 +108,18 @@ export class ArkCash {
     }
 
     get identity(): SingleKey {
-        return SingleKey.fromPrivateKey(this.privateKey);
+        return SingleKey.fromPrivateKey(this._privateKey);
     }
 
     get vtxoScript(): DefaultVtxo.Script {
         return new DefaultVtxo.Script({
-            pubKey: this.publicKey,
-            serverPubKey: this.serverPubKey,
+            pubKey: this._publicKey,
+            serverPubKey: this._serverPubKey,
             csvTimelock: this.csvTimelock,
         });
     }
 
     address(addressHrp: string): ArkAddress {
-        return this.vtxoScript.address(addressHrp, this.serverPubKey);
+        return this.vtxoScript.address(addressHrp, this._serverPubKey);
     }
 }

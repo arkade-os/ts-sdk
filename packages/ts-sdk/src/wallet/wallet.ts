@@ -11,6 +11,7 @@ import {
     ArkProvider,
     BatchFinalizationEvent,
     BatchStartedEvent,
+    PendingTx,
     RestArkProvider,
     SettlementEvent,
     SignedIntent,
@@ -63,6 +64,7 @@ import {
     byValueDescending,
     DEFAULT_RENEWAL_CONFIG,
     DEFAULT_SETTLEMENT_CONFIG,
+    MAX_INPUTS_PER_INTENT,
     MAX_VTXOS_PER_SETTLEMENT,
     SettlementConfig,
     VtxoManager,
@@ -403,6 +405,31 @@ export interface ArkCashClaimResult {
         amount: number;
         vtxos: ArkCashUnclaimedVtxo[];
     };
+}
+
+/**
+ * Thrown when {@link Wallet.createCash} funds the note but its `send` call
+ * fails after the transaction may already have been submitted.
+ *
+ * The whole value of the note lives in `cash`: it carries the private key that
+ * controls the funded output. If `send` committed and this error is discarded,
+ * the sats are stranded at an address only this token can reach. Callers that
+ * cannot rule out a post-submit failure must persist `cash` — passing it to
+ * {@link Wallet.claimCash} recovers the funds whether or not the send landed.
+ */
+export class ArkCashCreateError extends Error {
+    constructor(
+        /** The encoded arkcash token controlling the funded output. */
+        readonly cash: string,
+        /** The original failure from `send`. */
+        readonly cause: unknown,
+    ) {
+        super(
+            `Failed to create ArkCash: send failed after the note may have been submitted. ` +
+                `Recover with claimCash using the token on this error's \`cash\` field.`,
+        );
+        this.name = "ArkCashCreateError";
+    }
 }
 
 /**
@@ -3888,8 +3915,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             return { finalized: [], pending: [] };
         }
 
-        const MAX_INPUTS_PER_INTENT = 20;
-
         if (!vtxos || vtxos.length === 0) {
             // Batch all scripts into a single indexer call
             const scriptMap = await this.getScriptMap();
@@ -4073,10 +4098,19 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             cashHrp,
         );
         const address = cash.address(this.network.hrp).encode();
+        const cashStr = cash.toString();
 
-        await this.send({ address, amount });
+        try {
+            await this.send({ address, amount });
+        } catch (error) {
+            // `send` may fail after the tx was submitted, leaving the note
+            // funded but its token unreturned. Surface the token on the error
+            // so the caller can recover the funds with `claimCash` instead of
+            // stranding them at an address only this token can reach.
+            throw new ArkCashCreateError(cashStr, error);
+        }
 
-        return cash.toString();
+        return cashStr;
     }
 
     /**
@@ -4305,21 +4339,36 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         if (inputs.length === 0) return result;
 
         const identity = cash.identity;
-        const message: Intent.GetPendingTxMessage = { type: "get-pending-tx", expire_at: 0 };
-        const proof = Intent.create(message, inputs, []);
-        // Every proof input is an arkcash input — index 0 is the synthetic
-        // BIP-322 toSpend reference mirroring input 1's script. Signing them by
-        // explicit index surfaces a failure instead of shipping a half-signed
-        // proof for the server to reject.
-        const signedProof = await identity.sign(
-            proof,
-            Array.from({ length: inputs.length + 1 }, (_, i) => i),
-        );
 
-        const pendingTxs = await this.arkProvider.getPendingTxs({
-            proof: base64.encode(signedProof.toPSBT()),
-            message,
-        });
+        // A get-pending-tx proof carries every input, and the server caps an
+        // intent at MAX_INPUTS_PER_INTENT inputs — the same ceiling
+        // finalizePendingTxs chunks against. Split into batches, sign and submit
+        // one proof each, and dedupe the returned txs by arkTxid so a tx that
+        // surfaces under two batches is finalized once.
+        const seenTxids = new Set<string>();
+        const pendingTxs: PendingTx[] = [];
+        for (let i = 0; i < inputs.length; i += MAX_INPUTS_PER_INTENT) {
+            const batch = inputs.slice(i, i + MAX_INPUTS_PER_INTENT);
+            const message: Intent.GetPendingTxMessage = { type: "get-pending-tx", expire_at: 0 };
+            const proof = Intent.create(message, batch, []);
+            // Every proof input is an arkcash input — index 0 is the synthetic
+            // BIP-322 toSpend reference mirroring input 1's script. Signing them
+            // by explicit index surfaces a failure instead of shipping a
+            // half-signed proof for the server to reject.
+            const signedProof = await identity.sign(
+                proof,
+                Array.from({ length: batch.length + 1 }, (_, j) => j),
+            );
+            const batchPending = await this.arkProvider.getPendingTxs({
+                proof: base64.encode(signedProof.toPSBT()),
+                message,
+            });
+            for (const pendingTx of batchPending) {
+                if (seenTxids.has(pendingTx.arkTxid)) continue;
+                seenTxids.add(pendingTx.arkTxid);
+                pendingTxs.push(pendingTx);
+            }
+        }
 
         const myPkScriptHex = hex.encode(myPkScript);
 
