@@ -2477,7 +2477,9 @@ describe("ArkCash", () => {
     it("should reject invalid createCash amounts", async () => {
         const alice = await fundedWallet(10000);
 
-        for (const amount of [0, -1, 0.5, NaN, Infinity, 1]) {
+        // Subdust (e.g. 1) is now allowed — only non-positive/non-integer
+        // amounts are rejected.
+        for (const amount of [0, -1, 0.5, NaN, Infinity]) {
             await expect(alice.wallet.createCash(amount)).rejects.toThrow("Invalid ArkCash amount");
         }
     }, 30_000);
@@ -2613,5 +2615,93 @@ describe("ArkCash", () => {
 
         // The double claim recovered the single VTXO exactly once.
         expect((await bob.wallet.getBalance()).total).toBe(5000);
+    }, 240_000);
+
+    // ── subdust full claim (Phase 5 — see plans/pr-337-new-plan.md) ──
+
+    it("should recover a subdust arkcash via top-up aggregation", async () => {
+        const alice = await fundedWallet(10000);
+        // The claimer must hold spendable BTC: a subdust note cannot settle on
+        // its own, so recovery aggregates a claimer top-up to clear dust.
+        const bob = await fundedWallet(10000);
+
+        // A below-dust mint is allowed now; it lands at the OP_RETURN script.
+        const cashStr = await alice.wallet.createCash(1);
+        const cashScript = cashScriptOf(cashStr);
+        await waitForCashVtxo(bob, cashStr);
+
+        const bobBefore = (await bob.wallet.getBalance()).total;
+
+        // No spendable leaf → not swept away, imported for recovery as subdust.
+        const result = await bob.wallet.claimCash(cashStr);
+        expect(result.swept).toBe(0);
+        expect(result.recovering.amount).toBe(1);
+        expect(result.recovering.vtxos).toEqual([
+            expect.objectContaining({ value: 1, kind: "subdust" }),
+        ]);
+        expect(result.unclaimed.amount).toBe(0);
+
+        const manager = await bob.wallet.getContractManager();
+        expect(await manager.getContracts({ script: cashScript })).toHaveLength(1);
+
+        // Drive the isolated recovery: it settles the 1-sat note aggregated with
+        // a claimer top-up in a single mixed-key intent (the one new
+        // server-facing combination Phase 5 introduces).
+        const vtxoManager = await bob.wallet.getVtxoManager();
+        await waitFor(
+            async () => {
+                await vtxoManager.recoverImportedContracts();
+                return (await bob.wallet.getBalance()).total >= bobBefore + 1;
+            },
+            { timeout: 120_000, interval: 3000 },
+        );
+
+        // Net +1: the top-up is a self-transfer, only the note's value is new.
+        expect((await bob.wallet.getBalance()).total).toBe(bobBefore + 1);
+
+        // Recovery over: contract removed, key purged.
+        await waitFor(
+            async () => {
+                await vtxoManager.recoverImportedContracts();
+                return (await manager.getContracts({ script: cashScript })).length === 0;
+            },
+            { timeout: 30_000, interval: 2000 },
+        );
+    }, 240_000);
+
+    it("defers subdust recovery until the claimer wallet has funds", async () => {
+        const alice = await fundedWallet(10000);
+        // Unfunded claimer: no BTC to top up with, so recovery cannot proceed.
+        const bob = await createTestArkWallet();
+
+        const cashStr = await alice.wallet.createCash(1);
+        const cashScript = cashScriptOf(cashStr);
+        await waitForCashVtxo(bob, cashStr);
+
+        const result = await bob.wallet.claimCash(cashStr);
+        expect(result.recovering.amount).toBe(1);
+
+        const manager = await bob.wallet.getContractManager();
+        const vtxoManager = await bob.wallet.getVtxoManager();
+
+        // With no claimer funds the top-up selector finds nothing, so the pass
+        // defers this contract — it stays imported, the funds stay recoverable,
+        // and nothing is settled or purged.
+        await vtxoManager.recoverImportedContracts();
+        expect(await manager.getContracts({ script: cashScript })).toHaveLength(1);
+        expect((await bob.wallet.getBalance()).total).toBe(0);
+
+        // Fund the claimer → the next cycle aggregates a top-up and settles.
+        faucetOffchain(await bob.wallet.getAddress(), 10000);
+        await waitFor(async () => (await bob.wallet.getVtxos()).length > 0);
+
+        await waitFor(
+            async () => {
+                await vtxoManager.recoverImportedContracts();
+                return (await bob.wallet.getBalance()).total >= 10001;
+            },
+            { timeout: 120_000, interval: 3000 },
+        );
+        expect((await bob.wallet.getBalance()).total).toBe(10001);
     }, 240_000);
 });

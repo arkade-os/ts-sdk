@@ -118,6 +118,24 @@ function sweptCashVtxo(cashPkScript: string): VirtualCoin {
     } as VirtualCoin;
 }
 
+// dust in `info` is 1000n; 500 is below it.
+const SUBDUST_VALUE = 500;
+
+/** A below-dust arkcash VTXO: live, no spendable leaf, recovered via top-up. */
+function subdustCashVtxo(cashPkScript: string, assets?: unknown[]): VirtualCoin {
+    return {
+        txid: CASH_TXID,
+        vout: 0,
+        value: SUBDUST_VALUE,
+        script: cashPkScript,
+        status: { confirmed: true },
+        virtualStatus: { state: "preconfirmed" },
+        isSpent: false,
+        createdAt: new Date(),
+        assets,
+    } as VirtualCoin;
+}
+
 /** White-box reach for the wallet's keyring (private) in these unit tests. */
 function keyringOf(wallet: Wallet) {
     return (wallet as unknown as { _keyring: { hasKey(d: string): boolean } })._keyring;
@@ -233,7 +251,9 @@ describe("claimCash import-for-recovery", () => {
         // Reported as recovering, not swept away, not left unclaimed.
         expect(result.swept).toBe(0);
         expect(result.recovering.amount).toBe(CASH_VALUE);
-        expect(result.recovering.vtxos).toEqual([{ txid: CASH_TXID, vout: 0, value: CASH_VALUE }]);
+        expect(result.recovering.vtxos).toEqual([
+            { txid: CASH_TXID, vout: 0, value: CASH_VALUE, kind: "swept" },
+        ]);
         expect(result.unclaimed.vtxos).toEqual([]);
 
         // Recovery was kicked promptly rather than left to the poll loop.
@@ -285,6 +305,54 @@ describe("claimCash import-for-recovery", () => {
         // recovery-only VTXO must not appear there, or it would poison them.
         expect(await wallet.getVtxos()).toEqual([]);
         expect(await wallet.getVtxos({ withRecoverable: true })).toEqual([]);
+    });
+
+    it("imports a subdust VTXO for recovery and reports kind 'subdust'", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const wallet = await makeWallet(
+            cashIndexer(cashPkScript, [subdustCashVtxo(cashPkScript)]),
+            { getPendingTxs: vi.fn(async () => []) },
+        );
+        const manager = await wallet.getVtxoManager();
+        vi.spyOn(manager, "recoverImportedContracts").mockResolvedValue();
+
+        const result = await wallet.claimCash(cash.toString());
+
+        // A subdust note cannot thin-sweep — it is imported for recovery too.
+        expect(result.swept).toBe(0);
+        expect(result.recovering.amount).toBe(SUBDUST_VALUE);
+        expect(result.recovering.vtxos).toEqual([
+            { txid: CASH_TXID, vout: 0, value: SUBDUST_VALUE, kind: "subdust" },
+        ]);
+        expect(result.unclaimed.vtxos).toEqual([]);
+
+        // Same import machinery: keyring key + recovery-only contract.
+        expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cash.publicKey)})`)).toBe(true);
+    });
+
+    it("reports an asset-bearing subdust VTXO as has-assets, not imported", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const wallet = await makeWallet(
+            cashIndexer(cashPkScript, [
+                subdustCashVtxo(cashPkScript, [{ assetId: "usd", amount: 1n }]),
+            ]),
+            { getPendingTxs: vi.fn(async () => []) },
+        );
+        const manager = await wallet.getVtxoManager();
+        vi.spyOn(manager, "recoverImportedContracts").mockResolvedValue();
+
+        const result = await wallet.claimCash(cash.toString());
+
+        // The has-assets check runs BEFORE the subdust/swept case, so an
+        // asset-bearing subdust VTXO stays report-only and is NOT imported into
+        // the BTC-only recovery settle.
+        expect(result.recovering.vtxos).toEqual([]);
+        expect(result.unclaimed.vtxos).toEqual([
+            { txid: CASH_TXID, vout: 0, value: SUBDUST_VALUE, reason: "has-assets" },
+        ]);
+        expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cash.publicKey)})`)).toBe(false);
     });
 
     it("is idempotent: re-claiming does not duplicate the import", async () => {

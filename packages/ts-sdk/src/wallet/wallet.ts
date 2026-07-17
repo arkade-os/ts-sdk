@@ -361,19 +361,16 @@ export interface BoardingUtxoGroup {
  * Why a VTXO at an arkcash address could neither be swept nor imported for
  * recovery by {@link Wallet.claimCash}.
  *
- * - `subdust` — below dust, so it sits at an OP_RETURN script with no spendable
- *   leaf. Unspendable as cash; `createCash` prevents minting these.
  * - `already-spent` — someone else claimed it first.
  * - `has-assets` — asset-bearing; the BTC-only sweep would burn the assets.
  * - `sweep-failed` — spendable, but its own sweep was rejected.
- * - `recovery-failed` — server-swept and recoverable in principle, but the
- *   import that hands it to the wallet's recovery machinery failed.
+ * - `recovery-failed` — server-swept or subdust and recoverable in principle,
+ *   but the import that hands it to the wallet's recovery machinery failed.
  *
- * A server-swept VTXO whose import *succeeds* is not reported here — it lands
- * in {@link ArkCashClaimResult.recovering} instead.
+ * A VTXO whose recovery import *succeeds* — server-swept or subdust — is not
+ * reported here: it lands in {@link ArkCashClaimResult.recovering} instead.
  */
 export type ArkCashUnclaimedReason =
-    | "subdust"
     | "already-spent"
     | "has-assets"
     | "sweep-failed"
@@ -394,6 +391,19 @@ export interface ArkCashVtxoRef {
     value: number;
 }
 
+/**
+ * A VTXO {@link Wallet.claimCash} imported for background recovery.
+ *
+ * `kind` explains why the funds cannot arrive instantly:
+ * - `swept` — the server swept the batch at expiry; only a settlement lifts it.
+ * - `subdust` — below dust, so it has no spendable leaf and cannot settle on
+ *   its own; recovery aggregates it with a claimer top-up to clear dust, which
+ *   may wait until the claimer wallet holds enough spendable BTC.
+ */
+export interface ArkCashRecoveringVtxo extends ArkCashVtxoRef {
+    kind: "swept" | "subdust";
+}
+
 /** A VTXO {@link Wallet.claimCash} left behind, with the reason why. */
 export interface ArkCashUnclaimedVtxo extends ArkCashVtxoRef {
     reason: ArkCashUnclaimedReason;
@@ -410,17 +420,18 @@ export interface ArkCashClaimResult {
     /** Satoshis swept to this wallet instantly (the thin single-key sweep). */
     swept: number;
     /**
-     * Server-swept VTXOs imported for recovery. These funds are not in the
-     * wallet yet: a swept VTXO can only move through a settlement, so
-     * `claimCash` imports it as a signable contract and hands it to the
-     * wallet's own recovery machinery, which settles it back (rotation-aware)
-     * on the normal retry cadence. The amount arrives as a fresh VTXO once
-     * that settlement finalizes.
+     * VTXOs imported for recovery — server-swept or subdust. These funds are
+     * not in the wallet yet: neither a swept nor a subdust VTXO can move
+     * through the thin sweep, so `claimCash` imports them as a signable
+     * contract and hands them to the wallet's own recovery machinery, which
+     * settles them back (rotation-aware, aggregating a claimer top-up when a
+     * subdust note needs to clear dust) on the normal retry cadence. The
+     * amount arrives as a fresh VTXO once that settlement finalizes.
      */
     recovering: {
         /** Satoshis imported for recovery. */
         amount: number;
-        vtxos: ArkCashVtxoRef[];
+        vtxos: ArkCashRecoveringVtxo[];
     };
     unclaimed: {
         /** Satoshis left behind. */
@@ -4122,21 +4133,28 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      *
      * ArkCash is a short-lived instrument: it carries a private key, so it is
      * meant to be handed over and claimed promptly, not held. A note left
-     * unclaimed past its batch expiry is swept by the server and `claimCash`
-     * can only report it, not move it.
+     * unclaimed past its batch expiry is swept by the server; `claimCash` still
+     * recovers it via an isolated settlement (rotation-aware) rather than
+     * losing it.
      *
-     * @param amount - Amount in satoshis to send. Must be a whole number of
-     * sats at or above the dust threshold — a below-dust amount would mint an
-     * OP_RETURN output that is unspendable as cash.
+     * A below-dust amount is allowed: it mints an OP_RETURN (subdust) output
+     * with no spendable leaf, so `claimCash` cannot thin-sweep it — it recovers
+     * it through a settlement that aggregates a claimer top-up to clear dust,
+     * which is slower and needs the claimer to hold enough spendable BTC.
+     *
+     * @param amount - Amount in satoshis to send. Must be a positive whole
+     * number of sats.
      * @returns The encoded arkcash string (e.g., "arkcash1...")
      */
     async createCash(amount: number): Promise<string> {
-        // A bare `amount < dust` guard would let NaN, Infinity and fractional
+        // A bare `amount <= 0` guard would let NaN, Infinity and fractional
         // amounts through (all compare false), and `send` itself defaults every
-        // falsy amount to a dust send rather than rejecting it.
-        if (!Number.isSafeInteger(amount) || amount < Number(this.dustAmount)) {
+        // falsy amount to a dust send rather than rejecting it. Subdust is now
+        // allowed (it routes to the OP_RETURN script via the send machinery),
+        // so only positivity and integrality are enforced.
+        if (!Number.isSafeInteger(amount) || amount <= 0) {
             throw new Error(
-                `Invalid ArkCash amount ${amount}: must be a whole number of sats >= dust (${this.dustAmount})`,
+                `Invalid ArkCash amount ${amount}: must be a positive whole number of sats`,
             );
         }
 
@@ -4167,9 +4185,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * in the keyring) and handed to the wallet's own recovery machinery, which
      * settles it back on the normal retry cadence. That import is the only
      * thing `claimCash` persists, and the key is purged once recovery
-     * completes. Anything neither sweepable nor recoverable — subdust, already
-     * claimed, or asset-bearing — is returned in `unclaimed` with a per-VTXO
-     * reason and otherwise ignored.
+     * completes. A subdust note is imported the same way — it too can only move
+     * through a settlement — and recovery aggregates a claimer top-up to clear
+     * dust. Anything neither sweepable nor recoverable — already claimed or
+     * asset-bearing — is returned in `unclaimed` with a per-VTXO reason and
+     * otherwise ignored.
      *
      * The arkcash string is the recovery token: a claim interrupted between
      * submit and finalize is completed by simply re-running `claimCash`, which
@@ -4188,11 +4208,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         // One unfiltered query over the contract's P2TR script: the server's
         // state filters are mutually exclusive, so any filter here would hide
-        // the very states this method reports. Only the P2TR script is queried —
-        // the indexer rejects a non-P2TR (OP_RETURN) script outright, so subdust
-        // arkcash, which lives at the OP_RETURN script, is not visible here and
-        // is simply not reported. `createCash`'s dust floor keeps it from being
-        // minted in the first place.
+        // the very states this method reports. Only the P2TR script is queried,
+        // and that is sufficient: the server indexes a VTXO under the P2TR
+        // script of its taproot key regardless of whether the output pays the
+        // spendable OP_1 or the subdust OP_RETURN wrapper, so a subdust arkcash
+        // note surfaces here too (it is then imported for recovery, not swept).
         const scripts = [cashPkScript];
         let vtxos = await this.fetchAllVtxos(scripts);
 
@@ -4288,12 +4308,21 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // arkcash key as a signable contract and let the wallet's recovery
         // machinery settle it back. All recoverable VTXOs share the one arkcash
         // script, so a single import covers them.
-        const recovering: ArkCashVtxoRef[] = [];
+        const recovering: ArkCashRecoveringVtxo[] = [];
         if (recoverable.length > 0) {
             try {
                 await this.importArkCashForRecovery(cash, cashScript, cashAddress);
                 for (const vtxo of recoverable) {
-                    recovering.push({ txid: vtxo.txid, vout: vtxo.vout, value: vtxo.value });
+                    // A subdust note needs a claimer top-up to clear dust; a
+                    // swept ≥-dust note settles alone. `kind` lets callers
+                    // explain the difference in latency. One import covers both
+                    // (same script, same contract).
+                    recovering.push({
+                        txid: vtxo.txid,
+                        vout: vtxo.vout,
+                        value: vtxo.value,
+                        kind: isSubdust(vtxo, this.dustAmount) ? "subdust" : "swept",
+                    });
                 }
                 // Kick recovery promptly rather than waiting for the poll loop.
                 // Non-blocking: recovery is a full settlement (a batch round)
@@ -4416,27 +4445,21 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         for (const vtxo of vtxos) {
             if (!isSpendable(vtxo)) {
                 unclaimed.push(cashReport(vtxo, "already-spent"));
-            } else if (isSubdust(vtxo, this.dustAmount)) {
-                // A below-dust VTXO at the P2TR script cannot be swept or
-                // settled on its own. Subdust arkcash actually lives at an
-                // OP_RETURN script (not queried — the indexer rejects non-P2TR
-                // scripts), so this is a defensive guard; createCash's dust
-                // floor prevents minting subdust in the first place. Checked
-                // before the swept case, which would otherwise call it
-                // recoverable.
-                unclaimed.push(cashReport(vtxo, "subdust"));
             } else if (vtxo.assets && vtxo.assets.length > 0) {
-                // The thin sweep builds a BTC-only output; sweeping an
-                // asset-bearing VTXO with it would burn the assets. Detected up
-                // front rather than left to a server rejection. Checked before
-                // the swept case: a swept asset VTXO must stay report-only, not
-                // ride the BTC-only recovery import.
+                // The thin sweep and the BTC-only recovery settle both build a
+                // BTC-only output; moving an asset-bearing VTXO through either
+                // would burn the assets. Detected up front rather than left to
+                // a server rejection. Checked FIRST among the spendable cases:
+                // an asset-bearing swept or subdust VTXO must stay report-only,
+                // never ride the BTC-only recovery import.
                 unclaimed.push(cashReport(vtxo, "has-assets"));
-            } else if (isRecoverable(vtxo)) {
-                // The server swept the batch at expiry. The funds are still
-                // owed, but only a settlement can move them — no sweep can. The
-                // caller imports these as a signable contract and hands them to
-                // the wallet's recovery machinery.
+            } else if (isSubdust(vtxo, this.dustAmount) || isRecoverable(vtxo)) {
+                // Neither a below-dust VTXO (no spendable leaf; sits at the
+                // OP_RETURN script) nor a server-swept one (swept at batch
+                // expiry) can move through the thin sweep — only a settlement
+                // lifts them. The caller imports these as a signable contract
+                // and hands them to the wallet's recovery machinery, which
+                // settles them back (aggregating a claimer top-up for subdust).
                 recoverable.push(vtxo);
             } else {
                 spendable.push(vtxo);
