@@ -93,7 +93,7 @@ describe("Indexer provider", () => {
         expect(byOutpoint.vtxos).toHaveLength(1);
     });
 
-    it("should inspect a commitment tx", { timeout: 60000 }, async () => {
+    it("should inspect a commitment tx", { timeout: 120_000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestArkWallet();
         const aliceOffchainAddress = await alice.wallet.getAddress();
@@ -107,10 +107,15 @@ describe("Indexer provider", () => {
         const fundAmountStr = fundAmount.toString();
 
         // Wait until indexer reflects the batch totals instead of sleeping.
-        await waitFor(async () => {
-            const c = await indexerProvider.getCommitmentTx(txid);
-            return c?.batches?.["0"]?.totalOutputAmount === fundAmountStr;
-        });
+        // The settlement above plus indexer propagation can run well past the
+        // 25s default when the shared regtest stack is loaded, so give it room.
+        await waitFor(
+            async () => {
+                const c = await indexerProvider.getCommitmentTx(txid);
+                return c?.batches?.["0"]?.totalOutputAmount === fundAmountStr;
+            },
+            { timeout: 60_000 },
+        );
 
         const commitmentTx = await indexerProvider.getCommitmentTx(txid);
         expect(commitmentTx).toBeDefined();
