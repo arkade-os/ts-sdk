@@ -1,10 +1,22 @@
 import { hex } from "@scure/base";
 import { expect, describe, it, beforeEach } from "vitest";
-import { ArkCash } from "../../src";
+import { ArkCash, RestIndexerProvider } from "../../src";
 import { beforeEachFaucet, createTestArkWallet, faucetOffchain, waitFor } from "./utils";
 
 describe("ArkCash", () => {
     beforeEach(beforeEachFaucet, 20000);
+
+    // `createCash` returns once the funding tx is submitted, before the indexer
+    // exposes the VTXO. A real recipient gets the string out-of-band, so only
+    // these in-process create-then-claim tests race `claimCash` against it.
+    const indexer = new RestIndexerProvider("http://localhost:7070");
+    const waitForCashFunded = async (cashStr: string) => {
+        const script = hex.encode(ArkCash.fromString(cashStr).vtxoScript.pkScript);
+        await waitFor(async () => {
+            const { vtxos } = await indexer.getVtxos({ scripts: [script] });
+            return vtxos.length > 0;
+        });
+    };
 
     const fundedWallet = async (amount: number) => {
         const w = await createTestArkWallet();
@@ -20,6 +32,7 @@ describe("ArkCash", () => {
         // Alice creates cash — Bob never shares an address
         const cashStr = await alice.wallet.createCash(5000);
         expect(cashStr).toMatch(/cash1/);
+        await waitForCashFunded(cashStr);
 
         const result = await bob.wallet.claimCash(cashStr);
         expect(result.swept).toBe(5000);
@@ -43,6 +56,7 @@ describe("ArkCash", () => {
         const charlie = await createTestArkWallet();
 
         const cashStr = await alice.wallet.createCash(5000);
+        await waitForCashFunded(cashStr);
 
         await bob.wallet.claimCash(cashStr);
         await waitFor(async () => (await bob.wallet.getBalance()).total >= 5000);
@@ -83,6 +97,9 @@ describe("ArkCash", () => {
         const cash1 = await alice.wallet.createCash(5000);
         await waitFor(async () => (await alice.wallet.getVtxos()).length > 0);
         const cash2 = await alice.wallet.createCash(3000);
+
+        await waitForCashFunded(cash1);
+        await waitForCashFunded(cash2);
 
         expect((await bob.wallet.claimCash(cash1)).swept).toBe(5000);
         expect((await bob.wallet.claimCash(cash2)).swept).toBe(3000);
