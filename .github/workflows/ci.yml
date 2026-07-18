@@ -71,7 +71,8 @@ jobs:
           - package: ts-sdk
             group: arkade-assets
             test_files: >-
-              test/e2e/arkade-script.test.ts
+              test/e2e/asset.test.ts
+              test/e2e/arkcash.test.ts
               test/e2e/liquidation.test.ts
           - package: ts-sdk
             group: settlement-delegation
@@ -82,6 +83,7 @@ jobs:
               test/e2e/contract-params-change.test.ts
               test/e2e/restore.test.ts
               test/e2e/operatorOffline.test.ts
+              test/e2e/arkade-script.test.ts
           - package: ts-sdk
             group: exit-providers-rotation
             test_files: >-
