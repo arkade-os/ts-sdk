@@ -31,6 +31,7 @@ import {
     isVirtualCoin,
     normalizeVtxo,
     parseLegacyExpiry,
+    resolveTimeHeight,
     toBatchExpiry,
     toOffchainInputFeeParams,
     toVirtualStatus,
@@ -4266,15 +4267,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * Split the VTXOs at an arkcash address into the ones the thin sweep can
      * move and the ones it can only report.
      */
-    private classifyCashVtxos(vtxos: VirtualCoin[]): {
-        spendable: VirtualCoin[];
+    private classifyCashVtxos(vtxos: NormalizedVirtualCoin[]): {
+        spendable: NormalizedVirtualCoin[];
         unclaimed: ArkCashUnclaimedVtxo[];
     } {
-        const spendable: VirtualCoin[] = [];
+        const spendable: NormalizedVirtualCoin[] = [];
         const unclaimed: ArkCashUnclaimedVtxo[] = [];
 
         for (const vtxo of vtxos) {
-            if (!isSpendable(vtxo)) {
+            if (hasTerminalSpend(vtxo)) {
                 unclaimed.push(cashReport(vtxo, "already-spent"));
             } else if (isSubdust(vtxo, this.dustAmount)) {
                 // Subdust lives at an OP_RETURN output: no forfeit leaf, nothing
@@ -4284,9 +4285,14 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 // case, which would otherwise claim it is recoverable.
                 // createCash now prevents minting them.
                 unclaimed.push(cashReport(vtxo, "subdust"));
-            } else if (isRecoverable(vtxo)) {
+            } else if (vtxo.isSwept) {
                 // The server swept the batch at expiry. The funds are still
                 // owed, but only a settlement can move them — no sweep can.
+                //
+                // Bare `isSwept` rather than a recovery capability: the
+                // terminal-spend branch above already ran, so this reproduces
+                // the old `isRecoverable` (`isSwept && !spent`) exactly, without
+                // re-testing spentness or widening to past-expiry coins.
                 unclaimed.push(cashReport(vtxo, "swept"));
             } else if (vtxo.assets && vtxo.assets.length > 0) {
                 // The thin sweep builds a BTC-only output; sweeping an
@@ -4302,13 +4308,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     }
 
     /** Read every page of an unfiltered VTXO query for the given scripts. */
-    private async fetchAllVtxos(scripts: string[]): Promise<VirtualCoin[]> {
+    private async fetchAllVtxos(scripts: string[]): Promise<NormalizedVirtualCoin[]> {
         const pageSize = 100;
-        const all: VirtualCoin[] = [];
+        const all: NormalizedVirtualCoin[] = [];
         const seen = new Set<string>();
 
         for (let pageIndex = 0; ; pageIndex++) {
-            const { vtxos, page } = await this.indexerProvider.getVtxos({
+            const { vtxos, page } = await getNormalizedVtxos(this.indexerProvider, {
                 scripts,
                 pageIndex,
                 pageSize,
@@ -4765,15 +4771,21 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             const serverUnrollScript = this.serverUnrollScript;
             const arkAddress = offchainTapscript.address(this.network.hrp, serverPubKey);
 
+            // `inputs` is a public parameter, so it may be legacy-shaped: a coin carrying only
+            // the deprecated status object would read `undefined` for every canonical fact and
+            // fail the expiry check below despite having an expiry. Normalize once up front and
+            // use the result for the rest of the method.
+            const normalizedInputs = inputs.map(normalizeVtxo);
+
             // Only spendable, non-recoverable, batch-expiry-bearing VTXOs migrate
             // cooperatively: recoverable/swept inputs follow the recovery settle
             // path, and the DB-update path only persists a wallet-owned output
             // when an input batch expiry exists (unrolled inputs carry none).
-            const now = {
-                timestamp: new Date(),
-                height: (await this.onchainProvider.getChainTip()).height,
-            };
-            for (const input of inputs) {
+            //
+            // Degrades to timestamp-only if the tip is unreachable: migrating funds off an
+            // expiring signer must not depend on the onchain provider being up.
+            const now = await resolveTimeHeight(this.onchainProvider);
+            for (const input of normalizedInputs) {
                 if (!canSpendOffchain(input, now)) {
                     throw new Error(
                         `sendSelectedVtxosToSelf: input ${input.txid}:${input.vout} is not cooperatively spendable`,
@@ -4786,7 +4798,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 }
             }
 
-            const total = inputs.reduce((sum, c) => sum + BigInt(c.value), 0n);
+            const total = normalizedInputs.reduce((sum, c) => sum + BigInt(c.value), 0n);
 
             const outputs: TransactionOutput[] = [
                 {
@@ -4799,7 +4811,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             // Preserve every input asset on the single self output (output index
             // 0). With no asset-bearing recipients, all input asset amounts route
             // to the self receiver.
-            const assetInputs = selectedCoinsToAssetInputs(inputs);
+            const assetInputs = selectedCoinsToAssetInputs(normalizedInputs);
             let selfAssets: Asset[] | undefined;
             if (assetInputs.size > 0) {
                 const totals = new Map<string, bigint>();
@@ -4818,7 +4830,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 outputs.push(Extension.create([packet]).txOut());
             }
 
-            return this._submitOffchainSpend(inputs, outputs, {
+            return this._submitOffchainSpend(normalizedInputs, outputs, {
                 sentAmount: 0,
                 changeAmount: total,
                 changeVout: 0,

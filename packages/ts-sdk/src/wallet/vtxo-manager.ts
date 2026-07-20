@@ -13,6 +13,7 @@ import {
     hasTerminalSpend,
     isPastExpiry,
     normalizeVtxo,
+    resolveTimeHeight,
     toBatchExpiry,
     toOffchainInputFeeParams,
     type NormalizedExtendedVirtualCoin,
@@ -197,25 +198,13 @@ export function byValueDescending<T extends { value: number }>(vtxos: T[]): T[] 
 }
 
 /**
- * The `TimeHeight` for one expiry-driven pass.
+ * The {@link TimeHeight} for one expiry-driven pass, from whichever wallet we were handed.
  *
- * Fetched once per pass and reused for every VTXO in it, so the pass sees a consistent tip. A
- * tip-fetch failure degrades to timestamp-only rather than blocking: height-encoded expiry then
- * reads as not expired, which is what the whole SDK did before heights were evaluated at all.
- * Recovery must not become unavailable because Esplora is down.
+ * Degradation on tip-fetch failure lives in {@link resolveTimeHeight}; this only digs the provider
+ * out, since `onchainProvider` lives on the concrete wallets rather than on `IReadonlyWallet`.
  */
 async function fetchTimeHeight(wallet: IReadonlyWallet): Promise<TimeHeight> {
-    const timestamp = new Date();
-    // `onchainProvider` lives on the concrete wallets, not on IReadonlyWallet.
-    const provider = (wallet as Partial<SweepCapableWallet>).onchainProvider;
-    if (!provider) return { timestamp };
-    try {
-        const tip = await provider.getChainTip();
-        return { timestamp, height: tip.height };
-    } catch (e) {
-        console.warn("Failed to fetch chain tip; height-based expiry will not be evaluated", e);
-        return { timestamp };
-    }
+    return resolveTimeHeight((wallet as Partial<SweepCapableWallet>).onchainProvider);
 }
 
 /**

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
     EXPIRY_MIN_PLAUSIBLE_MS,
     canRecoverOnchain,
@@ -14,6 +14,7 @@ import {
     normalizeVtxo,
     parseLegacyExpiry,
     parseWireExpiry,
+    resolveTimeHeight,
     toBatchExpiry,
     toVirtualStatus,
 } from "../src/wallet/vtxo";
@@ -417,5 +418,57 @@ describe("getNormalizedVtxos", () => {
         expect(res.vtxos[0].isSwept).toBe(true);
         expect(res.vtxos[0].commitmentTxIds).toEqual(["22".repeat(32)]);
         expect(canRecoverOnchain(res.vtxos[0], { timestamp: NOW })).toBe(true);
+    });
+});
+
+describe("resolveTimeHeight", () => {
+    it("returns the tip height when the provider answers", async () => {
+        const provider = { getChainTip: vi.fn().mockResolvedValue({ height: 812_345 }) };
+
+        const now = await resolveTimeHeight(provider);
+
+        expect(now.height).toBe(812_345);
+        expect(now.timestamp).toBeInstanceOf(Date);
+    });
+
+    it("degrades to timestamp-only when the tip fetch rejects, rather than throwing", async () => {
+        // The guarantee that keeps recovery and deprecated-signer migration available while the
+        // onchain provider is down. Height-encoded expiry then reads as not expired, which is
+        // what the SDK did before heights were evaluated at all.
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const provider = { getChainTip: vi.fn().mockRejectedValue(new Error("esplora down")) };
+
+        const now = await resolveTimeHeight(provider);
+
+        expect(now.height).toBeUndefined();
+        expect(now.timestamp).toBeInstanceOf(Date);
+        expect(warn).toHaveBeenCalled();
+        warn.mockRestore();
+    });
+
+    it("omits height when no provider is supplied", async () => {
+        const now = await resolveTimeHeight(undefined);
+
+        expect(now.height).toBeUndefined();
+        expect(now.timestamp).toBeInstanceOf(Date);
+    });
+
+    it("reads a height-encoded expiry as not expired once height is unavailable", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const coin = normalizeVtxo({
+            ...legacyCoin("settled"),
+            expiresAtHeight: 100,
+        } as VirtualCoin);
+
+        const withTip = await resolveTimeHeight({
+            getChainTip: vi.fn().mockResolvedValue({ height: 500 }),
+        });
+        const degraded = await resolveTimeHeight({
+            getChainTip: vi.fn().mockRejectedValue(new Error("esplora down")),
+        });
+
+        expect(isPastExpiry(coin, withTip)).toBe(true);
+        expect(isPastExpiry(coin, degraded)).toBe(false);
+        warn.mockRestore();
     });
 });

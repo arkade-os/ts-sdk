@@ -1,4 +1,5 @@
 import type { GetVtxosOptions, IndexerProvider, PageResponse, Vtxo } from "../providers/indexer";
+import type { OnchainProvider } from "../providers/onchain";
 import type { ExtendedVirtualCoin, VirtualCoin, VirtualStatus } from "./index";
 
 /**
@@ -34,6 +35,36 @@ export const EXPIRY_MIN_PLAUSIBLE_MS = Date.UTC(2025, 0, 1);
  * height-based expiry cannot be evaluated and reads as not expired.
  */
 export type TimeHeight = { timestamp: Date; height?: number };
+
+/**
+ * Resolve the {@link TimeHeight} for one expiry-driven pass.
+ *
+ * @remarks
+ * Fetch the tip once per pass and reuse the result for every VTXO in it, so the pass judges them
+ * all against the same height.
+ *
+ * A tip-fetch failure **degrades to timestamp-only rather than blocking**: height-encoded expiry
+ * then reads as not expired, which is what the whole SDK did before heights were evaluated at all.
+ * Recovery and deprecated-signer migration must not become unavailable because the onchain provider
+ * is down. Every path that needs a height goes through here so that guarantee has one
+ * implementation rather than one per call site.
+ *
+ * Pass no provider to opt out of height entirely — the offline-first paths (balance, coin
+ * selection) do this deliberately.
+ */
+export async function resolveTimeHeight(
+    provider?: Pick<OnchainProvider, "getChainTip">,
+): Promise<TimeHeight> {
+    const timestamp = new Date();
+    if (!provider) return { timestamp };
+    try {
+        const tip = await provider.getChainTip();
+        return { timestamp, height: tip.height };
+    } catch (e) {
+        console.warn("Failed to fetch chain tip; height-based expiry will not be evaluated", e);
+        return { timestamp };
+    }
+}
 
 /**
  * A {@link VirtualCoin} that has passed through {@link normalizeVtxo}: every fact the capability

@@ -588,6 +588,15 @@ export {
     isExpired,
     getSequence,
 
+    // VTXO capability predicates — the replacement API the deprecation notices
+    // on isSpendable/isRecoverable/isExpired point at, so they must be exported
+    // as values, not via `export type`.
+    canRecoverOnchain,
+    canSpendOffchain,
+    hasTerminalSpend,
+    isPastExpiry,
+    isVirtualCoin,
+
     // Contracts
     ContractManager,
     ContractWatcher,
@@ -636,11 +645,6 @@ export type {
     VirtualStatus,
     Outpoint,
     VirtualCoin,
-    canRecoverOnchain,
-    canSpendOffchain,
-    hasTerminalSpend,
-    isPastExpiry,
-    isVirtualCoin,
     TimeHeight,
     TxKey,
     TapscriptType,

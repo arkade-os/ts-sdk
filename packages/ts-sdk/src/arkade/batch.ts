@@ -34,7 +34,7 @@ import { validateBatchRecipients } from "../wallet/validation";
 import { buildForfeitTx } from "../forfeit";
 import { Batch } from "../wallet/batch";
 import { Intent } from "../intent";
-import { isRecoverable, isSubdust } from "../wallet";
+import { isRecoverable, isSubdust, isVirtualCoin } from "../wallet";
 import type { ExtendedVirtualCoin } from "../wallet";
 import type { TxTree } from "../tree/txTree";
 
@@ -42,8 +42,10 @@ export type ArkadeExtendedCoin = ExtendedCoin & {
     arkadeScriptBytes: Uint8Array;
 };
 
+// Routed through the shared discriminator (keyed on `script`) rather than
+// testing for the deprecated legacy status object.
 const isVtxoCoin = (input: ArkadeExtendedCoin): input is ArkadeExtendedCoin & ExtendedVirtualCoin =>
-    "virtualStatus" in input;
+    isVirtualCoin(input);
 
 export function createArkadeBatchHandler(
     intentId: string,
