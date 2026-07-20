@@ -4113,7 +4113,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * @param amount - Amount in satoshis to send. Must be a whole number of
      * sats at or above the dust threshold — a below-dust amount would mint an
      * OP_RETURN output that is unspendable as cash.
-     * @returns The encoded arkadeCash string (e.g., "arkadecash1...")
+     * @returns The encoded arkadeCash string (e.g., "arkcash1...")
      */
     async createCash(amount: number): Promise<string> {
         // A bare `amount < dust` guard would let NaN, Infinity and fractional
@@ -4125,8 +4125,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             );
         }
 
-        // Derive HRP: ark→arkadecash, tark→tarkadecash
-        const cashHrp = this.network.hrp.replace(/ark$/, "arkadecash");
+        // Derive HRP: ark→arkcash, tark→tarkcash
+        const cashHrp = this.network.hrp.replace(/ark$/, "arkcash");
 
         const cash = ArkadeCash.generate(
             this.arkServerPublicKey,
@@ -4164,7 +4164,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * submit and finalize is completed by simply re-running `claimCash`, which
      * drains any pending arkadeCash transaction on the server before sweeping.
      *
-     * @param cashStr - The encoded arkadeCash string (e.g., "arkadecash1...")
+     * @param cashStr - The encoded arkadeCash string (e.g., "arkcash1...")
      * @returns The swept total and the report of what was left behind. The
      * shape is open: further buckets may be added alongside `unclaimed`.
      */

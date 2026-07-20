@@ -11,11 +11,11 @@ import { sequenceToTimelock, timelockToSequence } from "../utils/timelock";
  * It encodes a private key and contract parameters as a bech32m string,
  * enabling wallet-to-wallet transfers without address exchange.
  *
- * Format: arkadecash1... (bech32m encoded)
+ * Format: arkcash1... (bech32m encoded)
  * Payload: version (1 byte) + private key (32 bytes) + server pubkey (32 bytes) + csv timelock sequence (4 bytes)
  */
 export class ArkadeCash {
-    static readonly DefaultHRP = "arkadecash";
+    static readonly DefaultHRP = "arkcash";
     static readonly Version = 0;
     static readonly PayloadLength = 1 + 32 + 32 + 4; // 69 bytes
 
