@@ -400,11 +400,8 @@ export class RestArkProvider implements ArkProvider {
         const url = `${this.serverUrl}/v1/info`;
         // Wait + report (see rateGate): shares an origin, and a limiter, with
         // the indexer.
-        const response = await rateGate.run(url, () => fetch(url));
+        const response = await rateGate.runHttp(url, () => fetch(url));
         if (!response.ok) {
-            if (response.status === 429) {
-                rateGate.reportRateLimited(url, response.headers?.get("retry-after"));
-            }
             const errorText = await response.text();
             // A 429 or 5xx means the operator is up but temporarily unable to
             // serve — a retryable availability failure, not a config/auth error.

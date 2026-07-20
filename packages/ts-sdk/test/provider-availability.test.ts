@@ -118,6 +118,21 @@ describe("RestIndexerProvider availability classification", () => {
         expect(mockFetch).toHaveBeenCalledTimes(2);
     });
 
+    it("does not retry a subscribe POST", async () => {
+        // Replaying a subscribe whose response was lost would create a second
+        // subscription and leak the first — it carries no subscriptionId to
+        // make the retry idempotent.
+        mockFetch.mockResolvedValue({
+            ok: false,
+            status: 503,
+            statusText: "Service Unavailable",
+        });
+        await expect(provider().subscribeForScripts(["s"])).rejects.toBeInstanceOf(
+            ProviderUnavailableError,
+        );
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
     it("does not retry a terminal 404", async () => {
         mockFetch.mockResolvedValue({ ok: false, status: 404, statusText: "Not Found" });
         await expect(provider().getVtxos({ scripts: ["s"] })).rejects.toThrow(

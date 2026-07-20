@@ -308,15 +308,17 @@ export interface IContractManager extends Disposable {
      *
      * Error contract (safety-critical — see spec §4):
      * - A handler's `discoverAt` rejecting is **collected** into
-     *   `handlerErrors` and the loop **continues**; it never aborts the
-     *   scan or throws.
+     *   `handlerErrors` and makes its index *indeterminate*: it never
+     *   advances the gap counter, and the scan **stops verifying** there
+     *   rather than closing a window it never observed close. It still
+     *   never throws.
      * - A fatal operational error — `materialize()` throwing, or
      *   `createContract` rejecting — **propagates** out of `scanContracts`
      *   (it invalidates the gap-window signal, so a silent truncation
      *   would risk hiding user funds).
      *
      * @param opts See {@link ScanContractsOptions}.
-     * @returns `{ lastIndexUsed, handlerErrors }` — the caller surfaces
+     * @returns See {@link ScanResult}. The caller surfaces `truncatedAt` /
      *   `handlerErrors` *after* the inline VTXO pull.
      */
     scanContracts(opts: ScanContractsOptions): Promise<ScanResult>;

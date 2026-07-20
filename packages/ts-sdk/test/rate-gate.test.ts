@@ -145,6 +145,40 @@ describe("OriginRateGate", () => {
         gate.reportRateLimited("https://a.example/x", null);
         expect(gate.cooldownRemainingMs("https://a.example/x")).toBeGreaterThan(4_000);
     });
+
+    it("a queued waiter does not send into the cooldown the released request just earned", async () => {
+        // `release()` hands the slot on inside run()'s finally. Reporting the
+        // 429 after run() resolves is too late: the waiter resumes first, sees
+        // blockedUntil === 0, and sends. runHttp reports before releasing.
+        vi.useFakeTimers();
+        try {
+            const gate = new OriginRateGate({ maxConcurrent: 1, jitterMs: 0 });
+            const url = "https://a.example/x";
+            const sent: string[] = [];
+
+            const first = gate.runHttp(url, async () => {
+                sent.push("first");
+                return { status: 429, headers: new Headers({ "retry-after": "30" }) } as Response;
+            });
+            const second = gate.runHttp(url, async () => {
+                sent.push("second");
+                return { status: 200, headers: new Headers() } as Response;
+            });
+
+            await first;
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(sent).toEqual(["first"]);
+            expect(gate.cooldownRemainingMs(url)).toBeGreaterThan(29_000);
+
+            await vi.advanceTimersByTimeAsync(31_000);
+            await second;
+            expect(sent).toEqual(["first", "second"]);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });
 
 describe("shared cooldown across requests (herd regression)", () => {

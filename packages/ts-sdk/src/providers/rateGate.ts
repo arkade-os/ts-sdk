@@ -8,8 +8,9 @@
  * shared, keyed by **origin** (`/v1/info` and `/v1/indexer/*` are one host
  * behind one limiter). Callers use one of two verbs:
  *
- * - **Wait + report** ({@link OriginRateGate.run}) — idempotent GETs, where
- *   delaying a send is always safe.
+ * - **Wait + report** ({@link OriginRateGate.runHttp}) — indexer and operator
+ *   reads, where delaying a send is safe. Waiting is separate from retrying:
+ *   an indexer POST waits and reports but is not replayed (see `indexerFetch`).
  * - **Report-only** ({@link OriginRateGate.reportRateLimited}) — intent and
  *   settlement POSTs, which feed the shared signal but never wait or retry:
  *   batch sessions have deadlines, and these POSTs are not idempotent at the
@@ -124,6 +125,24 @@ export class OriginRateGate {
         } finally {
             this.release(state);
         }
+    }
+
+    /**
+     * {@link run} for a request whose response the gate should inspect: a `429`
+     * is recorded *before* the slot is released. Reporting after `run()` resolves
+     * is too late — `release()` hands the slot to the next queued waiter, which
+     * resumes, sees no cooldown, and sends into the limiter that just refused us.
+     *
+     * Prefer this over `run` for anything returning a `Response`.
+     */
+    runHttp(input: RequestInfo | URL, fn: () => Promise<Response>): Promise<Response> {
+        return this.run(input, async () => {
+            const response = await fn();
+            if (response.status === 429) {
+                this.reportRateLimited(input, response.headers?.get("retry-after"));
+            }
+            return response;
+        });
     }
 
     /**

@@ -122,12 +122,9 @@ export class RestDelegateProvider implements DelegateProvider {
         const url = `${this.url}/v1/delegator/info`;
         // Wait + report (see rateGate). Origin-keyed, so a delegate on its own
         // host is throttled independently of the operator's.
-        const response = await rateGate.run(url, () => baseFetch(url));
+        const response = await rateGate.runHttp(url, () => baseFetch(url));
 
         if (!response.ok) {
-            if (response.status === 429) {
-                rateGate.reportRateLimited(url, response.headers?.get("retry-after"));
-            }
             const errorText = await response.text();
             throw new Error(`Failed to get delegate info: ${errorText}`);
         }

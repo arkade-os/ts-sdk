@@ -29,18 +29,26 @@ const INDEXER_RETRY_BASE_MS = 250;
  *
  * Every REST indexer call funnels through here, so this is where politeness
  * lives: each attempt goes through the origin-scoped {@link rateGate}, and a
- * bounded retry ladder gives `ProviderUnavailableError.retryable` some teeth.
+ * bounded retry ladder — GET/HEAD only — gives `ProviderUnavailableError`'s
+ * `retryable` some teeth.
  * `Retry-After` is read here, while the `Response` is in hand, and fed to the
  * gate — never attached to the typed error, since per-instance `Error`
  * own-properties do not survive the service-worker `postMessage` boundary.
  * Only the retries-exhausted failure reaches the caller, in its previous shape.
  */
 async function indexerFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    // Retry only what is safe to send twice. A subscribe POST whose response is
+    // lost would otherwise be re-sent without a subscriptionId, creating a
+    // second subscription and leaking the first. Non-GETs still wait behind the
+    // cooldown and still report a 429 — only the replay is withheld.
+    const method = (init?.method ?? "GET").toUpperCase();
+    const maxAttempts = method === "GET" || method === "HEAD" ? INDEXER_MAX_ATTEMPTS : 1;
+
     for (let attempt = 1; ; attempt++) {
-        const lastAttempt = attempt >= INDEXER_MAX_ATTEMPTS;
+        const lastAttempt = attempt >= maxAttempts;
         let res: Response;
         try {
-            res = await rateGate.run(input, () => baseFetch(input, init));
+            res = await rateGate.runHttp(input, () => baseFetch(input, init));
         } catch (err) {
             const mapped = toProviderUnavailable(err, "indexer");
             // Only a transport failure is retryable; anything else is terminal.
@@ -60,12 +68,6 @@ async function indexerFetch(input: RequestInfo | URL, init?: RequestInit): Promi
             body = await res.clone().text();
         } catch {
             body = undefined;
-        }
-
-        // Before classifying, so a 429 pauses the origin even on the attempt
-        // we are about to give up on.
-        if (res.status === 429) {
-            rateGate.reportRateLimited(input, res.headers?.get("retry-after"));
         }
 
         try {
