@@ -148,20 +148,15 @@ export type SvcWrkArkadeSwapsConfig = Pick<ArkadeSwapsConfig, "swapProvider" | "
     referralId?: string;
     /**
      * Background swap monitoring, same semantics as {@link ArkadeSwapsConfig.swapManager}
-     * (omitted means enabled), minus `events`: the manager runs in the worker, so
-     * callbacks cannot cross the boundary. Use {@link ServiceWorkerArkadeSwaps.onSwapUpdate}
-     * and friends instead.
+     * (omitted means enabled), minus `events` — see {@link SerializableSwapManagerConfig}.
      */
     swapManager?: SerializableSwapManagerConfig;
 };
 
 /**
- * Drop the fields of a swap-manager config that cannot cross the `postMessage`
- * boundary. The type-level removal in {@link SvcWrkArkadeSwapsConfig} steers
- * TypeScript callers away from `events`, but `Omit` is not exact — a pre-typed
- * (non-literal) config still assigns through width subtyping, and JS callers see
- * no types at all — so this is the backstop that keeps `sendMessage` from
- * throwing `DataCloneError`.
+ * Runtime backstop for {@link SerializableSwapManagerConfig}: `Omit` is not exact,
+ * so a pre-typed (non-literal) config still assigns `events` through width
+ * subtyping, and JS callers see no types at all.
  */
 export function toSerializableSwapManagerConfig(
     swapManager: SerializableSwapManagerConfig,

@@ -3,10 +3,7 @@
  *
  * Boltz emits a VHTLC `refund` locktime in either BIP65 form depending on its
  * `useLocktimeSeconds` setting, so every comparison here dispatches on the
- * threshold rather than assuming a timestamp. Kept free of any class or provider
- * dependency so the branch logic is testable on its own; the decision about
- * *warning* when a block-height locktime meets an absent `OnchainProvider` lives
- * on `ArkadeSwaps`, which is what knows whether a provider was configured.
+ * threshold rather than assuming a timestamp.
  */
 
 /**
@@ -60,11 +57,10 @@ export const refundLocktimeBasis = (locktime: number, chainTipHeight?: number): 
         : `currentTimestamp=${Math.floor(Date.now() / 1000)}`;
 
 /**
- * A chain tip that has already been resolved. `height` is `undefined` when the
- * lookup was attempted and came back empty — deliberately distinct from "not
- * looked up yet", which a bare `tip?: number` could not express. That
- * distinction is what lets a batch hoist one fetch for many swaps: with a plain
- * optional, a hoisted fetch that failed would look identical to no fetch and
- * every swap would retry it, each paying its own failure latency and log line.
+ * A chain tip that has already been resolved: holding one means the lookup ran,
+ * so `height` being `undefined` says it came back empty, not that it is still
+ * pending. That is what lets a batch hoist one fetch for many swaps — a callee
+ * handed this must never re-fetch, or a failed hoisted lookup becomes one failed
+ * attempt per swap.
  */
-export type ChainTipSnapshot = { resolved: true; height?: number };
+export type ChainTipSnapshot = { height?: number };

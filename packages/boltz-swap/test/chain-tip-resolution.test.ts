@@ -63,7 +63,7 @@ describe("ArkadeSwaps chain-tip resolution", () => {
             const tip = await swaps.chainTipSnapshotFor([TIMESTAMP_LOCKTIME, TIMESTAMP_LOCKTIME]);
 
             expect(provider.getChainTip).not.toHaveBeenCalled();
-            expect(tip).toEqual({ resolved: true });
+            expect(tip).toEqual({});
         });
 
         it("fetches once for a batch containing any block-denominated locktime", async () => {
@@ -77,16 +77,17 @@ describe("ArkadeSwaps chain-tip resolution", () => {
             ]);
 
             expect(provider.getChainTip).toHaveBeenCalledTimes(1);
-            expect(tip).toEqual({ resolved: true, height: 210_000 });
+            expect(tip).toEqual({ height: 210_000 });
         });
 
-        it("reports a resolved-but-empty snapshot when the fetch fails", async () => {
+        it("reports an empty snapshot when the fetch fails, rather than throwing", async () => {
             const provider = { getChainTip: vi.fn().mockRejectedValue(new Error("network down")) };
             const swaps = makeSwaps(provider);
 
-            // `resolved: true` with no height is what stops callers from
-            // re-fetching per swap after a failed hoisted lookup.
-            expect(await swaps.chainTipSnapshotFor([HEIGHT_LOCKTIME])).toEqual({ resolved: true });
+            expect(await swaps.chainTipSnapshotFor([HEIGHT_LOCKTIME])).toEqual({});
+            // Distinguishes this from the skipped-fetch case above, which is now
+            // value-identical: the lookup ran and came back empty.
+            expect(provider.getChainTip).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -132,9 +133,7 @@ describe("ArkadeSwaps chain-tip resolution", () => {
 
             expect(swaps.isRefundLocktimeReachedAt(HEIGHT_LOCKTIME, tip)).toBe(false);
 
-            // Same undefined height, different cause: a transient fetch failure
-            // is already logged by chainTipHeight, and "no provider configured"
-            // would misdiagnose it.
+            // Same undefined height as the no-provider case, different cause.
             expect(missingProviderWarnings()).toHaveLength(0);
             expect(warnSpy).toHaveBeenCalledWith(
                 expect.stringMatching(/Failed to fetch chain tip/),
@@ -151,8 +150,7 @@ describe("ArkadeSwaps chain-tip resolution", () => {
 
             expect(swaps.isRefundLocktimeReachedAt(HEIGHT_LOCKTIME, tip)).toBe(false);
 
-            // The batch path hoists one fetch for N swaps; re-resolving here
-            // would restore N attempts, each paying its own failure latency.
+            // Re-resolving here would restore one failing fetch per swap in a batch.
             expect(provider.getChainTip).not.toHaveBeenCalled();
         });
 

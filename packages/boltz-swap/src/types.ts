@@ -375,6 +375,9 @@ export interface ArkadeSwapsConfig {
  * listeners through `ServiceWorkerArkadeSwaps.on*` instead. Everything else in
  * `SwapManagerConfig` is a number or boolean, as is `autoStart`, so this
  * projection is exact.
+ *
+ * Enforced at runtime by `toSerializableSwapManagerConfig`, since `Omit` alone
+ * does not stop a pre-typed config from carrying `events` through.
  */
 export type SerializableSwapManagerConfig =
     | boolean

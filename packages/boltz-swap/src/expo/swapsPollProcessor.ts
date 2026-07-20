@@ -67,8 +67,6 @@ export const swapsPollProcessor: TaskProcessor<SwapTaskDependencies> = {
             wallet,
             arkProvider,
             indexerProvider,
-            // Explicit: `wallet` here is the background shim, which carries no
-            // providers for ArkadeSwaps to fall back to.
             onchainProvider,
             swapProvider,
             swapManager: false,

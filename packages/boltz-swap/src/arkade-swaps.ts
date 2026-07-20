@@ -233,7 +233,6 @@ export class ArkadeSwaps {
     /** Storage backend for persisting swap data. */
     readonly swapRepository: SwapRepository;
 
-    /** Latch for {@link ArkadeSwaps.warnMissingOnchainProviderOnce}. */
     private missingOnchainProviderWarned = false;
 
     /**
@@ -1033,11 +1032,7 @@ export class ArkadeSwaps {
         };
     }
 
-    /**
-     * Chain tip height, or undefined when unavailable. Only block-height
-     * locktimes need it, so callers resolve it lazily via
-     * {@link ArkadeSwaps.chainTipSnapshotFor}.
-     */
+    /** Chain tip height, or undefined when unavailable. */
     private async chainTipHeight(): Promise<number | undefined> {
         if (!this.onchainProvider) return undefined;
         try {
@@ -1055,23 +1050,15 @@ export class ArkadeSwaps {
      * runs with `useLocktimeSeconds`, that is every one of them.
      */
     private async chainTipSnapshotFor(locktimes: number[]): Promise<ChainTipSnapshot> {
-        if (!locktimes.some(isBlockHeightLocktime)) return { resolved: true };
-        return { resolved: true, height: await this.chainTipHeight() };
+        if (!locktimes.some(isBlockHeightLocktime)) return {};
+        return { height: await this.chainTipHeight() };
     }
 
     /**
-     * Whether a refund locktime has been reached, against an already-resolved
-     * chain tip.
-     *
-     * Warns (once) when a block-height locktime cannot be resolved because no
-     * `OnchainProvider` is configured — that combination means the locktime can
-     * never be observed as reached and the refund defers forever, which the log
-     * would otherwise report as the ordinary "locktime has not passed".
-     *
-     * The warn condition is the null provider, *not* the undefined height: a
-     * height is also undefined after a transient fetch failure, which
-     * {@link ArkadeSwaps.chainTipHeight} already logs and which "no provider
-     * configured" would misdiagnose.
+     * Whether a refund locktime has been reached, against an already-resolved chain
+     * tip. Warns once if a block-height locktime meets an absent provider — the
+     * condition is the null provider, not the undefined height, which a transient
+     * fetch failure also produces (and which {@link ArkadeSwaps.chainTipHeight} logs).
      */
     private isRefundLocktimeReachedAt(locktime: number, tip: ChainTipSnapshot): boolean {
         if (isBlockHeightLocktime(locktime) && tip.height === undefined && !this.onchainProvider) {
@@ -1080,11 +1067,7 @@ export class ArkadeSwaps {
         return isRefundLocktimeReached(locktime, tip.height);
     }
 
-    /**
-     * Latched per instance rather than per module: a module-level latch would
-     * swallow the warning for every instance after the first — across networks,
-     * and across every test but the first to run.
-     */
+    /** Latched per instance: a module-level latch would silence every instance but the first. */
     private warnMissingOnchainProviderOnce(locktime: number): void {
         if (this.missingOnchainProviderWarned) return;
         this.missingOnchainProviderWarned = true;
@@ -1365,8 +1348,6 @@ export class ArkadeSwaps {
             }
         }
 
-        // One tip lookup for the whole batch — every swap resolves against it —
-        // and none at all unless some swap's locktime is block-denominated.
         const chainTip = await this.chainTipSnapshotFor(
             prepared.flatMap((item) =>
                 "error" in item ? [] : [item.context.vhtlcTimeouts.refund],
@@ -2888,12 +2869,9 @@ export class ArkadeSwaps {
             retryAt = retryAt === undefined ? candidate : Math.min(retryAt, candidate);
         };
 
-        // `refundLocktime` is per-swap, so it is constant across this loop and one
-        // tip lookup serves every iteration — and none at all for a timestamp
-        // locktime, which resolves against the wall clock. A block landing
-        // mid-loop is therefore not observed until the next scan; that only
-        // defers a VTXO that just matured, the same direction the loop already
-        // errs in, and `retryAt` brings it back.
+        // `refundLocktime` is constant across the loop, so one lookup serves it. A
+        // block landing mid-loop defers a just-matured VTXO until the next scan;
+        // `retryAt` brings it back.
         const chainTip = await this.chainTipSnapshotFor([refundLocktime]);
 
         for (const vtxo of vtxos) {

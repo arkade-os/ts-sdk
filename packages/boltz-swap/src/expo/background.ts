@@ -133,14 +133,10 @@ export function defineExpoSwapBackgroundTask(
 
             const arkProvider = new ExpoArkProvider(config.arkServerUrl);
             const indexerProvider = new ExpoIndexerProvider(config.arkServerUrl);
-            // No Expo-specific variant needed, unlike the two above: those exist
-            // because of SSE/EventSource, and EsploraProvider uses neither —
-            // getChainTip is a plain fetch, and its only other transport is
-            // WebSocket, which React Native supports natively.
-            //
-            // The URL argument is not optional in practice: the no-arg
-            // constructor defaults to the *default* network's endpoint,
-            // regardless of the network we persisted.
+            // No Expo variant needed: the two above exist for SSE/EventSource, which
+            // EsploraProvider does not use. The URL argument is not optional in
+            // practice — the no-arg constructor defaults to the *default* network's
+            // endpoint, regardless of the network we persisted.
             const onchainProvider = new EsploraProvider(
                 config.esploraUrl ?? ESPLORA_URL[config.network],
             );
