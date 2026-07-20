@@ -21,14 +21,14 @@ describe("ArkadeCash", () => {
             });
 
             const encoded = cash.toString();
-            expect(encoded.startsWith("arkadecash1")).toBe(true);
+            expect(encoded.startsWith("arkcash1")).toBe(true);
 
             const decoded = ArkadeCash.fromString(encoded);
             expect(hex.encode(decoded.privateKey)).toBe(hex.encode(testPrivKey));
             expect(hex.encode(decoded.serverPubKey)).toBe(hex.encode(testServerPubKey));
             expect(decoded.csvTimelock.type).toBe("blocks");
             expect(decoded.csvTimelock.value).toBe(144n);
-            expect(decoded.hrp).toBe("arkadecash");
+            expect(decoded.hrp).toBe("arkcash");
         });
 
         it("should roundtrip with seconds timelock", () => {

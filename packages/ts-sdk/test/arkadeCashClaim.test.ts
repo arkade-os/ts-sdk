@@ -249,7 +249,7 @@ describe("claimCash drain-pending accounting", () => {
         expect(err.cause).toBe(sendError);
         // The carried token round-trips back to a usable arkadeCash note.
         expect(() => ArkadeCash.fromString(err.cash)).not.toThrow();
-        expect(err.cash.startsWith("tarkadecash1")).toBe(true);
+        expect(err.cash.startsWith("tarkcash1")).toBe(true);
     });
 
     it("preserves the empty-input behavior", async () => {
