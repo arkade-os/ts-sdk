@@ -220,6 +220,17 @@ const refundRetryAt = (locktime: number): number =>
         : locktime;
 
 /**
+ * The value a refund locktime was actually compared against, for logging: the
+ * chain tip height for a block-height locktime, wall-clock seconds otherwise.
+ * Reporting the wrong one makes a block height read as catastrophically overdue
+ * against a ~1.7e9 timestamp.
+ */
+const refundLocktimeBasis = (locktime: number, chainTipHeight?: number): string =>
+    locktime < LOCKTIME_HEIGHT_THRESHOLD
+        ? `chainTipHeight=${chainTipHeight ?? "unknown"}`
+        : `currentTimestamp=${Math.floor(Date.now() / 1000)}`;
+
+/**
  * How long to wait before re-attempting a spend the server rejected as
  * CLTV-immature. It matures the locktime against the chain tip block's
  * timestamp rather than its wall clock, so the rejection clears once a later
@@ -313,8 +324,14 @@ export class ArkadeSwaps {
             throw new Error("Indexer provider is required either in wallet or config.");
         this.indexerProvider = indexerProvider;
 
-        this.onchainProvider =
-            config.onchainProvider ?? (config.wallet as any).onchainProvider ?? null;
+        // `IWallet` does not declare `onchainProvider` — only some implementations
+        // carry one (`ServiceWorkerWallet`, for instance, does not) — so narrow on
+        // the property rather than asserting it exists.
+        const walletOnchainProvider =
+            "onchainProvider" in config.wallet
+                ? (config.wallet.onchainProvider as OnchainProvider | undefined)
+                : undefined;
+        this.onchainProvider = config.onchainProvider ?? walletOnchainProvider ?? null;
 
         this.swapProvider = config.swapProvider;
 
@@ -2855,7 +2872,8 @@ export class ArkadeSwaps {
             // mid-loop is observed by every branch. Once it has passed, the
             // refundWithoutReceiver leaf is spendable — settle it offchain for a
             // live VTXO, or via a batch round for a swept one.
-            if (isRefundLocktimeReached(refundLocktime, await this.chainTipHeight())) {
+            const tipHeight = await this.chainTipHeight();
+            if (isRefundLocktimeReached(refundLocktime, tipHeight)) {
                 if (await this.trySettleRefundWithoutReceiver(swapId, refundContext, vtxo)) {
                     sweptCount++;
                 } else {
@@ -2871,8 +2889,8 @@ export class ArkadeSwaps {
                     `Swap ${swapId}: recoverable VTXO ${vtxo.txid}:${vtxo.vout} ` +
                         `cannot be refunded yet — refundWithoutReceiver locktime has not passed ` +
                         `(refundLocktime=${refundLocktime}, ` +
-                        `currentTimestamp=${Math.floor(Date.now() / 1000)}). ` +
-                        `Refund will be retried after locktime.`,
+                        `${refundLocktimeBasis(refundLocktime, tipHeight)}). ` +
+                        `Refund will be retried once the locktime is reached.`,
                 );
                 defer(refundRetryAt(refundLocktime));
                 continue;
@@ -2912,15 +2930,17 @@ export class ArkadeSwaps {
                     throw error;
                 }
 
-                // Re-check the locktime — wall clock may have advanced while
-                // talking to Boltz.
-                if (!isRefundLocktimeReached(refundLocktime, await this.chainTipHeight())) {
+                // Re-check the locktime — the clock or the chain tip may have
+                // advanced while talking to Boltz, so re-resolve rather than
+                // reusing the tip read at the top of this iteration.
+                const recheckTipHeight = await this.chainTipHeight();
+                if (!isRefundLocktimeReached(refundLocktime, recheckTipHeight)) {
                     logger.error(
                         `Swap ${swapId}: Boltz rejected VTXO outpoint and ` +
                             `refundWithoutReceiver locktime has not passed yet ` +
-                            `(currentTimestamp=${Math.floor(Date.now() / 1000)}, ` +
+                            `(${refundLocktimeBasis(refundLocktime, recheckTipHeight)}, ` +
                             `locktime=${refundLocktime}). ` +
-                            `Refund will be retried after locktime.`,
+                            `Refund will be retried once the locktime is reached.`,
                     );
                     defer(refundRetryAt(refundLocktime));
                     continue;
