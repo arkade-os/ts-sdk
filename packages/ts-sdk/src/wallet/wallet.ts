@@ -2544,19 +2544,36 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             deps,
         });
 
-        if (hd && result.lastIndexUsed >= 0) {
-            await provider.advanceLastIndexUsed(result.lastIndexUsed);
+        // Advanced even on a truncated scan: a caller that swallows the error
+        // below would otherwise be handed an already-funded index as a fresh
+        // receive address. See `ScanResult.highestConfirmedUsedIndex`.
+        if (hd && result.highestConfirmedUsedIndex >= 0) {
+            await provider.advanceLastIndexUsed(result.highestConfirmedUsedIndex);
         }
 
         // Inline pull BEFORE surfacing any handler errors so safely
         // discovered funds are always recovered (spec §3.B / §4).
         await manager.refreshVtxos({ includeInactive: true });
 
+        const causes = result.handlerErrors.map((e) =>
+            e.error instanceof Error ? e.error : new Error(String(e.error)),
+        );
+
+        if (result.truncatedAt !== undefined) {
+            throw new AggregateError(
+                causes,
+                `restore: scan truncated at index ${result.truncatedAt}; indices >= ` +
+                    `${result.truncatedAt} are unverified (${result.handlerErrors.length} ` +
+                    `discovery handler failure(s)). Retry is safe (idempotent).`,
+            );
+        }
+
+        // Unreachable via `ContractManager`, which always pairs errors with
+        // `truncatedAt`; kept so a third-party `IContractManager` that doesn't
+        // still fails loudly.
         if (result.handlerErrors.length > 0) {
             throw new AggregateError(
-                result.handlerErrors.map((e) =>
-                    e.error instanceof Error ? e.error : new Error(String(e.error)),
-                ),
+                causes,
                 `restore: ${result.handlerErrors.length} discovery handler(s) failed; ` +
                     `the gap window may have closed early — retry is safe (idempotent).`,
             );

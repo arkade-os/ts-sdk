@@ -123,14 +123,26 @@ export interface HandlerError {
 
 /**
  * Outcome of a {@link IContractManager.scanContracts} run.
- *
- * `lastIndexUsed` is the highest HD index at which any handler discovered a
- * contract (`-1` if nothing was found). `handlerErrors` collects per-handler
- * `discoverAt` failures — non-empty means the gap window may have closed
- * early and the caller should surface this (the scan itself still resolved).
  */
 export interface ScanResult {
+    /** @deprecated Alias of {@link ScanResult.highestConfirmedUsedIndex}. */
     lastIndexUsed: number;
+    /**
+     * Highest HD index at which any handler confirmed a contract (`-1` if none),
+     * including hits past {@link ScanResult.truncatedAt}. Safe to record
+     * unconditionally: the HD watermark it feeds is a monotonic max over a scan
+     * that always restarts at 0, so it cannot skip an index — while withholding
+     * it risks re-issuing a funded index as a fresh receive address.
+     */
+    highestConfirmedUsedIndex: number;
+    /**
+     * First index a handler failed at, making it *indeterminate* — neither a hit
+     * nor a confirmed miss. The scan stops there, so indices `>= truncatedAt` are
+     * unverified and the caller must retry (scanning is idempotent). `undefined`
+     * when the scan closed a genuine gap.
+     */
+    truncatedAt?: number;
+    /** Per-handler `discoverAt` failures. Non-empty implies `truncatedAt` is set. */
     handlerErrors: HandlerError[];
 }
 
@@ -710,9 +722,10 @@ export class ContractManager implements IContractManager {
      * Safety-critical invariants (spec §2.C / §4):
      * - `opts.materialize(i)` throwing is structural/fatal: it is NOT
      *   wrapped — it propagates and aborts the scan.
-     * - A `discoverAt` rejection is collected into `handlerErrors` and the
-     *   loop continues (the gap counter still advances for that index if no
-     *   other handler hit it).
+     * - A `discoverAt` rejection is collected into `handlerErrors` and makes
+     *   its index *indeterminate*: it does NOT advance the gap counter, and
+     *   the scan stops verifying there, reporting `truncatedAt`. Only an index
+     *   every handler answered for can be a confirmed miss.
      * - `persistAndWatchContract` rejecting is operational/fatal and
      *   propagates (only `discoverAt` is guarded).
      * - Within an index the handler probes run concurrently (independent
@@ -726,8 +739,12 @@ export class ContractManager implements IContractManager {
      *   over-scanned, nothing is discarded, and `materialize`/`discoverAt` are
      *   invoked on exactly the same index set. The window's hits are still
      *   processed strictly in ascending index order, so the discovered set,
-     *   persisted rows, `lastIndexUsed`, and `handlerErrors` are byte-for-byte
-     *   identical to the serial path — only the wall-clock differs.
+     *   persisted rows, `highestConfirmedUsedIndex`, and `handlerErrors` are
+     *   byte-for-byte identical to the serial path — only the wall-clock
+     *   differs. Truncation is the one exception: a window's concurrent probes
+     *   can surface hits above the failed index that a serial scan would never
+     *   have reached, so a truncated batched scan discovers a superset — never
+     *   a subset — of the serial one.
      */
     async scanContracts(opts: ScanContractsOptions): Promise<ScanResult> {
         const gapLimit = opts.gapLimit ?? 20;
@@ -768,7 +785,8 @@ export class ContractManager implements IContractManager {
 
         const maxIdx = opts.hd ? SCAN_MAX_INDEX : 0;
         const handlerErrors: HandlerError[] = [];
-        let lastIndexUsed = -1;
+        let highestConfirmedUsedIndex = -1;
+        let truncatedAt: number | undefined;
         let unused = 0;
         let i = 0;
 
@@ -818,6 +836,7 @@ export class ContractManager implements IContractManager {
                 const index = windowIndices[w];
                 const probes = windowProbes[w];
                 let hitAtThisIndex = false;
+                let indeterminate = false;
                 for (let h = 0; h < discoverables.length; h++) {
                     const probe = probes[h];
                     if (!probe.ok) {
@@ -826,6 +845,7 @@ export class ContractManager implements IContractManager {
                             index,
                             error: probe.error,
                         });
+                        indeterminate = true;
                         continue;
                     }
                     for (const c of probe.found) {
@@ -834,13 +854,22 @@ export class ContractManager implements IContractManager {
                     }
                 }
 
-                if (hitAtThisIndex) {
-                    lastIndexUsed = index;
-                    unused = 0;
-                } else {
-                    unused += 1;
-                }
+                // Three outcomes, not two: hit, confirmed miss, and
+                // indeterminate — nobody observed this index to be empty.
+                // Counting the third as a miss is what let a rate-limited scan
+                // close its gap window on failed requests rather than on absent
+                // funds, and return a wallet missing money.
+                if (indeterminate && truncatedAt === undefined) truncatedAt = index;
+                if (hitAtThisIndex) highestConfirmedUsedIndex = index;
+
+                // Past the truncation point only hits count; nothing may become
+                // a confirmed miss, so the gap window cannot close across it.
+                if (truncatedAt !== undefined) continue;
+                if (hitAtThisIndex) unused = 0;
+                else unused += 1;
             }
+
+            if (truncatedAt !== undefined) break;
             i = windowEnd + 1;
         }
 
@@ -848,8 +877,9 @@ export class ContractManager implements IContractManager {
         // scan was truncated. Surface loudly (matching the materialize-
         // fatal contract) rather than silently returning a partial
         // result, since the caller cannot otherwise distinguish "no
-        // more funds past lastIndexUsed" from "we stopped scanning".
-        if (opts.hd && i > maxIdx && unused < gapLimit) {
+        // more funds past lastIndexUsed" from "we stopped scanning". A
+        // truncated scan exits early by design, so it is excluded here.
+        if (opts.hd && truncatedAt === undefined && i > maxIdx && unused < gapLimit) {
             throw new Error(
                 `scanContracts: reached SCAN_MAX_INDEX (${SCAN_MAX_INDEX}) without closing the ` +
                     `${gapLimit}-index gap window; a Discoverable handler may be returning ` +
@@ -857,7 +887,12 @@ export class ContractManager implements IContractManager {
             );
         }
 
-        return { lastIndexUsed, handlerErrors };
+        return {
+            lastIndexUsed: highestConfirmedUsedIndex,
+            highestConfirmedUsedIndex,
+            ...(truncatedAt !== undefined && { truncatedAt }),
+            handlerErrors,
+        };
     }
 
     /**
