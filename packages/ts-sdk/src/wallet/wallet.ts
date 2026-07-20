@@ -5138,7 +5138,14 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             for (const input of inputs) {
                 if (isVirtualCoin(input)) {
                     // virtual output = mark it settled
-                    const vtxo = annotatedByKey.get(`${input.txid}:${input.vout}`)!;
+                    const outpoint = `${input.txid}:${input.vout}`;
+                    const vtxo = annotatedByKey.get(outpoint);
+                    if (!vtxo) {
+                        // `annotateVtxos` is expected to return one entry per
+                        // input; a gap means the contract manager dropped a coin
+                        // and the settled row would be silently lost.
+                        throw new Error(`missing annotation for virtual coin ${outpoint}`);
+                    }
                     if (vtxo.arkTxId) {
                         inputArkTxIds.add(vtxo.arkTxId);
                     }
