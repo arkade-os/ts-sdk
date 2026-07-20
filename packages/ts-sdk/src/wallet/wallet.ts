@@ -37,6 +37,7 @@ import {
     toVirtualStatus,
     type NormalizedExtendedVirtualCoin,
     type NormalizedVirtualCoin,
+    type TimeHeight,
 } from "./vtxo";
 import {
     ArkTransaction,
@@ -4756,7 +4757,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * there is no separate change output. It records no `TxSent` history — the
      * funds never leave the wallet.
      */
-    async sendSelectedVtxosToSelf(inputs: ExtendedVirtualCoin[]): Promise<string> {
+    async sendSelectedVtxosToSelf(
+        inputs: ExtendedVirtualCoin[],
+        now?: TimeHeight,
+    ): Promise<string> {
         if (inputs.length === 0) {
             throw new Error("sendSelectedVtxosToSelf: no inputs");
         }
@@ -4782,11 +4786,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             // path, and the DB-update path only persists a wallet-owned output
             // when an input batch expiry exists (unrolled inputs carry none).
             //
-            // Degrades to timestamp-only if the tip is unreachable: migrating funds off an
-            // expiring signer must not depend on the onchain provider being up.
-            const now = await resolveTimeHeight(this.onchainProvider);
+            // A caller running a multi-VTXO pass passes its own tip so both sides judge expiry
+            // against the same height and cannot disagree at the boundary — otherwise a VTXO
+            // that passed the caller's gate could fail here and abort the whole batch. Fetched
+            // here only for standalone callers, and degrading to timestamp-only if the tip is
+            // unreachable: migrating funds off an expiring signer must not depend on the onchain
+            // provider being up.
+            const at = now ?? (await resolveTimeHeight(this.onchainProvider));
             for (const input of normalizedInputs) {
-                if (!canSpendOffchain(input, now)) {
+                if (!canSpendOffchain(input, at)) {
                     throw new Error(
                         `sendSelectedVtxosToSelf: input ${input.txid}:${input.vout} is not cooperatively spendable`,
                     );

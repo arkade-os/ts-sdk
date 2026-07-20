@@ -208,6 +208,26 @@ async function fetchTimeHeight(wallet: IReadonlyWallet): Promise<TimeHeight> {
 }
 
 /**
+ * Whether {@link Wallet.sendSelectedVtxosToSelf} will accept this input at `now`.
+ *
+ * @remarks
+ * Mirrors that method's two rejection conditions exactly, so the migration leg never submits an
+ * input the send path throws on. This matters because the send path validates the batch as a
+ * whole: one rejected input aborts the entire submission, taking every other migratable VTXO with
+ * it. Partitioning here turns that into a per-input report line.
+ *
+ * The same `TimeHeight` is passed down to the send path with the inputs, so the two sides cannot
+ * disagree at the expiry boundary — the failure mode this predicate exists to prevent.
+ */
+function canMigrateBySend(vtxo: NormalizedExtendedVirtualCoin, now: TimeHeight): boolean {
+    // The send path spends cooperatively, so swept/expired inputs belong to recovery instead.
+    if (!canSpendOffchain(vtxo, now)) return false;
+    // No batch expiry means nothing to migrate *from*: the DB-update path only persists a
+    // wallet-owned output when an input expiry exists (unrolled/settled inputs carry none).
+    return vtxo.expiresAt !== undefined || vtxo.expiresAtHeight !== undefined;
+}
+
+/**
  * Order VTXOs so the soonest-expiring ones come first. New array; input
  * untouched. Already recoverable/expired VTXOs sort first. VTXOs without a
  * batch expiry, or with a block-height-looking expiry value, sort last because
@@ -675,7 +695,7 @@ export interface DeprecatedSignerReport {
  * exceeds the server's per-output ceiling (`vtxoMaxAmount`) — see
  * {@link MigrationLegReport.oversized}.
  */
-export type MigrationLegSkipReason = "below-dust" | "oversized-only";
+export type MigrationLegSkipReason = "below-dust" | "oversized-only" | "not-spendable-only";
 
 /**
  * Why the whole pass submitted nothing, before either leg was built.
@@ -714,6 +734,16 @@ export interface MigrationLegReport {
      * absent when the server advertises no ceiling (`vtxoMaxAmount < 0`).
      */
     oversized?: MigrationVtxoRef[];
+    /**
+     * Inputs the leg's submit path would have rejected — for the VTXO leg, no longer
+     * cooperatively spendable at this pass's chain tip (past batch expiry, since swept and spent
+     * inputs are already excluded upstream) or carrying no batch expiry at all.
+     *
+     * Partitioned out rather than submitted, because the send path validates the batch as a
+     * whole: one rejected input would abort the entire leg and strand every other migratable
+     * VTXO until the next pass. Present only when non-empty.
+     */
+    notSpendableOffchain?: MigrationVtxoRef[];
     /** Error message when this leg's submission failed; the other leg still runs. */
     error?: string;
 }
@@ -767,7 +797,7 @@ interface MigrationCapableWallet {
      * `settle`), preserving input assets. The pre-cutoff VTXO migration primitive
      * (plan step 1); never accepts boarding inputs.
      */
-    sendSelectedVtxosToSelf(inputs: ExtendedVirtualCoin[]): Promise<string>;
+    sendSelectedVtxosToSelf(inputs: ExtendedVirtualCoin[], now?: TimeHeight): Promise<string>;
     /**
      * Grouped boarding discovery over a given signer set, returning the
      * address↔signer association {@link ExtendedCoin} cannot carry. Consumed
@@ -1765,6 +1795,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         // VTXO leg — send to the active-signer self output. No settlement events.
         if (vtxoMigratable.length > 0) {
+            // One chain tip for the leg, shared with the send path below: the eligibility
+            // partition and the send path's own validation must judge every input against the
+            // same height, or an input that passes here could still abort the whole submission.
+            const now = await fetchTimeHeight(this.wallet);
             report.vtxos = await this.runMigrationLeg(
                 vtxoMigratable,
                 (c) => c.vtxo.value,
@@ -1772,7 +1806,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 vtxoMaxAmount,
                 dustAmount,
                 "VTXO",
-                (capped) => wallet.sendSelectedVtxosToSelf(capped.map((c) => c.vtxo)),
+                (capped) =>
+                    wallet.sendSelectedVtxosToSelf(
+                        capped.map((c) => c.vtxo),
+                        now,
+                    ),
+                (c) => canMigrateBySend(c.vtxo, now),
             );
         }
 
@@ -1825,10 +1864,35 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         dustAmount: bigint,
         legName: string,
         submit: (capped: C[]) => Promise<string>,
+        /**
+         * Inputs this leg's submit path would reject. Filtered out *before* sizing so they
+         * neither consume batch capacity nor count toward the dust floor. Omit when the leg's
+         * submit path has no such gate (the boarding leg settles, and settle validates
+         * per-input server-side).
+         */
+        eligible?: (c: C) => boolean,
     ): Promise<MigrationLegReport> {
+        const notSpendableRefs: MigrationVtxoRef[] = [];
+        const migratable = eligible
+            ? candidates.filter((c) => {
+                  if (eligible(c)) return true;
+                  notSpendableRefs.push(toRef(c));
+                  return false;
+              })
+            : candidates;
+        if (notSpendableRefs.length > 0) {
+            console.warn(
+                `Deprecated-signer migration (${legName}): ${notSpendableRefs.length} input(s) ` +
+                    `are no longer cooperatively spendable at the current chain tip and were ` +
+                    `excluded; they recover through the sweep/recovery path instead.`,
+            );
+        }
+        const notSpendableField =
+            notSpendableRefs.length > 0 ? { notSpendableOffchain: notSpendableRefs } : {};
+
         const oversizedRefs: MigrationVtxoRef[] = [];
         const sized: C[] = [];
-        for (const c of candidates) {
+        for (const c of migratable) {
             if (vtxoMaxAmount >= 0n && BigInt(valueOf(c)) > vtxoMaxAmount) {
                 oversizedRefs.push(toRef(c));
             } else {
@@ -1852,11 +1916,21 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const totalAmount = capped.reduce((sum, c) => sum + BigInt(valueOf(c)), 0n);
 
         if (totalAmount < dustAmount) {
-            const onlyOversized = sized.length === 0 && oversizedRefs.length > 0;
+            // Attribute the skip to whichever filter emptied the set, so "nothing migrated" is
+            // not silently reported as a dust problem when it was really an eligibility one.
+            const skipped: MigrationLegSkipReason =
+                sized.length > 0
+                    ? "below-dust"
+                    : oversizedRefs.length > 0
+                      ? "oversized-only"
+                      : notSpendableRefs.length > 0
+                        ? "not-spendable-only"
+                        : "below-dust";
             return {
                 migrated: [],
-                skipped: onlyOversized ? "oversized-only" : "below-dust",
+                skipped,
                 ...oversizedField,
+                ...notSpendableField,
             };
         }
 
@@ -1867,12 +1941,14 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 migrated: capped.map(toRef),
                 ...(deferred > 0 ? { deferred } : {}),
                 ...oversizedField,
+                ...notSpendableField,
             };
         } catch (e) {
             return {
                 migrated: [],
                 error: e instanceof Error ? e.message : String(e),
                 ...oversizedField,
+                ...notSpendableField,
             };
         }
     }
