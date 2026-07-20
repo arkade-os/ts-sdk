@@ -57,8 +57,13 @@ export function parseRetryAfterMs(header: string | null | undefined): number | u
     if (trimmed === "") return undefined;
 
     const seconds = Number(trimmed);
-    if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+    // A negative delta is malformed — delta-seconds is non-negative — so there
+    // is no valid reading of it. Fall back to the caller's default instead of
+    // clamping to 0, which would mean "no cooldown at all".
+    if (Number.isFinite(seconds)) return seconds < 0 ? undefined : seconds * 1000;
 
+    // Unlike a negative delta, a past HTTP-date is well-formed and does mean
+    // "retry now", so it clamps rather than falling back.
     const at = Date.parse(trimmed);
     if (!Number.isNaN(at)) return Math.max(0, at - Date.now());
 

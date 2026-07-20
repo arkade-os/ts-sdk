@@ -54,6 +54,16 @@ describe("parseRetryAfterMs", () => {
         expect(parseRetryAfterMs(undefined)).toBeUndefined();
         expect(parseRetryAfterMs("")).toBeUndefined();
         expect(parseRetryAfterMs("soon")).toBeUndefined();
+        // Malformed rather than "retry now": clamping to 0 would read as no
+        // cooldown, so these must fall back to the caller's default.
+        expect(parseRetryAfterMs("-5")).toBeUndefined();
+        expect(parseRetryAfterMs("Infinity")).toBeUndefined();
+    });
+
+    it("a negative Retry-After still applies the default cooldown", () => {
+        const gate = new OriginRateGate({ defaultCooldownMs: 5_000 });
+        gate.reportRateLimited("https://a.example/x", "-5");
+        expect(gate.cooldownRemainingMs("https://a.example/x")).toBeGreaterThan(4_000);
     });
 });
 
