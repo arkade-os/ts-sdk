@@ -246,7 +246,11 @@ import {
     type EmulatorInfo,
     type ConnectorTreeNode,
 } from "./providers/emulator";
-import type { ArkadeExtendedCoin } from "./arkade/batch";
+import type {
+    ArkadeBatchInput,
+    ArkadeExtendedCoin,
+    ArkadeExtendedVirtualCoin,
+} from "./arkade/batch";
 import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
@@ -824,7 +828,9 @@ export type {
     ServiceWorkerWalletMode,
 
     // Arkade types
+    ArkadeBatchInput,
     ArkadeExtendedCoin,
+    ArkadeExtendedVirtualCoin,
 
     // Delegate types (Delegator* aliases deprecated)
     IDelegateManager,

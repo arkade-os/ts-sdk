@@ -337,7 +337,8 @@ describe("arkade", () => {
             cosigners_public_keys: [sessionPubKey],
         };
 
-        // Create the intent proof
+        // Create the intent proof. `script` is what marks this as a virtual output rather than a
+        // boarding input, so the batch handler builds a forfeit for it.
         const coin = {
             txid: vtxo.txid,
             vout: vtxo.vout,
@@ -346,6 +347,9 @@ describe("arkade", () => {
             forfeitTapLeafScript: arkadeLeaf,
             intentTapLeafScript: arkadeLeaf,
             status: vtxo.status,
+            script: vtxo.script,
+            createdAt: vtxo.createdAt,
+            isUnrolled: vtxo.isUnrolled,
             isSpent: vtxo.isSpent,
             virtualStatus: vtxo.virtualStatus,
         };
@@ -763,6 +767,7 @@ describe("arkade", () => {
             cosigners_public_keys: [sessionPubKey],
         };
 
+        // `script` marks this as a virtual output — see the note on `coin` in TestSettlement.
         const settleCoin = {
             txid: settleVtxo.txid,
             vout: settleVtxo.vout,
@@ -771,6 +776,9 @@ describe("arkade", () => {
             forfeitTapLeafScript: settleArkadeLeaf,
             intentTapLeafScript: settleArkadeLeaf,
             status: settleVtxo.status,
+            script: settleVtxo.script,
+            createdAt: settleVtxo.createdAt,
+            isUnrolled: settleVtxo.isUnrolled,
             isSpent: settleVtxo.isSpent,
             virtualStatus: settleVtxo.virtualStatus,
         };
