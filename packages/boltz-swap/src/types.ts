@@ -1,4 +1,10 @@
-import { ArkProvider, IndexerProvider, IWallet, NetworkName } from "@arkade-os/sdk";
+import {
+    ArkProvider,
+    IndexerProvider,
+    IWallet,
+    NetworkName,
+    OnchainProvider,
+} from "@arkade-os/sdk";
 import {
     CreateReverseSwapResponse,
     CreateSubmarineSwapResponse,
@@ -337,6 +343,11 @@ export interface ArkadeSwapsConfig {
     swapProvider: BoltzSwapProvider;
     /** Explicit IndexerProvider. Falls back to wallet.indexerProvider if omitted. */
     indexerProvider?: IndexerProvider;
+    /**
+     * Explicit OnchainProvider. Falls back to wallet.onchainProvider if omitted.
+     * Used to resolve block-height refund locktimes against the chain tip.
+     */
+    onchainProvider?: OnchainProvider;
     /**
      * Background swap monitoring and autonomous actions (enabled by default).
      * - `undefined` or `true`: SwapManager enabled with default configuration

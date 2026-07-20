@@ -16,6 +16,7 @@ import {
     IndexerProvider,
     isArkError,
     IWallet,
+    OnchainProvider,
     VHTLC,
     ArkInfo,
     isRecoverable,
@@ -189,8 +190,34 @@ const canRecoverViaBoltz3of3 = (
  * timestamp semantics). Compare against wall-clock seconds; never against
  * chain tip height.
  */
-const isSubmarineRefundLocktimeReached = (refundTimestamp: number): boolean =>
-    Math.floor(Date.now() / 1000) >= refundTimestamp;
+/**
+ * BIP65 threshold: a locktime below this is a block height, at or above it a
+ * Unix timestamp in seconds.
+ */
+const LOCKTIME_HEIGHT_THRESHOLD = 500_000_000;
+
+/**
+ * Whether an absolute (CLTV) refund locktime has been reached.
+ *
+ * Boltz emits either form depending on its `useLocktimeSeconds` setting, so
+ * dispatch on the BIP65 threshold rather than assuming a timestamp. A
+ * block-height locktime with no known chain tip counts as not reached: that
+ * defers to the cooperative refund path instead of attempting a spend the
+ * server would reject as immature.
+ */
+const isRefundLocktimeReached = (locktime: number, chainTipHeight?: number): boolean =>
+    locktime < LOCKTIME_HEIGHT_THRESHOLD
+        ? chainTipHeight !== undefined && chainTipHeight >= locktime
+        : Math.floor(Date.now() / 1000) >= locktime;
+
+/**
+ * When to retry a locktime that has not been reached. A block height carries no
+ * wall-clock deadline, so re-poll on the block-interval cadence instead.
+ */
+const refundRetryAt = (locktime: number): number =>
+    locktime < LOCKTIME_HEIGHT_THRESHOLD
+        ? Math.floor(Date.now() / 1000) + CLTV_IMMATURE_RETRY_SEC
+        : locktime;
 
 /**
  * How long to wait before re-attempting a spend the server rejected as
@@ -232,6 +259,8 @@ export class ArkadeSwaps {
     readonly swapProvider: BoltzSwapProvider;
     /** Provider for querying VTXO state on the Ark indexer. */
     readonly indexerProvider: IndexerProvider;
+    /** Provider for chain-tip lookups, or null if the wallet exposes none. */
+    readonly onchainProvider: OnchainProvider | null;
     /** Background swap monitor, or null if not enabled. */
     readonly swapManager: SwapManager | null = null;
     /** Storage backend for persisting swap data. */
@@ -283,6 +312,9 @@ export class ArkadeSwaps {
         if (!indexerProvider)
             throw new Error("Indexer provider is required either in wallet or config.");
         this.indexerProvider = indexerProvider;
+
+        this.onchainProvider =
+            config.onchainProvider ?? (config.wallet as any).onchainProvider ?? null;
 
         this.swapProvider = config.swapProvider;
 
@@ -1025,14 +1057,30 @@ export class ArkadeSwaps {
         };
     }
 
+    /**
+     * Chain tip height, or undefined when unavailable. Only block-height
+     * locktimes need it, so callers resolve it lazily.
+     */
+    private async chainTipHeight(): Promise<number | undefined> {
+        if (!this.onchainProvider) return undefined;
+        try {
+            const { height } = await this.onchainProvider.getChainTip();
+            return height;
+        } catch (error) {
+            logger.warn(`Failed to fetch chain tip: ${error}`);
+            return undefined;
+        }
+    }
+
     private submarineRecoveryInfoFromLookup(
         swap: BoltzSubmarineSwap,
         lookup: Pick<SubmarineVHTLCLookup, "vhtlcTimeouts" | "refundableVtxos" | "diagnostic">,
+        chainTipHeight?: number,
     ): SubmarineRecoveryInfo {
         const { refundableVtxos, diagnostic, vhtlcTimeouts } = lookup;
 
         if (refundableVtxos.length > 0) {
-            const cltvSatisfied = isSubmarineRefundLocktimeReached(vhtlcTimeouts.refund);
+            const cltvSatisfied = isRefundLocktimeReached(vhtlcTimeouts.refund, chainTipHeight);
             const amountSats = refundableVtxos.reduce((sum, vtxo) => sum + Number(vtxo.value), 0);
             const isRecoverable = cltvSatisfied || canRecoverViaBoltz3of3(refundableVtxos, swap);
             return {
@@ -1193,7 +1241,7 @@ export class ArkadeSwaps {
             };
         }
 
-        return this.submarineRecoveryInfoFromLookup(swap, lookup);
+        return this.submarineRecoveryInfoFromLookup(swap, lookup, await this.chainTipHeight());
     }
 
     /**
@@ -1283,6 +1331,9 @@ export class ArkadeSwaps {
             }
         }
 
+        // One tip lookup for the whole batch — every swap resolves against it.
+        const chainTipHeight = await this.chainTipHeight();
+
         return prepared.map((item) => {
             if ("error" in item) {
                 return {
@@ -1297,10 +1348,14 @@ export class ArkadeSwaps {
 
             const refundableVtxos =
                 refundableByScript.get(item.context.vhtlcPkScriptHex.toLowerCase()) ?? [];
-            return this.submarineRecoveryInfoFromLookup(item.swap, {
-                ...item.context,
-                refundableVtxos,
-            });
+            return this.submarineRecoveryInfoFromLookup(
+                item.swap,
+                {
+                    ...item.context,
+                    refundableVtxos,
+                },
+                chainTipHeight,
+            );
         });
     }
 
@@ -2800,7 +2855,7 @@ export class ArkadeSwaps {
             // mid-loop is observed by every branch. Once it has passed, the
             // refundWithoutReceiver leaf is spendable — settle it offchain for a
             // live VTXO, or via a batch round for a swept one.
-            if (isSubmarineRefundLocktimeReached(refundLocktime)) {
+            if (isRefundLocktimeReached(refundLocktime, await this.chainTipHeight())) {
                 if (await this.trySettleRefundWithoutReceiver(swapId, refundContext, vtxo)) {
                     sweptCount++;
                 } else {
@@ -2819,7 +2874,7 @@ export class ArkadeSwaps {
                         `currentTimestamp=${Math.floor(Date.now() / 1000)}). ` +
                         `Refund will be retried after locktime.`,
                 );
-                defer(refundLocktime);
+                defer(refundRetryAt(refundLocktime));
                 continue;
             }
 
@@ -2859,7 +2914,7 @@ export class ArkadeSwaps {
 
                 // Re-check the locktime — wall clock may have advanced while
                 // talking to Boltz.
-                if (!isSubmarineRefundLocktimeReached(refundLocktime)) {
+                if (!isRefundLocktimeReached(refundLocktime, await this.chainTipHeight())) {
                     logger.error(
                         `Swap ${swapId}: Boltz rejected VTXO outpoint and ` +
                             `refundWithoutReceiver locktime has not passed yet ` +
@@ -2867,7 +2922,7 @@ export class ArkadeSwaps {
                             `locktime=${refundLocktime}). ` +
                             `Refund will be retried after locktime.`,
                     );
-                    defer(refundLocktime);
+                    defer(refundRetryAt(refundLocktime));
                     continue;
                 }
 

@@ -32,8 +32,9 @@ import { TransactionOutput, TransactionInput } from "@scure/btc-signer/psbt.js";
  * Boltz-Ark VHTLC timeouts. The shape matches Boltz's `timeoutBlockHeights`
  * API field, but the legacy name is misleading — these are not all block
  * heights:
- * - `refund` is an absolute Unix timestamp in seconds (CLTV with timestamp
- *   semantics, BIP65 threshold ≥ 500_000_000).
+ * - `refund` is an absolute CLTV locktime, in either form Boltz's
+ *   `useLocktimeSeconds` setting produces: a block height below the BIP65
+ *   threshold of 500_000_000, a Unix timestamp in seconds at or above it.
  * - `unilateralClaim`, `unilateralRefund`, `unilateralRefundWithoutReceiver`
  *   are BIP68 *relative* delays measured from the lockup confirmation. Values
  *   ≥ 512 are interpreted as seconds (BIP68 type-flag). For Boltz Ark mainnet
