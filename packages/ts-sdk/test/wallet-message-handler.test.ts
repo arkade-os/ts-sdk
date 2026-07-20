@@ -5,10 +5,10 @@ import {
     WalletMessageHandler,
     serializeMigrationReport,
     deserializeMigrationReport,
-    isSerializedArkCashCreateError,
-    deserializeArkCashCreateError,
+    isSerializedArkadeCashCreateError,
+    deserializeArkadeCashCreateError,
 } from "../src/wallet/serviceWorker/wallet-message-handler";
-import { InMemoryWalletRepository, ArkCashCreateError } from "../src";
+import { InMemoryWalletRepository, ArkadeCashCreateError } from "../src";
 import {
     createMockExtendedVtxo,
     createMockIndexerProvider,
@@ -137,9 +137,9 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
-    it("serializes ArkCashCreateError so the recovery token survives", async () => {
+    it("serializes ArkadeCashCreateError so the recovery token survives", async () => {
         (updater as any).readonlyWallet = {};
-        const original = new ArkCashCreateError("arkcash1recover", new Error("send blew up"));
+        const original = new ArkadeCashCreateError("arkcash1recover", new Error("send blew up"));
         (updater as any).wallet = {
             createCash: vi.fn().mockRejectedValue(original),
         };
@@ -150,10 +150,10 @@ describe("WalletMessageHandler handleMessage", () => {
             payload: { amount: 5000 },
         } as any);
 
-        expect(isSerializedArkCashCreateError(response.error)).toBe(true);
+        expect(isSerializedArkadeCashCreateError(response.error)).toBe(true);
 
-        const rebuilt = deserializeArkCashCreateError(response.error as any);
-        expect(rebuilt).toBeInstanceOf(ArkCashCreateError);
+        const rebuilt = deserializeArkadeCashCreateError(response.error as any);
+        expect(rebuilt).toBeInstanceOf(ArkadeCashCreateError);
         expect(rebuilt.cash).toBe("arkcash1recover");
     });
 

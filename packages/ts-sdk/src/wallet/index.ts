@@ -16,7 +16,7 @@ import {
 } from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
 import { IDelegateManager } from "./delegate";
-import type { ArkCashClaimResult } from "./wallet";
+import type { ArkadeCashClaimResult } from "./wallet";
 import type { Activity, ActivityRegistry } from "./activity";
 import type { ExitCaptureMode } from "./exit/capture";
 import type { ExitDataSource } from "./exit/resolver";
@@ -888,22 +888,22 @@ export interface IWallet extends IReadonlyWallet {
     send(...recipients: [Recipient, ...Recipient[]]): Promise<string>;
 
     /**
-     * Mint an ArkCash bearer note funded with `amount` sats.
+     * Mint an ArkadeCash bearer note funded with `amount` sats.
      *
      * @param amount - Sats to fund; whole number >= dust
-     * @returns The encoded arkcash token (bearer instrument)
-     * @throws ArkCashCreateError carrying the recovery token if funding lands
+     * @returns The encoded arkadeCash token (bearer instrument)
+     * @throws ArkadeCashCreateError carrying the recovery token if funding lands
      * but the send fails
      */
     createCash(amount: number): Promise<string>;
 
     /**
-     * Claim an ArkCash bearer note: sweep what can be swept, report the rest.
+     * Claim an ArkadeCash bearer note: sweep what can be swept, report the rest.
      *
-     * @param cashStr - The encoded arkcash token
+     * @param cashStr - The encoded arkadeCash token
      * @returns Swept total and the report of what was left behind
      */
-    claimCash(cashStr: string): Promise<ArkCashClaimResult>;
+    claimCash(cashStr: string): Promise<ArkadeCashClaimResult>;
 
     // TODO: this needs to be async or find a workaround
     /** Asset manager bound to this wallet instance. */

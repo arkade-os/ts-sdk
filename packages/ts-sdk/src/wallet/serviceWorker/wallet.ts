@@ -124,8 +124,8 @@ import {
     DEFAULT_MESSAGE_TAG,
     deserializeAggregateError,
     isSerializedAggregateError,
-    deserializeArkCashCreateError,
-    isSerializedArkCashCreateError,
+    deserializeArkadeCashCreateError,
+    isSerializedArkadeCashCreateError,
 } from "./wallet-message-handler";
 import type {
     Contract,
@@ -164,7 +164,7 @@ import {
 } from "../../worker/errors";
 import {
     getArkadeServerUrl,
-    type ArkCashClaimResult,
+    type ArkadeCashClaimResult,
     type ProviderConnectionState,
 } from "../wallet";
 
@@ -1706,14 +1706,14 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
         } catch (error) {
             // Rebuild the typed error before the generic wrap so the recovery
             // token on `.cash` reaches the caller.
-            if (isSerializedArkCashCreateError(error)) {
-                throw deserializeArkCashCreateError(error);
+            if (isSerializedArkadeCashCreateError(error)) {
+                throw deserializeArkadeCashCreateError(error);
             }
-            throw new Error(`Failed to create ArkCash: ${error}`);
+            throw new Error(`Failed to create ArkadeCash: ${error}`);
         }
     }
 
-    async claimCash(cash: string): Promise<ArkCashClaimResult> {
+    async claimCash(cash: string): Promise<ArkadeCashClaimResult> {
         const message: RequestClaimCash = {
             tag: this.messageTag,
             type: "CLAIM_CASH",
@@ -1725,7 +1725,7 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
             const response = await this.sendMessage(message);
             return (response as ResponseClaimCash).payload.result;
         } catch (error) {
-            throw new Error(`Failed to claim ArkCash: ${error}`);
+            throw new Error(`Failed to claim ArkadeCash: ${error}`);
         }
     }
 

@@ -9,7 +9,7 @@ import {
     MnemonicIdentity,
     SeedIdentity,
     ReadonlyDescriptorIdentity,
-    ArkCashCreateError,
+    ArkadeCashCreateError,
     type ContractSyncState,
 } from "../../src";
 import { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
@@ -704,14 +704,14 @@ describe("ServiceWorkerWallet", () => {
         );
     });
 
-    it("createCash() reconstructs a worker-side ArkCashCreateError with its token", async () => {
+    it("createCash() reconstructs a worker-side ArkadeCashCreateError with its token", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
             if (message.type !== "CREATE_CASH") return null;
             return {
                 id: message.id,
                 tag: messageTag,
                 error: {
-                    name: "ArkCashCreateError",
+                    name: "ArkadeCashCreateError",
                     message: "send failed",
                     cash: "arkcash1recover",
                 },
@@ -728,8 +728,8 @@ describe("ServiceWorkerWallet", () => {
             caught = err;
         }
 
-        expect(caught).toBeInstanceOf(ArkCashCreateError);
-        expect((caught as ArkCashCreateError).cash).toBe("arkcash1recover");
+        expect(caught).toBeInstanceOf(ArkadeCashCreateError);
+        expect((caught as ArkadeCashCreateError).cash).toBe("arkcash1recover");
     });
 
     it("claimCash() forwards the token and returns the claim result", async () => {

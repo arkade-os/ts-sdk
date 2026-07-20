@@ -39,8 +39,8 @@ import { DelegateInfo } from "../../providers/delegate";
 import {
     ReadonlyWallet,
     Wallet,
-    ArkCashCreateError,
-    type ArkCashClaimResult,
+    ArkadeCashCreateError,
+    type ArkadeCashClaimResult,
     type ProviderConnectionState,
 } from "../wallet";
 import type {
@@ -115,46 +115,46 @@ export function deserializeAggregateError(payload: SerializedAggregateError): Ag
 }
 
 /**
- * Wire form of {@link ArkCashCreateError}. The `cash` token controls the funded
+ * Wire form of {@link ArkadeCashCreateError}. The `cash` token controls the funded
  * output and is the only way to recover it, so it must cross the boundary that
  * structured-clone would otherwise strip along with the error's prototype.
  */
-export type SerializedArkCashCreateError = {
-    name: "ArkCashCreateError";
+export type SerializedArkadeCashCreateError = {
+    name: "ArkadeCashCreateError";
     message: string;
     cash: string;
     cause?: { name: string; message: string };
 };
 
-export function isSerializedArkCashCreateError(
+export function isSerializedArkadeCashCreateError(
     value: unknown,
-): value is SerializedArkCashCreateError {
+): value is SerializedArkadeCashCreateError {
     if (!value || typeof value !== "object") return false;
-    const v = value as Partial<SerializedArkCashCreateError>;
-    return v.name === "ArkCashCreateError" && typeof v.cash === "string";
+    const v = value as Partial<SerializedArkadeCashCreateError>;
+    return v.name === "ArkadeCashCreateError" && typeof v.cash === "string";
 }
 
-/** Worker-side serializer for {@link ArkCashCreateError}. */
-export function serializeArkCashCreateError(
-    error: ArkCashCreateError,
-): SerializedArkCashCreateError {
+/** Worker-side serializer for {@link ArkadeCashCreateError}. */
+export function serializeArkadeCashCreateError(
+    error: ArkadeCashCreateError,
+): SerializedArkadeCashCreateError {
     const cause =
         error.cause instanceof Error
             ? { name: error.cause.name, message: error.cause.message }
             : error.cause !== undefined
               ? { name: "Error", message: String(error.cause) }
               : undefined;
-    return { name: "ArkCashCreateError", message: error.message, cash: error.cash, cause };
+    return { name: "ArkadeCashCreateError", message: error.message, cash: error.cash, cause };
 }
 
-/** Page-side reconstructor: rebuild {@link ArkCashCreateError} from the wire form. */
-export function deserializeArkCashCreateError(
-    payload: SerializedArkCashCreateError,
-): ArkCashCreateError {
+/** Page-side reconstructor: rebuild {@link ArkadeCashCreateError} from the wire form. */
+export function deserializeArkadeCashCreateError(
+    payload: SerializedArkadeCashCreateError,
+): ArkadeCashCreateError {
     const cause = payload.cause
         ? Object.assign(new Error(payload.cause.message), { name: payload.cause.name })
         : undefined;
-    return new ArkCashCreateError(payload.cash, cause);
+    return new ArkadeCashCreateError(payload.cash, cause);
 }
 
 export class ReadonlyWalletError extends Error {
@@ -468,7 +468,7 @@ export type RequestClaimCash = RequestEnvelope & {
 };
 export type ResponseClaimCash = ResponseEnvelope & {
     type: "CLAIM_CASH_SUCCESS";
-    payload: { result: ArkCashClaimResult };
+    payload: { result: ArkadeCashClaimResult };
 };
 
 export type RequestGetAssetDetails = RequestEnvelope & {
@@ -1211,16 +1211,16 @@ export class WalletMessageHandler
                 }
                 case "CREATE_CASH": {
                     const { amount } = (message as RequestCreateCash).payload;
-                    // ArkCashCreateError carries the recovery token; serialize it
+                    // ArkadeCashCreateError carries the recovery token; serialize it
                     // explicitly so the token survives the postMessage boundary.
                     let cash: string;
                     try {
                         cash = await this.requireWallet().createCash(amount);
                     } catch (error) {
-                        if (error instanceof ArkCashCreateError) {
+                        if (error instanceof ArkadeCashCreateError) {
                             return this.tagged({
                                 id,
-                                error: serializeArkCashCreateError(error) as unknown as Error,
+                                error: serializeArkadeCashCreateError(error) as unknown as Error,
                             });
                         }
                         throw error;
