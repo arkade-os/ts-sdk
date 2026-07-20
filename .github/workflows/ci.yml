@@ -72,7 +72,7 @@ jobs:
             group: arkade-assets
             test_files: >-
               test/e2e/asset.test.ts
-              test/e2e/arkcash.test.ts
+              test/e2e/arkadeCash.test.ts
               test/e2e/liquidation.test.ts
           - package: ts-sdk
             group: settlement-delegation

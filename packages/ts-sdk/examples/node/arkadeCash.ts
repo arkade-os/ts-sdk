@@ -1,12 +1,12 @@
 /**
- * This example shows how Alice can send money to Bob using ArkCash.
+ * This example shows how Alice can send money to Bob using ArkadeCash.
  *
- * ArkCash is a bearer instrument: Alice creates a cash string and sends that
+ * ArkadeCash is a bearer instrument: Alice creates a cash string and sends that
  * string to Bob. Bob does not need to share an address with Alice.
  *
  * To run it:
  * ```
- * $ npx tsx examples/node/arkcash.ts
+ * $ npx tsx examples/node/arkadeCash.ts
  * ```
  *
  * Requires the local regtest stack to be running.
@@ -71,7 +71,7 @@ async function printBalance(name: string, wallet: WalletInstance): Promise<void>
 }
 
 async function main() {
-    console.log("Starting ArkCash NodeJS Example...");
+    console.log("Starting ArkadeCash NodeJS Example...");
 
     const aliceWallet = await createWallet("Alice");
     const bobWallet = await createWallet("Bob");
@@ -102,11 +102,11 @@ async function main() {
     await printBalance("Alice", aliceWallet);
     await printBalance("Bob", bobWallet);
 
-    console.log(`[Alice]\tCreating ${CASH_AMOUNT_SATS} sats of ArkCash for Bob...`);
+    console.log(`[Alice]\tCreating ${CASH_AMOUNT_SATS} sats of ArkadeCash for Bob...`);
     const cash = await aliceWallet.createCash(CASH_AMOUNT_SATS);
-    console.log("[Alice]\tArkCash string sent to Bob:", cash);
+    console.log("[Alice]\tArkadeCash string sent to Bob:", cash);
 
-    console.log("[Bob]\tClaiming ArkCash...");
+    console.log("[Bob]\tClaiming ArkadeCash...");
     const claim = await bobWallet.claimCash(cash);
     console.log("[Bob]\tSwept:", claim.swept, "sats");
     if (claim.unclaimed.vtxos.length > 0) {
