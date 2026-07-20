@@ -24,7 +24,7 @@ describe("Asset integration tests", () => {
 
         const fundAmount = 20_000;
         faucetOffchain(aliceAddress!, fundAmount);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await waitFor(async () => (await alice.wallet.getBalance()).total >= fundAmount);
 
         // alice issues an asset
         const issueAmount = 500n;
@@ -32,7 +32,11 @@ describe("Asset integration tests", () => {
             amount: issueAmount,
         });
 
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await waitFor(async () =>
+            (await alice.wallet.getVtxos()).some((v) =>
+                v.assets?.some((a) => a.assetId === issueResult.assetId),
+            ),
+        );
 
         const vtxosBefore = await alice.wallet.getVtxos();
         expect(vtxosBefore.length).toBeGreaterThan(0);
@@ -62,7 +66,16 @@ describe("Asset integration tests", () => {
         expect(settleTxid).toBeDefined();
 
         execCommand("node regtest/regtest.mjs mine 1");
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+
+        // poll until the settled vtxos carry the full asset balance again
+        await waitFor(async () => {
+            const vtxos = await alice.wallet.getVtxos();
+            const total = vtxos
+                .flatMap((v) => v.assets ?? [])
+                .filter((a) => a.assetId === issueResult.assetId)
+                .reduce((s, a) => s + a.amount, 0n);
+            return total === issueAmount;
+        });
 
         // verify the asset is still present on the settled vtxos
         const vtxosAfter = await alice.wallet.getVtxos();
@@ -82,7 +95,7 @@ describe("Asset integration tests", () => {
         // fund alice offchain
         const fundAmount = 10_000;
         faucetOffchain(aliceAddress!, fundAmount);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await waitFor(async () => (await alice.wallet.getBalance()).total >= fundAmount);
 
         // issue an asset
         const amount = 1000n;
@@ -91,7 +104,12 @@ describe("Asset integration tests", () => {
         expect(result.arkTxId).toBeDefined();
         expect(result.assetId).toBeDefined();
 
-        await new Promise((resolve) => setTimeout(resolve, 3000));
+        // poll until the issued asset appears on a vtxo with the full amount
+        await waitFor(async () =>
+            (await alice.wallet.getVtxos()).some((v) =>
+                v.assets?.some((a) => a.assetId === result.assetId && a.amount === amount),
+            ),
+        );
 
         // verify the asset appears on a vtxo
         const vtxos = await alice.wallet.getVtxos();
@@ -110,15 +128,19 @@ describe("Asset integration tests", () => {
 
         const fundAmount = 10_000;
         faucetOffchain(aliceAddress!, fundAmount);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await waitFor(async () => (await alice.wallet.getBalance()).total >= fundAmount);
 
         // first issuance to create a control asset
         const firstIssueResult = await alice.wallet.assetManager.issue({
             amount: 1n,
         });
 
-        // Wait for round completion so change VTXO is indexed
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        // wait until the control asset's change VTXO is indexed
+        await waitFor(async () =>
+            (await alice.wallet.getVtxos()).some((v) =>
+                v.assets?.some((a) => a.assetId === firstIssueResult.assetId),
+            ),
+        );
 
         // second issuance to create a new asset using the control asset
         const secondIssueResult = await alice.wallet.assetManager.issue({
@@ -129,7 +151,13 @@ describe("Asset integration tests", () => {
         expect(secondIssueResult.arkTxId).toBeDefined();
         expect(secondIssueResult.assetId).toBeDefined();
 
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        // poll until both the issued asset and control asset appear at full amount
+        await waitFor(async () => {
+            const assets = (await alice.wallet.getVtxos()).flatMap((v) => v.assets ?? []);
+            const issued = assets.find((a) => a.assetId === secondIssueResult.assetId);
+            const control = assets.find((a) => a.assetId === firstIssueResult.assetId);
+            return issued?.amount === 500n && control?.amount === 1n;
+        });
 
         // verify both the issued asset and control asset appear
         const vtxos = await alice.wallet.getVtxos();
@@ -151,7 +179,7 @@ describe("Asset integration tests", () => {
 
         const fundAmount = 10_000;
         faucetOffchain(aliceAddress!, fundAmount);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await waitFor(async () => (await alice.wallet.getBalance()).total >= fundAmount);
 
         const metadata = {
             decimals: 2,
@@ -168,7 +196,17 @@ describe("Asset integration tests", () => {
         expect(issueResult.arkTxId).toBeDefined();
         expect(issueResult.assetId).toBeDefined();
 
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        // poll until the issued asset's metadata is indexed and retrievable
+        await waitFor(async () => {
+            try {
+                const details = await alice.wallet.assetManager.getAssetDetails(
+                    issueResult.assetId,
+                );
+                return details.metadata !== undefined;
+            } catch {
+                return false;
+            }
+        });
 
         const assetDetails = await alice.wallet.assetManager.getAssetDetails(issueResult.assetId);
         expect(assetDetails.metadata).toBeDefined();
@@ -181,15 +219,19 @@ describe("Asset integration tests", () => {
 
         const fundAmount = 20_000;
         faucetOffchain(aliceAddress!, fundAmount);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await waitFor(async () => (await alice.wallet.getBalance()).total >= fundAmount);
 
         // first issuance to create a control asset
         const firstIssueResult = await alice.wallet.assetManager.issue({
             amount: 1n,
         });
 
-        // Wait for round completion so change VTXO is indexed
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        // wait until the control asset's change VTXO is indexed
+        await waitFor(async () =>
+            (await alice.wallet.getVtxos()).some((v) =>
+                v.assets?.some((a) => a.assetId === firstIssueResult.assetId),
+            ),
+        );
 
         // second issuance to create a new asset using the control asset
         const secondIssueResult = await alice.wallet.assetManager.issue({
@@ -197,8 +239,14 @@ describe("Asset integration tests", () => {
             controlAssetId: firstIssueResult.assetId,
         });
 
-        // Wait for round completion before reissue
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        // wait until the second issuance is indexed at its full amount before reissue
+        await waitFor(async () => {
+            const total = (await alice.wallet.getVtxos())
+                .flatMap((v) => v.assets ?? [])
+                .filter((a) => a.assetId === secondIssueResult.assetId)
+                .reduce((s, a) => s + a.amount, 0n);
+            return total === 500n;
+        });
 
         // reissue more units
         const reissueAmount = 300n;
@@ -208,7 +256,15 @@ describe("Asset integration tests", () => {
         });
 
         expect(reissueTxid).toBeDefined();
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // poll until the reissued units are reflected in the total
+        await waitFor(async () => {
+            const total = (await alice.wallet.getVtxos())
+                .flatMap((v) => v.assets ?? [])
+                .filter((a) => a.assetId === secondIssueResult.assetId)
+                .reduce((s, a) => s + a.amount, 0n);
+            return total === 500n + reissueAmount;
+        });
 
         // verify total asset amount is issueAmount + reissueAmount
         const vtxos = await alice.wallet.getVtxos();
@@ -230,7 +286,7 @@ describe("Asset integration tests", () => {
 
         const fundAmount = 20_000;
         faucetOffchain(aliceAddress!, fundAmount);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await waitFor(async () => (await alice.wallet.getBalance()).total >= fundAmount);
 
         // issue an asset
         const issueAmount = 1000n;
@@ -238,7 +294,14 @@ describe("Asset integration tests", () => {
             amount: issueAmount,
         });
 
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        // poll until the issued asset is indexed at its full amount
+        await waitFor(async () => {
+            const total = (await alice.wallet.getVtxos())
+                .flatMap((v) => v.assets ?? [])
+                .filter((a) => a.assetId === issueResult.assetId)
+                .reduce((s, a) => s + a.amount, 0n);
+            return total === issueAmount;
+        });
 
         // burn half
         const burnAmount = 400n;
@@ -248,7 +311,15 @@ describe("Asset integration tests", () => {
         });
 
         expect(burnTxid).toBeDefined();
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // poll until the remaining amount reflects the burn
+        await waitFor(async () => {
+            const total = (await alice.wallet.getVtxos())
+                .flatMap((v) => v.assets ?? [])
+                .filter((a) => a.assetId === issueResult.assetId)
+                .reduce((s, a) => s + a.amount, 0n);
+            return total === issueAmount - burnAmount;
+        });
 
         // verify remaining amount
         const vtxos = await alice.wallet.getVtxos();
@@ -265,7 +336,7 @@ describe("Asset integration tests", () => {
 
         const fundAmount = 20_000;
         faucetOffchain(aliceAddress!, fundAmount);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await waitFor(async () => (await alice.wallet.getBalance()).total >= fundAmount);
 
         // issue an asset
         const issueAmount = 500n;
@@ -273,7 +344,14 @@ describe("Asset integration tests", () => {
             amount: issueAmount,
         });
 
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        // poll until the issued asset is indexed at its full amount
+        await waitFor(async () => {
+            const total = (await alice.wallet.getVtxos())
+                .flatMap((v) => v.assets ?? [])
+                .filter((a) => a.assetId === issueResult.assetId)
+                .reduce((s, a) => s + a.amount, 0n);
+            return total === issueAmount;
+        });
 
         // burn all
         const burnTxid = await alice.wallet.assetManager.burn({
@@ -282,7 +360,14 @@ describe("Asset integration tests", () => {
         });
 
         expect(burnTxid).toBeDefined();
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // poll until the asset is fully gone from the wallet's vtxos
+        await waitFor(async () => {
+            const remaining = (await alice.wallet.getVtxos())
+                .flatMap((v) => v.assets ?? [])
+                .filter((a) => a.assetId === issueResult.assetId);
+            return remaining.length === 0;
+        });
 
         // verify asset is gone
         const vtxos = await alice.wallet.getVtxos();
@@ -300,7 +385,7 @@ describe("Asset integration tests", () => {
 
         const fundAmount = 20_000;
         faucetOffchain(aliceAddress!, fundAmount);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await waitFor(async () => (await alice.wallet.getBalance()).total >= fundAmount);
 
         // alice issues an asset
         const issueAmount = 1000n;
@@ -308,7 +393,14 @@ describe("Asset integration tests", () => {
             amount: issueAmount,
         });
 
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        // poll until the issued asset is indexed at its full amount
+        await waitFor(async () => {
+            const total = (await alice.wallet.getVtxos())
+                .flatMap((v) => v.assets ?? [])
+                .filter((a) => a.assetId === issueResult.assetId)
+                .reduce((s, a) => s + a.amount, 0n);
+            return total === issueAmount;
+        });
 
         // alice sends some asset to bob
         const sendAmount = 400n;
@@ -319,7 +411,19 @@ describe("Asset integration tests", () => {
         });
 
         expect(sendTxid).toBeDefined();
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // poll until bob received the asset and alice holds the change
+        await waitFor(async () => {
+            const bobTotal = (await bob.wallet.getVtxos())
+                .flatMap((v) => v.assets ?? [])
+                .filter((a) => a.assetId === issueResult.assetId)
+                .reduce((s, a) => s + a.amount, 0n);
+            const aliceTotal = (await alice.wallet.getVtxos())
+                .flatMap((v) => v.assets ?? [])
+                .filter((a) => a.assetId === issueResult.assetId)
+                .reduce((s, a) => s + a.amount, 0n);
+            return bobTotal === sendAmount && aliceTotal === issueAmount - sendAmount;
+        });
 
         // verify bob received the asset
         const bobVtxos = await bob.wallet.getVtxos();
@@ -346,7 +450,7 @@ describe("Asset integration tests", () => {
 
         const fundAmount = 20_000;
         faucetOffchain(aliceAddress!, fundAmount);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await waitFor(async () => (await alice.wallet.getBalance()).total >= fundAmount);
 
         // alice issues an asset
         const issueAmount = 500n;
@@ -354,7 +458,14 @@ describe("Asset integration tests", () => {
             amount: issueAmount,
         });
 
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        // poll until the issued asset is indexed at its full amount
+        await waitFor(async () => {
+            const total = (await alice.wallet.getVtxos())
+                .flatMap((v) => v.assets ?? [])
+                .filter((a) => a.assetId === issueResult.assetId)
+                .reduce((s, a) => s + a.amount, 0n);
+            return total === issueAmount;
+        });
 
         // alice sends all units to bob
         const sendTxid = await alice.wallet.send({
@@ -364,7 +475,19 @@ describe("Asset integration tests", () => {
         });
 
         expect(sendTxid).toBeDefined();
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // poll until bob holds all units and alice holds none
+        await waitFor(async () => {
+            const bobTotal = (await bob.wallet.getVtxos())
+                .flatMap((v) => v.assets ?? [])
+                .filter((a) => a.assetId === issueResult.assetId)
+                .reduce((s, a) => s + a.amount, 0n);
+            const aliceTotal = (await alice.wallet.getVtxos())
+                .flatMap((v) => v.assets ?? [])
+                .filter((a) => a.assetId === issueResult.assetId)
+                .reduce((s, a) => s + a.amount, 0n);
+            return bobTotal === issueAmount && aliceTotal === 0n;
+        });
 
         // verify bob has all the asset
         const bobVtxos = await bob.wallet.getVtxos();
@@ -389,7 +512,7 @@ describe("Asset integration tests", () => {
 
         const fundAmount = 20_000;
         faucetOffchain(aliceAddress!, fundAmount);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await waitFor(async () => (await alice.wallet.getBalance()).total >= fundAmount);
 
         // alice issues an asset
         const issueAmount = 500n;
@@ -397,7 +520,11 @@ describe("Asset integration tests", () => {
             amount: issueAmount,
         });
 
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await waitFor(async () =>
+            (await alice.wallet.getVtxos()).some((v) =>
+                v.assets?.some((a) => a.assetId === issueResult.assetId),
+            ),
+        );
 
         const vtxosBefore = await alice.wallet.getVtxos();
         expect(vtxosBefore.length).toBeGreaterThan(0);
@@ -421,7 +548,15 @@ describe("Asset integration tests", () => {
         expect(settleTxid).toBeDefined();
 
         execCommand("node regtest/regtest.mjs mine 1");
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+
+        // poll until the settled vtxos carry the full asset balance again
+        await waitFor(async () => {
+            const total = (await alice.wallet.getVtxos())
+                .flatMap((v) => v.assets ?? [])
+                .filter((a) => a.assetId === issueResult.assetId)
+                .reduce((s, a) => s + a.amount, 0n);
+            return total === issueAmount;
+        });
 
         // verify the asset is still present on the settled vtxos
         const vtxosAfter = await alice.wallet.getVtxos();
@@ -466,7 +601,11 @@ describe("Asset integration tests", () => {
                 amount: 100n,
             });
             expect(issueResult1.assetId).toBeDefined();
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+            await waitFor(async () =>
+                (await wallet1.getVtxos()).some((v) =>
+                    v.assets?.some((a) => a.assetId === issueResult1.assetId),
+                ),
+            );
 
             // Phase 2 — Add delegate: fund and issue asset on delegate address
             const wallet2 = await Wallet.create({
@@ -495,7 +634,11 @@ describe("Asset integration tests", () => {
                 amount: 200n,
             });
             expect(issueResult2.assetId).toBeDefined();
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+            await waitFor(async () =>
+                (await wallet2.getVtxos()).some((v) =>
+                    v.assets?.some((a) => a.assetId === issueResult2.assetId),
+                ),
+            );
 
             // Send assets to bob, forcing both VTXO pools to be consumed
             const bob = await createTestArkWallet();
@@ -514,7 +657,14 @@ describe("Asset integration tests", () => {
                 ],
             });
             expect(txid2).toBeDefined();
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+            await waitFor(async () => {
+                const bobAssets = (await bob.wallet.getVtxos()).flatMap((v) => v.assets ?? []);
+                const gotAsset1 =
+                    bobAssets.find((a) => a.assetId === issueResult1.assetId)?.amount === 50n;
+                const gotAsset2 =
+                    bobAssets.find((a) => a.assetId === issueResult2.assetId)?.amount === 100n;
+                return gotAsset1 && gotAsset2;
+            });
 
             // Verify bob received the assets
             const bobVtxos = await bob.wallet.getVtxos();
@@ -560,11 +710,29 @@ describe("Asset integration tests", () => {
                 amount: 300n,
             });
             expect(issueResult3.assetId).toBeDefined();
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+            await waitFor(async () =>
+                (await wallet3.getVtxos()).some((v) =>
+                    v.assets?.some((a) => a.assetId === issueResult3.assetId),
+                ),
+            );
 
-            const allVtxos3 = await wallet3.getVtxos();
-            const maxSingleVtxo3 = Math.max(...allVtxos3.map((v) => v.value));
-            const sendAmount3 = maxSingleVtxo3 + 1_000;
+            // Snapshot the removed-delegate VTXOs so we can prove the forfeit
+            // path actually spends one of them — not merely that the send
+            // required multiple inputs.
+            const delegateOutpoints = new Set(
+                (await manager3.getContractsWithVtxos({ type: ["delegate"] }))
+                    .flatMap((c) => c.vtxos.filter((v) => !v.isSpent))
+                    .map((v) => `${v.txid}:${v.vout}`),
+            );
+            expect(delegateOutpoints.size).toBeGreaterThan(0);
+
+            // Send more sats than the default contract alone can cover, forcing
+            // coin selection to reach into the removed-delegate pool and spend a
+            // delegate VTXO via the forfeit path.
+            const defaultTotal = (await manager3.getContractsWithVtxos({ type: ["default"] }))
+                .flatMap((c) => c.vtxos.filter((v) => !v.isSpent))
+                .reduce((s, v) => s + v.value, 0);
+            const sendAmount3 = defaultTotal + 1_000;
 
             // Spending works via forfeit path — assets should be preserved
             const txid3 = await wallet3.send({
@@ -573,7 +741,21 @@ describe("Asset integration tests", () => {
                 assets: [{ assetId: issueResult3.assetId, amount: 150n }],
             });
             expect(txid3).toBeDefined();
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+            await waitFor(async () => {
+                const bobAssets3 = (await bob.wallet.getVtxos()).flatMap((v) => v.assets ?? []);
+                return bobAssets3.find((a) => a.assetId === issueResult3.assetId)?.amount === 150n;
+            });
+
+            // Prove a specific removed-delegate VTXO was consumed: at least one
+            // outpoint that was unspent before the send is no longer unspent.
+            await waitFor(async () => {
+                const delegateUnspentNow = new Set(
+                    (await manager3.getContractsWithVtxos({ type: ["delegate"] }))
+                        .flatMap((c) => c.vtxos.filter((v) => !v.isSpent))
+                        .map((v) => `${v.txid}:${v.vout}`),
+                );
+                return [...delegateOutpoints].some((op) => !delegateUnspentNow.has(op));
+            });
 
             // Verify bob received the asset from phase 3
             const bobVtxos3 = await bob.wallet.getVtxos();
@@ -616,7 +798,11 @@ describe("Asset integration tests", () => {
                 amount: 500n,
             });
             expect(issueResult.assetId).toBeDefined();
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+            await waitFor(async () =>
+                (await wallet1.getVtxos()).some((v) =>
+                    v.assets?.some((a) => a.assetId === issueResult.assetId),
+                ),
+            );
 
             // Step 2 — Enable delegate: fund delegate address
             const wallet2 = await Wallet.create({
@@ -649,13 +835,25 @@ describe("Asset integration tests", () => {
             const maxSingleVtxo = Math.max(...allVtxos.map((v) => v.value));
             const sendAmount = maxSingleVtxo + 100;
 
+            // Snapshot delegate outpoints before the send so the change check can
+            // require a NEW delegate output created by this transaction rather
+            // than any pre-existing unspent VTXO.
+            const delegateBefore = new Set(
+                (await manager.getContractsWithVtxos({ type: ["delegate"] }))
+                    .flatMap((c) => c.vtxos)
+                    .map((v) => `${v.txid}:${v.vout}`),
+            );
+
             const txid = await wallet2.send({
                 address: bobAddress,
                 amount: sendAmount,
                 assets: [{ assetId: issueResult.assetId, amount: 200n }],
             });
             expect(txid).toBeDefined();
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+            await waitFor(async () => {
+                const bobAssets = (await bob.wallet.getVtxos()).flatMap((v) => v.assets ?? []);
+                return bobAssets.find((a) => a.assetId === issueResult.assetId)?.amount === 200n;
+            });
 
             // Verify bob received the asset
             const bobVtxos = await bob.wallet.getVtxos();
@@ -664,10 +862,21 @@ describe("Asset integration tests", () => {
             expect(bobAsset).toBeDefined();
             expect(bobAsset!.amount).toBe(200n);
 
-            // Verify change has remaining asset on delegate contract
+            // Poll until this send is fully reflected: the wallet retains 300n of
+            // the asset AND the change landed on the delegate contract as a NEW
+            // outpoint (not a pre-existing unspent VTXO).
             await waitFor(async () => {
-                const vtxos = await wallet2.getVtxos();
-                return vtxos.some((v) => !v.isSpent);
+                const remaining = (await wallet2.getVtxos())
+                    .flatMap((v) => v.assets ?? [])
+                    .filter((a) => a.assetId === issueResult.assetId)
+                    .reduce((s, a) => s + a.amount, 0n);
+                if (remaining !== 300n) return false;
+                const delegateNow = await manager.getContractsWithVtxos({
+                    type: ["delegate"],
+                });
+                return delegateNow[0].vtxos.some(
+                    (v) => !v.isSpent && !delegateBefore.has(`${v.txid}:${v.vout}`),
+                );
             });
 
             const vtxosAfter = await wallet2.getVtxos();
@@ -677,12 +886,15 @@ describe("Asset integration tests", () => {
                 .reduce((s, a) => s + a.amount, 0n);
             expect(aliceRemaining).toBe(300n);
 
-            // Change should land on delegate contract
+            // Change should land on the delegate contract as a new outpoint
+            // created by this send, not merely leave some delegate VTXO unspent.
             const delegateContractAfter = await manager.getContractsWithVtxos({
                 type: ["delegate"],
             });
-            const delegateUnspent = delegateContractAfter[0].vtxos.filter((v) => !v.isSpent);
-            expect(delegateUnspent.length).toBeGreaterThan(0);
+            const newDelegateUnspent = delegateContractAfter[0].vtxos.filter(
+                (v) => !v.isSpent && !delegateBefore.has(`${v.txid}:${v.vout}`),
+            );
+            expect(newDelegateUnspent.length).toBeGreaterThan(0);
         },
     );
 
@@ -739,7 +951,11 @@ describe("Asset integration tests", () => {
                 amount: 500n,
             });
             expect(issueResult.assetId).toBeDefined();
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+            await waitFor(async () =>
+                (await wallet2.getVtxos()).some((v) =>
+                    v.assets?.some((a) => a.assetId === issueResult.assetId),
+                ),
+            );
 
             faucetOffchain(delegateAddress, 1_000);
             await waitFor(async () => (await wallet2.getVtxos()).length >= 2);
@@ -752,13 +968,25 @@ describe("Asset integration tests", () => {
             const maxSingleVtxo = Math.max(...allVtxos.map((v) => v.value));
             const sendAmount = maxSingleVtxo + 100;
 
+            // Snapshot delegate outpoints before the send so the change check can
+            // require a NEW delegate output created by this transaction rather
+            // than any pre-existing unspent VTXO.
+            const delegateBefore = new Set(
+                (await manager.getContractsWithVtxos({ type: ["delegate"] }))
+                    .flatMap((c) => c.vtxos)
+                    .map((v) => `${v.txid}:${v.vout}`),
+            );
+
             const txid = await wallet2.send({
                 address: bobAddress,
                 amount: sendAmount,
                 assets: [{ assetId: issueResult.assetId, amount: 200n }],
             });
             expect(txid).toBeDefined();
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+            await waitFor(async () => {
+                const bobAssets = (await bob.wallet.getVtxos()).flatMap((v) => v.assets ?? []);
+                return bobAssets.find((a) => a.assetId === issueResult.assetId)?.amount === 200n;
+            });
 
             // Verify bob received the asset
             const bobVtxos = await bob.wallet.getVtxos();
@@ -767,10 +995,21 @@ describe("Asset integration tests", () => {
             expect(bobAsset).toBeDefined();
             expect(bobAsset!.amount).toBe(200n);
 
-            // Verify change has remaining asset on delegate contract
+            // Poll until this send is fully reflected: the wallet retains 300n of
+            // the asset AND the change landed on the delegate contract as a NEW
+            // outpoint (not a pre-existing unspent VTXO).
             await waitFor(async () => {
-                const vtxos = await wallet2.getVtxos();
-                return vtxos.some((v) => !v.isSpent);
+                const remaining = (await wallet2.getVtxos())
+                    .flatMap((v) => v.assets ?? [])
+                    .filter((a) => a.assetId === issueResult.assetId)
+                    .reduce((s, a) => s + a.amount, 0n);
+                if (remaining !== 300n) return false;
+                const delegateNow = await manager.getContractsWithVtxos({
+                    type: ["delegate"],
+                });
+                return delegateNow[0].vtxos.some(
+                    (v) => !v.isSpent && !delegateBefore.has(`${v.txid}:${v.vout}`),
+                );
             });
 
             const vtxosAfter = await wallet2.getVtxos();
@@ -780,12 +1019,15 @@ describe("Asset integration tests", () => {
                 .reduce((s, a) => s + a.amount, 0n);
             expect(aliceRemaining).toBe(300n);
 
-            // Change should land on delegate contract
+            // Change should land on the delegate contract as a new outpoint
+            // created by this send, not merely leave some delegate VTXO unspent.
             const delegateContractAfter = await manager.getContractsWithVtxos({
                 type: ["delegate"],
             });
-            const delegateUnspent = delegateContractAfter[0].vtxos.filter((v) => !v.isSpent);
-            expect(delegateUnspent.length).toBeGreaterThan(0);
+            const newDelegateUnspent = delegateContractAfter[0].vtxos.filter(
+                (v) => !v.isSpent && !delegateBefore.has(`${v.txid}:${v.vout}`),
+            );
+            expect(newDelegateUnspent.length).toBeGreaterThan(0);
         },
     );
 });
