@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { ArkCash } from "../src/arkcash";
+import { ArkadeCash } from "../src/arkadeCash";
 import { hex } from "@scure/base";
 import { pubSchnorr } from "@scure/btc-signer/utils.js";
 
-describe("ArkCash", () => {
+describe("ArkadeCash", () => {
     const testPrivKey = hex.decode(
         "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
     );
@@ -15,36 +15,36 @@ describe("ArkCash", () => {
 
     describe("encode/decode roundtrip", () => {
         it("should roundtrip with blocks timelock", () => {
-            const cash = new ArkCash(testPrivKey, testServerPubKey, {
+            const cash = new ArkadeCash(testPrivKey, testServerPubKey, {
                 type: "blocks",
                 value: 144n,
             });
 
             const encoded = cash.toString();
-            expect(encoded.startsWith("arkcash1")).toBe(true);
+            expect(encoded.startsWith("arkadecash1")).toBe(true);
 
-            const decoded = ArkCash.fromString(encoded);
+            const decoded = ArkadeCash.fromString(encoded);
             expect(hex.encode(decoded.privateKey)).toBe(hex.encode(testPrivKey));
             expect(hex.encode(decoded.serverPubKey)).toBe(hex.encode(testServerPubKey));
             expect(decoded.csvTimelock.type).toBe("blocks");
             expect(decoded.csvTimelock.value).toBe(144n);
-            expect(decoded.hrp).toBe("arkcash");
+            expect(decoded.hrp).toBe("arkadecash");
         });
 
         it("should roundtrip with seconds timelock", () => {
-            const cash = new ArkCash(testPrivKey, testServerPubKey, {
+            const cash = new ArkadeCash(testPrivKey, testServerPubKey, {
                 type: "seconds",
                 value: 512n,
             });
 
             const encoded = cash.toString();
-            const decoded = ArkCash.fromString(encoded);
+            const decoded = ArkadeCash.fromString(encoded);
             expect(decoded.csvTimelock.type).toBe("seconds");
             expect(decoded.csvTimelock.value).toBe(512n);
         });
 
         it("should roundtrip with custom HRP", () => {
-            const cash = new ArkCash(
+            const cash = new ArkadeCash(
                 testPrivKey,
                 testServerPubKey,
                 {
@@ -57,14 +57,14 @@ describe("ArkCash", () => {
             const encoded = cash.toString();
             expect(encoded.startsWith("tarkcash1")).toBe(true);
 
-            const decoded = ArkCash.fromString(encoded);
+            const decoded = ArkadeCash.fromString(encoded);
             expect(decoded.hrp).toBe("tarkcash");
         });
     });
 
     describe("key derivation", () => {
         it("should derive correct public key", () => {
-            const cash = new ArkCash(testPrivKey, testServerPubKey, {
+            const cash = new ArkadeCash(testPrivKey, testServerPubKey, {
                 type: "blocks",
                 value: 144n,
             });
@@ -74,7 +74,7 @@ describe("ArkCash", () => {
         });
 
         it("should return a SingleKey identity", async () => {
-            const cash = new ArkCash(testPrivKey, testServerPubKey, {
+            const cash = new ArkadeCash(testPrivKey, testServerPubKey, {
                 type: "blocks",
                 value: 144n,
             });
@@ -87,7 +87,7 @@ describe("ArkCash", () => {
 
     describe("vtxo script", () => {
         it("should create a valid DefaultVtxo script", () => {
-            const cash = new ArkCash(testPrivKey, testServerPubKey, {
+            const cash = new ArkadeCash(testPrivKey, testServerPubKey, {
                 type: "blocks",
                 value: 144n,
             });
@@ -99,7 +99,7 @@ describe("ArkCash", () => {
         });
 
         it("should derive a valid ArkAddress", () => {
-            const cash = new ArkCash(testPrivKey, testServerPubKey, {
+            const cash = new ArkadeCash(testPrivKey, testServerPubKey, {
                 type: "blocks",
                 value: 144n,
             });
@@ -111,8 +111,8 @@ describe("ArkCash", () => {
     });
 
     describe("generate", () => {
-        it("should generate a random ArkCash", () => {
-            const cash = ArkCash.generate(testServerPubKey, {
+        it("should generate a random ArkadeCash", () => {
+            const cash = ArkadeCash.generate(testServerPubKey, {
                 type: "blocks",
                 value: 144n,
             });
@@ -123,11 +123,11 @@ describe("ArkCash", () => {
         });
 
         it("should generate unique keys each time", () => {
-            const cash1 = ArkCash.generate(testServerPubKey, {
+            const cash1 = ArkadeCash.generate(testServerPubKey, {
                 type: "blocks",
                 value: 144n,
             });
-            const cash2 = ArkCash.generate(testServerPubKey, {
+            const cash2 = ArkadeCash.generate(testServerPubKey, {
                 type: "blocks",
                 value: 144n,
             });
@@ -140,7 +140,7 @@ describe("ArkCash", () => {
         it("is unaffected by mutating the buffers passed to the constructor", () => {
             const priv = testPrivKey.slice();
             const server = testServerPubKey.slice();
-            const cash = new ArkCash(priv, server, { type: "blocks", value: 144n });
+            const cash = new ArkadeCash(priv, server, { type: "blocks", value: 144n });
 
             const encodedBefore = cash.toString();
             const pubBefore = hex.encode(cash.publicKey);
@@ -156,7 +156,7 @@ describe("ArkCash", () => {
         });
 
         it("is unaffected by mutating the buffers returned from getters", () => {
-            const cash = new ArkCash(testPrivKey, testServerPubKey, {
+            const cash = new ArkadeCash(testPrivKey, testServerPubKey, {
                 type: "blocks",
                 value: 144n,
             });
@@ -173,7 +173,7 @@ describe("ArkCash", () => {
         });
 
         it("returns a distinct copy on each getter access", () => {
-            const cash = new ArkCash(testPrivKey, testServerPubKey, {
+            const cash = new ArkadeCash(testPrivKey, testServerPubKey, {
                 type: "blocks",
                 value: 144n,
             });
@@ -188,7 +188,7 @@ describe("ArkCash", () => {
         it("should throw on invalid private key length", () => {
             expect(
                 () =>
-                    new ArkCash(new Uint8Array(16), testServerPubKey, {
+                    new ArkadeCash(new Uint8Array(16), testServerPubKey, {
                         type: "blocks",
                         value: 144n,
                     }),
@@ -198,7 +198,7 @@ describe("ArkCash", () => {
         it("should throw on invalid server pubkey length", () => {
             expect(
                 () =>
-                    new ArkCash(testPrivKey, new Uint8Array(16), {
+                    new ArkadeCash(testPrivKey, new Uint8Array(16), {
                         type: "blocks",
                         value: 144n,
                     }),
@@ -206,11 +206,11 @@ describe("ArkCash", () => {
         });
 
         it("should throw on invalid bech32m string", () => {
-            expect(() => ArkCash.fromString("notvalid")).toThrow();
+            expect(() => ArkadeCash.fromString("notvalid")).toThrow();
         });
 
         it("should throw on wrong data length", () => {
-            expect(() => ArkCash.fromString("arkcash1qqqqqqqqq0saqvp")).toThrow();
+            expect(() => ArkadeCash.fromString("arkcash1qqqqqqqqq0saqvp")).toThrow();
         });
     });
 });

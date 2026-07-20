@@ -96,10 +96,10 @@ import {
     IncomingFunds,
     selectVirtualCoins,
     BoardingUtxoGroup,
-    type ArkCashClaimResult,
-    type ArkCashUnclaimedReason,
-    type ArkCashUnclaimedVtxo,
-    ArkCashCreateError,
+    type ArkadeCashClaimResult,
+    type ArkadeCashUnclaimedReason,
+    type ArkadeCashUnclaimedVtxo,
+    ArkadeCashCreateError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./wallet/wallet";
@@ -220,7 +220,7 @@ import {
 import { Intent } from "./intent";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
-import { ArkCash } from "./arkcash";
+import { ArkadeCash } from "./arkadeCash";
 import { getNetwork, networks, Network, NetworkName } from "./networks";
 import {
     RestIndexerProvider,
@@ -518,9 +518,9 @@ export {
     // Arknote
     ArkNote,
 
-    // Arkcash
-    ArkCash,
-    ArkCashCreateError,
+    // ArkadeCash
+    ArkadeCash,
+    ArkadeCashCreateError,
 
     // Network
     getNetwork,
@@ -721,9 +721,9 @@ export type {
     // Wallet types
     GetVtxosFilter,
     BoardingUtxoGroup,
-    ArkCashClaimResult,
-    ArkCashUnclaimedReason,
-    ArkCashUnclaimedVtxo,
+    ArkadeCashClaimResult,
+    ArkadeCashUnclaimedReason,
+    ArkadeCashUnclaimedVtxo,
     SettlementConfig,
     IVtxoManager,
     RenewVtxosOptions,

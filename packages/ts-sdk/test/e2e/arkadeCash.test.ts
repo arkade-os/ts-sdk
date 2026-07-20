@@ -1,9 +1,9 @@
 import { hex } from "@scure/base";
 import { expect, describe, it, beforeEach } from "vitest";
-import { ArkCash, RestIndexerProvider } from "../../src";
+import { ArkadeCash, RestIndexerProvider } from "../../src";
 import { beforeEachFaucet, createTestArkWallet, faucetOffchain, waitFor } from "./utils";
 
-describe("ArkCash", () => {
+describe("ArkadeCash", () => {
     beforeEach(beforeEachFaucet, 20000);
 
     // `createCash` returns once the funding tx is submitted, before the indexer
@@ -11,7 +11,7 @@ describe("ArkCash", () => {
     // these in-process create-then-claim tests race `claimCash` against it.
     const indexer = new RestIndexerProvider("http://localhost:7070");
     const waitForCashFunded = async (cashStr: string) => {
-        const script = hex.encode(ArkCash.fromString(cashStr).vtxoScript.pkScript);
+        const script = hex.encode(ArkadeCash.fromString(cashStr).vtxoScript.pkScript);
         await waitFor(async () => {
             const { vtxos } = await indexer.getVtxos({ scripts: [script] });
             return vtxos.length > 0;
@@ -25,7 +25,7 @@ describe("ArkCash", () => {
         return w;
     };
 
-    it("should send and claim arkcash (happy path)", async () => {
+    it("should send and claim arkadeCash (happy path)", async () => {
         const alice = await fundedWallet(10000);
         const bob = await createTestArkWallet();
 
@@ -41,16 +41,16 @@ describe("ArkCash", () => {
 
         await waitFor(async () => (await bob.wallet.getBalance()).total >= 5000);
 
-        // Sweep-or-report persists nothing: no arkcash contract may reach Bob's
+        // Sweep-or-report persists nothing: no arkadeCash contract may reach Bob's
         // repository, or his own renewal/recovery would settle an input he
         // cannot sign and reject the whole batch.
         const manager = await bob.wallet.getContractManager();
         const contracts = await manager.getContracts();
-        const cashScript = hex.encode(ArkCash.fromString(cashStr).vtxoScript.pkScript);
+        const cashScript = hex.encode(ArkadeCash.fromString(cashStr).vtxoScript.pkScript);
         expect(contracts.some((c) => c.script === cashScript)).toBe(false);
     }, 60_000);
 
-    it("should report an already-claimed arkcash instead of sweeping it", async () => {
+    it("should report an already-claimed arkadeCash instead of sweeping it", async () => {
         const alice = await fundedWallet(10000);
         const bob = await createTestArkWallet();
         const charlie = await createTestArkWallet();
@@ -62,7 +62,7 @@ describe("ArkCash", () => {
         await waitFor(async () => (await bob.wallet.getBalance()).total >= 5000);
 
         // The VTXO still exists, it is just spent — Charlie is told it was
-        // already claimed rather than that the arkcash is unknown.
+        // already claimed rather than that the arkadeCash is unknown.
         const result = await charlie.wallet.claimCash(cashStr);
         expect(result.swept).toBe(0);
         expect(result.unclaimed.amount).toBe(5000);
@@ -70,10 +70,10 @@ describe("ArkCash", () => {
         expect(result.unclaimed.vtxos[0].reason).toBe("already-spent");
     }, 90_000);
 
-    it("should throw when the arkcash was never funded", async () => {
+    it("should throw when the arkadeCash was never funded", async () => {
         const alice = await fundedWallet(10000);
         const info = await alice.wallet.arkProvider.getInfo();
-        const cash = ArkCash.generate(
+        const cash = ArkadeCash.generate(
             hex.decode(info.signerPubkey).slice(1),
             { type: "blocks", value: 144n },
             "tarkcash",
@@ -86,11 +86,13 @@ describe("ArkCash", () => {
         const alice = await fundedWallet(10000);
 
         for (const amount of [0, -1, 0.5, NaN, Infinity, 1]) {
-            await expect(alice.wallet.createCash(amount)).rejects.toThrow("Invalid ArkCash amount");
+            await expect(alice.wallet.createCash(amount)).rejects.toThrow(
+                "Invalid ArkadeCash amount",
+            );
         }
     }, 30_000);
 
-    it("should claim each arkcash independently", async () => {
+    it("should claim each arkadeCash independently", async () => {
         const alice = await fundedWallet(30000);
         const bob = await createTestArkWallet();
 
