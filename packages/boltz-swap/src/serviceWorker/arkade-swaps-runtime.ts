@@ -17,6 +17,7 @@ import {
     SendLightningPaymentRequest,
     SendLightningPaymentResponse,
     OptimisticSendLightningPaymentResponse,
+    SerializableSwapManagerConfig,
     SubmarineRecoveryInfo,
     SubmarineRecoveryResult,
     SubmarineRefundOutcome,
@@ -83,6 +84,7 @@ import {
     enrichSubmarineSwapInvoice as _enrichSubmarineSwapInvoice,
 } from "../utils/swap-helpers";
 import type { Actions, SwapManagerClient } from "../swap-manager";
+import { logger } from "../logger";
 
 // Check by error message content instead of instanceof because postMessage uses the
 // structured clone algorithm which strips the prototype chain — the page
@@ -138,16 +140,50 @@ function getRequestDedupKey(request: ArkadeSwapsUpdaterRequest): string {
     return JSON.stringify(rest);
 }
 
-export type SvcWrkArkadeSwapsConfig = Pick<
-    ArkadeSwapsConfig,
-    "swapManager" | "swapProvider" | "swapRepository"
-> & {
+export type SvcWrkArkadeSwapsConfig = Pick<ArkadeSwapsConfig, "swapProvider" | "swapRepository"> & {
     serviceWorker: ServiceWorker;
     messageTag?: string;
     network: Network;
     arkServerUrl: string;
     referralId?: string;
+    /**
+     * Background swap monitoring, same semantics as {@link ArkadeSwapsConfig.swapManager}
+     * (omitted means enabled), minus `events`: the manager runs in the worker, so
+     * callbacks cannot cross the boundary. Use {@link ServiceWorkerArkadeSwaps.onSwapUpdate}
+     * and friends instead.
+     */
+    swapManager?: SerializableSwapManagerConfig;
 };
+
+/**
+ * Drop the fields of a swap-manager config that cannot cross the `postMessage`
+ * boundary. The type-level removal in {@link SvcWrkArkadeSwapsConfig} steers
+ * TypeScript callers away from `events`, but `Omit` is not exact — a pre-typed
+ * (non-literal) config still assigns through width subtyping, and JS callers see
+ * no types at all — so this is the backstop that keeps `sendMessage` from
+ * throwing `DataCloneError`.
+ */
+export function toSerializableSwapManagerConfig(
+    swapManager: SerializableSwapManagerConfig,
+): SerializableSwapManagerConfig {
+    if (typeof swapManager === "boolean") return swapManager;
+
+    const { events, ...rest } = swapManager as typeof swapManager & {
+        events?: Record<string, unknown>;
+    };
+
+    if (events && Object.keys(events).length > 0) {
+        logger.warn(
+            "ArkadeSwaps: swapManager.events was dropped from the service-worker init " +
+                "payload — callbacks cannot be structured-cloned to the worker, and the " +
+                "SwapManager runs there. Register listeners with the ServiceWorkerArkadeSwaps " +
+                "on/off methods (onSwapUpdate, onSwapCompleted, onSwapFailed, " +
+                "onActionExecuted, onWebSocketConnected, onWebSocketDisconnected) instead.",
+        );
+    }
+
+    return rest;
+}
 
 export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
     private eventListenerInitialized = false;
@@ -186,18 +222,29 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
 
         const swapRepository = config.swapRepository ?? new IndexedDbSwapRepository();
 
+        // Match the core semantics of `ArkadeSwaps` (arkade-swaps.ts): an omitted
+        // `swapManager` means enabled-with-defaults. Resolving it here rather than
+        // reading omitted as disabled keeps the client's view of the worker
+        // truthful — the worker autostarts a manager either way, and the previous
+        // `Boolean(config.swapManager)` left `getSwapManager()` null and
+        // `stopSwapManager()` a silent no-op against a manager that was running.
+        const resolvedSwapManager = config.swapManager ?? true;
+
         const svcArkadeSwaps = new ServiceWorkerArkadeSwaps(
             messageTag,
             config.serviceWorker,
             swapRepository,
-            Boolean(config.swapManager),
+            resolvedSwapManager !== false,
         );
 
+        // Strip at build time, not send time: the payload is cached below and
+        // replayed verbatim by the reinit path, so a send-time strip would leave
+        // the cached copy carrying the un-cloneable callbacks.
         const initPayload: RequestInitArkSwaps["payload"] = {
             network: config.network,
             arkServerUrl: config.arkServerUrl,
             swapProvider: { baseUrl: config.swapProvider.getApiUrl() },
-            swapManager: config.swapManager,
+            swapManager: toSerializableSwapManagerConfig(resolvedSwapManager),
             referralId: config.referralId,
         };
 

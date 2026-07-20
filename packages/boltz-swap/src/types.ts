@@ -234,8 +234,10 @@ export interface SubmarineRecoveryInfo {
     /** Total satoshis across the unspent VTXOs. */
     amountSats: number;
     /**
-     * Absolute Unix-timestamp CLTV from the swap's VHTLC, when available.
-     * Compared against wall-clock seconds for refund readiness.
+     * Absolute CLTV locktime from the swap's VHTLC, when available. Either BIP65
+     * form: a block height below 500_000_000, a Unix timestamp in seconds at or
+     * above it. Refund readiness compares it against the chain tip or the wall
+     * clock accordingly.
      */
     refundLocktime?: number;
     /** Reason populated when `status === "invalid_swap"`. */
@@ -362,6 +364,21 @@ export interface ArkadeSwapsConfig {
      */
     swapRepository?: SwapRepository;
 }
+
+/**
+ * The subset of {@link ArkadeSwapsConfig.swapManager} that survives a
+ * `postMessage` structured clone.
+ *
+ * `events` is a bag of function callbacks, which structured clone rejects with a
+ * `DataCloneError` — and which could never fire across the boundary anyway,
+ * since the manager lives in the worker. Service-worker clients register
+ * listeners through `ServiceWorkerArkadeSwaps.on*` instead. Everything else in
+ * `SwapManagerConfig` is a number or boolean, as is `autoStart`, so this
+ * projection is exact.
+ */
+export type SerializableSwapManagerConfig =
+    | boolean
+    | (Omit<SwapManagerConfig, "events"> & { autoStart?: boolean });
 
 /**
  * Configuration for {@link ArkadeSwaps.create} — same as ArkadeSwapsConfig but

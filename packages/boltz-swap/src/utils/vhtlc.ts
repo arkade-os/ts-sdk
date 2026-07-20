@@ -68,8 +68,7 @@ const toBip68RelativeTimelock = (value: number) =>
  * @param args.preimageHash - The SHA256 digest of the preimage (not the raw preimage or RIPEMD160 hash).
  * The function will apply ripemd160(preimageHash) internally to create the final commitment.
  * @param args.timeoutBlockHeights - Boltz timeout fields. Despite the legacy
- *   field name, see {@link VhtlcTimeouts} for the actual semantics — `refund`
- *   is a Unix timestamp, the unilateral fields are BIP68 relative delays.
+ *   field name, see {@link VhtlcTimeouts} for the actual semantics.
  * @returns The created VHTLC script and address.
  */
 export const createVHTLCScript = (args: {

@@ -29,6 +29,7 @@ import {
     BoltzSubmarineSwap,
     type SendLightningPaymentRequest,
     type OptimisticSendLightningPaymentResponse,
+    type SerializableSwapManagerConfig,
     type SubmarineRecoveryInfo,
     type SubmarineRecoveryResult,
     type SubmarineRefundOutcome,
@@ -61,15 +62,29 @@ export class HandlerNotInitializedError extends Error {
     }
 }
 
+/**
+ * Every field here crosses a `postMessage` boundary, so nothing that structured
+ * clone rejects may survive the `Omit`: the providers are live objects (the ark
+ * and indexer ones are rebuilt worker-side from `arkServerUrl`), and
+ * `swapManager` is re-added in its serializable projection because
+ * `SwapManagerConfig.events` holds function callbacks.
+ */
 export type RequestInitArkSwaps = RequestEnvelope & {
     type: "INIT_ARKADE_SWAPS";
     payload: Omit<
         ArkadeSwapsConfig,
-        "wallet" | "swapRepository" | "swapProvider" | "indexerProvider"
+        | "wallet"
+        | "swapRepository"
+        | "swapProvider"
+        | "indexerProvider"
+        | "arkProvider"
+        | "onchainProvider"
+        | "swapManager"
     > & {
         network: Network;
         arkServerUrl: string;
         referralId?: string;
+        swapManager?: SerializableSwapManagerConfig;
         swapProvider: {
             baseUrl: string;
         };

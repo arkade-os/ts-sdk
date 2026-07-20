@@ -85,6 +85,7 @@ export type {
     IncomingPaymentSubscription,
     ArkadeSwapsConfig,
     ArkadeSwapsCreateConfig,
+    SerializableSwapManagerConfig,
     BoltzSubmarineSwap,
     PendingSubmarineSwap, // deprecated
     BoltzReverseSwap,
