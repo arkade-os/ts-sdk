@@ -104,15 +104,27 @@ describe("Indexer provider", () => {
         const fundAmount = 1000;
         const txid = await createVtxo(alice, fundAmount);
         expect(txid).toBeDefined();
-        const fundAmountStr = fundAmount.toString();
 
-        // Wait until indexer reflects the batch totals instead of sleeping.
-        // The settlement above plus indexer propagation can run well past the
-        // 25s default when the shared regtest stack is loaded, so give it room.
+        // Alice's settled vtxo — the leaf this commitment tx must contain.
+        const aliceVtxos = await alice.wallet.getVtxos();
+        expect(aliceVtxos).toHaveLength(1);
+        const aliceVtxo = aliceVtxos[0];
+
+        // A batch aggregates *every* participant that registered an intent in the
+        // same round, so its totals are a lower bound on Alice's contribution, not
+        // an exact match: the `beforeEach` note redemption or any long-running
+        // service on the shared stack can land in Alice's round and settle
+        // alongside her. Assert inclusion here and pin Alice's own output via the
+        // tree leaves below.
+        //
+        // Wait until the indexer reflects the batch instead of sleeping. The
+        // settlement above plus indexer propagation can run well past the 25s
+        // default when the shared regtest stack is loaded, so give it room.
         await waitFor(
             async () => {
                 const c = await indexerProvider.getCommitmentTx(txid);
-                return c?.batches?.["0"]?.totalOutputAmount === fundAmountStr;
+                const batch = c?.batches?.["0"];
+                return batch !== undefined && Number(batch.totalOutputAmount) >= fundAmount;
             },
             { timeout: 60_000 },
         );
@@ -123,8 +135,10 @@ describe("Indexer provider", () => {
         expect(commitmentTx.endedAt).toBeDefined();
         expect(commitmentTx.batches).toBeDefined();
         expect(commitmentTx.batches).toHaveProperty("0");
-        expect(commitmentTx.batches["0"].totalOutputAmount).toBe(fundAmountStr);
-        expect(commitmentTx.batches["0"].totalOutputVtxos).toBe(1);
+        expect(Number(commitmentTx.batches["0"].totalOutputAmount)).toBeGreaterThanOrEqual(
+            fundAmount,
+        );
+        expect(commitmentTx.batches["0"].totalOutputVtxos).toBeGreaterThanOrEqual(1);
 
         const connectsResponse = await indexerProvider.getCommitmentTxConnectors(txid);
         expect(connectsResponse.connectors).toBeDefined();
@@ -152,6 +166,15 @@ describe("Indexer provider", () => {
             vout: 0,
         });
         expect(btlResponse.leaves.length).toBeGreaterThanOrEqual(1);
+
+        // Alice's settled vtxo is a leaf of this batch's tree. Unlike the batch
+        // totals this holds whoever else shared the round, so it is what actually
+        // ties the commitment tx back to her settlement.
+        expect(
+            btlResponse.leaves.some(
+                (leaf) => leaf.txid === aliceVtxo.txid && leaf.vout === aliceVtxo.vout,
+            ),
+        ).toBe(true);
     });
 
     it("should subscribe to scripts", { timeout: 60000 }, async () => {
