@@ -67,9 +67,13 @@ pnpm run test:integration:boltz-swap   # boltz-swap only
 # Per-package stack control (replace :ts-sdk with :boltz-swap for the other)
 pnpm run regtest:up:ts-sdk
 pnpm run regtest:setup:ts-sdk
-pnpm run regtest:test:ts-sdk
+pnpm run regtest:test:ts-sdk                            # whole e2e suite
+pnpm run regtest:test:ts-sdk test/e2e/asset.test.ts    # or selected files only
 pnpm run regtest:down:ts-sdk
 pnpm run regtest:reset:ts-sdk
+
+# CI fans the ts-sdk e2e suite out across parallel groups by passing each group's
+# file list to `regtest:test` (see the `integration` matrix in .github/workflows/ci.yml).
 
 # Release (package-scoped; target = sdk | boltz-swap | all)
 pnpm run release -- boltz-swap patch          # Boltz bugfix only

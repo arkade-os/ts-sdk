@@ -19,7 +19,7 @@ jobs:
       !contains(github.ref, '-rc.') &&
       !contains(github.ref, '-next.')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
