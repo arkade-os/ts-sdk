@@ -102,6 +102,7 @@ import {
     ArkadeCashCreateError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
+    UnknownSigningDescriptorError,
 } from "./wallet/wallet";
 import { createAssetPacket, selectCoinsWithAsset } from "./wallet/asset";
 import { TxTree, TxTreeNode } from "./tree/txTree";
@@ -109,8 +110,9 @@ import { SignerSession, TreeNonces, TreePartialSigs } from "./tree/signingSessio
 import { DustChangeError, Ramps } from "./wallet/ramps";
 import { HDDescriptorProvider } from "./wallet/hdDescriptorProvider";
 import { StaticDescriptorProvider } from "./identity/staticDescriptorProvider";
-import { KeyringDescriptorProvider } from "./identity/keyringDescriptorProvider";
+import { KeyringSigningSource } from "./identity/keyringSigningSource";
 import type { DescriptorProvider, DescriptorSigningRequest } from "./identity/descriptorProvider";
+import type { DescriptorSigningSource } from "./identity/signingSource";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
 import type {
     IVtxoManager,
@@ -433,7 +435,7 @@ export {
     toXOnlySignerHex,
     HDDescriptorProvider,
     StaticDescriptorProvider,
-    KeyringDescriptorProvider,
+    KeyringSigningSource,
     DelegateManagerImpl,
     DelegatorManagerImpl,
     RestDelegateProvider,
@@ -585,6 +587,7 @@ export {
     isRetryableProviderError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
+    UnknownSigningDescriptorError,
 
     // Batch session
     Batch,
@@ -643,6 +646,9 @@ export type {
     // a provider they pass to the wallet.
     DescriptorProvider,
     DescriptorSigningRequest,
+    // The narrower signing-only role: implement this to hold a foreign
+    // signable contract without touching descriptor allocation.
+    DescriptorSigningSource,
     ReadonlyWalletConfig,
     ProviderClass,
     ArkTransaction,
