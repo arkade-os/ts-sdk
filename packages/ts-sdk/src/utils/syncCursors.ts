@@ -42,8 +42,11 @@ export async function updateWalletState(
  * half-applied.
  *
  * Use this over a bare `repo.getWalletState()` when the value read is
- * used to rebuild in-memory state that concurrent mutations also touch;
- * a plain read can land mid-cycle and reconstruct from a stale snapshot.
+ * acted on rather than merely reported — a plain read can land between
+ * a cycle's read and its write and act on a snapshot that no longer
+ * holds. `KeyringSigningSource` resolves every key this way, which is
+ * what lets it treat storage as the source of truth instead of keeping
+ * an in-memory mirror.
  */
 export async function readWalletState(repo: WalletRepository): Promise<WalletState> {
     const prev = walletStateLocks.get(repo) ?? Promise.resolve();
