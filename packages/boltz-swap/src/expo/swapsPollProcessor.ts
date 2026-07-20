@@ -38,7 +38,14 @@ export const swapsPollProcessor: TaskProcessor<SwapTaskDependencies> = {
         item: TaskItem,
         deps: SwapTaskDependencies,
     ): Promise<Omit<TaskResult, "id" | "executedAt">> {
-        const { swapRepository, swapProvider, wallet, arkProvider, indexerProvider } = deps;
+        const {
+            swapRepository,
+            swapProvider,
+            wallet,
+            arkProvider,
+            indexerProvider,
+            onchainProvider,
+        } = deps;
 
         const allSwaps = await swapRepository.getAllSwaps();
 
@@ -60,6 +67,9 @@ export const swapsPollProcessor: TaskProcessor<SwapTaskDependencies> = {
             wallet,
             arkProvider,
             indexerProvider,
+            // Explicit: `wallet` here is the background shim, which carries no
+            // providers for ArkadeSwaps to fall back to.
+            onchainProvider,
             swapProvider,
             swapManager: false,
             swapRepository,
