@@ -59,7 +59,7 @@ import {
     isSubdust,
     isRecoverable,
     isExpired,
-    // VTXO canonical facts and capability predicates
+    // VTXO capability predicates
     canRecoverOnchain,
     canSpendOffchain,
     hasTerminalSpend,
@@ -592,9 +592,7 @@ export {
     isExpired,
     getSequence,
 
-    // VTXO capability predicates — the replacement API the deprecation notices
-    // on isSpendable/isRecoverable/isExpired point at, so they must be exported
-    // as values, not via `export type`.
+    // VTXO capability predicates
     canRecoverOnchain,
     canSpendOffchain,
     hasTerminalSpend,

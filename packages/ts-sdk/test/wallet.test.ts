@@ -911,8 +911,6 @@ describe("Wallet", () => {
         });
 
         it("egress: Wallet.getVtxos returns virtualStatus and spentBy === '' on unspent coins", async () => {
-            // The compatibility guarantees are properties of the normalized shape itself — there
-            // is no egress projection, so they must hold on what getVtxos hands back directly.
             let walletScript = "";
             const getVtxos = vi
                 .fn<IndexerProvider["getVtxos"]>()

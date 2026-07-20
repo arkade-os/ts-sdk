@@ -1381,11 +1381,9 @@ export class WalletMessageHandler
         //
         // Pending is tested first, and before expiry: such funds cannot be renewed until they
         // recover, so once their batch expiry passes `canRecoverOnchain` would otherwise claim
-        // them and report them as renewable-right-now. The buckets are disjoint by construction,
-        // so `totalOffchain` below counts each VTXO once.
+        // them and report them as renewable-right-now. The branches are exclusive, so
+        // `totalOffchain` below counts each VTXO once.
         for (const vtxo of allVtxos) {
-            // Not implied by the predicates once `pendingOutpoints` is consulted first: it is
-            // supplied by the wallet, so the loop must not depend on how it filters.
             if (hasTerminalSpend(vtxo)) continue;
             if (pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
                 pendingRecovery += vtxo.value;
@@ -1810,8 +1808,7 @@ export class WalletMessageHandler
             );
         }
         // Routed through the same helper as the contract buckets rather than reading the
-        // repository directly, so this bucket normalizes too — one boundary is easier to keep true
-        // than two.
+        // repository directly, so this bucket normalizes too.
         addVtxos(
             await getVtxosForContract(this.walletRepository, {
                 script: walletScript,

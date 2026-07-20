@@ -22,9 +22,8 @@ import type { ExtendedVirtualCoin, VirtualCoin, VirtualStatus } from "./index";
  * Below this, a millisecond value is too small to be a real batch expiry and is read as a block
  * height instead. The server returns one scalar for both units.
  *
- * Compared as a UTC constant rather than via `getFullYear()`, which reads local time and would move
- * the boundary with the runtime's offset — making the classification machine-dependent and letting
- * data written in one timezone re-read differently in another.
+ * A UTC constant rather than `getFullYear()`, which reads local time and would make the
+ * classification depend on the runtime's timezone.
  */
 export const EXPIRY_MIN_PLAUSIBLE_MS = Date.UTC(2025, 0, 1);
 
@@ -46,8 +45,7 @@ export type TimeHeight = { timestamp: Date; height?: number };
  * A tip-fetch failure **degrades to timestamp-only rather than blocking**: height-encoded expiry
  * then reads as not expired, which is what the whole SDK did before heights were evaluated at all.
  * Recovery and deprecated-signer migration must not become unavailable because the onchain provider
- * is down. Every path that needs a height goes through here so that guarantee has one
- * implementation rather than one per call site.
+ * is down.
  *
  * Pass no provider to opt out of height entirely — the offline-first paths (balance, coin
  * selection) do this deliberately.
@@ -84,7 +82,6 @@ export type NormalizedVirtualCoin = Omit<
     isSwept: boolean;
     isPreconfirmed: boolean;
     isSpent: boolean;
-    /** `""` = not spent by anything — the public emission convention. Test truthiness. */
     spentBy: string;
     commitmentTxIds: string[];
 };
@@ -93,7 +90,7 @@ export type NormalizedExtendedVirtualCoin = ExtendedVirtualCoin & NormalizedVirt
 
 // --- expiry ------------------------------------------------------------------------------------
 
-/** D1: the wire's single `expiresAt` scalar -> canonical, disambiguating seconds from height. */
+/** The wire's single `expiresAt` scalar -> canonical, disambiguating seconds from height. */
 export function parseWireExpiry(raw: string | null | undefined): {
     expiresAt?: Date;
     expiresAtHeight?: number;
@@ -108,7 +105,7 @@ export function parseWireExpiry(raw: string | null | undefined): {
     return { expiresAtHeight: n };
 }
 
-/** D2: canonical -> legacy `batchExpiry`. */
+/** Canonical -> legacy `batchExpiry`. */
 export function toBatchExpiry(c: {
     expiresAt?: Date;
     expiresAtHeight?: number;
@@ -120,14 +117,12 @@ export function toBatchExpiry(c: {
     return undefined;
 }
 
-/** D3: legacy `batchExpiry` -> canonical, inverting D2 on its domain. */
+/** Legacy `batchExpiry` -> canonical, inverting {@link toBatchExpiry} on its domain. */
 export function parseLegacyExpiry(batchExpiry: number | undefined): {
     expiresAt?: Date;
     expiresAtHeight?: number;
 } {
-    // `<= 0` is guarded for the same reason as in `parseWireExpiry`: it would otherwise yield
-    // `expiresAtHeight: 0`, which every chain tip is past — a VTXO with no expiry would read as
-    // permanently expired.
+    // Same `<= 0` guard as `parseWireExpiry`.
     if (batchExpiry === undefined || batchExpiry <= 0) return {};
     if (batchExpiry >= EXPIRY_MIN_PLAUSIBLE_MS) return { expiresAt: new Date(batchExpiry) };
     return { expiresAtHeight: batchExpiry / 1000 };
@@ -135,7 +130,7 @@ export function parseLegacyExpiry(batchExpiry: number | undefined): {
 
 // --- normalization -----------------------------------------------------------------------------
 
-/** Direction 2: synthesize the legacy projection from canonical facts. */
+/** Synthesize the legacy projection from canonical facts. */
 export function toVirtualStatus(c: {
     isSpent?: boolean;
     isSwept?: boolean;
@@ -160,8 +155,8 @@ export function toVirtualStatus(c: {
 }
 
 /**
- * Direction 3: fill in every canonical fact, deriving from `virtualStatus` when a coin carries only
- * the legacy shape. Idempotent.
+ * Fill in every canonical fact, deriving from `virtualStatus` when a coin carries only the legacy
+ * shape. Idempotent.
  *
  * Facts are derived with `??` so a coin that already carries its own authoritative value keeps it
  * rather than having it re-derived from the lossy projection.
@@ -179,8 +174,8 @@ export function normalizeVtxo<T extends VirtualCoin>(v: T): T & NormalizedVirtua
         : parseLegacyExpiry(v.virtualStatus?.batchExpiry);
 
     // `state === "spent"` cannot tell us whether the coin was *also* swept or preconfirmed — the
-    // collapse destroyed that. Reading them as false matches today's behavior (a spent coin already
-    // fails every spendability check), but it is a decision, not an accident.
+    // collapse destroyed that. Reading them as false matches today's behavior: a spent coin already
+    // fails every spendability check.
     const isSpent = v.isSpent ?? state === "spent";
     const isSwept = v.isSwept ?? state === "swept";
     const isPreconfirmed = v.isPreconfirmed ?? state === "preconfirmed";
@@ -200,7 +195,7 @@ export function normalizeVtxo<T extends VirtualCoin>(v: T): T & NormalizedVirtua
     };
 }
 
-/** Direction 1: wire `Vtxo` -> canonical `VirtualCoin`. Shared by every indexer provider. */
+/** Wire `Vtxo` -> canonical `VirtualCoin`. Shared by every indexer provider. */
 export function convertVtxo(vtxo: Vtxo): NormalizedVirtualCoin {
     const expiry = parseWireExpiry(vtxo.expiresAt);
     const facts = {
@@ -236,11 +231,9 @@ export function convertVtxo(vtxo: Vtxo): NormalizedVirtualCoin {
 // --- provider boundary -------------------------------------------------------------------------
 
 /**
- * Boundary #1: the only sanctioned way for SDK logic to read VTXOs from an `IndexerProvider`.
- *
- * A drop-in for `provider.getVtxos()` that normalizes whatever came back. For the built-in
- * providers the facts are already present and this is a cheap pass-through; for a consumer-supplied
- * provider it is what makes the contract true.
+ * The only sanctioned way for SDK logic to read VTXOs from an `IndexerProvider`: a drop-in for
+ * `provider.getVtxos()` that normalizes whatever came back. A cheap pass-through for the built-in
+ * providers, which already populate the facts.
  */
 export async function getNormalizedVtxos(
     provider: Pick<IndexerProvider, "getVtxos">,
@@ -259,8 +252,7 @@ export async function getNormalizedVtxos(
  * Unions all three spend facts rather than trusting any one of them. The wire contract permits
  * `isSpent: true` with an empty `spentBy` (settlement inputs needing no forfeit are written that
  * way), so a `spentBy || settledBy` definition would classify a spent VTXO as spendable — inflating
- * balance and selecting it for a send that must fail. The union can only ever classify *more*
- * VTXOs as spent, which is the safe direction to err.
+ * balance and selecting it for a send that must fail.
  */
 export function hasTerminalSpend(vtxo: VirtualCoin): boolean {
     const n = normalizeVtxo(vtxo);
@@ -272,9 +264,9 @@ export function hasTerminalSpend(vtxo: VirtualCoin): boolean {
  * in explicitly by {@link canSpendOffchain} / {@link canRecoverOnchain}.
  *
  * @remarks
- * Deliberately not named `isExpired`: the deprecated {@link isExpired} also returns `true` for a
- * swept VTXO, and two same-named predicates with different truth conditions is how a call site gets
- * silently rewired.
+ * Not named `isExpired`: the deprecated {@link isExpired} also returns `true` for a swept VTXO, and
+ * two same-named predicates with different truth conditions is how a call site gets silently
+ * rewired.
  *
  * Height-based expiry is only evaluated when `now.height` is supplied.
  */
@@ -309,10 +301,9 @@ export function canRecoverOnchain(vtxo: VirtualCoin, now: TimeHeight): boolean {
  * The `OffchainInput` fields that come from the VTXO itself, shared by every offchain fee estimate.
  *
  * @remarks
- * `expiry` goes through {@link toBatchExpiry} rather than reading `expiresAt` directly, so a
- * height-encoded expiry keeps producing the same (dimensionally meaningless, near-1970) date the
- * legacy `batchExpiry` path always fed the estimator. Fee estimation is a no-height path: changing
- * what the estimator sees here would move fees, which is out of scope.
+ * `expiry` goes through {@link toBatchExpiry} so the estimator keeps seeing exactly what the legacy
+ * `batchExpiry` path fed it. Correcting the height case here would move fees, which is out of
+ * scope.
  */
 export function toOffchainInputFeeParams(vtxo: NormalizedVirtualCoin): {
     amount: bigint;

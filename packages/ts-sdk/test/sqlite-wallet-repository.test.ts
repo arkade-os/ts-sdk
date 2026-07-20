@@ -288,9 +288,8 @@ describe("SQLiteWalletRepository", () => {
         });
 
         it("derives isSpent for a VTXO stored with a null is_spent column", async () => {
-            // A null column must not surface as `undefined`: !!undefined is false, so the coin
-            // would read as spendable on the one fact that decides spendability. Deserialization
-            // derives it from the legacy state instead.
+            // Surfacing `undefined` would read as spendable — see the normalizeVtxo cases in
+            // vtxo-canonical.test.ts.
             const vtxo = createMockVtxo("tx-nospent", 0, 1000);
             (vtxo as any).isSpent = undefined;
 

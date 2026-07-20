@@ -2,14 +2,9 @@
 // through `getNormalizedVtxos`, which is what guarantees every VTXO entering SDK logic carries its
 // canonical facts.
 //
-// This cannot be a grep, in either direction:
-//   - `\.getVtxos\(` drowns in false positives — Wallet, ReadonlyWallet, WalletRepository and the
-//     legacy StorageAdapter all have a method of that name, and wallet.ts and
-//     wallet-message-handler.ts contain both kinds, so a file-level allowlist can't separate them.
-//   - `indexerProvider\.getVtxos\(` misses multi-line call chains and aliased receivers.
-//
-// The requirement is about the receiver's *type*, so the check resolves the invoked method's
-// declaration through the TypeScript checker and flags it only when it lives on IndexerProvider.
+// Resolved through the TypeScript checker rather than by grep, because the requirement is about the
+// receiver's *type*: several unrelated classes declare a `getVtxos`, and a dotted pattern would
+// miss multi-line call chains and aliased receivers.
 
 import ts from "typescript";
 import { join, relative } from "node:path";

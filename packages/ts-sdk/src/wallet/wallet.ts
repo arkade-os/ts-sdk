@@ -1055,9 +1055,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
         let recoverable = 0;
         let pendingRecovery = 0;
         // Buckets read the same capability the send path does, so nothing counted as available can
-        // be refused by `send`. No chain tip here: balance is an offline-first read and must not
-        // gain a network dependency, so height-encoded expiry reads as not expired — the send
-        // filter deliberately makes the same choice.
+        // be refused by `send`. No chain tip: balance is an offline-first read and must not gain a
+        // network dependency, so height-encoded expiry reads as not expired — as it does on the
+        // send path.
         const now = { timestamp: new Date() };
         // Funds under a past-cutoff (EXPIRED) deprecated signer that are not yet
         // swept are NOT spendable — excluded from settled/preconfirmed/available
@@ -1080,9 +1080,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
             .filter((coin) => canSpendOffchain(coin, now) && !isPendingRecovery(coin))
             .reduce((sum, coin) => sum + coin.value, 0);
         // `!isPendingRecovery` keeps the buckets disjoint, so `totalOffchain` counts each VTXO
-        // once: a pending-recovery VTXO whose batch expiry has passed satisfies
-        // `canRecoverOnchain` too, and it belongs to `pendingRecovery` — it cannot be renewed
-        // until it recovers.
+        // once: a pending-recovery VTXO past its batch expiry satisfies `canRecoverOnchain` too,
+        // and it belongs to `pendingRecovery` — it cannot be renewed until it recovers.
         recoverable = vtxos
             .filter((coin) => canRecoverOnchain(coin, now) && !isPendingRecovery(coin))
             .reduce((sum, coin) => sum + coin.value, 0);
@@ -1135,8 +1134,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const contractManager = await this.getContractManager();
         const vtxos = await contractManager.getContractsWithVtxos();
 
-        // No chain tip: this is an offline-first repository read. Balance makes the same choice, and
-        // the two must agree — see getBalance.
+        // No chain tip, for the same reason as `getBalance`, which this must agree with.
         const now = { timestamp: new Date() };
         return vtxos
             .flatMap((_) => _.vtxos)
@@ -3428,7 +3426,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      *
      * Boarding inputs are the non-VTXO coins (no `script`), the same
      * discriminator {@link handleSettlementFinalizationEvent} uses; the
-     * `typeof` guard skips arknote string inputs before the `in` test.
+     * `typeof` guard skips the arknote strings settle also accepts.
      *
      * No-ops for static / `auto` wallets (no descriptor provider — boarding
      * stays on its fixed index-0 address). Best-effort and non-fatal: the
@@ -3440,8 +3438,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      */
     private async maybeRotateBoardingAfterBoard(inputs: SettleParams["inputs"]): Promise<void> {
         if (!this._descriptorProvider) return;
-        // `typeof` first: settle historically tolerates arknote strings here, and an arknote is
-        // not a boarding input.
         const consumedBoarding = inputs.some(
             (input) => typeof input !== "string" && !isVirtualCoin(input),
         );
@@ -4289,11 +4285,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             } else if (vtxo.isSwept) {
                 // The server swept the batch at expiry. The funds are still
                 // owed, but only a settlement can move them — no sweep can.
-                //
-                // Bare `isSwept` rather than a recovery capability: the
-                // terminal-spend branch above already ran, so this reproduces
-                // the old `isRecoverable` (`isSwept && !spent`) exactly, without
-                // re-testing spentness or widening to past-expiry coins.
+                // Bare `isSwept`, not a recovery capability: this branch is
+                // about sweptness alone, not about past-expiry coins.
                 unclaimed.push(cashReport(vtxo, "swept"));
             } else if (vtxo.assets && vtxo.assets.length > 0) {
                 // The thin sweep builds a BTC-only output; sweeping an
@@ -4777,8 +4770,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             // `inputs` is a public parameter, so it may be legacy-shaped: a coin carrying only
             // the deprecated status object would read `undefined` for every canonical fact and
-            // fail the expiry check below despite having an expiry. Normalize once up front and
-            // use the result for the rest of the method.
+            // fail the expiry check below despite having an expiry.
             const normalizedInputs = inputs.map(normalizeVtxo);
 
             // Only spendable, non-recoverable, batch-expiry-bearing VTXOs migrate
@@ -4786,12 +4778,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             // path, and the DB-update path only persists a wallet-owned output
             // when an input batch expiry exists (unrolled inputs carry none).
             //
-            // A caller running a multi-VTXO pass passes its own tip so both sides judge expiry
-            // against the same height and cannot disagree at the boundary — otherwise a VTXO
-            // that passed the caller's gate could fail here and abort the whole batch. Fetched
-            // here only for standalone callers, and degrading to timestamp-only if the tip is
-            // unreachable: migrating funds off an expiring signer must not depend on the onchain
-            // provider being up.
+            // A caller running a multi-VTXO pass passes its own tip so its eligibility gate and
+            // this check cannot disagree at the expiry boundary; standalone callers fetch here.
             const at = now ?? (await resolveTimeHeight(this.onchainProvider));
             for (const input of normalizedInputs) {
                 if (!canSpendOffchain(input, at)) {

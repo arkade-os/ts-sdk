@@ -198,10 +198,8 @@ export function byValueDescending<T extends { value: number }>(vtxos: T[]): T[] 
 }
 
 /**
- * The {@link TimeHeight} for one expiry-driven pass, from whichever wallet we were handed.
- *
- * Degradation on tip-fetch failure lives in {@link resolveTimeHeight}; this only digs the provider
- * out, since `onchainProvider` lives on the concrete wallets rather than on `IReadonlyWallet`.
+ * The {@link TimeHeight} for one expiry-driven pass. Only digs the provider out of whichever wallet
+ * we were handed — `onchainProvider` lives on the concrete wallets, not on `IReadonlyWallet`.
  */
 async function fetchTimeHeight(wallet: IReadonlyWallet): Promise<TimeHeight> {
     return resolveTimeHeight((wallet as Partial<SweepCapableWallet>).onchainProvider);
@@ -212,12 +210,9 @@ async function fetchTimeHeight(wallet: IReadonlyWallet): Promise<TimeHeight> {
  *
  * @remarks
  * Mirrors that method's two rejection conditions exactly, so the migration leg never submits an
- * input the send path throws on. This matters because the send path validates the batch as a
- * whole: one rejected input aborts the entire submission, taking every other migratable VTXO with
- * it. Partitioning here turns that into a per-input report line.
- *
- * The same `TimeHeight` is passed down to the send path with the inputs, so the two sides cannot
- * disagree at the expiry boundary — the failure mode this predicate exists to prevent.
+ * input the send path throws on — see {@link MigrationLegReport.notSpendableOffchain} for why that
+ * matters. The same `TimeHeight` goes down to the send path with the inputs, so the two sides
+ * cannot disagree at the expiry boundary.
  */
 function canMigrateBySend(vtxo: NormalizedExtendedVirtualCoin, now: TimeHeight): boolean {
     // The send path spends cooperatively, so swept/expired inputs belong to recovery instead.
@@ -245,7 +240,6 @@ export function byExpiryAscending(
     const expiryKey = (vtxo: NormalizedExtendedVirtualCoin) => {
         // Swept: maximally urgent, and carries no wall-clock instant to order by.
         if (vtxo.isSwept) return -Infinity;
-        // Past or future, both orderable on one scale.
         if (vtxo.expiresAt !== undefined) return vtxo.expiresAt.getTime();
         // A height-encoded expiry has no place on the millisecond scale, so it can only be
         // ranked as urgent or not. Needs `now.height`; without one it reads as not expired.
@@ -1370,8 +1364,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             } else {
                 threshold = DEFAULT_RENEWAL_CONFIG.thresholdMs;
             }
-            // One chain tip for the whole pass: selection, pre-flight re-selection and the
-            // expiry sort below must judge every VTXO against the same height.
+            // One chain tip for the whole pass — see `selectExpiringVtxos`.
             const now = await fetchTimeHeight(this.wallet);
             let vtxos = await this.selectExpiringVtxos(threshold, now);
 
@@ -1795,9 +1788,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         // VTXO leg — send to the active-signer self output. No settlement events.
         if (vtxoMigratable.length > 0) {
-            // One chain tip for the leg, shared with the send path below: the eligibility
-            // partition and the send path's own validation must judge every input against the
-            // same height, or an input that passes here could still abort the whole submission.
+            // One chain tip for the leg, shared with the send path below — see
+            // {@link canMigrateBySend}.
             const now = await fetchTimeHeight(this.wallet);
             report.vtxos = await this.runMigrationLeg(
                 vtxoMigratable,
@@ -1867,8 +1859,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         /**
          * Inputs this leg's submit path would reject. Filtered out *before* sizing so they
          * neither consume batch capacity nor count toward the dust floor. Omit when the leg's
-         * submit path has no such gate (the boarding leg settles, and settle validates
-         * per-input server-side).
+         * submit path has no such gate — the boarding leg settles, and settle validates per-input
+         * server-side.
          */
         eligible?: (c: C) => boolean,
     ): Promise<MigrationLegReport> {
@@ -2730,8 +2722,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // Collect near-expiry VTXOs unless the event-driven path is mid-renewal.
         // Skipping when renewalInProgress avoids double-submitting the same VTXOs.
         let expiringVtxos: NormalizedExtendedVirtualCoin[] = [];
-        // One chain tip for the whole pass, shared with the expiry sort below. Fetched here
-        // rather than at the top of the method so a boarding-only pass stays offline.
+        // Fetched here rather than at the top of the method so a boarding-only pass stays offline.
         let now: TimeHeight | undefined;
         if (!this.renewalInProgress) {
             try {

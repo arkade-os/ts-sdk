@@ -58,9 +58,8 @@ function memoryAdapter(): StorageAdapter {
 }
 
 /**
- * Every canonical fact the capabilities read, plus a real Date for `expiresAt` — a type annotation
- * won't catch a string here, and `.getTime()` on one returns NaN, which compares false against
- * everything and silently reads as "not expired".
+ * Every canonical fact the capabilities read, plus a real Date for `expiresAt` — the type
+ * annotation alone won't catch the ISO string a JSON round-trip leaves behind.
  */
 function expectCanonical(v: ExtendedVirtualCoin) {
     expect(v.isSwept).toBe(true);

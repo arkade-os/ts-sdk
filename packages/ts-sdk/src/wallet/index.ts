@@ -663,9 +663,7 @@ export interface VirtualCoin extends Coin {
     /**
      * Virtual output status.
      *
-     * @deprecated Use `isSwept`, `isPreconfirmed`, `isSpent`, `expiresAt`, `expiresAtHeight`,
-     * `commitmentTxIds`, `spentBy`, and `settledBy`. This object is retained only as a
-     * backward-compatible projection.
+     * @deprecated See {@link VirtualStatus}.
      */
     virtualStatus: VirtualStatus;
     /** Assets carried by this virtual output, if any. */

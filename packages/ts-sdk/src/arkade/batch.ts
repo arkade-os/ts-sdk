@@ -53,14 +53,12 @@ export type ArkadeExtendedVirtualCoin = ExtendedVirtualCoin & {
  *
  * @remarks
  * Spelled as a union so the discriminant {@link isVtxoCoin} reads — `script`, required on
- * `VirtualCoin` and absent from `ExtendedCoin` — is visible in the type. Declaring the parameter as
- * `ArkadeExtendedCoin[]` alone would let a caller hand over a virtual output with no `script`,
- * which the handler would silently treat as a boarding input and settle without a forfeit.
+ * `VirtualCoin` and absent from `ExtendedCoin` — is visible in the type. `ArkadeExtendedCoin[]`
+ * alone would let a caller hand over a virtual output with no `script`, which the handler would
+ * silently treat as boarding and settle without a forfeit.
  */
 export type ArkadeBatchInput = ArkadeExtendedCoin | ArkadeExtendedVirtualCoin;
 
-// Routed through the shared discriminator (keyed on `script`) rather than
-// testing for the deprecated legacy status object.
 const isVtxoCoin = (input: ArkadeBatchInput): input is ArkadeExtendedVirtualCoin =>
     isVirtualCoin(input);
 

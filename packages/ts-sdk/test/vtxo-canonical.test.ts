@@ -241,7 +241,7 @@ describe("normalization", () => {
 
     it("reads isSwept/isPreconfirmed as false for a spent legacy coin", () => {
         // The collapse destroyed whether a spent coin was also swept; false matches today's
-        // behavior, and it is a decision rather than an accident.
+        // behavior.
         const n = normalizeVtxo(legacyCoin("spent"));
         expect(n.isSwept).toBe(false);
         expect(n.isPreconfirmed).toBe(false);

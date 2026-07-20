@@ -79,12 +79,9 @@ export const deserializeTapLeaf = (t: SerializedTapLeaf): TapLeafScript => {
 
 // Normalized on the way out so rows written before canonical facts existed — and rows from the
 // column-mapped backends, whose explicit column lists don't carry them — come back with the facts
-// reconstructed from the legacy blob. `expiresAt` gets the same treatment `createdAt` has always
-// needed: rehydrated to a real Date rather than the ISO string JSON left behind.
-//
-// This is convenience and durability, not the correctness boundary: repository *reads* are
-// normalized at `getVtxosForContract`, which also covers InMemory (stores by reference, never
-// deserializes) and consumer-implemented repositories that never touch this code.
+// reconstructed from the legacy blob, and with `expiresAt` rehydrated to a real Date rather than
+// the ISO string JSON left behind. The correctness boundary is `getVtxosForContract`, which also
+// covers the backends that never reach this code.
 export const deserializeVtxo = (o: SerializedVtxo): NormalizedExtendedVirtualCoin =>
     normalizeVtxo({
         ...o,

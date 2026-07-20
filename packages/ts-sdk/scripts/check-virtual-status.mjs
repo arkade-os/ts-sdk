@@ -1,10 +1,9 @@
-// Fails when production SDK logic reintroduces a dependency on `virtualStatus`.
+// Fails when production SDK logic reintroduces a dependency on `virtualStatus`. Behavior must read
+// the canonical facts and capability predicates instead; see src/wallet/vtxo.ts.
 //
-// The identifier is matched bare rather than as `virtualStatus.` — destructuring reads
-// (`const { batchExpiry } = vtxo.virtualStatus`) and `"virtualStatus" in x` discriminators are
-// exactly the forms that slipped through before, and a dotted pattern misses both.
-//
-// Behavior must read the canonical facts and capability predicates instead; see src/wallet/vtxo.ts.
+// The identifier is matched bare rather than as `virtualStatus.`, so that destructuring reads
+// (`const { batchExpiry } = vtxo.virtualStatus`) and `"virtualStatus" in x` discriminators — the
+// forms that slipped through before — are caught too.
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";

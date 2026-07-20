@@ -80,8 +80,8 @@ describe("source compatibility", () => {
 
     it("egress is projection-free: the normalized coin IS the public coin", () => {
         const n = normalizeVtxo(LEGACY_COIN);
-        // Assignable to the public type with no mapping step — there is no egress projection to
-        // forget, which is the property that keeps the two shapes from drifting.
+        // Assignable to the public type with no mapping step, so there is no egress projection to
+        // forget.
         const asPublic: VirtualCoin = n;
         expect(asPublic.virtualStatus).toBeDefined();
         expect(asPublic.virtualStatus.state).toBe("swept");
