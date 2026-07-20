@@ -4,7 +4,7 @@ import { DescriptorProvider, DescriptorSigningRequest } from "./descriptorProvid
 import { normalizeToDescriptor, extractPubKey } from "./descriptor";
 import { SingleKey } from "./singleKey";
 import { WalletRepository, WalletState } from "../repositories/walletRepository";
-import { updateWalletState } from "../utils/syncCursors";
+import { readWalletState, updateWalletState } from "../utils/syncCursors";
 import { Transaction } from "../utils/transaction";
 
 /**
@@ -69,6 +69,9 @@ export class KeyringDescriptorProvider implements DescriptorProvider {
      * persistence is not; kept in lockstep with storage by
      * {@link importKey} / {@link deleteKey}, and seeded at
      * {@link create}.
+     *
+     * Shared with every other live provider on the same repository (see
+     * {@link sharedKeyring}), so a purge takes effect everywhere at once.
      */
     private readonly keys: Map<string, SingleKey>;
 
@@ -91,14 +94,23 @@ export class KeyringDescriptorProvider implements DescriptorProvider {
      * from the repository. Unlike `HDDescriptorProvider.create`, this
      * *does* read at construction: `isOurs` is synchronous and must be
      * able to answer for persisted keys from the first call.
+     *
+     * The loaded entries go into the repository-scoped keyring shared by
+     * all live providers on `walletRepository`, and storage — the system
+     * of record — wins: entries it no longer holds are dropped from
+     * memory too, so a wiped repository cannot leave purged key material
+     * live behind a freshly created provider. The read is taken under
+     * the wallet-state mutex so this reconciliation cannot rebuild from
+     * a snapshot torn by a concurrent import or purge.
      */
     static async create(
         base: DescriptorProvider,
         walletRepository: WalletRepository,
     ): Promise<KeyringDescriptorProvider> {
-        const state = await walletRepository.getWalletState();
-        const settings = parseSettings(state ?? {});
-        const entries = new Map<string, SingleKey>();
+        const state = await readWalletState(walletRepository);
+        const settings = parseSettings(state);
+        const entries = sharedKeyring(walletRepository);
+        entries.clear();
         for (const [pubKeyHex, privKeyHex] of Object.entries(settings.keys)) {
             entries.set(pubKeyHex, SingleKey.fromHex(privKeyHex));
         }
@@ -243,6 +255,29 @@ export class KeyringDescriptorProvider implements DescriptorProvider {
             };
         });
     }
+}
+
+/**
+ * The in-memory keyring for a repository, shared by every live provider
+ * built over it.
+ *
+ * Per-instance mirrors would diverge the moment two providers on one
+ * repository disagreed: a key purged through one would stay resident in
+ * the other, which would keep claiming it via {@link
+ * KeyringDescriptorProvider.isOurs} and keep signing with it — the exact
+ * outcome `deleteKey` exists to prevent. Keyed by repository (as the
+ * wallet-state mutex is) because the repository is what the persisted
+ * keyring belongs to; providers are just views onto it.
+ */
+const keyringsByRepository = new WeakMap<WalletRepository, Map<string, SingleKey>>();
+
+function sharedKeyring(repo: WalletRepository): Map<string, SingleKey> {
+    let entries = keyringsByRepository.get(repo);
+    if (!entries) {
+        entries = new Map<string, SingleKey>();
+        keyringsByRepository.set(repo, entries);
+    }
+    return entries;
 }
 
 /**

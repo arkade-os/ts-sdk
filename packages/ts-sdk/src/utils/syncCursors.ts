@@ -36,6 +36,30 @@ export async function updateWalletState(
 }
 
 /**
+ * Read wallet state through the same per-repository mutex
+ * {@link updateWalletState} uses, so the read is ordered against
+ * in-flight read-modify-write cycles rather than observing one
+ * half-applied.
+ *
+ * Use this over a bare `repo.getWalletState()` when the value read is
+ * used to rebuild in-memory state that concurrent mutations also touch;
+ * a plain read can land mid-cycle and reconstruct from a stale snapshot.
+ */
+export async function readWalletState(repo: WalletRepository): Promise<WalletState> {
+    const prev = walletStateLocks.get(repo) ?? Promise.resolve();
+    const op = prev.then(async () => (await repo.getWalletState()) ?? {});
+    // Store a version that never rejects so the chain doesn't break.
+    walletStateLocks.set(
+        repo,
+        op.then(
+            () => {},
+            () => {},
+        ),
+    );
+    return op;
+}
+
+/**
  * Settings key that gates interpretation of the `lastSyncTime` field.
  *
  * The `lastSyncTime` column existed pre-PR with a different semantic

@@ -135,6 +135,24 @@ describe("KeyringDescriptorProvider", () => {
             );
         });
 
+        it("shows a key imported by one provider to its live siblings", async () => {
+            const { provider: sibling } = await makeProvider(walletRepo);
+
+            await provider.importKey(FOREIGN_PRIVKEY);
+
+            expect(sibling.hasKey(foreignDescriptor)).toBe(true);
+        });
+
+        it("does not resurrect keys in memory after the repo is cleared", async () => {
+            await provider.importKey(FOREIGN_PRIVKEY);
+            await walletRepo.clear();
+
+            const { provider: rebooted } = await makeProvider(walletRepo);
+
+            expect(rebooted.hasKey(foreignDescriptor)).toBe(false);
+            expect(rebooted.isOurs(foreignDescriptor)).toBe(false);
+        });
+
         it("throws when `keys` is not an object", async () => {
             const repo = new InMemoryWalletRepository();
             await repo.saveWalletState({ settings: { keyring: { keys: "nope" } } });
@@ -220,6 +238,34 @@ describe("KeyringDescriptorProvider", () => {
 
             expect(await provider.deleteKey(foreignDescriptor)).toBe(false);
             expect(await provider.deleteKey(baseDescriptor)).toBe(false);
+        });
+
+        it("purges from a sibling provider on the same repo", async () => {
+            // a stale per-instance mirror would keep claiming the purged
+            // descriptor and keep signing with the key
+            await provider.importKey(FOREIGN_PRIVKEY);
+            const { provider: sibling } = await makeProvider(walletRepo);
+            expect(sibling.hasKey(foreignDescriptor)).toBe(true);
+
+            expect(await provider.deleteKey(foreignDescriptor)).toBe(true);
+
+            expect(sibling.hasKey(foreignDescriptor)).toBe(false);
+            expect(sibling.isOurs(foreignDescriptor)).toBe(false);
+            await expect(
+                sibling.signMessageWithDescriptor(foreignDescriptor, new Uint8Array(32).fill(7)),
+            ).rejects.toThrow(/does not belong to this provider/);
+        });
+
+        it("leaves a sibling's other keys intact", async () => {
+            await provider.importKey(FOREIGN_PRIVKEY);
+            await provider.importKey(OTHER_FOREIGN_PRIVKEY);
+            const { provider: sibling } = await makeProvider(walletRepo);
+
+            await provider.deleteKey(foreignDescriptor);
+
+            expect(sibling.listKeyringDescriptors()).toEqual([
+                `tr(${xOnlyHex(OTHER_FOREIGN_PRIVKEY)})`,
+            ]);
         });
 
         it("leaves the other keys intact", async () => {
