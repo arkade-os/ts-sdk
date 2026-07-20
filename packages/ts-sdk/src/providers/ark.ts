@@ -14,6 +14,7 @@ import type { IntentFeeConfig } from "../arkfee";
 import { Intent } from "../intent";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 import { fetch } from "../utils/fetch";
+import { rateGate } from "./rateGate";
 
 /**
  * Thrown by {@link RestArkProvider} when arkd rejects a request with
@@ -347,6 +348,10 @@ export class RestArkProvider implements ArkProvider {
             throw toProviderUnavailable(err, "arkade");
         }
         if (response.ok) return response;
+        // Report-only (see rateGate): this POST is never delayed or retried.
+        if (response.status === 429) {
+            rateGate.reportRateLimited(url, response.headers?.get("retry-after"));
+        }
         // Read the body first: error classification must branch on its content,
         // not just the HTTP status. arkd is behind grpc-gateway, which renders
         // application-level errors across the 4xx AND 5xx range (gRPC INTERNAL ->
@@ -393,8 +398,13 @@ export class RestArkProvider implements ArkProvider {
 
     async getInfo(): Promise<ArkInfo> {
         const url = `${this.serverUrl}/v1/info`;
-        const response = await fetch(url);
+        // Wait + report (see rateGate): shares an origin, and a limiter, with
+        // the indexer.
+        const response = await rateGate.run(url, () => fetch(url));
         if (!response.ok) {
+            if (response.status === 429) {
+                rateGate.reportRateLimited(url, response.headers?.get("retry-after"));
+            }
             const errorText = await response.text();
             // A 429 or 5xx means the operator is up but temporarily unable to
             // serve — a retryable availability failure, not a config/auth error.

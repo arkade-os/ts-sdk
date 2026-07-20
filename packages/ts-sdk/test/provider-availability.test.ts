@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RestIndexerProvider, RestArkProvider, ProviderUnavailableError, ArkError } from "../src";
 import { throwIfHttpUnavailable, toProviderUnavailable } from "../src/providers/errors";
 import { FetchError } from "../src/utils/fetch";
+import { rateGate } from "../src/providers/rateGate";
 
 const { mockFetch } = vi.hoisted(() => ({ mockFetch: vi.fn() }));
 
@@ -77,11 +78,17 @@ describe("toProviderUnavailable", () => {
 });
 
 describe("RestIndexerProvider availability classification", () => {
-    beforeEach(() => mockFetch.mockReset());
+    beforeEach(() => {
+        mockFetch.mockReset();
+        rateGate.reset();
+    });
     const provider = () => new RestIndexerProvider("http://localhost:7070");
 
+    // `indexerFetch` retries availability failures, so these mocks must answer
+    // every attempt, not just the first — the assertion is about the error that
+    // surfaces after the ladder is exhausted.
     it("maps a 503 response to ProviderUnavailableError(indexer)", async () => {
-        mockFetch.mockResolvedValueOnce({
+        mockFetch.mockResolvedValue({
             ok: false,
             status: 503,
             statusText: "Service Unavailable",
@@ -90,13 +97,33 @@ describe("RestIndexerProvider availability classification", () => {
             name: "ProviderUnavailableError",
             message: expect.stringContaining("indexer unavailable"),
         });
+        expect(mockFetch).toHaveBeenCalledTimes(3);
     });
 
     it("maps a transport failure to ProviderUnavailableError(indexer)", async () => {
-        mockFetch.mockRejectedValueOnce(new FetchError("down", { url: "u" }));
+        mockFetch.mockRejectedValue(new FetchError("down", { url: "u" }));
         await expect(provider().getVtxos({ scripts: ["s"] })).rejects.toBeInstanceOf(
             ProviderUnavailableError,
         );
+        expect(mockFetch).toHaveBeenCalledTimes(3);
+    });
+
+    it("retries a 503 and succeeds on a later attempt", async () => {
+        mockFetch
+            .mockResolvedValueOnce({ ok: false, status: 503, statusText: "Service Unavailable" })
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ vtxos: [] }) });
+        await expect(provider().getVtxos({ scripts: ["s"] })).resolves.toMatchObject({
+            vtxos: [],
+        });
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not retry a terminal 404", async () => {
+        mockFetch.mockResolvedValue({ ok: false, status: 404, statusText: "Not Found" });
+        await expect(provider().getVtxos({ scripts: ["s"] })).rejects.toThrow(
+            /Failed to fetch vtxos/,
+        );
+        expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
     it("leaves a 404 as a terminal plain Error (not unavailable)", async () => {

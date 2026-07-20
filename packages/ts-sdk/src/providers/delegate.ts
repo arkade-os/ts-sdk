@@ -1,6 +1,7 @@
 import { Intent } from "../intent";
 import { SignedIntent } from "./ark";
 import { baseFetch } from "../utils/fetch";
+import { rateGate } from "./rateGate";
 
 /**
  * Delegate identity and fee information returned by `getDelegateInfo`.
@@ -119,9 +120,14 @@ export class RestDelegateProvider implements DelegateProvider {
     async getDelegateInfo(): Promise<DelegateInfo> {
         /** TODO: Update later once Fulmine URL changed */
         const url = `${this.url}/v1/delegator/info`;
-        const response = await baseFetch(url);
+        // Wait + report (see rateGate). Origin-keyed, so a delegate on its own
+        // host is throttled independently of the operator's.
+        const response = await rateGate.run(url, () => baseFetch(url));
 
         if (!response.ok) {
+            if (response.status === 429) {
+                rateGate.reportRateLimited(url, response.headers?.get("retry-after"));
+            }
             const errorText = await response.text();
             throw new Error(`Failed to get delegate info: ${errorText}`);
         }
