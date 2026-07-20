@@ -277,14 +277,18 @@ describe("vhtlc", () => {
             // seconds-CLTV would need both wall-clock passage and a later block to
             // carry that time forward, so neither mining nor waiting alone gets there.
             //
-            // The buffer is wide (not a tight +1) because `height` comes from
-            // EsploraProvider (mempool, polling Fulcrum every 2s), while arkd matures
-            // the CLTV against its own nbxplorer-derived tip — a separate indexing
-            // pipeline with no sync guarantee against mempool's. A thin margin here
-            // previously let indexer lag alone satisfy the locktime before the first
-            // submitTx below, failing this test's premature-rejection assertion.
+            // The buffer is squeezed between two bounds. Below it, the locktime must
+            // not already be matured against arkd's own nbxplorer-derived tip, which
+            // is a separate indexing pipeline from the mempool/Fulcrum one `height`
+            // comes from; a few blocks of slack cover that skew, and with
+            // AUTOMINE_INTERVAL=0 (see .env.regtest) nothing advances the tip between
+            // this read and the first submitTx below. Above it, the whole maturation
+            // must fit inside the funding VTXO's batch lifetime —
+            // ARKD_VTXO_TREE_EXPIRY=20 blocks — because an expired batch makes the
+            // input recoverable-only, and the retry then fails VTXO_RECOVERABLE
+            // instead of exercising the regression.
             const { height } = await onchainProvider.getChainTip();
-            const refundLocktime = BigInt(height + 30);
+            const refundLocktime = BigInt(height + 5);
 
             const preimageHash = hash160(new TextEncoder().encode("preimage"));
             const vhtlcScript = new VHTLC.Script({
@@ -352,7 +356,7 @@ describe("vhtlc", () => {
             expect(isArkError(rejection, ArkErrorName.FORFEIT_CLOSURE_LOCKED)).toBe(true);
             expect((rejection as ArkError).metadata?.type).toBe("height");
 
-            mineBlocks(31);
+            mineBlocks(6);
             await waitFor(
                 async () => (await onchainProvider.getChainTip()).height >= Number(refundLocktime),
             );
