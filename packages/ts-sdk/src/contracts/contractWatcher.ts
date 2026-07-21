@@ -563,9 +563,14 @@ export class ContractWatcher {
      * running), and every subscribe posts the *whole* accumulated script list —
      * so a restore scan that discovers N contracts sends N growing POSTs,
      * quadratic in script-slots. Inside this scope those updates are only
-     * marked dirty; the flush is guaranteed on both the success and the error
-     * path, and the failsafe poll covers the window where a just-added contract
-     * is not yet streaming.
+     * marked dirty, flushed once on the way out (success and error path alike).
+     *
+     * A contract added inside the scope is therefore not streaming until the
+     * flush. Nothing in the watcher closes that window — the failsafe poll
+     * replays repository state and cannot see VTXOs no one has fetched yet. The
+     * one caller, `scanContracts`, is covered because `Wallet.restore` follows
+     * it with a bulk `refreshVtxos`. A new caller must provide its own
+     * equivalent catch-up, or keep the scope short enough not to need one.
      */
     async withCoalescedSubscription<T>(fn: () => Promise<T>): Promise<T> {
         this.subscriptionBatchDepth++;
