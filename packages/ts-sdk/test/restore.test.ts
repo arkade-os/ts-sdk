@@ -17,6 +17,7 @@ import { VtxoScript } from "../src/script/base";
 import type { RelativeTimelock } from "../src/script/tapscript";
 import { contractHandlers } from "../src/contracts/handlers";
 import { makeManagerForTest, makeDeps } from "./helpers/scanManager";
+import { getSyncCursor, OVERLAP_MS } from "../src/utils/syncCursors";
 import {
     installRestoreHarness,
     teardownRestoreHarness,
@@ -1133,6 +1134,47 @@ describe("Wallet.restore", () => {
             expect(await hdProvider.getCurrentSigningDescriptor()).toBe(
                 hdProvider.materializeDescriptorAt(2),
             );
+            const balance = await wallet.getBalance();
+            expect(balance.total).toBeGreaterThan(0);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("HD: recovers history older than the delta-sync overlap window", async () => {
+        // Regression: the boot-time reconcile advances the global sync
+        // cursor to "now" before the scan has discovered anything, so
+        // restore's bulk hydration used to inherit a 24h delta window and
+        // silently recover only recent VTXOs from contracts it had just
+        // found for the first time.
+        const { wallet, indexer, hdProvider, walletRepository } = await makeHdWalletForTest();
+        try {
+            const serverPubKey = wallet.offchainTapscript.options.serverPubKey;
+            const scriptsAt = (index: number) =>
+                wallet.walletContractTimelocks.map((csvTimelock) =>
+                    hex.encode(
+                        new DefaultVtxo.Script({
+                            pubKey: deriveDescriptorLeafPubKey(
+                                hdProvider.materializeDescriptorAt(index),
+                            ),
+                            serverPubKey,
+                            csvTimelock,
+                        }).pkScript,
+                    ),
+                );
+            const ancient = new Date(Date.now() - 30 * OVERLAP_MS);
+            for (const s of scriptsAt(2)) {
+                indexer.usedScripts.add(s);
+                indexer.vtxoCreatedAt.set(s, ancient);
+            }
+
+            // Force the boot-time reconcile so the cursor is already at
+            // "now" when the scan runs — the ordering the bug depends on.
+            await wallet.getContractManager();
+            expect(await getSyncCursor(walletRepository)).toBeGreaterThan(0);
+
+            await wallet.restore({ gapLimit: 5 });
+
             const balance = await wallet.getBalance();
             expect(balance.total).toBeGreaterThan(0);
         } finally {

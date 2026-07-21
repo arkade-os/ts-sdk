@@ -108,13 +108,13 @@ function uniqueTxid(script: string): string {
 }
 
 /** A settled, unspent, confirmed VTXO of `value` sats locked by `script`. */
-function makeVtxo(script: string, value: number): VirtualCoin {
+function makeVtxo(script: string, value: number, createdAt: Date = new Date()): VirtualCoin {
     return {
         txid: uniqueTxid(script),
         vout: 0,
         value,
         status: { confirmed: true },
-        createdAt: new Date(),
+        createdAt,
         script,
         isUnrolled: false,
         isSpent: false,
@@ -132,24 +132,38 @@ function makeVtxo(script: string, value: number): VirtualCoin {
  * empty. The remaining `IndexerProvider` surface is stubbed because the
  * restore path never touches it.
  *
- * `getVtxosCalls` counts the `scripts`-shaped probes so a test can
- * assert the scan ran exactly once when calls coalesce.
+ * The `after` lower bound is honoured, so a caller that queries with a
+ * delta-sync window cannot see VTXOs minted before it. Without this a
+ * test cannot distinguish a windowed fetch from an unbounded one.
+ *
+ * `getVtxosCalls` records the `scripts`-shaped probes so a test can
+ * assert the scan ran exactly once when calls coalesce, and inspect the
+ * window each probe carried.
  */
 export interface MockIndexer extends IndexerProvider {
     usedScripts: Set<string>;
-    getVtxosCalls: { scripts: string[] }[];
+    /** Per-script VTXO creation time; scripts absent from the map mint at "now". */
+    vtxoCreatedAt: Map<string, Date>;
+    getVtxosCalls: { scripts: string[]; after?: number }[];
 }
 
 function makeMockIndexer(usedScripts: Set<string>): MockIndexer {
-    const getVtxosCalls: { scripts: string[] }[] = [];
+    const getVtxosCalls: { scripts: string[]; after?: number }[] = [];
+    const vtxoCreatedAt = new Map<string, Date>();
     const indexer = {
         usedScripts,
+        vtxoCreatedAt,
         getVtxosCalls,
-        async getVtxos(opts?: { scripts?: string[]; outpoints?: unknown[] }) {
+        async getVtxos(opts?: { scripts?: string[]; outpoints?: unknown[]; after?: number }) {
             const scripts = opts?.scripts;
             if (!scripts) return { vtxos: [] };
-            getVtxosCalls.push({ scripts });
-            const vtxos = scripts.filter((s) => usedScripts.has(s)).map((s) => makeVtxo(s, 50_000));
+            getVtxosCalls.push({ scripts, after: opts?.after });
+            // `after: 0` is the bootstrap sentinel — unbounded, same as omitting it.
+            const after = opts?.after;
+            const vtxos = scripts
+                .filter((s) => usedScripts.has(s))
+                .map((s) => makeVtxo(s, 50_000, vtxoCreatedAt.get(s)))
+                .filter((v) => !after || v.createdAt.getTime() > after);
             return { vtxos };
         },
         async getAssetDetails() {
