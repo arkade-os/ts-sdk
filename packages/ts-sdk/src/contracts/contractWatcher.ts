@@ -160,9 +160,10 @@ export class ContractWatcher {
     /**
      * Add a contract to be watched.
      *
-     * Every contract is immediately subscribed and polled, whatever its
-     * state — see {@link getWatchedContracts} for why retirement can't
-     * remove coverage.
+     * Once watching, every contract is subscribed and polled whatever
+     * its state.
+     *
+     * @see getWatchedContracts
      */
     async addContract(contract: Contract): Promise<void> {
         const state: ContractState = {
@@ -256,22 +257,15 @@ export class ContractWatcher {
     }
 
     /**
-     * Contracts the watcher tracks: **every** registered contract,
-     * including retired (`inactive`) ones that hold no known virtual
-     * outputs.
+     * Every registered contract, retired (`inactive`) ones included.
      *
-     * This is the single source of truth for "contracts whose VTXO state
-     * we still care about" — callers and the subscription itself fan out
-     * over the same set so nothing is reconciled that isn't also watched.
-     *
-     * Retirement must never narrow this set. An Ark receive address can be
-     * paid again after the wallet has rotated past it, so a retired,
-     * fully-spent contract dropped from here leaves *every* background
-     * channel at once — this accessor feeds both the subscription and the
-     * indexer sweep scope — and a real payment to it becomes invisible
-     * until some foreground read happens to sweep it. Retirement therefore
-     * controls sweep *cadence* and receive-address selection, never
-     * coverage.
+     * Feeds both the subscription and the indexer sweep scope, so
+     * narrowing it drops a contract from every background channel at
+     * once. Nothing may be narrowed out: an Ark receive address can be
+     * paid again after the wallet has rotated past it, and a payment
+     * that lands outside every background channel is invisible until
+     * some foreground read happens to sweep it. Retirement therefore
+     * governs receive-address selection, not coverage.
      */
     getWatchedContracts(): Contract[] {
         return this.getAllContracts();
@@ -626,8 +620,7 @@ export class ContractWatcher {
     /**
      * Update the subscription with scripts that should be watched.
      *
-     * @see getWatchedContracts — the subscription covers every registered
-     * contract, retired ones included.
+     * @see getWatchedContracts
      */
     private async updateSubscription(): Promise<void> {
         const scriptsToWatch = this.getWatchedContracts().map((c) => c.script);

@@ -52,9 +52,7 @@ describe("ContractWatcher", () => {
     });
 
     it("should subscribe inactive contracts without VTXOs", async () => {
-        // A rotated-past receive address can be paid again, so retiring
-        // it must not drop it from the subscription — that would make a
-        // later payment invisible to every background channel.
+        // A rotated-past receive address can still be paid.
         await watcher.startWatching(() => {});
 
         const contract: Contract = {

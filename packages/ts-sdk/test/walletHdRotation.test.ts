@@ -502,11 +502,9 @@ describe("Wallet HD rotation", () => {
         });
 
         it("second rotation deactivates the previous tagged display contract", async () => {
-            // Privacy: once we've moved past a tagged display address we
-            // stop handing it out — `state: 'inactive'` filters it out of
-            // future `pickActiveReceive` lookups. It stays fully watched;
-            // retirement never narrows coverage, because the address can
-            // still be paid.
+            // Privacy: `state: 'inactive'` stops `pickActiveReceive`
+            // handing the address out again. It stays fully watched —
+            // retirement never narrows coverage.
             const walletRepo = new InMemoryWalletRepository();
             const contractRepo = new InMemoryContractRepository();
             const wallet = await makeHdWallet(walletRepo, contractRepo);

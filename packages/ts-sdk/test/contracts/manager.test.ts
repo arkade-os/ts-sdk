@@ -347,11 +347,9 @@ describe("ContractManager", () => {
     });
 
     describe("refreshVtxos includeInactive", () => {
-        // Default `refreshVtxos()` syncs the watched set — every
-        // contract registered with the watcher, retired ones included.
-        // `includeInactive: true` widens the query to every row in the
-        // repository, which now differs only for rows the watcher never
-        // registered.
+        // Default `refreshVtxos()` syncs the watched set;
+        // `includeInactive: true` widens it to every repository row,
+        // which differs only for rows the watcher never registered.
         //
         // The manager validates that `script` is derived from `params`,
         // so these tests seed the repository directly with synthetic
@@ -413,19 +411,15 @@ describe("ContractManager", () => {
 
             await manager.refreshVtxos();
 
-            // The raw-seeded script bypassed `createContract`, so the
-            // watcher never saw it and the default path can't cover it.
-            // `includeInactive` is the explicit override.
+            // `seedRaw` bypasses `createContract`, so the watcher never
+            // saw this script.
             const requested = collectRequestedScripts(mockIndexer);
             expect(requested.has(inactiveScript)).toBe(false);
         });
 
         it("default path still covers contracts the watcher transitioned to inactive", async () => {
-            // The production path: a contract registered through
-            // `manager.createContract` is later retired via
-            // `setContractState`. It must stay in the watched set —
-            // a retired receive address can be paid again, and dropping
-            // it here is what left it outside every background channel.
+            // The production shape the `seedRaw` variants can't reach: a
+            // registered contract later retired via `setContractState`.
             await seedActive();
             await manager.createContract({
                 type: "default",
@@ -571,11 +565,9 @@ describe("ContractManager", () => {
     });
 
     describe("retired contract coverage", () => {
-        // A rotated-past receive address can be paid again. Retiring it
-        // must therefore change sweep cadence and receive-address
-        // selection only — never coverage. These tests assert detection
-        // through *background* channels with no read API involved, so
-        // they keep guarding once reads become repository-only.
+        // Detection is asserted through *background* channels only, with
+        // no read API involved, so these keep guarding once reads become
+        // repository-only.
 
         it("a retired, fully-spent contract that receives is picked up by the reconnect sweep", async () => {
             const walletRepo = new InMemoryWalletRepository();
@@ -597,9 +589,8 @@ describe("ContractManager", () => {
                     script: TEST_DEFAULT_SCRIPT,
                     address: "retired-address",
                 });
-                // Rotated past: retired with no VTXOs left, so neither
-                // arm of the old `active || lastKnownVtxos.size > 0`
-                // filter would have kept it.
+                // Retired with no VTXOs left: neither arm of the old
+                // `active || lastKnownVtxos.size > 0` filter held it.
                 await mgr.setContractState(TEST_DEFAULT_SCRIPT, "inactive");
 
                 const incoming = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
@@ -608,8 +599,7 @@ describe("ContractManager", () => {
                 (mockIndexer.getVtxos as any).mockClear();
                 (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [incoming] });
 
-                // Background channel: the reconnect reconcile. No read
-                // API is called anywhere in this test.
+                // Background channel: the reconnect reconcile.
                 await (mgr as any).handleContractEvent({
                     type: "connection_reset",
                     timestamp: Date.now(),

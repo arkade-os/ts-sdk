@@ -98,10 +98,10 @@ export type RefreshVtxosOptions = {
     before?: number;
     /**
      * When true and `scripts` is not set, refresh every contract in
-     * the repository rather than the watcher's watched set. Retirement
-     * no longer narrows that set (see
-     * {@link ContractWatcher.getWatchedContracts}), so this only differs
-     * for repository rows the watcher never registered.
+     * the repository rather than the watcher's watched set — which
+     * differs only for rows the watcher never registered, since
+     * retirement doesn't narrow that set
+     * (see {@link ContractWatcher.getWatchedContracts}).
      *
      * Because this is a *superset* of the watcher's watched set, the
      * cursor invariant still holds and the cursor advances normally
@@ -1381,11 +1381,10 @@ export class ContractManager implements IContractManager {
      * Sync virtual outputs for the given contracts against the indexer.
      *
      * When `options.contracts` is omitted the sync covers the full
-     * watched set — every registered contract, retired ones included
-     * (see {@link ContractWatcher.getWatchedContracts}) — and the global
-     * cursor is advanced on success. Passing an explicit subset leaves
-     * the cursor alone so a narrow poll can't hide data that other
-     * contracts still need to pick up.
+     * watched set ({@link ContractWatcher.getWatchedContracts}) and the
+     * global cursor is advanced on success. Passing an explicit subset
+     * leaves the cursor alone so a narrow poll can't hide data that
+     * other contracts still need to pick up.
      */
     private async syncContracts(options: {
         contracts?: Contract[];
