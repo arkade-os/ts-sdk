@@ -71,11 +71,11 @@ const createMockWallet = (
 
 const flushMicrotasks = async () => {
     // Drain enough cycles to clear the longest async chain in
-    // VtxoManager: getExpiringVtxos → revalidateBeforeSettle (which
-    // itself does getContractManager + refreshOutpoints +
-    // getExpiringVtxos) → settle. Two awaits used to be sufficient
-    // before pre-flight was added.
-    for (let i = 0; i < 8; i++) {
+    // VtxoManager: getExpiringVtxos (which fetches the chain tip) →
+    // revalidateBeforeSettle (which itself does getContractManager +
+    // refreshOutpoints + getExpiringVtxos) → settle. Two awaits used to
+    // be sufficient before pre-flight was added.
+    for (let i = 0; i < 16; i++) {
         await Promise.resolve();
     }
 };
@@ -91,7 +91,11 @@ const createMockVtxo = (
         vout: 0,
         value,
         virtualStatus: { state },
-        isSpent,
+        isSpent: isSpent || state === "spent",
+        isSwept: state === "swept",
+        isPreconfirmed: state === "preconfirmed",
+        spentBy: "",
+        commitmentTxIds: [],
         status: { confirmed: true },
         createdAt: new Date(),
         isUnrolled: false,
@@ -667,8 +671,14 @@ describe("VtxoManager - Renewal utilities", () => {
                     createdAt,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 5_000, // expiring soon
+                        batchExpiry: now + 5_000,
                     },
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: false,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                    expiresAt: new Date(now + 5_000), // expiring soon
                 } as ExtendedVirtualCoin,
                 {
                     txid: "vtxo2",
@@ -677,8 +687,14 @@ describe("VtxoManager - Renewal utilities", () => {
                     createdAt,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 20_000, // not expiring soon
+                        batchExpiry: now + 20_000,
                     },
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: false,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                    expiresAt: new Date(now + 20_000), // not expiring soon
                 } as ExtendedVirtualCoin,
                 {
                     txid: "vtxo3",
@@ -687,14 +703,22 @@ describe("VtxoManager - Renewal utilities", () => {
                     createdAt,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 8_000, // expiring soon
+                        batchExpiry: now + 8_000,
                     },
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: false,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                    expiresAt: new Date(now + 8_000), // expiring soon
                 } as ExtendedVirtualCoin,
             ];
 
             const thresholdMs = 10_000; // 10 seconds threshold
             const dustAmount = 330n; // dust threshold
-            const expiring = getExpiringAndRecoverableVtxos(vtxos, thresholdMs, dustAmount);
+            const expiring = getExpiringAndRecoverableVtxos(vtxos, thresholdMs, dustAmount, {
+                timestamp: new Date(),
+            });
 
             expect(expiring).toHaveLength(2);
             expect(expiring[0].txid).toBe("vtxo1");
@@ -718,7 +742,9 @@ describe("VtxoManager - Renewal utilities", () => {
             ];
 
             const thresholdMs = 10_000; // 10 seconds threshold
-            const expiring = getExpiringAndRecoverableVtxos(vtxos, thresholdMs, 330n);
+            const expiring = getExpiringAndRecoverableVtxos(vtxos, thresholdMs, 330n, {
+                timestamp: new Date(),
+            });
 
             expect(expiring).toHaveLength(0);
         });
@@ -736,6 +762,12 @@ describe("VtxoManager - Renewal utilities", () => {
                         state: "swept", // recoverable
                         batchExpiry: now - 5000, // expired
                     },
+                    isSpent: false,
+                    isSwept: true,
+                    isPreconfirmed: false,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                    expiresAt: new Date(now - 5000),
                 } as ExtendedVirtualCoin,
                 {
                     txid: "vtxo2",
@@ -744,8 +776,14 @@ describe("VtxoManager - Renewal utilities", () => {
                     createdAt,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 200_000, // not expiring soon
+                        batchExpiry: now + 200_000,
                     },
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: false,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                    expiresAt: new Date(now + 200_000), // not expiring soon
                 } as ExtendedVirtualCoin,
                 {
                     txid: "vtxo3",
@@ -754,14 +792,22 @@ describe("VtxoManager - Renewal utilities", () => {
                     createdAt,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 8_000, // expiring soon
+                        batchExpiry: now + 8_000,
                     },
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: false,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                    expiresAt: new Date(now + 8_000), // expiring soon
                 } as ExtendedVirtualCoin,
             ];
 
             const thresholdMs = 10_000; // 10 seconds threshold
             const dustAmount = 330n; // dust threshold
-            const expiring = getExpiringAndRecoverableVtxos(vtxos, thresholdMs, dustAmount);
+            const expiring = getExpiringAndRecoverableVtxos(vtxos, thresholdMs, dustAmount, {
+                timestamp: new Date(),
+            });
 
             expect(expiring).toHaveLength(3);
             expect(expiring[0].txid).toBe("vtxo1");
@@ -784,8 +830,14 @@ describe("VtxoManager - Renewal", () => {
                     createdAt,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 40_000, // expires in 40 seconds
+                        batchExpiry: now + 40_000,
                     },
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: false,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                    expiresAt: new Date(now + 40_000), // expires in 40 seconds
                 } as ExtendedVirtualCoin,
                 {
                     txid: "vtxo2",
@@ -794,8 +846,14 @@ describe("VtxoManager - Renewal", () => {
                     createdAt,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 60_000, // expires in 60 seconds
+                        batchExpiry: now + 60_000,
                     },
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: false,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                    expiresAt: new Date(now + 60_000), // expires in 60 seconds
                 } as ExtendedVirtualCoin,
                 {
                     txid: "vtxo3",
@@ -804,8 +862,14 @@ describe("VtxoManager - Renewal", () => {
                     createdAt,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 200_000, // expires in 200 seconds
+                        batchExpiry: now + 200_000,
                     },
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: false,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                    expiresAt: new Date(now + 200_000), // expires in 200 seconds
                 } as ExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
@@ -927,8 +991,14 @@ describe("VtxoManager - Renewal", () => {
                     createdAt,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 5_000, // 5 seconds (expiring soon)
+                        batchExpiry: now + 5_000,
                     },
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: false,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                    expiresAt: new Date(now + 5_000), // 5 seconds (expiring soon)
                 } as ExtendedVirtualCoin,
                 {
                     txid: "vtxo2",
@@ -944,8 +1014,14 @@ describe("VtxoManager - Renewal", () => {
                     createdAt,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 100_000, // not expiring soon
+                        batchExpiry: now + 100_000,
                     },
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: false,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                    expiresAt: new Date(now + 100_000), // not expiring soon
                 } as ExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
@@ -1146,6 +1222,11 @@ describe("VtxoManager - Renewal", () => {
                             status: { confirmed: true },
                             isUnrolled: false,
                             isSpent: false,
+                            isSwept: false,
+                            isPreconfirmed: false,
+                            spentBy: "",
+                            commitmentTxIds: [],
+                            expiresAt: new Date(expiry),
                         }) as any,
                 );
             const lessUrgent = makeExpiring(MAX_VTXOS_PER_SETTLEMENT, now + 200_000, "far");
@@ -1187,6 +1268,12 @@ describe("VtxoManager - Renewal", () => {
                             status: { confirmed: true },
                             isUnrolled: false,
                             isSpent: false,
+                            isSwept: state === "swept",
+                            isPreconfirmed: false,
+                            spentBy: "",
+                            commitmentTxIds: [],
+                            expiresAt:
+                                batchExpiry === undefined ? undefined : new Date(batchExpiry),
                         }) as any,
                 );
 
@@ -1425,8 +1512,14 @@ describe("SettlementConfig", () => {
                     createdAt: new Date(now - 100_000),
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 1000, // about to expire
+                        batchExpiry: now + 1000,
                     },
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: false,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                    expiresAt: new Date(now + 1000), // about to expire
                 } as ExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
@@ -1447,8 +1540,14 @@ describe("SettlementConfig", () => {
                     createdAt: new Date(now - 100_000),
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 1000, // about to expire
+                        batchExpiry: now + 1000,
                     },
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: false,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                    expiresAt: new Date(now + 1000), // about to expire
                 } as ExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
@@ -1471,8 +1570,14 @@ describe("SettlementConfig", () => {
                     createdAt,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 50_000, // expires in 50 seconds
+                        batchExpiry: now + 50_000,
                     },
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: false,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                    expiresAt: new Date(now + 50_000), // expires in 50 seconds
                 } as ExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
@@ -1497,8 +1602,14 @@ describe("SettlementConfig", () => {
                     createdAt,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 200_000, // expires in 200 seconds
+                        batchExpiry: now + 200_000,
                     },
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: false,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                    expiresAt: new Date(now + 200_000), // expires in 200 seconds
                 } as ExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
@@ -2501,6 +2612,11 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
                 batchExpiry,
             },
             isSpent: false,
+            isSwept: false,
+            isPreconfirmed: false,
+            spentBy: "",
+            commitmentTxIds: [],
+            expiresAt: new Date(batchExpiry),
             status: { confirmed: true },
             createdAt: new Date(),
             isUnrolled: false,

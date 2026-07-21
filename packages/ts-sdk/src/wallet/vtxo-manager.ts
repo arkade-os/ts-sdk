@@ -3,13 +3,22 @@ import {
     ExtendedVirtualCoin,
     IWallet,
     IReadonlyWallet,
-    isExpired,
-    isRecoverable,
-    isSpendable,
     isSubdust,
     Outpoint,
     VirtualCoin,
 } from ".";
+import {
+    canRecoverOnchain,
+    canSpendOffchain,
+    hasTerminalSpend,
+    isPastExpiry,
+    normalizeVtxo,
+    resolveTimeHeight,
+    toBatchExpiry,
+    toOffchainInputFeeParams,
+    type NormalizedExtendedVirtualCoin,
+    type TimeHeight,
+} from "./vtxo";
 import { ArkInfo, ArkProvider, SettlementEvent } from "../providers/ark";
 import { ArkErrorName, isArkError, maybeArkError } from "../providers/errors";
 import type { BoardingUtxoGroup } from "./wallet";
@@ -64,7 +73,7 @@ export function selectPendingRecoveryOutpoints(
             continue;
         }
         for (const v of vtxos) {
-            if (isSpendable(v) && !isRecoverable(v)) out.add(`${v.txid}:${v.vout}`);
+            if (!hasTerminalSpend(v) && !v.isSwept) out.add(`${v.txid}:${v.vout}`);
         }
     }
     return out;
@@ -189,6 +198,31 @@ export function byValueDescending<T extends { value: number }>(vtxos: T[]): T[] 
 }
 
 /**
+ * The {@link TimeHeight} for one expiry-driven pass. Only digs the provider out of whichever wallet
+ * we were handed — `onchainProvider` lives on the concrete wallets, not on `IReadonlyWallet`.
+ */
+async function fetchTimeHeight(wallet: IReadonlyWallet): Promise<TimeHeight> {
+    return resolveTimeHeight((wallet as Partial<SweepCapableWallet>).onchainProvider);
+}
+
+/**
+ * Whether {@link Wallet.sendSelectedVtxosToSelf} will accept this input at `now`.
+ *
+ * @remarks
+ * Mirrors that method's two rejection conditions exactly, so the migration leg never submits an
+ * input the send path throws on — see {@link MigrationLegReport.notSpendableOffchain} for why that
+ * matters. The same `TimeHeight` goes down to the send path with the inputs, so the two sides
+ * cannot disagree at the expiry boundary.
+ */
+function canMigrateBySend(vtxo: NormalizedExtendedVirtualCoin, now: TimeHeight): boolean {
+    // The send path spends cooperatively, so swept/expired inputs belong to recovery instead.
+    if (!canSpendOffchain(vtxo, now)) return false;
+    // No batch expiry means nothing to migrate *from*: the DB-update path only persists a
+    // wallet-owned output when an input expiry exists (unrolled/settled inputs carry none).
+    return vtxo.expiresAt !== undefined || vtxo.expiresAtHeight !== undefined;
+}
+
+/**
  * Order VTXOs so the soonest-expiring ones come first. New array; input
  * untouched. Already recoverable/expired VTXOs sort first. VTXOs without a
  * batch expiry, or with a block-height-looking expiry value, sort last because
@@ -199,24 +233,31 @@ export function byValueDescending<T extends { value: number }>(vtxos: T[]): T[] 
  * the most urgent VTXOs must make the cut so none miss their renewal window
  * and get forced into a unilateral exit.
  */
-export function byExpiryAscending(vtxos: ExtendedVirtualCoin[]): ExtendedVirtualCoin[] {
-    const expiryKey = (vtxo: ExtendedVirtualCoin) => {
-        if (isRecoverable(vtxo)) return -Infinity;
-
-        const batchExpiry = vtxo.virtualStatus.batchExpiry;
-
-        if (isExpired(vtxo)) return batchExpiry ?? -Infinity;
-        if (!batchExpiry) return Infinity;
-
-        // Some regtest-like indexers return a block height here instead of a
-        // timestamp. Match isVtxoExpiringSoon/isExpired and avoid treating that
-        // as the most urgent wall-clock expiry.
-        if (new Date(batchExpiry).getFullYear() < 2025) return Infinity;
-
-        return batchExpiry;
+export function byExpiryAscending(
+    vtxos: NormalizedExtendedVirtualCoin[],
+    now: TimeHeight,
+): NormalizedExtendedVirtualCoin[] {
+    const expiryKey = (vtxo: NormalizedExtendedVirtualCoin) => {
+        // Swept: maximally urgent, and carries no wall-clock instant to order by.
+        if (vtxo.isSwept) return -Infinity;
+        if (vtxo.expiresAt !== undefined) return vtxo.expiresAt.getTime();
+        // A height-encoded expiry has no place on the millisecond scale, so it can only be
+        // ranked as urgent or not. Needs `now.height`; without one it reads as not expired.
+        if (vtxo.expiresAtHeight !== undefined) {
+            return isPastExpiry(vtxo, now) ? -Infinity : Infinity;
+        }
+        return Infinity;
     };
 
-    return [...vtxos].sort((a, b) => expiryKey(a) - expiryKey(b));
+    // Compared rather than subtracted: two swept VTXOs (both `-Infinity`), or two without a
+    // wall-clock expiry (both `Infinity`), subtract to NaN, and a NaN comparator leaves the order
+    // unspecified — the urgent-first guarantee would hold only by luck.
+    return [...vtxos].sort((a, b) => {
+        const ka = expiryKey(a);
+        const kb = expiryKey(b);
+        if (ka === kb) return 0;
+        return ka < kb ? -1 : 1;
+    });
 }
 
 /**
@@ -440,22 +481,18 @@ export const DEFAULT_SETTLEMENT_CONFIG: Required<SettlementConfig> = {
  * @returns Array of recoverable virtual outputs
  */
 function getRecoverableVtxos(
-    vtxos: ExtendedVirtualCoin[],
+    vtxos: NormalizedExtendedVirtualCoin[],
     dustAmount: bigint,
-): ExtendedVirtualCoin[] {
+    now: TimeHeight,
+): NormalizedExtendedVirtualCoin[] {
     return vtxos.filter((vtxo) => {
-        // Always recover swept virtual outputs
-        if (isRecoverable(vtxo)) {
-            return true;
-        }
-
-        // also include virtual outputs that are not swept but expired
-        if (isSpendable(vtxo) && isExpired(vtxo)) {
+        // Swept, or past expiry but not yet swept — both recover the same way.
+        if (canRecoverOnchain(vtxo, now)) {
             return true;
         }
 
         // Recover preconfirmed subdust to consolidate small amounts
-        if (vtxo.virtualStatus.state === "preconfirmed" && isSubdust(vtxo, dustAmount)) {
+        if (canSpendOffchain(vtxo, now) && vtxo.isPreconfirmed && isSubdust(vtxo, dustAmount)) {
             return true;
         }
 
@@ -474,18 +511,19 @@ function getRecoverableVtxos(
  * @returns Object containing recoverable virtual outputs and whether subdust should be included
  */
 function getRecoverableWithSubdust(
-    vtxos: ExtendedVirtualCoin[],
+    vtxos: NormalizedExtendedVirtualCoin[],
     dustAmount: bigint,
+    now: TimeHeight,
 ): {
-    vtxosToRecover: ExtendedVirtualCoin[];
+    vtxosToRecover: NormalizedExtendedVirtualCoin[];
     includesSubdust: boolean;
     totalAmount: bigint;
 } {
-    const recoverableVtxos = getRecoverableVtxos(vtxos, dustAmount);
+    const recoverableVtxos = getRecoverableVtxos(vtxos, dustAmount, now);
 
     // Separate subdust from regular recoverable
-    const subdust: ExtendedVirtualCoin[] = [];
-    const regular: ExtendedVirtualCoin[] = [];
+    const subdust: NormalizedExtendedVirtualCoin[] = [];
+    const regular: NormalizedExtendedVirtualCoin[] = [];
 
     for (const vtxo of recoverableVtxos) {
         if (isSubdust(vtxo, dustAmount)) {
@@ -526,18 +564,13 @@ export function isVtxoExpiringSoon(
 ): boolean {
     const realThresholdMs = thresholdMs <= 100 ? DEFAULT_THRESHOLD_MS : thresholdMs;
 
-    const { batchExpiry } = vtxo.virtualStatus;
-
-    if (!batchExpiry) return false; // it doesn't expire
-
-    // we use this as a workaround to avoid issue on regtest where expiry date is
-    // expressed in blockheight instead of timestamp. If expiry, as Date, is before 2025,
-    // then we admit it's too small to be a timestamp
-    // TODO: API should return the expiry unit
-    const expireAt = new Date(batchExpiry);
-    if (expireAt.getFullYear() < 2025) return false;
+    // Being synchronous, this has no chain tip to compare a height-encoded expiry against, so
+    // `expiresAtHeight` reads as "doesn't expire" — as it always has.
+    const expiresAt = normalizeVtxo(vtxo).expiresAt;
+    if (expiresAt === undefined) return false;
 
     const now = Date.now();
+    const batchExpiry = expiresAt.getTime();
 
     if (batchExpiry <= now) return false; // already expired
 
@@ -553,15 +586,15 @@ export function isVtxoExpiringSoon(
  * @returns Array of virtual outputs expiring within threshold
  */
 export function getExpiringAndRecoverableVtxos(
-    vtxos: ExtendedVirtualCoin[],
+    vtxos: NormalizedExtendedVirtualCoin[],
     thresholdMs: number,
     dustAmount: bigint,
-): ExtendedVirtualCoin[] {
+    now: TimeHeight,
+): NormalizedExtendedVirtualCoin[] {
     return vtxos.filter(
         (vtxo) =>
             isVtxoExpiringSoon(vtxo, thresholdMs) ||
-            isRecoverable(vtxo) ||
-            (isSpendable(vtxo) && isExpired(vtxo)) ||
+            canRecoverOnchain(vtxo, now) ||
             isSubdust(vtxo, dustAmount),
     );
 }
@@ -656,7 +689,7 @@ export interface DeprecatedSignerReport {
  * exceeds the server's per-output ceiling (`vtxoMaxAmount`) — see
  * {@link MigrationLegReport.oversized}.
  */
-export type MigrationLegSkipReason = "below-dust" | "oversized-only";
+export type MigrationLegSkipReason = "below-dust" | "oversized-only" | "not-spendable-only";
 
 /**
  * Why the whole pass submitted nothing, before either leg was built.
@@ -695,6 +728,16 @@ export interface MigrationLegReport {
      * absent when the server advertises no ceiling (`vtxoMaxAmount < 0`).
      */
     oversized?: MigrationVtxoRef[];
+    /**
+     * Inputs the leg's submit path would have rejected — for the VTXO leg, no longer
+     * cooperatively spendable at this pass's chain tip (past batch expiry, since swept and spent
+     * inputs are already excluded upstream) or carrying no batch expiry at all.
+     *
+     * Partitioned out rather than submitted, because the send path validates the batch as a
+     * whole: one rejected input would abort the entire leg and strand every other migratable
+     * VTXO until the next pass. Present only when non-empty.
+     */
+    notSpendableOffchain?: MigrationVtxoRef[];
     /** Error message when this leg's submission failed; the other leg still runs. */
     error?: string;
 }
@@ -748,7 +791,7 @@ interface MigrationCapableWallet {
      * `settle`), preserving input assets. The pre-cutoff VTXO migration primitive
      * (plan step 1); never accepts boarding inputs.
      */
-    sendSelectedVtxosToSelf(inputs: ExtendedVirtualCoin[]): Promise<string>;
+    sendSelectedVtxosToSelf(inputs: ExtendedVirtualCoin[], now?: TimeHeight): Promise<string>;
     /**
      * Grouped boarding discovery over a given signer set, returning the
      * address↔signer association {@link ExtendedCoin} cannot carry. Consumed
@@ -854,7 +897,7 @@ function mergeSignerReports(...reportLists: DeprecatedSignerReport[][]): Depreca
  * - **Expiry monitoring**: Check for virtual outputs that are expiring soon
  *
  * Virtual outputs become recoverable when:
- * - The Arkade server sweeps them (virtualStatus.state === "swept") and they remain spendable
+ * - The Arkade server sweeps them (`isSwept`) and they remain spendable
  * - They are preconfirmed subdust (to consolidate small amounts without locking liquidity on settled virtual outputs)
  *
  * @example
@@ -1062,7 +1105,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const dustAmount = getDustAmount(this.wallet);
 
         // Filter recoverable virtual outputs and handle subdust logic
-        let { vtxosToRecover, totalAmount } = getRecoverableWithSubdust(allVtxos, dustAmount);
+        const now = await fetchTimeHeight(this.wallet);
+        let { vtxosToRecover, totalAmount } = getRecoverableWithSubdust(allVtxos, dustAmount, now);
 
         if (vtxosToRecover.length === 0) {
             throw new Error("No recoverable VTXOs found");
@@ -1083,7 +1127,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const capped = capSettlementBatch(byValueDescending(vtxosToRecover), vtxoMaxAmount);
         if (capped.length < vtxosToRecover.length) {
             const recoverableCount = vtxosToRecover.length;
-            ({ vtxosToRecover, totalAmount } = getRecoverableWithSubdust(capped, dustAmount));
+            ({ vtxosToRecover, totalAmount } = getRecoverableWithSubdust(capped, dustAmount, now));
             if (vtxosToRecover.length === 0) {
                 // Recoverable VTXOs exist, but the highest-value subset that
                 // fits in one settlement stays below dust, so submitting it
@@ -1163,6 +1207,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const { vtxosToRecover, includesSubdust, totalAmount } = getRecoverableWithSubdust(
             allVtxos,
             dustAmount,
+            await fetchTimeHeight(this.wallet),
         );
 
         // Calculate subdust amount separately for reporting
@@ -1202,7 +1247,21 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * }
      * ```
      */
-    async getExpiringVtxos(thresholdMs?: number): Promise<ExtendedVirtualCoin[]> {
+    async getExpiringVtxos(thresholdMs?: number): Promise<NormalizedExtendedVirtualCoin[]> {
+        return this.selectExpiringVtxos(thresholdMs);
+    }
+
+    /**
+     * {@link getExpiringVtxos}, against a caller-supplied chain tip.
+     *
+     * The settle paths select, re-select after pre-flight, and sort by expiry within one pass;
+     * each of those judges expiry, so they share one tip rather than fetching (and possibly
+     * disagreeing on) one apiece. Fetches its own when `now` is omitted.
+     */
+    private async selectExpiringVtxos(
+        thresholdMs?: number,
+        now?: TimeHeight,
+    ): Promise<NormalizedExtendedVirtualCoin[]> {
         // If settlementConfig is explicitly false and no override provided, renewal is disabled
         if (this.settlementConfig === false && thresholdMs === undefined) {
             return [];
@@ -1224,7 +1283,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             threshold = this.renewalConfig?.thresholdMs ?? DEFAULT_RENEWAL_CONFIG.thresholdMs;
         }
 
-        return getExpiringAndRecoverableVtxos(vtxos, threshold, getDustAmount(this.wallet));
+        return getExpiringAndRecoverableVtxos(
+            vtxos,
+            threshold,
+            getDustAmount(this.wallet),
+            now ?? (await fetchTimeHeight(this.wallet)),
+        );
     }
 
     /**
@@ -1300,7 +1364,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             } else {
                 threshold = DEFAULT_RENEWAL_CONFIG.thresholdMs;
             }
-            let vtxos = await this.getExpiringVtxos(threshold);
+            // One chain tip for the whole pass — see `selectExpiringVtxos`.
+            const now = await fetchTimeHeight(this.wallet);
+            let vtxos = await this.selectExpiringVtxos(threshold, now);
 
             if (vtxos.length === 0) {
                 throw new Error("No VTXOs available to renew");
@@ -1313,7 +1379,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // cache forever; settling against it yields a guaranteed
             // VTXO_ALREADY_SPENT 400. Refreshing the candidates here
             // catches that BEFORE the network round-trip.
-            vtxos = await this.revalidateBeforeSettle(vtxos, threshold);
+            vtxos = await this.revalidateBeforeSettle(vtxos, threshold, now);
             if (vtxos.length === 0) {
                 throw new Error("No VTXOs available to renew");
             }
@@ -1328,7 +1394,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // renewed on the next cycle.
             const info = await this.getInfoProvider()?.getInfo();
             const vtxoMaxAmount = info?.vtxoMaxAmount ?? -1n;
-            const capped = capSettlementBatch(byExpiryAscending(vtxos), vtxoMaxAmount);
+            const capped = capSettlementBatch(byExpiryAscending(vtxos, now), vtxoMaxAmount);
             if (vtxoMaxAmount >= 0n) {
                 // A VTXO whose value alone exceeds the per-output ceiling can
                 // never be renewed by this path (the server would reject it) and
@@ -1722,6 +1788,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         // VTXO leg — send to the active-signer self output. No settlement events.
         if (vtxoMigratable.length > 0) {
+            // One chain tip for the leg, shared with the send path below — see
+            // {@link canMigrateBySend}.
+            const now = await fetchTimeHeight(this.wallet);
             report.vtxos = await this.runMigrationLeg(
                 vtxoMigratable,
                 (c) => c.vtxo.value,
@@ -1729,7 +1798,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 vtxoMaxAmount,
                 dustAmount,
                 "VTXO",
-                (capped) => wallet.sendSelectedVtxosToSelf(capped.map((c) => c.vtxo)),
+                (capped) =>
+                    wallet.sendSelectedVtxosToSelf(
+                        capped.map((c) => c.vtxo),
+                        now,
+                    ),
+                (c) => canMigrateBySend(c.vtxo, now),
             );
         }
 
@@ -1782,10 +1856,35 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         dustAmount: bigint,
         legName: string,
         submit: (capped: C[]) => Promise<string>,
+        /**
+         * Inputs this leg's submit path would reject. Filtered out *before* sizing so they
+         * neither consume batch capacity nor count toward the dust floor. Omit when the leg's
+         * submit path has no such gate — the boarding leg settles, and settle validates per-input
+         * server-side.
+         */
+        eligible?: (c: C) => boolean,
     ): Promise<MigrationLegReport> {
+        const notSpendableRefs: MigrationVtxoRef[] = [];
+        const migratable = eligible
+            ? candidates.filter((c) => {
+                  if (eligible(c)) return true;
+                  notSpendableRefs.push(toRef(c));
+                  return false;
+              })
+            : candidates;
+        if (notSpendableRefs.length > 0) {
+            console.warn(
+                `Deprecated-signer migration (${legName}): ${notSpendableRefs.length} input(s) ` +
+                    `are no longer cooperatively spendable at the current chain tip and were ` +
+                    `excluded; they recover through the sweep/recovery path instead.`,
+            );
+        }
+        const notSpendableField =
+            notSpendableRefs.length > 0 ? { notSpendableOffchain: notSpendableRefs } : {};
+
         const oversizedRefs: MigrationVtxoRef[] = [];
         const sized: C[] = [];
-        for (const c of candidates) {
+        for (const c of migratable) {
             if (vtxoMaxAmount >= 0n && BigInt(valueOf(c)) > vtxoMaxAmount) {
                 oversizedRefs.push(toRef(c));
             } else {
@@ -1809,11 +1908,21 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const totalAmount = capped.reduce((sum, c) => sum + BigInt(valueOf(c)), 0n);
 
         if (totalAmount < dustAmount) {
-            const onlyOversized = sized.length === 0 && oversizedRefs.length > 0;
+            // Attribute the skip to whichever filter emptied the set, so "nothing migrated" is
+            // not silently reported as a dust problem when it was really an eligibility one.
+            const skipped: MigrationLegSkipReason =
+                sized.length > 0
+                    ? "below-dust"
+                    : oversizedRefs.length > 0
+                      ? "oversized-only"
+                      : notSpendableRefs.length > 0
+                        ? "not-spendable-only"
+                        : "below-dust";
             return {
                 migrated: [],
-                skipped: onlyOversized ? "oversized-only" : "below-dust",
+                skipped,
                 ...oversizedField,
+                ...notSpendableField,
             };
         }
 
@@ -1824,12 +1933,14 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 migrated: capped.map(toRef),
                 ...(deferred > 0 ? { deferred } : {}),
                 ...oversizedField,
+                ...notSpendableField,
             };
         } catch (e) {
             return {
                 migrated: [],
                 error: e instanceof Error ? e.message : String(e),
                 ...oversizedField,
+                ...notSpendableField,
             };
         }
     }
@@ -1873,8 +1984,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // are exactly the funds already draining into the active signer, so
             // the report still counts them (recoverableCount) alongside the
             // not-yet-swept holdings (awaitingSweepCount) (Section 6 / post-cutoff).
-            const recoverable = vtxos.filter((v) => isRecoverable(v));
-            const spendable = vtxos.filter((v) => isSpendable(v) && !isRecoverable(v));
+            const recoverable = vtxos.filter((v) => v.isSwept && !hasTerminalSpend(v));
+            const spendable = vtxos.filter((v) => !hasTerminalSpend(v) && !v.isSwept);
 
             const value = spendable.reduce((sum, v) => sum + v.value, 0);
 
@@ -1893,7 +2004,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 awaitingSweepCount = spendable.length;
                 awaitingSweepValue = value;
                 for (const v of spendable) {
-                    const exp = v.virtualStatus.batchExpiry;
+                    const exp = toBatchExpiry(v);
                     if (exp !== undefined && (nextSweepEta === undefined || exp < nextSweepEta)) {
                         nextSweepEta = exp;
                     }
@@ -1941,7 +2052,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                     // VTXO leg. Such holdings stay counted in the per-signer report
                     // above; they exit via on-chain/recovery paths, not cooperative
                     // send.
-                    if (!v.virtualStatus.batchExpiry) continue;
+                    if (v.expiresAt === undefined && v.expiresAtHeight === undefined) continue;
                     migratable.push({ vtxo: v, classification: cls });
                 }
             } else if (cls.status === "EXPIRED") {
@@ -2423,9 +2534,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * handle whatever slipped through.
      */
     private async revalidateBeforeSettle(
-        candidates: ExtendedVirtualCoin[],
+        candidates: NormalizedExtendedVirtualCoin[],
         thresholdMs?: number,
-    ): Promise<ExtendedVirtualCoin[]> {
+        now?: TimeHeight,
+    ): Promise<NormalizedExtendedVirtualCoin[]> {
         if (candidates.length === 0) return candidates;
         try {
             const cm = await this.wallet.getContractManager();
@@ -2438,7 +2550,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // selected but spent gets filtered out by the standard
         // `isSpendable`/`isSpent` checks inside getVtxos / getExpiringVtxos.
         try {
-            const refreshed = await this.getExpiringVtxos(thresholdMs);
+            const refreshed = await this.selectExpiringVtxos(thresholdMs, now);
             const candidateKeys = new Set(candidates.map((v) => `${v.txid}:${v.vout}`));
             // Restrict to vtxos that were also in the original candidate set
             // — `getExpiringVtxos` may surface NEW vtxos and we don't want
@@ -2609,16 +2721,19 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         // Collect near-expiry VTXOs unless the event-driven path is mid-renewal.
         // Skipping when renewalInProgress avoids double-submitting the same VTXOs.
-        let expiringVtxos: ExtendedVirtualCoin[] = [];
+        let expiringVtxos: NormalizedExtendedVirtualCoin[] = [];
+        // Fetched here rather than at the top of the method so a boarding-only pass stays offline.
+        let now: TimeHeight | undefined;
         if (!this.renewalInProgress) {
             try {
-                expiringVtxos = await this.getExpiringVtxos();
+                now = await fetchTimeHeight(this.wallet);
+                expiringVtxos = await this.selectExpiringVtxos(undefined, now);
                 // Pre-flight validation: see comment in `renewVtxos`. The
                 // local cache may carry vtxos that the indexer already
                 // marks spent because the cursor-derived delta sync only
                 // catches `created_at`-recent updates, not status changes
                 // for older VTXOs.
-                expiringVtxos = await this.revalidateBeforeSettle(expiringVtxos);
+                expiringVtxos = await this.revalidateBeforeSettle(expiringVtxos, undefined, now);
             } catch (e) {
                 // Non-fatal: fall back to boarding-only settle.
                 console.error("Error fetching expiring VTXOs:", e);
@@ -2678,20 +2793,14 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // server rejects the over-limit output — a multi-output split would be
         // needed to settle that, which is out of scope here). Any overflow is
         // settled on the next cycle.
-        const filteredVtxos: ExtendedVirtualCoin[] = [];
-        for (const v of byExpiryAscending(expiringVtxos)) {
+        const filteredVtxos: NormalizedExtendedVirtualCoin[] = [];
+        // `now` is unset only when the selection block above was skipped, which leaves
+        // `expiringVtxos` empty — nothing to sort, so the fallback tip is never read.
+        for (const v of byExpiryAscending(expiringVtxos, now ?? { timestamp: new Date() })) {
             if (filteredVtxos.length >= MAX_VTXOS_PER_SETTLEMENT) {
                 break;
             }
-            const inputFee = estimator.evalOffchainInput({
-                amount: BigInt(v.value),
-                type: v.virtualStatus.state === "swept" ? "recoverable" : "vtxo",
-                weight: 0,
-                birth: v.createdAt,
-                expiry: v.virtualStatus.batchExpiry
-                    ? new Date(v.virtualStatus.batchExpiry)
-                    : undefined,
-            });
+            const inputFee = estimator.evalOffchainInput(toOffchainInputFeeParams(v));
             if (inputFee.satoshis >= v.value) {
                 continue;
             }

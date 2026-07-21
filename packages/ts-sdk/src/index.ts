@@ -59,6 +59,13 @@ import {
     isSubdust,
     isRecoverable,
     isExpired,
+    // VTXO capability predicates
+    canRecoverOnchain,
+    canSpendOffchain,
+    hasTerminalSpend,
+    isPastExpiry,
+    isVirtualCoin,
+    TimeHeight,
     // Asset types
     Asset,
     Recipient,
@@ -239,7 +246,11 @@ import {
     type EmulatorInfo,
     type ConnectorTreeNode,
 } from "./providers/emulator";
-import type { ArkadeExtendedCoin } from "./arkade/batch";
+import type {
+    ArkadeBatchInput,
+    ArkadeExtendedCoin,
+    ArkadeExtendedVirtualCoin,
+} from "./arkade/batch";
 import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
@@ -581,6 +592,13 @@ export {
     isExpired,
     getSequence,
 
+    // VTXO capability predicates
+    canRecoverOnchain,
+    canSpendOffchain,
+    hasTerminalSpend,
+    isPastExpiry,
+    isVirtualCoin,
+
     // Contracts
     ContractManager,
     ContractWatcher,
@@ -629,6 +647,7 @@ export type {
     VirtualStatus,
     Outpoint,
     VirtualCoin,
+    TimeHeight,
     TxKey,
     TapscriptType,
     ArkTxInput,
@@ -807,7 +826,9 @@ export type {
     ServiceWorkerWalletMode,
 
     // Arkade types
+    ArkadeBatchInput,
     ArkadeExtendedCoin,
+    ArkadeExtendedVirtualCoin,
 
     // Delegate types (Delegator* aliases deprecated)
     IDelegateManager,

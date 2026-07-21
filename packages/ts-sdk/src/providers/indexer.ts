@@ -1,5 +1,6 @@
 import { hex } from "@scure/base";
 import { AssetDetails, AssetMetadata, Outpoint, VirtualCoin } from "../wallet";
+import { convertVtxo } from "../wallet/vtxo";
 import { isFetchTimeoutError } from "./ark";
 import { eventSourceIterator, isEventSourceError } from "./utils";
 import { MetadataList } from "../extension/asset";
@@ -768,40 +769,6 @@ function parseAssetMetadata(metadata: string): AssetMetadata {
         }
     }
     return out;
-}
-
-function convertVtxo(vtxo: Vtxo): VirtualCoin {
-    return {
-        txid: vtxo.outpoint.txid,
-        vout: vtxo.outpoint.vout,
-        value: Number(vtxo.amount),
-        status: {
-            confirmed: !vtxo.isSwept && !vtxo.isPreconfirmed,
-            isLeaf: !vtxo.isPreconfirmed,
-        },
-        virtualStatus: {
-            state: vtxo.isSpent
-                ? "spent"
-                : vtxo.isSwept
-                  ? "swept"
-                  : vtxo.isPreconfirmed
-                    ? "preconfirmed"
-                    : "settled",
-            commitmentTxIds: vtxo.commitmentTxids,
-            batchExpiry: vtxo.expiresAt ? Number(vtxo.expiresAt) * 1000 : undefined,
-        },
-        spentBy: vtxo.spentBy ?? "",
-        settledBy: vtxo.settledBy,
-        arkTxId: vtxo.arkTxid,
-        createdAt: new Date(Number(vtxo.createdAt) * 1000),
-        isUnrolled: vtxo.isUnrolled,
-        isSpent: vtxo.isSpent,
-        script: vtxo.script,
-        assets: vtxo.assets?.map((a) => ({
-            assetId: a.assetId,
-            amount: BigInt(a.amount),
-        })),
-    };
 }
 
 // Unexported namespace for type guards only

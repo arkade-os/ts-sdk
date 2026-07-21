@@ -140,6 +140,7 @@
         "build": "tsup",
         "smoke:dist": "node scripts/smoke-dist.mjs",
         "typecheck": "tsc --noEmit",
+        "check:vtxo": "node scripts/check-virtual-status.mjs && node scripts/check-provider-boundary.mjs",
         "docs:build": "pnpm run typecheck && pnpm typedoc",
         "docs:open": "open ../../docs/index.html",
         "test": "vitest run",
@@ -156,7 +157,7 @@
         "test:watch": "vitest",
         "test:coverage": "vitest run --coverage",
         "format": "prettier --write src test examples",
-        "lint": "prettier --check src test examples",
+        "lint": "prettier --check src test examples && pnpm run check:vtxo",
         "audit": "pnpm audit",
         "prepack": "pnpm run build",
         "prepublishOnly": "pnpm run build"

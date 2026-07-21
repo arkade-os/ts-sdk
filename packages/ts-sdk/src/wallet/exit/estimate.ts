@@ -8,6 +8,7 @@ import { Transaction } from "../../utils/transaction";
 import { TxWeightEstimator } from "../../utils/txSizeEstimator";
 import { OnchainWallet } from "../onchain";
 import type { Wallet } from "../wallet";
+import { getNormalizedVtxos } from "../vtxo";
 import { buildExitDag, DagNode, topoSortByDeps } from "./chain";
 import { createExitChainResolver } from "./resolver";
 import { finalizeVirtualTx } from "./finalizeVirtualTx";
@@ -80,7 +81,7 @@ export async function selectExitVtxos(opts: ExitOptions): Promise<ExitVtxo[]> {
     // contract row (tap tree derived via the contract handler). This
     // deliberately bypasses the wallet's own VTXO listing, so contract
     // VTXOs the wallet does not track are exitable too.
-    const res = await opts.wallet.indexerProvider.getVtxos({ outpoints: opts.vtxos });
+    const res = await getNormalizedVtxos(opts.wallet.indexerProvider, { outpoints: opts.vtxos });
     const tapTrees = new Map<string, Uint8Array>();
     const out: ExitVtxo[] = [];
     for (const vtxo of res.vtxos) {

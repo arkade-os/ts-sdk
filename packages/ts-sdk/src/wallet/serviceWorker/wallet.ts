@@ -5,7 +5,6 @@ import {
     SettleParams,
     ArkTransaction,
     ExtendedCoin,
-    ExtendedVirtualCoin,
     GetVtxosFilter,
     StorageConfig,
     IReadonlyWallet,
@@ -157,6 +156,7 @@ import {
     ServiceWorkerTimeoutError,
 } from "../../worker/errors";
 import { getArkadeServerUrl, type ProviderConnectionState } from "../wallet";
+import { normalizeVtxo, type NormalizedExtendedVirtualCoin } from "../vtxo";
 
 function isMessageBusNotInitializedError(error: unknown): boolean {
     return error instanceof Error && error.message.includes(MESSAGE_BUS_NOT_INITIALIZED);
@@ -1094,7 +1094,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         }
     }
 
-    async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
+    async getVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
         const message: RequestGetVtxos = {
             id: getRandomId(),
             tag: this.messageTag,
@@ -1104,7 +1104,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         try {
             const response = await this.sendMessage(message);
-            return (response as ResponseGetVtxos).payload.vtxos;
+            return (response as ResponseGetVtxos).payload.vtxos.map(normalizeVtxo);
         } catch (error) {
             throw new Error(`Failed to get vtxos: ${error}`);
         }
@@ -1241,7 +1241,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 return syncState;
             },
 
-            async annotateVtxos(vtxos: VirtualCoin[]): Promise<ExtendedVirtualCoin[]> {
+            async annotateVtxos(vtxos: VirtualCoin[]): Promise<NormalizedExtendedVirtualCoin[]> {
                 if (vtxos.length === 0) return [];
                 const message: RequestAnnotateVtxos = {
                     type: "ANNOTATE_VTXOS",
@@ -1251,7 +1251,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 };
                 try {
                     const response = await sendContractMessage(message);
-                    return (response as ResponseAnnotateVtxos).payload.vtxos;
+                    return (response as ResponseAnnotateVtxos).payload.vtxos.map(normalizeVtxo);
                 } catch (e) {
                     throw new Error("Failed to annotate vtxos");
                 }
@@ -1794,7 +1794,7 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
                 };
                 try {
                     const response = await wallet.sendMessage(message);
-                    return (response as ResponseGetExpiringVtxos).payload.vtxos;
+                    return (response as ResponseGetExpiringVtxos).payload.vtxos.map(normalizeVtxo);
                 } catch (e) {
                     throw new Error(`Failed to get expiring vtxos: ${e}`);
                 }

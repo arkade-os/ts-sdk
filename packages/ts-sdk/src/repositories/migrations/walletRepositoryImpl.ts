@@ -1,67 +1,21 @@
-import { hex } from "@scure/base";
-import { TaprootControlBlock } from "@scure/btc-signer";
 import { WalletRepository, WalletState } from "../walletRepository";
 import { StorageAdapter } from "../../storage";
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
-import { TapLeafScript } from "../../script/base";
 import {
-    serializeAssets,
-    deserializeAssets,
-    serializeTransaction,
+    SerializedUtxo,
+    SerializedVtxo,
     deserializeTransaction,
+    deserializeUtxo,
+    deserializeVtxo,
+    serializeTransaction,
+    serializeUtxo,
+    serializeVtxo,
 } from "../serialization";
 
 const getVtxosStorageKey = (address: string) => `vtxos:${address}`;
 const getUtxosStorageKey = (address: string) => `utxos:${address}`;
 const getTransactionsStorageKey = (address: string) => `tx:${address}`;
 const walletStateStorageKey = "wallet:state";
-
-// Utility functions for (de)serializing complex structures
-const serializeVtxo = (v: ExtendedVirtualCoin) => ({
-    ...v,
-    tapTree: hex.encode(v.tapTree),
-    forfeitTapLeafScript: serializeTapLeaf(v.forfeitTapLeafScript),
-    intentTapLeafScript: serializeTapLeaf(v.intentTapLeafScript),
-    extraWitness: v.extraWitness?.map(hex.encode),
-    assets: serializeAssets(v.assets),
-});
-
-const serializeUtxo = (u: ExtendedCoin) => ({
-    ...u,
-    tapTree: hex.encode(u.tapTree),
-    forfeitTapLeafScript: serializeTapLeaf(u.forfeitTapLeafScript),
-    intentTapLeafScript: serializeTapLeaf(u.intentTapLeafScript),
-    extraWitness: u.extraWitness?.map(hex.encode),
-});
-
-const deserializeVtxo = (o: any): ExtendedVirtualCoin => ({
-    ...o,
-    createdAt: new Date(o.createdAt),
-    tapTree: hex.decode(o.tapTree),
-    forfeitTapLeafScript: deserializeTapLeaf(o.forfeitTapLeafScript),
-    intentTapLeafScript: deserializeTapLeaf(o.intentTapLeafScript),
-    extraWitness: o.extraWitness?.map(hex.decode),
-    assets: deserializeAssets(o.assets),
-});
-
-const deserializeUtxo = (o: any): ExtendedCoin => ({
-    ...o,
-    tapTree: hex.decode(o.tapTree),
-    forfeitTapLeafScript: deserializeTapLeaf(o.forfeitTapLeafScript),
-    intentTapLeafScript: deserializeTapLeaf(o.intentTapLeafScript),
-    extraWitness: o.extraWitness?.map(hex.decode),
-});
-
-const serializeTapLeaf = ([cb, s]: TapLeafScript) => ({
-    cb: hex.encode(TaprootControlBlock.encode(cb)),
-    s: hex.encode(s),
-});
-
-const deserializeTapLeaf = (t: { cb: string; s: string }): TapLeafScript => {
-    const cb = TaprootControlBlock.decode(hex.decode(t.cb));
-    const s = hex.decode(t.s);
-    return [cb, s];
-};
 
 /**
  * @deprecated This is only to be used in migration from storage V1
@@ -79,7 +33,7 @@ export class WalletRepositoryImpl implements WalletRepository {
         if (!stored) return [];
 
         try {
-            const parsed = JSON.parse(stored) as ExtendedVirtualCoin[];
+            const parsed = JSON.parse(stored) as SerializedVtxo[];
             return parsed.map(deserializeVtxo);
         } catch (error) {
             console.error(`Failed to parse VTXOs for address ${address}:`, error);
@@ -118,7 +72,7 @@ export class WalletRepositoryImpl implements WalletRepository {
         if (!stored) return [];
 
         try {
-            const parsed = JSON.parse(stored) as ExtendedCoin[];
+            const parsed = JSON.parse(stored) as SerializedUtxo[];
             return parsed.map(deserializeUtxo);
         } catch (error) {
             console.error(`Failed to parse UTXOs for address ${address}:`, error);

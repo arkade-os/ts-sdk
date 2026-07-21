@@ -7,6 +7,7 @@ import type { ExtendedVirtualCoin, ExtendedCoin, ArkTransaction, TxType } from "
 import type { TapLeafScript } from "../src/script/base";
 import type { WalletState } from "../src/repositories/walletRepository";
 import { createMockSQLExecutor } from "./helpers/mockSqlExecutor";
+import { hasTerminalSpend } from "../src/wallet/vtxo";
 
 // ── Test fixtures ───────────────────────────────────────────────────────
 
@@ -286,14 +287,30 @@ describe("SQLiteWalletRepository", () => {
             expect(retrieved.createdAt.toISOString()).toBe("2024-06-15T10:30:00.000Z");
         });
 
-        it("should handle VTXO with isSpent undefined", async () => {
+        it("derives isSpent for a VTXO stored with a null is_spent column", async () => {
+            // Surfacing `undefined` would read as spendable — see the normalizeVtxo cases in
+            // vtxo-canonical.test.ts.
             const vtxo = createMockVtxo("tx-nospent", 0, 1000);
             (vtxo as any).isSpent = undefined;
 
             await repository.saveVtxos(testAddress, [vtxo]);
             const [retrieved] = await repository.getVtxos(testAddress);
 
-            expect(retrieved.isSpent).toBeUndefined();
+            // The fixture is preconfirmed, so the derivation says "not spent".
+            expect(retrieved.isSpent).toBe(false);
+            expect(hasTerminalSpend(retrieved)).toBe(false);
+        });
+
+        it("derives isSpent as true for a spent VTXO stored with a null is_spent column", async () => {
+            const vtxo = createMockVtxo("tx-nospent-spent", 0, 1000);
+            (vtxo as any).isSpent = undefined;
+            vtxo.virtualStatus = { ...vtxo.virtualStatus, state: "spent" };
+
+            await repository.saveVtxos(testAddress, [vtxo]);
+            const [retrieved] = await repository.getVtxos(testAddress);
+
+            expect(retrieved.isSpent).toBe(true);
+            expect(hasTerminalSpend(retrieved)).toBe(true);
         });
 
         describe("Script-scoped VTXO management", () => {
