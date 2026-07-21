@@ -3,10 +3,18 @@ import { DelegateVtxo } from "../../script/delegate";
 import { RelativeTimelock } from "../../script/tapscript";
 import { Contract, ContractHandler, Discoverable, PathContext, PathSelection } from "../types";
 import type { DiscoveredContract, DiscoveryDeps } from "../types";
-import { isCsvSpendable, detectUsedScripts } from "./helpers";
-import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
-import { deriveDescriptorLeafPubKey } from "../../identity/descriptor";
-import { WALLET_RECEIVE_SOURCE } from "../metadata";
+import {
+    discoverIndexerCandidates,
+    discoverAtViaRange,
+    extractPubKeyBytes,
+    deserializeCsvTimelock,
+    rotatedReceiveMetadata,
+    buildSignerTimelockCandidates,
+    selectForfeitOrExitPath,
+    forfeitExitAllPaths,
+    forfeitExitSpendablePaths,
+} from "./helpers";
+import { timelockToSequence } from "../../utils/timelock";
 
 /**
  * Typed parameters for DelegateVtxo contracts.
@@ -45,12 +53,11 @@ export const DelegateContractHandler: ContractHandler<DelegateContractParams, De
     },
 
     deserializeParams(params: Record<string, string>): DelegateContractParams {
-        const csvTimelock = sequenceToTimelock(Number(params.csvTimelock));
         return {
-            pubKey: hex.decode(params.pubKey),
-            serverPubKey: hex.decode(params.serverPubKey),
-            delegatePubKey: hex.decode(params.delegatePubKey),
-            csvTimelock,
+            pubKey: extractPubKeyBytes(params.pubKey),
+            serverPubKey: extractPubKeyBytes(params.serverPubKey),
+            delegatePubKey: extractPubKeyBytes(params.delegatePubKey),
+            csvTimelock: deserializeCsvTimelock(params.csvTimelock),
         };
     },
 
@@ -59,20 +66,7 @@ export const DelegateContractHandler: ContractHandler<DelegateContractParams, De
         contract: Contract,
         context: PathContext,
     ): PathSelection | null {
-        if (context.collaborative) {
-            return { leaf: script.forfeit() };
-        }
-
-        const sequence = contract.params.csvTimelock
-            ? Number(contract.params.csvTimelock)
-            : undefined;
-        if (!isCsvSpendable(context, sequence)) {
-            return null;
-        }
-        return {
-            leaf: script.exit(),
-            sequence,
-        };
+        return selectForfeitOrExitPath(script, contract, context);
     },
 
     getAllSpendingPaths(
@@ -80,24 +74,12 @@ export const DelegateContractHandler: ContractHandler<DelegateContractParams, De
         contract: Contract,
         context: PathContext,
     ): PathSelection[] {
-        const paths: PathSelection[] = [];
-
-        if (context.collaborative) {
-            paths.push({ leaf: script.forfeit() });
-        }
-
-        const exitPath: PathSelection = { leaf: script.exit() };
-        if (contract.params.csvTimelock) {
-            exitPath.sequence = Number(contract.params.csvTimelock);
-        }
-        paths.push(exitPath);
-
-        // Delegate path (Alice + Delegate + Server) — collaborative only
-        if (context.collaborative) {
-            paths.push({ leaf: script.delegate() });
-        }
-
-        return paths;
+        return [
+            ...forfeitExitAllPaths(script, contract, context),
+            // Delegate path (Alice + Delegate + Server) — collaborative only,
+            // and last so the shared forfeit/exit ordering is unchanged.
+            ...(context.collaborative ? [{ leaf: script.delegate() }] : []),
+        ];
     },
 
     getSpendablePaths(
@@ -105,94 +87,49 @@ export const DelegateContractHandler: ContractHandler<DelegateContractParams, De
         contract: Contract,
         context: PathContext,
     ): PathSelection[] {
-        const paths: PathSelection[] = [];
-
-        if (context.collaborative) {
-            paths.push({ leaf: script.forfeit() });
-        }
-
-        const exitSequence = contract.params.csvTimelock
-            ? Number(contract.params.csvTimelock)
-            : undefined;
-
-        if (isCsvSpendable(context, exitSequence)) {
-            const exitPath: PathSelection = { leaf: script.exit() };
-            if (exitSequence !== undefined) {
-                exitPath.sequence = exitSequence;
-            }
-            paths.push(exitPath);
-        }
-
-        return paths;
+        return forfeitExitSpendablePaths(script, contract, context);
     },
 
-    async discoverAt(
-        index: number,
-        descriptor: string,
-        deps: DiscoveryDeps,
-    ): Promise<DiscoveredContract[]> {
-        if (!deps.delegatePubKey) return [];
-        const pubKey = deriveDescriptorLeafPubKey(descriptor);
-        // Build the candidate set: current signer first, then any deprecated
-        // signers, each crossed with the CSV-timelock matrix (see
-        // DefaultContractHandler.discoverAt for the rationale). Dedup by
-        // scriptHex so a non-rotating signer is neither probed nor emitted
-        // twice; the current signer wins the attribution.
-        const signers = [deps.serverPubKey, ...(deps.deprecatedSignerPubKeys ?? [])];
-        const seen = new Set<string>();
-        const candidates: {
-            serverPubKey: Uint8Array;
-            csvTimelock: RelativeTimelock;
-            script: DelegateVtxo.Script;
-            scriptHex: string;
-        }[] = [];
-        for (const serverPubKey of signers) {
-            for (const csvTimelock of deps.csvTimelocks) {
-                const script = new DelegateVtxo.Script({
-                    pubKey,
-                    serverPubKey,
-                    delegatePubKey: deps.delegatePubKey,
-                    csvTimelock,
-                });
-                const scriptHex = hex.encode(script.pkScript);
-                if (seen.has(scriptHex)) continue;
-                seen.add(scriptHex);
-                candidates.push({ serverPubKey, csvTimelock, script, scriptHex });
-            }
-        }
+    discoverAt: discoverAtViaRange(discoverDelegateRange),
 
-        // One batched indexer query over every candidate, instead of one call
-        // per (signer × CSV) variant.
-        const used = await detectUsedScripts(
-            deps.indexerProvider,
-            candidates.map((c) => c.scriptHex),
-        );
-
-        const out: DiscoveredContract[] = [];
-        for (const c of candidates) {
-            if (!used.has(c.scriptHex)) continue;
-            // The matched signer is threaded through script, params, and
-            // address so signing/forfeit later resolves the right key.
-            out.push({
-                type: "delegate",
-                params: {
-                    pubKey: hex.encode(pubKey),
-                    serverPubKey: hex.encode(c.serverPubKey),
-                    delegatePubKey: hex.encode(deps.delegatePubKey),
-                    csvTimelock: timelockToSequence(c.csvTimelock).toString(),
-                },
-                script: c.scriptHex,
-                address: c.script.address(deps.network.hrp, c.serverPubKey).encode(),
-                ...(index > 0
-                    ? {
-                          metadata: {
-                              source: WALLET_RECEIVE_SOURCE,
-                              signingDescriptor: descriptor,
-                          },
-                      }
-                    : {}),
-            });
-        }
-        return out;
-    },
+    discoverRange: discoverDelegateRange,
 };
+
+function discoverDelegateRange(
+    entries: readonly { index: number; descriptor: string }[],
+    deps: DiscoveryDeps,
+): Promise<Map<number, DiscoveredContract[]>> {
+    // Not a delegate wallet: still answer for every requested index, since an
+    // omission would read as indeterminate and truncate the scan.
+    const delegatePubKey = deps.delegatePubKey;
+    if (!delegatePubKey) {
+        return Promise.resolve(new Map(entries.map((e) => [e.index, []])));
+    }
+
+    return discoverIndexerCandidates(
+        deps.indexerProvider,
+        entries,
+        // The delegate key is constant across the cross-product, so it rides
+        // the closure rather than being repeated on every candidate.
+        (_index, descriptor) =>
+            buildSignerTimelockCandidates(
+                descriptor,
+                deps,
+                (opts) => new DelegateVtxo.Script({ ...opts, delegatePubKey }),
+            ),
+        // The matched signer is threaded through script, params, and address so
+        // signing/forfeit later resolves the right key.
+        (c, index, descriptor) => ({
+            type: "delegate",
+            params: {
+                pubKey: hex.encode(c.pubKey),
+                serverPubKey: hex.encode(c.serverPubKey),
+                delegatePubKey: hex.encode(delegatePubKey),
+                csvTimelock: timelockToSequence(c.csvTimelock).toString(),
+            },
+            script: c.scriptHex,
+            address: c.script.address(deps.network.hrp, c.serverPubKey).encode(),
+            ...rotatedReceiveMetadata(index, descriptor),
+        }),
+    );
+}

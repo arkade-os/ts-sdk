@@ -5,7 +5,7 @@ import type { DiscoveredContract, DiscoveryDeps } from "../types";
 import { DefaultContractHandler, DefaultContractParams } from "./default";
 import { deriveDescriptorLeafPubKey } from "../../identity/descriptor";
 import { timelockToSequence } from "../../utils/timelock";
-import { WALLET_RECEIVE_SOURCE } from "../metadata";
+import { rotatedReceiveMetadata } from "./helpers";
 
 /**
  * Typed parameters for boarding contracts.
@@ -172,14 +172,7 @@ export const BoardingContractHandler: ContractHandler<BoardingContractParams, De
                 // newest boarding address and descriptor-aware signing can
                 // recover the per-index key (plan §6-II/§6-III.3). The index-0
                 // baseline stays untagged, matching `default`/`delegate`.
-                ...(index > 0
-                    ? {
-                          metadata: {
-                              source: WALLET_RECEIVE_SOURCE,
-                              signingDescriptor: descriptor,
-                          },
-                      }
-                    : {}),
+                ...rotatedReceiveMetadata(index, descriptor),
             },
         ];
     },
