@@ -1379,6 +1379,43 @@ describe("Wallet.restore", () => {
         }
     });
 
+    it("re-subscribes ONCE for a scan that discovers several contracts", async () => {
+        // Every subscribe posts the whole accumulated script list, so one per
+        // discovered contract is quadratic in script-slots. The scan coalesces
+        // them into a single POST carrying the final set.
+        const { wallet, indexer, hdProvider } = await makeHdWalletForTest();
+        try {
+            const serverPubKey = wallet.offchainTapscript.options.serverPubKey;
+            const funded: string[] = [];
+            for (const index of [1, 2, 3]) {
+                for (const csvTimelock of wallet.walletContractTimelocks) {
+                    const script = hex.encode(
+                        new DefaultVtxo.Script({
+                            pubKey: deriveDescriptorLeafPubKey(
+                                hdProvider.materializeDescriptorAt(index),
+                            ),
+                            serverPubKey,
+                            csvTimelock,
+                        }).pkScript,
+                    );
+                    indexer.usedScripts.add(script);
+                    funded.push(script);
+                }
+            }
+
+            indexer.subscribeCalls.length = 0;
+            await wallet.restore({ gapLimit: 5 });
+
+            expect(indexer.subscribeCalls).toHaveLength(1);
+            // The one POST carries every discovered script, not a prefix.
+            for (const script of funded) {
+                expect(indexer.subscribeCalls[0]).toContain(script);
+            }
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
     it("HD: a funded boarding index is recovered via the on-chain probe (advances watermark)", async () => {
         const { wallet, hdProvider, fundedOnchain } = await makeHdWalletForTest();
         try {

@@ -778,8 +778,15 @@ export class ContractManager implements IContractManager {
      *   can surface hits above the failed index that a serial scan would never
      *   have reached, so a truncated batched scan discovers a superset — never
      *   a subset — of the serial one.
+     * - The whole scan runs inside one coalesced subscription scope, so N
+     *   discovered contracts cost ONE `subscribeForScripts` instead of N
+     *   growing ones (see {@link ContractWatcher.withCoalescedSubscription}).
      */
-    async scanContracts(opts: ScanContractsOptions): Promise<ScanResult> {
+    scanContracts(opts: ScanContractsOptions): Promise<ScanResult> {
+        return this.watcher.withCoalescedSubscription(() => this.runScan(opts));
+    }
+
+    private async runScan(opts: ScanContractsOptions): Promise<ScanResult> {
         const gapLimit = opts.gapLimit ?? 20;
         if (!Number.isInteger(gapLimit) || gapLimit <= 0) {
             throw new Error(

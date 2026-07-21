@@ -138,22 +138,26 @@ function makeVtxo(script: string, value: number, createdAt: Date = new Date()): 
  *
  * `getVtxosCalls` records the `scripts`-shaped probes so a test can
  * assert the scan ran exactly once when calls coalesce, and inspect the
- * window each probe carried.
+ * window each probe carried; `subscribeCalls` records each subscription
+ * POST's script list for the same reason.
  */
 export interface MockIndexer extends IndexerProvider {
     usedScripts: Set<string>;
     /** Per-script VTXO creation time; scripts absent from the map mint at "now". */
     vtxoCreatedAt: Map<string, Date>;
     getVtxosCalls: { scripts: string[]; after?: number }[];
+    subscribeCalls: string[][];
 }
 
 function makeMockIndexer(usedScripts: Set<string>): MockIndexer {
     const getVtxosCalls: { scripts: string[]; after?: number }[] = [];
     const vtxoCreatedAt = new Map<string, Date>();
+    const subscribeCalls: string[][] = [];
     const indexer = {
         usedScripts,
         vtxoCreatedAt,
         getVtxosCalls,
+        subscribeCalls,
         async getVtxos(opts?: { scripts?: string[]; outpoints?: unknown[]; after?: number }) {
             const scripts = opts?.scripts;
             if (!scripts) return { vtxos: [] };
@@ -169,7 +173,8 @@ function makeMockIndexer(usedScripts: Set<string>): MockIndexer {
         async getAssetDetails() {
             throw new Error("getAssetDetails not used by restore");
         },
-        async subscribeForScripts() {
+        async subscribeForScripts(scripts: string[]) {
+            subscribeCalls.push(scripts);
             return "sub-1";
         },
         async unsubscribeForScripts() {
