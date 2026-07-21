@@ -1375,17 +1375,13 @@ export class ContractManager implements IContractManager {
     private async fetchPresentOutpoints(vtxos: ExtendedVirtualCoin[]): Promise<Set<string>> {
         const outpoints = vtxos.map((v) => ({ txid: v.txid, vout: v.vout }));
         const present = new Set<string>();
-        let pageIndex = 0;
-        let hasMore = true;
-        while (hasMore) {
-            const { vtxos: found, page } = await this.config.indexerProvider.getVtxos({
-                outpoints,
-                pageIndex,
-                pageSize: DEFAULT_PAGE_SIZE,
+        const BATCH_SIZE = 100;
+
+        for (let i = 0; i < outpoints.length; i += BATCH_SIZE) {
+            const res = await this.config.indexerProvider.getVtxos({
+                outpoints: outpoints.slice(i, i + BATCH_SIZE),
             });
-            for (const v of found) present.add(vtxoOutpoint(v));
-            hasMore = page ? found.length === DEFAULT_PAGE_SIZE : false;
-            pageIndex++;
+            for (const v of res.vtxos) present.add(vtxoOutpoint(v));
         }
         return present;
     }
