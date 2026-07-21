@@ -240,6 +240,20 @@ export function mineBlocks(n: number = 1): void {
     execCommand(`node regtest/regtest.mjs mine ${n}`);
 }
 
+/**
+ * Bitcoin Core's block count, read straight from the node.
+ *
+ * Every indexer in the stack (mempool/Fulcrum behind EsploraProvider, nbxplorer
+ * behind arkd) trails this by an unbounded amount — right after `mineBlocks(10)`
+ * they still report the pre-mine tip for a second or two. Use this, not an
+ * indexer's tip, whenever a test needs a height no consumer can already be past:
+ * every indexer height is <= this one, so a locktime built on it is guaranteed
+ * immature everywhere at the moment it is read.
+ */
+export function coreBlockCount(): number {
+    return Number(execCommand(`node regtest/regtest.mjs rpc getblockcount`));
+}
+
 export async function createVtxo(alice: TestArkWallet, amount: number): Promise<string> {
     const address = await alice.wallet.getAddress();
     if (!address) throw new Error("Offchain address not defined.");

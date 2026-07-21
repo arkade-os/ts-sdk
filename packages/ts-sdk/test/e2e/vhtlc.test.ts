@@ -23,6 +23,7 @@ import {
 import {
     arkdExec,
     beforeEachFaucet,
+    coreBlockCount,
     createTestArkWallet,
     createTestIdentity,
     execCommand,
@@ -277,18 +278,21 @@ describe("vhtlc", () => {
             // seconds-CLTV would need both wall-clock passage and a later block to
             // carry that time forward, so neither mining nor waiting alone gets there.
             //
-            // The buffer is squeezed between two bounds. Below it, the locktime must
-            // not already be matured against arkd's own nbxplorer-derived tip, which
-            // is a separate indexing pipeline from the mempool/Fulcrum one `height`
-            // comes from; a few blocks of slack cover that skew, and with
+            // The baseline comes from Bitcoin Core, not from an indexer. arkd matures
+            // the CLTV against its nbxplorer-derived tip, and every indexer in the
+            // stack trails Core by an unbounded amount: the preceding test mines 10
+            // blocks and returns, so an EsploraProvider tip read here can still be
+            // those 10 blocks stale — a locktime built on it is then *already* matured
+            // against arkd, and the premature-rejection assertion below fails. Core's
+            // count is an upper bound on every indexer, so `+5` is immature everywhere.
+            //
+            // The buffer stays small because the whole maturation must fit inside the
+            // funding VTXO's batch lifetime — ARKD_VTXO_TREE_EXPIRY=20 blocks — an
+            // expired batch makes the input recoverable-only, and the retry then fails
+            // VTXO_RECOVERABLE instead of exercising the regression. With
             // AUTOMINE_INTERVAL=0 (see .env.regtest) nothing advances the tip between
-            // this read and the first submitTx below. Above it, the whole maturation
-            // must fit inside the funding VTXO's batch lifetime —
-            // ARKD_VTXO_TREE_EXPIRY=20 blocks — because an expired batch makes the
-            // input recoverable-only, and the retry then fails VTXO_RECOVERABLE
-            // instead of exercising the regression.
-            const { height } = await onchainProvider.getChainTip();
-            const refundLocktime = BigInt(height + 5);
+            // this read and the first submitTx below.
+            const refundLocktime = BigInt(coreBlockCount() + 5);
 
             const preimageHash = hash160(new TextEncoder().encode("preimage"));
             const vhtlcScript = new VHTLC.Script({
