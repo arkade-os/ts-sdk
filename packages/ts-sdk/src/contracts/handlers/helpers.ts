@@ -1,11 +1,17 @@
 import { hex } from "@scure/base";
 import { sequenceToTimelock } from "../../utils/timelock";
-import { Contract, DiscoveredContract, PathContext } from "../types";
+import { Contract, DiscoveredContract, PathContext, PathSelection } from "../types";
 import type { Discoverable, DiscoveryDeps } from "../types";
-import { isDescriptor, extractPubKey, normalizeToDescriptor } from "../../identity/descriptor";
+import {
+    isDescriptor,
+    extractPubKey,
+    normalizeToDescriptor,
+    deriveDescriptorLeafPubKey,
+} from "../../identity/descriptor";
 import type { IndexerProvider } from "../../providers/indexer";
 import { getNormalizedVtxos } from "../../wallet/vtxo";
 import { DefaultVtxo } from "../../script/default";
+import type { TapLeafScript } from "../../script/base";
 import type { RelativeTimelock } from "../../script/tapscript";
 import { WALLET_RECEIVE_SOURCE } from "../metadata";
 import { DEFAULT_PAGE_SIZE, SCRIPT_QUERY_CHUNK_SIZE } from "../constants";
@@ -156,6 +162,99 @@ export function isCsvSpendable(context: PathContext, sequence?: number): boolean
 }
 
 /**
+ * The tapleaf surface shared by `DefaultVtxo.Script` and
+ * `DelegateVtxo.Script`. Structural rather than nominal: the two classes are
+ * siblings (delegate wraps a default rather than extending it), so a shared
+ * interface is what lets both feed the forfeit/exit path helpers below.
+ */
+export interface ForfeitExitScript {
+    forfeit(): TapLeafScript;
+    exit(): TapLeafScript;
+}
+
+/**
+ * BIP68 sequence for a contract's exit path, or `undefined` when the contract
+ * carries no `csvTimelock` param (an exit with no relative timelock).
+ */
+export function exitSequence(contract: Contract): number | undefined {
+    return contract.params.csvTimelock ? Number(contract.params.csvTimelock) : undefined;
+}
+
+/**
+ * The `forfeit`-or-`exit` selection every forfeit/exit contract shares:
+ * collaborative spending takes the forfeit path, otherwise the exit path once
+ * its CSV has matured. Returns null when neither is available.
+ */
+export function selectForfeitOrExitPath(
+    script: ForfeitExitScript,
+    contract: Contract,
+    context: PathContext,
+): PathSelection | null {
+    if (context.collaborative) {
+        return { leaf: script.forfeit() };
+    }
+
+    const sequence = exitSequence(contract);
+    if (!isCsvSpendable(context, sequence)) {
+        return null;
+    }
+    return { leaf: script.exit(), sequence };
+}
+
+/**
+ * Every forfeit/exit path that exists at all: forfeit when the server
+ * cooperates, plus exit unconditionally (its CSV is checked at tx build time,
+ * not here).
+ */
+export function forfeitExitAllPaths(
+    script: ForfeitExitScript,
+    contract: Contract,
+    context: PathContext,
+): PathSelection[] {
+    const paths: PathSelection[] = [];
+
+    if (context.collaborative) {
+        paths.push({ leaf: script.forfeit() });
+    }
+
+    const exitPath: PathSelection = { leaf: script.exit() };
+    const sequence = exitSequence(contract);
+    if (sequence !== undefined) {
+        exitPath.sequence = sequence;
+    }
+    paths.push(exitPath);
+
+    return paths;
+}
+
+/**
+ * The subset of {@link forfeitExitAllPaths} spendable *right now* — the exit
+ * path is dropped until its CSV has matured.
+ */
+export function forfeitExitSpendablePaths(
+    script: ForfeitExitScript,
+    contract: Contract,
+    context: PathContext,
+): PathSelection[] {
+    const paths: PathSelection[] = [];
+
+    if (context.collaborative) {
+        paths.push({ leaf: script.forfeit() });
+    }
+
+    const sequence = exitSequence(contract);
+    if (isCsvSpendable(context, sequence)) {
+        const exitPath: PathSelection = { leaf: script.exit() };
+        if (sequence !== undefined) {
+            exitPath.sequence = sequence;
+        }
+        paths.push(exitPath);
+    }
+
+    return paths;
+}
+
+/**
  * Batched discovery probe: given candidate pkScripts a discovery pass built
  * (the signer × CSV-timelock cross-product, possibly across several wallet
  * indices), return the subset the indexer has at least one VTXO for — in any
@@ -248,6 +347,56 @@ export async function discoverIndexerCandidates<C extends { scriptHex: string }>
         );
     }
     return out;
+}
+
+/**
+ * One probe candidate: a built script plus the (signer, timelock) pair that
+ * produced it, so the matched signer can be threaded into the emitted
+ * contract's params and address.
+ */
+export interface SignerCandidate<S> {
+    pubKey: Uint8Array;
+    serverPubKey: Uint8Array;
+    csvTimelock: RelativeTimelock;
+    script: S;
+    scriptHex: string;
+}
+
+/**
+ * Candidate scripts for one wallet index: the current signer first, then any
+ * deprecated signers (so a VTXO minted under a now-rotated server key is still
+ * discovered), each crossed with the CSV-timelock matrix.
+ *
+ * Dedup by scriptHex — a deprecated signer that produced no rotation yields
+ * the same scripts as the current key, so it must neither be probed nor
+ * emitted twice; the current signer wins the attribution by being first.
+ *
+ * `makeScript` is the only per-contract-type part, which is what lets
+ * `default` and `delegate` share one cross-product.
+ */
+export function buildSignerTimelockCandidates<S extends { pkScript: Uint8Array }>(
+    descriptor: string,
+    deps: DiscoveryDeps,
+    makeScript: (opts: {
+        pubKey: Uint8Array;
+        serverPubKey: Uint8Array;
+        csvTimelock: RelativeTimelock;
+    }) => S,
+): SignerCandidate<S>[] {
+    const pubKey = deriveDescriptorLeafPubKey(descriptor);
+    const signers = [deps.serverPubKey, ...(deps.deprecatedSignerPubKeys ?? [])];
+    const seen = new Set<string>();
+    const candidates: SignerCandidate<S>[] = [];
+    for (const serverPubKey of signers) {
+        for (const csvTimelock of deps.csvTimelocks) {
+            const script = makeScript({ pubKey, serverPubKey, csvTimelock });
+            const scriptHex = hex.encode(script.pkScript);
+            if (seen.has(scriptHex)) continue;
+            seen.add(scriptHex);
+            candidates.push({ pubKey, serverPubKey, csvTimelock, script, scriptHex });
+        }
+    }
+    return candidates;
 }
 
 /**
