@@ -1,9 +1,9 @@
 import { sequenceToTimelock } from "../../utils/timelock";
-import { Contract, PathContext } from "../types";
+import { Contract, DiscoveredContract, PathContext } from "../types";
 import { isDescriptor, extractPubKey } from "../../identity/descriptor";
 import type { IndexerProvider } from "../../providers/indexer";
 import { getNormalizedVtxos } from "../../wallet/vtxo";
-import { DEFAULT_PAGE_SIZE } from "../constants";
+import { DEFAULT_PAGE_SIZE, SCRIPT_QUERY_CHUNK_SIZE } from "../constants";
 
 /**
  * Extract raw hex pubkey from a value that may be a descriptor or raw hex.
@@ -121,10 +121,10 @@ export function isCsvSpendable(context: PathContext, sequence?: number): boolean
 }
 
 /**
- * Batched discovery probe for a single wallet index: given the candidate
- * pkScripts a `discoverAt` built (the signer × CSV-timelock cross-product,
- * already deduped), return the subset the indexer has at least one VTXO for —
- * in any state, since restore counts a spent-but-used script as activity.
+ * Batched discovery probe: given candidate pkScripts a discovery pass built
+ * (the signer × CSV-timelock cross-product, possibly across several wallet
+ * indices), return the subset the indexer has at least one VTXO for — in any
+ * state, since restore counts a spent-but-used script as activity.
  *
  * Collapses what used to be one `getVtxos` call per candidate script into a
  * single call per page, the same batching shape as
@@ -134,32 +134,83 @@ export function isCsvSpendable(context: PathContext, sequence?: number): boolean
  * all are seen), and otherwise to the end of history, so the discovered set is
  * identical to the prior per-script path — a heavily-reused candidate cannot
  * starve another candidate off the first page.
+ *
+ * Scripts beyond {@link SCRIPT_QUERY_CHUNK_SIZE} are split into sequential
+ * chunks (a URL-length budget, see the constant). Chunks are issued serially,
+ * not concurrently: pacing the indexer is the point of batching here. A chunk
+ * rejecting rejects the whole call — callers treat a partial answer as
+ * indeterminate, so there is no partial-result channel to leak into.
  */
 export async function detectUsedScripts(
     indexerProvider: IndexerProvider,
     scriptHexes: string[],
 ): Promise<Set<string>> {
     const used = new Set<string>();
-    if (scriptHexes.length === 0) return used;
+    // Distinct indices can derive the same script (e.g. an unrotated signer),
+    // and a duplicate would only pad the query string.
+    const unique = [...new Set(scriptHexes)];
 
-    // `scripts` stays the full candidate set across pages so the indexer's
-    // pagination is consistent; `remaining` only drives the early stop.
-    const remaining = new Set(scriptHexes);
-    let pageIndex = 0;
-    let hasMore = true;
-    while (hasMore && remaining.size > 0) {
-        const { vtxos, page } = await getNormalizedVtxos(indexerProvider, {
-            scripts: scriptHexes,
-            pageIndex,
-            pageSize: DEFAULT_PAGE_SIZE,
-        });
-        for (const vtxo of vtxos) {
-            if (remaining.delete(vtxo.script)) used.add(vtxo.script);
+    for (let offset = 0; offset < unique.length; offset += SCRIPT_QUERY_CHUNK_SIZE) {
+        const scripts = unique.slice(offset, offset + SCRIPT_QUERY_CHUNK_SIZE);
+        // `scripts` stays the full chunk across pages so the indexer's
+        // pagination is consistent; `remaining` only drives the early stop.
+        const remaining = new Set(scripts);
+        let pageIndex = 0;
+        let hasMore = true;
+        while (hasMore && remaining.size > 0) {
+            const { vtxos, page } = await getNormalizedVtxos(indexerProvider, {
+                scripts,
+                pageIndex,
+                pageSize: DEFAULT_PAGE_SIZE,
+            });
+            for (const vtxo of vtxos) {
+                if (remaining.delete(vtxo.script)) used.add(vtxo.script);
+            }
+            // Same end-of-history heuristic as fetchContractVtxosBulk: a short
+            // page (or absent page metadata) means there is nothing left to
+            // fetch.
+            hasMore = page ? vtxos.length === DEFAULT_PAGE_SIZE : false;
+            pageIndex++;
         }
-        // Same end-of-history heuristic as fetchContractVtxosBulk: a short page
-        // (or absent page metadata) means there is nothing left to fetch.
-        hasMore = page ? vtxos.length === DEFAULT_PAGE_SIZE : false;
-        pageIndex++;
     }
     return used;
+}
+
+/**
+ * Shared body of an indexer-backed handler's `discoverAt` / `discoverRange`.
+ *
+ * Both verbs are this one function — per-index discovery is just a range of
+ * one — so the two paths cannot drift into reporting different contracts for
+ * the same wallet state. Every I/O the pass needs is the single
+ * {@link detectUsedScripts} call over the union of all indices' candidates,
+ * which is what turns a 10-index window's ~20 concurrent 2-script requests
+ * into 1-2 sequential batched ones.
+ *
+ * The returned map covers **every** requested index (empty array when nothing
+ * hit), satisfying the `discoverRange` coverage contract the scanner enforces.
+ */
+export async function discoverIndexerCandidates<C extends { scriptHex: string }>(
+    indexerProvider: IndexerProvider,
+    entries: readonly { index: number; descriptor: string }[],
+    buildCandidates: (index: number, descriptor: string) => C[],
+    emit: (candidate: C, index: number, descriptor: string) => DiscoveredContract,
+): Promise<Map<number, DiscoveredContract[]>> {
+    const perIndex = entries.map((entry) => ({
+        ...entry,
+        candidates: buildCandidates(entry.index, entry.descriptor),
+    }));
+
+    const used = await detectUsedScripts(
+        indexerProvider,
+        perIndex.flatMap((e) => e.candidates.map((c) => c.scriptHex)),
+    );
+
+    const out = new Map<number, DiscoveredContract[]>();
+    for (const { index, descriptor, candidates } of perIndex) {
+        out.set(
+            index,
+            candidates.filter((c) => used.has(c.scriptHex)).map((c) => emit(c, index, descriptor)),
+        );
+    }
+    return out;
 }

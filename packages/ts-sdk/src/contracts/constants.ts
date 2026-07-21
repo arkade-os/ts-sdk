@@ -20,5 +20,10 @@ export const DEFAULT_PAGE_SIZE = 500;
  * `414`s: a few hundred contracts is ~28 KB. 32 keeps a request at ~2.6 KB —
  * well inside any plausible limit, since `arkd`'s real ceiling is unpublished
  * and 16 is the largest batch observed working in the wild.
+ *
+ * Shared by `wallet/vtxo.ts`'s `getAllNormalizedVtxos` and the discovery
+ * handlers' batched `detectUsedScripts` probe (which also gets a 10-index scan
+ * window collapsed into 1-2 requests as a side effect) so the two can't drift
+ * onto different budgets for the same URL constraint.
  */
 export const SCRIPT_QUERY_CHUNK_SIZE = 32;

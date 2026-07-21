@@ -3,7 +3,7 @@ import { DefaultVtxo } from "../../script/default";
 import { RelativeTimelock } from "../../script/tapscript";
 import { Contract, ContractHandler, Discoverable, PathContext, PathSelection } from "../types";
 import type { DiscoveredContract, DiscoveryDeps } from "../types";
-import { isCsvSpendable, detectUsedScripts } from "./helpers";
+import { isCsvSpendable, discoverIndexerCandidates } from "./helpers";
 import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
 import {
     normalizeToDescriptor,
@@ -144,68 +144,73 @@ export const DefaultContractHandler: ContractHandler<DefaultContractParams, Defa
         descriptor: string,
         deps: DiscoveryDeps,
     ): Promise<DiscoveredContract[]> {
-        const pubKey = deriveDescriptorLeafPubKey(descriptor);
-        // Build the candidate set for this wallet index: the current signer
-        // first, then any deprecated signers (so a VTXO minted under a
-        // now-rotated server key is still discovered), each crossed with the
-        // CSV-timelock matrix. Dedup by scriptHex — a deprecated signer that
-        // produced no rotation yields the same scripts as the current key, so
-        // it must neither be probed nor emitted twice; the current signer wins
-        // the attribution.
-        const signers = [deps.serverPubKey, ...(deps.deprecatedSignerPubKeys ?? [])];
-        const seen = new Set<string>();
-        const candidates: {
-            serverPubKey: Uint8Array;
-            csvTimelock: RelativeTimelock;
-            script: DefaultVtxo.Script;
-            scriptHex: string;
-        }[] = [];
-        for (const serverPubKey of signers) {
-            for (const csvTimelock of deps.csvTimelocks) {
-                const script = new DefaultVtxo.Script({
-                    pubKey,
-                    serverPubKey,
-                    csvTimelock,
-                });
-                const scriptHex = hex.encode(script.pkScript);
-                if (seen.has(scriptHex)) continue;
-                seen.add(scriptHex);
-                candidates.push({ serverPubKey, csvTimelock, script, scriptHex });
-            }
-        }
-
-        // One batched indexer query over every candidate, instead of one call
-        // per (signer × CSV) variant.
-        const used = await detectUsedScripts(
-            deps.indexerProvider,
-            candidates.map((c) => c.scriptHex),
-        );
-
-        const out: DiscoveredContract[] = [];
-        for (const c of candidates) {
-            if (!used.has(c.scriptHex)) continue;
-            // The matched signer is threaded through the script (already built),
-            // the persisted params, and the encoded address so signing/forfeit
-            // later resolves the right key.
-            out.push({
-                type: "default",
-                params: {
-                    pubKey: hex.encode(pubKey),
-                    serverPubKey: hex.encode(c.serverPubKey),
-                    csvTimelock: timelockToSequence(c.csvTimelock).toString(),
-                },
-                script: c.scriptHex,
-                address: c.script.address(deps.network.hrp, c.serverPubKey).encode(),
-                ...(index > 0
-                    ? {
-                          metadata: {
-                              source: WALLET_RECEIVE_SOURCE,
-                              signingDescriptor: descriptor,
-                          },
-                      }
-                    : {}),
-            });
-        }
-        return out;
+        return (await discoverDefaultRange([{ index, descriptor }], deps)).get(index) ?? [];
     },
+
+    discoverRange: discoverDefaultRange,
 };
+
+/**
+ * Candidate scripts for one wallet index: the current signer first, then any
+ * deprecated signers (so a VTXO minted under a now-rotated server key is still
+ * discovered), each crossed with the CSV-timelock matrix. Dedup by scriptHex —
+ * a deprecated signer that produced no rotation yields the same scripts as the
+ * current key, so it must neither be probed nor emitted twice; the current
+ * signer wins the attribution.
+ */
+function buildDefaultCandidates(descriptor: string, deps: DiscoveryDeps): DefaultCandidate[] {
+    const pubKey = deriveDescriptorLeafPubKey(descriptor);
+    const signers = [deps.serverPubKey, ...(deps.deprecatedSignerPubKeys ?? [])];
+    const seen = new Set<string>();
+    const candidates: DefaultCandidate[] = [];
+    for (const serverPubKey of signers) {
+        for (const csvTimelock of deps.csvTimelocks) {
+            const script = new DefaultVtxo.Script({ pubKey, serverPubKey, csvTimelock });
+            const scriptHex = hex.encode(script.pkScript);
+            if (seen.has(scriptHex)) continue;
+            seen.add(scriptHex);
+            candidates.push({ pubKey, serverPubKey, csvTimelock, script, scriptHex });
+        }
+    }
+    return candidates;
+}
+
+interface DefaultCandidate {
+    pubKey: Uint8Array;
+    serverPubKey: Uint8Array;
+    csvTimelock: RelativeTimelock;
+    script: DefaultVtxo.Script;
+    scriptHex: string;
+}
+
+function discoverDefaultRange(
+    entries: readonly { index: number; descriptor: string }[],
+    deps: DiscoveryDeps,
+): Promise<Map<number, DiscoveredContract[]>> {
+    return discoverIndexerCandidates(
+        deps.indexerProvider,
+        entries,
+        (_index, descriptor) => buildDefaultCandidates(descriptor, deps),
+        // The matched signer is threaded through the script (already built),
+        // the persisted params, and the encoded address so signing/forfeit
+        // later resolves the right key.
+        (c, index, descriptor) => ({
+            type: "default",
+            params: {
+                pubKey: hex.encode(c.pubKey),
+                serverPubKey: hex.encode(c.serverPubKey),
+                csvTimelock: timelockToSequence(c.csvTimelock).toString(),
+            },
+            script: c.scriptHex,
+            address: c.script.address(deps.network.hrp, c.serverPubKey).encode(),
+            ...(index > 0
+                ? {
+                      metadata: {
+                          source: WALLET_RECEIVE_SOURCE,
+                          signingDescriptor: descriptor,
+                      },
+                  }
+                : {}),
+        }),
+    );
+}
