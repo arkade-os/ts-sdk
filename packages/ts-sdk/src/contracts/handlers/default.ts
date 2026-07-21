@@ -3,14 +3,16 @@ import { DefaultVtxo } from "../../script/default";
 import { RelativeTimelock } from "../../script/tapscript";
 import { Contract, ContractHandler, Discoverable, PathContext, PathSelection } from "../types";
 import type { DiscoveredContract, DiscoveryDeps } from "../types";
-import { isCsvSpendable, discoverIndexerCandidates } from "./helpers";
-import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
 import {
-    normalizeToDescriptor,
-    extractPubKey,
-    deriveDescriptorLeafPubKey,
-} from "../../identity/descriptor";
-import { WALLET_RECEIVE_SOURCE } from "../metadata";
+    isCsvSpendable,
+    discoverIndexerCandidates,
+    discoverAtViaRange,
+    extractPubKeyBytes,
+    deserializeCsvTimelock,
+    rotatedReceiveMetadata,
+} from "./helpers";
+import { timelockToSequence } from "../../utils/timelock";
+import { deriveDescriptorLeafPubKey } from "../../identity/descriptor";
 
 /**
  * Typed parameters for DefaultVtxo contracts.
@@ -19,13 +21,6 @@ export interface DefaultContractParams {
     pubKey: Uint8Array;
     serverPubKey: Uint8Array;
     csvTimelock: RelativeTimelock;
-}
-
-/**
- * Extract pubkey bytes from a descriptor or hex string.
- */
-function extractPubKeyBytes(value: string): Uint8Array {
-    return hex.decode(extractPubKey(normalizeToDescriptor(value)));
 }
 
 /**
@@ -53,18 +48,10 @@ export const DefaultContractHandler: ContractHandler<DefaultContractParams, Defa
     },
 
     deserializeParams(params: Record<string, string>): DefaultContractParams {
-        // csvTimelock may be absent on legacy/minimal params (e.g. hex pubkeys
-        // with no timelock). DefaultVtxo.Script no longer applies its own
-        // fallback, so restore it here rather than feeding sequenceToTimelock
-        // a NaN (which silently decodes to a zero timelock).
-        const csvTimelock =
-            params.csvTimelock !== undefined && params.csvTimelock !== ""
-                ? sequenceToTimelock(Number(params.csvTimelock))
-                : DefaultVtxo.Script.DEFAULT_TIMELOCK;
         return {
             pubKey: extractPubKeyBytes(params.pubKey),
             serverPubKey: extractPubKeyBytes(params.serverPubKey),
-            csvTimelock,
+            csvTimelock: deserializeCsvTimelock(params.csvTimelock),
         };
     },
 
@@ -139,13 +126,7 @@ export const DefaultContractHandler: ContractHandler<DefaultContractParams, Defa
         return paths;
     },
 
-    async discoverAt(
-        index: number,
-        descriptor: string,
-        deps: DiscoveryDeps,
-    ): Promise<DiscoveredContract[]> {
-        return (await discoverDefaultRange([{ index, descriptor }], deps)).get(index) ?? [];
-    },
+    discoverAt: discoverAtViaRange(discoverDefaultRange),
 
     discoverRange: discoverDefaultRange,
 };
@@ -203,14 +184,7 @@ function discoverDefaultRange(
             },
             script: c.scriptHex,
             address: c.script.address(deps.network.hrp, c.serverPubKey).encode(),
-            ...(index > 0
-                ? {
-                      metadata: {
-                          source: WALLET_RECEIVE_SOURCE,
-                          signingDescriptor: descriptor,
-                      },
-                  }
-                : {}),
+            ...rotatedReceiveMetadata(index, descriptor),
         }),
     );
 }

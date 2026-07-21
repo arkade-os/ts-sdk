@@ -1,8 +1,13 @@
+import { hex } from "@scure/base";
 import { sequenceToTimelock } from "../../utils/timelock";
 import { Contract, DiscoveredContract, PathContext } from "../types";
-import { isDescriptor, extractPubKey } from "../../identity/descriptor";
+import type { Discoverable, DiscoveryDeps } from "../types";
+import { isDescriptor, extractPubKey, normalizeToDescriptor } from "../../identity/descriptor";
 import type { IndexerProvider } from "../../providers/indexer";
 import { getNormalizedVtxos } from "../../wallet/vtxo";
+import { DefaultVtxo } from "../../script/default";
+import type { RelativeTimelock } from "../../script/tapscript";
+import { WALLET_RECEIVE_SOURCE } from "../metadata";
 import { DEFAULT_PAGE_SIZE, SCRIPT_QUERY_CHUNK_SIZE } from "../constants";
 
 /**
@@ -70,6 +75,36 @@ export function resolveRole(
     }
 
     return undefined;
+}
+
+/**
+ * Extract pubkey bytes from a persisted param that may hold either a
+ * descriptor or a raw hex key.
+ *
+ * Shared by every descriptor-capable handler (`default` / `delegate` /
+ * `boarding` — see `DESCRIPTOR_CAPABLE_CONTRACT_TYPES`) so a rotated row whose
+ * key param was persisted in descriptor form deserializes identically
+ * whichever handler owns it.
+ */
+export function extractPubKeyBytes(value: string): Uint8Array {
+    return hex.decode(extractPubKey(normalizeToDescriptor(value)));
+}
+
+/**
+ * Decode a persisted `csvTimelock` param, restoring the default when absent.
+ *
+ * The param may be missing or empty on legacy/minimal rows (e.g. hex pubkeys
+ * written with no timelock). The script classes no longer apply their own
+ * fallback, and an unguarded decode does *not* fail loudly: `Number("")` /
+ * `Number(undefined)` is `NaN`, and `bip68.decode(NaN)` returns
+ * `{ blocks: 0 }`, so `sequenceToTimelock` silently yields a zero timelock —
+ * an exit path that reads as immediately spendable. Restore the documented
+ * default instead of decoding a NaN.
+ */
+export function deserializeCsvTimelock(value: string | undefined): RelativeTimelock {
+    return value !== undefined && value !== ""
+        ? sequenceToTimelock(Number(value))
+        : DefaultVtxo.Script.DEFAULT_TIMELOCK;
 }
 
 /**
@@ -213,4 +248,38 @@ export async function discoverIndexerCandidates<C extends { scriptHex: string }>
         );
     }
     return out;
+}
+
+/**
+ * Metadata tagging a discovered contract as one of the wallet's own rotating
+ * receive addresses — spread into a {@link DiscoveredContract} literal.
+ *
+ * Only *rotated* rows (index > 0) are tagged, so boot resolution can find the
+ * newest address and descriptor-aware signing can recover the per-index key.
+ * The index-0 baseline stays untagged across every handler.
+ */
+export function rotatedReceiveMetadata(
+    index: number,
+    descriptor: string,
+): Pick<DiscoveredContract, "metadata"> {
+    return index > 0
+        ? { metadata: { source: WALLET_RECEIVE_SOURCE, signingDescriptor: descriptor } }
+        : {};
+}
+
+/**
+ * Derive a handler's {@link Discoverable.discoverAt} from its
+ * {@link Discoverable.discoverRange}: per-index discovery is just a range of
+ * one, so the two verbs cannot drift into reporting different contracts for
+ * the same wallet state.
+ *
+ * The `?? []` mirrors `discoverRange`'s coverage contract from the caller's
+ * side — a range that omitted the requested index reports a miss here rather
+ * than `undefined`.
+ */
+export function discoverAtViaRange(
+    discoverRange: NonNullable<Discoverable["discoverRange"]>,
+): Discoverable["discoverAt"] {
+    return async (index: number, descriptor: string, deps: DiscoveryDeps) =>
+        (await discoverRange([{ index, descriptor }], deps)).get(index) ?? [];
 }

@@ -3,10 +3,16 @@ import { DelegateVtxo } from "../../script/delegate";
 import { RelativeTimelock } from "../../script/tapscript";
 import { Contract, ContractHandler, Discoverable, PathContext, PathSelection } from "../types";
 import type { DiscoveredContract, DiscoveryDeps } from "../types";
-import { isCsvSpendable, discoverIndexerCandidates } from "./helpers";
-import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
+import {
+    isCsvSpendable,
+    discoverIndexerCandidates,
+    discoverAtViaRange,
+    extractPubKeyBytes,
+    deserializeCsvTimelock,
+    rotatedReceiveMetadata,
+} from "./helpers";
+import { timelockToSequence } from "../../utils/timelock";
 import { deriveDescriptorLeafPubKey } from "../../identity/descriptor";
-import { WALLET_RECEIVE_SOURCE } from "../metadata";
 
 /**
  * Typed parameters for DelegateVtxo contracts.
@@ -45,12 +51,11 @@ export const DelegateContractHandler: ContractHandler<DelegateContractParams, De
     },
 
     deserializeParams(params: Record<string, string>): DelegateContractParams {
-        const csvTimelock = sequenceToTimelock(Number(params.csvTimelock));
         return {
-            pubKey: hex.decode(params.pubKey),
-            serverPubKey: hex.decode(params.serverPubKey),
-            delegatePubKey: hex.decode(params.delegatePubKey),
-            csvTimelock,
+            pubKey: extractPubKeyBytes(params.pubKey),
+            serverPubKey: extractPubKeyBytes(params.serverPubKey),
+            delegatePubKey: extractPubKeyBytes(params.delegatePubKey),
+            csvTimelock: deserializeCsvTimelock(params.csvTimelock),
         };
     },
 
@@ -126,13 +131,7 @@ export const DelegateContractHandler: ContractHandler<DelegateContractParams, De
         return paths;
     },
 
-    async discoverAt(
-        index: number,
-        descriptor: string,
-        deps: DiscoveryDeps,
-    ): Promise<DiscoveredContract[]> {
-        return (await discoverDelegateRange([{ index, descriptor }], deps)).get(index) ?? [];
-    },
+    discoverAt: discoverAtViaRange(discoverDelegateRange),
 
     discoverRange: discoverDelegateRange,
 };
@@ -212,14 +211,7 @@ function discoverDelegateRange(
             },
             script: c.scriptHex,
             address: c.script.address(deps.network.hrp, c.serverPubKey).encode(),
-            ...(index > 0
-                ? {
-                      metadata: {
-                          source: WALLET_RECEIVE_SOURCE,
-                          signingDescriptor: descriptor,
-                      },
-                  }
-                : {}),
+            ...rotatedReceiveMetadata(index, descriptor),
         }),
     );
 }
