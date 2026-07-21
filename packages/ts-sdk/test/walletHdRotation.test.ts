@@ -502,12 +502,11 @@ describe("Wallet HD rotation", () => {
         });
 
         it("second rotation deactivates the previous tagged display contract", async () => {
-            // Privacy + watch-set hygiene: once we've moved past a
-            // tagged display address, we stop accepting new arrivals
-            // there. The watcher keeps tracking it as long as it has
-            // unspent VTXOs, but `state: 'inactive'` filters it out of
-            // future `pickActiveReceive` lookups and shrinks the
-            // long-term watch surface.
+            // Privacy: once we've moved past a tagged display address we
+            // stop handing it out — `state: 'inactive'` filters it out of
+            // future `pickActiveReceive` lookups. It stays fully watched;
+            // retirement never narrows coverage, because the address can
+            // still be paid.
             const walletRepo = new InMemoryWalletRepository();
             const contractRepo = new InMemoryContractRepository();
             const wallet = await makeHdWallet(walletRepo, contractRepo);

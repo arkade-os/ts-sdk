@@ -51,7 +51,10 @@ describe("ContractWatcher", () => {
         expect(mockIndexer.subscribeForScripts).toHaveBeenCalledWith([contract.script], undefined);
     });
 
-    it("should exclude inactive contracts without VTXOs from watching", async () => {
+    it("should subscribe inactive contracts without VTXOs", async () => {
+        // A rotated-past receive address can be paid again, so retiring
+        // it must not drop it from the subscription — that would make a
+        // later payment invisible to every background channel.
         await watcher.startWatching(() => {});
 
         const contract: Contract = {
@@ -64,7 +67,7 @@ describe("ContractWatcher", () => {
         };
 
         await watcher.addContract(contract);
-        expect(mockIndexer.subscribeForScripts).not.toHaveBeenCalled();
+        expect(mockIndexer.subscribeForScripts).toHaveBeenCalledWith([contract.script], undefined);
     });
 
     it("should unsubscribe from scripts when stopped", async () => {

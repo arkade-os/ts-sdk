@@ -160,10 +160,9 @@ export class ContractWatcher {
     /**
      * Add a contract to be watched.
      *
-     * Active contracts are immediately subscribed.
-     *
-     * All contracts are polled to discover any existing virtual outputs
-     * (which may cause them to be watched even if inactive).
+     * Every contract is immediately subscribed and polled, whatever its
+     * state — see {@link getWatchedContracts} for why retirement can't
+     * remove coverage.
      */
     async addContract(contract: Contract): Promise<void> {
         const state: ContractState = {
@@ -257,20 +256,25 @@ export class ContractWatcher {
     }
 
     /**
-     * Contracts the watcher is actually tracking:
-     * - all active contracts, plus
-     * - inactive contracts that still hold known virtual outputs
-     *   (the subscription keeps watching them so `vtxo_spent` events for
-     *   those unspent outputs are still observed).
+     * Contracts the watcher tracks: **every** registered contract,
+     * including retired (`inactive`) ones that hold no known virtual
+     * outputs.
      *
      * This is the single source of truth for "contracts whose VTXO state
      * we still care about" — callers and the subscription itself fan out
      * over the same set so nothing is reconciled that isn't also watched.
+     *
+     * Retirement must never narrow this set. An Ark receive address can be
+     * paid again after the wallet has rotated past it, so a retired,
+     * fully-spent contract dropped from here leaves *every* background
+     * channel at once — this accessor feeds both the subscription and the
+     * indexer sweep scope — and a real payment to it becomes invisible
+     * until some foreground read happens to sweep it. Retirement therefore
+     * controls sweep *cadence* and receive-address selection, never
+     * coverage.
      */
     getWatchedContracts(): Contract[] {
-        return Array.from(this.contracts.values())
-            .filter((s) => s.contract.state === "active" || s.lastKnownVtxos.size > 0)
-            .map((s) => s.contract);
+        return this.getAllContracts();
     }
 
     /**
@@ -622,7 +626,8 @@ export class ContractWatcher {
     /**
      * Update the subscription with scripts that should be watched.
      *
-     * Watches both active contracts and contracts with virtual outputs.
+     * @see getWatchedContracts — the subscription covers every registered
+     * contract, retired ones included.
      */
     private async updateSubscription(): Promise<void> {
         const scriptsToWatch = this.getWatchedContracts().map((c) => c.script);

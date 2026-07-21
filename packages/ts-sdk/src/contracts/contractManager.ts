@@ -98,10 +98,10 @@ export type RefreshVtxosOptions = {
     before?: number;
     /**
      * When true and `scripts` is not set, refresh every contract in
-     * the repository — including those marked `inactive` and those
-     * that have dropped out of the watcher's active set. Useful for
-     * "did anyone send funds to a stale rotated display address?"
-     * audits.
+     * the repository rather than the watcher's watched set. Retirement
+     * no longer narrows that set (see
+     * {@link ContractWatcher.getWatchedContracts}), so this only differs
+     * for repository rows the watcher never registered.
      *
      * Because this is a *superset* of the watcher's watched set, the
      * cursor invariant still holds and the cursor advances normally
@@ -1225,9 +1225,8 @@ export class ContractManager implements IContractManager {
      * have data we'd skip).
      *
      * `includeInactive: true` (and no `scripts`) widens the refresh to
-     * every contract in the repository, including ones marked
-     * `inactive` and ones that have dropped out of the watcher's
-     * active set. This is a *superset* of the watched set, so the
+     * every contract in the repository, including rows the watcher
+     * never registered. This is a *superset* of the watched set, so the
      * cursor invariant still holds and the cursor advances normally.
      *
      * `after` / `before` apply a caller-supplied time window. The
@@ -1382,11 +1381,11 @@ export class ContractManager implements IContractManager {
      * Sync virtual outputs for the given contracts against the indexer.
      *
      * When `options.contracts` is omitted the sync covers the full
-     * watched set (active contracts plus any inactive contracts still
-     * holding cached VTXOs) and the global cursor is advanced on
-     * success. Passing an explicit subset leaves the cursor alone so a
-     * narrow poll can't hide data that other contracts still need to
-     * pick up.
+     * watched set — every registered contract, retired ones included
+     * (see {@link ContractWatcher.getWatchedContracts}) — and the global
+     * cursor is advanced on success. Passing an explicit subset leaves
+     * the cursor alone so a narrow poll can't hide data that other
+     * contracts still need to pick up.
      */
     private async syncContracts(options: {
         contracts?: Contract[];
