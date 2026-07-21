@@ -93,8 +93,19 @@ const SCAN_MAX_INDEX = 10_000;
 const DEFAULT_SCAN_BATCH = 10;
 
 export type RefreshVtxosOptions = {
+    /**
+     * Narrow the refresh to these scripts. A subset query, so the
+     * cursor is not advanced: contracts outside the list may have data
+     * we'd skip.
+     */
     scripts?: string[];
+    /**
+     * Time window overriding the cursor-derived one. The cursor never
+     * advances on a windowed query because the window may skip data
+     * outside its bounds.
+     */
     after?: number;
+    /** @see after */
     before?: number;
     /**
      * When true and `scripts` is not set, refresh every contract in
@@ -103,12 +114,9 @@ export type RefreshVtxosOptions = {
      * retirement doesn't narrow that set
      * (see {@link ContractWatcher.getWatchedContracts}).
      *
-     * Because this is a *superset* of the watcher's watched set, the
-     * cursor invariant still holds and the cursor advances normally
-     * (unless an explicit `after` / `before` window is also supplied).
-     *
-     * Ignored when `scripts` is set (the explicit list already
-     * specifies what to refresh, regardless of contract state).
+     * Because this is a *superset* of the watched set, the cursor
+     * invariant still holds and the cursor advances normally (unless
+     * `after` / `before` is also supplied).
      *
      * @defaultValue `false`
      */
@@ -1217,21 +1225,10 @@ export class ContractManager implements IContractManager {
     /**
      * Force refresh virtual outputs from the indexer.
      *
-     * Without options, re-fetches every contract in the watcher's
-     * watched set and advances the global cursor.
-     *
-     * `scripts` narrows the refresh to a specific list (subset query —
-     * cursor is not advanced because contracts outside the list may
-     * have data we'd skip).
-     *
-     * `includeInactive: true` (and no `scripts`) widens the refresh to
-     * every contract in the repository, including rows the watcher
-     * never registered. This is a *superset* of the watched set, so the
-     * cursor invariant still holds and the cursor advances normally.
-     *
-     * `after` / `before` apply a caller-supplied time window. The
-     * cursor never advances on a windowed query because the window
-     * may skip data outside its bounds.
+     * Without options, re-fetches the watcher's watched set and
+     * advances the global cursor. Each option narrows or widens that
+     * scope and may hold the cursor back — see
+     * {@link RefreshVtxosOptions}.
      */
     async refreshVtxos(opts?: RefreshVtxosOptions): Promise<void> {
         const contracts = opts?.scripts
