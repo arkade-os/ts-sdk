@@ -11,6 +11,7 @@ import {
 } from "../../src";
 import { ContractRepository } from "../../src/repositories";
 import { contractHandlers } from "../../src/contracts/handlers";
+import { OVERLAP_MS } from "../../src/utils/syncCursors";
 import { hex } from "@scure/base";
 import {
     createDefaultContractParams,
@@ -802,6 +803,49 @@ describe("ContractManager", () => {
 
             // Cursor untouched — caller-supplied windows are targeted and
             // must not move the global high-water mark.
+            const stateAfter = await repo.getWalletState();
+            expect(stateAfter?.lastSyncTime).toBe(SEEDED_CURSOR);
+        });
+
+        // Regression for restore's bulk hydration: contracts a scan just
+        // discovered have no prior sync state, so their first fetch must be
+        // unbounded. `after: 0` bypasses the cursor the boot-time reconcile
+        // already advanced past their history.
+        it("`after: 0` fetches history predating the cursor without advancing it", async () => {
+            const { mgr, repo } = await makeFreshManager();
+
+            await repo.saveWalletState({
+                lastSyncTime: SEEDED_CURSOR,
+                settings: { vtxoCursorMigrated: true },
+            });
+
+            const ancient = new Date(Date.now() - 30 * OVERLAP_MS);
+            (mockIndexer.getVtxos as any).mockClear();
+            // Honours the `after` bound, so a cursor-derived window would
+            // come back empty — without this the assertions pass either way.
+            (mockIndexer.getVtxos as any).mockImplementation(async (opts: any) => {
+                const vtxo = createMockVtxo({
+                    script: TEST_DEFAULT_SCRIPT,
+                    createdAt: ancient,
+                });
+                const visible = !opts?.after || ancient.getTime() > opts.after;
+                return { vtxos: visible ? [vtxo] : [] };
+            });
+
+            await mgr.refreshVtxos({ includeInactive: true, after: 0 });
+
+            const calls = (mockIndexer.getVtxos as any).mock.calls;
+            expect(calls.length).toBeGreaterThan(0);
+            for (const args of calls) {
+                expect(args[0]?.after).toBe(0);
+            }
+
+            const stored = await repo.getVtxos("address");
+            expect(stored).toHaveLength(1);
+            expect(stored[0].createdAt).toEqual(ancient);
+
+            // Same invariant as the explicit-window case above: a targeted
+            // superset fetch must not move the global watermark.
             const stateAfter = await repo.getWalletState();
             expect(stateAfter?.lastSyncTime).toBe(SEEDED_CURSOR);
         });

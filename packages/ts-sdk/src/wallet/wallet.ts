@@ -2555,7 +2555,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         // Inline pull BEFORE surfacing any handler errors so safely
         // discovered funds are always recovered (spec §3.B / §4).
-        await manager.refreshVtxos({ includeInactive: true });
+        //
+        // `after: 0` is load-bearing: the scan just discovered these
+        // contracts, so their first sync must span all of history. Without
+        // it the pull inherits the global delta cursor — already advanced
+        // to "now" by the boot-time reconcile that ran before the scan —
+        // and silently recovers only the last OVERLAP_MS of their history.
+        await manager.refreshVtxos({ includeInactive: true, after: 0 });
 
         const causes = result.handlerErrors.map((e) =>
             e.error instanceof Error ? e.error : new Error(String(e.error)),
