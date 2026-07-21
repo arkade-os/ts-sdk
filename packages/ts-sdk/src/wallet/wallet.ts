@@ -26,6 +26,7 @@ import { Identity, ReadonlyIdentity, isBatchSignable } from "../identity";
 import {
     canRecoverOnchain,
     canSpendOffchain,
+    getAllNormalizedVtxos,
     getNormalizedVtxos,
     hasTerminalSpend,
     isVirtualCoin,
@@ -1653,9 +1654,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     async fetchPendingTxs(): Promise<string[]> {
         // get non-swept virtual outputs, rely on the indexer only in case DB doesn't have the right state
         const scripts = await this.getWalletScripts();
-        let { vtxos } = await getNormalizedVtxos(this.indexerProvider, {
-            scripts,
-        });
+        const vtxos = await getAllNormalizedVtxos(this.indexerProvider, scripts);
         return vtxos
             .filter(
                 (vtxo) =>
@@ -3949,14 +3948,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         }
 
         if (!vtxos || vtxos.length === 0) {
-            // Batch all scripts into a single indexer call
             const scriptMap = await this.getScriptMap();
             const allExtended: ExtendedVirtualCoin[] = [];
 
-            const allScripts = [...scriptMap.keys()];
-            const { vtxos: fetchedVtxos } = await getNormalizedVtxos(this.indexerProvider, {
-                scripts: allScripts,
-            });
+            const fetchedVtxos = await getAllNormalizedVtxos(this.indexerProvider, [
+                ...scriptMap.keys(),
+            ]);
 
             for (const vtxo of fetchedVtxos) {
                 const vtxoScript = scriptMap.get(vtxo.script);
