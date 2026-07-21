@@ -7,15 +7,15 @@ import { RelativeTimelock } from "../script/tapscript";
 import { sequenceToTimelock, timelockToSequence } from "../utils/timelock";
 
 /**
- * ArkCash is a bearer instrument for the Ark protocol.
+ * ArkadeCash is a bearer instrument for the Ark protocol.
  * It encodes a private key and contract parameters as a bech32m string,
  * enabling wallet-to-wallet transfers without address exchange.
  *
- * Format: arkcash1... (bech32m encoded)
+ * Format: arkadecash1... (bech32m encoded)
  * Payload: version (1 byte) + private key (32 bytes) + server pubkey (32 bytes) + csv timelock sequence (4 bytes)
  */
-export class ArkCash {
-    static readonly DefaultHRP = "arkcash";
+export class ArkadeCash {
+    static readonly DefaultHRP = "arkadecash";
     static readonly Version = 0;
     static readonly PayloadLength = 1 + 32 + 32 + 4; // 69 bytes
 
@@ -30,7 +30,7 @@ export class ArkCash {
         privateKey: Uint8Array,
         serverPubKey: Uint8Array,
         readonly csvTimelock: RelativeTimelock,
-        readonly hrp: string = ArkCash.DefaultHRP,
+        readonly hrp: string = ArkadeCash.DefaultHRP,
     ) {
         if (privateKey.length !== 32) {
             throw new Error(
@@ -66,26 +66,26 @@ export class ArkCash {
         serverPubKey: Uint8Array,
         csvTimelock: RelativeTimelock,
         hrp?: string,
-    ): ArkCash {
-        return new ArkCash(randomPrivateKeyBytes(), serverPubKey, csvTimelock, hrp);
+    ): ArkadeCash {
+        return new ArkadeCash(randomPrivateKeyBytes(), serverPubKey, csvTimelock, hrp);
     }
 
-    static fromString(encoded: string): ArkCash {
+    static fromString(encoded: string): ArkadeCash {
         const decoded = bech32m.decodeUnsafe(encoded.trim().toLowerCase(), 1023);
         if (!decoded) {
-            throw new Error("Invalid arkcash string: failed to decode bech32m");
+            throw new Error("Invalid arkadeCash string: failed to decode bech32m");
         }
 
         const data = new Uint8Array(bech32m.fromWords(decoded.words));
-        if (data.length !== ArkCash.PayloadLength) {
+        if (data.length !== ArkadeCash.PayloadLength) {
             throw new Error(
-                `Invalid arkcash data length: expected ${ArkCash.PayloadLength} bytes, got ${data.length}`,
+                `Invalid arkadeCash data length: expected ${ArkadeCash.PayloadLength} bytes, got ${data.length}`,
             );
         }
 
         const version = data[0];
-        if (version !== ArkCash.Version) {
-            throw new Error(`Unsupported arkcash version: ${version}`);
+        if (version !== ArkadeCash.Version) {
+            throw new Error(`Unsupported arkadeCash version: ${version}`);
         }
 
         const privateKey = data.slice(1, 33);
@@ -93,12 +93,12 @@ export class ArkCash {
         const sequence = new DataView(data.buffer, data.byteOffset + 65, 4).getUint32(0, false);
         const csvTimelock = sequenceToTimelock(sequence);
 
-        return new ArkCash(privateKey, serverPubKey, csvTimelock, decoded.prefix);
+        return new ArkadeCash(privateKey, serverPubKey, csvTimelock, decoded.prefix);
     }
 
     toString(): string {
-        const data = new Uint8Array(ArkCash.PayloadLength);
-        data[0] = ArkCash.Version;
+        const data = new Uint8Array(ArkadeCash.PayloadLength);
+        data[0] = ArkadeCash.Version;
         data.set(this._privateKey, 1);
         data.set(this._serverPubKey, 33);
         const sequence = timelockToSequence(this.csvTimelock);

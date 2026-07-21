@@ -400,7 +400,7 @@ export interface OffchainTxSubmitProvider {
  *   batch-signs the arkTx and all checkpoints in one popup — returning the
  *   user-signed checkpoints from {@link signArkTx} so they are merged onto the
  *   server's signatures.
- * - A single-key spend (e.g. an ArkCash sweep) signs every input with one
+ * - A single-key spend (e.g. an ArkadeCash sweep) signs every input with one
  *   identity and lets each server-returned checkpoint be signed afterwards via
  *   {@link signCheckpoint}.
  */
@@ -427,7 +427,7 @@ export interface OffchainTxSigner {
  * Submit a pre-built offchain transaction to the Ark server and finalize it.
  *
  * Owns the submit → checkpoint-sign → finalize sequence shared by every Ark
- * spend path (the wallet send/migration path and the single-key ArkCash
+ * spend path (the wallet send/migration path and the single-key ArkadeCash
  * sweep). The signing strategy is injected via {@link OffchainTxSigner} so a
  * caller holding a single key does not pull in the wallet's router/batch
  * machinery. Optional {@link hooks} let the wallet mark/clear its pending-tx
@@ -507,7 +507,7 @@ export async function submitOffchainTx(
  *
  * Needs no wallet, repository, or contract state: just an identity that can
  * sign, an Ark provider, the inputs (already carrying their spend leaf and tap
- * tree), the outputs, and the server unroll script. Used by the ArkCash sweep
+ * tree), the outputs, and the server unroll script. Used by the ArkadeCash sweep
  * to move bearer coins to the receiver's address without spinning up a full
  * background-managed wallet on shared repositories.
  *

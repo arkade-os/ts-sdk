@@ -71,7 +71,7 @@ pnpm run regtest:reset:ts-sdk   # Remove containers and volumes
 `regtest:test` accepts optional test-file paths to run just a subset against the running stack:
 
 ```bash
-pnpm run regtest:test:ts-sdk test/e2e/asset.test.ts test/e2e/arkcash.test.ts
+pnpm run regtest:test:ts-sdk test/e2e/asset.test.ts test/e2e/arkadeCash.test.ts
 ```
 
 CI uses this to fan the ts-sdk e2e suite out across parallel groups (see the `integration` matrix in `.github/workflows/ci.yml`); the same file lists reproduce a single group locally.

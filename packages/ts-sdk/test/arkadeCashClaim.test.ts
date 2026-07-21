@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { Transaction } from "@scure/btc-signer";
-import { Wallet, ArkCashCreateError } from "../src/wallet/wallet";
+import { Wallet, ArkadeCashCreateError } from "../src/wallet/wallet";
 import { InMemoryWalletRepository } from "../src/repositories/inMemory/walletRepository";
 import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
 import { SingleKey } from "../src/identity/singleKey";
-import { ArkCash } from "../src/arkcash";
+import { ArkadeCash } from "../src/arkadeCash";
 import { ArkAddress } from "../src/script/address";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
 import { buildOffchainTx } from "../src/utils/arkTransaction";
@@ -59,7 +59,7 @@ function idleOnchain() {
     } as never;
 }
 
-/** Indexer that only knows about the arkcash address. */
+/** Indexer that only knows about the arkadeCash address. */
 function cashIndexer(cashPkScript: string, vtxos: VirtualCoin[]) {
     return {
         getVtxos: vi.fn(async (opts?: { scripts?: string[] }) => ({
@@ -91,7 +91,7 @@ async function makeWallet(indexerProvider: never, arkProvider: Record<string, un
     });
 }
 
-/** The arkcash VTXO as it reads back after a sweep was registered: spent. */
+/** The arkadeCash VTXO as it reads back after a sweep was registered: spent. */
 function spentCashVtxo(cashPkScript: string): VirtualCoin {
     return {
         txid: CASH_TXID,
@@ -105,7 +105,7 @@ function spentCashVtxo(cashPkScript: string): VirtualCoin {
     } as VirtualCoin;
 }
 
-/** A distinct spent arkcash VTXO, one per index, all at the same pkScript. */
+/** A distinct spent arkadeCash VTXO, one per index, all at the same pkScript. */
 function spentCashVtxoAt(cashPkScript: string, index: number): VirtualCoin {
     return {
         ...spentCashVtxo(cashPkScript),
@@ -117,7 +117,7 @@ function spentCashVtxoAt(cashPkScript: string, index: number): VirtualCoin {
  * The pending sweep the crashed claim left on the server: the offchain tx it
  * built and submitted but never finalized, paying `destinationPkScript`.
  */
-function pendingSweep(cash: ArkCash, destinationPkScript: Uint8Array) {
+function pendingSweep(cash: ArkadeCash, destinationPkScript: Uint8Array) {
     const cashScript = cash.vtxoScript;
     const offchainTx = buildOffchainTx(
         [
@@ -141,7 +141,7 @@ function pendingSweep(cash: ArkCash, destinationPkScript: Uint8Array) {
 }
 
 const makeCash = () =>
-    ArkCash.generate(
+    ArkadeCash.generate(
         hex.decode(SERVER_PUBKEY_HEX).slice(1),
         { type: "blocks", value: 144n },
         "tarkcash",
@@ -184,7 +184,7 @@ describe("claimCash drain-pending accounting", () => {
 
         // A different claimer won the race and crashed mid-claim: finalizing
         // their sweep is still correct, but it pays them, not us.
-        const stranger = ArkCash.generate(
+        const stranger = ArkadeCash.generate(
             hex.decode(SERVER_PUBKEY_HEX).slice(1),
             { type: "blocks", value: 144n },
             "tarkcash",
@@ -245,11 +245,11 @@ describe("claimCash drain-pending accounting", () => {
             .then(() => null)
             .catch((e) => e);
 
-        expect(err).toBeInstanceOf(ArkCashCreateError);
+        expect(err).toBeInstanceOf(ArkadeCashCreateError);
         expect(err.cause).toBe(sendError);
-        // The carried token round-trips back to a usable arkcash note.
-        expect(() => ArkCash.fromString(err.cash)).not.toThrow();
-        expect(err.cash.startsWith("tarkcash1")).toBe(true);
+        // The carried token round-trips back to a usable arkadeCash note.
+        expect(() => ArkadeCash.fromString(err.cash)).not.toThrow();
+        expect(err.cash.startsWith("tarkadecash1")).toBe(true);
     });
 
     it("preserves the empty-input behavior", async () => {
