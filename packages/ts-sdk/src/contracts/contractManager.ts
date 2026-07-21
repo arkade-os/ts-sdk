@@ -19,6 +19,7 @@ import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
 import { ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
 import {
+    getAllNormalizedVtxos,
     getNormalizedVtxos,
     normalizeVtxo,
     type NormalizedExtendedVirtualCoin,
@@ -1347,13 +1348,13 @@ export class ContractManager implements IContractManager {
      * window (e.g. a spend that hasn't settled yet).
      */
     private async reconcilePendingFrontier(contracts: Contract[]): Promise<void> {
-        const scripts = contracts.map((c) => c.script);
         const scriptToContract = new Map<string, Contract>(contracts.map((c) => [c.script, c]));
 
-        const { vtxos } = await getNormalizedVtxos(this.config.indexerProvider, {
-            scripts,
-            pendingOnly: true,
-        });
+        const vtxos = await getAllNormalizedVtxos(
+            this.config.indexerProvider,
+            contracts.map((c) => c.script),
+            { pendingOnly: true },
+        );
 
         // Share the annotation path with external callers so the two entry
         // points can't drift.
@@ -1446,16 +1447,14 @@ export class ContractManager implements IContractManager {
             return new Map();
         }
 
-        // Batch all scripts into a single indexer call per page to minimise
-        // round-trips. Results are keyed by script so we can distribute them
-        // back to the correct contract afterwards. Always fetches the full
-        // history (spent/swept included) so the repo is the source of truth.
+        // Results are keyed by script so we can distribute them back to the
+        // correct contract afterwards. Always fetches the full history
+        // (spent/swept included) so the repo is the source of truth.
         const scriptToContract = new Map<string, Contract>(contracts.map((c) => [c.script, c]));
         const result = new Map<string, ExtendedContractVtxo[]>(
             contracts.map((c) => [c.script, []]),
         );
 
-        const scripts = contracts.map((c) => c.script);
         const windowOpts = syncWindow
             ? {
                   ...(syncWindow.after !== undefined && {
@@ -1466,33 +1465,24 @@ export class ContractManager implements IContractManager {
                   }),
               }
             : {};
-        let pageIndex = 0;
-        let hasMore = true;
 
-        while (hasMore) {
-            const { vtxos, page } = await getNormalizedVtxos(this.config.indexerProvider, {
-                scripts,
-                ...windowOpts,
-                pageIndex,
-                pageSize,
+        const vtxos = await getAllNormalizedVtxos(
+            this.config.indexerProvider,
+            contracts.map((c) => c.script),
+            { ...windowOpts, pageSize },
+        );
+
+        // Match virtual outputs back to their contract via the script field
+        // populated by the indexer, then share the annotation path with
+        // external callers via annotateVtxos so the two entry points can't
+        // drift.
+        const owned = vtxos.filter((v) => scriptToContract.has(v.script));
+        const annotated = await this.annotateVtxos(owned);
+        for (const vtxo of annotated) {
+            result.get(vtxo.script)!.push({
+                ...vtxo,
+                contractScript: vtxo.script,
             });
-
-            // Match virtual outputs back to their contract via the script field
-            // populated by the indexer, then share the annotation path with
-            // external callers via annotateVtxos so the two entry points can't
-            // drift.
-            const owned = vtxos.filter((v) => scriptToContract.has(v.script));
-            const annotated = await this.annotateVtxos(owned);
-            for (const vtxo of annotated) {
-                result.get(vtxo.script)!.push({
-                    ...vtxo,
-                    contractScript: vtxo.script,
-                });
-            }
-
-            hasMore = page ? vtxos.length === pageSize : false;
-            pageIndex++;
-            if (hasMore) await new Promise((r) => setTimeout(r, 500));
         }
 
         return result;
