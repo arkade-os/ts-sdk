@@ -68,6 +68,14 @@ pnpm run regtest:down:ts-sdk    # Stop the stack (preserves data)
 pnpm run regtest:reset:ts-sdk   # Remove containers and volumes
 ```
 
+`regtest:test` accepts optional test-file paths to run just a subset against the running stack:
+
+```bash
+pnpm run regtest:test:ts-sdk test/e2e/asset.test.ts test/e2e/arkadeCash.test.ts
+```
+
+CI uses this to fan the ts-sdk e2e suite out across parallel groups (see the `integration` matrix in `.github/workflows/ci.yml`); the same file lists reproduce a single group locally.
+
 ### Documentation
 
 TypeDoc-generated API docs for `@arkade-os/sdk` are written to the repo-root `docs/` directory (the source for [arkade-os.github.io/ts-sdk](https://arkade-os.github.io/ts-sdk/)).

@@ -1,3 +1,4 @@
+import { hex } from "@scure/base";
 import { expect, describe, it, beforeEach } from "vitest";
 import {
     faucetOffchain,
@@ -14,7 +15,6 @@ import {
     TxTreeNode,
     ChainTxType,
 } from "../../src";
-import { hex } from "@scure/base";
 import { vi } from "vitest";
 import { afterEach } from "vitest";
 
@@ -60,7 +60,40 @@ describe("Indexer provider", () => {
         expect(leaves.leaves).toHaveLength(0);
     });
 
-    it("should inspect a commitment tx", { timeout: 60000 }, async () => {
+    it("filters vtxos by renewableOnly", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const aliceOffchainAddress = await alice.wallet.getAddress();
+        expect(aliceOffchainAddress).toBeDefined();
+
+        const fundAmount = 1000;
+        faucetOffchain(aliceOffchainAddress!, fundAmount);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        const indexerProvider = new RestIndexerProvider("http://localhost:7070");
+        const scripts = [hex.encode(ArkAddress.decode(aliceOffchainAddress!).pkScript)];
+
+        // renewableOnly is the union of the spendable and recoverable sets. A freshly
+        // funded wallet has one spendable and zero recoverable vtxos, so renewableOnly
+        // matches spendableOnly here (the union-with-recoverable case needs a swept /
+        // subdust vtxo, which this fixture does not create).
+        const renewable = await indexerProvider.getVtxos({ scripts, renewableOnly: true });
+        const spendable = await indexerProvider.getVtxos({ scripts, spendableOnly: true });
+
+        expect(renewable.vtxos).toHaveLength(1);
+        expect(renewable.vtxos.map((v) => `${v.txid}:${v.vout}`).sort()).toEqual(
+            spendable.vtxos.map((v) => `${v.txid}:${v.vout}`).sort(),
+        );
+
+        // State filters are applied only when querying by scripts; the server ignores
+        // them for outpoint queries, so the vtxo still comes back.
+        const byOutpoint = await indexerProvider.getVtxos({
+            outpoints: [{ txid: renewable.vtxos[0].txid, vout: renewable.vtxos[0].vout }],
+            renewableOnly: true,
+        });
+        expect(byOutpoint.vtxos).toHaveLength(1);
+    });
+
+    it("should inspect a commitment tx", { timeout: 120_000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestArkWallet();
         const aliceOffchainAddress = await alice.wallet.getAddress();
@@ -71,13 +104,30 @@ describe("Indexer provider", () => {
         const fundAmount = 1000;
         const txid = await createVtxo(alice, fundAmount);
         expect(txid).toBeDefined();
-        const fundAmountStr = fundAmount.toString();
 
-        // Wait until indexer reflects the batch totals instead of sleeping.
-        await waitFor(async () => {
-            const c = await indexerProvider.getCommitmentTx(txid);
-            return c?.batches?.["0"]?.totalOutputAmount === fundAmountStr;
-        });
+        // Alice's settled vtxo — the leaf this commitment tx must contain.
+        const aliceVtxos = await alice.wallet.getVtxos();
+        expect(aliceVtxos).toHaveLength(1);
+        const aliceVtxo = aliceVtxos[0];
+
+        // A batch aggregates *every* participant that registered an intent in the
+        // same round, so its totals are a lower bound on Alice's contribution, not
+        // an exact match: the `beforeEach` note redemption or any long-running
+        // service on the shared stack can land in Alice's round and settle
+        // alongside her. Assert inclusion here and pin Alice's own output via the
+        // tree leaves below.
+        //
+        // Wait until the indexer reflects the batch instead of sleeping. The
+        // settlement above plus indexer propagation can run well past the 25s
+        // default when the shared regtest stack is loaded, so give it room.
+        await waitFor(
+            async () => {
+                const c = await indexerProvider.getCommitmentTx(txid);
+                const batch = c?.batches?.["0"];
+                return batch !== undefined && Number(batch.totalOutputAmount) >= fundAmount;
+            },
+            { timeout: 60_000 },
+        );
 
         const commitmentTx = await indexerProvider.getCommitmentTx(txid);
         expect(commitmentTx).toBeDefined();
@@ -85,8 +135,10 @@ describe("Indexer provider", () => {
         expect(commitmentTx.endedAt).toBeDefined();
         expect(commitmentTx.batches).toBeDefined();
         expect(commitmentTx.batches).toHaveProperty("0");
-        expect(commitmentTx.batches["0"].totalOutputAmount).toBe(fundAmountStr);
-        expect(commitmentTx.batches["0"].totalOutputVtxos).toBe(1);
+        expect(Number(commitmentTx.batches["0"].totalOutputAmount)).toBeGreaterThanOrEqual(
+            fundAmount,
+        );
+        expect(commitmentTx.batches["0"].totalOutputVtxos).toBeGreaterThanOrEqual(1);
 
         const connectsResponse = await indexerProvider.getCommitmentTxConnectors(txid);
         expect(connectsResponse.connectors).toBeDefined();
@@ -114,6 +166,15 @@ describe("Indexer provider", () => {
             vout: 0,
         });
         expect(btlResponse.leaves.length).toBeGreaterThanOrEqual(1);
+
+        // Alice's settled vtxo is a leaf of this batch's tree. Unlike the batch
+        // totals this holds whoever else shared the round, so it is what actually
+        // ties the commitment tx back to her settlement.
+        expect(
+            btlResponse.leaves.some(
+                (leaf) => leaf.txid === aliceVtxo.txid && leaf.vout === aliceVtxo.vout,
+            ),
+        ).toBe(true);
     });
 
     it("should subscribe to scripts", { timeout: 60000 }, async () => {

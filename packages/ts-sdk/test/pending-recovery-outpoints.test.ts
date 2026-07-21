@@ -19,9 +19,18 @@ const signerSet: SignerSet = {
 };
 
 // Minimal VirtualCoin-shaped stub: selectPendingRecoveryOutpoints only reads
-// txid/vout (outpoint), isSpent (isSpendable), and virtualStatus.state (swept).
+// txid/vout (outpoint) and the spend/swept facts.
 const vtxo = (txid: string, vout: number, state: string, isSpent = false) =>
-    ({ txid, vout, value: 1000, isSpent, virtualStatus: { state } }) as never;
+    ({
+        txid,
+        vout,
+        value: 1000,
+        isSpent,
+        isSwept: state === "swept",
+        isPreconfirmed: state === "preconfirmed",
+        spentBy: "",
+        commitmentTxIds: [],
+    }) as never;
 
 const row = (serverPubKey: string, vtxos: unknown[]) =>
     ({ contract: { params: { serverPubKey } }, vtxos }) as never;

@@ -2,6 +2,7 @@ import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import { TapLeafScript } from "../script/base";
 import { ArkTransaction, Asset, ExtendedCoin, ExtendedVirtualCoin } from "../wallet";
+import { normalizeVtxo, type NormalizedExtendedVirtualCoin } from "../wallet/vtxo";
 
 export type SerializedTapLeaf = { cb: string; s: string };
 export type SerializedVtxo = ReturnType<typeof serializeVtxo>;
@@ -76,15 +77,21 @@ export const deserializeTapLeaf = (t: SerializedTapLeaf): TapLeafScript => {
     return [cb, s];
 };
 
-export const deserializeVtxo = (o: SerializedVtxo): ExtendedVirtualCoin => ({
-    ...o,
-    createdAt: new Date(o.createdAt),
-    tapTree: hex.decode(o.tapTree),
-    forfeitTapLeafScript: deserializeTapLeaf(o.forfeitTapLeafScript),
-    intentTapLeafScript: deserializeTapLeaf(o.intentTapLeafScript),
-    extraWitness: o.extraWitness?.map(hex.decode),
-    assets: deserializeAssets(o.assets),
-});
+// Normalized on the way out so rows written before canonical facts existed — and rows from the
+// column-mapped backends, whose explicit column lists don't carry them — come back with the facts
+// reconstructed from the legacy blob, and with `expiresAt` rehydrated to a real Date rather than
+// the ISO string JSON left behind. The correctness boundary is `getVtxosForContract`, which also
+// covers the backends that never reach this code.
+export const deserializeVtxo = (o: SerializedVtxo): NormalizedExtendedVirtualCoin =>
+    normalizeVtxo({
+        ...o,
+        createdAt: new Date(o.createdAt),
+        tapTree: hex.decode(o.tapTree),
+        forfeitTapLeafScript: deserializeTapLeaf(o.forfeitTapLeafScript),
+        intentTapLeafScript: deserializeTapLeaf(o.intentTapLeafScript),
+        extraWitness: o.extraWitness?.map(hex.decode),
+        assets: deserializeAssets(o.assets),
+    });
 
 export const deserializeUtxo = (o: SerializedUtxo): ExtendedCoin => ({
     ...o,

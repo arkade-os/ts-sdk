@@ -1,5 +1,6 @@
 import { IndexerProvider, SubscriptionResponse } from "../providers/indexer";
 import { VirtualCoin } from "../wallet";
+import { normalizeVtxo } from "../wallet/vtxo";
 import { extendVirtualCoinForContract } from "../wallet/utils";
 import { WalletRepository } from "../repositories/walletRepository";
 import { Contract, ContractVtxo, ContractEventCallback, ContractEvent } from "./types";
@@ -653,6 +654,10 @@ export class ContractWatcher {
 
     /**
      * Handle a subscription update.
+     *
+     * Normalization boundary: `getSubscription` is part of the public `IndexerProvider` interface,
+     * so a consumer implementation may yield legacy-shaped VTXOs. Normalizing on ingest also fixes
+     * the shape of the payloads emitted to external event consumers.
      */
     private handleSubscriptionUpdate(update: SubscriptionResponse): void {
         if (!this.eventCallback) return;
@@ -660,11 +665,19 @@ export class ContractWatcher {
         const timestamp = Date.now();
 
         if (update.newVtxos?.length) {
-            this.processSubscriptionVtxos(update.newVtxos, "vtxo_received", timestamp);
+            this.processSubscriptionVtxos(
+                update.newVtxos.map(normalizeVtxo),
+                "vtxo_received",
+                timestamp,
+            );
         }
 
         if (update.spentVtxos?.length) {
-            this.processSubscriptionVtxos(update.spentVtxos, "vtxo_spent", timestamp);
+            this.processSubscriptionVtxos(
+                update.spentVtxos.map(normalizeVtxo),
+                "vtxo_spent",
+                timestamp,
+            );
         }
     }
 

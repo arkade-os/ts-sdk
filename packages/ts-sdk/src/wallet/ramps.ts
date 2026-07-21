@@ -1,4 +1,5 @@
 import { ExtendedCoin, IWallet } from ".";
+import { toOffchainInputFeeParams } from "./vtxo";
 import { FeeInfo, SettlementEvent } from "../providers/ark";
 import { Estimator } from "../arkfee";
 import { Address, OutScript } from "@scure/btc-signer";
@@ -184,15 +185,7 @@ export class Ramps {
         let totalAmount = 0n;
 
         for (const vtxo of vtxos) {
-            const inputFee = estimator.evalOffchainInput({
-                amount: BigInt(vtxo.value),
-                type: vtxo.virtualStatus.state === "swept" ? "recoverable" : "vtxo",
-                weight: 0,
-                birth: vtxo.createdAt,
-                expiry: vtxo.virtualStatus.batchExpiry
-                    ? new Date(vtxo.virtualStatus.batchExpiry)
-                    : undefined,
-            });
+            const inputFee = estimator.evalOffchainInput(toOffchainInputFeeParams(vtxo));
             if (inputFee.satoshis >= vtxo.value) {
                 // Skip virtual outputs where spending fees are greater than or equal to the output value.
                 continue;

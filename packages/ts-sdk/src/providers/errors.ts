@@ -12,6 +12,45 @@ export class ArkError extends Error {
 }
 
 /**
+ * Structured arkd error `name`s the SDK branches on, centralized so call sites don't
+ * hardcode string literals. Not an exhaustive mirror of the server's codes — only the
+ * ones the SDK acts on.
+ */
+export const ArkErrorName = {
+    DIGEST_MISMATCH: "DIGEST_MISMATCH",
+    VTXO_ALREADY_SPENT: "VTXO_ALREADY_SPENT",
+    INVALID_TX_FILTER: "INVALID_TX_FILTER",
+    TX_FILTERS_LIMIT_EXCEEDED: "TX_FILTERS_LIMIT_EXCEEDED",
+    /**
+     * A CLTV closure was spent before its absolute locktime matured. Raised only by
+     * `submitTx` (never `finalizeTx`), with metadata
+     * `{ locktime, current_locktime, type: "height" | "time" }`.
+     *
+     * Self-healing, so defer and retry rather than fail: the server matures a
+     * seconds-locktime against the **chain tip block's timestamp**, not its wall clock,
+     * so a spend attempted promptly at maturity is rejected until a later block lands.
+     */
+    FORFEIT_CLOSURE_LOCKED: "FORFEIT_CLOSURE_LOCKED",
+} as const;
+
+export type ArkErrorName = (typeof ArkErrorName)[keyof typeof ArkErrorName];
+
+/**
+ * Type guard for a structured {@link ArkError}, optionally narrowing to a specific
+ * `name`. Prefer it over comparing `err.name` literals.
+ *
+ * `name` accepts only cataloged {@link ArkErrorName} values; to branch on a name the
+ * catalog does not cover, either add it there or compare `err.name` after guarding
+ * with the one-argument form.
+ *
+ * @example
+ * if (isArkError(maybeArkError(err), ArkErrorName.DIGEST_MISMATCH)) { ... }
+ */
+export function isArkError(error: unknown, name?: ArkErrorName): error is ArkError {
+    return error instanceof ArkError && (name === undefined || error.name === name);
+}
+
+/**
  * Which remote dependency an availability failure refers to. Used to label the
  * {@link ProviderUnavailableError} message and the wallet's
  * `ProviderConnectionState`; it is deliberately *not* carried as a structured

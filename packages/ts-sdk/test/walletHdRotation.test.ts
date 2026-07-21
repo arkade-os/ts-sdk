@@ -979,6 +979,10 @@ describe("Wallet HD rotation", () => {
                 createdAt: new Date(),
                 isUnrolled: false,
                 isSpent: false,
+                isSwept: false,
+                isPreconfirmed: false,
+                spentBy: "",
+                commitmentTxIds: [],
                 script: hex.encode(tapscript.pkScript),
                 forfeitTapLeafScript: tapscript.forfeit(),
                 intentTapLeafScript: tapscript.forfeit(),
@@ -1460,7 +1464,12 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
                 contractRepository: contractRepo ?? new InMemoryContractRepository(),
             },
         });
-        return { wallet, identity, base };
+        const getChainTipSpy = vi.spyOn(wallet.onchainProvider, "getChainTip").mockResolvedValue({
+            height: 0,
+            time: 0,
+            hash: "00".repeat(32),
+        });
+        return { wallet, identity, base, getChainTipSpy };
     }
 
     function makeBaselineCoin(
@@ -1479,6 +1488,10 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
             createdAt: new Date(),
             isUnrolled: false,
             isSpent: false,
+            isSwept: false,
+            isPreconfirmed: false,
+            spentBy: "",
+            commitmentTxIds: [],
             script: hex.encode(tapscript.pkScript),
             forfeitTapLeafScript: tapscript.forfeit(),
             intentTapLeafScript: tapscript.forfeit(),
@@ -1718,10 +1731,12 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         extra: Partial<ExtendedVirtualCoin> = {},
     ): ExtendedVirtualCoin {
         const base = makeBaselineCoin(wallet);
+        const batchExpiry = Date.now() + 7 * 24 * 3600 * 1000;
         return {
             ...base,
-            // A real (post-2025) ms timestamp so isExpired treats it as live.
-            virtualStatus: { state: "settled", batchExpiry: Date.now() + 7 * 24 * 3600 * 1000 },
+            // A real (post-2025) wall-clock expiry, so the coin reads as live.
+            virtualStatus: { state: "settled", batchExpiry },
+            expiresAt: new Date(batchExpiry),
             ...extra,
         };
     }
@@ -1799,6 +1814,29 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         await wallet.dispose();
     });
 
+    it("sendSelectedVtxosToSelf rejects a height-expired input before submission", async () => {
+        const { wallet, getChainTipSpy } = await makeStaticBatchWallet();
+        getChainTipSpy.mockResolvedValueOnce({
+            height: 501,
+            time: 0,
+            hash: "00".repeat(32),
+        });
+        const coin = makeMigratableCoin(wallet, {
+            virtualStatus: { state: "settled", batchExpiry: 500_000 },
+            expiresAt: undefined,
+            expiresAtHeight: 500,
+        });
+        const { submitSpy } = stubSendRoundTrip(wallet);
+
+        await expect(wallet.sendSelectedVtxosToSelf([coin])).rejects.toThrow(
+            /not cooperatively spendable/,
+        );
+        expect(submitSpy).not.toHaveBeenCalled();
+        expect(getChainTipSpy).toHaveBeenCalled();
+
+        await wallet.dispose();
+    });
+
     it("sendSelectedVtxosToSelf rejects an input without a batch expiry", async () => {
         const { wallet } = await makeStaticBatchWallet();
         // A settled coin with no batchExpiry (unrolled-style) — not cooperatively
@@ -1806,7 +1844,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         const coin = makeBaselineCoin(wallet);
         const { submitSpy } = stubSendRoundTrip(wallet);
 
-        await expect(wallet.sendSelectedVtxosToSelf([coin])).rejects.toThrow(/batchExpiry/);
+        await expect(wallet.sendSelectedVtxosToSelf([coin])).rejects.toThrow(/batch expiry/);
         // Validation happens before any submission.
         expect(submitSpy).not.toHaveBeenCalled();
 

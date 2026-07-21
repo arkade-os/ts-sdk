@@ -649,9 +649,10 @@ describe("ContractManager.scanContracts", () => {
         }
     });
 
-    it("a discoverAt error is collected but the loop completes the gap window", async () => {
-        // Always throws → loop must still terminate via the gap counter
-        // (unused reaches gapLimit) and surface one error per probed index.
+    it("an always-failing handler terminates the scan at index 0, gap window unclosed", async () => {
+        // Every index indeterminate → the gap counter never advances and the
+        // loop terminates on truncation instead. The first window is already in
+        // flight, so all its errors are collected; nothing beyond it is probed.
         const { handler } = makeFakeHandler("boomfake", () => {
             throw new Error("handler down");
         });
@@ -664,11 +665,138 @@ describe("ContractManager.scanContracts", () => {
                 materialize,
                 deps: makeDeps(),
             });
-            // 3 unused indices (0,1,2) close the window; one error each.
-            expect(res.lastIndexUsed).toBe(-1);
+            expect(res.highestConfirmedUsedIndex).toBe(-1);
+            expect(res.truncatedAt).toBe(0);
             expect(res.handlerErrors).toHaveLength(3);
             expect(res.handlerErrors.map((e) => e.index)).toEqual([0, 1, 2]);
             expect(res.handlerErrors.every((e) => e.handler === "boomfake")).toBe(true);
+        } finally {
+            mgr.dispose();
+        }
+    });
+
+    it("a failed probe is INDETERMINATE, not unused: the gap window cannot close across it", async () => {
+        // Regression for the rate-limiting incident: a failure at index 3 used
+        // to increment `unused`, so under a 429 storm the window closed on
+        // failed requests rather than absent funds and restore under-reported.
+        const { handler, calls } = makeFakeHandler("boomfake", (i) => {
+            if (i === 3) throw new Error("rate limited");
+            return [];
+        });
+        register("boomfake", handler);
+        const mgr = await makeManagerForTest();
+        try {
+            const res = await mgr.scanContracts({
+                gapLimit: 20,
+                batchSize: 1,
+                hd: true,
+                materialize,
+                deps: makeDeps(),
+            });
+            expect(res.truncatedAt).toBe(3);
+            expect(res.handlerErrors).toHaveLength(1);
+            expect(res.handlerErrors[0]).toMatchObject({ handler: "boomfake", index: 3 });
+            // Stopped verifying AT the hole — never probed past it.
+            expect(calls).toEqual([0, 1, 2, 3]);
+        } finally {
+            mgr.dispose();
+        }
+    });
+
+    it("a clean scan reports no truncation", async () => {
+        const { handler } = makeFakeHandler("swapfake", () => []);
+        register("swapfake", handler);
+        const mgr = await makeManagerForTest();
+        try {
+            const res = await mgr.scanContracts({
+                gapLimit: 3,
+                hd: true,
+                materialize,
+                deps: makeDeps(),
+            });
+            expect(res.truncatedAt).toBeUndefined();
+            expect(res.handlerErrors).toEqual([]);
+        } finally {
+            mgr.dispose();
+        }
+    });
+
+    it("keeps a confirmed hit found PAST the truncation point (address-reuse guard)", async () => {
+        // Concurrent probing means a failure at index 1 can arrive alongside a
+        // real hit at index 4. Dropping that hit would let index 4 be re-issued
+        // as a fresh receive address.
+        const hitAt4 = makeFakeHandler("swapfake", (i) =>
+            i === 4
+                ? [
+                      {
+                          type: "swapfake",
+                          params: { script: "aabb" },
+                          script: "aabb",
+                          address: "ark1qswap",
+                      },
+                  ]
+                : [],
+        );
+        const failAt1 = makeFakeHandler("boomfake", (i) => {
+            if (i === 1) throw new Error("rate limited");
+            return [];
+        });
+        register("swapfake", hitAt4.handler);
+        register("boomfake", failAt1.handler);
+        const mgr = await makeManagerForTest();
+        try {
+            const res = await mgr.scanContracts({
+                gapLimit: 10,
+                batchSize: 10, // one window covers 0..9, so index 4 is probed
+                hd: true,
+                materialize,
+                deps: makeDeps(),
+            });
+            expect(res.truncatedAt).toBe(1);
+            expect(res.highestConfirmedUsedIndex).toBe(4);
+            expect(res.lastIndexUsed).toBe(4); // deprecated alias stays faithful
+            // Persisted, not merely counted.
+            const [c] = await mgr.getContracts({ script: "aabb" });
+            expect(c?.type).toBe("swapfake");
+        } finally {
+            mgr.dispose();
+        }
+    });
+
+    it("a hit past the truncation point does NOT reopen the gap window", async () => {
+        // A hit above `truncatedAt` advances the watermark but must not reset
+        // `unused` and resume scanning: indices below it are still unverified.
+        const failAt0 = makeFakeHandler("boomfake", (i) => {
+            if (i === 0) throw new Error("rate limited");
+            return [];
+        });
+        const hitAt5 = makeFakeHandler("swapfake", (i) =>
+            i === 5
+                ? [
+                      {
+                          type: "swapfake",
+                          params: { script: "ccdd" },
+                          script: "ccdd",
+                          address: "ark1qswap",
+                      },
+                  ]
+                : [],
+        );
+        register("boomfake", failAt0.handler);
+        register("swapfake", hitAt5.handler);
+        const mgr = await makeManagerForTest();
+        try {
+            const res = await mgr.scanContracts({
+                gapLimit: 10,
+                batchSize: 10,
+                hd: true,
+                materialize,
+                deps: makeDeps(),
+            });
+            expect(res.truncatedAt).toBe(0);
+            expect(res.highestConfirmedUsedIndex).toBe(5);
+            // Exactly one window: no second window was dispatched past the hit.
+            expect(hitAt5.calls).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
         } finally {
             mgr.dispose();
         }
@@ -1676,11 +1804,70 @@ describe("Wallet.restore", () => {
             expect(((err as AggregateError).errors[0] as Error).message).toBe(
                 "swap source unreachable",
             );
+            // Names the exact unverified boundary, not a guess at one.
+            expect((err as AggregateError).message).toMatch(
+                /scan truncated at index 0; indices >= 0 are unverified/,
+            );
 
             // Despite the throwing handler, the inline refreshVtxos ran
             // first so the default-handler funds were still recovered.
             const balance = await wallet.getBalance();
             expect(balance.total).toBeGreaterThan(0);
+        } finally {
+            contractHandlers.unregister(fakeType);
+            await wallet.dispose();
+        }
+    });
+
+    it("a truncated scan still advances the watermark past a confirmed hit (address reuse)", async () => {
+        // A caller that ignores the restore error then asks for a receive
+        // address. `getNextSigningDescriptor` allocates `lastIndexUsed + 1`, so
+        // withholding the hit at index 2 would re-issue a funded address.
+        const { wallet, indexer, hdProvider } = await makeHdWalletForTest();
+        const fakeType = "restore-truncate-fake";
+        const fake = {
+            type: fakeType,
+            createScript: (params: Record<string, string>) =>
+                ({ pkScript: hex.decode(params.script || "00") }) as any,
+            serializeParams: (p: any) => p,
+            deserializeParams: (p: any) => p,
+            selectPath: () => null,
+            getAllSpendingPaths: () => [],
+            getSpendablePaths: () => [],
+            async discoverAt(index: number) {
+                if (index === 0) throw new Error("indexer rate limited");
+                return [];
+            },
+        };
+        contractHandlers.register(fake as any);
+        try {
+            const serverPubKey = wallet.offchainTapscript.options.serverPubKey;
+            for (const csvTimelock of wallet.walletContractTimelocks) {
+                indexer.usedScripts.add(
+                    hex.encode(
+                        new DefaultVtxo.Script({
+                            pubKey: deriveDescriptorLeafPubKey(
+                                hdProvider.materializeDescriptorAt(2),
+                            ),
+                            serverPubKey,
+                            csvTimelock,
+                        }).pkScript,
+                    ),
+                );
+            }
+
+            const err = await wallet.restore({ gapLimit: 10 }).then(
+                () => undefined,
+                (e) => e,
+            );
+            // Fails loudly (index 0 unverified)...
+            expect(err).toBeInstanceOf(AggregateError);
+            expect((err as AggregateError).message).toMatch(/scan truncated at index 0/);
+
+            // ...yet still allocates 3, never re-handing out the funded 2.
+            expect(await hdProvider.getNextSigningDescriptor()).toBe(
+                hdProvider.materializeDescriptorAt(3),
+            );
         } finally {
             contractHandlers.unregister(fakeType);
             await wallet.dispose();

@@ -11,7 +11,7 @@ import {
     ExtendedVirtualCoin,
     Identity,
     Intent,
-    isRecoverable,
+    isSubdust,
     MultisigTapscript,
     Outpoint,
     Recipient,
@@ -21,6 +21,13 @@ import {
     VirtualCoin,
     VtxoScript,
 } from "..";
+import {
+    canRecoverOnchain,
+    normalizeVtxo,
+    toBatchExpiry,
+    toOffchainInputFeeParams,
+    type NormalizedExtendedVirtualCoin,
+} from "./vtxo";
 import { ContractVtxo } from "../contracts/types";
 import { DelegateProvider } from "../providers/delegate";
 import { base64, hex } from "@scure/base";
@@ -95,10 +102,13 @@ export class DelegateManagerImpl implements IDelegateManager {
         // keep only vtxos that can be signed by the delegate. The guard
         // narrows ContractVtxo (with optional taproot fields) to the
         // ExtendedVirtualCoin shape required by makeDelegateForfeitTx.
-        const eligible = vtxos.filter(
-            (v): v is ContractVtxo & ExtendedVirtualCoin =>
-                isAnnotated(v) && findDelegateTapLeaf(v, delegateInfo.pubkey) !== undefined,
-        );
+        // Normalized first: `vtxos` is caller-supplied, so it may be legacy-shaped.
+        const eligible = vtxos
+            .map(normalizeVtxo)
+            .filter(
+                (v): v is ContractVtxo & NormalizedExtendedVirtualCoin =>
+                    isAnnotated(v) && findDelegateTapLeaf(v, delegateInfo.pubkey) !== undefined,
+            );
         if (eligible.length === 0) {
             return { delegated: [], failed: [] };
         }
@@ -125,16 +135,18 @@ export class DelegateManagerImpl implements IDelegateManager {
         }
 
         // if no explicit delegateAt is provided, sort virtual outputs by expiry and delegate in groups of the same expiry day
-        const groupByExpiry: Map<number, ExtendedVirtualCoin[]> = new Map();
-        let recoverableVtxos: ExtendedVirtualCoin[] = [];
+        // Delegation is a no-height path: height-encoded expiry reads as not expired, as it does today.
+        const now = { timestamp: new Date() };
+        const groupByExpiry: Map<number, NormalizedExtendedVirtualCoin[]> = new Map();
+        let recoverableVtxos: NormalizedExtendedVirtualCoin[] = [];
 
         for (const vtxo of eligible) {
-            if (isRecoverable(vtxo)) {
+            if (canRecoverOnchain(vtxo, now)) {
                 recoverableVtxos.push(vtxo);
                 continue;
             }
 
-            const expiry = vtxo.virtualStatus.batchExpiry;
+            const expiry = toBatchExpiry(vtxo);
             if (!expiry) continue;
 
             const dayKey = getDayTimestamp(expiry);
@@ -219,7 +231,7 @@ async function delegate(
     delegateProvider: DelegateProvider,
     arkInfo: ArkInfo,
     delegateInfo: DelegateInfo,
-    vtxos: ExtendedVirtualCoin[],
+    vtxos: NormalizedExtendedVirtualCoin[],
     destinationScript: Bytes,
     delegateAt?: Date,
 ): Promise<void> {
@@ -232,12 +244,10 @@ async function delegate(
     }
 
     if (!delegateAt) {
+        const now = { timestamp: new Date() };
         const expiryTimestamp = vtxos
-            .filter((coin) => !isRecoverable(coin) && coin.virtualStatus.batchExpiry)
-            .reduce(
-                (min, coin) => Math.min(min, coin.virtualStatus.batchExpiry!),
-                Number.MAX_SAFE_INTEGER,
-            );
+            .filter((coin) => !canRecoverOnchain(coin, now) && toBatchExpiry(coin))
+            .reduce((min, coin) => Math.min(min, toBatchExpiry(coin)!), Number.MAX_SAFE_INTEGER);
         if (!expiryTimestamp || expiryTimestamp === Number.MAX_SAFE_INTEGER) {
             // if no expiry (recoverable virtual outputs), delegate 1 minute from now
             delegateAt = new Date(Date.now() + 1 * 60 * 1000);
@@ -270,13 +280,8 @@ async function delegate(
     let amount = 0n;
     for (const coin of vtxos) {
         const inputFee = estimator.evalOffchainInput({
-            amount: BigInt(coin.value),
+            ...toOffchainInputFeeParams(coin),
             type: "vtxo",
-            weight: 0,
-            birth: coin.createdAt,
-            expiry: coin.virtualStatus.batchExpiry
-                ? new Date(coin.virtualStatus.batchExpiry)
-                : undefined,
         });
         if (inputFee.value >= coin.value) {
             continue;
@@ -308,13 +313,13 @@ async function delegate(
         );
     }, 0);
 
-    if (amount - BigInt(outputFee) <= dust) {
+    if (isSubdust(amount - BigInt(outputFee), dust)) {
         throw new Error("Amount is below dust limit, cannot delegate");
     }
     amount -= BigInt(outputFee);
 
     amount -= delegateFee;
-    if (amount <= dust) {
+    if (isSubdust(amount, dust)) {
         throw new Error("Amount is below dust limit, cannot delegate");
     }
 
@@ -339,7 +344,7 @@ async function delegate(
 
     const forfeits = await Promise.all(
         vtxos
-            .filter((v) => !isRecoverable(v))
+            .filter((v) => !canRecoverOnchain(v, { timestamp: new Date() }))
             .map(async (coin) => {
                 const forfeit = await makeDelegateForfeitTx(
                     coin,

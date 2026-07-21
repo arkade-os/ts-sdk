@@ -25,7 +25,6 @@ import {
     IssuanceResult,
     isExpired,
     isRecoverable,
-    isSpendable,
     isSubdust,
     IWallet,
     Recipient,
@@ -36,6 +35,13 @@ import {
     WalletBalance,
 } from "../index";
 import { DelegateInfo } from "../../providers/delegate";
+import {
+    canRecoverOnchain,
+    canSpendOffchain,
+    getNormalizedVtxos,
+    hasTerminalSpend,
+    type NormalizedExtendedVirtualCoin,
+} from "../vtxo";
 import { ReadonlyWallet, Wallet, type ProviderConnectionState } from "../wallet";
 import type {
     DeprecatedSignerMigrationReport,
@@ -51,7 +57,6 @@ import { MessageHandler, RequestEnvelope, ResponseEnvelope } from "../../worker/
 import { Transaction } from "../../utils/transaction";
 import { buildTransactionHistory } from "../../utils/transactionHistory";
 import {
-    filterVtxosForScript,
     getVtxosForContract,
     saveVtxosForContract,
     warnAndFilterVtxosForScript,
@@ -1363,9 +1368,9 @@ export class WalletMessageHandler
             }
         }
 
-        // offchain — split spendable vs swept from single repo read
-        const spendableVtxos = allVtxos.filter(isSpendable);
-        const sweptVtxos = allVtxos.filter((vtxo) => vtxo.virtualStatus.state === "swept");
+        // offchain — bucketed from a single repo read, with the same capability reads
+        // Wallet.getBalance uses so the two agree. No chain tip: this is an offline-first read.
+        const now = { timestamp: new Date() };
 
         let settled = 0;
         let preconfirmed = 0;
@@ -1373,18 +1378,23 @@ export class WalletMessageHandler
         let pendingRecovery = 0;
         // Past-cutoff (EXPIRED) deprecated-signer funds not yet swept are NOT
         // spendable — bucket them under pendingRecovery, out of settled/preconfirmed.
-        for (const vtxo of spendableVtxos) {
+        //
+        // Pending is tested first, and before expiry: such funds cannot be renewed until they
+        // recover, so once their batch expiry passes `canRecoverOnchain` would otherwise claim
+        // them and report them as renewable-right-now. The branches are exclusive, so
+        // `totalOffchain` below counts each VTXO once.
+        for (const vtxo of allVtxos) {
+            if (hasTerminalSpend(vtxo)) continue;
             if (pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
                 pendingRecovery += vtxo.value;
-            } else if (vtxo.virtualStatus.state === "settled") {
-                settled += vtxo.value;
-            } else if (vtxo.virtualStatus.state === "preconfirmed") {
-                preconfirmed += vtxo.value;
-            }
-        }
-        for (const vtxo of sweptVtxos) {
-            if (isSpendable(vtxo)) {
+            } else if (canRecoverOnchain(vtxo, now)) {
                 recoverable += vtxo.value;
+            } else if (canSpendOffchain(vtxo, now)) {
+                if (vtxo.isPreconfirmed) {
+                    preconfirmed += vtxo.value;
+                } else {
+                    settled += vtxo.value;
+                }
             }
         }
 
@@ -1393,7 +1403,8 @@ export class WalletMessageHandler
 
         // aggregate asset balances from spendable virtual outputs
         const assetBalances = new Map<string, bigint>();
-        for (const vtxo of spendableVtxos) {
+        for (const vtxo of allVtxos) {
+            if (hasTerminalSpend(vtxo)) continue;
             if (vtxo.assets) {
                 for (const a of vtxo.assets) {
                     const current = assetBalances.get(a.assetId) ?? 0n;
@@ -1430,7 +1441,7 @@ export class WalletMessageHandler
      */
     private async getSpendableVtxos() {
         const vtxos = await this.getVtxosFromRepo();
-        return vtxos.filter(isSpendable);
+        return vtxos.filter((v) => !hasTerminalSpend(v));
     }
 
     private async onWalletInitialized() {
@@ -1456,11 +1467,7 @@ export class WalletMessageHandler
             try {
                 const vtxos = await this.getVtxosFromRepo();
                 const { pending, finalized } = await this.wallet.finalizePendingTxs(
-                    vtxos.filter(
-                        (vtxo) =>
-                            vtxo.virtualStatus.state !== "swept" &&
-                            vtxo.virtualStatus.state !== "settled",
-                    ),
+                    vtxos.filter((vtxo) => vtxo.isSpent || (vtxo.isPreconfirmed && !vtxo.isSwept)),
                 );
                 console.info(
                     `Recovered ${finalized.length}/${pending.length} pending transactions: ${finalized.join(", ")}`,
@@ -1761,12 +1768,12 @@ export class WalletMessageHandler
      * Read all virtual outputs from the repository, aggregated across all contract
      * addresses and the wallet's primary address, with deduplication.
      */
-    private async getVtxosFromRepo(): Promise<ExtendedVirtualCoin[]> {
+    private async getVtxosFromRepo(): Promise<NormalizedExtendedVirtualCoin[]> {
         if (!this.walletRepository || !this.readonlyWallet) return [];
         const seen = new Set<string>();
-        const allVtxos: ExtendedVirtualCoin[] = [];
+        const allVtxos: NormalizedExtendedVirtualCoin[] = [];
 
-        const addVtxos = (vtxos: ExtendedVirtualCoin[]) => {
+        const addVtxos = (vtxos: NormalizedExtendedVirtualCoin[]) => {
             for (const vtxo of vtxos) {
                 const key = `${vtxo.txid}:${vtxo.vout}`;
                 if (!seen.has(key)) {
@@ -1800,8 +1807,14 @@ export class WalletMessageHandler
                 `WalletMessageHandler.getVtxosFromRepo: failed to derive script from wallet address ${walletAddress}: ${e instanceof Error ? e.message : String(e)}`,
             );
         }
-        const walletVtxos = await this.walletRepository.getVtxos(walletAddress);
-        addVtxos(filterVtxosForScript(walletVtxos, walletScript));
+        // Routed through the same helper as the contract buckets rather than reading the
+        // repository directly, so this bucket normalizes too.
+        addVtxos(
+            await getVtxosForContract(this.walletRepository, {
+                script: walletScript,
+                address: walletAddress,
+            }),
+        );
 
         return allVtxos;
     }
@@ -1852,7 +1865,7 @@ export class WalletMessageHandler
                 }));
                 const BATCH_SIZE = 100;
                 for (let i = 0; i < outpoints.length; i += BATCH_SIZE) {
-                    const res = await this.indexerProvider.getVtxos({
+                    const res = await getNormalizedVtxos(this.indexerProvider, {
                         outpoints: outpoints.slice(i, i + BATCH_SIZE),
                     });
                     for (const v of res.vtxos) {

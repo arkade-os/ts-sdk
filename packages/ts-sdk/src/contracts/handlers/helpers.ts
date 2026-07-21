@@ -2,6 +2,7 @@ import { sequenceToTimelock } from "../../utils/timelock";
 import { Contract, PathContext } from "../types";
 import { isDescriptor, extractPubKey } from "../../identity/descriptor";
 import type { IndexerProvider } from "../../providers/indexer";
+import { getNormalizedVtxos } from "../../wallet/vtxo";
 import { DEFAULT_PAGE_SIZE } from "../constants";
 
 /**
@@ -147,7 +148,7 @@ export async function detectUsedScripts(
     let pageIndex = 0;
     let hasMore = true;
     while (hasMore && remaining.size > 0) {
-        const { vtxos, page } = await indexerProvider.getVtxos({
+        const { vtxos, page } = await getNormalizedVtxos(indexerProvider, {
             scripts: scriptHexes,
             pageIndex,
             pageSize: DEFAULT_PAGE_SIZE,

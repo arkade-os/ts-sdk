@@ -18,6 +18,11 @@ import {
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
 import { ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
+import {
+    getNormalizedVtxos,
+    normalizeVtxo,
+    type NormalizedExtendedVirtualCoin,
+} from "../wallet/vtxo";
 import { extendVirtualCoinForContract, type ContractTapscriptCache } from "../wallet/utils";
 import { ContractFilter, ContractRepository, IntentRepository } from "../repositories";
 import { reconcileIntents } from "../wallet/intentReconciliation";
@@ -126,14 +131,26 @@ export interface HandlerError {
 
 /**
  * Outcome of a {@link IContractManager.scanContracts} run.
- *
- * `lastIndexUsed` is the highest HD index at which any handler discovered a
- * contract (`-1` if nothing was found). `handlerErrors` collects per-handler
- * `discoverAt` failures — non-empty means the gap window may have closed
- * early and the caller should surface this (the scan itself still resolved).
  */
 export interface ScanResult {
+    /** @deprecated Alias of {@link ScanResult.highestConfirmedUsedIndex}. */
     lastIndexUsed: number;
+    /**
+     * Highest HD index at which any handler confirmed a contract (`-1` if none),
+     * including hits past {@link ScanResult.truncatedAt}. Safe to record
+     * unconditionally: the HD watermark it feeds is a monotonic max over a scan
+     * that always restarts at 0, so it cannot skip an index — while withholding
+     * it risks re-issuing a funded index as a fresh receive address.
+     */
+    highestConfirmedUsedIndex: number;
+    /**
+     * First index a handler failed at, making it *indeterminate* — neither a hit
+     * nor a confirmed miss. The scan stops there, so indices `>= truncatedAt` are
+     * unverified and the caller must retry (scanning is idempotent). `undefined`
+     * when the scan closed a genuine gap.
+     */
+    truncatedAt?: number;
+    /** Per-handler `discoverAt` failures. Non-empty implies `truncatedAt` is set. */
     handlerErrors: HandlerError[];
 }
 
@@ -221,7 +238,7 @@ export interface IContractManager extends Disposable {
      * in wallet/handler code, and keeps the wallet from silently stamping the
      * default tapscript onto a non-default vtxo.
      */
-    annotateVtxos(vtxos: VirtualCoin[]): Promise<ExtendedVirtualCoin[]>;
+    annotateVtxos(vtxos: VirtualCoin[]): Promise<NormalizedExtendedVirtualCoin[]>;
 
     /**
      * Update mutable contract fields.
@@ -299,15 +316,17 @@ export interface IContractManager extends Disposable {
      *
      * Error contract (safety-critical — see spec §4):
      * - A handler's `discoverAt` rejecting is **collected** into
-     *   `handlerErrors` and the loop **continues**; it never aborts the
-     *   scan or throws.
+     *   `handlerErrors` and makes its index *indeterminate*: it never
+     *   advances the gap counter, and the scan **stops verifying** there
+     *   rather than closing a window it never observed close. It still
+     *   never throws.
      * - A fatal operational error — `materialize()` throwing, or
      *   `createContract` rejecting — **propagates** out of `scanContracts`
      *   (it invalidates the gap-window signal, so a silent truncation
      *   would risk hiding user funds).
      *
      * @param opts See {@link ScanContractsOptions}.
-     * @returns `{ lastIndexUsed, handlerErrors }` — the caller surfaces
+     * @returns See {@link ScanResult}. The caller surfaces `truncatedAt` /
      *   `handlerErrors` *after* the inline VTXO pull.
      */
     scanContracts(opts: ScanContractsOptions): Promise<ScanResult>;
@@ -715,9 +734,10 @@ export class ContractManager implements IContractManager {
      * Safety-critical invariants (spec §2.C / §4):
      * - `opts.materialize(i)` throwing is structural/fatal: it is NOT
      *   wrapped — it propagates and aborts the scan.
-     * - A `discoverAt` rejection is collected into `handlerErrors` and the
-     *   loop continues (the gap counter still advances for that index if no
-     *   other handler hit it).
+     * - A `discoverAt` rejection is collected into `handlerErrors` and makes
+     *   its index *indeterminate*: it does NOT advance the gap counter, and
+     *   the scan stops verifying there, reporting `truncatedAt`. Only an index
+     *   every handler answered for can be a confirmed miss.
      * - `persistAndWatchContract` rejecting is operational/fatal and
      *   propagates (only `discoverAt` is guarded).
      * - Within an index the handler probes run concurrently (independent
@@ -731,8 +751,12 @@ export class ContractManager implements IContractManager {
      *   over-scanned, nothing is discarded, and `materialize`/`discoverAt` are
      *   invoked on exactly the same index set. The window's hits are still
      *   processed strictly in ascending index order, so the discovered set,
-     *   persisted rows, `lastIndexUsed`, and `handlerErrors` are byte-for-byte
-     *   identical to the serial path — only the wall-clock differs.
+     *   persisted rows, `highestConfirmedUsedIndex`, and `handlerErrors` are
+     *   byte-for-byte identical to the serial path — only the wall-clock
+     *   differs. Truncation is the one exception: a window's concurrent probes
+     *   can surface hits above the failed index that a serial scan would never
+     *   have reached, so a truncated batched scan discovers a superset — never
+     *   a subset — of the serial one.
      */
     async scanContracts(opts: ScanContractsOptions): Promise<ScanResult> {
         const gapLimit = opts.gapLimit ?? 20;
@@ -773,7 +797,8 @@ export class ContractManager implements IContractManager {
 
         const maxIdx = opts.hd ? SCAN_MAX_INDEX : 0;
         const handlerErrors: HandlerError[] = [];
-        let lastIndexUsed = -1;
+        let highestConfirmedUsedIndex = -1;
+        let truncatedAt: number | undefined;
         let unused = 0;
         let i = 0;
 
@@ -823,6 +848,7 @@ export class ContractManager implements IContractManager {
                 const index = windowIndices[w];
                 const probes = windowProbes[w];
                 let hitAtThisIndex = false;
+                let indeterminate = false;
                 for (let h = 0; h < discoverables.length; h++) {
                     const probe = probes[h];
                     if (!probe.ok) {
@@ -831,6 +857,7 @@ export class ContractManager implements IContractManager {
                             index,
                             error: probe.error,
                         });
+                        indeterminate = true;
                         continue;
                     }
                     for (const c of probe.found) {
@@ -839,13 +866,22 @@ export class ContractManager implements IContractManager {
                     }
                 }
 
-                if (hitAtThisIndex) {
-                    lastIndexUsed = index;
-                    unused = 0;
-                } else {
-                    unused += 1;
-                }
+                // Three outcomes, not two: hit, confirmed miss, and
+                // indeterminate — nobody observed this index to be empty.
+                // Counting the third as a miss is what let a rate-limited scan
+                // close its gap window on failed requests rather than on absent
+                // funds, and return a wallet missing money.
+                if (indeterminate && truncatedAt === undefined) truncatedAt = index;
+                if (hitAtThisIndex) highestConfirmedUsedIndex = index;
+
+                // Past the truncation point only hits count; nothing may become
+                // a confirmed miss, so the gap window cannot close across it.
+                if (truncatedAt !== undefined) continue;
+                if (hitAtThisIndex) unused = 0;
+                else unused += 1;
             }
+
+            if (truncatedAt !== undefined) break;
             i = windowEnd + 1;
         }
 
@@ -853,8 +889,9 @@ export class ContractManager implements IContractManager {
         // scan was truncated. Surface loudly (matching the materialize-
         // fatal contract) rather than silently returning a partial
         // result, since the caller cannot otherwise distinguish "no
-        // more funds past lastIndexUsed" from "we stopped scanning".
-        if (opts.hd && i > maxIdx && unused < gapLimit) {
+        // more funds past lastIndexUsed" from "we stopped scanning". A
+        // truncated scan exits early by design, so it is excluded here.
+        if (opts.hd && truncatedAt === undefined && i > maxIdx && unused < gapLimit) {
             throw new Error(
                 `scanContracts: reached SCAN_MAX_INDEX (${SCAN_MAX_INDEX}) without closing the ` +
                     `${gapLimit}-index gap window; a Discoverable handler may be returning ` +
@@ -862,7 +899,12 @@ export class ContractManager implements IContractManager {
             );
         }
 
-        return { lastIndexUsed, handlerErrors };
+        return {
+            lastIndexUsed: highestConfirmedUsedIndex,
+            highestConfirmedUsedIndex,
+            ...(truncatedAt !== undefined && { truncatedAt }),
+            handlerErrors,
+        };
     }
 
     /**
@@ -908,7 +950,7 @@ export class ContractManager implements IContractManager {
         }));
     }
 
-    async annotateVtxos(vtxos: VirtualCoin[]): Promise<ExtendedVirtualCoin[]> {
+    async annotateVtxos(vtxos: VirtualCoin[]): Promise<NormalizedExtendedVirtualCoin[]> {
         if (vtxos.length === 0) return [];
 
         const scripts = Array.from(new Set(vtxos.map((v) => v.script)));
@@ -926,7 +968,11 @@ export class ContractManager implements IContractManager {
         // contract to avoid rebuilding the taproot tree once per VTXO — the
         // dominant cost when annotating long spent/swept histories (see #521).
         const tapscriptCache: ContractTapscriptCache = new Map();
-        return vtxos.map((vtxo) => extendVirtualCoinForContract(vtxo, byScript, tapscriptCache));
+        // `vtxos` is caller-supplied, so normalize before annotating: the annotated coins flow on
+        // into forfeit construction and repository writes.
+        return vtxos.map((vtxo) =>
+            extendVirtualCoinForContract(normalizeVtxo(vtxo), byScript, tapscriptCache),
+        );
     }
 
     private buildContractsDbFilter(filter: GetContractsFilter): ContractFilter {
@@ -1132,7 +1178,7 @@ export class ContractManager implements IContractManager {
     async refreshOutpoints(outpoints: Outpoint[]): Promise<void> {
         if (outpoints.length === 0) return;
 
-        const { vtxos } = await this.config.indexerProvider.getVtxos({
+        const { vtxos } = await getNormalizedVtxos(this.config.indexerProvider, {
             outpoints,
         });
         if (vtxos.length === 0) return;
@@ -1378,10 +1424,10 @@ export class ContractManager implements IContractManager {
         const BATCH_SIZE = 100;
 
         for (let i = 0; i < outpoints.length; i += BATCH_SIZE) {
-            const res = await this.config.indexerProvider.getVtxos({
+            const { vtxos: found } = await getNormalizedVtxos(this.config.indexerProvider, {
                 outpoints: outpoints.slice(i, i + BATCH_SIZE),
             });
-            for (const v of res.vtxos) present.add(vtxoOutpoint(v));
+            for (const v of found) present.add(vtxoOutpoint(v));
         }
         return present;
     }
@@ -1395,7 +1441,7 @@ export class ContractManager implements IContractManager {
         const scripts = contracts.map((c) => c.script);
         const scriptToContract = new Map<string, Contract>(contracts.map((c) => [c.script, c]));
 
-        const { vtxos } = await this.config.indexerProvider.getVtxos({
+        const { vtxos } = await getNormalizedVtxos(this.config.indexerProvider, {
             scripts,
             pendingOnly: true,
         });
@@ -1515,7 +1561,7 @@ export class ContractManager implements IContractManager {
         let hasMore = true;
 
         while (hasMore) {
-            const { vtxos, page } = await this.config.indexerProvider.getVtxos({
+            const { vtxos, page } = await getNormalizedVtxos(this.config.indexerProvider, {
                 scripts,
                 ...windowOpts,
                 pageIndex,

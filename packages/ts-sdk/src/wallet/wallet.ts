@@ -11,6 +11,7 @@ import {
     ArkProvider,
     BatchFinalizationEvent,
     BatchStartedEvent,
+    PendingTx,
     RestArkProvider,
     SettlementEvent,
     SignedIntent,
@@ -23,6 +24,22 @@ import { validateConnectorsTxGraph, validateVtxoTxGraph } from "../tree/validati
 import { validateBatchRecipients } from "./validation";
 import { Identity, ReadonlyIdentity, isBatchSignable } from "../identity";
 import {
+    canRecoverOnchain,
+    canSpendOffchain,
+    getNormalizedVtxos,
+    hasTerminalSpend,
+    isVirtualCoin,
+    normalizeVtxo,
+    parseLegacyExpiry,
+    resolveTimeHeight,
+    toBatchExpiry,
+    toOffchainInputFeeParams,
+    toVirtualStatus,
+    type NormalizedExtendedVirtualCoin,
+    type NormalizedVirtualCoin,
+    type TimeHeight,
+} from "./vtxo";
+import {
     ArkTransaction,
     Asset,
     Coin,
@@ -32,9 +49,6 @@ import {
     IAssetManager,
     IReadonlyAssetManager,
     IReadonlyWallet,
-    isExpired,
-    isRecoverable,
-    isSpendable,
     isSubdust,
     IWallet,
     Outpoint,
@@ -53,20 +67,24 @@ import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { toXOnlySignerHex } from "./signerRotation";
 import {
     buildOffchainTx,
-    combineTapscriptSigs,
     hasBoardingTxExpired,
     isValidArkAddress,
+    signAndSubmitOffchainTx,
+    submitOffchainTx,
+    type OffchainTxSigner,
 } from "../utils/arkTransaction";
 import {
     byValueDescending,
     DEFAULT_RENEWAL_CONFIG,
     DEFAULT_SETTLEMENT_CONFIG,
+    MAX_INPUTS_PER_INTENT,
     MAX_VTXOS_PER_SETTLEMENT,
     SettlementConfig,
     VtxoManager,
     selectPendingRecoveryOutpoints,
 } from "./vtxo-manager";
 import { ArkNote } from "../arknote";
+import { ArkadeCash } from "../arkadeCash";
 import { Intent } from "../intent";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
@@ -98,7 +116,7 @@ import { DelegateProvider } from "../providers/delegate";
 import { buildTransactionHistory } from "../utils/transactionHistory";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "./activity";
 import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
-import { Extension } from "../extension";
+import { Extension, type ExtensionPacket } from "../extension";
 import { DelegateVtxo } from "../script/delegate";
 import { DelegateManagerImpl, findDestinationOutputIndex, IDelegateManager } from "./delegate";
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../repositories";
@@ -350,6 +368,84 @@ export interface BoardingUtxoGroup {
     /** CSV exit timelock decoded from THIS tapscript's exit leaf. */
     csvTimelock: RelativeTimelock;
     coins: ExtendedCoin[];
+}
+
+/**
+ * Why a VTXO at an arkadeCash address could not be swept by {@link Wallet.claimCash}.
+ *
+ * - `swept` — the server swept the batch at expiry. Recoverable in principle,
+ *   but only through a settlement, which the thin sweep cannot do.
+ * - `subdust` — below dust, so it sits at an OP_RETURN script with no spendable
+ *   leaf. Unspendable as cash; `createCash` prevents minting these.
+ * - `already-spent` — someone else claimed it first.
+ * - `has-assets` — asset-bearing; the BTC-only sweep would burn the assets.
+ * - `sweep-failed` — spendable, but its own sweep was rejected.
+ */
+export type ArkadeCashUnclaimedReason =
+    | "swept"
+    | "subdust"
+    | "already-spent"
+    | "has-assets"
+    | "sweep-failed";
+
+const cashReport = (
+    vtxo: VirtualCoin,
+    reason: ArkadeCashUnclaimedReason,
+): ArkadeCashUnclaimedVtxo => ({
+    txid: vtxo.txid,
+    vout: vtxo.vout,
+    value: vtxo.value,
+    reason,
+});
+
+/** A VTXO {@link Wallet.claimCash} left behind, with the reason why. */
+export interface ArkadeCashUnclaimedVtxo {
+    txid: string;
+    vout: number;
+    /** Value in satoshis. */
+    value: number;
+    reason: ArkadeCashUnclaimedReason;
+}
+
+/**
+ * Outcome of {@link Wallet.claimCash}: what was swept, and what was not.
+ *
+ * The shape is open — further buckets may be added alongside `unclaimed` as
+ * more of the non-sweepable states become claimable.
+ */
+export interface ArkadeCashClaimResult {
+    /** Satoshis swept to this wallet. */
+    swept: number;
+    unclaimed: {
+        /** Satoshis left behind. */
+        amount: number;
+        vtxos: ArkadeCashUnclaimedVtxo[];
+    };
+}
+
+/**
+ * Thrown when {@link Wallet.createCash} funds the note but its `send` call
+ * fails after the transaction may already have been submitted.
+ *
+ * The whole value of the note lives in `cash`: it carries the private key that
+ * controls the funded output. If `send` committed and this error is discarded,
+ * the sats are stranded at an address only this token can reach. Callers that
+ * cannot rule out a post-submit failure must persist `cash` — passing it to
+ * {@link Wallet.claimCash} recovers the funds whether or not the send landed.
+ */
+export class ArkadeCashCreateError extends Error {
+    constructor(
+        /** The encoded arkadeCash token controlling the funded output. */
+        readonly cash: string,
+        /** The original failure from `send`. */
+        readonly cause: unknown,
+    ) {
+        super(
+            `Failed to create ArkadeCash: send failed after the note may have been submitted. ` +
+                `Recover with claimCash using the token on this error's \`cash\` field.`,
+        );
+        this.name = "ArkadeCashCreateError";
+    }
 }
 
 /**
@@ -961,29 +1057,36 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // offchain
         let recoverable = 0;
         let pendingRecovery = 0;
+        // Buckets read the same capability the send path does, so nothing counted as available can
+        // be refused by `send`. No chain tip: balance is an offline-first read and must not gain a
+        // network dependency, so height-encoded expiry reads as not expired — as it does on the
+        // send path.
+        const now = { timestamp: new Date() };
         // Funds under a past-cutoff (EXPIRED) deprecated signer that are not yet
         // swept are NOT spendable — excluded from settled/preconfirmed/available
         // and surfaced under `pendingRecovery` (they still count toward `total`).
         const settled = vtxos
-            .filter((coin) => coin.virtualStatus.state === "settled" && !isPendingRecovery(coin))
+            .filter(
+                (coin) =>
+                    canSpendOffchain(coin, now) && !coin.isPreconfirmed && !isPendingRecovery(coin),
+            )
             .reduce((sum, coin) => sum + coin.value, 0);
         const preconfirmed = vtxos
             .filter(
-                (coin) => coin.virtualStatus.state === "preconfirmed" && !isPendingRecovery(coin),
-            )
-            .reduce((sum, coin) => sum + coin.value, 0);
-        // Spendable-right-now subset: the same settled+preconfirmed rule, but
-        // over VTXOs not currently locked by an in-flight intent.
-        const available = unlockedVtxos
-            .filter(
                 (coin) =>
-                    (coin.virtualStatus.state === "settled" ||
-                        coin.virtualStatus.state === "preconfirmed") &&
-                    !isPendingRecovery(coin),
+                    canSpendOffchain(coin, now) && coin.isPreconfirmed && !isPendingRecovery(coin),
             )
             .reduce((sum, coin) => sum + coin.value, 0);
+        // Spendable-right-now subset: the same rule, but over VTXOs not
+        // currently locked by an in-flight intent.
+        const available = unlockedVtxos
+            .filter((coin) => canSpendOffchain(coin, now) && !isPendingRecovery(coin))
+            .reduce((sum, coin) => sum + coin.value, 0);
+        // `!isPendingRecovery` keeps the buckets disjoint, so `totalOffchain` counts each VTXO
+        // once: a pending-recovery VTXO past its batch expiry satisfies `canRecoverOnchain` too,
+        // and it belongs to `pendingRecovery` — it cannot be renewed until it recovers.
         recoverable = vtxos
-            .filter((coin) => isSpendable(coin) && coin.virtualStatus.state === "swept")
+            .filter((coin) => canRecoverOnchain(coin, now) && !isPendingRecovery(coin))
             .reduce((sum, coin) => sum + coin.value, 0);
         pendingRecovery = vtxos
             .filter(isPendingRecovery)
@@ -995,7 +1098,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // aggregate asset balances from spendable virtual outputs
         const assetBalances = new Map<string, bigint>();
         for (const vtxo of vtxos) {
-            if (!isSpendable(vtxo)) continue;
+            if (hasTerminalSpend(vtxo)) continue;
             if (vtxo.assets) {
                 for (const a of vtxo.assets) {
                     const current = assetBalances.get(a.assetId) ?? 0n;
@@ -1029,19 +1132,21 @@ export class ReadonlyWallet implements IReadonlyWallet {
      *
      * @param filter - Optional flags controlling whether recoverable or unrolled VTXOs are included
      */
-    async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
+    async getVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
         const f = filter ?? { withRecoverable: true, withUnrolled: false };
         const contractManager = await this.getContractManager();
         const vtxos = await contractManager.getContractsWithVtxos();
 
+        // No chain tip, for the same reason as `getBalance`, which this must agree with.
+        const now = { timestamp: new Date() };
         return vtxos
             .flatMap((_) => _.vtxos)
             .filter((vtxo) => {
                 if (this._pendingSpendOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
                     return false;
                 }
-                if (isSpendable(vtxo)) {
-                    if (!f.withRecoverable && (isRecoverable(vtxo) || isExpired(vtxo))) {
+                if (!hasTerminalSpend(vtxo)) {
+                    if (!f.withRecoverable && canRecoverOnchain(vtxo, now)) {
                         return false;
                     }
                     return true;
@@ -1079,8 +1184,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const { boardingTxs, commitmentsToIgnore } = await this.getBoardingTxs();
 
         const getTxCreatedAt = (txid: string) =>
-            this.indexerProvider
-                .getVtxos({ outpoints: [{ txid, vout: 0 }] })
+            getNormalizedVtxos(this.indexerProvider, { outpoints: [{ txid, vout: 0 }] })
                 .then((res) => res.vtxos[0]?.createdAt.getTime())
                 // Best-effort createdAt enrichment: when the indexer is
                 // unavailable, leave it undefined (history still builds from
@@ -1141,7 +1245,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         boardingTxs: ArkTransaction[];
         commitmentsToIgnore: Set<string>;
     }> {
-        const utxos: VirtualCoin[] = [];
+        const utxos: NormalizedVirtualCoin[] = [];
         const commitmentsToIgnore = new Set<string>();
         const tapscripts = await this.getBoardingTapscripts(this.watchedBoardingSigners());
 
@@ -1191,6 +1295,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
                             commitmentsToIgnore.add(commitmentTxid);
                         }
 
+                        const boardingFacts = {
+                            isSpent: spent,
+                            isSwept: false,
+                            isPreconfirmed: false,
+                            commitmentTxIds: spent && commitmentTxid ? [commitmentTxid] : [],
+                        };
                         utxos.push({
                             txid: tx.txid,
                             vout: i,
@@ -1200,11 +1310,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
                                 block_time: tx.status.block_time,
                             },
                             isUnrolled: true,
-                            virtualStatus: {
-                                state: spent ? "spent" : "settled",
-                                commitmentTxIds:
-                                    spent && commitmentTxid ? [commitmentTxid] : undefined,
-                            },
+                            ...boardingFacts,
+                            virtualStatus: toVirtualStatus(boardingFacts),
+                            spentBy: "",
                             createdAt: tx.status.confirmed
                                 ? new Date(tx.status.block_time * 1000)
                                 : new Date(0),
@@ -1222,12 +1330,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
             const tx: ArkTransaction = {
                 key: {
                     boardingTxid: utxo.txid,
-                    commitmentTxid: utxo.virtualStatus.commitmentTxIds?.[0] ?? "",
+                    commitmentTxid: utxo.commitmentTxIds[0] ?? "",
                     arkTxid: "",
                 },
                 amount: utxo.value,
                 type: TxType.TxReceived,
-                settled: utxo.virtualStatus.state === "spent",
+                settled: utxo.isSpent,
                 createdAt: utxo.status.block_time
                     ? new Date(utxo.status.block_time * 1000).getTime()
                     : 0,
@@ -1548,14 +1656,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
     async fetchPendingTxs(): Promise<string[]> {
         // get non-swept virtual outputs, rely on the indexer only in case DB doesn't have the right state
         const scripts = await this.getWalletScripts();
-        let { vtxos } = await this.indexerProvider.getVtxos({
+        let { vtxos } = await getNormalizedVtxos(this.indexerProvider, {
             scripts,
         });
         return vtxos
             .filter(
                 (vtxo) =>
-                    vtxo.virtualStatus.state !== "swept" &&
-                    vtxo.virtualStatus.state !== "settled" &&
+                    (vtxo.isSpent || (vtxo.isPreconfirmed && !vtxo.isSwept)) &&
                     vtxo.arkTxId !== undefined,
             )
             .map((_) => _.arkTxId!);
@@ -1676,7 +1783,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             });
             onVtxosPersisted = async (_contract, vtxos) => {
                 for (const v of vtxos) {
-                    if (v.virtualStatus.state === "spent") continue;
+                    if (v.isSpent) continue;
                     await captureExitBranch({
                         resolver,
                         repository: virtualTxRepository,
@@ -2309,7 +2416,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
     private _addPendingSpends(inputs: readonly ExtendedCoin[]): void {
         for (const input of inputs) {
-            if ("virtualStatus" in input) {
+            if (isVirtualCoin(input)) {
                 this._pendingSpendOutpoints.add(`${input.txid}:${input.vout}`);
             }
         }
@@ -2317,7 +2424,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
     private _removePendingSpends(inputs: readonly ExtendedCoin[]): void {
         for (const input of inputs) {
-            if ("virtualStatus" in input) {
+            if (isVirtualCoin(input)) {
                 this._pendingSpendOutpoints.delete(`${input.txid}:${input.vout}`);
             }
         }
@@ -2440,19 +2547,36 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             deps,
         });
 
-        if (hd && result.lastIndexUsed >= 0) {
-            await provider.advanceLastIndexUsed(result.lastIndexUsed);
+        // Advanced even on a truncated scan: a caller that swallows the error
+        // below would otherwise be handed an already-funded index as a fresh
+        // receive address. See `ScanResult.highestConfirmedUsedIndex`.
+        if (hd && result.highestConfirmedUsedIndex >= 0) {
+            await provider.advanceLastIndexUsed(result.highestConfirmedUsedIndex);
         }
 
         // Inline pull BEFORE surfacing any handler errors so safely
         // discovered funds are always recovered (spec §3.B / §4).
         await manager.refreshVtxos({ includeInactive: true });
 
+        const causes = result.handlerErrors.map((e) =>
+            e.error instanceof Error ? e.error : new Error(String(e.error)),
+        );
+
+        if (result.truncatedAt !== undefined) {
+            throw new AggregateError(
+                causes,
+                `restore: scan truncated at index ${result.truncatedAt}; indices >= ` +
+                    `${result.truncatedAt} are unverified (${result.handlerErrors.length} ` +
+                    `discovery handler failure(s)). Retry is safe (idempotent).`,
+            );
+        }
+
+        // Unreachable via `ContractManager`, which always pairs errors with
+        // `truncatedAt`; kept so a third-party `IContractManager` that doesn't
+        // still fails loudly.
         if (result.handlerErrors.length > 0) {
             throw new AggregateError(
-                result.handlerErrors.map((e) =>
-                    e.error instanceof Error ? e.error : new Error(String(e.error)),
-                ),
+                causes,
                 `restore: ${result.handlerErrors.length} discovery handler(s) failed; ` +
                     `the gap window may have closed early — retry is safe (idempotent).`,
             );
@@ -3018,15 +3142,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 if (filteredVtxos.length >= MAX_VTXOS_PER_SETTLEMENT) {
                     break;
                 }
-                const inputFee = estimator.evalOffchainInput({
-                    amount: BigInt(vtxo.value),
-                    type: vtxo.virtualStatus.state === "swept" ? "recoverable" : "vtxo",
-                    weight: 0,
-                    birth: vtxo.createdAt,
-                    expiry: vtxo.virtualStatus.batchExpiry
-                        ? new Date(vtxo.virtualStatus.batchExpiry)
-                        : undefined,
-                });
+                const inputFee = estimator.evalOffchainInput(toOffchainInputFeeParams(vtxo));
                 if (inputFee.satoshis >= vtxo.value) {
                     // skip if fees are greater than the virtual output value
                     continue;
@@ -3071,7 +3187,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             output.amount -= BigInt(outputFee.satoshis);
 
-            if (output.amount <= this.dustAmount) {
+            if (isSubdust(output.amount, this.dustAmount)) {
                 throw new Error("Output amount is below dust limit");
             }
 
@@ -3328,9 +3444,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * renewal / offboard) is not a board and leaves the boarding address
      * untouched.
      *
-     * Boarding inputs are the non-VTXO coins (no `virtualStatus`), the same
+     * Boarding inputs are the non-VTXO coins (no `script`), the same
      * discriminator {@link handleSettlementFinalizationEvent} uses; the
-     * `typeof` guard skips arknote string inputs before the `in` test.
+     * `typeof` guard skips the arknote strings settle also accepts.
      *
      * No-ops for static / `auto` wallets (no descriptor provider — boarding
      * stays on its fixed index-0 address). Best-effort and non-fatal: the
@@ -3343,7 +3459,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     private async maybeRotateBoardingAfterBoard(inputs: SettleParams["inputs"]): Promise<void> {
         if (!this._descriptorProvider) return;
         const consumedBoarding = inputs.some(
-            (input) => typeof input !== "string" && !("virtualStatus" in input),
+            (input) => typeof input !== "string" && !isVirtualCoin(input),
         );
         if (!consumedBoarding) return;
         try {
@@ -3362,9 +3478,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // the signed forfeits transactions to submit
         const signedForfeits: string[] = [];
 
-        const isVtxo = (input: ExtendedCoin): input is ExtendedVirtualCoin =>
-            "virtualStatus" in input;
-
         let settlementPsbt = Transaction.fromPSBT(base64.decode(event.commitmentTx));
         let hasBoardingUtxos = false;
 
@@ -3374,7 +3487,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         for (const input of inputs) {
             // boarding input, we need to sign the settlement tx
-            if (!isVtxo(input)) {
+            if (!isVirtualCoin(input)) {
                 for (let i = 0; i < settlementPsbt.inputsLength; i++) {
                     const settlementInput = settlementPsbt.getInput(i);
 
@@ -3412,7 +3525,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 continue;
             }
 
-            if (isRecoverable(input) || isSubdust(input, this.dustAmount)) {
+            if (
+                canRecoverOnchain(input, { timestamp: new Date() }) ||
+                isSubdust({ value: input.value }, this.dustAmount)
+            ) {
                 // recoverable or subdust coin, we don't need to create a forfeit tx
                 continue;
             }
@@ -3835,15 +3951,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             return { finalized: [], pending: [] };
         }
 
-        const MAX_INPUTS_PER_INTENT = 20;
-
         if (!vtxos || vtxos.length === 0) {
             // Batch all scripts into a single indexer call
             const scriptMap = await this.getScriptMap();
             const allExtended: ExtendedVirtualCoin[] = [];
 
             const allScripts = [...scriptMap.keys()];
-            const { vtxos: fetchedVtxos } = await this.indexerProvider.getVtxos({
+            const { vtxos: fetchedVtxos } = await getNormalizedVtxos(this.indexerProvider, {
                 scripts: allScripts,
             });
 
@@ -3851,10 +3965,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 const vtxoScript = scriptMap.get(vtxo.script);
                 if (!vtxoScript) continue;
 
-                if (
-                    vtxo.virtualStatus.state === "swept" ||
-                    vtxo.virtualStatus.state === "settled"
-                ) {
+                if (!vtxo.isSpent && !(vtxo.isPreconfirmed && !vtxo.isSwept)) {
                     continue;
                 }
 
@@ -3981,6 +4092,378 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             ...state,
             settings: { ...state.settings, hasPendingTx: value },
         }));
+    }
+
+    /**
+     * Create an ArkadeCash bearer instrument.
+     *
+     * Generates a fresh keypair, sends the specified amount to a DefaultVtxo
+     * controlled by the new key, and returns the encoded arkadeCash string.
+     * The receiver can claim the funds using `claimCash()` without ever
+     * sharing their address.
+     *
+     * ArkadeCash is a short-lived instrument: it carries a private key, so it is
+     * meant to be handed over and claimed promptly, not held. A note left
+     * unclaimed past its batch expiry is swept by the server and `claimCash`
+     * can only report it, not move it.
+     *
+     * @param amount - Amount in satoshis to send. Must be a whole number of
+     * sats at or above the dust threshold — a below-dust amount would mint an
+     * OP_RETURN output that is unspendable as cash.
+     * @returns The encoded arkadeCash string (e.g., "arkadecash1...")
+     */
+    async createCash(amount: number): Promise<string> {
+        // A bare `amount < dust` guard would let NaN, Infinity and fractional
+        // amounts through (all compare false), and `send` itself defaults every
+        // falsy amount to a dust send rather than rejecting it.
+        if (!Number.isSafeInteger(amount) || amount < Number(this.dustAmount)) {
+            throw new Error(
+                `Invalid ArkadeCash amount ${amount}: must be a whole number of sats >= dust (${this.dustAmount})`,
+            );
+        }
+
+        // Derive HRP: ark→arkadecash, tark→tarkadecash
+        const cashHrp = this.network.hrp.replace(/ark$/, "arkadecash");
+
+        const cash = ArkadeCash.generate(
+            this.arkServerPublicKey,
+            this.offchainTapscript.options.csvTimelock,
+            cashHrp,
+        );
+        const address = cash.address(this.network.hrp).encode();
+        const cashStr = cash.toString();
+
+        try {
+            await this.send({ address, amount });
+        } catch (error) {
+            // `send` may fail after the tx was submitted, leaving the note
+            // funded but its token unreturned. Surface the token on the error
+            // so the caller can recover the funds with `claimCash` instead of
+            // stranding them at an address only this token can reach.
+            throw new ArkadeCashCreateError(cashStr, error);
+        }
+
+        return cashStr;
+    }
+
+    /**
+     * Claim an ArkadeCash bearer instrument: sweep what can be swept, report the
+     * rest.
+     *
+     * Every spendable VTXO at the arkadeCash address is swept to this wallet in
+     * its own offchain transaction, signed with the key carried by the arkadeCash
+     * string. Nothing is ever persisted: no contract is imported, and the
+     * arkadeCash key is not stored. Anything that cannot be swept — server-swept,
+     * subdust, already claimed, or asset-bearing — is returned in `unclaimed`
+     * with a per-VTXO reason and otherwise ignored.
+     *
+     * The arkadeCash string is the recovery token: a claim interrupted between
+     * submit and finalize is completed by simply re-running `claimCash`, which
+     * drains any pending arkadeCash transaction on the server before sweeping.
+     *
+     * @param cashStr - The encoded arkadeCash string (e.g., "arkadecash1...")
+     * @returns The swept total and the report of what was left behind. The
+     * shape is open: further buckets may be added alongside `unclaimed`.
+     */
+    async claimCash(cashStr: string): Promise<ArkadeCashClaimResult> {
+        const cash = ArkadeCash.fromString(cashStr);
+        const cashScript = cash.vtxoScript;
+        const cashPkScript = hex.encode(cashScript.pkScript);
+
+        // One unfiltered query: the server's state filters are mutually
+        // exclusive, so any filter here would hide the very states this method
+        // reports. Only the P2TR script is queried — the indexer rejects a
+        // non-P2TR (OP_RETURN) query script outright, and it keys every vtxo,
+        // subdust included, by its taproot key, so subdust arkadeCash comes back
+        // under this same script. It is told apart by its below-dust value, not
+        // by its script (the indexer always reports the P2TR form).
+        const scripts = [cashPkScript];
+        let vtxos = await this.fetchAllVtxos(scripts);
+
+        if (vtxos.length === 0) {
+            throw new Error("No VTXOs found for this arkadeCash");
+        }
+
+        const myPkScript = ArkAddress.decode(await this.getAddress()).pkScript;
+        let { spendable, unclaimed } = this.classifyCashVtxos(vtxos);
+        let swept = 0;
+
+        // Drain first: a previous claim may have registered a sweep it never
+        // finalized. That pending tx is keyed to the arkadeCash key, so this
+        // wallet's own finalizePendingTxs can never reach it — but we hold the
+        // key right now, so we run the same server-side recovery scoped to it.
+        //
+        // The candidate set is neither `spendable` nor everything. Registering
+        // a sweep marks its input spent, so the very inputs needing a drain are
+        // the ones classified `already-spent` — gating on `spendable` would
+        // skip the drain exactly when it is needed. Subdust must stay out
+        // regardless: the proof describes every input by the contract's P2TR
+        // pkScript, which is a lie for an OP_RETURN outpoint and would have the
+        // server reject the whole proof. It is excluded by value, since the
+        // indexer reports subdust under that same P2TR script.
+        const drainable = vtxos.filter((vtxo) => !isSubdust(vtxo, this.dustAmount));
+        if (drainable.length > 0) {
+            let drained = { count: 0, swept: 0, claimed: new Set<string>() };
+            try {
+                drained = await this.finalizePendingCashTxs(
+                    cash,
+                    drainable,
+                    cashScript,
+                    myPkScript,
+                );
+            } catch (error) {
+                // A drain that cannot run must not sink a claim that can still
+                // sweep: any VTXO still held by a pending tx simply fails its
+                // own sweep below and is reported.
+                console.error("Failed to drain pending arkadeCash txs:", error);
+            }
+            if (drained.count > 0) {
+                // A completed sweep spends its input, so the snapshot above is
+                // now stale: re-read it, or we would re-sweep an outpoint we
+                // just spent and report the rejection as a failure.
+                vtxos = await this.fetchAllVtxos(scripts);
+                ({ spendable, unclaimed } = this.classifyCashVtxos(vtxos));
+
+                // The drain moved these to this wallet, so they are swept by
+                // this call — the re-read above sees them spent and would
+                // otherwise report the funds as left behind while they were in
+                // fact just claimed. Outpoints a drained tx paid to someone
+                // else stay reported: for this claimer they really are gone.
+                swept += drained.swept;
+                unclaimed = unclaimed.filter(
+                    (vtxo) => !drained.claimed.has(`${vtxo.txid}:${vtxo.vout}`),
+                );
+            }
+        }
+
+        if (spendable.length > 0) {
+            const info = await this.arkProvider.getInfo();
+            const serverUnrollScript = CSVMultisigTapscript.decode(
+                hex.decode(info.checkpointTapscript),
+            );
+
+            // One tx per VTXO: a stale or rejected input then dents only its own
+            // sweep instead of blocking the whole claim, and each output is one
+            // VTXO's value — already within the server's per-output ceiling, so
+            // no consolidation can breach it.
+            for (const vtxo of spendable) {
+                try {
+                    await signAndSubmitOffchainTx({
+                        identity: cash.identity,
+                        provider: this.arkProvider,
+                        inputs: [
+                            {
+                                txid: vtxo.txid,
+                                vout: vtxo.vout,
+                                value: vtxo.value,
+                                tapLeafScript: cashScript.forfeit(),
+                                tapTree: cashScript.encode(),
+                            },
+                        ],
+                        outputs: [{ script: myPkScript, amount: BigInt(vtxo.value) }],
+                        serverUnrollScript,
+                    });
+                    swept += vtxo.value;
+                } catch (error) {
+                    console.error(
+                        `Failed to sweep arkadeCash VTXO ${vtxo.txid}:${vtxo.vout}:`,
+                        error,
+                    );
+                    unclaimed.push(cashReport(vtxo, "sweep-failed"));
+                }
+            }
+        }
+
+        return {
+            swept,
+            unclaimed: {
+                amount: unclaimed.reduce((total, vtxo) => total + vtxo.value, 0),
+                vtxos: unclaimed,
+            },
+        };
+    }
+
+    /**
+     * Split the VTXOs at an arkadeCash address into the ones the thin sweep can
+     * move and the ones it can only report.
+     */
+    private classifyCashVtxos(vtxos: NormalizedVirtualCoin[]): {
+        spendable: NormalizedVirtualCoin[];
+        unclaimed: ArkadeCashUnclaimedVtxo[];
+    } {
+        const spendable: NormalizedVirtualCoin[] = [];
+        const unclaimed: ArkadeCashUnclaimedVtxo[] = [];
+
+        for (const vtxo of vtxos) {
+            if (hasTerminalSpend(vtxo)) {
+                unclaimed.push(cashReport(vtxo, "already-spent"));
+            } else if (isSubdust(vtxo, this.dustAmount)) {
+                // Subdust lives at an OP_RETURN output: no forfeit leaf, nothing
+                // to spend, and no settlement can lift it out on its own. The
+                // indexer reports it under the P2TR script and flags it swept,
+                // so it is told apart by value and checked before the swept
+                // case, which would otherwise claim it is recoverable.
+                // createCash now prevents minting them.
+                unclaimed.push(cashReport(vtxo, "subdust"));
+            } else if (vtxo.isSwept) {
+                // The server swept the batch at expiry. The funds are still
+                // owed, but only a settlement can move them — no sweep can.
+                // Bare `isSwept`, not a recovery capability: this branch is
+                // about sweptness alone, not about past-expiry coins.
+                unclaimed.push(cashReport(vtxo, "swept"));
+            } else if (vtxo.assets && vtxo.assets.length > 0) {
+                // The thin sweep builds a BTC-only output; sweeping an
+                // asset-bearing VTXO with it would burn the assets. Detected up
+                // front rather than left to a server rejection.
+                unclaimed.push(cashReport(vtxo, "has-assets"));
+            } else {
+                spendable.push(vtxo);
+            }
+        }
+
+        return { spendable, unclaimed };
+    }
+
+    /** Read every page of an unfiltered VTXO query for the given scripts. */
+    private async fetchAllVtxos(scripts: string[]): Promise<NormalizedVirtualCoin[]> {
+        const pageSize = 100;
+        const all: NormalizedVirtualCoin[] = [];
+        const seen = new Set<string>();
+
+        for (let pageIndex = 0; ; pageIndex++) {
+            const { vtxos, page } = await getNormalizedVtxos(this.indexerProvider, {
+                scripts,
+                pageIndex,
+                pageSize,
+            });
+            for (const vtxo of vtxos) {
+                const outpoint = `${vtxo.txid}:${vtxo.vout}`;
+                if (seen.has(outpoint)) continue;
+                seen.add(outpoint);
+                all.push(vtxo);
+            }
+            if (!page || vtxos.length < pageSize) return all;
+        }
+    }
+
+    /**
+     * Complete any sweep a previous `claimCash` registered but never finalized.
+     * A thin variant of {@link finalizePendingTxs}, scoped to the arkadeCash key:
+     * the intent is signed with it, and so are the returned checkpoints.
+     *
+     * A drained sweep is not automatically *ours*. Whoever registered it chose
+     * the destination, so a tx a different claimer left half-finished pays that
+     * claimer — finalizing it is still right (the input is spent either way, and
+     * completing it unsticks the funds), but only the value it actually pays to
+     * `myPkScript` may be counted as claimed here.
+     *
+     * @param vtxos - VTXOs at the arkadeCash contract's own pkScript, spent ones
+     * included (a registered sweep marks its input spent). Any other outpoint —
+     * subdust above all — would make the proof invalid, since it describes every
+     * input by that pkScript.
+     * @returns The number of pending txs finalized, the sats among them paid to
+     * this wallet, and the outpoints those txs consumed to pay it.
+     */
+    private async finalizePendingCashTxs(
+        cash: ArkadeCash,
+        vtxos: VirtualCoin[],
+        cashScript: DefaultVtxo.Script,
+        myPkScript: Bytes,
+    ): Promise<{ count: number; swept: number; claimed: Set<string> }> {
+        const result = { count: 0, swept: 0, claimed: new Set<string>() };
+
+        const inputs = vtxos.map((vtxo) => ({
+            ...vtxo,
+            forfeitTapLeafScript: cashScript.forfeit(),
+            intentTapLeafScript: cashScript.forfeit(),
+            tapTree: cashScript.encode(),
+        }));
+        if (inputs.length === 0) return result;
+
+        const identity = cash.identity;
+
+        // A get-pending-tx proof carries every input, and the server caps an
+        // intent at MAX_INPUTS_PER_INTENT inputs — the same ceiling
+        // finalizePendingTxs chunks against. Split into batches, sign and submit
+        // one proof each, and dedupe the returned txs by arkTxid so a tx that
+        // surfaces under two batches is finalized once.
+        const seenTxids = new Set<string>();
+        const pendingTxs: PendingTx[] = [];
+        for (let i = 0; i < inputs.length; i += MAX_INPUTS_PER_INTENT) {
+            const batch = inputs.slice(i, i + MAX_INPUTS_PER_INTENT);
+            const message: Intent.GetPendingTxMessage = { type: "get-pending-tx", expire_at: 0 };
+            const proof = Intent.create(message, batch, []);
+            // Every proof input is an arkadeCash input — index 0 is the synthetic
+            // BIP-322 toSpend reference mirroring input 1's script. Signing them
+            // by explicit index surfaces a failure instead of shipping a
+            // half-signed proof for the server to reject.
+            const signedProof = await identity.sign(
+                proof,
+                Array.from({ length: batch.length + 1 }, (_, j) => j),
+            );
+            const batchPending = await this.arkProvider.getPendingTxs({
+                proof: base64.encode(signedProof.toPSBT()),
+                message,
+            });
+            for (const pendingTx of batchPending) {
+                if (seenTxids.has(pendingTx.arkTxid)) continue;
+                seenTxids.add(pendingTx.arkTxid);
+                pendingTxs.push(pendingTx);
+            }
+        }
+
+        const myPkScriptHex = hex.encode(myPkScript);
+
+        for (const pendingTx of pendingTxs) {
+            try {
+                // These checkpoints already carry the server's signature; the
+                // arkadeCash key adds its own share in place.
+                const checkpointTxs = pendingTx.signedCheckpointTxs.map((checkpoint) =>
+                    Transaction.fromPSBT(base64.decode(checkpoint)),
+                );
+                const finalCheckpoints = await Promise.all(
+                    checkpointTxs.map(async (checkpoint) =>
+                        base64.encode((await identity.sign(checkpoint)).toPSBT()),
+                    ),
+                );
+                await this.arkProvider.finalizeTx(pendingTx.arkTxid, finalCheckpoints);
+                result.count++;
+
+                const paidToMe = this.arkTxAmountPaidTo(pendingTx.finalArkTx, myPkScriptHex);
+                if (paidToMe === 0) continue;
+
+                // The ark tx spends the checkpoints, not the arkadeCash VTXOs —
+                // the VTXOs are the checkpoints' own inputs, so that is where
+                // the outpoints this claim just consumed are read from.
+                result.swept += paidToMe;
+                for (const checkpoint of checkpointTxs) {
+                    for (let i = 0; i < checkpoint.inputsLength; i++) {
+                        const input = checkpoint.getInput(i);
+                        if (!input.txid) continue;
+                        result.claimed.add(`${hex.encode(input.txid)}:${input.index}`);
+                    }
+                }
+            } catch (error) {
+                console.error(
+                    `Failed to finalize pending arkadeCash tx ${pendingTx.arkTxid}:`,
+                    error,
+                );
+            }
+        }
+
+        return result;
+    }
+
+    /** Sum the outputs of an ark tx PSBT that pay the given scriptPubKey. */
+    private arkTxAmountPaidTo(arkTxPsbt: string, pkScriptHex: string): number {
+        const arkTx = Transaction.fromPSBT(base64.decode(arkTxPsbt));
+        let total = 0;
+        for (let i = 0; i < arkTx.outputsLength; i++) {
+            const output = arkTx.getOutput(i);
+            if (!output.script || output.amount === undefined) continue;
+            if (hex.encode(output.script) === pkScriptHex) total += Number(output.amount);
+        }
+        return total;
     }
 
     /**
@@ -4191,9 +4674,28 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const assetInputs = selectedCoinsToAssetInputs(selectedCoins);
         const hasAssets =
             assetInputs.size > 0 || recipients.some((r) => r.assets && r.assets.length > 0);
+
+        // collect custom extension packets from recipients
+        const customExtPackets: ExtensionPacket[] = [];
+        for (const r of args) {
+            if (r.extensions) {
+                for (const ext of r.extensions) {
+                    customExtPackets.push({
+                        type: () => ext.type,
+                        serialize: () => ext.payload,
+                    });
+                }
+            }
+        }
+
+        const allExtPackets: ExtensionPacket[] = [];
         if (hasAssets) {
-            const assetPacket = createAssetPacket(assetInputs, recipients, changeReceiver);
-            outputs.push(Extension.create([assetPacket]).txOut());
+            allExtPackets.push(createAssetPacket(assetInputs, recipients, changeReceiver));
+        }
+        allExtPackets.push(...customExtPackets);
+
+        if (allExtPackets.length > 0) {
+            outputs.push(Extension.create(allExtPackets).txOut());
         }
 
         const sentAmount = recipients.reduce((sum, r) => sum + r.amount, 0);
@@ -4274,7 +4776,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * there is no separate change output. It records no `TxSent` history — the
      * funds never leave the wallet.
      */
-    async sendSelectedVtxosToSelf(inputs: ExtendedVirtualCoin[]): Promise<string> {
+    async sendSelectedVtxosToSelf(
+        inputs: ExtendedVirtualCoin[],
+        now?: TimeHeight,
+    ): Promise<string> {
         if (inputs.length === 0) {
             throw new Error("sendSelectedVtxosToSelf: no inputs");
         }
@@ -4289,24 +4794,33 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             const serverUnrollScript = this.serverUnrollScript;
             const arkAddress = offchainTapscript.address(this.network.hrp, serverPubKey);
 
+            // `inputs` is a public parameter, so it may be legacy-shaped: a coin carrying only
+            // the deprecated status object would read `undefined` for every canonical fact and
+            // fail the expiry check below despite having an expiry.
+            const normalizedInputs = inputs.map(normalizeVtxo);
+
             // Only spendable, non-recoverable, batch-expiry-bearing VTXOs migrate
             // cooperatively: recoverable/swept inputs follow the recovery settle
             // path, and the DB-update path only persists a wallet-owned output
             // when an input batch expiry exists (unrolled inputs carry none).
-            for (const input of inputs) {
-                if (!isSpendable(input) || isRecoverable(input)) {
+            //
+            // A caller running a multi-VTXO pass passes its own tip so its eligibility gate and
+            // this check cannot disagree at the expiry boundary; standalone callers fetch here.
+            const at = now ?? (await resolveTimeHeight(this.onchainProvider));
+            for (const input of normalizedInputs) {
+                if (!canSpendOffchain(input, at)) {
                     throw new Error(
                         `sendSelectedVtxosToSelf: input ${input.txid}:${input.vout} is not cooperatively spendable`,
                     );
                 }
-                if (!input.virtualStatus.batchExpiry) {
+                if (input.expiresAt === undefined && input.expiresAtHeight === undefined) {
                     throw new Error(
-                        `sendSelectedVtxosToSelf: input ${input.txid}:${input.vout} has no batchExpiry`,
+                        `sendSelectedVtxosToSelf: input ${input.txid}:${input.vout} has no batch expiry`,
                     );
                 }
             }
 
-            const total = inputs.reduce((sum, c) => sum + BigInt(c.value), 0n);
+            const total = normalizedInputs.reduce((sum, c) => sum + BigInt(c.value), 0n);
 
             const outputs: TransactionOutput[] = [
                 {
@@ -4319,7 +4833,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             // Preserve every input asset on the single self output (output index
             // 0). With no asset-bearing recipients, all input asset amounts route
             // to the self receiver.
-            const assetInputs = selectedCoinsToAssetInputs(inputs);
+            const assetInputs = selectedCoinsToAssetInputs(normalizedInputs);
             let selfAssets: Asset[] | undefined;
             if (assetInputs.size > 0) {
                 const totals = new Map<string, bigint>();
@@ -4338,7 +4852,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 outputs.push(Extension.create([packet]).txOut());
             }
 
-            return this._submitOffchainSpend(inputs, outputs, {
+            return this._submitOffchainSpend(normalizedInputs, outputs, {
                 sentAmount: 0,
                 changeAmount: total,
                 changeVout: 0,
@@ -4381,98 +4895,70 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             index,
             lookupScript: VtxoScript.decode(input.tapTree).pkScript,
         }));
-        const checkpointJobs = offchainTx.checkpoints.map((c) =>
-            this.inputSigningJobsFromWitnessUtxos(c),
-        );
-
-        // Batch path: when every signable input across arkTx + checkpoints
-        // resolves to the baseline identity key, a `BatchSignableIdentity`
-        // can sign all N+1 PSBTs in a single wallet popup. Stash the
-        // user-signed checkpoints, submit the unsigned ones to the server
-        // for its share, then merge server + user tapscript sigs.
-        let signedVirtualTx: Transaction;
-        let userSignedCheckpoints: Transaction[] | undefined;
+        // Wallet signer: routes each input to its owning contract's key and,
+        // when eligible, batch-signs the arkTx + all checkpoints in one popup.
+        // The shared `submitOffchainTx` owns the submit → finalize sequence.
         const identity = this.identity;
-        const batchEligible =
-            isBatchSignable(identity) &&
-            (await this._signerRouter.canBatch(arkTxJobs, ...checkpointJobs));
-
-        if (batchEligible) {
-            // Clone so a misbehaving provider can't mutate the originals
-            // before submitTx. The contract on `signMultiple` is "one
-            // result per request, in input order" — validated below.
-            const requests = [
-                {
-                    tx: offchainTx.arkTx.clone(),
-                    inputIndexes: arkTxJobs.map((j) => j.index),
-                },
-                ...offchainTx.checkpoints.map((c, i) => ({
-                    tx: c.clone(),
-                    inputIndexes: checkpointJobs[i].map((j) => j.index),
-                })),
-            ];
-            const signed = await identity.signMultiple(requests);
-            if (signed.length !== requests.length) {
-                throw new Error(
-                    `signMultiple returned ${signed.length} transactions, expected ${requests.length}`,
+        const signer: OffchainTxSigner = {
+            signArkTx: async (arkTx, checkpoints) => {
+                const checkpointJobs = checkpoints.map((c) =>
+                    this.inputSigningJobsFromWitnessUtxos(c),
                 );
-            }
-            const [firstSignedTx, ...signedCheckpoints] = signed;
-            signedVirtualTx = firstSignedTx;
-            userSignedCheckpoints = signedCheckpoints;
-        } else {
-            signedVirtualTx = await this._signerRouter.sign(offchainTx.arkTx, arkTxJobs);
-        }
 
-        // Mark pending before submitting — if we crash between submit and
-        // finalize, the next init will recover via finalizePendingTxs.
-        await this.setPendingTxFlag(true);
+                // Batch path: when every signable input across arkTx +
+                // checkpoints resolves to the baseline identity key, a
+                // `BatchSignableIdentity` can sign all N+1 PSBTs in a single
+                // wallet popup. Return the user-signed checkpoints so
+                // `submitOffchainTx` merges them onto the server's shares.
+                const batchEligible =
+                    isBatchSignable(identity) &&
+                    (await this._signerRouter.canBatch(arkTxJobs, ...checkpointJobs));
 
-        const { arkTxid, signedCheckpointTxs } = await this.arkProvider.submitTx(
-            base64.encode(signedVirtualTx.toPSBT()),
-            offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT())),
-        );
+                if (batchEligible) {
+                    // Clone so a misbehaving provider can't mutate the originals
+                    // before submitTx. The contract on `signMultiple` is "one
+                    // result per request, in input order" — validated below.
+                    const requests = [
+                        {
+                            tx: arkTx.clone(),
+                            inputIndexes: arkTxJobs.map((j) => j.index),
+                        },
+                        ...checkpoints.map((c, i) => ({
+                            tx: c.clone(),
+                            inputIndexes: checkpointJobs[i].map((j) => j.index),
+                        })),
+                    ];
+                    const signed = await identity.signMultiple(requests);
+                    if (signed.length !== requests.length) {
+                        throw new Error(
+                            `signMultiple returned ${signed.length} transactions, expected ${requests.length}`,
+                        );
+                    }
+                    const [firstSignedTx, ...signedCheckpoints] = signed;
+                    return { arkTx: firstSignedTx, userSignedCheckpoints: signedCheckpoints };
+                }
 
-        let finalCheckpoints: string[];
-        if (userSignedCheckpoints) {
-            // The server must return exactly one checkpoint per user-signed
-            // checkpoint: the merge below pairs them by index, so a short
-            // response would silently drop the tail (→ incomplete finalizeTx)
-            // and a long one would throw a cryptic undefined access. Guard
-            // explicitly, mirroring the signMultiple length check above.
-            if (signedCheckpointTxs.length !== userSignedCheckpoints.length) {
-                throw new Error(
-                    `submitTx returned ${signedCheckpointTxs.length} checkpoints, expected ${userSignedCheckpoints.length}`,
-                );
-            }
-            // Merge stashed user sigs onto the server-signed checkpoints.
-            finalCheckpoints = signedCheckpointTxs.map((c, i) => {
-                const serverSigned = Transaction.fromPSBT(base64.decode(c));
-                combineTapscriptSigs(userSignedCheckpoints![i], serverSigned);
-                return base64.encode(serverSigned.toPSBT());
-            });
-        } else {
-            finalCheckpoints = await Promise.all(
-                signedCheckpointTxs.map(async (c) => {
-                    const tx = Transaction.fromPSBT(base64.decode(c));
-                    const signedCheckpoint = await this._signerRouter.sign(
-                        tx,
-                        this.inputSigningJobsFromWitnessUtxos(tx),
-                    );
-                    return base64.encode(signedCheckpoint.toPSBT());
-                }),
-            );
-        }
+                return { arkTx: await this._signerRouter.sign(arkTx, arkTxJobs) };
+            },
+            signCheckpoint: (checkpoint) =>
+                this._signerRouter.sign(
+                    checkpoint,
+                    this.inputSigningJobsFromWitnessUtxos(checkpoint),
+                ),
+        };
 
-        await this.arkProvider.finalizeTx(arkTxid, finalCheckpoints);
-
-        try {
-            await this.setPendingTxFlag(false);
-        } catch (error) {
-            console.error("Failed to clear pending tx flag:", error);
-        }
-
-        return { arkTxid, signedCheckpointTxs };
+        return submitOffchainTx(this.arkProvider, offchainTx, signer, {
+            // Mark pending before submitting — if we crash between submit and
+            // finalize, the next init recovers via finalizePendingTxs.
+            beforeSubmit: () => this.setPendingTxFlag(true),
+            afterFinalize: async () => {
+                try {
+                    await this.setPendingTxFlag(false);
+                } catch (error) {
+                    console.error("Failed to clear pending tx flag:", error);
+                }
+            },
+        });
     }
 
     // mark virtual outputs as spent, save change outputs if any.
@@ -4515,40 +5001,32 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             const cm = await this.getContractManager();
             const annotatedInputs = await cm.annotateVtxos(inputs);
             for (const [inputIndex, vtxo] of annotatedInputs.entries()) {
+                const spentFacts = { ...vtxo, isSpent: true };
                 if (inputIndex < safeLength && signedCheckpointTxs[inputIndex]) {
                     const checkpoint = Transaction.fromPSBT(
                         base64.decode(signedCheckpointTxs[inputIndex]),
                     );
 
                     spentVtxos.push({
-                        ...vtxo,
-                        virtualStatus: {
-                            ...vtxo.virtualStatus,
-                            state: "spent",
-                        },
+                        ...spentFacts,
+                        virtualStatus: toVirtualStatus(spentFacts),
                         spentBy: checkpoint.id,
                         arkTxId: arkTxid,
-                        isSpent: true,
                     });
                 } else {
                     spentVtxos.push({
-                        ...vtxo,
-                        virtualStatus: {
-                            ...vtxo.virtualStatus,
-                            state: "spent",
-                        },
+                        ...spentFacts,
+                        virtualStatus: toVirtualStatus(spentFacts),
                         arkTxId: arkTxid,
-                        isSpent: true,
                     });
                 }
 
-                if (vtxo.virtualStatus.commitmentTxIds) {
-                    for (const id of vtxo.virtualStatus.commitmentTxIds) {
-                        commitmentTxIds.add(id);
-                    }
+                for (const id of vtxo.commitmentTxIds) {
+                    commitmentTxIds.add(id);
                 }
-                if (vtxo.virtualStatus.batchExpiry) {
-                    batchExpiry = Math.min(batchExpiry, vtxo.virtualStatus.batchExpiry);
+                const vtxoExpiry = toBatchExpiry(vtxo);
+                if (vtxoExpiry) {
+                    batchExpiry = Math.min(batchExpiry, vtxoExpiry);
                 }
             }
 
@@ -4556,8 +5034,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             // Only save a change virtual output for preconfirmed coins (those with a batchExpiry).
             // Inputs without a batchExpiry are already settled/unrolled and don't need tracking.
-            let changeVtxo: ExtendedVirtualCoin | undefined;
+            let changeVtxo: NormalizedExtendedVirtualCoin | undefined;
             if (changeAmount > 0n && batchExpiry !== Number.MAX_SAFE_INTEGER) {
+                const changeFacts = {
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: true,
+                    commitmentTxIds: Array.from(commitmentTxIds),
+                    ...parseLegacyExpiry(batchExpiry),
+                };
                 changeVtxo = {
                     txid: arkTxid,
                     vout: changeVout,
@@ -4565,14 +5050,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     forfeitTapLeafScript: offchainTapscript.forfeit(),
                     intentTapLeafScript: offchainTapscript.forfeit(),
                     isUnrolled: false,
-                    isSpent: false,
                     tapTree: offchainTapscript.encode(),
                     value: Number(changeAmount),
-                    virtualStatus: {
-                        state: "preconfirmed",
-                        commitmentTxIds: Array.from(commitmentTxIds),
-                        batchExpiry,
-                    },
+                    ...changeFacts,
+                    virtualStatus: toVirtualStatus(changeFacts),
+                    spentBy: "",
                     status: {
                         confirmed: false,
                     },
@@ -4663,28 +5145,29 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             // the current `getBoardingAddress()` bucket (plan §6-III.4).
             const boardingRemovalsByAddress = new Map<string, Set<string>>();
 
-            const isVtxo = (input: ExtendedCoin): input is ExtendedVirtualCoin =>
-                "virtualStatus" in input;
-
-            const vtxoInputs = inputs.filter(isVtxo);
+            const vtxoInputs = inputs.filter(isVirtualCoin);
             const cm = await this.getContractManager();
             const annotatedVtxos = await cm.annotateVtxos(vtxoInputs);
             const annotatedByKey = new Map(annotatedVtxos.map((v) => [`${v.txid}:${v.vout}`, v]));
             for (const input of inputs) {
-                if (isVtxo(input)) {
+                if (isVirtualCoin(input)) {
                     // virtual output = mark it settled
-                    const vtxo = annotatedByKey.get(`${input.txid}:${input.vout}`)!;
+                    const outpoint = `${input.txid}:${input.vout}`;
+                    const vtxo = annotatedByKey.get(outpoint);
+                    if (!vtxo) {
+                        // `annotateVtxos` is expected to return one entry per
+                        // input; a gap means the contract manager dropped a coin
+                        // and the settled row would be silently lost.
+                        throw new Error(`missing annotation for virtual coin ${outpoint}`);
+                    }
                     if (vtxo.arkTxId) {
                         inputArkTxIds.add(vtxo.arkTxId);
                     }
+                    const settledFacts = { ...vtxo, isSpent: true };
                     spentVtxos.push({
-                        ...vtxo,
-                        virtualStatus: {
-                            ...vtxo.virtualStatus,
-                            state: "settled",
-                        },
+                        ...settledFacts,
+                        virtualStatus: toVirtualStatus(settledFacts),
                         settledBy: commitmentTxid,
-                        isSpent: true,
                     });
                 } else {
                     // boarding input = remove it from the bucket of the
@@ -4780,11 +5263,12 @@ export function selectVirtualCoins(
     inputs: ExtendedVirtualCoin[];
     changeAmount: bigint;
 } {
-    // Sort virtual outputs by expiry (ascending) and amount (descending)
-    const sortedCoins = [...coins].sort((a, b) => {
+    // Sort virtual outputs by expiry (ascending) and amount (descending). Normalized once up
+    // front rather than per comparison, which would be O(n log n) normalizations.
+    const sortedCoins = coins.map(normalizeVtxo).sort((a, b) => {
         // First sort by expiry if available
-        const expiryA = a.virtualStatus.batchExpiry || Number.MAX_SAFE_INTEGER;
-        const expiryB = b.virtualStatus.batchExpiry || Number.MAX_SAFE_INTEGER;
+        const expiryA = toBatchExpiry(a) || Number.MAX_SAFE_INTEGER;
+        const expiryB = toBatchExpiry(b) || Number.MAX_SAFE_INTEGER;
         if (expiryA !== expiryB) {
             return expiryA - expiryB; // Earlier expiry first
         }

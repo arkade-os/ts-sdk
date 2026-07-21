@@ -2,7 +2,7 @@ import { hex } from "@scure/base";
 import type { ExtensionPacket } from "../packet";
 import { AssetRefType } from "./types";
 import { AssetGroup } from "./assetGroup";
-import { BufferReader, BufferWriter } from "./utils";
+import { BufferReader, BufferWriter } from "../utils";
 
 /**
  * Packet represents a collection of asset groups.

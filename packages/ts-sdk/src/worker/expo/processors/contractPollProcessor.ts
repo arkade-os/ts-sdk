@@ -1,6 +1,7 @@
 import type { TaskItem, TaskResult } from "../taskQueue";
 import type { TaskProcessor, TaskDependencies } from "../taskRunner";
 import type { ExtendedVirtualCoin } from "../../../wallet";
+import { getNormalizedVtxos } from "../../../wallet/vtxo";
 import {
     warnAndFilterVtxosForScript,
     saveVtxosForContract,
@@ -45,7 +46,7 @@ export const contractPollProcessor: TaskProcessor = {
             const allVtxos: ExtendedVirtualCoin[] = [];
 
             while (hasMore) {
-                const { vtxos, page } = await indexerProvider.getVtxos({
+                const { vtxos, page } = await getNormalizedVtxos(indexerProvider, {
                     scripts: [contract.script],
                     pageIndex,
                     pageSize,

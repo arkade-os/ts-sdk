@@ -1,6 +1,7 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { EncodedVtxoScript, TapLeafScript, VtxoScript } from "../script/base";
 import { ExtendedVirtualCoin, VirtualCoin, TapLeaves } from "../wallet";
+import type { NormalizedExtendedVirtualCoin } from "../wallet/vtxo";
 import { ContractFilter } from "../repositories";
 import type { RelativeTimelock } from "../script/tapscript";
 import type { IndexerProvider } from "../providers/indexer";
@@ -100,7 +101,7 @@ export type ContractVtxo = VirtualCoin &
  * should enforce that annotation has happened — e.g. `saveVtxos` and
  * forfeit transaction construction.
  */
-export type ExtendedContractVtxo = ExtendedVirtualCoin & {
+export type ExtendedContractVtxo = NormalizedExtendedVirtualCoin & {
     contractScript: string;
 };
 
@@ -322,6 +323,37 @@ export function isDiscoverable(
     handler: ContractHandler<unknown> | undefined,
 ): handler is ContractHandler<unknown> & Discoverable {
     return !!handler && typeof (handler as Partial<Discoverable>).discoverAt === "function";
+}
+
+/**
+ * The per-contract tapscript annotation stamped onto every VTXO locked to a
+ * contract (see `extendVirtualCoinForContract`): the leaf used to co-sign
+ * forfeits, the leaf committed in intent proofs, and the encoded taproot tree.
+ */
+export interface DerivedContractTapscripts {
+    forfeitTapLeafScript: TapLeafScript;
+    intentTapLeafScript: TapLeafScript;
+    tapTree: Bytes;
+}
+
+/**
+ * Optional capability a {@link ContractHandler} implements to provide the
+ * forfeit/intent tapscripts for VTXO annotation. Handlers whose script shape
+ * doesn't expose the legacy `forfeit()` method (e.g. program-compiled arkade
+ * contracts, where the right leaf depends on the program) implement this so
+ * the annotation pipeline stays type-agnostic.
+ */
+export interface TapscriptDeriving<S extends VtxoScript = VtxoScript> {
+    deriveTapscripts(script: S, contract: Contract): DerivedContractTapscripts;
+}
+
+/** Duck-typed guard (mirrors {@link isDiscoverable}). */
+export function isTapscriptDeriving(
+    handler: ContractHandler<unknown> | undefined,
+): handler is ContractHandler<unknown> & TapscriptDeriving {
+    return (
+        !!handler && typeof (handler as Partial<TapscriptDeriving>).deriveTapscripts === "function"
+    );
 }
 
 /**

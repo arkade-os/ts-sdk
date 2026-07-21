@@ -215,6 +215,7 @@ describe("Wallet boarding rotation", () => {
             txid: "cd".repeat(32),
             vout: 0,
             value: 100_000,
+            script: "51".repeat(17),
             virtualStatus: { state: "settled" },
         };
 
