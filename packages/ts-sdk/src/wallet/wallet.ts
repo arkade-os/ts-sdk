@@ -469,6 +469,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManager?: ContractManager;
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
+    protected readonly contractManagerConfig?: ReadonlyWalletConfig["contractManagerConfig"];
 
     /**
      * Opt-in intent-lifecycle repository. Assigned by the `create()`
@@ -623,6 +624,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly delegateProvider?: DelegateProvider,
         watcherConfig?: ReadonlyWalletConfig["watcherConfig"],
         walletContractTimelocks?: RelativeTimelock[],
+        contractManagerConfig?: ReadonlyWalletConfig["contractManagerConfig"],
     ) {
         // Guard: detect identity/server network mismatch for descriptor-based identities.
         // This duplicates the check in setupWalletConfig() so that subclasses
@@ -643,6 +645,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         this._boardingTapscript = boardingTapscript;
         this._arkServerPublicKey = arkServerPublicKey;
         this.watcherConfig = watcherConfig;
+        this.contractManagerConfig = contractManagerConfig;
         this._assetManager = new ReadonlyAssetManager(this.indexerProvider);
         // Defensive for direct-construction callers; setupWalletConfig already
         // passes a deduped list through the public create() factories.
@@ -985,6 +988,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             setup.delegateProvider || setup.delegatorProvider,
             config.watcherConfig,
             setup.walletContractTimelocks,
+            config.contractManagerConfig,
         );
         wallet.intentRepository = config.storage?.intentRepository;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
@@ -1814,6 +1818,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             onVtxosPersisted,
             onVtxosSpent,
             watcherConfig: this.watcherConfig,
+            ...this.contractManagerConfig,
         });
 
         // Register the wallet's baseline always-active contracts: every
@@ -2628,6 +2633,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         walletContractTimelocks?: RelativeTimelock[],
         receiveRotator?: WalletReceiveRotator,
         descriptorProvider?: DescriptorProvider,
+        contractManagerConfig?: WalletConfig["contractManagerConfig"],
     ) {
         super(
             identity,
@@ -2643,6 +2649,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             delegateProvider,
             watcherConfig,
             walletContractTimelocks,
+            contractManagerConfig,
         );
         this.identity = identity;
 
@@ -2847,6 +2854,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             setup.walletContractTimelocks,
             boot?.rotator,
             boot?.provider,
+            config.contractManagerConfig,
         );
         wallet._serverInfoSource = setup.serverInfoSource;
         // The response cleared construction validation — network/signer in
@@ -2948,6 +2956,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.delegateProvider,
             this.watcherConfig,
             this.walletContractTimelocks,
+            this.contractManagerConfig,
         );
         // Carry the cached deprecated-signer set (with cutoffs) so the clone's
         // boarding watch path and spendability split match the source wallet's.

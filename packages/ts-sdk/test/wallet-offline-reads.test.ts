@@ -9,6 +9,7 @@ import {
     type OnchainProvider,
 } from "../src";
 import type { ArkInfo } from "../src/providers/ark";
+import type { ReadonlyWalletConfig } from "../src";
 import { ReadonlySingleKey, SingleKey } from "../src/identity/singleKey";
 
 const serverKeyHex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -68,7 +69,11 @@ const healthyIndexer = () =>
 
 async function createWallet(
     indexerProvider: IndexerProvider,
-    opts?: { getInfo?: ArkProvider["getInfo"]; storage?: Storage },
+    opts?: {
+        getInfo?: ArkProvider["getInfo"];
+        storage?: Storage;
+        contractManagerConfig?: ReadonlyWalletConfig["contractManagerConfig"];
+    },
 ) {
     const identity = ReadonlySingleKey.fromPublicKey(
         await SingleKey.fromHex(privKeyHex).compressedPublicKey(),
@@ -87,8 +92,38 @@ async function createWallet(
             getTransactions: async () => [],
         } as Partial<OnchainProvider> as OnchainProvider,
         storage: opts?.storage ?? freshStorage(),
+        contractManagerConfig: opts?.contractManagerConfig,
     });
 }
+
+describe("background sweep is wallet-configurable", () => {
+    // Reads no longer sync, so the sweep is what keeps the repository fresh —
+    // an embedder that can't reach the knob can't tune or disable it.
+    const sweepInterval = async (wallet: ReadonlyWallet) => {
+        const manager = (await wallet.getContractManager()) as unknown as {
+            config: { periodicSyncIntervalMs?: number };
+        };
+        return manager.config.periodicSyncIntervalMs;
+    };
+
+    it("defaults to the ContractManager default when unset", async () => {
+        expect(await sweepInterval(await createWallet(healthyIndexer()))).toBeUndefined();
+    });
+
+    it("forwards an explicit interval", async () => {
+        const wallet = await createWallet(healthyIndexer(), {
+            contractManagerConfig: { periodicSyncIntervalMs: 5_000 },
+        });
+        expect(await sweepInterval(wallet)).toBe(5_000);
+    });
+
+    it("forwards a zero interval, disabling the sweep", async () => {
+        const wallet = await createWallet(healthyIndexer(), {
+            contractManagerConfig: { periodicSyncIntervalMs: 0 },
+        });
+        expect(await sweepInterval(wallet)).toBe(0);
+    });
+});
 
 describe("wallet offline-first reads (Scope 4)", () => {
     it("getVtxos returns repository state instead of throwing when the indexer is down", async () => {

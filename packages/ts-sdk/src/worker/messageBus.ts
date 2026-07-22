@@ -15,6 +15,7 @@ import {
 import { ReadonlyWallet, Wallet } from "../wallet/wallet";
 import type { SettlementConfig } from "../wallet/vtxo-manager";
 import type { ContractWatcherConfig } from "../contracts/contractWatcher";
+import type { WalletContractManagerConfig } from "../wallet";
 import { ContractRepository, WalletRepository } from "../repositories";
 import {
     MessageBusInitializingError,
@@ -147,6 +148,7 @@ type Initialize = {
         settlementConfig?: SettlementConfig | false;
         walletMode?: "auto" | "static" | "hd";
         watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
+        contractManagerConfig?: WalletContractManagerConfig;
         /**
          * Page-supplied per-operation timeout map. Keys are message types
          * (e.g. "SETTLE"). Overrides constructor-supplied
@@ -413,6 +415,7 @@ export class MessageBus {
                 settlementConfig: config.settlementConfig,
                 walletMode: config.walletMode,
                 watcherConfig: config.watcherConfig,
+                contractManagerConfig: config.contractManagerConfig,
             });
             return { wallet, arkProvider, readonlyWallet: wallet };
         }
@@ -427,6 +430,7 @@ export class MessageBus {
             storage,
             delegateProvider,
             watcherConfig: config.watcherConfig,
+            contractManagerConfig: config.contractManagerConfig,
         });
         return { readonlyWallet, arkProvider };
     }

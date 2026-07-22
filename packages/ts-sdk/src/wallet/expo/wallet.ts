@@ -154,9 +154,20 @@ export class ExpoWallet implements IWallet {
     static async setup(config: ExpoWalletConfig): Promise<ExpoWallet> {
         warnOnRemovedBackgroundFields(config.background);
 
-        const wallet = await Wallet.create(config);
-
         const processors = config.background.processors ?? [contractPollProcessor];
+
+        // Expo's own contract poll already sweeps every contract against the
+        // indexer, so running the ContractManager's background sweep too would
+        // double the cost. Its tick is the one under app control (foreground
+        // interval + OS background wake), so it wins — unless the caller has
+        // said otherwise, or swapped in processors that don't poll contracts.
+        const pollsContracts = processors.some((p) => p.taskType === CONTRACT_POLL_TASK_TYPE);
+        const wallet = await Wallet.create({
+            ...config,
+            contractManagerConfig: config.contractManagerConfig ?? {
+                periodicSyncIntervalMs: pollsContracts ? 0 : undefined,
+            },
+        });
 
         const deps: TaskDependencies = {
             walletRepository: wallet.walletRepository,
