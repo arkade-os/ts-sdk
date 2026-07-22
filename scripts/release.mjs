@@ -217,6 +217,11 @@ Options:
 Releasing SDK implies a dependent boltz-swap release because boltz-swap
 depends on SDK via workspace:* (pnpm rewrites this to an exact version on
 pack/publish).
+
+Stable releases (patch/minor/major or a literal non-prerelease version) must
+be run from master. Prerelease releases (prepatch/preminor/premajor/
+prerelease, or a literal -alpha/-beta/-rc/-next version) may be run from any
+branch and publish under a matching npm dist-tag, never 'latest'.
 `,
     );
 }
@@ -404,11 +409,15 @@ function gitCurrentBranch() {
     }).trim();
 }
 
-function assertReleaseBranch() {
+function assertReleaseBranch(plan) {
+    const isPrerelease = [...plan.values()].some((v) => parseVersion(v.next).pre);
+    if (isPrerelease) return;
+
     const branch = gitCurrentBranch();
     if (branch !== RELEASE_BRANCH) {
         die(
-            `Releases must be run from ${RELEASE_BRANCH}; current branch is ${branch || "detached HEAD"}`,
+            `Stable releases must be run from ${RELEASE_BRANCH}; current branch is ${branch || "detached HEAD"}. ` +
+                `Prerelease versions (prepatch/preminor/premajor/prerelease, or a literal -alpha/-beta/-rc/-next version) may be run from any branch.`,
         );
     }
 }
@@ -589,7 +598,7 @@ function dryRun(args) {
 
 function release(args) {
     const plan = computeTargetVersions(args);
-    assertReleaseBranch();
+    assertReleaseBranch(plan);
     summarizePlan({ ...args, plan });
 
     if (!gitClean()) {

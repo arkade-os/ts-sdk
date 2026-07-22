@@ -1863,6 +1863,11 @@ export class WalletMessageHandler
                     txid,
                     vout: 0,
                 }));
+                // Outpoints cost about what scripts do in the query string, so
+                // this spends nearly the whole URL budget that
+                // SCRIPT_QUERY_CHUNK_SIZE leaves unspent. Left as-is because
+                // this path has never 414'd; lower it to the shared constant if
+                // it ever does.
                 const BATCH_SIZE = 100;
                 for (let i = 0; i < outpoints.length; i += BATCH_SIZE) {
                     const res = await getNormalizedVtxos(this.indexerProvider, {

@@ -756,6 +756,7 @@ export {
     canRecoverOnchain,
     canSpendOffchain,
     convertVtxo,
+    getAllNormalizedVtxos,
     getNormalizedVtxos,
     hasTerminalSpend,
     isExpired,
@@ -768,6 +769,7 @@ export {
     type NormalizedExtendedVirtualCoin,
     type NormalizedVirtualCoin,
     type TimeHeight,
+    type VtxoScriptQuery,
 } from "./vtxo";
 
 /**

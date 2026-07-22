@@ -316,6 +316,28 @@ export interface Discoverable {
         descriptor: string,
         deps: DiscoveryDeps,
     ): Promise<DiscoveredContract[]>;
+
+    /**
+     * Optional: answer for a whole scan window in one batched round-trip.
+     * The scanner prefers it over per-index `discoverAt` calls when present,
+     * which is what keeps a 10-index window to 1-2 indexer requests instead
+     * of one per index. Handlers whose source is inherently per-address (e.g.
+     * boarding, on Esplora) implement only `discoverAt`.
+     *
+     * **All-or-nothing per call.** Either resolve with a map covering *every*
+     * requested index (empty array = confirmed miss), or reject — a handler
+     * whose inner chunk fails partway must discard the partial results and
+     * reject, because a missing index would otherwise read as "no funds here"
+     * and let restore close its gap window on a failed request. The scanner
+     * enforces this rather than trusting it: an incomplete map is treated as a
+     * rejection, making the whole requested range indeterminate (hits present
+     * in it are still persisted) and truncating the scan at the range's first
+     * index. Indices that were not requested are ignored.
+     */
+    discoverRange?(
+        entries: readonly { index: number; descriptor: string }[],
+        deps: DiscoveryDeps,
+    ): Promise<Map<number, DiscoveredContract[]>>;
 }
 
 /** Duck-typed guard (mirrors `hasReceiveRotatorFactory`). */

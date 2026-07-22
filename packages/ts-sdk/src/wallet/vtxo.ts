@@ -1,3 +1,4 @@
+import { DEFAULT_PAGE_SIZE, SCRIPT_QUERY_CHUNK_SIZE } from "../contracts/constants";
 import type { GetVtxosOptions, IndexerProvider, PageResponse, Vtxo } from "../providers/indexer";
 import type { OnchainProvider } from "../providers/onchain";
 import type { ExtendedVirtualCoin, VirtualCoin, VirtualStatus } from "./index";
@@ -241,6 +242,51 @@ export async function getNormalizedVtxos(
 ): Promise<{ vtxos: NormalizedVirtualCoin[]; page?: PageResponse }> {
     const { vtxos, page } = await provider.getVtxos(opts);
     return { vtxos: vtxos.map(normalizeVtxo), page };
+}
+
+/** Everything a script query can filter on, minus the cursor this reader owns. */
+export type VtxoScriptQuery = Omit<GetVtxosOptions, "scripts" | "outpoints" | "pageIndex">;
+
+/**
+ * Read every virtual output for an arbitrary number of scripts.
+ *
+ * @remarks
+ * Scripts travel in the query string, so a wallet-derived list must be chunked
+ * at {@link SCRIPT_QUERY_CHUNK_SIZE} or the request `414`s. Chunks run
+ * sequentially — that pacing is the point, since this path can now run wide —
+ * and each is paged to exhaustion, so callers cannot silently receive page one.
+ */
+export async function getAllNormalizedVtxos(
+    provider: Pick<IndexerProvider, "getVtxos">,
+    scripts: string[],
+    opts: VtxoScriptQuery = {},
+): Promise<NormalizedVirtualCoin[]> {
+    const { pageSize = DEFAULT_PAGE_SIZE, ...filters } = opts;
+    const all: NormalizedVirtualCoin[] = [];
+
+    for (let i = 0; i < scripts.length; i += SCRIPT_QUERY_CHUNK_SIZE) {
+        const chunk = scripts.slice(i, i + SCRIPT_QUERY_CHUNK_SIZE);
+        let pageIndex = 0;
+        let hasMore = true;
+
+        while (hasMore) {
+            const { vtxos, page } = await getNormalizedVtxos(provider, {
+                ...filters,
+                scripts: chunk,
+                pageIndex,
+                pageSize,
+            });
+            all.push(...vtxos);
+
+            // A short page means the last one: providers that omit `page`
+            // entirely are treated as unpaged.
+            hasMore = page ? vtxos.length === pageSize : false;
+            pageIndex++;
+            if (hasMore) await new Promise((r) => setTimeout(r, 500));
+        }
+    }
+
+    return all;
 }
 
 // --- capabilities ------------------------------------------------------------------------------

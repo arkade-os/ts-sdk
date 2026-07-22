@@ -7,7 +7,10 @@ import {
     ContractEvent,
     ContractEventCallback,
     ContractState,
+    ContractHandler,
     ContractWithVtxos,
+    Discoverable,
+    DiscoveredContract,
     DiscoveryDeps,
     GetContractsFilter,
     PathContext,
@@ -19,6 +22,7 @@ import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
 import { ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
 import {
+    getAllNormalizedVtxos,
     getNormalizedVtxos,
     normalizeVtxo,
     type NormalizedExtendedVirtualCoin,
@@ -112,13 +116,31 @@ export type RefreshVtxosOptions = {
 };
 
 /**
- * A single `Discoverable` handler's `discoverAt` rejection, captured during
- * a {@link IContractManager.scanContracts} run instead of aborting the loop.
+ * A single `Discoverable` handler's discovery failure, captured during a
+ * {@link IContractManager.scanContracts} run instead of aborting the loop.
+ *
+ * TODO(next major): rename `index` → `fromIndex` so the pair reads
+ * `fromIndex`/`toIndex`. It stays `index` here only to keep this exported
+ * shape backward-compatible.
  */
 export interface HandlerError {
     handler: string;
+    /** The failed index, or the first index of a failed `discoverRange` window. */
     index: number;
+    /** Inclusive end of a failed `discoverRange` window; absent for a single index. */
+    toIndex?: number;
     error: unknown;
+}
+
+/**
+ * One handler's answer for a whole scan window: hits per index, the indices it
+ * could not answer for, and its failures keyed by the index each is anchored
+ * at (a batched failure anchors at the range's first index).
+ */
+interface HandlerWindowProbe {
+    found: Map<number, DiscoveredContract[]>;
+    indeterminate: Set<number>;
+    errors: Map<number, HandlerError>;
 }
 
 /**
@@ -142,7 +164,7 @@ export interface ScanResult {
      * when the scan closed a genuine gap.
      */
     truncatedAt?: number;
-    /** Per-handler `discoverAt` failures. Non-empty implies `truncatedAt` is set. */
+    /** Per-handler discovery failures. Non-empty implies `truncatedAt` is set. */
     handlerErrors: HandlerError[];
 }
 
@@ -153,11 +175,13 @@ export interface ScanContractsOptions {
     /** Default 20. A non-positive / non-integer value throws. */
     gapLimit?: number;
     /**
-     * Number of HD indices probed concurrently per window (default
-     * {@link DEFAULT_SCAN_BATCH}). Pure latency knob: the gap loop stays
-     * gap-limit bounded and the discovered set is identical regardless of
-     * batch size. A non-positive / non-integer value throws. Ignored when
-     * `hd` is false (the static pass probes only index 0).
+     * Number of HD indices probed per window (default
+     * {@link DEFAULT_SCAN_BATCH}). The gap loop stays gap-limit bounded and
+     * the discovered set is identical regardless of batch size; the window is
+     * also the unit a batching handler ({@link Discoverable.discoverRange})
+     * collapses into one request, so it doubles as the batch width. A
+     * non-positive / non-integer value throws. Ignored when `hd` is false (the
+     * static pass probes only index 0).
      */
     batchSize?: number;
     /** HD mode → unbounded gap loop guided by the gap counter; false → probe only index 0 (single static pass). */
@@ -307,11 +331,12 @@ export interface IContractManager extends Disposable {
      * resets the gap counter, so swap discovery keeps the HD window open.
      *
      * Error contract (safety-critical — see spec §4):
-     * - A handler's `discoverAt` rejecting is **collected** into
-     *   `handlerErrors` and makes its index *indeterminate*: it never
-     *   advances the gap counter, and the scan **stops verifying** there
-     *   rather than closing a window it never observed close. It still
-     *   never throws.
+     * - A handler's discovery rejecting is **collected** into `handlerErrors`
+     *   and makes its index *indeterminate*: it never advances the gap
+     *   counter, and the scan **stops verifying** there rather than closing a
+     *   window it never observed close. A batched
+     *   {@link Discoverable.discoverRange} failure makes its whole requested
+     *   range indeterminate. It still never throws.
      * - A fatal operational error — `materialize()` throwing, or
      *   `createContract` rejecting — **propagates** out of `scanContracts`
      *   (it invalidates the gap-window signal, so a silent truncation
@@ -724,21 +749,27 @@ export class ContractManager implements IContractManager {
      * Safety-critical invariants (spec §2.C / §4):
      * - `opts.materialize(i)` throwing is structural/fatal: it is NOT
      *   wrapped — it propagates and aborts the scan.
-     * - A `discoverAt` rejection is collected into `handlerErrors` and makes
-     *   its index *indeterminate*: it does NOT advance the gap counter, and
-     *   the scan stops verifying there, reporting `truncatedAt`. Only an index
+     * - A discovery rejection is collected into `handlerErrors` and makes its
+     *   index *indeterminate*: it does NOT advance the gap counter, and the
+     *   scan stops verifying there, reporting `truncatedAt`. Only an index
      *   every handler answered for can be a confirmed miss.
      * - `persistAndWatchContract` rejecting is operational/fatal and
-     *   propagates (only `discoverAt` is guarded).
-     * - Within an index the handler probes run concurrently (independent
-     *   network reads); their hits are persisted sequentially in
-     *   `discoverables` order to preserve the first-wins collision tie-break.
-     * - Indices are probed `batchSize` at a time (a second concurrency layer
-     *   over the per-index probes), but each window is CAPPED to
+     *   propagates (only the handler calls are guarded).
+     * - A handler exposing {@link Discoverable.discoverRange} is asked for the
+     *   whole window in ONE call instead of one per index — the batching that
+     *   keeps a large restore from bursting into an operator's rate limiter.
+     *   Its failures are therefore range-wide: every index in the window goes
+     *   indeterminate and truncation lands on the window's first index. Its
+     *   answer must cover every requested index; an incomplete map is treated
+     *   as a rejection (see `Discoverable.discoverRange`).
+     * - Handlers are probed concurrently (independent network reads); their
+     *   hits are persisted sequentially in `discoverables` order to preserve
+     *   the first-wins collision tie-break.
+     * - Indices are probed `batchSize` at a time, but each window is CAPPED to
      *   `gapLimit - unused` indices — the most a serial scan could still reach
      *   before the gap window is guaranteed to close. So every index probed in
      *   a window is one a one-index-at-a-time scan would also reach: nothing is
-     *   over-scanned, nothing is discarded, and `materialize`/`discoverAt` are
+     *   over-scanned, nothing is discarded, and `materialize`/discovery are
      *   invoked on exactly the same index set. The window's hits are still
      *   processed strictly in ascending index order, so the discovered set,
      *   persisted rows, `highestConfirmedUsedIndex`, and `handlerErrors` are
@@ -747,8 +778,15 @@ export class ContractManager implements IContractManager {
      *   can surface hits above the failed index that a serial scan would never
      *   have reached, so a truncated batched scan discovers a superset — never
      *   a subset — of the serial one.
+     * - The whole scan runs inside one coalesced subscription scope, so N
+     *   discovered contracts cost ONE `subscribeForScripts` instead of N
+     *   growing ones (see {@link ContractWatcher.withCoalescedSubscription}).
      */
-    async scanContracts(opts: ScanContractsOptions): Promise<ScanResult> {
+    scanContracts(opts: ScanContractsOptions): Promise<ScanResult> {
+        return this.watcher.withCoalescedSubscription(() => this.runScan(opts));
+    }
+
+    private async runScan(opts: ScanContractsOptions): Promise<ScanResult> {
         const gapLimit = opts.gapLimit ?? 20;
         if (!Number.isInteger(gapLimit) || gapLimit <= 0) {
             throw new Error(
@@ -792,27 +830,81 @@ export class ContractManager implements IContractManager {
         let unused = 0;
         let i = 0;
 
-        // Probe one index's discoverable handlers CONCURRENTLY: they are
-        // independent network reads (indexer / on-chain explorer), so
-        // overlapping them cuts per-index latency. Each probe's try/catch
-        // mirrors the former serial guard, capturing a discoverAt rejection
-        // (or synchronous throw) instead of propagating it, so one failing
-        // handler never aborts the others. Materialization failure is
-        // fatal/structural — it is NOT guarded and propagates.
-        const probeIndex = async (index: number) => {
-            const descriptor = opts.materialize(index);
-            return Promise.all(
-                discoverables.map(async (h) => {
-                    try {
-                        return {
-                            ok: true as const,
-                            found: await h.discoverAt(index, descriptor, opts.deps),
-                        };
-                    } catch (error) {
-                        return { ok: false as const, error };
-                    }
-                }),
-            );
+        // Probe one handler over a whole window. Handlers that batch
+        // (`discoverRange`) answer the window in one round-trip; the rest are
+        // fanned out per index as before. Either way a rejection is captured,
+        // never propagated, so one failing handler cannot abort the others.
+        const probeHandler = async (
+            h: ContractHandler<unknown> & Discoverable,
+            entries: { index: number; descriptor: string }[],
+        ): Promise<HandlerWindowProbe> => {
+            const probe: HandlerWindowProbe = {
+                found: new Map(),
+                indeterminate: new Set(),
+                // Keyed by the index the failure is ANCHORED at, so errors stay
+                // reported in ascending-index order below, exactly as the
+                // per-index path reports them.
+                errors: new Map(),
+            };
+
+            if (!h.discoverRange) {
+                await Promise.all(
+                    entries.map(async ({ index, descriptor }) => {
+                        try {
+                            probe.found.set(
+                                index,
+                                await h.discoverAt(index, descriptor, opts.deps),
+                            );
+                        } catch (error) {
+                            probe.indeterminate.add(index);
+                            probe.errors.set(index, { handler: h.type, index, error });
+                        }
+                    }),
+                );
+                return probe;
+            }
+
+            const from = entries[0].index;
+            const to = entries[entries.length - 1].index;
+            // A batched failure is coarser than a per-index one: the whole
+            // requested range goes indeterminate, so the scan truncates at its
+            // first index. That is the accepted price of batching — retry is
+            // idempotent.
+            const failRange = (error: unknown) => {
+                for (const e of entries) probe.indeterminate.add(e.index);
+                probe.errors.set(from, {
+                    handler: h.type,
+                    index: from,
+                    ...(to > from && { toIndex: to }),
+                    error,
+                });
+            };
+
+            let ranged: Map<number, DiscoveredContract[]>;
+            try {
+                ranged = await h.discoverRange(entries, opts.deps);
+            } catch (error) {
+                failRange(error);
+                return probe;
+            }
+
+            for (const e of entries) {
+                const found = ranged.get(e.index);
+                if (found) probe.found.set(e.index, found);
+            }
+            // Enforce the coverage contract rather than trusting it: reading an
+            // absent index as "nothing here" would turn a third-party
+            // handler's bug into a silently under-reported restore. Hits it did
+            // return are affirmative data and are kept.
+            const missing = entries.find((e) => !ranged.has(e.index));
+            if (missing) {
+                failRange(
+                    new Error(
+                        `${h.type}.discoverRange resolved without index ${missing.index} of the requested range [${from}..${to}]`,
+                    ),
+                );
+            }
+            return probe;
         };
 
         while (i <= maxIdx && unused < gapLimit) {
@@ -824,9 +916,17 @@ export class ContractManager implements IContractManager {
             // reach — nothing is over-scanned or discarded, and the discovered
             // set stays byte-for-byte identical to the serial path.
             const windowEnd = Math.min(maxIdx, i + Math.min(batchSize, gapLimit - unused) - 1);
-            const windowIndices: number[] = [];
-            for (let idx = i; idx <= windowEnd; idx++) windowIndices.push(idx);
-            const windowProbes = await Promise.all(windowIndices.map(probeIndex));
+            const entries: { index: number; descriptor: string }[] = [];
+            // Materialize ascending and up front: a throw here is
+            // structural/fatal and must propagate before any probe is issued.
+            for (let idx = i; idx <= windowEnd; idx++) {
+                entries.push({ index: idx, descriptor: opts.materialize(idx) });
+            }
+            // Handlers run CONCURRENTLY — independent network reads (indexer /
+            // on-chain explorer), so overlapping them cuts window latency.
+            const windowProbes = await Promise.all(
+                discoverables.map((h) => probeHandler(h, entries)),
+            );
 
             // Process the window strictly in ASCENDING index order, and within
             // each index persist in the original `discoverables` order — that
@@ -834,23 +934,14 @@ export class ContractManager implements IContractManager {
             // default/delegate), so it must not be reordered. Only the I/O
             // above overlapped. A persistAndWatchContract rejection stays
             // operational/fatal (unguarded), matching the materialize contract.
-            for (let w = 0; w < windowIndices.length; w++) {
-                const index = windowIndices[w];
-                const probes = windowProbes[w];
+            for (const { index } of entries) {
                 let hitAtThisIndex = false;
                 let indeterminate = false;
-                for (let h = 0; h < discoverables.length; h++) {
-                    const probe = probes[h];
-                    if (!probe.ok) {
-                        handlerErrors.push({
-                            handler: discoverables[h].type,
-                            index,
-                            error: probe.error,
-                        });
-                        indeterminate = true;
-                        continue;
-                    }
-                    for (const c of probe.found) {
+                for (const probe of windowProbes) {
+                    const error = probe.errors.get(index);
+                    if (error) handlerErrors.push(error);
+                    if (probe.indeterminate.has(index)) indeterminate = true;
+                    for (const c of probe.found.get(index) ?? []) {
                         await this.persistAndWatchContract(c); // idempotent (script-keyed)
                         hitAtThisIndex = true;
                     }
@@ -1347,13 +1438,13 @@ export class ContractManager implements IContractManager {
      * window (e.g. a spend that hasn't settled yet).
      */
     private async reconcilePendingFrontier(contracts: Contract[]): Promise<void> {
-        const scripts = contracts.map((c) => c.script);
         const scriptToContract = new Map<string, Contract>(contracts.map((c) => [c.script, c]));
 
-        const { vtxos } = await getNormalizedVtxos(this.config.indexerProvider, {
-            scripts,
-            pendingOnly: true,
-        });
+        const vtxos = await getAllNormalizedVtxos(
+            this.config.indexerProvider,
+            contracts.map((c) => c.script),
+            { pendingOnly: true },
+        );
 
         // Share the annotation path with external callers so the two entry
         // points can't drift.
@@ -1446,16 +1537,14 @@ export class ContractManager implements IContractManager {
             return new Map();
         }
 
-        // Batch all scripts into a single indexer call per page to minimise
-        // round-trips. Results are keyed by script so we can distribute them
-        // back to the correct contract afterwards. Always fetches the full
-        // history (spent/swept included) so the repo is the source of truth.
+        // Results are keyed by script so we can distribute them back to the
+        // correct contract afterwards. Always fetches the full history
+        // (spent/swept included) so the repo is the source of truth.
         const scriptToContract = new Map<string, Contract>(contracts.map((c) => [c.script, c]));
         const result = new Map<string, ExtendedContractVtxo[]>(
             contracts.map((c) => [c.script, []]),
         );
 
-        const scripts = contracts.map((c) => c.script);
         const windowOpts = syncWindow
             ? {
                   ...(syncWindow.after !== undefined && {
@@ -1466,33 +1555,24 @@ export class ContractManager implements IContractManager {
                   }),
               }
             : {};
-        let pageIndex = 0;
-        let hasMore = true;
 
-        while (hasMore) {
-            const { vtxos, page } = await getNormalizedVtxos(this.config.indexerProvider, {
-                scripts,
-                ...windowOpts,
-                pageIndex,
-                pageSize,
+        const vtxos = await getAllNormalizedVtxos(
+            this.config.indexerProvider,
+            contracts.map((c) => c.script),
+            { ...windowOpts, pageSize },
+        );
+
+        // Match virtual outputs back to their contract via the script field
+        // populated by the indexer, then share the annotation path with
+        // external callers via annotateVtxos so the two entry points can't
+        // drift.
+        const owned = vtxos.filter((v) => scriptToContract.has(v.script));
+        const annotated = await this.annotateVtxos(owned);
+        for (const vtxo of annotated) {
+            result.get(vtxo.script)!.push({
+                ...vtxo,
+                contractScript: vtxo.script,
             });
-
-            // Match virtual outputs back to their contract via the script field
-            // populated by the indexer, then share the annotation path with
-            // external callers via annotateVtxos so the two entry points can't
-            // drift.
-            const owned = vtxos.filter((v) => scriptToContract.has(v.script));
-            const annotated = await this.annotateVtxos(owned);
-            for (const vtxo of annotated) {
-                result.get(vtxo.script)!.push({
-                    ...vtxo,
-                    contractScript: vtxo.script,
-                });
-            }
-
-            hasMore = page ? vtxos.length === pageSize : false;
-            pageIndex++;
-            if (hasMore) await new Promise((r) => setTimeout(r, 500));
         }
 
         return result;

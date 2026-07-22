@@ -26,6 +26,7 @@ import { Identity, ReadonlyIdentity, isBatchSignable } from "../identity";
 import {
     canRecoverOnchain,
     canSpendOffchain,
+    getAllNormalizedVtxos,
     getNormalizedVtxos,
     hasTerminalSpend,
     isVirtualCoin,
@@ -1656,9 +1657,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     async fetchPendingTxs(): Promise<string[]> {
         // get non-swept virtual outputs, rely on the indexer only in case DB doesn't have the right state
         const scripts = await this.getWalletScripts();
-        let { vtxos } = await getNormalizedVtxos(this.indexerProvider, {
-            scripts,
-        });
+        const vtxos = await getAllNormalizedVtxos(this.indexerProvider, scripts);
         return vtxos
             .filter(
                 (vtxo) =>
@@ -2556,7 +2555,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         // Inline pull BEFORE surfacing any handler errors so safely
         // discovered funds are always recovered (spec §3.B / §4).
-        await manager.refreshVtxos({ includeInactive: true });
+        //
+        // `after: 0` is load-bearing: the scan just discovered these
+        // contracts, so their first sync must span all of history. Without
+        // it the pull inherits the global delta cursor — already advanced
+        // to "now" by the boot-time reconcile that ran before the scan —
+        // and silently recovers only the last OVERLAP_MS of their history.
+        await manager.refreshVtxos({ includeInactive: true, after: 0 });
 
         const causes = result.handlerErrors.map((e) =>
             e.error instanceof Error ? e.error : new Error(String(e.error)),
@@ -3952,14 +3957,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         }
 
         if (!vtxos || vtxos.length === 0) {
-            // Batch all scripts into a single indexer call
             const scriptMap = await this.getScriptMap();
             const allExtended: ExtendedVirtualCoin[] = [];
 
-            const allScripts = [...scriptMap.keys()];
-            const { vtxos: fetchedVtxos } = await getNormalizedVtxos(this.indexerProvider, {
-                scripts: allScripts,
-            });
+            const fetchedVtxos = await getAllNormalizedVtxos(this.indexerProvider, [
+                ...scriptMap.keys(),
+            ]);
 
             for (const vtxo of fetchedVtxos) {
                 const vtxoScript = scriptMap.get(vtxo.script);
