@@ -72,7 +72,6 @@ import { ripemd160 } from "@noble/hashes/legacy.js";
 import { hex } from "@scure/base";
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
-import { randomBytes } from "@noble/hashes/utils.js";
 import { Address, OutScript, SigHash, Transaction } from "@scure/btc-signer";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 import { create as createMusig } from "./utils/musig";
@@ -101,6 +100,7 @@ import { logger } from "./logger";
 import { IndexedDbSwapRepository } from "./repositories/IndexedDb/swap-repository";
 import { SwapRepository } from "./repositories/swap-repository";
 import { claimVHTLCIdentity } from "./utils/identity";
+import { derivePreimage } from "./utils/preimage";
 import {
     candidateServerPubkeys,
     claimVHTLCwithOffchainTx,
@@ -467,6 +467,11 @@ export class ArkadeSwaps {
         } as CreateLightningInvoiceResponse;
     }
 
+    private derivePreimage(): Promise<Uint8Array> {
+        // NArk uses 0 index for now. In future versions it may change.
+        return derivePreimage(this.wallet.identity, 0);
+    }
+
     /**
      * Creates a reverse swap (Lightning → Arkade) and saves it to storage.
      * @param args.amount - Amount in satoshis for the reverse swap.
@@ -484,8 +489,7 @@ export class ArkadeSwaps {
                 message: "Failed to get claim public key from wallet",
             });
 
-        // create random preimage and its hash
-        const preimage = randomBytes(32);
+        const preimage = await this.derivePreimage();
         const preimageHash = hex.encode(sha256(preimage));
         if (!preimageHash) throw new SwapError({ message: "Failed to get preimage hash" });
 
@@ -2313,8 +2317,7 @@ export class ArkadeSwaps {
             throw new SwapError({ message: "Invalid lock amount" });
         }
 
-        // create random preimage and its hash
-        const preimage = randomBytes(32);
+        const preimage = await this.derivePreimage();
         const preimageHash = hex.encode(sha256(preimage));
         if (!preimageHash) throw new SwapError({ message: "Failed to get preimage hash" });
 
@@ -3139,7 +3142,7 @@ export class ArkadeSwaps {
      * Restore swaps from Boltz API.
      *
      * Note: restored swaps may lack local-only data such as the original
-     * Lightning invoice or preimage. They are intended primarily for
+     * Lightning invoice. They are intended primarily for
      * display/monitoring and are not automatically wired into the SwapManager.
      */
     async restoreSwaps(boltzFees?: FeesResponse): Promise<{
@@ -3171,6 +3174,19 @@ export class ArkadeSwaps {
                     timeoutBlockHeights,
                 } = swap.claimDetails;
 
+                // Re-derive the preimage so a restored wallet can claim outstanding VHTLCs.
+                // Falls back to "" for non-deterministic identities; the caller can still
+                // use enrichReverseSwapPreimage() to supply it manually.
+                let restoredPreimage = "";
+                try {
+                    const derived = await this.derivePreimage();
+                    if (hex.encode(sha256(derived)) === preimageHash) {
+                        restoredPreimage = hex.encode(derived);
+                    }
+                } catch (e) {
+                    logger.warn(`Failed to re-derive preimage for reverse swap ${id}`, e);
+                }
+
                 reverseSwaps.push({
                     id,
                     createdAt,
@@ -3189,7 +3205,7 @@ export class ArkadeSwaps {
                     },
                     status,
                     type: "reverse",
-                    preimage: "",
+                    preimage: restoredPreimage,
                 } as BoltzReverseSwap);
             } else if (isRestoredSubmarineSwap(swap)) {
                 const { amount, lockupAddress, serverPublicKey, tree, timeoutBlockHeights } =
@@ -3239,11 +3255,23 @@ export class ArkadeSwaps {
                     timeoutBlockHeights,
                 } = refundDetails;
 
+                let restoredChainPreimage = "";
+                if (swap.preimageHash) {
+                    try {
+                        const derived = await this.derivePreimage();
+                        if (hex.encode(sha256(derived)) === swap.preimageHash) {
+                            restoredChainPreimage = hex.encode(derived);
+                        }
+                    } catch (e) {
+                        logger.warn(`Failed to re-derive preimage for chain swap ${id}`, e);
+                    }
+                }
+
                 chainSwaps.push({
                     id,
                     type: "chain",
                     createdAt,
-                    preimage: "",
+                    preimage: restoredChainPreimage,
                     ephemeralKey: "",
                     feeSatsPerByte: 1,
                     amount,
