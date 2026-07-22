@@ -374,6 +374,14 @@ export type ContractEvent =
           contract: Contract;
           timestamp: number;
       }
+    // Coins gone without a spend: a chain reset/reorg dropped them from the indexer.
+    | {
+          type: "vtxo_vanished";
+          contractScript: string;
+          vtxos: ContractVtxo[];
+          contract: Contract;
+          timestamp: number;
+      }
     | { type: "connection_reset"; timestamp: number };
 
 /**

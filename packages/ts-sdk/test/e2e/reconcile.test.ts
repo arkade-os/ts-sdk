@@ -40,8 +40,9 @@ describe("Reconcile vanished VTXOs (chain reset)", () => {
             // Reconcile deletes it after the absence threshold; reset the cooldown
             // each pass so the rapid loop actually re-checks.
             const manager = await alice.wallet.getContractManager();
+            const throttle = manager as unknown as { lastReconcileByContract: Map<string, number> };
             for (let i = 0; i < RECONCILE_ABSENCE_THRESHOLD; i++) {
-                (manager as unknown as { lastReconcileAt: number }).lastReconcileAt = 0;
+                throttle.lastReconcileByContract.clear();
                 await alice.wallet.getVtxos();
             }
 

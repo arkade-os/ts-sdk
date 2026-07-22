@@ -905,7 +905,7 @@ describe("Wallet", () => {
             // Reset the reconcile cooldown each pass so the rapid loop actually re-checks.
             const manager = await wallet.getContractManager();
             for (let i = 0; i < RECONCILE_ABSENCE_THRESHOLD; i++) {
-                (manager as any).lastReconcileAt = 0;
+                (manager as any).lastReconcileByContract.clear();
                 await wallet.getVtxos();
             }
 

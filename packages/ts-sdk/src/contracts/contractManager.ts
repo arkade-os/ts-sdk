@@ -403,6 +403,14 @@ export interface ContractManagerConfig {
      */
     onVtxosSpent?: (vtxos: Outpoint[]) => Promise<void>;
 
+    /**
+     * Optional exit-data prune hook for coins that vanished without a spend
+     * (chain reset/reorg). Reconcile is their only cleanup point, so a
+     * configured virtualTxRepository can drop their now-unusable branch here.
+     * Absent ⇒ no-op.
+     */
+    onVtxosVanished?: (vtxos: Outpoint[]) => Promise<void>;
+
     /** Watcher configuration */
     watcherConfig?: Partial<ContractWatcherConfig>;
 }
@@ -469,7 +477,7 @@ export class ContractManager implements IContractManager {
     private eventCallbacks: Set<ContractEventCallback> = new Set();
     private stopWatcherFn?: () => void;
     private readonly vanishMissCounts = new Map<string, number>();
-    private lastReconcileAt = 0;
+    private readonly lastReconcileByContract = new Map<string, number>();
     /** `undefined` while online; the failure reason once a sync degrades. */
     private syncDegradedReason?: string;
     /** Epoch-ms of the last successful provider sync, if any. */
@@ -1366,13 +1374,13 @@ export class ContractManager implements IContractManager {
      */
     private async reconcileVanishedVtxos(contracts: Contract[]): Promise<void> {
         const now = Date.now();
-        if (now - this.lastReconcileAt < RECONCILE_MIN_INTERVAL_MS) return;
-        this.lastReconcileAt = now;
 
         try {
             const owned: { contract: Contract; unspent: ExtendedVirtualCoin[] }[] = [];
             const toCheck: ExtendedVirtualCoin[] = [];
             for (const contract of contracts) {
+                const lastReconcile = this.lastReconcileByContract.get(contract.script) ?? 0;
+                if (now - lastReconcile < RECONCILE_MIN_INTERVAL_MS) continue;
                 const stored = await getVtxosForContract(this.config.walletRepository, contract);
                 const unspent: ExtendedVirtualCoin[] = [];
                 for (const v of stored) {
@@ -1384,6 +1392,7 @@ export class ContractManager implements IContractManager {
                     }
                 }
                 if (unspent.length > 0) {
+                    this.lastReconcileByContract.set(contract.script, now);
                     owned.push({ contract, unspent });
                     toCheck.push(...unspent);
                 }
@@ -1410,6 +1419,22 @@ export class ContractManager implements IContractManager {
                 }
                 if (vanished.length > 0) {
                     await deleteVtxosForContract(this.config.walletRepository, contract, vanished);
+                    this.emitEvent({
+                        type: "vtxo_vanished",
+                        contractScript: contract.script,
+                        vtxos: vanished.map((v) => ({ ...v, contractScript: contract.script })),
+                        contract,
+                        timestamp: now,
+                    });
+                    if (this.config.onVtxosVanished) {
+                        try {
+                            await this.config.onVtxosVanished(
+                                vanished.map((v) => ({ txid: v.txid, vout: v.vout })),
+                            );
+                        } catch {
+                            // prune is best-effort; never block reconcile
+                        }
+                    }
                 }
             }
         } catch (error) {
