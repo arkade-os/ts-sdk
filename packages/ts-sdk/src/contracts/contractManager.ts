@@ -238,11 +238,16 @@ export interface IContractManager extends Disposable {
     getContracts(filter?: GetContractsFilter): Promise<Contract[]>;
 
     /**
-     * List contracts and their current virtual outputs.
+     * List contracts and their current virtual outputs, read from the
+     * repository. If no filter is provided, returns all contracts.
      *
-     * If no filter is provided, returns all contracts with their virtual outputs.
+     * Offline-first: no indexer traffic unless `options.sync` is set. Freshness
+     * comes from the background sync — see {@link GetContractsWithVtxosOptions}.
      */
-    getContractsWithVtxos(filter?: GetContractsFilter): Promise<ContractWithVtxos[]>;
+    getContractsWithVtxos(
+        filter?: GetContractsFilter,
+        options?: GetContractsWithVtxosOptions,
+    ): Promise<ContractWithVtxos[]>;
 
     /**
      * Latest provider-sync health (online vs. degraded to repository data).
@@ -433,6 +438,41 @@ export interface ContractManagerConfig {
 
     /** Watcher configuration */
     watcherConfig?: Partial<ContractWatcherConfig>;
+
+    /**
+     * Interval of the background delta sweep (ms). `0` disables it.
+     *
+     * The sweep is the only periodic indexer refresh the wallet has: reads are
+     * repository-only, the watcher's failsafe poll replays repository state,
+     * and the subscription cannot be relied on alone — arkd has been observed
+     * to silently miss events for scripts subscribed after the stream opened.
+     *
+     * @defaultValue {@link DEFAULT_PERIODIC_SYNC_INTERVAL_MS}
+     */
+    periodicSyncIntervalMs?: number;
+}
+
+/** @see ContractManagerConfig.periodicSyncIntervalMs */
+export const DEFAULT_PERIODIC_SYNC_INTERVAL_MS = 60_000;
+
+/** Options for {@link ContractManager.getContractsWithVtxos}. */
+export interface GetContractsWithVtxosOptions {
+    /**
+     * Sync against the indexer before reading, best-effort: a retryable
+     * failure serves repository state and records degraded sync health, a
+     * terminal one propagates.
+     *
+     * Off by default — reads are repository-only and the background sweep
+     * keeps that state fresh. Opting in restores the pre-0.5 read semantics
+     * for embedders that depend on them; note the sync is scoped to the
+     * filtered contracts and therefore never advances the global cursor.
+     *
+     * @defaultValue `false`
+     */
+    sync?: boolean;
+
+    /** Chunk size for the opt-in sync. Ignored without `sync`. */
+    pageSize?: number;
 }
 
 /**
@@ -500,6 +540,9 @@ export class ContractManager implements IContractManager {
     private syncDegradedReason?: string;
     /** Epoch-ms of the last successful provider sync, if any. */
     private lastSyncedAt?: number;
+    private periodicSyncIntervalId?: ReturnType<typeof setInterval>;
+    /** In-flight background sweep, so a slow one cannot stack up. */
+    private periodicSyncInFlight?: Promise<void>;
 
     private constructor(config: ContractManagerConfig) {
         this.config = config;
@@ -529,9 +572,10 @@ export class ContractManager implements IContractManager {
 
     /**
      * Latest provider-sync health. See {@link ContractSyncState}. Degradation is
-     * recorded by {@link initialize}, {@link getContractsWithVtxos}, and
-     * {@link createContract}; it flips back to `online` on the next successful
-     * sync. Purely a freshness signal — not a source of truth for wallet data.
+     * recorded by the sync paths — {@link initialize}, the background sweep,
+     * {@link createContract}, and an opted-in {@link getContractsWithVtxos} —
+     * and flips back to `online` on the next successful sync. Purely a
+     * freshness signal, not a source of truth for wallet data.
      */
     getSyncState(): ContractSyncState {
         return this.syncDegradedReason === undefined
@@ -587,6 +631,46 @@ export class ContractManager implements IContractManager {
                 console.error("Error handling contract event:", error);
             });
         });
+
+        this.startPeriodicSync();
+    }
+
+    /**
+     * Background delta sweep of the watched set — the wallet's only periodic
+     * indexer refresh (see {@link ContractManagerConfig.periodicSyncIntervalMs}).
+     *
+     * Delta-only on purpose: it uses the cursor-derived window and advances the
+     * cursor, so it stays at `ceil(scripts / SCRIPT_QUERY_CHUNK_SIZE)` requests
+     * per tick. The unbounded `reconcilePendingFrontier` stays on boot and
+     * reconnect, where a one-off cost is acceptable.
+     */
+    private startPeriodicSync(): void {
+        const intervalMs = this.config.periodicSyncIntervalMs ?? DEFAULT_PERIODIC_SYNC_INTERVAL_MS;
+        if (intervalMs <= 0) return;
+
+        this.periodicSyncIntervalId = setInterval(() => {
+            void this.runPeriodicSync();
+        }, intervalMs);
+    }
+
+    private runPeriodicSync(): Promise<void> {
+        if (this.periodicSyncInFlight) return this.periodicSyncInFlight;
+
+        this.periodicSyncInFlight = (async () => {
+            try {
+                await this.syncContracts({});
+                this.markSyncOnline();
+            } catch (err) {
+                // A timer has no caller to propagate to, so terminal failures
+                // are recorded as degraded too rather than becoming an
+                // unhandled rejection. The next tick retries.
+                this.markSyncDegraded(err);
+            } finally {
+                this.periodicSyncInFlight = undefined;
+            }
+        })();
+
+        return this.periodicSyncInFlight;
     }
 
     /**
@@ -1021,19 +1105,21 @@ export class ContractManager implements IContractManager {
 
     async getContractsWithVtxos(
         filter?: GetContractsFilter,
-        pageSize?: number,
+        options?: GetContractsWithVtxosOptions,
     ): Promise<ContractWithVtxos[]> {
         const contracts = await this.getContracts(filter);
-        // Best-effort opportunistic sync: on a retryable indexer/operator
-        // failure, serve repository state rather than failing the read. The
-        // failed sync writes no partial state and does not advance the cursor
-        // (targeted subset queries never do). Terminal failures still propagate.
-        try {
-            await this.syncContracts({ contracts, pageSize });
-            this.markSyncOnline();
-        } catch (err) {
-            if (!isRetryableProviderError(err)) throw err;
-            this.markSyncDegraded(err);
+        if (options?.sync) {
+            // Best-effort: on a retryable indexer/operator failure, serve
+            // repository state rather than failing the read. The failed sync
+            // writes no partial state and does not advance the cursor (targeted
+            // subset queries never do). Terminal failures still propagate.
+            try {
+                await this.syncContracts({ contracts, pageSize: options.pageSize });
+                this.markSyncOnline();
+            } catch (err) {
+                if (!isRetryableProviderError(err)) throw err;
+                this.markSyncDegraded(err);
+            }
         }
         const vtxos = await this.getVtxosForContracts(contracts);
         return contracts.map((contract) => ({
@@ -1592,6 +1678,9 @@ export class ContractManager implements IContractManager {
         // Stop watching
         this.stopWatcherFn?.();
         this.stopWatcherFn = undefined;
+
+        clearInterval(this.periodicSyncIntervalId);
+        this.periodicSyncIntervalId = undefined;
 
         // Clear callbacks
         this.eventCallbacks.clear();

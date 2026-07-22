@@ -171,6 +171,8 @@ describe("Cross-contract spending", () => {
             });
             return Promise.resolve({ vtxos });
         });
+        // Reads are repository-only, so pull the funded state in explicitly.
+        await manager.refreshVtxos();
 
         // getVtxos (public) should see VTXOs from both contracts.
         const allVtxos = await wallet.getVtxos();

@@ -1027,6 +1027,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Return the wallet's combined onchain and offchain balances.
+     *
+     * Offchain amounts are an offline-first repository read kept fresh by
+     * {@link ContractManager}'s background sync; force one with
+     * `(await wallet.getContractManager()).refreshVtxos()`. Boarding amounts
+     * still query the onchain provider.
      */
     async getBalance(): Promise<WalletBalance> {
         const [boardingUtxos, vtxos, pendingOutpoints] = await Promise.all([
@@ -1130,6 +1135,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Return virtual outputs tracked by the wallet.
+     *
+     * Offline-first: reads the repository, which {@link ContractManager} keeps
+     * fresh in the background. Force a refresh with
+     * `(await wallet.getContractManager()).refreshVtxos()`.
      *
      * @param filter - Optional flags controlling whether recoverable or unrolled VTXOs are included
      */

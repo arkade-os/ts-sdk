@@ -131,6 +131,7 @@ import type {
     ContractSyncState,
     CreateContractParams,
     GetAllSpendingPathsOptions,
+    GetContractsWithVtxosOptions,
     GetSpendablePathsOptions,
     IContractManager,
     RefreshVtxosOptions,
@@ -1216,17 +1217,21 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 }
             },
 
-            async getContractsWithVtxos(filter: GetContractsFilter): Promise<ContractWithVtxos[]> {
+            async getContractsWithVtxos(
+                filter?: GetContractsFilter,
+                options?: GetContractsWithVtxosOptions,
+            ): Promise<ContractWithVtxos[]> {
                 const message: RequestGetContractsWithVtxos = {
                     type: "GET_CONTRACTS_WITH_VTXOS",
                     id: getRandomId(),
                     tag: messageTag,
-                    payload: { filter },
+                    payload: { filter, options },
                 };
                 try {
                     const response = await sendContractMessage(message);
-                    // A best-effort sync ran on the worker; it may have degraded
-                    // to repository data or recovered — refresh the cached view.
+                    // An opted-in sync may have run on the worker, and the
+                    // worker's background sweep moves sync health regardless —
+                    // refresh the cached view either way.
                     await refreshSyncState();
                     return (response as ResponseGetContractsWithVtxos).payload.contracts;
                 } catch (e) {

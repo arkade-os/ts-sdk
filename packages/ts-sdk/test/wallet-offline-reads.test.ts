@@ -80,7 +80,12 @@ async function createWallet(
             getInfo: opts?.getInfo ?? (async () => arkInfo()),
         } as Partial<ArkProvider> as ArkProvider,
         indexerProvider,
-        onchainProvider: {} as OnchainProvider,
+        // Boarding reads stay network-backed (a different provider, out of the
+        // offline-first scope); stubbed empty so they don't mask the assertions.
+        onchainProvider: {
+            getCoins: async () => [],
+            getTransactions: async () => [],
+        } as Partial<OnchainProvider> as OnchainProvider,
         storage: opts?.storage ?? freshStorage(),
     });
 }
@@ -91,17 +96,85 @@ describe("wallet offline-first reads (Scope 4)", () => {
         await expect(wallet.getVtxos()).resolves.toEqual([]);
     });
 
-    it("getVtxos still rethrows a terminal (non-retryable) indexer failure", async () => {
-        const indexer = {
-            getVtxos: async () => {
-                throw new Error("schema violation");
-            },
-            subscribeForScripts: async () => "sub-1",
-            unsubscribeForScripts: async () => undefined,
-            getSubscription: async function* () {},
-        } as Partial<IndexerProvider> as IndexerProvider;
+    // The invariant from AGENTS.md: reads come from repositories only. Asserted
+    // against an indexer whose every offchain call is terminal — a read that
+    // touches it at all propagates the failure rather than resolving.
+    describe("read paths never query the indexer", () => {
+        const deadIndexer = () =>
+            ({
+                getVtxos: async () => {
+                    throw new Error("schema violation");
+                },
+                subscribeForScripts: async () => "sub-1",
+                unsubscribeForScripts: async () => undefined,
+                getSubscription: async function* () {},
+            }) as Partial<IndexerProvider> as IndexerProvider;
+
+        // Boot syncs once (ContractManager.initialize), so the manager has to be
+        // up before the indexer turns terminal — otherwise construction throws
+        // and the test proves nothing about the read itself.
+        const bootedWallet = async () => {
+            const indexer = healthyIndexer();
+            const wallet = await createWallet(indexer);
+            await wallet.getContractManager();
+            Object.assign(indexer, deadIndexer());
+            return wallet;
+        };
+
+        it("getVtxos", async () => {
+            await expect((await bootedWallet()).getVtxos()).resolves.toEqual([]);
+        });
+
+        it("getTransactionHistory", async () => {
+            await expect((await bootedWallet()).getTransactionHistory()).resolves.toEqual([]);
+        });
+
+        // Seeded with a deprecated signer so it gets past its empty fast-path
+        // and actually reaches the contract read.
+        it("pendingRecoveryOutpoints", async () => {
+            const indexer = healthyIndexer();
+            const wallet = await createWallet(indexer, {
+                getInfo: async () => ({
+                    ...arkInfo(),
+                    deprecatedSigners: [{ pubkey: serverKeyHex, cutoffDate: 1n }],
+                }),
+            });
+            await wallet.getContractManager();
+            Object.assign(indexer, deadIndexer());
+
+            await expect(wallet.pendingRecoveryOutpoints()).resolves.toEqual(new Set());
+        });
+    });
+
+    it("reads return repository state even when the indexer holds different data", async () => {
+        const indexer = healthyIndexer();
         const wallet = await createWallet(indexer);
-        await expect(wallet.getVtxos()).rejects.toThrow("schema violation");
+        const manager = await wallet.getContractManager();
+        const [contract] = await manager.getContracts();
+
+        // The indexer now reports funds the repository has never seen. A
+        // repository-only read must not surface them; only an explicit
+        // refresh may.
+        indexer.getVtxos = async () => ({
+            vtxos: [
+                {
+                    txid: "a".repeat(64),
+                    vout: 0,
+                    value: 21_000,
+                    script: contract.script,
+                    createdAt: new Date(),
+                    isPreconfirmed: false,
+                    isSwept: false,
+                    isUnrolled: false,
+                    isSpent: false,
+                },
+            ],
+        });
+
+        await expect(wallet.getVtxos()).resolves.toEqual([]);
+
+        await manager.refreshVtxos();
+        expect(await wallet.getVtxos()).toHaveLength(1);
     });
 });
 
@@ -131,12 +204,14 @@ describe("provider connection state (Scope 5)", () => {
         });
     });
 
-    it("reports degraded on indexer/repository after a read hits a down indexer", async () => {
+    // Reads are repository-only, so they no longer report on the indexer at
+    // all; the boot sync inside the manager's lazy initialization does.
+    it("reports degraded on indexer/repository once a sync hits a down indexer", async () => {
         const wallet = await createWallet(downIndexer());
-        // The contract manager isn't initialized until the first read.
+        // The contract manager isn't initialized until first used.
         expect(wallet.getProviderConnectionState().mode).toBe("online");
 
-        await wallet.getVtxos();
+        await wallet.getContractManager();
         expect(wallet.getProviderConnectionState()).toMatchObject({
             mode: "degraded",
             source: "repository",

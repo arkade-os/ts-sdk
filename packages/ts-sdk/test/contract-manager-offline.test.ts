@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
     ContractManager,
     InMemoryContractRepository,
@@ -17,6 +17,8 @@ import { getSyncCursor } from "../src/utils/syncCursors";
 // Long timers so the watcher's failsafe poll / reconnect never fire mid-test;
 // every manager is disposed in afterEach to stop them.
 const watcherConfig = { failsafePollIntervalMs: 1_000_000, reconnectDelayMs: 1_000_000 };
+// The background sweep is exercised deliberately below, never incidentally.
+const noPeriodicSync = 0;
 
 describe("ContractManager offline-first reads (Scope 3)", () => {
     const managers: ContractManager[] = [];
@@ -39,6 +41,7 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
             contractRepository,
             walletRepository,
             watcherConfig,
+            periodicSyncIntervalMs: noPeriodicSync,
         }).then(track);
 
     const seededContract = (): Contract => ({
@@ -85,11 +88,27 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
                 contractRepository: contractRepo,
                 walletRepository: new InMemoryWalletRepository(),
                 watcherConfig,
+                periodicSyncIntervalMs: noPeriodicSync,
             }),
         ).rejects.toThrow("schema violation");
     });
 
-    it("getContractsWithVtxos serves repository state on a retryable sync failure", async () => {
+    it("getContractsWithVtxos reads the repository without touching the indexer", async () => {
+        const contractRepo = new InMemoryContractRepository();
+        const walletRepo = new InMemoryWalletRepository();
+        const indexer = createMockIndexerProvider();
+        const m = await create(indexer, contractRepo, walletRepo);
+        await m.createContract(params());
+
+        // A terminal failure would propagate if the read queried at all.
+        (indexer.getVtxos as any).mockRejectedValue(new Error("schema violation"));
+        (indexer.getVtxos as any).mockClear();
+
+        await expect(m.getContractsWithVtxos()).resolves.toHaveLength(1);
+        expect(indexer.getVtxos).not.toHaveBeenCalled();
+    });
+
+    it("getContractsWithVtxos with sync serves repository state on a retryable failure", async () => {
         const contractRepo = new InMemoryContractRepository();
         const walletRepo = new InMemoryWalletRepository();
         const indexer = createMockIndexerProvider(); // getVtxos resolves [] initially
@@ -98,13 +117,13 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         expect(m.getSyncState().mode).toBe("online");
 
         (indexer.getVtxos as any).mockRejectedValue(new ProviderUnavailableError("down"));
-        const result = await m.getContractsWithVtxos(); // must NOT throw
+        const result = await m.getContractsWithVtxos(undefined, { sync: true }); // must NOT throw
 
         expect(result).toHaveLength(1);
         expect(m.getSyncState().mode).toBe("degraded");
     });
 
-    it("getContractsWithVtxos rethrows a terminal sync failure", async () => {
+    it("getContractsWithVtxos with sync rethrows a terminal failure", async () => {
         const contractRepo = new InMemoryContractRepository();
         const walletRepo = new InMemoryWalletRepository();
         const indexer = createMockIndexerProvider();
@@ -112,7 +131,9 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         await m.createContract(params());
 
         (indexer.getVtxos as any).mockRejectedValue(new Error("schema violation"));
-        await expect(m.getContractsWithVtxos()).rejects.toThrow("schema violation");
+        await expect(m.getContractsWithVtxos(undefined, { sync: true })).rejects.toThrow(
+            "schema violation",
+        );
     });
 
     it("createContract persists and watches even when hydration is retryable-unavailable", async () => {
@@ -140,7 +161,7 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         expect(m.getSyncState().mode).toBe("degraded");
 
         // Operator recovers (base mock resolves { vtxos: [] }).
-        await m.getContractsWithVtxos();
+        await m.getContractsWithVtxos(undefined, { sync: true });
         expect(m.getSyncState().mode).toBe("online");
     });
 
@@ -185,5 +206,95 @@ describe("ContractManager offline-first reads (Scope 3)", () => {
         await expect(
             (m as any).handleContractEvent({ type: "connection_reset", timestamp: 3 }),
         ).rejects.toThrow("schema violation");
+    });
+});
+
+describe("ContractManager background sweep", () => {
+    const managers: ContractManager[] = [];
+
+    afterEach(async () => {
+        while (managers.length) await managers.pop()!.dispose();
+        vi.useRealTimers();
+    });
+
+    const seeded = async (indexer: IndexerProvider, periodicSyncIntervalMs?: number) => {
+        const contractRepository = new InMemoryContractRepository();
+        await contractRepository.saveContract({
+            type: "default",
+            params: createDefaultContractParams(),
+            script: TEST_DEFAULT_SCRIPT,
+            address: "addr",
+            state: "active",
+            createdAt: 1,
+        });
+        const m = await ContractManager.create({
+            indexerProvider: indexer,
+            contractRepository,
+            walletRepository: new InMemoryWalletRepository(),
+            watcherConfig,
+            periodicSyncIntervalMs,
+        });
+        managers.push(m);
+        return m;
+    };
+
+    it("sweeps the watched set on each tick", async () => {
+        const indexer = createMockIndexerProvider();
+        const m = await seeded(indexer, 1_000);
+        (indexer.getVtxos as any).mockClear();
+
+        await (m as any).runPeriodicSync();
+
+        expect(indexer.getVtxos).toHaveBeenCalled();
+        expect(m.getSyncState().mode).toBe("online");
+    });
+
+    it("records a failed sweep as degraded instead of rejecting", async () => {
+        const indexer = createMockIndexerProvider();
+        const m = await seeded(indexer, 1_000);
+
+        // Terminal, not retryable: a timer has no caller to propagate to, so it
+        // must still be swallowed into degraded state.
+        (indexer.getVtxos as any).mockRejectedValue(new Error("schema violation"));
+        await expect((m as any).runPeriodicSync()).resolves.toBeUndefined();
+
+        expect(m.getSyncState().mode).toBe("degraded");
+    });
+
+    it("does not stack overlapping sweeps", async () => {
+        const indexer = createMockIndexerProvider();
+        let release!: () => void;
+        const blocked = new Promise<void>((r) => (release = r));
+        const m = await seeded(indexer, 1_000);
+        (indexer.getVtxos as any).mockClear();
+        (indexer.getVtxos as any).mockImplementation(async () => {
+            await blocked;
+            return { vtxos: [] };
+        });
+
+        const first = (m as any).runPeriodicSync();
+        const second = (m as any).runPeriodicSync();
+        expect(second).toBe(first);
+
+        release();
+        await first;
+        expect((indexer.getVtxos as any).mock.calls.length).toBe(1);
+    });
+
+    it("is disabled by a zero interval and stopped by dispose", async () => {
+        vi.useFakeTimers();
+        const indexer = createMockIndexerProvider();
+
+        const off = await seeded(indexer, 0);
+        (indexer.getVtxos as any).mockClear();
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(indexer.getVtxos).not.toHaveBeenCalled();
+        await off.dispose();
+
+        const on = await seeded(indexer, 1_000);
+        await on.dispose();
+        (indexer.getVtxos as any).mockClear();
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(indexer.getVtxos).not.toHaveBeenCalled();
     });
 });
