@@ -75,6 +75,11 @@ export interface CreateLightningInvoiceRequest {
      * is SHA256 of the zap request and the receipt later proves the match.
      */
     descriptionHash?: string;
+    /**
+     * Let a covclaimd daemon claim the VHTLC (Ark reverse swaps only).
+     * Requires `covclaimdUrl` on the ArkadeSwaps config. Default false.
+     */
+    nonInteractive?: boolean;
 }
 
 /** Response containing the created Lightning invoice and swap details. */
@@ -350,6 +355,11 @@ export interface ArkadeSwapsConfig {
      * - `SwapRepository` object: SwapRepository enabled with custom configuration
      */
     swapRepository?: SwapRepository;
+    /**
+     * Base URL of a covclaimd daemon. Enables non-interactive reverse swaps:
+     * the SDK reveals the preimage to covclaimd, which sweeps the VHTLC.
+     */
+    covclaimdUrl?: string;
 }
 
 /**

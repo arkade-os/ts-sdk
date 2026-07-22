@@ -140,7 +140,7 @@ function getRequestDedupKey(request: ArkadeSwapsUpdaterRequest): string {
 
 export type SvcWrkArkadeSwapsConfig = Pick<
     ArkadeSwapsConfig,
-    "swapManager" | "swapProvider" | "swapRepository"
+    "swapManager" | "swapProvider" | "swapRepository" | "covclaimdUrl"
 > & {
     serviceWorker: ServiceWorker;
     messageTag?: string;
@@ -199,6 +199,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             swapProvider: { baseUrl: config.swapProvider.getApiUrl() },
             swapManager: config.swapManager,
             referralId: config.referralId,
+            covclaimdUrl: config.covclaimdUrl,
         };
 
         const initMessage: RequestInitArkSwaps = {

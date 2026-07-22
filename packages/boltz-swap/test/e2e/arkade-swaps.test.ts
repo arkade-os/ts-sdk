@@ -15,6 +15,7 @@ import {
     SingleKey,
     EsploraProvider,
     ArkNote,
+    ArkAddress,
     InMemoryWalletRepository,
     InMemoryContractRepository,
 } from "@arkade-os/sdk";
@@ -185,6 +186,7 @@ describe("ArkadeSwaps", () => {
     let fundedWallet: Wallet;
 
     const arkUrl = "http://localhost:7070";
+    const covclaimdUrl = "http://localhost:7271";
 
     const fundWallet = async (amount: number): Promise<void> => {
         await fundedWallet.send({
@@ -1688,5 +1690,66 @@ describe("ArkadeSwaps", () => {
                 }),
             ).toThrow(/VHTLC address mismatch/);
         }, 60_000);
+    });
+
+    describe("Non-interactive reverse swap (covclaimd claim)", () => {
+        it(
+            "covclaimd claims the funded VHTLC without any client-side claim",
+            { timeout: 90_000 },
+            async () => {
+                const wallet = await Wallet.create({
+                    identity: SingleKey.fromRandomBytes(),
+                    arkServerUrl: arkUrl,
+                    settlementConfig: false,
+                    storage: createWalletStorage(),
+                    onchainProvider: new EsploraProvider("http://localhost:3000/api", {
+                        forcePolling: true,
+                        pollingInterval: 2000,
+                    }),
+                });
+
+                const indexerProvider = new RestIndexerProvider(arkUrl);
+                const swaps = new ArkadeSwaps({
+                    wallet,
+                    swapProvider: new BoltzSwapProvider({ network: "regtest" }),
+                    arkProvider: new RestArkProvider(arkUrl),
+                    indexerProvider,
+                    swapRepository: new InMemorySwapRepository(),
+                    swapManager: false,
+                    covclaimdUrl,
+                });
+
+                const receiver = await wallet.getAddress();
+                const receiverPkScript = hex.encode(ArkAddress.decode(receiver).pkScript);
+
+                const before = await indexerProvider.getVtxos({ scripts: [receiverPkScript] });
+                expect(before.vtxos.filter((v) => !v.isSpent)).toHaveLength(0);
+
+                const { pendingSwap } = await swaps.createLightningInvoice({
+                    amount: 10_000,
+                    nonInteractive: true,
+                });
+                expect(pendingSwap.request.nonInteractiveClaim?.claimAddress).toBe(receiver);
+
+                await payInvoice(pendingSwap.response.invoice).catch(() => {});
+
+                let claimed: { txid: string; value: number } | undefined;
+                const start = Date.now();
+                while (Date.now() - start < 75_000) {
+                    const { vtxos } = await indexerProvider.getVtxos({
+                        scripts: [receiverPkScript],
+                    });
+                    const unspent = vtxos.filter((v) => !v.isSpent);
+                    if (unspent.length > 0) {
+                        claimed = { txid: unspent[0].txid, value: unspent[0].value };
+                        break;
+                    }
+                    await sleep(1500);
+                }
+
+                expect(claimed).toBeDefined();
+                expect(claimed!.value).toBeGreaterThan(0);
+            },
+        );
     });
 });

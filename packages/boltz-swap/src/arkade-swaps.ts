@@ -25,6 +25,7 @@ import {
     getNetwork,
     type NetworkName,
 } from "@arkade-os/sdk";
+import { eciesEncrypt } from "./utils/covclaimd-ecies";
 import type {
     Chain,
     Network,
@@ -101,6 +102,7 @@ import { logger } from "./logger";
 import { IndexedDbSwapRepository } from "./repositories/IndexedDb/swap-repository";
 import { SwapRepository } from "./repositories/swap-repository";
 import { claimVHTLCIdentity } from "./utils/identity";
+import { CovclaimdProvider } from "./covclaimd-provider";
 import {
     candidateServerPubkeys,
     claimVHTLCwithOffchainTx,
@@ -236,6 +238,8 @@ export class ArkadeSwaps {
     readonly swapManager: SwapManager | null = null;
     /** Storage backend for persisting swap data. */
     readonly swapRepository: SwapRepository;
+    /** Client for a covclaimd daemon, enabling non-interactive reverse swaps. */
+    private readonly covclaimd?: CovclaimdProvider;
 
     /**
      * Creates an ArkadeSwaps instance, auto-detecting the network from the wallet's Ark server.
@@ -285,6 +289,10 @@ export class ArkadeSwaps {
         this.indexerProvider = indexerProvider;
 
         this.swapProvider = config.swapProvider;
+
+        this.covclaimd = config.covclaimdUrl
+            ? new CovclaimdProvider(config.covclaimdUrl)
+            : undefined;
 
         // Initialize SwapRepository
         if (config.swapRepository) {
@@ -495,6 +503,19 @@ export class ArkadeSwaps {
         // Gate on `!== undefined` (not truthiness) so a present-but-invalid
         // hash like "" is forwarded and rejected by the provider's hex check,
         // rather than silently falling back to the description.
+        let nonInteractiveClaim: CreateReverseSwapRequest["nonInteractiveClaim"];
+        let covPubKeys: { covclaimdPubKey: Uint8Array; emulatorPubKey: Uint8Array } | undefined;
+        let claimAddress: string | undefined;
+        if (args.nonInteractive) {
+            if (!this.covclaimd)
+                throw new SwapError({
+                    message: "nonInteractive requires covclaimdUrl in ArkadeSwaps config",
+                });
+            covPubKeys = await this.covclaimd.getPubKeys();
+            claimAddress = await this.wallet.getAddress();
+            nonInteractiveClaim = { claimAddress };
+        }
+
         const swapRequest: CreateReverseSwapRequest = {
             invoiceAmount: args.amount,
             claimPublicKey,
@@ -504,6 +525,7 @@ export class ArkadeSwaps {
                 : args.description?.trim()
                   ? { description: args.description.trim() }
                   : {}),
+            ...(nonInteractiveClaim ? { nonInteractiveClaim } : {}),
         };
 
         // make reverse swap request
@@ -526,6 +548,17 @@ export class ArkadeSwaps {
 
         // save pending swap to storage
         await this.savePendingReverseSwap(pendingSwap);
+
+        if (covPubKeys && claimAddress && this.covclaimd) {
+            if (!swapResponse.lockupAddress)
+                throw new SwapError({ message: "reverse swap response missing lockupAddress" });
+            const receiverTapKey = ArkAddress.decode(claimAddress).vtxoTaprootKey;
+            await this.covclaimd.reveal({
+                swapAddress: swapResponse.lockupAddress,
+                ciphertext: eciesEncrypt(covPubKeys.covclaimdPubKey, preimage),
+                arkadeScript: enforcePayTo(receiverTapKey),
+            });
+        }
 
         // Add to swap manager if enabled
         if (this.swapManager) {
@@ -1933,6 +1966,7 @@ export class ArkadeSwaps {
         feeSatsPerByte?: number;
         senderLockAmount?: number;
         receiverLockAmount?: number;
+        nonInteractive?: boolean;
     }): Promise<BtcToArkResponse> {
         const pendingSwap = await this.createChainSwap({
             to: "ARK",
@@ -1941,6 +1975,7 @@ export class ArkadeSwaps {
             senderLockAmount: args.senderLockAmount,
             receiverLockAmount: args.receiverLockAmount,
             toAddress: await this.wallet.getAddress(),
+            nonInteractive: args.nonInteractive,
         });
 
         await this.verifyChainSwap({
@@ -2289,6 +2324,7 @@ export class ArkadeSwaps {
         feeSatsPerByte?: number;
         senderLockAmount?: number;
         receiverLockAmount?: number;
+        nonInteractive?: boolean;
     }): Promise<BoltzChainSwap> {
         const { to, from, receiverLockAmount, senderLockAmount, toAddress } = args;
 
@@ -2341,6 +2377,19 @@ export class ArkadeSwaps {
                 message: "Failed to get claim public key",
             });
 
+        let covPubKeys: { covclaimdPubKey: Uint8Array; emulatorPubKey: Uint8Array } | undefined;
+        if (args.nonInteractive) {
+            if (to !== "ARK")
+                throw new SwapError({
+                    message: "nonInteractive is only supported for chain swaps to Ark",
+                });
+            if (!this.covclaimd)
+                throw new SwapError({
+                    message: "nonInteractive requires covclaimdUrl in ArkadeSwaps config",
+                });
+            covPubKeys = await this.covclaimd.getPubKeys();
+        }
+
         const swapRequest: CreateChainSwapRequest = {
             to,
             from,
@@ -2350,6 +2399,7 @@ export class ArkadeSwaps {
             refundPublicKey,
             serverLockAmount,
             userLockAmount,
+            ...(covPubKeys ? { nonInteractiveClaim: { claimAddress: toAddress } } : {}),
         };
 
         const swapResponse = await this.swapProvider.createChainSwap(swapRequest);
@@ -2369,6 +2419,20 @@ export class ArkadeSwaps {
         };
 
         await this.savePendingChainSwap(pendingSwap);
+
+        if (covPubKeys && this.covclaimd) {
+            const arkVhtlcAddress = swapResponse.claimDetails.lockupAddress;
+            if (!arkVhtlcAddress)
+                throw new SwapError({
+                    message: "chain swap response missing Ark lockup address",
+                });
+            const receiverTapKey = ArkAddress.decode(toAddress).vtxoTaprootKey;
+            await this.covclaimd.reveal({
+                swapAddress: arkVhtlcAddress,
+                ciphertext: eciesEncrypt(covPubKeys.covclaimdPubKey, preimage),
+                arkadeScript: enforcePayTo(receiverTapKey),
+            });
+        }
 
         this.swapManager?.addSwap(pendingSwap);
 
@@ -2424,6 +2488,20 @@ export class ArkadeSwaps {
                 ? swap.response.claimDetails.timeouts!
                 : swap.response.lockupDetails.timeouts!;
 
+        let nonInteractiveClaim: { emulatorPublicKey: string; claimAddress: string } | undefined;
+        if (to === "ARK" && swap.request.nonInteractiveClaim) {
+            if (!this.covclaimd)
+                throw new SwapError({
+                    message:
+                        "non-interactive chain swap requires covclaimdUrl in ArkadeSwaps config",
+                });
+            const { emulatorPubKey } = await this.covclaimd.getPubKeys();
+            nonInteractiveClaim = {
+                emulatorPublicKey: hex.encode(emulatorPubKey),
+                claimAddress: swap.request.nonInteractiveClaim.claimAddress,
+            };
+        }
+
         const { vhtlcAddress } = this.createVHTLCScript({
             network: arkInfo.network,
             preimageHash: hex.decode(swap.request.preimageHash),
@@ -2431,6 +2509,7 @@ export class ArkadeSwaps {
             senderPubkey,
             serverPubkey,
             timeoutBlockHeights: vhtlcTimeouts,
+            nonInteractiveClaim,
         });
 
         if (lockupAddress !== vhtlcAddress) {
@@ -2899,6 +2978,10 @@ export class ArkadeSwaps {
         senderPubkey: string;
         serverPubkey: string;
         timeoutBlockHeights: VhtlcTimeouts;
+        nonInteractiveClaim?: {
+            emulatorPublicKey: string;
+            claimAddress: string;
+        };
     }): { vhtlcScript: VHTLC.Script; vhtlcAddress: string } {
         return createVHTLCScript(args);
     }
@@ -3355,6 +3438,7 @@ export interface IArkadeSwaps extends AsyncDisposable {
         feeSatsPerByte?: number;
         senderLockAmount?: number;
         receiverLockAmount?: number;
+        nonInteractive?: boolean;
     }): Promise<BtcToArkResponse>;
     waitAndClaimArk(pendingSwap: BoltzChainSwap): Promise<{ txid: string }>;
     claimArk(pendingSwap: BoltzChainSwap): Promise<{ txid: string }>;
@@ -3367,6 +3451,7 @@ export interface IArkadeSwaps extends AsyncDisposable {
         feeSatsPerByte?: number;
         senderLockAmount?: number;
         receiverLockAmount?: number;
+        nonInteractive?: boolean;
     }): Promise<BoltzChainSwap>;
     verifyChainSwap(args: {
         to: Chain;
@@ -3391,6 +3476,10 @@ export interface IArkadeSwaps extends AsyncDisposable {
         senderPubkey: string;
         serverPubkey: string;
         timeoutBlockHeights: VhtlcTimeouts;
+        nonInteractiveClaim?: {
+            emulatorPublicKey: string;
+            claimAddress: string;
+        };
     }): { vhtlcScript: VHTLC.Script; vhtlcAddress: string };
     getFees(): Promise<FeesResponse>;
     getFees(from: Chain, to: Chain): Promise<ChainFeesResponse>;
@@ -3412,4 +3501,23 @@ export interface IArkadeSwaps extends AsyncDisposable {
      */
     reset(): Promise<void>;
     dispose(): Promise<void>;
+}
+
+function enforcePayTo(receiverTapKey: Uint8Array): Uint8Array {
+    if (receiverTapKey.length !== 32)
+        throw new Error(`enforcePayTo: expected 32-byte tap key, got ${receiverTapKey.length}`);
+    return new Uint8Array([
+        0xcd, // OP_PUSHCURRENTINPUTINDEX
+        0x76, // OP_DUP
+        0xd1, // OP_INSPECTOUTPUTSCRIPTPUBKEY
+        0x51, // OP_1 (taproot version)
+        0x88, // OP_EQUALVERIFY
+        0x20, // push 32 bytes
+        ...receiverTapKey,
+        0x88, // OP_EQUALVERIFY
+        0xcf, // OP_INSPECTOUTPUTVALUE
+        0xcd, // OP_PUSHCURRENTINPUTINDEX
+        0xc9, // OP_INSPECTINPUTVALUE
+        0xa2, // OP_GREATERTHANOREQUAL
+    ]);
 }
