@@ -8,7 +8,7 @@ import {
     ArkError,
     RestDelegateProvider,
 } from "../../src";
-import { arkdExec, beforeEachFaucet, execCommand, waitFor } from "./utils";
+import { arkdExec, beforeEachFaucet, execCommand, refreshWallet, waitFor } from "./utils";
 
 describe("Settlement - Auto-settle boarding UTXOs", () => {
     beforeEach(beforeEachFaucet, 20000);
@@ -205,6 +205,7 @@ describe("Settlement - VtxoManager Recovery", () => {
 
         // Wait for VTXO to become swept
         await waitFor(async () => {
+            await refreshWallet(wallet);
             const v = await wallet.getVtxos({ withRecoverable: true });
             return v.some((c) => c.txid === originalTxid && c.virtualStatus.state === "swept");
         });
@@ -276,6 +277,7 @@ describe("Settlement - VtxoManager Recovery", () => {
         execCommand("node regtest/regtest.mjs mine 25");
 
         await waitFor(async () => {
+            await refreshWallet(wallet);
             const v = await wallet.getVtxos({ withRecoverable: true });
             return v.some((c) => c.txid === originalTxid && c.virtualStatus.state === "swept");
         });

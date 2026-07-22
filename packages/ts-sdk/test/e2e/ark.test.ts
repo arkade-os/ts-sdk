@@ -33,6 +33,7 @@ import {
     execCommand,
     faucetOffchain,
     faucetOnchain,
+    refreshWallet,
     setFees,
     waitFor,
 } from "./utils";
@@ -464,6 +465,7 @@ describe("Common", () => {
                     }
                 }
 
+                await refreshWallet(alice.wallet);
                 const virtualCoinsAfterExit = await alice.wallet.getVtxos({
                     withUnrolled: true,
                 });
@@ -540,6 +542,7 @@ describe("Common", () => {
                         }
                     }
 
+                    await refreshWallet(alice.wallet);
                     const virtualCoinsAfterExit = await alice.wallet.getVtxos({
                         withUnrolled: true,
                     });
@@ -640,6 +643,7 @@ describe("Common", () => {
                         }
                     }
 
+                    await refreshWallet(alice.wallet);
                     const virtualCoinsAfterExit = await alice.wallet.getVtxos({
                         withUnrolled: true,
                     });
@@ -774,6 +778,7 @@ describe("Common", () => {
 
                 // wait until indexer reflects the swept instead of sleeping.
                 await waitFor(async () => {
+                    await refreshWallet(alice.wallet);
                     const v = await alice.wallet.getVtxos({
                         withRecoverable: true,
                     });

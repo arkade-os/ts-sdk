@@ -309,6 +309,18 @@ export function clearFees(): void {
     execCommand(`${arkdExec} arkd fees clear`);
 }
 
+/**
+ * Pull indexer state into the wallet's repository. Wallet reads are
+ * repository-only, so a test that changes VTXO state through something other
+ * than the wallet — an `Unroll.Session`, mining blocks until the server sweeps,
+ * a second wallet — must refresh before asserting, exactly as an embedder would.
+ */
+export async function refreshWallet(wallet: {
+    getContractManager: () => Promise<{ refreshVtxos: () => Promise<void> }>;
+}): Promise<void> {
+    await (await wallet.getContractManager()).refreshVtxos();
+}
+
 export async function waitFor(
     fn: () => Promise<boolean>,
     { timeout = 25_000, interval = 250 } = {},

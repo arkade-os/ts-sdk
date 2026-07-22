@@ -14,6 +14,7 @@ import {
     faucetOffchain,
     faucetOnchain,
     getServerInfo,
+    refreshWallet,
     rotateArkdSigner,
     waitFor,
 } from "./utils";
@@ -129,7 +130,11 @@ describe("deprecated-signer migration (real rotation)", () => {
 
         const amount = 10_000;
         faucetOffchain(await wallet.getAddress(), amount);
+        // Funded by the arkd CLI, so the wallet only learns of it via the
+        // subscription — which this suite deliberately disrupts by rotating
+        // arkd's signer. Refresh each round rather than racing the reconnect.
         const vtxos = await poll(async () => {
+            await refreshWallet(wallet);
             const v = await wallet.getVtxos();
             return v.length > 0 ? v : null;
         });

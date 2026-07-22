@@ -3396,6 +3396,19 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             await this.updateDbAfterSettle(params.inputs, commitmentTxid);
 
+            // `updateDbAfterSettle` marks the *inputs* spent; the settle's own
+            // output is only known to the indexer. Reads are repository-only, so
+            // without this the wallet's freshly settled funds stay invisible
+            // until an SSE event or the background sweep lands — on the most
+            // common flow there is. The new VTXO is `created_at`-recent, so the
+            // cursor-derived delta window catches it. Best-effort: never fail an
+            // already-committed settle.
+            try {
+                await (await this.getContractManager()).refreshVtxos();
+            } catch (e) {
+                console.warn("Failed to refresh VTXOs after settle", e);
+            }
+
             // Boarding rotation (rotate-on-board): if this settle swept any
             // boarding (on-chain) UTXO into Arkade, advance the boarding
             // address to a fresh HD index so the next deposit lands on a new
