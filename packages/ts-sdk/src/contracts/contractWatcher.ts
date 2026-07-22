@@ -180,11 +180,10 @@ export class ContractWatcher {
         // app launch and can confuse consumers that react to the event.
         await this.seedLastKnownVtxos(state);
 
-        // If we're already watching, poll to discover virtual outputs and update subscription
+        // If we're already watching, poll to seed virtual outputs and fold
+        // this script into the subscription.
         if (this.isWatching) {
-            // Poll first to discover virtual outputs (may affect whether we watch this contract).
             await this.pollContracts([contract.script]);
-            // Update subscription based on active state and virtual outputs.
             await this.tryUpdateSubscription();
         }
     }
@@ -313,7 +312,7 @@ export class ContractWatcher {
     }
 
     /**
-     * Start watching for virtual output events across all active contracts.
+     * Start watching for virtual output events across all watched contracts.
      */
     async startWatching(callback: ContractEventCallback): Promise<() => void> {
         if (this.isWatching) {
@@ -380,7 +379,7 @@ export class ContractWatcher {
     }
 
     /**
-     * Force a poll of all active contracts.
+     * Force a poll of all watched contracts.
      * Useful for manual refresh or after app resume.
      */
     async forcePoll(): Promise<void> {

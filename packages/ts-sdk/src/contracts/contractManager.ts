@@ -275,12 +275,15 @@ export interface IContractManager extends Disposable {
     ): Promise<Contract>;
 
     /**
-     * Convenience helper to update only the contract state.
+     * Convenience helper to update only the contract state. Note
+     * `inactive` does not stop watching; see {@link ContractState} and
+     * {@link deleteContract}.
      */
     setContractState(script: string, state: ContractState): Promise<void>;
 
     /**
-     * Delete a contract by script and stop watching it (if applicable).
+     * Delete a contract by script and stop watching it. This — not
+     * retiring via {@link setContractState} — is the stop-watching path.
      */
     deleteContract(script: string): Promise<void>;
 
@@ -513,8 +516,8 @@ export class ContractManager implements IContractManager {
      * Static factory method for creating a new ContractManager.
      * Initialize the manager by loading persisted contracts and starting to watch.
      *
-     * After initialization, the manager automatically watches all active contracts
-     * and contracts with virtual outputs. Use `onContractEvent()` to register event callbacks.
+     * After initialization, the manager automatically watches every persisted
+     * contract. Use `onContractEvent()` to register event callbacks.
      *
      * @param config ContractManagerConfig
      */
@@ -1131,14 +1134,18 @@ export class ContractManager implements IContractManager {
     }
 
     /**
-     * Set a contract's state.
+     * Set a contract's state. Retiring (`inactive`) keeps it watched;
+     * see {@link ContractState}. To stop watching, use
+     * {@link deleteContract}.
      */
     async setContractState(script: string, state: ContractState): Promise<void> {
         await this.updateContract(script, { state });
     }
 
     /**
-     * Delete a contract.
+     * Delete a contract. Also removes it from the watcher — the only way
+     * to stop watching a contract (retiring it via
+     * {@link setContractState} does not).
      *
      * @param script - Contract script
      */

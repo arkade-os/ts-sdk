@@ -9,7 +9,12 @@ import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 
 /**
- * Contract state indicating whether it should be actively monitored.
+ * Contract lifecycle state. Both states stay monitored — the watcher
+ * subscribes and sweeps every registered contract regardless
+ * (see {@link ContractWatcher.getWatchedContracts}), because a retired
+ * receive address can still be paid. `inactive` only demotes a contract
+ * out of receive-address selection; it does **not** unsubscribe it.
+ * Use {@link IContractManager.deleteContract} to stop watching.
  */
 export type ContractState = "active" | "inactive";
 
