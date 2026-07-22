@@ -2445,7 +2445,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 }
 
                 if (delegateManager) {
-                    // TODO: review this
                     delegateManager.delegate(event.vtxos, destination).catch((e) => {
                         console.error("Error delegating VTXOs:", e);
                     });

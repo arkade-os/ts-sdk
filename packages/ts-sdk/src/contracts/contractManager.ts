@@ -1103,18 +1103,27 @@ export class ContractManager implements IContractManager {
         return await this.config.contractRepository.getContracts(dbFilter);
     }
 
+    /**
+     * @param options - Read options. A bare `number` is the pre-0.5 `pageSize`
+     * argument and is read as `{ sync: true, pageSize }`, since back then every
+     * call synced — TypeScript rejects it, but compiled JS would otherwise
+     * silently degrade to a repository-only read.
+     */
     async getContractsWithVtxos(
         filter?: GetContractsFilter,
-        options?: GetContractsWithVtxosOptions,
+        options?: GetContractsWithVtxosOptions | number,
     ): Promise<ContractWithVtxos[]> {
+        const opts: GetContractsWithVtxosOptions | undefined =
+            typeof options === "number" ? { sync: true, pageSize: options } : options;
+
         const contracts = await this.getContracts(filter);
-        if (options?.sync) {
+        if (opts?.sync) {
             // Best-effort: on a retryable indexer/operator failure, serve
             // repository state rather than failing the read. The failed sync
             // writes no partial state and does not advance the cursor (targeted
             // subset queries never do). Terminal failures still propagate.
             try {
-                await this.syncContracts({ contracts, pageSize: options.pageSize });
+                await this.syncContracts({ contracts, pageSize: opts.pageSize });
                 this.markSyncOnline();
             } catch (err) {
                 if (!isRetryableProviderError(err)) throw err;

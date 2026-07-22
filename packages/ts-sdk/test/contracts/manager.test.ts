@@ -317,6 +317,25 @@ describe("ContractManager", () => {
         );
     });
 
+    // Pre-0.5 JS callers pass pageSize positionally. TypeScript rejects it, but
+    // compiled JS would silently degrade to a repository-only read.
+    it("getContractsWithVtxos treats a numeric second argument as the legacy pageSize", async () => {
+        await manager.createContract({
+            type: "default",
+            params: createDefaultContractParams(),
+            script: TEST_DEFAULT_SCRIPT,
+            address: "address",
+        });
+
+        (mockIndexer.getVtxos as any).mockClear();
+        await (manager as any).getContractsWithVtxos(undefined, 7);
+
+        expect(mockIndexer.getVtxos).toHaveBeenCalled();
+        for (const [opts] of (mockIndexer.getVtxos as any).mock.calls) {
+            expect(opts.pageSize).toBe(7);
+        }
+    });
+
     it("getContractsWithVtxos issues no query without the sync flag", async () => {
         await manager.createContract({
             type: "default",
