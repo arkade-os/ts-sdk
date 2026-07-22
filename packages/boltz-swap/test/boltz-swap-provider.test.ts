@@ -209,6 +209,119 @@ describe("BoltzSwapProvider", () => {
         });
     });
 
+    describe("pair-metadata cache", () => {
+        const submarineResponse = {
+            ARK: {
+                BTC: {
+                    hash: "mock-hash",
+                    rate: 0.0001,
+                    limits: { maximal: 1000000, minimal: 1000, maximalZeroConf: 0 },
+                    fees: { percentage: 0.01, minerFees: 1000 },
+                },
+            },
+        };
+        const reverseResponse = {
+            BTC: {
+                ARK: {
+                    hash: "mock-hash",
+                    rate: 1,
+                    limits: { maximal: 4294967, minimal: 1000 },
+                    fees: { percentage: 0.4, minerFees: { claim: 0, lockup: 0 } },
+                },
+            },
+        };
+        const chainPair = {
+            hash: "mock-hash",
+            rate: 1,
+            limits: { maximal: 2000000, minimal: 5000, maximalZeroConf: 0 },
+            fees: { percentage: 0.1, minerFees: { server: 100, user: { claim: 50, lockup: 60 } } },
+        };
+        const chainResponse = { ARK: { BTC: chainPair }, BTC: { ARK: chainPair } };
+
+        // Branch the fetch mock on the requested pair endpoint.
+        const pairFetch = () =>
+            vi.fn((url: string) =>
+                createFetchResponse(
+                    url.includes("/reverse")
+                        ? reverseResponse
+                        : url.includes("/chain")
+                          ? chainResponse
+                          : submarineResponse,
+                ),
+            );
+
+        it("reuses the cached submarine response across getLimits() calls", async () => {
+            const mockFetch = pairFetch();
+            vi.stubGlobal("fetch", mockFetch);
+            const a = await provider.getLimits();
+            const b = await provider.getLimits();
+            expect(a).toEqual({ min: 1000, max: 1000000 });
+            expect(b).toEqual(a);
+            expect(mockFetch).toHaveBeenCalledTimes(1); // second call served from cache
+        });
+
+        it("serves getLimits from the submarine response cached by getFees", async () => {
+            const mockFetch = pairFetch();
+            vi.stubGlobal("fetch", mockFetch);
+            await provider.getFees(); // fetches submarine + reverse
+            const limits = await provider.getLimits(); // submarine from cache
+            expect(limits).toEqual({ min: 1000, max: 1000000 });
+            expect(mockFetch).toHaveBeenCalledTimes(2);
+        });
+
+        it("reuses the cached chain response across getChainLimits/getChainFees", async () => {
+            const mockFetch = pairFetch();
+            vi.stubGlobal("fetch", mockFetch);
+            const limits = await provider.getChainLimits("ARK", "BTC");
+            const fees = await provider.getChainFees("ARK", "BTC");
+            expect(limits).toEqual({ min: 5000, max: 2000000 });
+            expect(fees).toEqual(chainPair.fees);
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+        });
+
+        it("dedupes the in-flight submarine GET across concurrent getLimits/getFees", async () => {
+            const mockFetch = pairFetch();
+            vi.stubGlobal("fetch", mockFetch);
+            await Promise.all([provider.getLimits(), provider.getFees()]);
+            const submarineCalls = mockFetch.mock.calls.filter((c) =>
+                c[0].includes("/submarine"),
+            ).length;
+            expect(submarineCalls).toBe(1);
+        });
+
+        it("does not cache a schema-invalid response; the next call refetches", async () => {
+            const mockFetch = vi
+                .fn()
+                .mockReturnValueOnce(createFetchResponse({ invalid: "response" }))
+                .mockReturnValue(createFetchResponse(submarineResponse));
+            vi.stubGlobal("fetch", mockFetch);
+            await expect(provider.getLimits()).rejects.toThrow(SchemaError);
+            const limits = await provider.getLimits();
+            expect(limits).toEqual({ min: 1000, max: 1000000 });
+            expect(mockFetch).toHaveBeenCalledTimes(2);
+        });
+
+        it("refetches once the 15-minute TTL expires", async () => {
+            vi.useFakeTimers();
+            try {
+                const mockFetch = pairFetch();
+                vi.stubGlobal("fetch", mockFetch);
+                await provider.getLimits();
+                expect(mockFetch).toHaveBeenCalledTimes(1);
+                // just before expiry: still served from cache
+                vi.advanceTimersByTime(15 * 60 * 1000 - 1);
+                await provider.getLimits();
+                expect(mockFetch).toHaveBeenCalledTimes(1);
+                // past the TTL: refetch
+                vi.advanceTimersByTime(2);
+                await provider.getLimits();
+                expect(mockFetch).toHaveBeenCalledTimes(2);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+    });
+
     describe("getSwapStatus", () => {
         it("should fetch swap status by ID", async () => {
             // arrange
