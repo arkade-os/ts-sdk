@@ -1108,6 +1108,9 @@ export class ContractManager implements IContractManager {
      * argument and is read as `{ sync: true, pageSize }`, since back then every
      * call synced — TypeScript rejects it, but compiled JS would otherwise
      * silently degrade to a repository-only read.
+     *
+     * TODO(next major): drop the `number` overload and the normalization below,
+     * narrowing `options` to {@link GetContractsWithVtxosOptions}.
      */
     async getContractsWithVtxos(
         filter?: GetContractsFilter,

@@ -319,6 +319,7 @@ describe("ContractManager", () => {
 
     // Pre-0.5 JS callers pass pageSize positionally. TypeScript rejects it, but
     // compiled JS would silently degrade to a repository-only read.
+    // TODO(next major): delete with the shim it covers.
     it("getContractsWithVtxos treats a numeric second argument as the legacy pageSize", async () => {
         await manager.createContract({
             type: "default",
