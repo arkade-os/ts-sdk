@@ -1179,7 +1179,8 @@ export class ContractManager implements IContractManager {
             // `contracts` because `scripts` already names the exact set.
             includeInactive: contracts ? false : opts?.includeInactive,
             window: hasExplicitWindow ? { after: opts?.after, before: opts?.before } : undefined,
-            reconcile: true,
+            // Only re-check current coins on a normal refresh, not when fetching old history.
+            reconcile: !hasExplicitWindow,
         });
     }
 
