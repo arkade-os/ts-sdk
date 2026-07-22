@@ -87,6 +87,25 @@ importers:
         specifier: ^7.3.6
         version: 7.3.6(@types/node@25.9.2)(lightningcss@1.32.0)(terser@5.48.0)(yaml@2.9.0)
 
+  packages/sync:
+    dependencies:
+      '@arkade-os/sdk':
+        specifier: workspace:*
+        version: link:../ts-sdk
+      '@noble/ciphers':
+        specifier: 2.2.0
+        version: 2.2.0
+      '@noble/hashes':
+        specifier: 2.0.1
+        version: 2.0.1
+      '@scure/base':
+        specifier: 2.0.0
+        version: 2.0.0
+    devDependencies:
+      fake-indexeddb:
+        specifier: 6.2.5
+        version: 6.2.5
+
   packages/ts-sdk:
     dependencies:
       '@bitcoinerlab/descriptors-scure':
@@ -1181,6 +1200,10 @@ packages:
     resolution: {integrity: sha512-oaTrAziGr3zDLFiMt/yLU3nZuRMawyWQB5X1a0I7s9eGy3JYzX9l8ZXXHyMd64nzbeVFZTewuUShwsZQdK6UCA==}
     engines: {node: '>=20.19.0'}
     hasBin: true
+
+  '@noble/ciphers@2.2.0':
+    resolution: {integrity: sha512-Z6pjIZ/8IJcCGzb2S/0Px5J81yij85xASuk1teLNeg75bfT07MV3a/O2Mtn1I2se43k3lkVEcFaR10N4cgQcZA==}
+    engines: {node: '>= 20.19.0'}
 
   '@noble/curves@2.0.1':
     resolution: {integrity: sha512-vs1Az2OOTBiP4q0pwjW5aF0xp9n4MxVrmkFBxc6EKZc6ddYx5gaZiAsZoq0uRRXWbi3AT/sBqn05eRPtn1JCPw==}
@@ -5061,6 +5084,8 @@ snapshots:
       '@jridgewell/sourcemap-codec': 1.5.5
 
   '@marcbachmann/cel-js@8.0.0': {}
+
+  '@noble/ciphers@2.2.0': {}
 
   '@noble/curves@2.0.1':
     dependencies:
