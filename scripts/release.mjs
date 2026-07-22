@@ -410,8 +410,8 @@ function gitCurrentBranch() {
 }
 
 function assertReleaseBranch(plan) {
-    const isPrerelease = [...plan.values()].some((v) => parseVersion(v.next).pre);
-    if (isPrerelease) return;
+    const hasStableVersion = [...plan.values()].some((v) => !parseVersion(v.next).pre);
+    if (!hasStableVersion) return;
 
     const branch = gitCurrentBranch();
     if (branch !== RELEASE_BRANCH) {
