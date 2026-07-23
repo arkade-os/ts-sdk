@@ -111,6 +111,7 @@ Foreground (app active):
   setInterval calls runForegroundPoll()
   → runTasks() dispatches to ContractPollProcessor
   → Processor fetches VTXOs from indexer, saves to repository
+  → Wallet reads consume the updated repository state
   → Results acknowledged immediately, task re-seeded
 
 Background (15+ min later):

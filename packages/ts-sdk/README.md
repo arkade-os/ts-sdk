@@ -1247,9 +1247,11 @@ This is required for MuSig2 settlements and cryptographic operations.
 
 ### Contract Management
 
-Both `Wallet` and `ServiceWorkerWallet` use a `ContractManager` internally to watch for virtual outputs. This provides resilient connection handling with automatic reconnection and failsafe polling - for your wallet's default address and any external contracts you register (Boltz swaps, HTLCs, etc.).
+Both `Wallet` and `ServiceWorkerWallet` use a `ContractManager` internally to watch for virtual outputs and persist them into repositories. This provides resilient connection handling with automatic reconnection and failsafe polling - for your wallet's default address and any external contracts you register (Boltz swaps, HTLCs, etc.).
 
-When you call `wallet.notifyIncomingFunds()` or use `waitForIncomingFunds()`, it uses the ContractManager under the hood, giving you automatic reconnection and failsafe polling for free - no code changes needed.
+When you call `wallet.notifyIncomingFunds()` or use `waitForIncomingFunds()`, it uses the ContractManager under the hood, giving you automatic reconnection and repository-backed event replay for free - no code changes needed.
+
+`watcherConfig.failsafePollIntervalMs` (default `20_000`) controls how often the watcher replays repository changes into contract events; it does not fetch fresh VTXOs from the indexer.
 
 For advanced use cases, you can access the ContractManager directly to register external contracts:
 
@@ -1312,21 +1314,22 @@ const allPaths = await manager.getAllSpendingPaths({
 // Fetch contracts together with their current virtual outputs
 const contractsWithVtxos = await manager.getContractsWithVtxos()
 
-// Force a full refresh from the indexer when needed
+// Force an indexer refresh of the watched contracts when needed
 await manager.refreshVtxos()
 
 // Stop watching
 unsubscribe()
 ```
 
-The watcher features:
-- **Automatic reconnection** with exponential backoff (1s → 30s max)
-- **Failsafe polling** every 60 seconds to catch missed events
-- **Immediate sync** on connection and after failures
+Contract freshness behavior:
+- **Automatic reconnection** with exponential backoff (1s → 5s max)
+- **Immediate sync** on manager initialization, subscription reconnect, and contract events
+- **Failsafe polling** every 20 seconds by default to catch missed events, configurable via `watcherConfig.failsafePollIntervalMs`
+- **Manual refresh** through `manager.refreshVtxos()`; pass `{ includeInactive: true }` to sweep every repository contract
 
 ### Repository Pattern
 
-Most users don't need to touch repositories directly — `Wallet` and `ContractManager` already read and write through them. They are documented here for advanced integrations (custom storage backends, offline-first apps, repository inspection).
+Most users don't need to touch repositories directly — `Wallet` reads through them and `ContractManager` owns VTXO/contract synchronization into them. They are documented here for advanced integrations (custom storage backends, offline-first apps, repository inspection).
 
 ```typescript
 // Wallet repository — VTXOs, UTXOs, transaction history, settings
