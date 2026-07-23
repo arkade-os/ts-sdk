@@ -411,6 +411,20 @@ describe("RealmWalletRepository", () => {
             expect(await repository.getVtxos(address2)).toHaveLength(1);
         });
 
+        it("should delete only the named VTXOs by outpoint", async () => {
+            const address1 = "address-1";
+            const address2 = "address-2";
+            await repository.saveVtxos(address1, [createMockVtxo("tx1", 0, 10000)]);
+            await repository.saveVtxos(address2, [createMockVtxo("tx2", 0, 20000)]);
+
+            await repository.deleteVtxosByOutpoint([{ txid: "tx1", vout: 0 }]);
+
+            expect(await repository.getVtxos(address1)).toEqual([]);
+            const remaining = await repository.getVtxos(address2);
+            expect(remaining).toHaveLength(1);
+            expect(remaining[0].txid).toBe("tx2");
+        });
+
         it("should preserve createdAt date through round-trip", async () => {
             const vtxo = createMockVtxo("tx-date", 0, 1000);
             vtxo.createdAt = new Date("2024-06-15T10:30:00.000Z");

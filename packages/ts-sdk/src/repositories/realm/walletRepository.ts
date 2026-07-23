@@ -1,4 +1,4 @@
-import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
+import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin, Outpoint } from "../../wallet";
 import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
 import {
     serializeVtxo,
@@ -131,6 +131,19 @@ export class RealmWalletRepository implements WalletRepository {
         this.realm.write(() => {
             const toDelete = this.realm.objects("ArkVtxo").filtered("script == $0", script);
             this.realm.delete(toDelete);
+        });
+    }
+
+    async deleteVtxosByOutpoint(outpoints: Outpoint[]): Promise<void> {
+        if (outpoints.length === 0) return;
+        await this.ensureInit();
+        this.realm.write(() => {
+            for (const { txid, vout } of outpoints) {
+                const toDelete = this.realm
+                    .objects("ArkVtxo")
+                    .filtered("txid == $0 AND vout == $1", txid, vout);
+                this.realm.delete(toDelete);
+            }
         });
     }
 

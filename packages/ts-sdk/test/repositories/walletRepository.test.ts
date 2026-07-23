@@ -167,6 +167,23 @@ describe.each(walletRepositoryImplementations)("WalletRepository: $name", ({ fac
             expect(await repository.getVtxos(address2)).toEqual([]);
         });
 
+        it("should delete only the named VTXOs by outpoint, leaving the rest", async () => {
+            const address1 = "address1";
+            const address2 = "address2";
+            const vtxo1 = createMockVtxo("tx1", 0, 10000);
+            const vtxo2 = createMockVtxo("tx2", 0, 20000);
+
+            await repository.saveVtxos(address1, [vtxo1]);
+            await repository.saveVtxos(address2, [vtxo2]);
+
+            await repository.deleteVtxosByOutpoint!([{ txid: "tx1", vout: 0 }]);
+
+            expect(await repository.getVtxos(address1)).toEqual([]);
+            const remaining = await repository.getVtxos(address2);
+            expect(remaining).toHaveLength(1);
+            expect(remaining[0].txid).toBe("tx2");
+        });
+
         if (name.includes("IndexedDB")) {
             it("should dedup same outpoint across address buckets in getVtxosForScript", async () => {
                 const script1 = "script1";

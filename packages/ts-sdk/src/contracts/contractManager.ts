@@ -37,11 +37,19 @@ import {
     getSyncCursor,
 } from "../utils/syncCursors";
 import {
+    deleteVtxosForContract,
     getVtxosForContract,
     saveVtxosForContract,
+    vtxoOutpoint,
     warnAndFilterVtxosForScript,
 } from "./vtxoOwnership";
 import { DEFAULT_PAGE_SIZE } from "./constants";
+
+/** Consecutive syncs a stored coin must be absent from the indexer before reconcile deletes it. */
+export const RECONCILE_ABSENCE_THRESHOLD = 3;
+
+/** Minimum gap between reconcile existence checks, so chatty reads collapse into one probe. */
+const RECONCILE_MIN_INTERVAL_MS = 15_000;
 
 /**
  * Whether two *different* contract types may legitimately share a single
@@ -431,6 +439,14 @@ export interface ContractManagerConfig {
      */
     onVtxosSpent?: (vtxos: Outpoint[]) => Promise<void>;
 
+    /**
+     * Optional exit-data prune hook for coins that vanished without a spend
+     * (chain reset/reorg). Reconcile is their only cleanup point, so a
+     * configured virtualTxRepository can drop their now-unusable branch here.
+     * Absent ⇒ no-op.
+     */
+    onVtxosVanished?: (vtxos: Outpoint[]) => Promise<void>;
+
     /** Watcher configuration */
     watcherConfig?: Partial<ContractWatcherConfig>;
 }
@@ -496,6 +512,8 @@ export class ContractManager implements IContractManager {
     private initialized = false;
     private eventCallbacks: Set<ContractEventCallback> = new Set();
     private stopWatcherFn?: () => void;
+    private readonly vanishMissCounts = new Map<string, number>();
+    private readonly lastReconcileByContract = new Map<string, number>();
     /** `undefined` while online; the failure reason once a sync degrades. */
     private syncDegradedReason?: string;
     /** Epoch-ms of the last successful provider sync, if any. */
@@ -600,7 +618,7 @@ export class ContractManager implements IContractManager {
      * outputs that could sit outside any delta window.
      */
     private async reconcileWatched(): Promise<void> {
-        await this.syncContracts({});
+        await this.syncContracts({ reconcile: true });
         const watched = this.watcher.getWatchedContracts();
         if (watched.length > 0) {
             await this.reconcilePendingFrontier(watched);
@@ -1029,7 +1047,7 @@ export class ContractManager implements IContractManager {
         // failed sync writes no partial state and does not advance the cursor
         // (targeted subset queries never do). Terminal failures still propagate.
         try {
-            await this.syncContracts({ contracts, pageSize });
+            await this.syncContracts({ contracts, pageSize, reconcile: true });
             this.markSyncOnline();
         } catch (err) {
             if (!isRetryableProviderError(err)) throw err;
@@ -1255,6 +1273,8 @@ export class ContractManager implements IContractManager {
             // `contracts` because `scripts` already names the exact set.
             includeInactive: contracts ? false : opts?.includeInactive,
             window: hasExplicitWindow ? { after: opts?.after, before: opts?.before } : undefined,
+            // Only re-check current coins on a normal refresh, not when fetching old history.
+            reconcile: !hasExplicitWindow,
         });
     }
 
@@ -1400,6 +1420,9 @@ export class ContractManager implements IContractManager {
         // watched set. This is a superset of the watched set, so the
         // cursor invariant still holds and the cursor still advances.
         includeInactive?: boolean;
+        // Run the vanished-vtxo existence check after the sync. Off for
+        // per-contract push events; on for reads and reconnect.
+        reconcile?: boolean;
     }): Promise<Map<string, ExtendedContractVtxo[]>> {
         const cursor = await getSyncCursor(this.config.walletRepository);
         const window = options.window ?? computeSyncWindow(cursor);
@@ -1431,7 +1454,101 @@ export class ContractManager implements IContractManager {
             await advanceSyncCursor(this.config.walletRepository, cutoff);
         }
 
+        if (options.reconcile) {
+            await this.reconcileVanishedVtxos(contracts);
+        }
+
         return result;
+    }
+
+    /**
+     * Delete unspent VTXOs the indexer no longer knows, checked by outpoint.
+     * Requires {@link RECONCILE_ABSENCE_THRESHOLD} consecutive absences so a
+     * transient empty response never drops a real coin; a failed lookup never deletes.
+     */
+    private async reconcileVanishedVtxos(contracts: Contract[]): Promise<void> {
+        const now = Date.now();
+
+        try {
+            const owned: { contract: Contract; unspent: ExtendedVirtualCoin[] }[] = [];
+            const toCheck: ExtendedVirtualCoin[] = [];
+            for (const contract of contracts) {
+                const lastReconcile = this.lastReconcileByContract.get(contract.script) ?? 0;
+                if (now - lastReconcile < RECONCILE_MIN_INTERVAL_MS) continue;
+                const stored = await getVtxosForContract(this.config.walletRepository, contract);
+                const unspent: ExtendedVirtualCoin[] = [];
+                for (const v of stored) {
+                    if (v.isSpent) {
+                        // Now-spent coin left the unspent set; drop any stale absence counter.
+                        this.vanishMissCounts.delete(vtxoOutpoint(v));
+                    } else {
+                        unspent.push(v);
+                    }
+                }
+                if (unspent.length > 0) {
+                    this.lastReconcileByContract.set(contract.script, now);
+                    owned.push({ contract, unspent });
+                    toCheck.push(...unspent);
+                }
+            }
+            if (toCheck.length === 0) return;
+
+            const present = await this.fetchPresentOutpoints(toCheck);
+
+            for (const { contract, unspent } of owned) {
+                const vanished: ExtendedVirtualCoin[] = [];
+                for (const v of unspent) {
+                    const key = vtxoOutpoint(v);
+                    if (present.has(key)) {
+                        this.vanishMissCounts.delete(key);
+                        continue;
+                    }
+                    const misses = (this.vanishMissCounts.get(key) ?? 0) + 1;
+                    if (misses >= RECONCILE_ABSENCE_THRESHOLD) {
+                        this.vanishMissCounts.delete(key);
+                        vanished.push(v);
+                    } else {
+                        this.vanishMissCounts.set(key, misses);
+                    }
+                }
+                if (vanished.length > 0) {
+                    await deleteVtxosForContract(this.config.walletRepository, contract, vanished);
+                    this.emitEvent({
+                        type: "vtxo_vanished",
+                        contractScript: contract.script,
+                        vtxos: vanished.map((v) => ({ ...v, contractScript: contract.script })),
+                        contract,
+                        timestamp: now,
+                    });
+                    if (this.config.onVtxosVanished) {
+                        try {
+                            await this.config.onVtxosVanished(
+                                vanished.map((v) => ({ txid: v.txid, vout: v.vout })),
+                            );
+                        } catch {
+                            // prune is best-effort; never block reconcile
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.error("reconcileVanishedVtxos: vanished-vtxo reconciliation failed:", error);
+        }
+    }
+
+    /** Outpoints the indexer still knows, across all pages (absent = truly gone). */
+    private async fetchPresentOutpoints(vtxos: ExtendedVirtualCoin[]): Promise<Set<string>> {
+        const outpoints = vtxos.map((v) => ({ txid: v.txid, vout: v.vout }));
+        const present = new Set<string>();
+        const BATCH_SIZE = 100;
+
+        for (let i = 0; i < outpoints.length; i += BATCH_SIZE) {
+            const { vtxos: found } = await getNormalizedVtxos(this.config.indexerProvider, {
+                outpoints: outpoints.slice(i, i + BATCH_SIZE),
+            });
+            for (const v of found) present.add(vtxoOutpoint(v));
+        }
+        return present;
     }
 
     /**

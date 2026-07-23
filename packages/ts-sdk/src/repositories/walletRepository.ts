@@ -1,4 +1,4 @@
-import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../wallet";
+import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin, Outpoint } from "../wallet";
 
 export interface WalletState {
     /** Arbitrary stored wallet settings. */
@@ -64,6 +64,12 @@ export interface WalletRepository extends AsyncDisposable {
      * @optional SDK backends implement this; custom backends fall back to Tier 1.
      */
     deleteVtxosForScript?(script: string): Promise<void>;
+
+    /**
+     * Delete specific stored virtual outputs by outpoint.
+     * @optional SDK backends implement this; custom backends fall back to Tier 1.
+     */
+    deleteVtxosByOutpoint?(outpoints: Outpoint[]): Promise<void>;
 
     /** Fetch stored boarding inputs for an address. */
     getUtxos(address: string): Promise<ExtendedCoin[]>;

@@ -104,3 +104,21 @@ export async function saveVtxosForContract(
     validateVtxosForScript(vtxos, contract.script, "saveVtxosForContract");
     return repo.saveVtxos(contract.address, vtxos);
 }
+
+export async function deleteVtxosForContract(
+    repo: WalletRepository,
+    contract: Pick<Contract, "script" | "address">,
+    vtxos: Array<Pick<ExtendedVirtualCoin, "txid" | "vout">>,
+): Promise<void> {
+    if (vtxos.length === 0) return;
+    if (repo.deleteVtxosByOutpoint) {
+        return repo.deleteVtxosByOutpoint(vtxos.map((v) => ({ txid: v.txid, vout: v.vout })));
+    }
+    // Fallback: rewrite the address bucket without the removed coins.
+    const gone = new Set(vtxos.map(vtxoOutpoint));
+    const remaining = (await repo.getVtxos(contract.address)).filter(
+        (v) => !gone.has(vtxoOutpoint(v)),
+    );
+    await repo.deleteVtxos(contract.address);
+    await repo.saveVtxos(contract.address, remaining);
+}

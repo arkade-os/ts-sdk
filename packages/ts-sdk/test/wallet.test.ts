@@ -20,6 +20,7 @@ import { TEST_PUB_KEY, TEST_DELEGATE_PUB_KEY, TEST_SERVER_PUB_KEY } from "./cont
 import type { ExtendedCoin, ExtendedVirtualCoin } from "../src/wallet";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
 import { MAX_VTXOS_PER_SETTLEMENT } from "../src/wallet/vtxo-manager";
+import { RECONCILE_ABSENCE_THRESHOLD } from "../src/contracts/contractManager";
 import { ReadonlySingleKey } from "../src/identity/singleKey";
 import { IndexedDBWalletRepository, IndexedDBContractRepository } from "../src/repositories";
 import type { Coin, VirtualCoin } from "../src/wallet";
@@ -879,6 +880,39 @@ describe("Wallet", () => {
             const cached = await walletRepository.getVtxos(await wallet.getAddress());
             expect(cached).toHaveLength(1);
             expect(cached[0].isSpent).toBe(true);
+        });
+
+        it("drops a cached VTXO the indexer no longer returns at all (chain reset)", async () => {
+            let walletScript = "";
+            let chainReset = false;
+            const getVtxos = vi
+                .fn<IndexerProvider["getVtxos"]>()
+                .mockImplementation(async (opts) => {
+                    if (!walletScript && opts?.scripts?.[0]) {
+                        walletScript = opts.scripts[0];
+                    }
+                    return { vtxos: chainReset ? [] : [createMockVtxo(walletScript)] };
+                });
+
+            const { wallet, walletRepository } = await createReadonlyTestWallet(getVtxos);
+
+            expect(await wallet.getVtxos()).toHaveLength(1);
+
+            // Chain reset: the indexer no longer reports the VTXO at all (not even spent).
+            chainReset = true;
+
+            // The ghost is dropped only after it stays absent across the threshold.
+            // Reset the reconcile cooldown each pass so the rapid loop actually re-checks.
+            const manager = await wallet.getContractManager();
+            for (let i = 0; i < RECONCILE_ABSENCE_THRESHOLD; i++) {
+                (manager as any).lastReconcileByContract.clear();
+                await wallet.getVtxos();
+            }
+
+            expect(await wallet.getVtxos()).toEqual([]);
+
+            const cached = await walletRepository.getVtxos(await wallet.getAddress());
+            expect(cached).toEqual([]);
         });
 
         it("normalizes VTXOs from a legacy-only custom indexer provider", async () => {
