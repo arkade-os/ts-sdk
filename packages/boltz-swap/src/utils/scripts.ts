@@ -5,10 +5,9 @@ import { ripemd160 } from "@noble/hashes/legacy.js";
 
 /**
  * Boltz-Ark VHTLC timeouts. See {@link ./vhtlc.ts#VhtlcTimeouts} for the
- * canonical definition; this duplicate exists only to keep the legacy
- * `createVHTLCScript` exported from this module type-aligned. `refund` is an
- * absolute Unix timestamp; the unilateral fields are BIP68 relative delays
- * (seconds when ≥ 512).
+ * canonical definition — including which BIP65 form `refund` takes — this
+ * duplicate exists only to keep the legacy `createVHTLCScript` exported from
+ * this module type-aligned.
  */
 export type VhtlcTimeouts = {
     refund: number;

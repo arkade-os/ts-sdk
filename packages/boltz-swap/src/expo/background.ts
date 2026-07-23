@@ -22,7 +22,13 @@ import * as BackgroundTask from "expo-background-task";
 import type { TaskItem } from "@arkade-os/sdk/worker/expo";
 import { runTasks } from "@arkade-os/sdk/worker/expo";
 import { ExpoArkProvider, ExpoIndexerProvider } from "@arkade-os/sdk/adapters/expo";
-import { getRandomId, type IWallet, type NetworkName } from "@arkade-os/sdk";
+import {
+    ESPLORA_URL,
+    EsploraProvider,
+    getRandomId,
+    type IWallet,
+    type NetworkName,
+} from "@arkade-os/sdk";
 import { BoltzSwapProvider } from "../boltz-swap-provider";
 import { swapsPollProcessor, SWAP_POLL_TASK_TYPE } from "./swapsPollProcessor";
 import type {
@@ -127,6 +133,13 @@ export function defineExpoSwapBackgroundTask(
 
             const arkProvider = new ExpoArkProvider(config.arkServerUrl);
             const indexerProvider = new ExpoIndexerProvider(config.arkServerUrl);
+            // No Expo variant needed: the two above exist for SSE/EventSource, which
+            // EsploraProvider does not use. The URL argument is not optional in
+            // practice — the no-arg constructor defaults to the *default* network's
+            // endpoint, regardless of the network we persisted.
+            const onchainProvider = new EsploraProvider(
+                config.esploraUrl ?? ESPLORA_URL[config.network],
+            );
             const swapProvider = new BoltzSwapProvider({
                 network: config.network,
                 apiUrl: config.boltzApiUrl,
@@ -152,6 +165,7 @@ export function defineExpoSwapBackgroundTask(
                 swapProvider,
                 arkProvider,
                 indexerProvider,
+                onchainProvider,
                 identity,
                 wallet,
             };

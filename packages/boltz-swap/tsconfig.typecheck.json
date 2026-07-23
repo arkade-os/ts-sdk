@@ -1,0 +1,16 @@
+// Type-test config for Vitest's typecheck mode.
+//
+// The package tsconfig excludes `test/` — production builds and `pnpm typecheck`
+// must keep ignoring it — but that means `.test-d.ts` assertions would never be
+// checked by anything: Vitest transpiles tests through esbuild, which strips
+// types without checking them, so an `expectTypeOf` assertion in a plain test
+// file is a runtime no-op that passes green regardless of what it claims.
+//
+// This config includes the type-test files (and only those, not the runtime
+// `.test.ts` suites, which have never been typechecked) so the assertions
+// actually bite.
+{
+    "extends": "./tsconfig.json",
+    "include": ["src/**/*.ts", "test/**/*.test-d.ts", "../../config/types/**/*.d.ts"],
+    "exclude": ["node_modules", "dist", "test/e2e", "src/repositories/realm"]
+}

@@ -109,6 +109,7 @@ describe("swapsPollProcessor", () => {
             swapProvider: mockSwapProvider as BoltzSwapProvider,
             arkProvider: {} as any,
             indexerProvider: {} as any,
+            onchainProvider: { getChainTip: vi.fn() } as any,
             identity: {} as any,
             wallet: {} as any,
         };
@@ -116,6 +117,18 @@ describe("swapsPollProcessor", () => {
 
     it("should have the correct task type", () => {
         expect(swapsPollProcessor.taskType).toBe(SWAP_POLL_TASK_TYPE);
+    });
+
+    it("passes the onchain provider through to ArkadeSwaps", async () => {
+        // The background wallet is a shim with no providers, so ArkadeSwaps has
+        // nothing to fall back to: without this explicitly threaded through,
+        // onchainProvider resolves to null and block-height refund locktimes
+        // never mature.
+        await swapsPollProcessor.execute(createTaskItem(), deps);
+
+        expect(ArkadeSwaps).toHaveBeenCalledWith(
+            expect.objectContaining({ onchainProvider: deps.onchainProvider }),
+        );
     });
 
     it("should return success with no swaps", async () => {

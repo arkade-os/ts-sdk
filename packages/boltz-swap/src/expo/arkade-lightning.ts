@@ -146,11 +146,20 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
             );
         }
 
+        // Best-effort, unlike arkServerUrl above, which throws when underivable:
+        // `EsploraProvider.baseUrl` is TS-private and the OnchainProvider
+        // interface exposes no URL at all, so a non-Esplora implementation
+        // legitimately yields nothing. The background task falls back to the
+        // network default in that case.
+        const derivedEsploraUrl = (inner.onchainProvider as unknown as { baseUrl?: string } | null)
+            ?.baseUrl;
+
         // Persist config for background handler rehydration
         const bgConfig: PersistedSwapBackgroundConfig = {
             boltzApiUrl: config.swapProvider.getApiUrl(),
             arkServerUrl,
             network: config.swapProvider.getNetwork(),
+            esploraUrl: config.esploraUrl ?? derivedEsploraUrl ?? undefined,
         };
         await taskQueue.persistConfig(bgConfig);
 

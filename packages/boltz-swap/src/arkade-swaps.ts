@@ -16,6 +16,7 @@ import {
     IndexerProvider,
     isArkError,
     IWallet,
+    OnchainProvider,
     VHTLC,
     ArkInfo,
     isRecoverable,
@@ -102,6 +103,14 @@ import { IndexedDbSwapRepository } from "./repositories/IndexedDb/swap-repositor
 import { SwapRepository } from "./repositories/swap-repository";
 import { claimVHTLCIdentity } from "./utils/identity";
 import {
+    CLTV_IMMATURE_RETRY_SEC,
+    isBlockHeightLocktime,
+    isRefundLocktimeReached,
+    refundLocktimeBasis,
+    refundRetryAt,
+    type ChainTipSnapshot,
+} from "./utils/locktime";
+import {
     candidateServerPubkeys,
     claimVHTLCwithOffchainTx,
     createVHTLCScript,
@@ -122,8 +131,9 @@ type SubmarineVHTLCContext = {
     vhtlcAddress: string;
     vhtlcPkScriptHex: string;
     /**
-     * VHTLC timeout fields from the Boltz response. `refund` is an absolute
-     * Unix timestamp (CLTV); the unilateral fields are BIP68 relative delays.
+     * VHTLC timeout fields from the Boltz response. `refund` is an absolute CLTV
+     * locktime in either BIP65 form (see {@link VhtlcTimeouts}); the unilateral
+     * fields are BIP68 relative delays.
      */
     vhtlcTimeouts: NonNullable<BoltzSubmarineSwap["response"]["timeoutBlockHeights"]>;
     ourXOnlyPublicKey: Uint8Array;
@@ -184,22 +194,6 @@ const canRecoverViaBoltz3of3 = (
     return refundableVtxos.some((vtxo) => !vtxo.isSpent && !isRecoverable(vtxo));
 };
 
-/**
- * Boltz Ark VHTLCs encode `refund` as an absolute Unix timestamp (CLTV with
- * timestamp semantics). Compare against wall-clock seconds; never against
- * chain tip height.
- */
-const isSubmarineRefundLocktimeReached = (refundTimestamp: number): boolean =>
-    Math.floor(Date.now() / 1000) >= refundTimestamp;
-
-/**
- * How long to wait before re-attempting a spend the server rejected as
- * CLTV-immature. It matures the locktime against the chain tip block's
- * timestamp rather than its wall clock, so the rejection clears once a later
- * block lands — on the order of one block interval, not of the locktime itself.
- */
-const CLTV_IMMATURE_RETRY_SEC = 60;
-
 // Retry policy for fetching the lockup VTXO when claiming a swap: the indexer
 // may lag behind the on-chain lockup tx, so retry a few times before giving up.
 const CLAIM_VTXO_RETRY_ATTEMPTS = 3;
@@ -232,10 +226,14 @@ export class ArkadeSwaps {
     readonly swapProvider: BoltzSwapProvider;
     /** Provider for querying VTXO state on the Ark indexer. */
     readonly indexerProvider: IndexerProvider;
+    /** Provider for chain-tip lookups, or null if the wallet exposes none. */
+    readonly onchainProvider: OnchainProvider | null;
     /** Background swap monitor, or null if not enabled. */
     readonly swapManager: SwapManager | null = null;
     /** Storage backend for persisting swap data. */
     readonly swapRepository: SwapRepository;
+
+    private missingOnchainProviderWarned = false;
 
     /**
      * Creates an ArkadeSwaps instance, auto-detecting the network from the wallet's Ark server.
@@ -283,6 +281,15 @@ export class ArkadeSwaps {
         if (!indexerProvider)
             throw new Error("Indexer provider is required either in wallet or config.");
         this.indexerProvider = indexerProvider;
+
+        // `IWallet` does not declare `onchainProvider` — only some implementations
+        // carry one (`ServiceWorkerWallet`, for instance, does not) — so narrow on
+        // the property rather than asserting it exists.
+        const walletOnchainProvider =
+            "onchainProvider" in config.wallet
+                ? (config.wallet.onchainProvider as OnchainProvider | undefined)
+                : undefined;
+        this.onchainProvider = config.onchainProvider ?? walletOnchainProvider ?? null;
 
         this.swapProvider = config.swapProvider;
 
@@ -1025,14 +1032,68 @@ export class ArkadeSwaps {
         };
     }
 
+    /** Chain tip height, or undefined when unavailable. */
+    private async chainTipHeight(): Promise<number | undefined> {
+        if (!this.onchainProvider) return undefined;
+        try {
+            const { height } = await this.onchainProvider.getChainTip();
+            return height;
+        } catch (error) {
+            logger.warn(`Failed to fetch chain tip: ${error}`);
+            return undefined;
+        }
+    }
+
+    /**
+     * Resolve the chain tip once for a set of locktimes, skipping the fetch
+     * entirely when none of them is block-denominated — on mainnet, where Boltz
+     * runs with `useLocktimeSeconds`, that is every one of them.
+     */
+    private async chainTipSnapshotFor(locktimes: number[]): Promise<ChainTipSnapshot> {
+        if (!locktimes.some(isBlockHeightLocktime)) return {};
+        return { height: await this.chainTipHeight() };
+    }
+
+    /**
+     * Whether a refund locktime has been reached, against an already-resolved chain
+     * tip. Warns once if a block-height locktime meets an absent provider — the
+     * condition is the null provider, not the undefined height, which a transient
+     * fetch failure also produces (and which {@link ArkadeSwaps.chainTipHeight} logs).
+     */
+    private isRefundLocktimeReachedAt(locktime: number, tip: ChainTipSnapshot): boolean {
+        if (isBlockHeightLocktime(locktime) && tip.height === undefined && !this.onchainProvider) {
+            this.warnMissingOnchainProviderOnce(locktime);
+        }
+        return isRefundLocktimeReached(locktime, tip.height);
+    }
+
+    /** Latched per instance: a module-level latch would silence every instance but the first. */
+    private warnMissingOnchainProviderOnce(locktime: number): void {
+        if (this.missingOnchainProviderWarned) return;
+        this.missingOnchainProviderWarned = true;
+        logger.warn(
+            `ArkadeSwaps: refund locktime ${locktime} is a block height, but no ` +
+                `OnchainProvider is configured — the chain tip cannot be read, so the ` +
+                `locktime will never be observed as reached and affected refunds will ` +
+                `defer indefinitely instead of maturing. Pass \`onchainProvider\` to ` +
+                `ArkadeSwaps, or use a wallet that carries one (in the Expo background ` +
+                `task, set \`esploraUrl\` in the swap background config).`,
+        );
+    }
+
+    /**
+     * Stays synchronous — the caller resolves the chain tip, so a batch can hoist
+     * one lookup across every swap it maps over.
+     */
     private submarineRecoveryInfoFromLookup(
         swap: BoltzSubmarineSwap,
         lookup: Pick<SubmarineVHTLCLookup, "vhtlcTimeouts" | "refundableVtxos" | "diagnostic">,
+        tip: ChainTipSnapshot,
     ): SubmarineRecoveryInfo {
         const { refundableVtxos, diagnostic, vhtlcTimeouts } = lookup;
 
         if (refundableVtxos.length > 0) {
-            const cltvSatisfied = isSubmarineRefundLocktimeReached(vhtlcTimeouts.refund);
+            const cltvSatisfied = this.isRefundLocktimeReachedAt(vhtlcTimeouts.refund, tip);
             const amountSats = refundableVtxos.reduce((sum, vtxo) => sum + Number(vtxo.value), 0);
             const isRecoverable = cltvSatisfied || canRecoverViaBoltz3of3(refundableVtxos, swap);
             return {
@@ -1193,7 +1254,11 @@ export class ArkadeSwaps {
             };
         }
 
-        return this.submarineRecoveryInfoFromLookup(swap, lookup);
+        return this.submarineRecoveryInfoFromLookup(
+            swap,
+            lookup,
+            await this.chainTipSnapshotFor([lookup.vhtlcTimeouts.refund]),
+        );
     }
 
     /**
@@ -1283,6 +1348,12 @@ export class ArkadeSwaps {
             }
         }
 
+        const chainTip = await this.chainTipSnapshotFor(
+            prepared.flatMap((item) =>
+                "error" in item ? [] : [item.context.vhtlcTimeouts.refund],
+            ),
+        );
+
         return prepared.map((item) => {
             if ("error" in item) {
                 return {
@@ -1297,10 +1368,14 @@ export class ArkadeSwaps {
 
             const refundableVtxos =
                 refundableByScript.get(item.context.vhtlcPkScriptHex.toLowerCase()) ?? [];
-            return this.submarineRecoveryInfoFromLookup(item.swap, {
-                ...item.context,
-                refundableVtxos,
-            });
+            return this.submarineRecoveryInfoFromLookup(
+                item.swap,
+                {
+                    ...item.context,
+                    refundableVtxos,
+                },
+                chainTip,
+            );
         });
     }
 
@@ -2709,9 +2784,10 @@ export class ArkadeSwaps {
     /**
      * {@link settleRefundWithoutReceiver}, deferring instead of failing when the server
      * rejects the spend as CLTV-immature ({@link ArkErrorName.FORFEIT_CLOSURE_LOCKED}):
-     * we gate on the local wall clock, the server on the chain tip's, which lags. The
-     * server-authoritative sibling of the wall-clock deferral the pre-CLTV branches
-     * already implement. Anything else propagates.
+     * we gate on our own reading of the locktime — wall clock or chain tip, per its
+     * BIP65 form — the server on the chain tip block's timestamp, which lags. The
+     * server-authoritative sibling of the deferral the pre-CLTV branches already
+     * implement. Anything else propagates.
      *
      * Only `submitTx` can raise it, so this is a pass-through for recoverable VTXOs,
      * which settle via a batch round.
@@ -2745,7 +2821,8 @@ export class ArkadeSwaps {
      * Refund every VTXO at a swap's VHTLC address back to the wallet, shared by
      * {@link ArkadeSwaps.refundVHTLC} (submarine) and {@link ArkadeSwaps.refundArk}
      * (chain). Path selection per VTXO:
-     * - CLTV elapsed by our wall clock → `refundWithoutReceiver` (offchain for a
+     * - CLTV elapsed against the wall clock or the chain tip, per the locktime's
+     *   BIP65 form → `refundWithoutReceiver` (offchain for a
      *   live VTXO, via a batch round for a swept one — see
      *   {@link settleRefundWithoutReceiver}), or skipped if the server defers it as
      *   still immature (see {@link trySettleRefundWithoutReceiver}).
@@ -2792,15 +2869,20 @@ export class ArkadeSwaps {
             retryAt = retryAt === undefined ? candidate : Math.min(retryAt, candidate);
         };
 
+        // `refundLocktime` is constant across the loop, so one lookup serves it. A
+        // block landing mid-loop defers a just-matured VTXO until the next scan;
+        // `retryAt` brings it back.
+        const chainTip = await this.chainTipSnapshotFor([refundLocktime]);
+
         for (const vtxo of vtxos) {
             const isRecoverableVtxo = isRecoverable(vtxo);
             const output = { amount: BigInt(vtxo.value), script: outputScript };
 
-            // Re-evaluate the locktime per iteration so a CLTV that elapses
-            // mid-loop is observed by every branch. Once it has passed, the
-            // refundWithoutReceiver leaf is spendable — settle it offchain for a
-            // live VTXO, or via a batch round for a swept one.
-            if (isSubmarineRefundLocktimeReached(refundLocktime)) {
+            // Re-evaluate the locktime per iteration so a timestamp CLTV that
+            // elapses mid-loop is observed by every branch. Once it has passed,
+            // the refundWithoutReceiver leaf is spendable — settle it offchain
+            // for a live VTXO, or via a batch round for a swept one.
+            if (this.isRefundLocktimeReachedAt(refundLocktime, chainTip)) {
                 if (await this.trySettleRefundWithoutReceiver(swapId, refundContext, vtxo)) {
                     sweptCount++;
                 } else {
@@ -2816,10 +2898,10 @@ export class ArkadeSwaps {
                     `Swap ${swapId}: recoverable VTXO ${vtxo.txid}:${vtxo.vout} ` +
                         `cannot be refunded yet — refundWithoutReceiver locktime has not passed ` +
                         `(refundLocktime=${refundLocktime}, ` +
-                        `currentTimestamp=${Math.floor(Date.now() / 1000)}). ` +
-                        `Refund will be retried after locktime.`,
+                        `${refundLocktimeBasis(refundLocktime, chainTip.height)}). ` +
+                        `Refund will be retried once the locktime is reached.`,
                 );
-                defer(refundLocktime);
+                defer(refundRetryAt(refundLocktime));
                 continue;
             }
 
@@ -2857,17 +2939,19 @@ export class ArkadeSwaps {
                     throw error;
                 }
 
-                // Re-check the locktime — wall clock may have advanced while
-                // talking to Boltz.
-                if (!isSubmarineRefundLocktimeReached(refundLocktime)) {
+                // Re-check the locktime — the clock or the chain tip may have
+                // advanced while talking to Boltz, so re-resolve rather than
+                // reusing the tip hoisted above this loop.
+                const recheckTip = await this.chainTipSnapshotFor([refundLocktime]);
+                if (!this.isRefundLocktimeReachedAt(refundLocktime, recheckTip)) {
                     logger.error(
                         `Swap ${swapId}: Boltz rejected VTXO outpoint and ` +
                             `refundWithoutReceiver locktime has not passed yet ` +
-                            `(currentTimestamp=${Math.floor(Date.now() / 1000)}, ` +
+                            `(${refundLocktimeBasis(refundLocktime, recheckTip.height)}, ` +
                             `locktime=${refundLocktime}). ` +
-                            `Refund will be retried after locktime.`,
+                            `Refund will be retried once the locktime is reached.`,
                     );
-                    defer(refundLocktime);
+                    defer(refundRetryAt(refundLocktime));
                     continue;
                 }
 

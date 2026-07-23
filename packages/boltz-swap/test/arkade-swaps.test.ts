@@ -3701,9 +3701,10 @@ describe("ArkadeSwaps", () => {
             });
 
             describe("server-side CLTV deferral (FORFEIT_CLOSURE_LOCKED)", () => {
-                // Our locktime gate reads the wall clock, arkd's reads the lagging
-                // chain tip, so it routinely rejects a refund we consider mature. That
-                // is self-healing: a deferral the caller retries, never a swap failure.
+                // Our locktime gate reads the wall clock (these fixtures are
+                // timestamp-denominated), arkd's reads the lagging chain tip block,
+                // so it routinely rejects a refund we consider mature. That is
+                // self-healing: a deferral the caller retries, never a swap failure.
 
                 /**
                  * Build the error as the wire delivers it — through the same
@@ -4015,12 +4016,13 @@ describe("ArkadeSwaps", () => {
             expect(info.vtxoCount).toBe(1);
         });
 
-        it("compares refund against wall-clock Unix time, never chain height", async () => {
-            // Regression: the legacy block-height locktime path queried
-            // swapProvider.getChainHeight(). Boltz Ark VHTLCs always encode
-            // refund as a Unix timestamp, so the wall-clock check is the
-            // only path. This test pins that by failing if we ever reach
-            // for the chain tip again.
+        it("compares a timestamp-denominated refund against wall-clock Unix time", async () => {
+            // Regression: the legacy path queried swapProvider.getChainHeight()
+            // for every locktime. A timestamp-denominated refund resolves
+            // against the wall clock alone, so no chain-tip lookup of any kind
+            // should happen. Height-denominated refunds do consult the tip —
+            // see the OnchainProvider cases in test/locktime.test.ts and the
+            // block-height suite below.
             const swap = swapWithRefund(claimedSwap, pastRefund());
             mockSelection({ recoverable: [makeVtxo(lockupTxid, 0)] });
             const chainHeightSpy = vi.spyOn(swapProvider, "getChainHeight");
@@ -4397,8 +4399,10 @@ describe("ArkadeSwaps", () => {
     });
 
     // =========================================================================
-    // Regressions: VHTLC refund readiness uses wall-clock time, not chain
-    // height. Boltz Ark VHTLCs encode `refund` as an absolute Unix timestamp.
+    // Regressions: VHTLC refund readiness for *timestamp-denominated* locktimes,
+    // which Boltz emits when `useLocktimeSeconds` is on (all of mainnet today).
+    // These resolve against the wall clock and never touch the chain tip; the
+    // block-height form is covered in test/locktime.test.ts.
     // =========================================================================
     describe("Submarine refund readiness — timestamp vs chain height", () => {
         const lockupTxid = hex.encode(randomBytes(32));

@@ -1,4 +1,10 @@
-import type { ArkProvider, Identity, IndexerProvider, IWallet } from "@arkade-os/sdk";
+import type {
+    ArkProvider,
+    Identity,
+    IndexerProvider,
+    IWallet,
+    OnchainProvider,
+} from "@arkade-os/sdk";
 import type { AsyncStorageTaskQueue } from "@arkade-os/sdk/worker/expo";
 import type { BoltzSwapProvider } from "../boltz-swap-provider";
 import type { SwapRepository } from "../repositories/swap-repository";
@@ -17,6 +23,12 @@ export interface SwapTaskDependencies {
     swapProvider: BoltzSwapProvider;
     arkProvider: ArkProvider;
     indexerProvider: IndexerProvider;
+    /**
+     * Chain-tip source for resolving block-height refund locktimes. The
+     * background wallet is a shim carrying no providers, so without this the
+     * tip is unreadable and such refunds never mature.
+     */
+    onchainProvider: OnchainProvider;
     identity: Identity;
     wallet: IWallet;
 }
@@ -32,6 +44,12 @@ export interface PersistedSwapBackgroundConfig {
     boltzApiUrl: string;
     arkServerUrl: string;
     network: Network;
+    /**
+     * Esplora base URL for chain-tip lookups. Optional, and absent from configs
+     * written before it existed, so the background task falls back to the
+     * network default — the same fallback `Wallet.create` applies.
+     */
+    esploraUrl?: string;
 }
 
 /**
@@ -72,6 +90,15 @@ export interface ExpoArkadeSwapsConfig extends ArkadeSwapsConfig {
      * ExpoArkadeSwaps will attempt to derive it from the ArkProvider.
      */
     arkServerUrl?: string;
+    /**
+     * Esplora base URL (e.g. "https://mempool.space/api").
+     *
+     * Recommended for type-safe background rehydration, where it is what makes
+     * block-height refund locktimes resolvable. If omitted, ExpoArkadeSwaps
+     * attempts to derive it from the resolved OnchainProvider, and the
+     * background task falls back to the network default.
+     */
+    esploraUrl?: string;
     background: ExpoSwapBackgroundConfig;
 }
 
