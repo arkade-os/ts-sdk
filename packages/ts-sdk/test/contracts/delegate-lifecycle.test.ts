@@ -59,7 +59,8 @@ describe("Delegate Lifecycle", () => {
             vtxos: [defaultVtxo],
         });
 
-        const contractsWithVtxos1 = await manager1.getContractsWithVtxos();
+        // Mocked after boot, so opt into a sync to pull the new state in.
+        const contractsWithVtxos1 = await manager1.getContractsWithVtxos(undefined, { sync: true });
         expect(contractsWithVtxos1).toHaveLength(1);
         expect(contractsWithVtxos1[0].vtxos).toHaveLength(1);
         expect(contractsWithVtxos1[0].vtxos[0].value).toBe(50_000);
@@ -107,7 +108,7 @@ describe("Delegate Lifecycle", () => {
             return Promise.resolve({ vtxos });
         });
 
-        const contractsWithVtxos2 = await manager2.getContractsWithVtxos();
+        const contractsWithVtxos2 = await manager2.getContractsWithVtxos(undefined, { sync: true });
         expect(contractsWithVtxos2).toHaveLength(2);
         for (const cwv of contractsWithVtxos2) {
             expect(cwv.vtxos).toHaveLength(1);
@@ -200,7 +201,7 @@ describe("Delegate Lifecycle", () => {
             return Promise.resolve({ vtxos });
         });
 
-        const contractsWithVtxos = await manager3.getContractsWithVtxos();
+        const contractsWithVtxos = await manager3.getContractsWithVtxos(undefined, { sync: true });
         expect(contractsWithVtxos).toHaveLength(2);
         for (const cwv of contractsWithVtxos) {
             expect(cwv.vtxos).toHaveLength(1);

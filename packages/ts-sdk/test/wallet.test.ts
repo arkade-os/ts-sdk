@@ -122,9 +122,11 @@ describe("Wallet", () => {
             // 1. getInfo() during wallet creation
             // 2. getBoardingUtxos() -> esplora getCoins()
             // 3. ContractManager.createContract() full vtxo fetch for
-            //    the wallet's default contract (includeSpent=true)
+            //    the wallet's default contract (includeSpent=true) — the only
+            //    fetch that funds the repository, since getBalance is a
+            //    repository-only read and issues no delta fetch of its own
             // 4. ContractWatcher.subscribeForScripts for the wallet's script
-            // 5. getContractsWithVtxos -> syncContracts delta fetch
+            // 5. boot reconcile (pending frontier)
             //
             // boardingExitDelay equals unilateralExitDelay here, so the
             // boarding script is byte-identical to the default baseline
@@ -154,14 +156,6 @@ describe("Wallet", () => {
                     ok: true,
                     json: () => Promise.resolve(mockUTXOs),
                 })
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve({ vtxos: [] }),
-                })
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve({ subscriptionId: "sub-1" }),
-                })
                 .mockImplementationOnce((url: string) => {
                     // Extract the script from the request URL so the
                     // mock response matches the wallet's actual script.
@@ -172,6 +166,14 @@ describe("Wallet", () => {
                         ok: true,
                         json: () => Promise.resolve(mockServerResponse),
                     });
+                })
+                .mockResolvedValueOnce({
+                    ok: true,
+                    json: () => Promise.resolve({ subscriptionId: "sub-1" }),
+                })
+                .mockResolvedValue({
+                    ok: true,
+                    json: () => Promise.resolve({ vtxos: [] }),
                 });
 
             const wallet = await Wallet.create({
@@ -746,6 +748,11 @@ describe("Wallet", () => {
             return { wallet, walletRepository };
         }
 
+        // Reads are repository-only, so the reconciliation under test is driven
+        // by an explicit refresh rather than by the read itself.
+        const refresh = async (wallet: ReadonlyWallet) =>
+            (await wallet.getContractManager()).refreshVtxos();
+
         function createMockVtxo(
             script: string,
             state: "preconfirmed" | "settled" = "preconfirmed",
@@ -814,6 +821,7 @@ describe("Wallet", () => {
             expect((await wallet.getVtxos())[0].virtualStatus.state).toBe("preconfirmed");
 
             state = "settled";
+            await refresh(wallet);
 
             const vtxos = await wallet.getVtxos();
             expect(vtxos).toHaveLength(1);
@@ -844,6 +852,7 @@ describe("Wallet", () => {
             expect(await wallet.getVtxos()).toHaveLength(1);
 
             markSpent = true;
+            await refresh(wallet);
 
             expect(await wallet.getVtxos()).toEqual([]);
 
@@ -873,6 +882,7 @@ describe("Wallet", () => {
             expect(vtxos[0].virtualStatus.state).toBe("settled");
 
             markSpent = true;
+            await refresh(wallet);
 
             expect(await wallet.getVtxos()).toEqual([]);
 

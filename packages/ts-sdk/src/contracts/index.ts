@@ -27,10 +27,11 @@ export { ContractWatcher } from "./contractWatcher";
 export type { ContractWatcherConfig } from "./contractWatcher";
 
 // Contract manager
-export { ContractManager } from "./contractManager";
+export { ContractManager, DEFAULT_PERIODIC_SYNC_INTERVAL_MS } from "./contractManager";
 export type {
     ContractManagerConfig,
     CreateContractParams,
+    GetContractsWithVtxosOptions,
     RefreshVtxosOptions,
     ScanResult,
     ScanContractsOptions,

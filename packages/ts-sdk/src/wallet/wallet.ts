@@ -469,6 +469,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManager?: ContractManager;
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
+    protected readonly contractManagerConfig?: ReadonlyWalletConfig["contractManagerConfig"];
 
     /**
      * Opt-in intent-lifecycle repository. Assigned by the `create()`
@@ -623,6 +624,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly delegateProvider?: DelegateProvider,
         watcherConfig?: ReadonlyWalletConfig["watcherConfig"],
         walletContractTimelocks?: RelativeTimelock[],
+        contractManagerConfig?: ReadonlyWalletConfig["contractManagerConfig"],
     ) {
         // Guard: detect identity/server network mismatch for descriptor-based identities.
         // This duplicates the check in setupWalletConfig() so that subclasses
@@ -643,6 +645,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         this._boardingTapscript = boardingTapscript;
         this._arkServerPublicKey = arkServerPublicKey;
         this.watcherConfig = watcherConfig;
+        this.contractManagerConfig = contractManagerConfig;
         this._assetManager = new ReadonlyAssetManager(this.indexerProvider);
         // Defensive for direct-construction callers; setupWalletConfig already
         // passes a deduped list through the public create() factories.
@@ -985,6 +988,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             setup.delegateProvider || setup.delegatorProvider,
             config.watcherConfig,
             setup.walletContractTimelocks,
+            config.contractManagerConfig,
         );
         wallet.intentRepository = config.storage?.intentRepository;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
@@ -1027,6 +1031,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Return the wallet's combined onchain and offchain balances.
+     *
+     * Offchain amounts are an offline-first repository read kept fresh by
+     * {@link ContractManager}'s background sync; force one with
+     * `(await wallet.getContractManager()).refreshVtxos()`. Boarding amounts
+     * still query the onchain provider.
      */
     async getBalance(): Promise<WalletBalance> {
         const [boardingUtxos, vtxos, pendingOutpoints] = await Promise.all([
@@ -1130,6 +1139,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Return virtual outputs tracked by the wallet.
+     *
+     * Offline-first: reads the repository, which {@link ContractManager} keeps
+     * fresh in the background. Force a refresh with
+     * `(await wallet.getContractManager()).refreshVtxos()`.
      *
      * @param filter - Optional flags controlling whether recoverable or unrolled VTXOs are included
      */
@@ -1805,6 +1818,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             onVtxosPersisted,
             onVtxosSpent,
             watcherConfig: this.watcherConfig,
+            ...this.contractManagerConfig,
         });
 
         // Register the wallet's baseline always-active contracts: every
@@ -2619,6 +2633,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         walletContractTimelocks?: RelativeTimelock[],
         receiveRotator?: WalletReceiveRotator,
         descriptorProvider?: DescriptorProvider,
+        contractManagerConfig?: WalletConfig["contractManagerConfig"],
     ) {
         super(
             identity,
@@ -2634,6 +2649,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             delegateProvider,
             watcherConfig,
             walletContractTimelocks,
+            contractManagerConfig,
         );
         this.identity = identity;
 
@@ -2838,6 +2854,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             setup.walletContractTimelocks,
             boot?.rotator,
             boot?.provider,
+            config.contractManagerConfig,
         );
         wallet._serverInfoSource = setup.serverInfoSource;
         // The response cleared construction validation — network/signer in
@@ -2939,6 +2956,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.delegateProvider,
             this.watcherConfig,
             this.walletContractTimelocks,
+            this.contractManagerConfig,
         );
         // Carry the cached deprecated-signer set (with cutoffs) so the clone's
         // boarding watch path and spendability split match the source wallet's.
@@ -3377,6 +3395,19 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             committedTxid = commitmentTxid;
 
             await this.updateDbAfterSettle(params.inputs, commitmentTxid);
+
+            // `updateDbAfterSettle` marks the *inputs* spent; the settle's own
+            // output is only known to the indexer. Reads are repository-only, so
+            // without this the wallet's freshly settled funds stay invisible
+            // until an SSE event or the background sweep lands — on the most
+            // common flow there is. The new VTXO is `created_at`-recent, so the
+            // cursor-derived delta window catches it. Best-effort: never fail an
+            // already-committed settle.
+            try {
+                await (await this.getContractManager()).refreshVtxos();
+            } catch (e) {
+                console.warn("Failed to refresh VTXOs after settle", e);
+            }
 
             // Boarding rotation (rotate-on-board): if this settle swept any
             // boarding (on-chain) UTXO into Arkade, advance the boarding

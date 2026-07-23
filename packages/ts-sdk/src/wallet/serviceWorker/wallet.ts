@@ -131,6 +131,7 @@ import type {
     ContractSyncState,
     CreateContractParams,
     GetAllSpendingPathsOptions,
+    GetContractsWithVtxosOptions,
     GetSpendablePathsOptions,
     IContractManager,
     RefreshVtxosOptions,
@@ -149,7 +150,7 @@ import type {
 import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegate";
 import { getRandomId } from "../utils";
-import type { VirtualCoin } from "..";
+import type { VirtualCoin, WalletContractManagerConfig } from "..";
 import {
     MESSAGE_BUS_INITIALIZING,
     MESSAGE_BUS_NOT_INITIALIZED,
@@ -414,6 +415,8 @@ interface ServiceWorkerWalletOptions {
     walletMode?: ServiceWorkerWalletMode;
     /** Optional contract watcher configuration forwarded to the worker wallet. */
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
+    /** Optional contract manager configuration forwarded to the worker wallet. */
+    contractManagerConfig?: WalletContractManagerConfig;
     /**
      * Per-request timeout overrides for wallet-updater messages.
      * @see DEFAULT_MESSAGE_TIMEOUTS
@@ -460,6 +463,7 @@ type MessageBusInitConfig = {
     settlementConfig?: SettlementConfig | false;
     walletMode?: ServiceWorkerWalletMode;
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
+    contractManagerConfig?: WalletContractManagerConfig;
     messageTimeouts?: Record<string, number>;
 };
 
@@ -525,6 +529,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     protected indexerUrl?: string;
     protected esploraUrl?: string;
     protected watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
+    protected contractManagerConfig?: WalletContractManagerConfig;
     protected settlementConfig?: SettlementConfig | false;
     private reinitPromise: Promise<void> | null = null;
     private pingPromise: Promise<void> | null = null;
@@ -620,6 +625,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             indexerUrl: options.indexerUrl,
             esploraUrl: options.esploraUrl,
             watcherConfig: options.watcherConfig,
+            contractManagerConfig: options.contractManagerConfig,
             messageTimeouts,
         };
 
@@ -895,6 +901,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             indexerUrl: this.indexerUrl,
             esploraUrl: this.esploraUrl,
             watcherConfig: this.watcherConfig,
+            contractManagerConfig: this.contractManagerConfig,
             settlementConfig: this.settlementConfig,
         };
         return this.initConfig;
@@ -1216,17 +1223,21 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 }
             },
 
-            async getContractsWithVtxos(filter: GetContractsFilter): Promise<ContractWithVtxos[]> {
+            async getContractsWithVtxos(
+                filter?: GetContractsFilter,
+                options?: GetContractsWithVtxosOptions,
+            ): Promise<ContractWithVtxos[]> {
                 const message: RequestGetContractsWithVtxos = {
                     type: "GET_CONTRACTS_WITH_VTXOS",
                     id: getRandomId(),
                     tag: messageTag,
-                    payload: { filter },
+                    payload: { filter, options },
                 };
                 try {
                     const response = await sendContractMessage(message);
-                    // A best-effort sync ran on the worker; it may have degraded
-                    // to repository data or recovered — refresh the cached view.
+                    // An opted-in sync may have run on the worker, and the
+                    // worker's background sweep moves sync health regardless —
+                    // refresh the cached view either way.
                     await refreshSyncState();
                     return (response as ResponseGetContractsWithVtxos).payload.contracts;
                 } catch (e) {
@@ -1534,6 +1545,7 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
             settlementConfig: options.settlementConfig,
             walletMode: options.walletMode,
             watcherConfig: options.watcherConfig,
+            contractManagerConfig: options.contractManagerConfig,
             messageTimeouts,
         };
 

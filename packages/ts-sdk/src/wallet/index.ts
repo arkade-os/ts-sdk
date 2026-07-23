@@ -8,6 +8,7 @@ import { RenewalConfig, SettlementConfig } from "./vtxo-manager";
 import { IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
 import { ContractWatcherConfig } from "../contracts/contractWatcher";
+import type { ContractManagerConfig } from "../contracts/contractManager";
 import {
     ContractRepository,
     WalletRepository,
@@ -155,7 +156,22 @@ export interface ReadonlyWalletConfig extends BaseWalletConfig {
      * @see ContractWatcherConfig
      */
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
+
+    /**
+     * Configuration for the ContractManager itself, as opposed to its watcher.
+     * Currently the cadence of the background delta sweep — the wallet's only
+     * periodic indexer refresh, since reads are repository-only.
+     *
+     * @see WalletContractManagerConfig
+     */
+    contractManagerConfig?: WalletContractManagerConfig;
 }
+
+/**
+ * The slice of {@link ContractManagerConfig} a wallet exposes. Repositories and
+ * providers are owned by the wallet, so only the tunables are settable here.
+ */
+export type WalletContractManagerConfig = Pick<ContractManagerConfig, "periodicSyncIntervalMs">;
 
 /**
  * Configuration options for full wallet initialization.

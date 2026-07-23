@@ -12,6 +12,7 @@ import type {
     ContractSyncState,
     CreateContractParams,
     GetAllSpendingPathsOptions,
+    GetContractsWithVtxosOptions,
     GetSpendablePathsOptions,
 } from "../../contracts/contractManager";
 import {
@@ -279,7 +280,7 @@ export type ResponseGetContracts = ResponseEnvelope & {
 
 export type RequestGetContractsWithVtxos = RequestEnvelope & {
     type: "GET_CONTRACTS_WITH_VTXOS";
-    payload: { filter?: GetContractsFilter };
+    payload: { filter?: GetContractsFilter; options?: GetContractsWithVtxosOptions };
 };
 export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
     type: "CONTRACTS_WITH_VTXOS";
@@ -1053,7 +1054,10 @@ export class WalletMessageHandler
                 }
                 case "GET_CONTRACTS_WITH_VTXOS": {
                     const manager = await this.readonlyWallet.getContractManager();
-                    const contracts = await manager.getContractsWithVtxos(message.payload.filter);
+                    const contracts = await manager.getContractsWithVtxos(
+                        message.payload.filter,
+                        message.payload.options,
+                    );
                     return this.tagged({
                         id,
                         type: "CONTRACTS_WITH_VTXOS",

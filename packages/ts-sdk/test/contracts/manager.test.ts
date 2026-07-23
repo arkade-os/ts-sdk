@@ -280,8 +280,8 @@ describe("ContractManager", () => {
         expect(states).toContain("swept");
     });
 
-    it("should not use spendable-only filter for getContractsWithVtxos", async () => {
-        const contract = await manager.createContract({
+    it("should not use spendable-only filter when getContractsWithVtxos syncs", async () => {
+        await manager.createContract({
             type: "default",
             params: createDefaultContractParams(),
             script: TEST_DEFAULT_SCRIPT,
@@ -301,11 +301,54 @@ describe("ContractManager", () => {
             vtxos: [spendable, spent],
         });
 
-        const result = await manager.getContractsWithVtxos();
+        // Cleared so the assertion below can only be satisfied by this read's
+        // own query — createContract hydrates from the indexer too.
+        (mockIndexer.getVtxos as any).mockClear();
+        const result = await manager.getContractsWithVtxos(undefined, { sync: true });
 
-        // getContractsWithVtxos forces a sync to retrieve all VTXOs in the time window
-        const lastCall = (mockIndexer.getVtxos as any).mock.calls.at(-1);
-        expect(lastCall[0].spendableOnly).toBeUndefined();
+        expect(mockIndexer.getVtxos).toHaveBeenCalled();
+        for (const [opts] of (mockIndexer.getVtxos as any).mock.calls) {
+            expect(opts.spendableOnly).toBeUndefined();
+        }
+        // The point of not filtering: the spent row is persisted and returned,
+        // so history and spend reconciliation can see it.
+        expect(result[0].vtxos.map((v) => v.txid).sort()).toEqual(
+            ["aa".repeat(32), "bb".repeat(32)].sort(),
+        );
+    });
+
+    // Pre-0.5 JS callers pass pageSize positionally. TypeScript rejects it, but
+    // compiled JS would silently degrade to a repository-only read.
+    // TODO(next major): delete with the shim it covers.
+    it("getContractsWithVtxos treats a numeric second argument as the legacy pageSize", async () => {
+        await manager.createContract({
+            type: "default",
+            params: createDefaultContractParams(),
+            script: TEST_DEFAULT_SCRIPT,
+            address: "address",
+        });
+
+        (mockIndexer.getVtxos as any).mockClear();
+        await (manager as any).getContractsWithVtxos(undefined, 7);
+
+        expect(mockIndexer.getVtxos).toHaveBeenCalled();
+        for (const [opts] of (mockIndexer.getVtxos as any).mock.calls) {
+            expect(opts.pageSize).toBe(7);
+        }
+    });
+
+    it("getContractsWithVtxos issues no query without the sync flag", async () => {
+        await manager.createContract({
+            type: "default",
+            params: createDefaultContractParams(),
+            script: TEST_DEFAULT_SCRIPT,
+            address: "address",
+        });
+
+        (mockIndexer.getVtxos as any).mockClear();
+        await manager.getContractsWithVtxos();
+
+        expect(mockIndexer.getVtxos).not.toHaveBeenCalled();
     });
 
     it("should force VTXOs refresh from indexer when received a `connection_reset` event", async () => {
