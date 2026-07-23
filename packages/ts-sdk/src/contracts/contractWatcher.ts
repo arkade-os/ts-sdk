@@ -160,10 +160,10 @@ export class ContractWatcher {
     /**
      * Add a contract to be watched.
      *
-     * Active contracts are immediately subscribed.
+     * Once watching, every contract is subscribed and polled whatever
+     * its state.
      *
-     * All contracts are polled to discover any existing virtual outputs
-     * (which may cause them to be watched even if inactive).
+     * @see getWatchedContracts
      */
     async addContract(contract: Contract): Promise<void> {
         const state: ContractState = {
@@ -180,11 +180,10 @@ export class ContractWatcher {
         // app launch and can confuse consumers that react to the event.
         await this.seedLastKnownVtxos(state);
 
-        // If we're already watching, poll to discover virtual outputs and update subscription
+        // If we're already watching, poll to seed virtual outputs and fold
+        // this script into the subscription.
         if (this.isWatching) {
-            // Poll first to discover virtual outputs (may affect whether we watch this contract).
             await this.pollContracts([contract.script]);
-            // Update subscription based on active state and virtual outputs.
             await this.tryUpdateSubscription();
         }
     }
@@ -257,20 +256,18 @@ export class ContractWatcher {
     }
 
     /**
-     * Contracts the watcher is actually tracking:
-     * - all active contracts, plus
-     * - inactive contracts that still hold known virtual outputs
-     *   (the subscription keeps watching them so `vtxo_spent` events for
-     *   those unspent outputs are still observed).
+     * Every registered contract, retired (`inactive`) ones included.
      *
-     * This is the single source of truth for "contracts whose VTXO state
-     * we still care about" — callers and the subscription itself fan out
-     * over the same set so nothing is reconciled that isn't also watched.
+     * Feeds both the subscription and the indexer sweep scope, so
+     * narrowing it drops a contract from every background channel at
+     * once. Nothing may be narrowed out: an Ark receive address can be
+     * paid again after the wallet has rotated past it, and a payment
+     * that lands outside every background channel is invisible until
+     * some foreground read happens to sweep it. Retirement therefore
+     * governs receive-address selection, not coverage.
      */
     getWatchedContracts(): Contract[] {
-        return Array.from(this.contracts.values())
-            .filter((s) => s.contract.state === "active" || s.lastKnownVtxos.size > 0)
-            .map((s) => s.contract);
+        return this.getAllContracts();
     }
 
     /**
@@ -315,7 +312,7 @@ export class ContractWatcher {
     }
 
     /**
-     * Start watching for virtual output events across all active contracts.
+     * Start watching for virtual output events across all watched contracts.
      */
     async startWatching(callback: ContractEventCallback): Promise<() => void> {
         if (this.isWatching) {
@@ -382,7 +379,7 @@ export class ContractWatcher {
     }
 
     /**
-     * Force a poll of all active contracts.
+     * Force a poll of all watched contracts.
      * Useful for manual refresh or after app resume.
      */
     async forcePoll(): Promise<void> {
@@ -622,7 +619,7 @@ export class ContractWatcher {
     /**
      * Update the subscription with scripts that should be watched.
      *
-     * Watches both active contracts and contracts with virtual outputs.
+     * @see getWatchedContracts
      */
     private async updateSubscription(): Promise<void> {
         const scriptsToWatch = this.getWatchedContracts().map((c) => c.script);

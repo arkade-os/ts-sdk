@@ -93,22 +93,30 @@ const SCAN_MAX_INDEX = 10_000;
 const DEFAULT_SCAN_BATCH = 10;
 
 export type RefreshVtxosOptions = {
+    /**
+     * Narrow the refresh to these scripts. A subset query, so the
+     * cursor is not advanced: contracts outside the list may have data
+     * we'd skip.
+     */
     scripts?: string[];
+    /**
+     * Time window overriding the cursor-derived one. The cursor never
+     * advances on a windowed query because the window may skip data
+     * outside its bounds.
+     */
     after?: number;
+    /** @see after */
     before?: number;
     /**
      * When true and `scripts` is not set, refresh every contract in
-     * the repository — including those marked `inactive` and those
-     * that have dropped out of the watcher's active set. Useful for
-     * "did anyone send funds to a stale rotated display address?"
-     * audits.
+     * the repository rather than the watcher's watched set — which
+     * differs only for rows the watcher never registered, since
+     * retirement doesn't narrow that set
+     * (see {@link ContractWatcher.getWatchedContracts}).
      *
-     * Because this is a *superset* of the watcher's watched set, the
-     * cursor invariant still holds and the cursor advances normally
-     * (unless an explicit `after` / `before` window is also supplied).
-     *
-     * Ignored when `scripts` is set (the explicit list already
-     * specifies what to refresh, regardless of contract state).
+     * Because this is a *superset* of the watched set, the cursor
+     * invariant still holds and the cursor advances normally (unless
+     * `after` / `before` is also supplied).
      *
      * @defaultValue `false`
      */
@@ -267,12 +275,15 @@ export interface IContractManager extends Disposable {
     ): Promise<Contract>;
 
     /**
-     * Convenience helper to update only the contract state.
+     * Convenience helper to update only the contract state. Note
+     * `inactive` does not stop watching; see {@link ContractState} and
+     * {@link deleteContract}.
      */
     setContractState(script: string, state: ContractState): Promise<void>;
 
     /**
-     * Delete a contract by script and stop watching it (if applicable).
+     * Delete a contract by script and stop watching it. This — not
+     * retiring via {@link setContractState} — is the stop-watching path.
      */
     deleteContract(script: string): Promise<void>;
 
@@ -505,8 +516,8 @@ export class ContractManager implements IContractManager {
      * Static factory method for creating a new ContractManager.
      * Initialize the manager by loading persisted contracts and starting to watch.
      *
-     * After initialization, the manager automatically watches all active contracts
-     * and contracts with virtual outputs. Use `onContractEvent()` to register event callbacks.
+     * After initialization, the manager automatically watches every persisted
+     * contract. Use `onContractEvent()` to register event callbacks.
      *
      * @param config ContractManagerConfig
      */
@@ -1123,14 +1134,18 @@ export class ContractManager implements IContractManager {
     }
 
     /**
-     * Set a contract's state.
+     * Set a contract's state. Retiring (`inactive`) keeps it watched;
+     * see {@link ContractState}. To stop watching, use
+     * {@link deleteContract}.
      */
     async setContractState(script: string, state: ContractState): Promise<void> {
         await this.updateContract(script, { state });
     }
 
     /**
-     * Delete a contract.
+     * Delete a contract. Also removes it from the watcher — the only way
+     * to stop watching a contract (retiring it via
+     * {@link setContractState} does not).
      *
      * @param script - Contract script
      */
@@ -1217,22 +1232,10 @@ export class ContractManager implements IContractManager {
     /**
      * Force refresh virtual outputs from the indexer.
      *
-     * Without options, re-fetches every contract in the watcher's
-     * watched set and advances the global cursor.
-     *
-     * `scripts` narrows the refresh to a specific list (subset query —
-     * cursor is not advanced because contracts outside the list may
-     * have data we'd skip).
-     *
-     * `includeInactive: true` (and no `scripts`) widens the refresh to
-     * every contract in the repository, including ones marked
-     * `inactive` and ones that have dropped out of the watcher's
-     * active set. This is a *superset* of the watched set, so the
-     * cursor invariant still holds and the cursor advances normally.
-     *
-     * `after` / `before` apply a caller-supplied time window. The
-     * cursor never advances on a windowed query because the window
-     * may skip data outside its bounds.
+     * Without options, re-fetches the watcher's watched set and
+     * advances the global cursor. Each option narrows or widens that
+     * scope and may hold the cursor back — see
+     * {@link RefreshVtxosOptions}.
      */
     async refreshVtxos(opts?: RefreshVtxosOptions): Promise<void> {
         const contracts = opts?.scripts
@@ -1382,11 +1385,10 @@ export class ContractManager implements IContractManager {
      * Sync virtual outputs for the given contracts against the indexer.
      *
      * When `options.contracts` is omitted the sync covers the full
-     * watched set (active contracts plus any inactive contracts still
-     * holding cached VTXOs) and the global cursor is advanced on
-     * success. Passing an explicit subset leaves the cursor alone so a
-     * narrow poll can't hide data that other contracts still need to
-     * pick up.
+     * watched set ({@link ContractWatcher.getWatchedContracts}) and the
+     * global cursor is advanced on success. Passing an explicit subset
+     * leaves the cursor alone so a narrow poll can't hide data that
+     * other contracts still need to pick up.
      */
     private async syncContracts(options: {
         contracts?: Contract[];
