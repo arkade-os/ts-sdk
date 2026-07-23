@@ -1,4 +1,5 @@
 export { parseVtxoProof, VtxoProofError } from "./proof";
+export { verifyClaimedLeaf, verifyGraphSegments } from "./graph";
 export type {
     ParsedVtxoProof,
     VtxoChainSource,
