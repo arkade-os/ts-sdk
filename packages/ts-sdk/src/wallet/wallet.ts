@@ -135,6 +135,9 @@ import { validateVtxosForScript, saveVtxosForContract } from "../contracts/vtxoO
 import { WalletReceiveRotator, signingDescriptorIndex } from "./walletReceiveRotator";
 import { HDDescriptorProvider } from "./hdDescriptorProvider";
 import { DescriptorProvider } from "../identity/descriptorProvider";
+import { KeyringSigningSource } from "../identity/keyringSigningSource";
+import { CompositeDescriptorSigner } from "../identity/compositeDescriptorSigner";
+import { ProviderSigningSource } from "../identity/signingSource";
 import { deriveDescriptorLeafPubKey } from "../identity/descriptor";
 import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
 import { DiscoveryDeps } from "../contracts/types";
@@ -142,6 +145,7 @@ import { InputSignerRouter, InputSigningJob } from "./inputSignerRouter";
 import {
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
+    UnknownSigningDescriptorError,
 } from "./signingErrors";
 
 export const getArkadeServerUrl = ({ arkServerUrl }: { arkServerUrl?: string }) =>
@@ -311,7 +315,11 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
     );
 }
 
-export { DescriptorSigningProviderMissingError, MissingSigningDescriptorError };
+export {
+    DescriptorSigningProviderMissingError,
+    MissingSigningDescriptorError,
+    UnknownSigningDescriptorError,
+};
 
 /**
  * Drop VTXOs whose outpoint is locked by a non-terminal intent. Returns the
@@ -2091,6 +2099,17 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      */
     private readonly _descriptorProvider?: DescriptorProvider;
 
+    /**
+     * Keys imported from outside the derivation tree, composed behind
+     * {@link _descriptorProvider} in the router's signer. Present in every
+     * wallet mode — holding a foreign signable contract must not depend on
+     * how the wallet was configured.
+     *
+     * @internal Kept private: the import/purge lifecycle belongs to the
+     * recovery flows that own it, not to the wallet's public surface.
+     */
+    private readonly _keyringSource: KeyringSigningSource;
+
     private readonly _signerRouter: InputSignerRouter;
 
     /**
@@ -2666,10 +2685,19 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         this._serverUnrollScript = serverUnrollScript;
         this._receiveRotator = receiveRotator;
         this._descriptorProvider = descriptorProvider;
+        this._keyringSource = new KeyringSigningSource(walletRepository);
         this._signerRouter = new InputSignerRouter({
             identity,
             contractRepository,
-            descriptorProvider,
+            // Source order is the collision rule: the wallet's own
+            // provider gets first refusal, so importing a key already in
+            // the derivation tree cannot reroute existing contracts. With
+            // an empty keyring the provider sees exactly the requests it
+            // saw before the composite existed.
+            descriptorSigner: new CompositeDescriptorSigner([
+                ...(descriptorProvider ? [new ProviderSigningSource(descriptorProvider)] : []),
+                this._keyringSource,
+            ]),
             boardingPkScript: boardingTapscript.pkScript,
         });
     }

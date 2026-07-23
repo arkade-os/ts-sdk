@@ -2,11 +2,8 @@ import { hex } from "@scure/base";
 import { Transaction } from "@scure/btc-signer";
 import { Identity } from "../identity";
 import { ContractRepository } from "../repositories/contractRepository";
-import { DescriptorProvider } from "../identity/descriptorProvider";
-import {
-    DescriptorSigningProviderMissingError,
-    MissingSigningDescriptorError,
-} from "./signingErrors";
+import { CompositeDescriptorSigner } from "../identity/compositeDescriptorSigner";
+import { MissingSigningDescriptorError } from "./signingErrors";
 
 export interface InputSigningJob {
     /** Index in the source transaction. */
@@ -23,7 +20,13 @@ export interface InputSigningJob {
 export interface InputSignerRouterDeps {
     identity: Identity;
     contractRepository: ContractRepository;
-    descriptorProvider?: DescriptorProvider;
+    /**
+     * Every non-baseline descriptor group goes here. Always present: the
+     * wallet composes its descriptor provider (when it has one) with its
+     * keyring of imported keys, so there is no wallet configuration under
+     * which descriptor signing is simply unavailable.
+     */
+    descriptorSigner: CompositeDescriptorSigner;
     boardingPkScript: Uint8Array;
 }
 
@@ -32,15 +35,15 @@ const DESCRIPTOR_CAPABLE_CONTRACT_TYPES = new Set(["default", "delegate", "board
 /**
  * Routing decision for a single tx's signable inputs: which inputs the
  * baseline {@link Identity} signs, and which are grouped by descriptor for
- * the {@link DescriptorProvider}.
+ * the {@link CompositeDescriptorSigner}.
  */
 export interface InputRoutingPlan {
     /** Input indexes the baseline {@link Identity} should sign. */
     identityIndexes: number[];
     /**
      * Per-descriptor buckets of input indexes routed to the
-     * {@link DescriptorProvider}. Empty map ⇒ batch-eligible (every input
-     * resolves to the baseline key).
+     * {@link CompositeDescriptorSigner}. Empty map ⇒ batch-eligible (every
+     * input resolves to the baseline key).
      */
     descriptorGroups: Map<string, number[]>;
 }
@@ -48,9 +51,9 @@ export interface InputRoutingPlan {
 /**
  * Routes PSBT inputs to the correct signer based on the owning contract.
  * Inputs whose script matches a `default`/`delegate`/`boarding` contract with
- * a non-baseline owner are sent to {@link DescriptorProvider}; everything
- * else (baseline-owned contracts, other contract types, and the index-0
- * boarding fallback script) is sent to {@link Identity}. Inputs with no
+ * a non-baseline owner are sent to {@link CompositeDescriptorSigner};
+ * everything else (baseline-owned contracts, other contract types, and the
+ * index-0 boarding fallback script) is sent to {@link Identity}. Inputs with no
  * matching contract and no boarding match are silently skipped, matching
  * how the wallet historically handled cosigner/connector inputs.
  *
@@ -171,14 +174,10 @@ export class InputSignerRouter {
         }
 
         if (descriptorGroups.size > 0) {
-            if (!this.deps.descriptorProvider) {
-                throw new DescriptorSigningProviderMissingError();
-            }
-
             const sortedDescriptors = Array.from(descriptorGroups.keys()).sort();
             for (const descriptor of sortedDescriptors) {
                 const indexes = descriptorGroups.get(descriptor)!;
-                const [next] = await this.deps.descriptorProvider.signWithDescriptor([
+                const [next] = await this.deps.descriptorSigner.signWithDescriptor([
                     {
                         tx: signed,
                         descriptor,

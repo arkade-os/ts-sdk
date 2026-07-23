@@ -104,3 +104,9 @@ export { isHDCapableIdentity } from "./hdCapableIdentity";
 
 // Static descriptor provider (wrapper for legacy Identity)
 export { StaticDescriptorProvider } from "./staticDescriptorProvider";
+
+// Descriptor signing sources — the narrow "can sign for this descriptor"
+// role that composes behind a provider. The composite that orders them is
+// wallet wiring and stays internal.
+export type { DescriptorSigningSource } from "./signingSource";
+export { KeyringSigningSource } from "./keyringSigningSource";

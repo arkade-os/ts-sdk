@@ -7,9 +7,12 @@ import { InMemoryContractRepository } from "../../src/repositories/inMemory/cont
 import { ContractRepository } from "../../src/repositories/contractRepository";
 import { Contract } from "../../src/contracts/types";
 import {
-    DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
+    UnknownSigningDescriptorError,
 } from "../../src/wallet/signingErrors";
+import { CompositeDescriptorSigner } from "../../src/identity/compositeDescriptorSigner";
+import { KeyringSigningSource } from "../../src/identity/keyringSigningSource";
+import { InMemoryWalletRepository } from "../../src/repositories/inMemory/walletRepository";
 
 const identity = SingleKey.fromHex(
     "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
@@ -59,11 +62,29 @@ const stubTxWithInputs = (count: number): Transaction => {
 describe("InputSignerRouter", async () => {
     const baselinePubKey = hex.encode(await identity.xOnlyPublicKey());
 
+    /**
+     * A composite over one source that claims every descriptor and hands
+     * the batch to `signWithDescriptor` — the router's view of "a signer
+     * that can sign this", with the source-selection logic (covered in
+     * compositeDescriptorSigner.test.ts) held constant.
+     */
+    const signerFor = (signWithDescriptor: (requests: any) => any) =>
+        new CompositeDescriptorSigner([
+            {
+                canProvide: async () => true,
+                signWithDescriptor,
+                signMessageWithDescriptor: async () => new Uint8Array(64),
+            },
+        ]);
+
     const createRouter = (deps: Partial<any> = {}) =>
         new InputSignerRouter({
             identity,
             contractRepository: new InMemoryContractRepository(),
             boardingPkScript,
+            // Claims nothing by default, so a test that unexpectedly takes
+            // the descriptor route fails loudly instead of on `undefined`.
+            descriptorSigner: new CompositeDescriptorSigner([]),
             ...deps,
         });
 
@@ -205,7 +226,7 @@ describe("InputSignerRouter", async () => {
         const signWithDescriptor = vi.fn().mockImplementation((reqs) => [reqs[0].tx]);
         const router = createRouter({
             contractRepository: contractRepo,
-            descriptorProvider: { signWithDescriptor },
+            descriptorSigner: signerFor(signWithDescriptor),
         });
 
         const tx = stubTxWithInputs(1);
@@ -230,7 +251,7 @@ describe("InputSignerRouter", async () => {
         const signWithDescriptor = vi.fn().mockImplementation((reqs) => [reqs[0].tx]);
         const router = createRouter({
             contractRepository: contractRepo,
-            descriptorProvider: { signWithDescriptor },
+            descriptorSigner: signerFor(signWithDescriptor),
         });
 
         const tx = stubTxWithInputs(1);
@@ -259,7 +280,7 @@ describe("InputSignerRouter", async () => {
         );
     });
 
-    it("throws DescriptorSigningProviderMissingError if descriptor route needed but no provider", async () => {
+    it("throws UnknownSigningDescriptorError if no source holds the descriptor", async () => {
         const contractRepo = new InMemoryContractRepository();
         const script = taprootScript(ROTATED_A_PUBKEY);
         await contractRepo.saveContract(
@@ -271,15 +292,74 @@ describe("InputSignerRouter", async () => {
             }),
         );
 
-        const router = createRouter({
-            contractRepository: contractRepo,
-            descriptorProvider: undefined,
-        });
+        const router = createRouter({ contractRepository: contractRepo });
         const tx = stubTxWithInputs(1);
 
         await expect(router.sign(tx, [{ index: 0, lookupScript: script }])).rejects.toThrow(
-            DescriptorSigningProviderMissingError,
+            UnknownSigningDescriptorError,
         );
+    });
+
+    // The wiring hole this phase closes: a static wallet has no descriptor
+    // provider at all, yet must still be able to spend a contract whose key
+    // it was handed. The composite makes the keyring source unconditional,
+    // so this works with no wallet configuration.
+    it("signs a foreign descriptor from the keyring with no descriptor provider present", async () => {
+        const foreignPrivKey = new Uint8Array(32).fill(4);
+        const keyring = new KeyringSigningSource(new InMemoryWalletRepository());
+        const descriptor = await keyring.importKey(foreignPrivKey);
+
+        const contractRepo = new InMemoryContractRepository();
+        const script = taprootScript(ROTATED_A_PUBKEY);
+        await contractRepo.saveContract(
+            makeContract({
+                script: hex.encode(script),
+                type: "default",
+                params: { pubKey: ROTATED_A_PUBKEY },
+                metadata: { signingDescriptor: descriptor },
+            }),
+        );
+
+        // Real `canProvide` — the claim is what this test is about — but
+        // stubbed signing, since the router's stub txs carry no
+        // witnessUtxo for a real signature to bind to.
+        const signWithDescriptor = vi
+            .spyOn(keyring, "signWithDescriptor")
+            .mockImplementation(async (reqs) => [reqs[0].tx]);
+        const router = createRouter({
+            contractRepository: contractRepo,
+            // exactly what the wallet builds when `walletMode` resolved to
+            // no provider: the keyring source alone
+            descriptorSigner: new CompositeDescriptorSigner([keyring]),
+        });
+
+        const tx = stubTxWithInputs(1);
+        await router.sign(tx, [{ index: 0, lookupScript: script }]);
+
+        expect(signWithDescriptor).toHaveBeenCalledWith([{ tx, descriptor, inputIndexes: [0] }]);
+    });
+
+    it("still fails loudly for a descriptor the keyring does not hold", async () => {
+        const keyring = new KeyringSigningSource(new InMemoryWalletRepository());
+        const contractRepo = new InMemoryContractRepository();
+        const script = taprootScript(ROTATED_A_PUBKEY);
+        await contractRepo.saveContract(
+            makeContract({
+                script: hex.encode(script),
+                type: "default",
+                params: { pubKey: ROTATED_A_PUBKEY },
+                metadata: { signingDescriptor: "tr(never-imported)" },
+            }),
+        );
+
+        const router = createRouter({
+            contractRepository: contractRepo,
+            descriptorSigner: new CompositeDescriptorSigner([keyring]),
+        });
+
+        await expect(
+            router.sign(stubTxWithInputs(1), [{ index: 0, lookupScript: script }]),
+        ).rejects.toThrow(UnknownSigningDescriptorError);
     });
 
     it("routes non-default/non-delegate contract (vhtlc) to identity", async () => {
@@ -352,7 +432,7 @@ describe("InputSignerRouter", async () => {
         const signWithDescriptor = vi.fn().mockImplementation((reqs) => [reqs[0].tx]);
         const router = createRouter({
             contractRepository: contractRepo,
-            descriptorProvider: { signWithDescriptor },
+            descriptorSigner: signerFor(signWithDescriptor),
         });
 
         const tx = stubTxWithInputs(1);
@@ -431,23 +511,19 @@ describe("InputSignerRouter", async () => {
             }),
         };
 
-        const mockDescriptorProvider = {
-            signWithDescriptor: vi.fn().mockImplementation((reqs) => {
-                const tx = reqs[0].tx as any;
-                const next = cloneTx(tx) as any;
-                next._signedByDescriptor = tx._signedByDescriptor
-                    ? [...tx._signedByDescriptor]
-                    : [];
-                next._signedByDescriptor.push(reqs[0].descriptor);
-                if (tx._signedByIdentity) next._signedByIdentity = true;
-                return [next];
-            }),
-        };
+        const signWithDescriptor = vi.fn().mockImplementation((reqs) => {
+            const tx = reqs[0].tx as any;
+            const next = cloneTx(tx) as any;
+            next._signedByDescriptor = tx._signedByDescriptor ? [...tx._signedByDescriptor] : [];
+            next._signedByDescriptor.push(reqs[0].descriptor);
+            if (tx._signedByIdentity) next._signedByIdentity = true;
+            return [next];
+        });
 
         const router = createRouter({
             identity: mockIdentity,
             contractRepository: contractRepo,
-            descriptorProvider: mockDescriptorProvider,
+            descriptorSigner: signerFor(signWithDescriptor),
         });
 
         const tx = stubTxWithInputs(3);
@@ -463,19 +539,11 @@ describe("InputSignerRouter", async () => {
         expect(mockIdentity.sign).toHaveBeenCalledOnce();
         expect(mockIdentity.sign).toHaveBeenCalledWith(expect.anything(), [0]);
 
-        expect(mockDescriptorProvider.signWithDescriptor).toHaveBeenCalledTimes(2);
-        expect(mockDescriptorProvider.signWithDescriptor.mock.calls[0][0][0].descriptor).toBe(
-            descriptorA,
-        );
-        expect(mockDescriptorProvider.signWithDescriptor.mock.calls[0][0][0].inputIndexes).toEqual([
-            2,
-        ]);
-        expect(mockDescriptorProvider.signWithDescriptor.mock.calls[1][0][0].descriptor).toBe(
-            descriptorB,
-        );
-        expect(mockDescriptorProvider.signWithDescriptor.mock.calls[1][0][0].inputIndexes).toEqual([
-            1,
-        ]);
+        expect(signWithDescriptor).toHaveBeenCalledTimes(2);
+        expect(signWithDescriptor.mock.calls[0][0][0].descriptor).toBe(descriptorA);
+        expect(signWithDescriptor.mock.calls[0][0][0].inputIndexes).toEqual([2]);
+        expect(signWithDescriptor.mock.calls[1][0][0].descriptor).toBe(descriptorB);
+        expect(signWithDescriptor.mock.calls[1][0][0].inputIndexes).toEqual([1]);
 
         expect(result._signedByIdentity).toBe(true);
         expect(result._signedByDescriptor).toEqual([descriptorA, descriptorB]);
@@ -655,7 +723,7 @@ describe("InputSignerRouter", async () => {
         const signWithDescriptor = vi.fn().mockImplementation((reqs) => [reqs[0].tx]);
         const router = createRouter({
             contractRepository: stubRepo,
-            descriptorProvider: { signWithDescriptor },
+            descriptorSigner: signerFor(signWithDescriptor),
         });
 
         const tx = stubTxWithInputs(1);
