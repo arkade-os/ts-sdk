@@ -219,6 +219,21 @@ export interface WalletConfig extends ReadonlyWalletConfig {
      * @defaultValue `'auto'`
      */
     walletMode?: WalletMode;
+
+    /**
+     * Per-side width of the HD look-ahead watch window: the wallet watches
+     * missing offchain receive scripts across `[watermark - N, watermark + N]`
+     * so funds paid to an address issued by an external party (a merchant
+     * backend sharing the seed) arrive without an explicit `restore()`.
+     *
+     * Only meaningful for HD wallets (`walletMode: 'hd'` or an HD
+     * {@link DescriptorProvider}); ignored otherwise. Raise it when the issuer
+     * is expected to hand out more than `N` consecutive addresses without any
+     * of them being paid. Must be a positive integer.
+     *
+     * @defaultValue `20`
+     */
+    lookAheadWindow?: number;
 }
 
 /**

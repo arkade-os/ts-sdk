@@ -1403,6 +1403,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 );
             },
 
+            refillLookAhead(): Promise<void> {
+                // The look-ahead is wired into the inner Wallet the worker
+                // owns, and every refill trigger fires there. A page-side call
+                // has nothing to schedule.
+                return Promise.resolve();
+            },
+
             async isWatching(): Promise<boolean> {
                 const message: RequestIsContractManagerWatching = {
                     type: "IS_CONTRACT_MANAGER_WATCHING",

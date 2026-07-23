@@ -1406,8 +1406,10 @@ describe("Wallet.restore", () => {
             indexer.subscribeCalls.length = 0;
             await wallet.restore({ gapLimit: 5 });
 
-            expect(indexer.subscribeCalls).toHaveLength(1);
-            // The one POST carries every discovered script, not a prefix.
+            // Two POSTs total: the scan's coalesced one, then the look-ahead
+            // refill that follows the watermark the scan advanced.
+            expect(indexer.subscribeCalls).toHaveLength(2);
+            // The scan's POST carries every discovered script, not a prefix.
             for (const script of funded) {
                 expect(indexer.subscribeCalls[0]).toContain(script);
             }
