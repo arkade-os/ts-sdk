@@ -1260,6 +1260,14 @@ const wallet = await Wallet.create({
     walletMode: "hd",
     lookAheadWindow: 50, // issuer hands out long runs of unpaid invoices
 });
+
+// Same option on the service-worker wallet; it is forwarded to the worker's inner wallet.
+const swWallet = await ServiceWorkerWallet.setup({
+    serviceWorkerPath: "/service-worker.js",
+    identity,
+    walletMode: "hd",
+    lookAheadWindow: 50,
+});
 ```
 
 Raise it when the external issuer is expected to burn more than `N` consecutive addresses without
