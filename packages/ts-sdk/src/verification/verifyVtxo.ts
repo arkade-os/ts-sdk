@@ -28,17 +28,6 @@ export async function verifyVtxo(
         throw new Error("minConfirmationDepth must be a non-negative integer");
     }
 
-    if (vtxo.isPreconfirmed) {
-        return {
-            status: "preconfirmed",
-            outpoint,
-            commitmentTxids: vtxo.commitmentTxIds ?? [],
-            chainLength: 0,
-            issues: [],
-            partialChecks: {},
-        };
-    }
-
     let proof;
     try {
         proof = await parseVtxoProof(outpoint, proofSource);
@@ -66,6 +55,26 @@ export async function verifyVtxo(
         commitmentTxids: proof.commitmentTxids,
         chainLength: proof.transactions.size,
     };
+    if (vtxo.isPreconfirmed) {
+        const prevoutIssues = hydrateVirtualPrevouts(proof);
+        const leafIssues = verifyClaimedLeaf(vtxo, proof);
+        const graphIssues = [...prevoutIssues, ...verifyGraphSegments(proof)];
+        const signatureIssues = [
+            ...verifyTreeCosignerKeys(proof, serverInfo),
+            ...verifyProofSignatures(proof),
+        ];
+        return {
+            status: "preconfirmed",
+            ...base,
+            issues: boundVerificationIssues([...leafIssues, ...graphIssues, ...signatureIssues]),
+            partialChecks: {
+                leaf: leafIssues.length === 0,
+                graph: graphIssues.length === 0,
+                signatures: signatureIssues.length === 0,
+            },
+        };
+    }
+
     let anchors;
     try {
         anchors = await verifyCommitmentAnchors(proof, chainSource, minConfirmationDepth);
@@ -84,7 +93,7 @@ export async function verifyVtxo(
         };
     }
 
-    const issues = bounded([
+    const issues = boundVerificationIssues([
         ...hydrateVirtualPrevouts(proof),
         ...verifyClaimedLeaf(vtxo, proof),
         ...verifyGraphSegments(proof),
@@ -103,7 +112,7 @@ export async function verifyVtxo(
     };
 }
 
-function bounded(issues: VtxoVerificationIssue[]): VtxoVerificationIssue[] {
+export function boundVerificationIssues(issues: VtxoVerificationIssue[]): VtxoVerificationIssue[] {
     if (issues.length <= MAX_ISSUES) return issues;
     return [
         ...issues.slice(0, MAX_ISSUES),

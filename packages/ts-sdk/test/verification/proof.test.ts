@@ -63,6 +63,58 @@ describe("parseVtxoProof", () => {
         expect(proof.entries.get(tree.txid)?.spends).toEqual([COMMITMENT_TXID]);
     });
 
+    it("normalizes metadata transaction identifiers before comparison", async () => {
+        const tree = makeTreePsbt();
+        const chain = makeChain(tree.txid).map((entry) => ({
+            ...entry,
+            txid: entry.txid.toUpperCase(),
+            spends: entry.spends.map((txid) => txid.toUpperCase()),
+        }));
+
+        const proof = await parseVtxoProof(
+            { txid: tree.txid.toUpperCase(), vout: 0 },
+            source(chain, [tree.psbt]),
+        );
+
+        expect(proof.entries.has(tree.txid)).toBe(true);
+        expect(proof.entries.get(tree.txid)?.spends).toEqual([COMMITMENT_TXID]);
+        expect(proof.commitmentTxids).toEqual([COMMITMENT_TXID]);
+    });
+
+    it("rejects duplicate metadata identifiers that differ only by case", async () => {
+        const tree = makeTreePsbt();
+        const chain = makeChain(tree.txid);
+        chain.push({ ...chain[1], txid: tree.txid.toUpperCase() });
+
+        await expect(
+            parseVtxoProof({ txid: tree.txid, vout: 0 }, source(chain, [tree.psbt])),
+        ).rejects.toMatchObject<VtxoProofError>({
+            code: "proof_duplicate_txid",
+            kind: "invalid",
+        });
+    });
+
+    it("rejects metadata nodes disconnected from the requested outpoint", async () => {
+        const tree = makeTreePsbt();
+        const unrelatedCommitment = "22".repeat(32);
+        const chain = [
+            ...makeChain(tree.txid),
+            {
+                txid: unrelatedCommitment,
+                expiresAt: "0",
+                type: ChainTxType.COMMITMENT,
+                spends: [],
+            },
+        ];
+
+        await expect(
+            parseVtxoProof({ txid: tree.txid, vout: 0 }, source(chain, [tree.psbt])),
+        ).rejects.toMatchObject<VtxoProofError>({
+            code: "proof_disconnected_node",
+            kind: "invalid",
+        });
+    });
+
     it("classifies a missing PSBT as unavailable", async () => {
         const tree = makeTreePsbt();
 

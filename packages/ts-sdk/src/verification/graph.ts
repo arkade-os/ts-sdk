@@ -60,13 +60,14 @@ export function verifyClaimedLeaf(
     vtxo: VirtualCoin,
     proof: ParsedVtxoProof,
 ): VtxoVerificationIssue[] {
-    const tx = proof.transactions.get(vtxo.txid);
+    const txid = vtxo.txid.toLowerCase();
+    const tx = proof.transactions.get(txid);
     if (!tx) {
         return [
             {
                 code: "leaf_tx_missing",
-                message: `Claimed VTXO transaction ${vtxo.txid} is absent from the proof`,
-                txid: vtxo.txid,
+                message: `Claimed VTXO transaction ${txid} is absent from the proof`,
+                txid,
             },
         ];
     }
@@ -74,8 +75,8 @@ export function verifyClaimedLeaf(
         return [
             {
                 code: "leaf_output_missing",
-                message: `Claimed VTXO output ${vtxo.txid}:${vtxo.vout} does not exist`,
-                txid: vtxo.txid,
+                message: `Claimed VTXO output ${txid}:${vtxo.vout} does not exist`,
+                txid,
                 outputIndex: vtxo.vout,
             },
         ];
@@ -85,8 +86,8 @@ export function verifyClaimedLeaf(
         return [
             {
                 code: "leaf_output_incomplete",
-                message: `Claimed VTXO output ${vtxo.txid}:${vtxo.vout} has no amount or script`,
-                txid: vtxo.txid,
+                message: `Claimed VTXO output ${txid}:${vtxo.vout} has no amount or script`,
+                txid,
                 outputIndex: vtxo.vout,
             },
         ];
@@ -97,7 +98,7 @@ export function verifyClaimedLeaf(
         issues.push({
             code: "leaf_amount_mismatch",
             message: `Claimed amount ${vtxo.value} does not match output amount ${output.amount}`,
-            txid: vtxo.txid,
+            txid,
             outputIndex: vtxo.vout,
         });
     }
@@ -105,7 +106,7 @@ export function verifyClaimedLeaf(
         issues.push({
             code: "leaf_script_mismatch",
             message: "Claimed script does not match the virtual transaction output",
-            txid: vtxo.txid,
+            txid,
             outputIndex: vtxo.vout,
         });
     }
@@ -123,12 +124,32 @@ export function verifyGraphSegments(proof: ParsedVtxoProof): VtxoVerificationIss
             let inputAmount = 0n;
             let completeInputs = true;
             for (let inputIndex = 0; inputIndex < tx.inputsLength; inputIndex++) {
-                const witnessUtxo = tx.getInput(inputIndex).witnessUtxo;
-                if (!witnessUtxo) {
+                const input = tx.getInput(inputIndex);
+                if (!input.txid || input.index === undefined) {
+                    issues.push({
+                        code: "graph_input_incomplete",
+                        message: `Transaction ${txid} input ${inputIndex} has incomplete parent data`,
+                        txid,
+                        inputIndex,
+                    });
                     completeInputs = false;
-                    break;
+                    continue;
                 }
-                inputAmount += witnessUtxo.amount;
+                const parentKey = `${hex.encode(input.txid)}:${input.index}`;
+                if (spentOutputs.has(parentKey)) {
+                    issues.push({
+                        code: "graph_duplicate_spend",
+                        message: `Multiple transactions spend ${parentKey}`,
+                        txid,
+                        inputIndex,
+                    });
+                }
+                spentOutputs.add(parentKey);
+                if (!input.witnessUtxo) {
+                    completeInputs = false;
+                    continue;
+                }
+                inputAmount += input.witnessUtxo.amount;
             }
             let outputAmount = 0n;
             for (let outputIndex = 0; outputIndex < tx.outputsLength; outputIndex++) {
@@ -168,7 +189,7 @@ export function verifyGraphSegments(proof: ParsedVtxoProof): VtxoVerificationIss
         if (spentOutputs.has(parentKey)) {
             issues.push({
                 code: "graph_duplicate_spend",
-                message: `Multiple TREE transactions spend ${parentKey}`,
+                message: `Multiple transactions spend ${parentKey}`,
                 txid,
                 inputIndex: 0,
             });

@@ -43,8 +43,13 @@ export async function parseVtxoProof(
         );
     }
 
-    const entries = new Map<string, (typeof chain)[number]>();
-    for (const entry of chain) {
+    const normalizedChain = chain.map((entry) => ({
+        ...entry,
+        txid: entry.txid.toLowerCase(),
+        spends: entry.spends.map((txid) => txid.toLowerCase()),
+    }));
+    const entries = new Map<string, (typeof normalizedChain)[number]>();
+    for (const entry of normalizedChain) {
         if (entries.has(entry.txid)) {
             throw new VtxoProofError(
                 "proof_duplicate_txid",
@@ -62,7 +67,42 @@ export async function parseVtxoProof(
         entries.set(entry.txid, entry);
     }
 
-    const virtualEntries = chain.filter((entry) => VIRTUAL_TYPES.has(entry.type));
+    const targetTxid = outpoint.txid.toLowerCase();
+    if (!entries.has(targetTxid)) {
+        throw new VtxoProofError(
+            "proof_target_missing",
+            `The VTXO chain does not contain requested transaction ${targetTxid}`,
+            "invalid",
+        );
+    }
+
+    const reachable = new Set<string>();
+    const visiting = new Set<string>();
+    const visit = (txid: string): void => {
+        if (reachable.has(txid)) return;
+        if (visiting.has(txid)) {
+            throw new VtxoProofError(
+                "proof_cycle",
+                `The VTXO chain contains a cycle at transaction ${txid}`,
+                "invalid",
+            );
+        }
+        const entry = entries.get(txid);
+        // Defer unknown-parent classification until after the PSBT's actual
+        // parents are compared with metadata, so a contradiction is reported
+        // as parent_mismatch rather than being masked by traversal order.
+        if (!entry) return;
+        visiting.add(txid);
+        for (const parent of entry.spends) visit(parent);
+        visiting.delete(txid);
+        reachable.add(txid);
+    };
+    visit(targetTxid);
+
+    const reachableEntries = new Map([...entries].filter(([txid]) => reachable.has(txid)));
+    const virtualEntries = normalizedChain.filter(
+        (entry) => reachable.has(entry.txid) && VIRTUAL_TYPES.has(entry.type),
+    );
     let psbts: string[];
     try {
         psbts = await source.getVirtualTxs(virtualEntries.map((entry) => entry.txid));
@@ -93,21 +133,22 @@ export async function parseVtxoProof(
                 "invalid",
             );
         }
-        if (!entries.has(tx.id) || !VIRTUAL_TYPES.has(entries.get(tx.id)!.type)) {
+        const txid = tx.id.toLowerCase();
+        if (!reachableEntries.has(txid) || !VIRTUAL_TYPES.has(reachableEntries.get(txid)!.type)) {
             throw new VtxoProofError(
                 "proof_psbt_txid_mismatch",
-                `Virtual transaction ${tx.id} was not declared by the chain metadata`,
+                `Virtual transaction ${txid} was not declared by the chain metadata`,
                 "invalid",
             );
         }
-        if (transactions.has(tx.id)) {
+        if (transactions.has(txid)) {
             throw new VtxoProofError(
                 "proof_duplicate_psbt",
-                `The proof contains duplicate PSBT ${tx.id}`,
+                `The proof contains duplicate PSBT ${txid}`,
                 "invalid",
             );
         }
-        transactions.set(tx.id, tx);
+        transactions.set(txid, tx);
     }
 
     for (const entry of virtualEntries) {
@@ -143,7 +184,7 @@ export async function parseVtxoProof(
             );
         }
         for (const parent of actualParents) {
-            if (!entries.has(parent)) {
+            if (!reachableEntries.has(parent)) {
                 throw new VtxoProofError(
                     "proof_parent_unknown",
                     `Transaction ${entry.txid} references unknown parent ${parent}`,
@@ -153,11 +194,20 @@ export async function parseVtxoProof(
         }
     }
 
+    const disconnectedTxid = [...entries.keys()].find((txid) => !reachable.has(txid));
+    if (disconnectedTxid) {
+        throw new VtxoProofError(
+            "proof_disconnected_node",
+            `Transaction ${disconnectedTxid} is disconnected from requested transaction ${targetTxid}`,
+            "invalid",
+        );
+    }
+
     return {
-        entries,
+        entries: reachableEntries,
         transactions,
-        commitmentTxids: chain
-            .filter((entry) => entry.type === ChainTxType.COMMITMENT)
+        commitmentTxids: normalizedChain
+            .filter((entry) => reachable.has(entry.txid) && entry.type === ChainTxType.COMMITMENT)
             .map((entry) => entry.txid),
     };
 }

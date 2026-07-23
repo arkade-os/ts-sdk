@@ -16,6 +16,7 @@ import {
     VtxoProofSource,
     VtxoVerificationServerInfo,
 } from "../../src/verification";
+import { boundVerificationIssues } from "../../src/verification/verifyVtxo";
 
 const SECRET_KEY = new Uint8Array(32).fill(7);
 const COSIGNER_KEY = secp256k1.getPublicKey(SECRET_KEY);
@@ -45,6 +46,10 @@ function fixture(tipHeight = 105) {
     tree.addInput({
         txid: hex.decode(commitment.id),
         index: 0,
+        witnessUtxo: {
+            amount: 10_000n,
+            script: SCRIPT,
+        },
     });
     setArkPsbtField(tree, 0, CosignerPublicKey, {
         index: 0,
@@ -116,8 +121,11 @@ describe("verifyVtxo", () => {
         });
     });
 
-    it("returns preconfirmed without claiming an onchain anchor", async () => {
+    it("runs local checks for preconfirmed VTXOs without querying an onchain anchor", async () => {
         const { vtxo, proofSource, chainSource } = fixture();
+        chainSource.getTxHex = async () => {
+            throw new Error("anchor source must not be queried");
+        };
         const result = await verifyVtxo(
             { ...vtxo, isPreconfirmed: true },
             proofSource,
@@ -125,7 +133,31 @@ describe("verifyVtxo", () => {
             SERVER,
         );
 
-        expect(result.status).toBe("preconfirmed");
+        expect(result).toMatchObject({
+            status: "preconfirmed",
+            issues: [],
+            partialChecks: {
+                leaf: true,
+                graph: true,
+                signatures: true,
+            },
+        });
+    });
+
+    it("reports failed local checks on a preconfirmed VTXO", async () => {
+        const { vtxo, proofSource, chainSource } = fixture();
+        const result = await verifyVtxo(
+            { ...vtxo, value: 10_001, isPreconfirmed: true },
+            proofSource,
+            chainSource,
+            SERVER,
+        );
+
+        expect(result).toMatchObject({
+            status: "preconfirmed",
+            partialChecks: { leaf: false },
+        });
+        expect(result.issues.map((issue) => issue.code)).toContain("leaf_amount_mismatch");
     });
 
     it("returns invalid for a forged claimed amount", async () => {
@@ -162,5 +194,23 @@ describe("verifyVtxo", () => {
                 })
             ).status,
         ).toBe("confirmed");
+    });
+});
+
+describe("boundVerificationIssues", () => {
+    it("caps diagnostics and appends an issues_truncated marker", () => {
+        const issues = Array.from({ length: 101 }, (_, index) => ({
+            code: `issue_${index}`,
+            message: `Issue ${index}`,
+        }));
+
+        const bounded = boundVerificationIssues(issues);
+
+        expect(bounded).toHaveLength(101);
+        expect(bounded[99]).toEqual(issues[99]);
+        expect(bounded[100]).toEqual({
+            code: "issues_truncated",
+            message: "Verification produced more than 100 issues",
+        });
     });
 });

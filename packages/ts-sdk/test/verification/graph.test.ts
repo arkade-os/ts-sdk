@@ -170,4 +170,19 @@ describe("verifyGraphSegments", () => {
 
         expect(verifyGraphSegments(proof)[0].code).toBe("graph_amount_mismatch");
     });
+
+    it("rejects an ARK and TREE transaction spending the same parent output", () => {
+        const root = makeTx(COMMITMENT_TXID, 0, [10_000n]);
+        const tree = makeTx(root.id, 0, [9_999n, 1n]);
+        const ark = makeTx(root.id, 0, [9_998n, 2n]);
+        const proof = proofFor([root, tree, ark]);
+        proof.entries.set(ark.id, {
+            ...proof.entries.get(ark.id)!,
+            type: ChainTxType.ARK,
+        });
+
+        expect(verifyGraphSegments(proof).map((issue) => issue.code)).toContain(
+            "graph_duplicate_spend",
+        );
+    });
 });
