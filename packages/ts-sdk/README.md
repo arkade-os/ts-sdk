@@ -13,6 +13,49 @@ npm install @arkade-os/sdk
 
 ## Usage
 
+### Verifying a settled VTXO
+
+`verifyVtxo` validates proof material locally and binds it to commitment
+transactions fetched from an independent Bitcoin backend. The indexer or local
+exit repository supplies untrusted proof bytes; only a `confirmed` result means
+the VTXO passed graph, signature, leaf, and on-chain anchor verification.
+
+```typescript
+import {
+  createExitChainResolver,
+  verifyVtxo,
+} from '@arkade-os/sdk'
+
+const proofSource = createExitChainResolver({
+  indexer,
+  repository: virtualTxRepository,
+})
+
+const result = await verifyVtxo(
+  vtxo,
+  proofSource,
+  chainSource,
+  {
+    pubkey: serverPubkey,
+    sweepInterval: unilateralExitDelay,
+  },
+)
+
+if (result.status === 'confirmed') {
+  console.log(`confirmed at depth ${result.confirmationDepth}`)
+}
+```
+
+The result status is one of:
+
+- `confirmed`: every required check passed.
+- `preconfirmed`: no final Bitcoin anchor exists yet.
+- `invalid`: available evidence contradicts the claimed VTXO.
+- `unavailable`: proof or independent chain data could not be obtained.
+
+The independent `chainSource` is the trust boundary. A `preconfirmed` or
+`unavailable` result must not be presented as confirmed.
+
 ### Creating a Wallet
 
 ```typescript
