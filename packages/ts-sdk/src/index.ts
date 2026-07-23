@@ -850,3 +850,14 @@ export type {
     VirtualTx,
     VtxoBranch,
 };
+
+export { verifyVtxo } from "./verification";
+export type {
+    VtxoChainSource,
+    VtxoProofSource,
+    VtxoVerificationCheck,
+    VtxoVerificationIssue,
+    VtxoVerificationOptions,
+    VtxoVerificationResult,
+    VtxoVerificationServerInfo,
+} from "./verification";

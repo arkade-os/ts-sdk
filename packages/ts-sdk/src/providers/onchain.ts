@@ -192,6 +192,15 @@ export class EsploraProvider implements OnchainProvider {
         }
     }
 
+    async getTxHex(txid: string): Promise<string> {
+        const response = await baseFetch(`${this.baseUrl}/tx/${txid}/hex`);
+        const body = await response.text();
+        if (!response.ok) {
+            throw new Error(`Failed to get transaction hex: ${body}`);
+        }
+        return body.trim();
+    }
+
     async getTxOutspends(txid: string): Promise<{ spent: boolean; txid?: string }[]> {
         const response = await baseFetch(`${this.baseUrl}/tx/${txid}/outspends`);
         if (!response.ok) {
