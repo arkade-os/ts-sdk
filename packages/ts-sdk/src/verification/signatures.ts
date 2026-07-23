@@ -1,12 +1,91 @@
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { hex } from "@scure/base";
 import { SigHash, TAPROOT_UNSPENDABLE_KEY } from "@scure/btc-signer";
+import { tapLeafHash } from "@scure/btc-signer/payment.js";
+import { compareBytes, taprootTweakPubkey } from "@scure/btc-signer/utils.js";
+import { aggregateKeys } from "../musig2";
 import { ChainTxType } from "../providers/indexer";
 import { scriptFromTapLeafScript } from "../script/base";
-import { decodeTapscript } from "../script/tapscript";
+import { CSVMultisigTapscript, decodeTapscript } from "../script/tapscript";
 import { verifyTapscriptSignatures } from "../utils/arkTransaction";
+import { CosignerPublicKey, getArkPsbtFields, VtxoTreeExpiry } from "../utils/unknownFields";
 import type { Transaction } from "../utils/transaction";
-import type { ParsedVtxoProof, VtxoVerificationIssue } from "./types";
+import type { ParsedVtxoProof, VtxoVerificationIssue, VtxoVerificationServerInfo } from "./types";
+
+export function verifyTreeCosignerKeys(
+    proof: ParsedVtxoProof,
+    serverInfo: VtxoVerificationServerInfo,
+): VtxoVerificationIssue[] {
+    const issues: VtxoVerificationIssue[] = [];
+
+    for (const [txid, entry] of proof.entries) {
+        if (entry.type !== ChainTxType.TREE) continue;
+        const tx = proof.transactions.get(txid);
+        if (!tx) continue;
+
+        for (let inputIndex = 0; inputIndex < tx.inputsLength; inputIndex++) {
+            const input = tx.getInput(inputIndex);
+            const script = input.witnessUtxo?.script;
+            if (!script || script.length !== 34 || script[0] !== 0x51 || script[1] !== 0x20) {
+                continue;
+            }
+
+            const cosigners = getArkPsbtFields(tx, inputIndex, CosignerPublicKey);
+            if (cosigners.length === 0) {
+                issues.push({
+                    code: "signature_cosigner_missing",
+                    message: `TREE transaction ${txid} input ${inputIndex} has no cosigner keys`,
+                    txid,
+                    inputIndex,
+                });
+                continue;
+            }
+
+            const expiries = getArkPsbtFields(tx, inputIndex, VtxoTreeExpiry);
+            if (expiries.length !== 1) {
+                issues.push({
+                    code:
+                        expiries.length === 0
+                            ? "signature_sweep_expiry_missing"
+                            : "signature_sweep_expiry_ambiguous",
+                    message: `TREE transaction ${txid} input ${inputIndex} must have exactly one sweep expiry`,
+                    txid,
+                    inputIndex,
+                });
+                continue;
+            }
+
+            try {
+                const sweepScript = CSVMultisigTapscript.encode({
+                    timelock: expiries[0],
+                    pubkeys: [serverInfo.forfeitPubkey],
+                }).script;
+                const { finalKey } = aggregateKeys(
+                    cosigners.map((cosigner) => cosigner.key),
+                    true,
+                    { taprootTweak: tapLeafHash(sweepScript) },
+                );
+                if (hex.encode(finalKey.subarray(1)) !== hex.encode(script.subarray(2))) {
+                    issues.push({
+                        code: "signature_cosigner_key_mismatch",
+                        message: `TREE transaction ${txid} input ${inputIndex} cosigners do not match its prevout`,
+                        txid,
+                        inputIndex,
+                    });
+                }
+            } catch (error) {
+                issues.push({
+                    code: "signature_cosigner_invalid",
+                    message: `TREE transaction ${txid} input ${inputIndex} has invalid cosigner keys: ${errorMessage(error)}`,
+                    txid,
+                    inputIndex,
+                });
+            }
+        }
+    }
+
+    return issues;
+}
 
 export function verifyProofSignatures(proof: ParsedVtxoProof): VtxoVerificationIssue[] {
     const issues: VtxoVerificationIssue[] = [];
@@ -118,13 +197,45 @@ function verifyScriptPathSignatures(
 ): void {
     for (let inputIndex = 0; inputIndex < tx.inputsLength; inputIndex++) {
         const input = tx.getInput(inputIndex);
-        if (!input.tapLeafScript || input.tapLeafScript.length === 0) continue;
+        if (!input.tapLeafScript || input.tapLeafScript.length === 0) {
+            issues.push({
+                code: "signature_script_path_missing",
+                message: `Transaction ${txid} input ${inputIndex} has no tapscript proof`,
+                txid,
+                inputIndex,
+            });
+            continue;
+        }
 
-        const internalKey = input.tapLeafScript[0][0]?.internalKey;
-        if (!internalKey || hex.encode(internalKey) !== hex.encode(TAPROOT_UNSPENDABLE_KEY)) {
+        if (
+            input.tapLeafScript.some(
+                ([controlBlock]) =>
+                    hex.encode(controlBlock.internalKey) !== hex.encode(TAPROOT_UNSPENDABLE_KEY),
+            )
+        ) {
             issues.push({
                 code: "signature_internal_key_spendable",
                 message: `Transaction ${txid} input ${inputIndex} does not use the NUMS internal key`,
+                txid,
+                inputIndex,
+            });
+            continue;
+        }
+
+        if (
+            !input.witnessUtxo ||
+            input.tapLeafScript.some(
+                ([controlBlock, scriptWithVersion]) =>
+                    !tapLeafBindsToPrevout(
+                        controlBlock,
+                        scriptWithVersion,
+                        input.witnessUtxo!.script,
+                    ),
+            )
+        ) {
+            issues.push({
+                code: "signature_tapleaf_unbound",
+                message: `Transaction ${txid} input ${inputIndex} tapscript is not bound to its prevout`,
                 txid,
                 inputIndex,
             });
@@ -146,6 +257,45 @@ function verifyScriptPathSignatures(
                 inputIndex,
             });
         }
+    }
+}
+
+function tapLeafBindsToPrevout(
+    controlBlock: {
+        version: number;
+        internalKey: Uint8Array;
+        merklePath: Uint8Array[];
+    },
+    scriptWithVersion: Uint8Array,
+    prevoutScript: Uint8Array,
+): boolean {
+    if (
+        scriptWithVersion.length === 0 ||
+        prevoutScript.length !== 34 ||
+        prevoutScript[0] !== 0x51 ||
+        prevoutScript[1] !== 0x20
+    ) {
+        return false;
+    }
+
+    const leafVersion = scriptWithVersion[scriptWithVersion.length - 1];
+    if ((controlBlock.version & 0xfe) !== leafVersion) return false;
+
+    let merkleRoot = tapLeafHash(scriptWithVersion.subarray(0, -1), leafVersion);
+    for (const sibling of controlBlock.merklePath) {
+        const [left, right] =
+            compareBytes(merkleRoot, sibling) <= 0 ? [merkleRoot, sibling] : [sibling, merkleRoot];
+        merkleRoot = schnorr.utils.taggedHash("TapBranch", left, right);
+    }
+
+    try {
+        const [outputKey, parity] = taprootTweakPubkey(controlBlock.internalKey, merkleRoot);
+        return (
+            parity === (controlBlock.version & 1) &&
+            hex.encode(outputKey) === hex.encode(prevoutScript.subarray(2))
+        );
+    } catch {
+        return false;
     }
 }
 

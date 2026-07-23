@@ -3,6 +3,59 @@ import { ChainTxType } from "../providers/indexer";
 import type { VirtualCoin } from "../wallet";
 import type { ParsedVtxoProof, VtxoVerificationIssue } from "./types";
 
+export function hydrateVirtualPrevouts(proof: ParsedVtxoProof): VtxoVerificationIssue[] {
+    const issues: VtxoVerificationIssue[] = [];
+
+    for (const [txid, tx] of proof.transactions) {
+        for (let inputIndex = 0; inputIndex < tx.inputsLength; inputIndex++) {
+            const input = tx.getInput(inputIndex);
+            if (!input.txid || input.index === undefined) continue;
+
+            const parentTxid = hex.encode(input.txid);
+            const parent = proof.transactions.get(parentTxid);
+            if (!parent) continue;
+
+            const parentOutput =
+                input.index >= 0 && input.index < parent.outputsLength
+                    ? parent.getOutput(input.index)
+                    : undefined;
+            if (parentOutput?.amount === undefined || !parentOutput.script) {
+                issues.push({
+                    code: "graph_parent_output_missing",
+                    message: `Parent output ${parentTxid}:${input.index} does not exist`,
+                    txid,
+                    inputIndex,
+                });
+                continue;
+            }
+
+            if (!input.witnessUtxo) {
+                tx.updateInput(inputIndex, {
+                    witnessUtxo: {
+                        amount: parentOutput.amount,
+                        script: parentOutput.script,
+                    },
+                });
+                continue;
+            }
+
+            if (
+                input.witnessUtxo.amount !== parentOutput.amount ||
+                hex.encode(input.witnessUtxo.script) !== hex.encode(parentOutput.script)
+            ) {
+                issues.push({
+                    code: "graph_prevout_mismatch",
+                    message: `Input prevout does not match ${parentTxid}:${input.index}`,
+                    txid,
+                    inputIndex,
+                });
+            }
+        }
+    }
+
+    return issues;
+}
+
 export function verifyClaimedLeaf(
     vtxo: VirtualCoin,
     proof: ParsedVtxoProof,
@@ -64,9 +117,33 @@ export function verifyGraphSegments(proof: ParsedVtxoProof): VtxoVerificationIss
     const spentOutputs = new Set<string>();
 
     for (const [txid, entry] of proof.entries) {
-        if (entry.type !== ChainTxType.TREE) continue;
         const tx = proof.transactions.get(txid);
         if (!tx) continue;
+        if (entry.type === ChainTxType.ARK || entry.type === ChainTxType.CHECKPOINT) {
+            let inputAmount = 0n;
+            let completeInputs = true;
+            for (let inputIndex = 0; inputIndex < tx.inputsLength; inputIndex++) {
+                const witnessUtxo = tx.getInput(inputIndex).witnessUtxo;
+                if (!witnessUtxo) {
+                    completeInputs = false;
+                    break;
+                }
+                inputAmount += witnessUtxo.amount;
+            }
+            let outputAmount = 0n;
+            for (let outputIndex = 0; outputIndex < tx.outputsLength; outputIndex++) {
+                outputAmount += tx.getOutput(outputIndex)?.amount ?? 0n;
+            }
+            if (completeInputs && outputAmount > inputAmount) {
+                issues.push({
+                    code: "graph_amount_mismatch",
+                    message: `Transaction ${txid} outputs ${outputAmount} but spends ${inputAmount}`,
+                    txid,
+                });
+            }
+            continue;
+        }
+        if (entry.type !== ChainTxType.TREE) continue;
         if (tx.inputsLength !== 1) {
             issues.push({
                 code: "graph_input_count",
@@ -134,7 +211,10 @@ export function verifyGraphSegments(proof: ParsedVtxoProof): VtxoVerificationIss
         }
 
         const parent = proof.transactions.get(parentTxid);
-        const parentOutput = parent?.getOutput(input.index);
+        const parentOutput =
+            parent && input.index >= 0 && input.index < parent.outputsLength
+                ? parent.getOutput(input.index)
+                : undefined;
         if (parentOutput?.amount === undefined || !parentOutput.script) {
             issues.push({
                 code: "graph_parent_output_missing",

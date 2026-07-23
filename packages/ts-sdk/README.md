@@ -36,8 +36,7 @@ const result = await verifyVtxo(
   proofSource,
   chainSource,
   {
-    pubkey: serverPubkey,
-    sweepInterval: unilateralExitDelay,
+    forfeitPubkey: serverForfeitPubkey,
   },
 )
 
@@ -55,6 +54,10 @@ The result status is one of:
 
 The independent `chainSource` is the trust boundary. A `preconfirmed` or
 `unavailable` result must not be presented as confirmed.
+
+`serverForfeitPubkey` is the x-only forfeit key that applied when the VTXO tree
+was created. The tree expiry is decoded from the PSBT and accepted only when the
+resulting sweep leaf and cosigner aggregate reproduce the anchored P2TR output.
 
 ### Creating a Wallet
 

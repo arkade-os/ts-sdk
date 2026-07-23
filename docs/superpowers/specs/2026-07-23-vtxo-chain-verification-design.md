@@ -91,6 +91,19 @@ export interface VtxoProofSource {
 `ExitChainResolver` structurally satisfies this interface, so callers can use
 `createExitChainResolver` and retain local-first retrieval.
 
+The server input contains only the expected historical forfeit key:
+
+```ts
+export interface VtxoVerificationServerInfo {
+    forfeitPubkey: Uint8Array;
+}
+```
+
+The verifier decodes each TREE input's `VtxoTreeExpiry` field and accepts it
+only when that expiry, the expected forfeit key, and the declared cosigners
+reproduce the P2TR prevout key. The expiry is therefore proof material, not a
+trusted caller-supplied policy value.
+
 `VtxoChainSource` is deliberately narrower than changing every existing
 `OnchainProvider` implementation:
 
@@ -162,7 +175,7 @@ For each TREE segment, reuse and extend `validateVtxoTxGraph` to validate:
 - complete amount conservation;
 - expected Taproot output scripts;
 - cosigner key aggregation;
-- the configured server sweep leaf;
+- the expected server forfeit key and proof-carried sweep expiry;
 - multi-level parent/child relationships.
 
 For ARK and checkpoint nodes, validate actual transaction inputs against
@@ -187,8 +200,9 @@ For every commitment transaction reached by the graph:
 
 1. Fetch raw transaction hex from `VtxoChainSource`.
 2. Parse it and recompute its txid.
-3. Match the commitment output index, amount, and script against the root TREE
-   input's witness UTXO.
+3. Resolve every root TREE prevout directly from the commitment output. If the
+   PSBT includes a witness UTXO it must match; if omitted, hydrate it from the
+   authenticated raw transaction before graph and signature verification.
 4. Fetch confirmation status and the shared chain tip.
 5. Require confirmation depth to meet `minConfirmationDepth`.
 6. Check the commitment output's outspend. An unspent output is valid. A spent

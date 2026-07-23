@@ -30,22 +30,12 @@ export async function verifyCommitmentAnchors(
     let minimumDepth = Number.POSITIVE_INFINITY;
 
     for (const commitmentTxid of proof.commitmentTxids) {
-        const root = findCommitmentRoot(proof, commitmentTxid);
-        if (!root) {
+        const roots = findCommitmentRoots(proof, commitmentTxid);
+        if (roots.length === 0) {
             issues.push({
                 code: "anchor_root_missing",
                 message: `No TREE transaction spends commitment ${commitmentTxid}`,
                 txid: commitmentTxid,
-            });
-            continue;
-        }
-        const rootInput = root.tx.getInput(root.inputIndex);
-        if (!rootInput.witnessUtxo || rootInput.index === undefined) {
-            issues.push({
-                code: "anchor_root_prevout_missing",
-                message: `TREE root ${root.tx.id} has incomplete commitment prevout data`,
-                txid: root.tx.id,
-                inputIndex: root.inputIndex,
             });
             continue;
         }
@@ -90,33 +80,6 @@ export async function verifyCommitmentAnchors(
             continue;
         }
 
-        const output = commitment.getOutput(rootInput.index);
-        if (output?.amount === undefined || !output.script) {
-            issues.push({
-                code: "anchor_output_missing",
-                message: `Commitment output ${commitmentTxid}:${rootInput.index} does not exist`,
-                txid: commitmentTxid,
-                outputIndex: rootInput.index,
-            });
-            continue;
-        }
-        if (output.amount !== rootInput.witnessUtxo.amount) {
-            issues.push({
-                code: "anchor_amount_mismatch",
-                message: `Commitment output amount ${output.amount} does not match TREE prevout ${rootInput.witnessUtxo.amount}`,
-                txid: commitmentTxid,
-                outputIndex: rootInput.index,
-            });
-        }
-        if (hex.encode(output.script) !== hex.encode(rootInput.witnessUtxo.script)) {
-            issues.push({
-                code: "anchor_script_mismatch",
-                message: "Commitment output script does not match the TREE root prevout",
-                txid: commitmentTxid,
-                outputIndex: rootInput.index,
-            });
-        }
-
         if (!status.confirmed) {
             issues.push({
                 code: "anchor_unconfirmed",
@@ -135,8 +98,58 @@ export async function verifyCommitmentAnchors(
             }
         }
 
-        const outspend = outspends[rootInput.index];
-        if (outspend?.spent) {
+        for (const root of roots) {
+            const rootInput = root.tx.getInput(root.inputIndex);
+            if (rootInput.index === undefined) {
+                issues.push({
+                    code: "anchor_root_prevout_missing",
+                    message: `TREE root ${root.tx.id} has no commitment output index`,
+                    txid: root.tx.id,
+                    inputIndex: root.inputIndex,
+                });
+                continue;
+            }
+
+            const output =
+                rootInput.index >= 0 && rootInput.index < commitment.outputsLength
+                    ? commitment.getOutput(rootInput.index)
+                    : undefined;
+            if (output?.amount === undefined || !output.script) {
+                issues.push({
+                    code: "anchor_output_missing",
+                    message: `Commitment output ${commitmentTxid}:${rootInput.index} does not exist`,
+                    txid: commitmentTxid,
+                    outputIndex: rootInput.index,
+                });
+                continue;
+            }
+            if (rootInput.witnessUtxo && output.amount !== rootInput.witnessUtxo.amount) {
+                issues.push({
+                    code: "anchor_amount_mismatch",
+                    message: `Commitment output amount ${output.amount} does not match TREE prevout ${rootInput.witnessUtxo.amount}`,
+                    txid: commitmentTxid,
+                    outputIndex: rootInput.index,
+                });
+            }
+            if (
+                rootInput.witnessUtxo &&
+                hex.encode(output.script) !== hex.encode(rootInput.witnessUtxo.script)
+            ) {
+                issues.push({
+                    code: "anchor_script_mismatch",
+                    message: "Commitment output script does not match the TREE root prevout",
+                    txid: commitmentTxid,
+                    outputIndex: rootInput.index,
+                });
+            }
+            if (!rootInput.witnessUtxo) {
+                root.tx.updateInput(root.inputIndex, {
+                    witnessUtxo: { amount: output.amount, script: output.script },
+                });
+            }
+
+            const outspend = outspends[rootInput.index];
+            if (!outspend?.spent) continue;
             if (!outspend.txid) {
                 issues.push({
                     code: "anchor_spender_unknown",
@@ -161,7 +174,8 @@ export async function verifyCommitmentAnchors(
     };
 }
 
-function findCommitmentRoot(proof: ParsedVtxoProof, commitmentTxid: string) {
+function findCommitmentRoots(proof: ParsedVtxoProof, commitmentTxid: string) {
+    const roots: { tx: Transaction; inputIndex: number }[] = [];
     for (const [txid, entry] of proof.entries) {
         if (entry.type !== ChainTxType.TREE) continue;
         const tx = proof.transactions.get(txid);
@@ -169,11 +183,11 @@ function findCommitmentRoot(proof: ParsedVtxoProof, commitmentTxid: string) {
         for (let inputIndex = 0; inputIndex < tx.inputsLength; inputIndex++) {
             const input = tx.getInput(inputIndex);
             if (input.txid && hex.encode(input.txid) === commitmentTxid) {
-                return { tx, inputIndex };
+                roots.push({ tx, inputIndex });
             }
         }
     }
-    return undefined;
+    return roots;
 }
 
 function unavailable(code: string, text: string, cause: unknown) {

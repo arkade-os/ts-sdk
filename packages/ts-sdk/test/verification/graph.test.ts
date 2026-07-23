@@ -4,18 +4,29 @@ import { describe, expect, it } from "vitest";
 import { ChainTxType } from "../../src/providers/indexer";
 import { Transaction } from "../../src/utils/transaction";
 import type { VirtualCoin } from "../../src/wallet";
-import { ParsedVtxoProof, verifyClaimedLeaf, verifyGraphSegments } from "../../src/verification";
+import {
+    hydrateVirtualPrevouts,
+    ParsedVtxoProof,
+    verifyClaimedLeaf,
+    verifyGraphSegments,
+} from "../../src/verification";
 
 const COMMITMENT_TXID = "11".repeat(32);
 const KEY = schnorr.getPublicKey(new Uint8Array(32).fill(3));
 const SCRIPT = Uint8Array.from([0x51, 0x20, ...KEY]);
 
-function makeTx(parentTxid: string, parentVout: number, amounts: bigint[]): Transaction {
+function makeTx(
+    parentTxid: string,
+    parentVout: number,
+    amounts: bigint[],
+    inputAmount = amounts.reduce((sum, amount) => sum + amount, 0n),
+    includeWitnessUtxo = true,
+): Transaction {
     const tx = new Transaction({ allowLegacyWitnessUtxo: true });
     tx.addInput({
         txid: hex.decode(parentTxid),
         index: parentVout,
-        witnessUtxo: { amount: amounts.reduce((sum, amount) => sum + amount, 0n), script: SCRIPT },
+        ...(includeWitnessUtxo ? { witnessUtxo: { amount: inputAmount, script: SCRIPT } } : {}),
     });
     for (const amount of amounts) {
         tx.addOutput({ amount, script: SCRIPT });
@@ -101,6 +112,28 @@ describe("verifyClaimedLeaf", () => {
 });
 
 describe("verifyGraphSegments", () => {
+    it("hydrates an omitted child prevout from its parent TREE output", () => {
+        const root = makeTx(COMMITMENT_TXID, 0, [10_000n]);
+        const child = makeTx(root.id, 0, [10_000n], 10_000n, false);
+        const proof = proofFor([root, child]);
+
+        expect(hydrateVirtualPrevouts(proof)).toEqual([]);
+        expect(child.getInput(0).witnessUtxo).toEqual({
+            amount: 10_000n,
+            script: SCRIPT,
+        });
+        expect(verifyGraphSegments(proof)).toEqual([]);
+    });
+
+    it("reports an out-of-range parent output without throwing", () => {
+        const root = makeTx(COMMITMENT_TXID, 0, [10_000n]);
+        const child = makeTx(root.id, 9, [10_000n], 10_000n, false);
+
+        expect(hydrateVirtualPrevouts(proofFor([root, child]))[0].code).toBe(
+            "graph_parent_output_missing",
+        );
+    });
+
     it("accepts a three-level amount-conserving TREE", () => {
         const root = makeTx(COMMITMENT_TXID, 0, [6_000n, 4_000n]);
         const child = makeTx(root.id, 0, [3_500n, 2_500n]);
@@ -124,5 +157,17 @@ describe("verifyGraphSegments", () => {
         expect(verifyGraphSegments(proofFor([root, left, right]))[0].code).toBe(
             "graph_duplicate_spend",
         );
+    });
+
+    it("rejects an ARK transaction whose outputs exceed its inputs", () => {
+        const root = makeTx(COMMITMENT_TXID, 0, [10_000n]);
+        const ark = makeTx(root.id, 0, [10_001n], 10_000n);
+        const proof = proofFor([root, ark]);
+        proof.entries.set(ark.id, {
+            ...proof.entries.get(ark.id)!,
+            type: ChainTxType.ARK,
+        });
+
+        expect(verifyGraphSegments(proof)[0].code).toBe("graph_amount_mismatch");
     });
 });

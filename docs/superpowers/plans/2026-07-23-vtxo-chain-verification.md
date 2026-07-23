@@ -8,6 +8,12 @@
 
 **Tech Stack:** TypeScript 5.9, Vitest 3, `@scure/btc-signer` 2, `@noble/curves` Schnorr, pnpm 10.25.
 
+> **Implementation note:** Live arkd PSBTs omit TREE `witnessUtxo`. The final
+> implementation reconstructs root prevouts from raw Bitcoin commitments and
+> child prevouts from parent virtual transactions. It also derives the sweep
+> expiry from `VtxoTreeExpiry`, so `VtxoVerificationServerInfo` carries only
+> `forfeitPubkey`; the proof-carried expiry must reproduce the anchored output.
+
 ## Global Constraints
 
 - Base all work on `upstream/master` version `0.4.49` or newer.

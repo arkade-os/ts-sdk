@@ -1,6 +1,6 @@
 export { parseVtxoProof, VtxoProofError } from "./proof";
-export { verifyClaimedLeaf, verifyGraphSegments } from "./graph";
-export { verifyProofSignatures } from "./signatures";
+export { hydrateVirtualPrevouts, verifyClaimedLeaf, verifyGraphSegments } from "./graph";
+export { verifyProofSignatures, verifyTreeCosignerKeys } from "./signatures";
 export { verifyCommitmentAnchors, VtxoVerificationUnavailableError } from "./anchor";
 export { verifyVtxo } from "./verifyVtxo";
 export type {

@@ -13,6 +13,8 @@ import {
 const SCRIPT = Uint8Array.from([0x51, 0x20, ...schnorr.getPublicKey(new Uint8Array(32).fill(4))]);
 
 function fixture(overrides?: {
+    commitmentSeed?: number;
+    omitWitnessUtxo?: boolean;
     witnessAmount?: bigint;
     witnessScript?: Uint8Array;
     status?: Awaited<ReturnType<VtxoChainSource["getTxStatus"]>>;
@@ -23,17 +25,24 @@ function fixture(overrides?: {
         allowUnknownInputs: true,
         allowUnknownOutputs: true,
     });
-    commitment.addInput({ txid: new Uint8Array(32).fill(1), index: 0 });
+    commitment.addInput({
+        txid: new Uint8Array(32).fill(overrides?.commitmentSeed ?? 1),
+        index: 0,
+    });
     commitment.addOutput({ amount: 10_000n, script: SCRIPT });
 
     const tree = new Transaction({ allowLegacyWitnessUtxo: true });
     tree.addInput({
         txid: hex.decode(commitment.id),
         index: 0,
-        witnessUtxo: {
-            amount: overrides?.witnessAmount ?? 10_000n,
-            script: overrides?.witnessScript ?? SCRIPT,
-        },
+        ...(overrides?.omitWitnessUtxo
+            ? {}
+            : {
+                  witnessUtxo: {
+                      amount: overrides?.witnessAmount ?? 10_000n,
+                      script: overrides?.witnessScript ?? SCRIPT,
+                  },
+              }),
     });
     tree.addOutput({ amount: 10_000n, script: SCRIPT });
 
@@ -84,6 +93,16 @@ describe("verifyCommitmentAnchors", () => {
         });
     });
 
+    it("hydrates an omitted TREE root prevout from the raw commitment", async () => {
+        const { proof, source, tree } = fixture({ omitWitnessUtxo: true });
+
+        expect((await verifyCommitmentAnchors(proof, source, 6)).issues).toEqual([]);
+        expect(tree.getInput(0).witnessUtxo).toEqual({
+            amount: 10_000n,
+            script: SCRIPT,
+        });
+    });
+
     it("rejects a commitment amount mismatch", async () => {
         const { proof, source } = fixture({ witnessAmount: 9_999n });
         const result = await verifyCommitmentAnchors(proof, source, 6);
@@ -124,6 +143,96 @@ describe("verifyCommitmentAnchors", () => {
         });
         const result = await verifyCommitmentAnchors(proof, source, 6);
         expect(result.issues[0].code).toBe("anchor_unexpected_spend");
+    });
+
+    it("checks every TREE root that claims the same commitment", async () => {
+        const { commitment, proof, source } = fixture();
+        const rogueRoot = new Transaction({ allowLegacyWitnessUtxo: true });
+        rogueRoot.addInput({
+            txid: hex.decode(commitment.id),
+            index: 1,
+            witnessUtxo: { amount: 10_000n, script: SCRIPT },
+        });
+        rogueRoot.addOutput({ amount: 10_000n, script: SCRIPT });
+        proof.entries.set(rogueRoot.id, {
+            txid: rogueRoot.id,
+            expiresAt: "0",
+            type: ChainTxType.TREE,
+            spends: [commitment.id],
+        });
+        proof.transactions.set(rogueRoot.id, rogueRoot);
+
+        const issues = (await verifyCommitmentAnchors(proof, source, 6)).issues;
+        expect(issues).toContainEqual(
+            expect.objectContaining({
+                code: "anchor_output_missing",
+                txid: commitment.id,
+                outputIndex: 1,
+            }),
+        );
+    });
+
+    it("verifies both commitments behind an ARK join at the shallowest depth", async () => {
+        const first = fixture({ commitmentSeed: 1 });
+        const second = fixture({ commitmentSeed: 2 });
+        const ark = new Transaction({ allowLegacyWitnessUtxo: true });
+        ark.addInput({
+            txid: hex.decode(first.tree.id),
+            index: 0,
+            witnessUtxo: first.tree.getOutput(0),
+        });
+        ark.addInput({
+            txid: hex.decode(second.tree.id),
+            index: 0,
+            witnessUtxo: second.tree.getOutput(0),
+        });
+        ark.addOutput({ amount: 20_000n, script: SCRIPT });
+
+        const proof: ParsedVtxoProof = {
+            entries: new Map([
+                ...first.proof.entries,
+                ...second.proof.entries,
+                [
+                    ark.id,
+                    {
+                        txid: ark.id,
+                        expiresAt: "0",
+                        type: ChainTxType.ARK,
+                        spends: [first.tree.id, second.tree.id],
+                    },
+                ],
+            ]),
+            transactions: new Map([
+                ...first.proof.transactions,
+                ...second.proof.transactions,
+                [ark.id, ark],
+            ]),
+            commitmentTxids: [first.commitment.id, second.commitment.id],
+        };
+        const fetched: string[] = [];
+        const source: VtxoChainSource = {
+            getTxHex: async (txid) => {
+                fetched.push(txid);
+                return txid === first.commitment.id ? first.commitment.hex : second.commitment.hex;
+            },
+            getTxStatus: async (txid) => ({
+                confirmed: true,
+                blockHeight: txid === first.commitment.id ? 100 : 102,
+                blockTime: 1,
+            }),
+            getChainTip: async () => ({
+                height: 105,
+                time: 2,
+                hash: "00".repeat(32),
+            }),
+            getTxOutspends: async () => [{ spent: false }],
+        };
+
+        await expect(verifyCommitmentAnchors(proof, source, 4)).resolves.toMatchObject({
+            confirmationDepth: 4,
+            issues: [],
+        });
+        expect(fetched).toEqual([first.commitment.id, second.commitment.id]);
     });
 
     it("classifies chain-source failure as unavailable", async () => {

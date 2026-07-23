@@ -1,8 +1,8 @@
 import type { VirtualCoin } from "../wallet";
 import { verifyCommitmentAnchors, VtxoVerificationUnavailableError } from "./anchor";
-import { verifyClaimedLeaf, verifyGraphSegments } from "./graph";
+import { hydrateVirtualPrevouts, verifyClaimedLeaf, verifyGraphSegments } from "./graph";
 import { parseVtxoProof, VtxoProofError } from "./proof";
-import { verifyProofSignatures } from "./signatures";
+import { verifyProofSignatures, verifyTreeCosignerKeys } from "./signatures";
 import type {
     VtxoChainSource,
     VtxoProofSource,
@@ -19,7 +19,7 @@ export async function verifyVtxo(
     vtxo: VirtualCoin,
     proofSource: VtxoProofSource,
     chainSource: VtxoChainSource,
-    _serverInfo: VtxoVerificationServerInfo,
+    serverInfo: VtxoVerificationServerInfo,
     options: VtxoVerificationOptions = {},
 ): Promise<VtxoVerificationResult> {
     const outpoint = { txid: vtxo.txid, vout: vtxo.vout };
@@ -66,27 +66,9 @@ export async function verifyVtxo(
         commitmentTxids: proof.commitmentTxids,
         chainLength: proof.transactions.size,
     };
-    const localIssues = bounded([
-        ...verifyClaimedLeaf(vtxo, proof),
-        ...verifyGraphSegments(proof),
-        ...verifyProofSignatures(proof),
-    ]);
-    if (localIssues.length > 0) {
-        return { status: "invalid", ...base, issues: localIssues };
-    }
-
+    let anchors;
     try {
-        const anchors = await verifyCommitmentAnchors(proof, chainSource, minConfirmationDepth);
-        const issues = bounded(anchors.issues);
-        if (issues.length > 0) {
-            return { status: "invalid", ...base, issues };
-        }
-        return {
-            status: "confirmed",
-            ...base,
-            confirmationDepth: anchors.confirmationDepth,
-            issues: [],
-        };
+        anchors = await verifyCommitmentAnchors(proof, chainSource, minConfirmationDepth);
     } catch (error) {
         if (error instanceof VtxoVerificationUnavailableError) {
             return {
@@ -101,6 +83,24 @@ export async function verifyVtxo(
             issues: [{ code: "anchor_unavailable", message: message(error) }],
         };
     }
+
+    const issues = bounded([
+        ...hydrateVirtualPrevouts(proof),
+        ...verifyClaimedLeaf(vtxo, proof),
+        ...verifyGraphSegments(proof),
+        ...verifyTreeCosignerKeys(proof, serverInfo),
+        ...verifyProofSignatures(proof),
+        ...anchors.issues,
+    ]);
+    if (issues.length > 0) {
+        return { status: "invalid", ...base, issues };
+    }
+    return {
+        status: "confirmed",
+        ...base,
+        confirmationDepth: anchors.confirmationDepth,
+        issues: [],
+    };
 }
 
 function bounded(issues: VtxoVerificationIssue[]): VtxoVerificationIssue[] {

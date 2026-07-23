@@ -1,5 +1,4 @@
 import type { ChainTx } from "../providers/indexer";
-import type { RelativeTimelock } from "../script/tapscript";
 import type { Transaction } from "../utils/transaction";
 import type { Outpoint } from "../wallet";
 
@@ -18,8 +17,7 @@ export interface VtxoChainSource {
 }
 
 export interface VtxoVerificationServerInfo {
-    pubkey: Uint8Array;
-    sweepInterval: RelativeTimelock;
+    forfeitPubkey: Uint8Array;
 }
 
 export interface VtxoVerificationOptions {
