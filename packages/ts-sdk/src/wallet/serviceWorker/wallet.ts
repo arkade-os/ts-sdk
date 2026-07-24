@@ -415,6 +415,13 @@ interface ServiceWorkerWalletOptions {
     /** Optional contract watcher configuration forwarded to the worker wallet. */
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
     /**
+     * HD look-ahead window forwarded to the worker wallet. Only takes effect
+     * together with `walletMode: 'hd'`.
+     *
+     * @see WalletConfig.lookAheadWindow
+     */
+    lookAheadWindow?: number;
+    /**
      * Per-request timeout overrides for wallet-updater messages.
      * @see DEFAULT_MESSAGE_TIMEOUTS
      */
@@ -460,6 +467,7 @@ type MessageBusInitConfig = {
     settlementConfig?: SettlementConfig | false;
     walletMode?: ServiceWorkerWalletMode;
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
+    lookAheadWindow?: number;
     messageTimeouts?: Record<string, number>;
 };
 
@@ -1403,6 +1411,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 );
             },
 
+            refillLookAhead(): Promise<void> {
+                // The look-ahead is wired into the inner Wallet the worker
+                // owns, and every refill trigger fires there. A page-side call
+                // has nothing to schedule.
+                return Promise.resolve();
+            },
+
             async isWatching(): Promise<boolean> {
                 const message: RequestIsContractManagerWatching = {
                     type: "IS_CONTRACT_MANAGER_WATCHING",
@@ -1466,6 +1481,17 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
     }
 
     static async create(options: ServiceWorkerWalletCreateOptions): Promise<ServiceWorkerWallet> {
+        // Same guard the inner `Wallet.create` applies, run here so a bad value
+        // fails at the call site instead of inside the worker.
+        if (
+            options.lookAheadWindow !== undefined &&
+            (!Number.isInteger(options.lookAheadWindow) || options.lookAheadWindow <= 0)
+        ) {
+            throw new Error(
+                `lookAheadWindow must be a positive integer (got ${String(options.lookAheadWindow)})`,
+            );
+        }
+
         const walletRepository =
             options.storage?.walletRepository ?? new IndexedDBWalletRepository();
 
@@ -1534,6 +1560,7 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
             settlementConfig: options.settlementConfig,
             walletMode: options.walletMode,
             watcherConfig: options.watcherConfig,
+            lookAheadWindow: options.lookAheadWindow,
             messageTimeouts,
         };
 

@@ -72,6 +72,15 @@ export function areCoalescibleContractTypes(a: string, b: string): boolean {
 }
 
 /**
+ * Shape a {@link CreateContractParams} into the full {@link Contract} that
+ * {@link ContractWatcher.addContract} requires. The row is not persisted —
+ * this object exists only to fold a script into the subscription.
+ */
+function toWatchOnlyContract(params: CreateContractParams): Contract {
+    return { ...params, state: params.state ?? "active", createdAt: Date.now() };
+}
+
+/**
  * Hard upper bound on the HD index range probed by {@link scanContracts}.
  * Safety valve: a buggy or malicious `Discoverable` handler that returns a
  * hit at every index would otherwise keep the gap window open forever and
@@ -333,6 +342,16 @@ export interface IContractManager extends Disposable {
     refreshOutpoints(outpoints: Outpoint[]): Promise<void>;
 
     /**
+     * Rebuild the HD look-ahead watch window around the current allocation
+     * watermark. No-op when the manager was configured without `lookAhead`.
+     *
+     * Call after anything that moves the watermark (restore, boarding
+     * allocation, receive rotation, server-signer rotation). Concurrent calls
+     * coalesce into a single drain.
+     */
+    refillLookAhead(): Promise<void>;
+
+    /**
      * Explicit, gap-limit contract discovery used by `wallet.restore()`.
      *
      * Walks HD indices from 0, asking every registered `Discoverable`
@@ -433,6 +452,44 @@ export interface ContractManagerConfig {
 
     /** Watcher configuration */
     watcherConfig?: Partial<ContractWatcherConfig>;
+
+    /**
+     * Enables the HD look-ahead watch window. Absent ⇒ feature off (static /
+     * non-HD wallets, third-party embedders). See
+     * {@link ContractManager.refillLookAhead}.
+     */
+    lookAhead?: LookAheadConfig;
+}
+
+/**
+ * Wallet-injected surface backing the HD look-ahead window. Kept as a
+ * callback bundle so the contracts layer never learns what an HD descriptor
+ * is (mirrors {@link ScanContractsOptions.materialize}).
+ */
+export interface LookAheadConfig {
+    /** Per-side band bound: the window spans `[max(0, w - size), w + size]`. */
+    size: number;
+    /** Current allocation watermark (`lastIndexUsed ?? -1`). */
+    currentWatermark(): Promise<number>;
+    /** Offchain receive contract params at an HD index. Pure derivation. */
+    materialize(index: number): CreateContractParams;
+    /** Fired after a speculative entry at `index` is promoted to a real row. */
+    onPromoted?(index: number): Promise<void>;
+}
+
+/**
+ * A watched-but-unpersisted look-ahead index. Speculative entries live only
+ * here and in the watcher's subscription — never in `contractRepository`, so
+ * they cannot leak into balances, address lists, or activity history.
+ */
+interface LookAheadEntry {
+    index: number;
+    /** Promotion payload. */
+    params: CreateContractParams;
+    /** Synthesized watcher object (never persisted as-is). */
+    contract: Contract;
+    /** Awaiting the one-time full-history catch-up sync. */
+    catchUpPending: boolean;
 }
 
 /**
@@ -500,6 +557,12 @@ export class ContractManager implements IContractManager {
     private syncDegradedReason?: string;
     /** Epoch-ms of the last successful provider sync, if any. */
     private lastSyncedAt?: number;
+    /** Speculative look-ahead scripts, keyed by script. @see LookAheadEntry */
+    private lookAheadEntries: Map<string, LookAheadEntry> = new Map();
+    /** In-flight look-ahead drain, if any. @see scheduleLookAheadDrain */
+    private lookAheadDrain?: Promise<void>;
+    /** A refill was requested while a drain was running. */
+    private lookAheadDirty = false;
 
     private constructor(config: ContractManagerConfig) {
         this.config = config;
@@ -567,6 +630,12 @@ export class ContractManager implements IContractManager {
             await this.watcher.addContract(contract);
         }
 
+        // Register the speculative band BEFORE the boot sync, so newly watched
+        // window scripts get their full-history catch-up first and the delta
+        // sync below then covers the whole watched set. Retryable failures are
+        // already swallowed inside (degraded state); terminal ones propagate.
+        await this.scheduleLookAheadDrain();
+
         // Best-effort boot sync: a retryable indexer/operator failure must not
         // fail construction. Record degraded state and continue with repository
         // data — the watcher still starts below and reconciles when the operator
@@ -628,6 +697,187 @@ export class ContractManager implements IContractManager {
         }
     }
 
+    /** @see IContractManager.refillLookAhead */
+    refillLookAhead(): Promise<void> {
+        return this.scheduleLookAheadDrain();
+    }
+
+    /**
+     * Serialized drain of the look-ahead band: concurrent callers join the
+     * active drain and mark it dirty, an idle call starts a new one. Promotion
+     * can uncover more funded indices, and boot / SSE / rotate / reconnect can
+     * all request a refill at once, so the loop coalesces them instead of
+     * recursing.
+     */
+    private scheduleLookAheadDrain(): Promise<void> {
+        if (!this.config.lookAhead) return Promise.resolve();
+        if (this.lookAheadDrain) {
+            this.lookAheadDirty = true;
+            return this.lookAheadDrain;
+        }
+        const drain = (async () => {
+            do {
+                this.lookAheadDirty = false;
+                await this.ensureLookAhead();
+            } while (this.lookAheadDirty);
+        })().finally(() => {
+            this.lookAheadDrain = undefined;
+        });
+        this.lookAheadDrain = drain;
+        return drain;
+    }
+
+    /**
+     * Request a drain without awaiting it. Used from inside a sync (promotion),
+     * where awaiting the drain that the sync itself is part of would deadlock.
+     */
+    private requestLookAheadDrain(): void {
+        if (!this.config.lookAhead) return;
+        if (this.lookAheadDrain) {
+            this.lookAheadDirty = true;
+            return;
+        }
+        void this.scheduleLookAheadDrain().catch((err) => {
+            console.error("ContractManager: look-ahead refill failed", err);
+        });
+    }
+
+    /**
+     * Rebuild the speculative watch band around the allocation watermark.
+     *
+     * NArk needs no analogue because it *is* the address issuer: it persists a
+     * contract row at derivation time, so its watched set is a superset of
+     * every address it ever advertised. This SDK, when a third party issues
+     * addresses from the shared seed, cannot observe those allocations at all —
+     * the window is how a non-issuer compensates.
+     *
+     * Entries are registered with the watcher but NOT persisted: they become
+     * repository rows only once funded (see {@link promoteLookAheadHits}).
+     */
+    private async ensureLookAhead(): Promise<void> {
+        const lookAhead = this.config.lookAhead;
+        if (!lookAhead) return;
+
+        const watermark = await lookAhead.currentWatermark();
+        // A fresh wallet (watermark -1) yields [0, size - 1].
+        const from = Math.max(0, watermark - lookAhead.size);
+        const to = watermark + lookAhead.size;
+
+        const band = new Map<string, { index: number; params: CreateContractParams }>();
+        for (let index = from; index <= to; index++) {
+            const params = lookAhead.materialize(index);
+            band.set(params.script, { index, params });
+        }
+
+        // One coalesced subscription update for the whole band: N eager
+        // `addContract` calls would otherwise send N growing POSTs.
+        await this.watcher.withCoalescedSubscription(async () => {
+            const persisted = await this.config.contractRepository.getContracts({
+                script: [...band.keys()],
+            });
+            const persistedScripts = new Set(persisted.map((c) => c.script));
+
+            for (const [script, { index, params }] of band) {
+                // A persisted row is watched through the repository path; it is
+                // declassified rather than tracked as speculative.
+                if (persistedScripts.has(script)) {
+                    this.lookAheadEntries.delete(script);
+                    continue;
+                }
+                if (this.lookAheadEntries.has(script)) continue;
+                const contract = toWatchOnlyContract(params);
+                this.lookAheadEntries.set(script, {
+                    index,
+                    params,
+                    contract,
+                    catchUpPending: true,
+                });
+                await this.watcher.addContract(contract);
+            }
+
+            const stale = [...this.lookAheadEntries.keys()].filter((s) => !band.has(s));
+            if (stale.length > 0) {
+                // Only unwatch scripts that are still speculative: a script
+                // that gained a repository row (promotion, `rotate()`, an
+                // idempotent re-`createContract`) must keep its subscription.
+                const rows = await this.config.contractRepository.getContracts({ script: stale });
+                const nowPersisted = new Set(rows.map((c) => c.script));
+                for (const script of stale) {
+                    this.lookAheadEntries.delete(script);
+                    if (!nowPersisted.has(script)) await this.watcher.removeContract(script);
+                }
+            }
+        });
+
+        await this.runLookAheadCatchUp();
+    }
+
+    /**
+     * One-time full-history sync for speculative entries the manager has not
+     * successfully caught up on yet.
+     *
+     * Every normal sync uses the cursor-derived delta window and SSE only
+     * delivers events after a script is subscribed, so a script first
+     * registered after its funding time would otherwise be skipped forever
+     * (upgrade migration, or a band that slid over an already-funded index).
+     * The entries are passed as in-memory contracts because `refreshVtxos`
+     * resolves scripts through the repository, where they deliberately do not
+     * exist. Targeted + explicitly windowed, so the global cursor stays put.
+     */
+    private async runLookAheadCatchUp(): Promise<void> {
+        const pending = [...this.lookAheadEntries.values()].filter((e) => e.catchUpPending);
+        if (pending.length === 0) return;
+        try {
+            await this.syncContracts({
+                contracts: pending.map((e) => e.contract),
+                window: { after: 0 },
+            });
+            for (const entry of pending) entry.catchUpPending = false;
+        } catch (err) {
+            // Same rule as the boot reconcile: a retryable provider failure
+            // degrades sync state rather than failing construction. The band is
+            // pure derivation, so the entries stay pending and retry on the next
+            // boot or `connection_reset`.
+            if (!isRetryableProviderError(err)) throw err;
+            this.markSyncDegraded(err);
+        }
+    }
+
+    /**
+     * Promote every look-ahead entry funded by `vtxos` into a real repository
+     * row, returning the persisted rows keyed by script.
+     *
+     * MUST run on each raw indexer fetch before `annotateVtxos`:
+     * `extendVirtualCoinForContract` throws when a VTXO's script has no
+     * contract row, so a funded window entry has to be persisted before its
+     * VTXOs are annotated and saved. Callers also swap the returned rows into
+     * the local contract maps they built pre-promotion, so `saveVtxosForContract`
+     * and `onVtxosPersisted` never see the synthetic watcher object.
+     */
+    private async promoteLookAheadHits(
+        vtxos: { script: string }[],
+    ): Promise<Map<string, Contract>> {
+        const promoted = new Map<string, Contract>();
+        if (this.lookAheadEntries.size === 0) return promoted;
+
+        const hits = new Map<string, LookAheadEntry>();
+        for (const vtxo of vtxos) {
+            const entry = this.lookAheadEntries.get(vtxo.script);
+            if (entry) hits.set(vtxo.script, entry);
+        }
+        if (hits.size === 0) return promoted;
+
+        for (const [script, entry] of hits) {
+            // `upsertContract` declassifies the entry (D10).
+            promoted.set(script, await this.persistAndWatchContract(entry.params));
+            await this.config.lookAhead?.onPromoted?.(entry.index);
+        }
+        // The watermark moved (or a gap closed): slide the band, but not from
+        // inside the sync this promotion belongs to.
+        this.requestLookAheadDrain();
+        return promoted;
+    }
+
     /**
      * Create and register a new contract.
      *
@@ -679,6 +929,19 @@ export class ContractManager implements IContractManager {
      * `persisted` is `true`.
      */
     private async upsertContract(
+        params: CreateContractParams,
+    ): Promise<{ contract: Contract; persisted: boolean }> {
+        const result = await this.upsertContractRow(params);
+        // Once a script has a repository row it is watched through the normal
+        // repository path: declassify it, but leave its watcher registration
+        // alone. Covers promotion, wallet-owned allocations (`rotate()`,
+        // boarding), and idempotent re-registration alike — a later refill must
+        // not read a stale speculative entry and unsubscribe a real contract.
+        this.lookAheadEntries.delete(params.script);
+        return result;
+    }
+
+    private async upsertContractRow(
         params: CreateContractParams,
     ): Promise<{ contract: Contract; persisted: boolean }> {
         // Validate that a handler exists for this contract type
@@ -1351,7 +1614,10 @@ export class ContractManager implements IContractManager {
                 case "connection_reset":
                     // Same recovery path as boot: delta-sync the watched set
                     // and reconcile the pending frontier. `advanceSyncCursor`
-                    // is monotonic so this never rewinds the cursor.
+                    // is monotonic so this never rewinds the cursor. The refill
+                    // first, so catch-up-pending window entries retry their
+                    // full-history sync without waiting for a restart.
+                    await this.scheduleLookAheadDrain();
                     await this.reconcileWatched();
                     this.markSyncOnline();
                     break;
@@ -1448,14 +1714,26 @@ export class ContractManager implements IContractManager {
             { pendingOnly: true },
         );
 
+        // Promote before annotating: `annotateVtxos` resolves contracts from
+        // the repository and throws for a script with no row. This is the raw
+        // fetch path that does not go through `fetchContractVxosFromIndexer`.
+        for (const [script, contract] of await this.promoteLookAheadHits(vtxos)) {
+            scriptToContract.set(script, contract);
+        }
+
         // Share the annotation path with external callers so the two entry
         // points can't drift.
         const owned = vtxos.filter((v) => scriptToContract.has(v.script));
         const annotated = await this.annotateVtxos(owned);
 
         const byContract = new Map<string, ExtendedContractVtxo[]>();
+        // Resolved here rather than re-found in `contracts` below, so a
+        // just-promoted script saves against its repository row instead of the
+        // synthetic watcher object it was fetched under.
+        const contractByAddress = new Map<string, Contract>();
         for (const vtxo of annotated) {
             const contract = scriptToContract.get(vtxo.script)!;
+            contractByAddress.set(contract.address, contract);
             let arr = byContract.get(contract.address);
             if (!arr) {
                 arr = [];
@@ -1471,7 +1749,7 @@ export class ContractManager implements IContractManager {
             // The bucket is keyed by contract address, so the script filter
             // here is the same as the contract's. Skip wrong-script rows
             // rather than crash the reconcile loop.
-            const contract = contracts.find((c) => c.address === addr)!;
+            const contract = contractByAddress.get(addr)!;
             const filtered = warnAndFilterVtxosForScript(
                 contractVtxos,
                 contract.script,
@@ -1498,11 +1776,18 @@ export class ContractManager implements IContractManager {
         pageSize?: number,
         syncWindow?: { after?: number; before?: number },
     ): Promise<Map<string, ExtendedContractVtxo[]>> {
-        const fetched = await this.fetchContractVtxosBulk(contracts, pageSize, syncWindow);
+        const { vtxosByScript, promoted } = await this.fetchContractVtxosBulk(
+            contracts,
+            pageSize,
+            syncWindow,
+        );
         const result = new Map<string, ExtendedContractVtxo[]>();
-        for (const [contractScript, vtxos] of fetched) {
+        for (const [contractScript, vtxos] of vtxosByScript) {
             result.set(contractScript, vtxos);
-            const contract = contracts.find((c) => c.script === contractScript);
+            // A just-promoted script must save against its repository row, not
+            // the synthetic watcher object `contracts` still holds.
+            const contract =
+                promoted.get(contractScript) ?? contracts.find((c) => c.script === contractScript);
             if (contract) {
                 const filtered = warnAndFilterVtxosForScript(
                     vtxos,
@@ -1534,9 +1819,13 @@ export class ContractManager implements IContractManager {
         contracts: Contract[],
         pageSize: number = DEFAULT_PAGE_SIZE,
         syncWindow?: { after?: number; before?: number },
-    ): Promise<Map<string, ExtendedContractVtxo[]>> {
+    ): Promise<{
+        vtxosByScript: Map<string, ExtendedContractVtxo[]>;
+        /** Look-ahead entries this fetch funded. @see promoteLookAheadHits */
+        promoted: Map<string, Contract>;
+    }> {
         if (contracts.length === 0) {
-            return new Map();
+            return { vtxosByScript: new Map(), promoted: new Map() };
         }
 
         // Results are keyed by script so we can distribute them back to the
@@ -1564,6 +1853,15 @@ export class ContractManager implements IContractManager {
             { ...windowOpts, pageSize },
         );
 
+        // Promote before annotating: `annotateVtxos` resolves contracts from
+        // the repository and throws for a script with no row, so a funded
+        // window entry must get its row here — before annotation and before
+        // its VTXOs are written.
+        const promoted = await this.promoteLookAheadHits(vtxos);
+        for (const [script, contract] of promoted) {
+            scriptToContract.set(script, contract);
+        }
+
         // Match virtual outputs back to their contract via the script field
         // populated by the indexer, then share the annotation path with
         // external callers via annotateVtxos so the two entry points can't
@@ -1577,7 +1875,7 @@ export class ContractManager implements IContractManager {
             });
         }
 
-        return result;
+        return { vtxosByScript: result, promoted };
     }
 
     /**
@@ -1595,6 +1893,9 @@ export class ContractManager implements IContractManager {
 
         // Clear callbacks
         this.eventCallbacks.clear();
+
+        // Speculative entries are pure derivation; a fresh manager rebuilds them.
+        this.lookAheadEntries.clear();
 
         // Mark as uninitialized
         this.initialized = false;

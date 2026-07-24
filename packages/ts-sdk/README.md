@@ -1253,6 +1253,28 @@ When you call `wallet.notifyIncomingFunds()` or use `waitForIncomingFunds()`, it
 
 `watcherConfig.failsafePollIntervalMs` (default `20_000`) controls how often the watcher replays repository changes into contract events; it does not fetch fresh VTXOs from the indexer.
 
+#### HD look-ahead window
+
+HD wallets (`walletMode: 'hd'`, or an explicit HD `DescriptorProvider`) also watch a band of *unused* offchain receive scripts around their allocation watermark, so a payment to an address that some other party issued from the same seed — a merchant backend such as BTCPay Server — arrives without the user calling `restore()`. `lookAheadWindow` (default `20`) is the per-side width of that band: the wallet watches `[watermark - N, watermark + N]`. Speculative entries are subscription-only; they become contract rows, and enter balances, only once funded.
+
+```typescript
+const wallet = await Wallet.create({
+  identity,
+  walletMode: 'hd',
+  lookAheadWindow: 50,  // issuer hands out long runs of unpaid invoices
+})
+
+// Same option on the service-worker wallet; it is forwarded to the worker's inner wallet.
+const swWallet = await ServiceWorkerWallet.setup({
+  serviceWorkerPath: '/service-worker.js',
+  identity,
+  walletMode: 'hd',
+  lookAheadWindow: 50,
+})
+```
+
+Raise it when the external issuer is expected to burn more than `N` consecutive addresses without any of them being paid — every index in such a run is a miss, and the funded one sits past the band. When that happens the funds are invisible until a `restore()` whose `gapLimit` is large enough to cross the run (`wallet.restore({ gapLimit: 200 })`); a default restore closes its gap window before reaching the funded index. Keep the value modest: the band adds up to `2N + 1` script filters to the wallet's subscription.
+
 For advanced use cases, you can access the ContractManager directly to register external contracts:
 
 ```typescript
