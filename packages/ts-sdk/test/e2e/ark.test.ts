@@ -1209,6 +1209,50 @@ describe("Delegate", () => {
         expect(vtxoAfterDelegate.txid).not.toBe(vtxoBeforeDelegate.txid);
         expect(vtxoAfterDelegate.value).toBe(vtxoBeforeDelegate.value);
     });
+
+    it("should delegate renewal across repeated cycles", { timeout: 120000 }, async () => {
+        const alice = await createTestArkWalletWithDelegate();
+        const address = await alice.wallet.getAddress();
+        const boardingAddress = await alice.wallet.getBoardingAddress();
+        execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+
+        await alice.wallet.settle();
+
+        let vtxos = await alice.wallet.getVtxos();
+        expect(vtxos).toHaveLength(1);
+        let current = vtxos[0];
+        const initialValue = current.value;
+
+        const delegateManager = await alice.wallet.getDelegateManager();
+        expect(delegateManager).toBeDefined();
+
+        // Renew the same coin multiple times: each cycle delegates the VTXO
+        // produced by the previous renewal, so a fresh VTXO must keep landing
+        // on the wallet and being re-delegated.
+        const CYCLES = 3;
+        for (let i = 0; i < CYCLES; i++) {
+            const previousTxid = current.txid;
+
+            await delegateManager!.delegate([current], address, new Date(Date.now() + 1000));
+
+            // Wait for the delegate server to register the intent and re-settle
+            // the coin into a new VTXO (txid changes, value preserved).
+            await waitFor(
+                async () => {
+                    const v = await alice.wallet.getVtxos();
+                    return v.length === 1 && v[0].txid !== previousTxid;
+                },
+                { timeout: 30000, interval: 2000 },
+            );
+
+            vtxos = await alice.wallet.getVtxos();
+            expect(vtxos).toHaveLength(1);
+            expect(vtxos[0].txid).not.toBe(previousTxid);
+            expect(vtxos[0].value).toBe(initialValue);
+            current = vtxos[0];
+        }
+    });
 });
 
 describe("Delegate Lifecycle", () => {
