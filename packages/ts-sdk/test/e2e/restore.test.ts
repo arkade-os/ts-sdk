@@ -1,7 +1,7 @@
 import { expect, describe, it, beforeEach } from "vitest";
 import { generateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
-import { HDDescriptorProvider } from "../../src";
+import { HDDescriptorProvider, RestIndexerProvider } from "../../src";
 import type { HDCapableIdentity } from "../../src/identity";
 import { buildReceiveContract } from "../../src/wallet/walletReceiveRotator";
 import {
@@ -94,6 +94,17 @@ describe("Wallet.restore()", () => {
                 // that a fresh same-seed wallet's baseline + [0, 1] look-ahead
                 // band cannot reach.
                 faucetOffchain(gapAddress, AMOUNT);
+
+                // Wallet A cannot watch index-5, so poll the indexer directly
+                // for the gap script: restore() reads the same indexer, and if
+                // the send were not yet indexed its gap scan would miss the
+                // funds and the recovery assertion would flake.
+                const indexer = new RestIndexerProvider("http://localhost:7070");
+                await waitFor(
+                    async () =>
+                        (await indexer.getVtxos({ scripts: [params.script] })).vtxos.length > 0,
+                    { timeout: 60_000, interval: 1_000 },
+                );
 
                 // ── Wallet B: same seed, HD mode, FRESH separate repos ────────
                 const freshRepos = createSharedRepos();
