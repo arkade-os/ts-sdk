@@ -198,6 +198,7 @@ export async function createTestArkWalletFromMnemonic(
     mnemonic: string,
     repos?: SharedRepos,
     walletMode?: WalletMode,
+    lookAheadWindow?: number,
 ): Promise<TestArkWallet> {
     const identity = MnemonicIdentity.fromMnemonic(mnemonic, {
         isMainnet: false,
@@ -207,6 +208,7 @@ export async function createTestArkWalletFromMnemonic(
     const wallet = await Wallet.create({
         identity,
         ...(walletMode !== undefined ? { walletMode } : {}),
+        ...(lookAheadWindow !== undefined ? { lookAheadWindow } : {}),
         arkServerUrl: "http://localhost:7070",
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
