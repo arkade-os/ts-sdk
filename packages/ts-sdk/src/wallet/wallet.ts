@@ -2278,7 +2278,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // Boarding shares the HD index stream, so this allocation moved the
         // watermark past an offchain index an external issuer may still hand
         // out — the band has to slide (and keep covering it on the low side).
-        await manager.refillLookAhead();
+        // Best-effort: the boarding address is already allocated and committed,
+        // so a failed band slide must not fail the allocation.
+        try {
+            await manager.refillLookAhead();
+        } catch (e) {
+            console.warn("look-ahead refill after boarding allocation failed", e);
+        }
         return newBoarding.onchainAddress(this.network);
     }
 
@@ -2457,8 +2463,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // Rebuild the speculative band against the now-active signer: the old
         // one embedded the previous server pubkey. Still-speculative old-signer
         // entries fall out of the band and are unwatched; persisted old-signer
-        // rows stay watched so the migration pass can drain them.
-        await manager.refillLookAhead();
+        // rows stay watched so the migration pass can drain them. Best-effort:
+        // the rotation has committed, so a failed band slide must not fail it.
+        try {
+            await manager.refillLookAhead();
+        } catch (e) {
+            console.warn("look-ahead refill after server-signer rotation failed", e);
+        }
     }
 
     /**

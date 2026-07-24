@@ -577,8 +577,14 @@ export class WalletReceiveRotator {
         this.currentTaggedScript = newScript;
 
         // The watermark moved — slide the look-ahead band with it. Last, so a
-        // refill failure cannot leave a persisted-but-uncommitted rotation.
-        await manager.refillLookAhead();
+        // refill failure cannot leave a persisted-but-uncommitted rotation, and
+        // best-effort: the rotation has committed, so a failed band slide must
+        // not make `runRotateWithBackoff` retry (and burn another index).
+        try {
+            await manager.refillLookAhead();
+        } catch (err) {
+            this.logger.error("WalletReceiveRotator: look-ahead refill failed", err);
+        }
     }
 }
 
