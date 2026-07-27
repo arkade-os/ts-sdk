@@ -407,6 +407,8 @@ import {
     MessageBusInitializingError,
     MessageBusNotInitializedError,
     ServiceWorkerTimeoutError,
+    isMessageBusInitializingError,
+    isMessageBusNotInitializedError,
 } from "./worker/errors";
 import { AssetManager, ReadonlyAssetManager } from "./wallet/asset-manager";
 
@@ -475,6 +477,8 @@ export {
     MessageBusInitializingError,
     MessageBusNotInitializedError,
     ServiceWorkerTimeoutError,
+    isMessageBusInitializingError,
+    isMessageBusNotInitializedError,
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
     DEFAULT_MESSAGE_TIMEOUTS,

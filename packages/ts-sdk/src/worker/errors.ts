@@ -24,3 +24,15 @@ export class ServiceWorkerTimeoutError extends Error {
         super(detail);
     }
 }
+
+// Match by message rather than instanceof: postMessage's structured clone strips
+// the prototype chain, so the page receives a plain Error.
+export function isMessageBusNotInitializedError(error: unknown): boolean {
+    return error instanceof Error && error.message.includes(MESSAGE_BUS_NOT_INITIALIZED);
+}
+
+// Callers must test this before isMessageBusNotInitializedError: the message is a
+// superset, so the broader check also matches an in-flight init.
+export function isMessageBusInitializingError(error: unknown): boolean {
+    return error instanceof Error && error.message.includes(MESSAGE_BUS_INITIALIZING);
+}
