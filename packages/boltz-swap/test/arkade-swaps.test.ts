@@ -699,6 +699,19 @@ describe("ArkadeSwaps", () => {
         });
     });
 
+    describe("startSwapManager", () => {
+        it("starts the manager with the swaps loaded from the repository", async () => {
+            const stored = [{ id: "s1" }, { id: "s2" }];
+            mockSwapRepository.getAllSwaps.mockResolvedValueOnce(stored);
+            const manager = { start: vi.fn().mockResolvedValue(undefined) };
+            (swaps as any).swapManager = manager;
+
+            await swaps.startSwapManager();
+
+            expect(manager.start).toHaveBeenCalledWith(stored);
+        });
+    });
+
     describe("Receive from Lightning", () => {
         describe("Create Lightning Invoice", () => {
             it("should throw if amount is not > 0", async () => {

@@ -292,6 +292,8 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         const tag = this.messageTag;
 
         const proxy = {
+            // No payload: the SW side loads pending swaps from the repository itself
+            // (see ArkadeSwaps.startSwapManager).
             start: async () => {
                 await send({
                     id: getRandomId(),
