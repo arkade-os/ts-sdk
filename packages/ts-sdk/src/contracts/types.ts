@@ -367,9 +367,7 @@ export interface Discoverable {
 /** Duck-typed guard for the pure candidate surface. @see Discoverable.candidatesAt */
 export function hasCandidates(
     handler: ContractHandler<unknown> | undefined,
-): handler is ContractHandler<unknown> &
-    Discoverable &
-    Required<Pick<Discoverable, "candidatesAt">> {
+): handler is ContractHandler<unknown> & Required<Pick<Discoverable, "candidatesAt">> {
     return !!handler && typeof (handler as Partial<Discoverable>).candidatesAt === "function";
 }
 
