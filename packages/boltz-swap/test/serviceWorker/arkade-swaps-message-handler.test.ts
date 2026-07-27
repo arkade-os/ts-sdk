@@ -39,6 +39,19 @@ describe("ArkadeSwapsMessageHandler broadcastEvent", () => {
             expect.objectContaining({ type: "SM-EVENT-SWAP_UPDATE" }),
         );
     });
+
+    it("includes uncontrolled windows so pages before SW claim receive events", async () => {
+        await (handler as any).broadcastEvent({
+            tag: "TAG",
+            type: "SM-EVENT-SWAP_UPDATE",
+            payload: { swap: { id: "s1" }, oldStatus: "swap.created" as BoltzSwapStatus },
+        });
+
+        expect((globalThis as any).self.clients.matchAll).toHaveBeenCalledWith({
+            includeUncontrolled: true,
+            type: "window",
+        });
+    });
 });
 
 describe("ArkadeSwapsMessageHandler long-running requests", () => {

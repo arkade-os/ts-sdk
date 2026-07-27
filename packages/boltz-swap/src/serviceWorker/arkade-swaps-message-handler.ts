@@ -774,7 +774,12 @@ export class ArkadeSwapsMessageHandler
     private async broadcastEvent(event: SwapManagerEventMessage): Promise<void> {
         const sw: any = self as any;
         if (!sw?.clients?.matchAll) return;
-        const clients = await sw.clients.matchAll();
+        // Same options as the core bus fan-out: pages loaded before the SW claimed
+        // them are uncontrolled and would otherwise miss every swap event.
+        const clients = await sw.clients.matchAll({
+            includeUncontrolled: true,
+            type: "window",
+        });
         for (const client of clients) {
             try {
                 (client as any).postMessage(event);
