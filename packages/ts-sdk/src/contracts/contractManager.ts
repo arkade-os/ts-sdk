@@ -3,6 +3,7 @@ import { IndexerProvider } from "../providers/indexer";
 import { isRetryableProviderError } from "../providers/availability";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
+    CandidateDeps,
     Contract,
     ContractEvent,
     ContractEventCallback,
@@ -16,10 +17,12 @@ import {
     PathContext,
     PathSelection,
     ExtendedContractVtxo,
+    hasCandidates,
     isDiscoverable,
 } from "./types";
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
+import { speculativeReceiveMetadata } from "./handlers/helpers";
 import { ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
 import {
     getAllNormalizedVtxos,
@@ -471,8 +474,14 @@ export interface LookAheadConfig {
     size: number;
     /** Current allocation watermark (`lastIndexUsed ?? -1`). */
     currentWatermark(): Promise<number>;
-    /** Offchain receive contract params at an HD index. Pure derivation. */
-    materialize(index: number): CreateContractParams;
+    /** Signing descriptor at an HD index. Pure derivation. */
+    materialize(index: number): string;
+    /**
+     * Key and timelock axes an externally issued receive script could be
+     * anchored to. Read once per refill, so a band rebuilt after
+     * `rotateServerSigner` fans the new signer set.
+     */
+    candidateDeps(): CandidateDeps;
     /** Fired after a speculative entry at `index` is promoted to a real row. */
     onPromoted?(index: number): Promise<void>;
 }
@@ -753,6 +762,10 @@ export class ContractManager implements IContractManager {
      *
      * Entries are registered with the watcher but NOT persisted: they become
      * repository rows only once funded (see {@link promoteLookAheadHits}).
+     *
+     * Each index contributes every {@link Discoverable.candidatesAt} candidate —
+     * the same set `restore()`'s gap scan probes, since the wallet cannot know
+     * which variant a third-party issuer handed out.
      */
     private async ensureLookAhead(): Promise<void> {
         const lookAhead = this.config.lookAhead;
@@ -763,10 +776,28 @@ export class ContractManager implements IContractManager {
         const from = Math.max(0, watermark - lookAhead.size);
         const to = watermark + lookAhead.size;
 
+        const deps = lookAhead.candidateDeps();
+        const handlers = contractHandlers
+            .getRegisteredTypes()
+            .map((t) => contractHandlers.get(t))
+            .filter(hasCandidates);
+
         const band = new Map<string, { index: number; params: CreateContractParams }>();
         for (let index = from; index <= to; index++) {
-            const params = lookAhead.materialize(index);
-            band.set(params.script, { index, params });
+            const descriptor = lookAhead.materialize(index);
+            for (const handler of handlers) {
+                for (const candidate of handler.candidatesAt(index, descriptor, deps)) {
+                    // First-wins on a colliding script, like `upsertContract`.
+                    if (band.has(candidate.script)) continue;
+                    band.set(candidate.script, {
+                        index,
+                        params: {
+                            ...candidate,
+                            ...speculativeReceiveMetadata(descriptor),
+                        },
+                    });
+                }
+            }
         }
 
         // One coalesced subscription update for the whole band: N eager

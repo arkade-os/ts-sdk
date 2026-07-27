@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
 import { sequenceToTimelock } from "../../utils/timelock";
 import { Contract, DiscoveredContract, PathContext, PathSelection } from "../types";
-import type { Discoverable, DiscoveryDeps } from "../types";
+import type { CandidateDeps, Discoverable, DiscoveryDeps } from "../types";
 import {
     isDescriptor,
     extractPubKey,
@@ -323,7 +323,7 @@ export async function detectUsedScripts(
  * The returned map covers **every** requested index (empty array when nothing
  * hit), satisfying the `discoverRange` coverage contract the scanner enforces.
  */
-export async function discoverIndexerCandidates<C extends { scriptHex: string }>(
+export async function discoverIndexerCandidates<C extends { script: string }>(
     indexerProvider: IndexerProvider,
     entries: readonly { index: number; descriptor: string }[],
     buildCandidates: (index: number, descriptor: string) => C[],
@@ -336,14 +336,14 @@ export async function discoverIndexerCandidates<C extends { scriptHex: string }>
 
     const used = await detectUsedScripts(
         indexerProvider,
-        perIndex.flatMap((e) => e.candidates.map((c) => c.scriptHex)),
+        perIndex.flatMap((e) => e.candidates.map((c) => c.script)),
     );
 
     const out = new Map<number, DiscoveredContract[]>();
     for (const { index, descriptor, candidates } of perIndex) {
         out.set(
             index,
-            candidates.filter((c) => used.has(c.scriptHex)).map((c) => emit(c, index, descriptor)),
+            candidates.filter((c) => used.has(c.script)).map((c) => emit(c, index, descriptor)),
         );
     }
     return out;
@@ -376,7 +376,7 @@ export interface SignerCandidate<S> {
  */
 export function buildSignerTimelockCandidates<S extends { pkScript: Uint8Array }>(
     descriptor: string,
-    deps: DiscoveryDeps,
+    deps: CandidateDeps,
     makeScript: (opts: {
         pubKey: Uint8Array;
         serverPubKey: Uint8Array;
@@ -414,6 +414,20 @@ export function rotatedReceiveMetadata(
     return index > 0
         ? { metadata: { source: WALLET_RECEIVE_SOURCE, signingDescriptor: descriptor } }
         : {};
+}
+
+/**
+ * Metadata for a *speculative* candidate the look-ahead band watches: the
+ * signing descriptor, so a promoted row stays spendable, and never
+ * {@link WALLET_RECEIVE_SOURCE} — the tag would make the next boot advertise a
+ * third party's invoice address as the wallet's own. Unconditional on the
+ * index, unlike {@link rotatedReceiveMetadata}: an unpersisted entry has no
+ * display-address meaning to protect at index 0.
+ */
+export function speculativeReceiveMetadata(
+    descriptor: string,
+): Pick<DiscoveredContract, "metadata"> {
+    return { metadata: { signingDescriptor: descriptor } };
 }
 
 /**

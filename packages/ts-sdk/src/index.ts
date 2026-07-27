@@ -372,7 +372,7 @@ import {
     isArkContract,
 } from "./contracts/arkcontract";
 import type { ParsedArkContract } from "./contracts/arkcontract";
-import { isDiscoverable } from "./contracts/types";
+import { hasCandidates, isDiscoverable } from "./contracts/types";
 import type {
     Contract,
     ContractVtxo,
@@ -388,6 +388,7 @@ import type {
     Discoverable,
     DiscoveryDeps,
     DiscoveredContract,
+    CandidateDeps,
 } from "./contracts/types";
 import type { ScanResult, ScanContractsOptions, HandlerError } from "./contracts/contractManager";
 import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
@@ -614,6 +615,7 @@ export {
     contractFromArkContractWithAddress,
     isArkContract,
     isDiscoverable,
+    hasCandidates,
     // Contract handler authoring helpers (spending-path selection)
     isCsvSpendable,
     isCltvSatisfied,
@@ -814,6 +816,7 @@ export type {
     Discoverable,
     DiscoveryDeps,
     DiscoveredContract,
+    CandidateDeps,
     ScanResult,
     ScanContractsOptions,
     HandlerError,

@@ -2,7 +2,7 @@ import { hex } from "@scure/base";
 import { DefaultVtxo } from "../../script/default";
 import { RelativeTimelock } from "../../script/tapscript";
 import { Contract, ContractHandler, Discoverable, PathContext, PathSelection } from "../types";
-import type { DiscoveredContract, DiscoveryDeps } from "../types";
+import type { CandidateDeps, DiscoveredContract, DiscoveryDeps } from "../types";
 import {
     discoverIndexerCandidates,
     discoverAtViaRange,
@@ -84,7 +84,35 @@ export const DefaultContractHandler: ContractHandler<DefaultContractParams, Defa
     discoverAt: discoverAtViaRange(discoverDefaultRange),
 
     discoverRange: discoverDefaultRange,
+
+    candidatesAt: defaultCandidatesAt,
 };
+
+/**
+ * The signer × CSV-timelock cross-product under the index's leaf key. Each
+ * candidate's own signer is threaded through its params and address so
+ * signing/forfeit later resolves the right key.
+ */
+function defaultCandidatesAt(
+    _index: number,
+    descriptor: string,
+    deps: CandidateDeps,
+): DiscoveredContract[] {
+    return buildSignerTimelockCandidates(
+        descriptor,
+        deps,
+        (opts) => new DefaultVtxo.Script(opts),
+    ).map((c) => ({
+        type: "default",
+        params: {
+            pubKey: hex.encode(c.pubKey),
+            serverPubKey: hex.encode(c.serverPubKey),
+            csvTimelock: timelockToSequence(c.csvTimelock).toString(),
+        },
+        script: c.scriptHex,
+        address: c.script.address(deps.network.hrp, c.serverPubKey).encode(),
+    }));
+}
 
 function discoverDefaultRange(
     entries: readonly { index: number; descriptor: string }[],
@@ -93,21 +121,7 @@ function discoverDefaultRange(
     return discoverIndexerCandidates(
         deps.indexerProvider,
         entries,
-        (_index, descriptor) =>
-            buildSignerTimelockCandidates(descriptor, deps, (opts) => new DefaultVtxo.Script(opts)),
-        // The matched signer is threaded through the script (already built),
-        // the persisted params, and the encoded address so signing/forfeit
-        // later resolves the right key.
-        (c, index, descriptor) => ({
-            type: "default",
-            params: {
-                pubKey: hex.encode(c.pubKey),
-                serverPubKey: hex.encode(c.serverPubKey),
-                csvTimelock: timelockToSequence(c.csvTimelock).toString(),
-            },
-            script: c.scriptHex,
-            address: c.script.address(deps.network.hrp, c.serverPubKey).encode(),
-            ...rotatedReceiveMetadata(index, descriptor),
-        }),
+        (index, descriptor) => defaultCandidatesAt(index, descriptor, deps),
+        (c, index, descriptor) => ({ ...c, ...rotatedReceiveMetadata(index, descriptor) }),
     );
 }
