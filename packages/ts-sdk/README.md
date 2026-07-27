@@ -1255,7 +1255,9 @@ When you call `wallet.notifyIncomingFunds()` or use `waitForIncomingFunds()`, it
 
 #### HD look-ahead window
 
-HD wallets (`walletMode: 'hd'`, or an explicit HD `DescriptorProvider`) also watch a band of *unused* offchain receive scripts around their allocation watermark, so a payment to an address that some other party issued from the same seed — a merchant backend such as BTCPay Server — arrives without the user calling `restore()`. `lookAheadWindow` (default `20`) is the per-side width of that band: the wallet watches `[watermark - N, watermark + N]`. Speculative entries are subscription-only; they become contract rows, and enter balances, only once funded.
+HD wallets (`walletMode: 'hd'`, or an explicit HD `DescriptorProvider`) also watch a band of *unused* offchain receive scripts around their allocation watermark, so a payment to an address that some other party issued from the same seed — a merchant backend such as BTCPay Server, or the .NET SDK driving the same wallet — arrives without the user calling `restore()`. `lookAheadWindow` (default `20`) is the per-side width of that band: the wallet watches `[watermark - N, watermark + N]`. Speculative entries are subscription-only; they become contract rows, and enter balances, only once funded.
+
+The issuer, not the wallet, picks the contract shape, so each index is watched at *every* variant the wallet could own there: `default` and `delegate`, crossed with the unilateral-exit timelock matrix and the operator's current plus deprecated signers. That is the candidate set `restore()` probes too, so watching and restoring cover identical scripts.
 
 ```typescript
 const wallet = await Wallet.create({
@@ -1273,7 +1275,7 @@ const swWallet = await ServiceWorkerWallet.setup({
 })
 ```
 
-Raise it when the external issuer is expected to burn more than `N` consecutive addresses without any of them being paid — every index in such a run is a miss, and the funded one sits past the band. When that happens the funds are invisible until a `restore()` whose `gapLimit` is large enough to cross the run (`wallet.restore({ gapLimit: 200 })`); a default restore closes its gap window before reaching the funded index. Keep the value modest: the band adds up to `2N + 1` script filters to the wallet's subscription.
+Raise it when the external issuer is expected to burn more than `N` consecutive addresses without any of them being paid — every index in such a run is a miss, and the funded one sits past the band. When that happens the funds are invisible until a `restore()` whose `gapLimit` is large enough to cross the run (`wallet.restore({ gapLimit: 200 })`); a default restore closes its gap window before reaching the funded index. Keep the value modest: the band adds up to `2N + 1` indices × the candidate matrix (typically 1-4 scripts each) to the wallet's subscription.
 
 For advanced use cases, you can access the ContractManager directly to register external contracts:
 

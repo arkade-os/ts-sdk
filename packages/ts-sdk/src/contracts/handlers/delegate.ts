@@ -2,7 +2,7 @@ import { hex } from "@scure/base";
 import { DelegateVtxo } from "../../script/delegate";
 import { RelativeTimelock } from "../../script/tapscript";
 import { Contract, ContractHandler, Discoverable, PathContext, PathSelection } from "../types";
-import type { DiscoveredContract, DiscoveryDeps } from "../types";
+import type { CandidateDeps, DiscoveredContract, DiscoveryDeps } from "../types";
 import {
     discoverIndexerCandidates,
     discoverAtViaRange,
@@ -93,7 +93,38 @@ export const DelegateContractHandler: ContractHandler<DelegateContractParams, De
     discoverAt: discoverAtViaRange(discoverDelegateRange),
 
     discoverRange: discoverDelegateRange,
+
+    candidatesAt: delegateCandidatesAt,
 };
+
+/**
+ * The `default` cross-product (@see DefaultContractHandler.candidatesAt) under
+ * the wallet's delegate key. Empty for a non-delegate wallet.
+ */
+function delegateCandidatesAt(
+    _index: number,
+    descriptor: string,
+    deps: CandidateDeps,
+): DiscoveredContract[] {
+    const delegatePubKey = deps.delegatePubKey;
+    if (!delegatePubKey) return [];
+
+    return buildSignerTimelockCandidates(
+        descriptor,
+        deps,
+        (opts) => new DelegateVtxo.Script({ ...opts, delegatePubKey }),
+    ).map((c) => ({
+        type: "delegate",
+        params: {
+            pubKey: hex.encode(c.pubKey),
+            serverPubKey: hex.encode(c.serverPubKey),
+            delegatePubKey: hex.encode(delegatePubKey),
+            csvTimelock: timelockToSequence(c.csvTimelock).toString(),
+        },
+        script: c.scriptHex,
+        address: c.script.address(deps.network.hrp, c.serverPubKey).encode(),
+    }));
+}
 
 function discoverDelegateRange(
     entries: readonly { index: number; descriptor: string }[],
@@ -101,35 +132,14 @@ function discoverDelegateRange(
 ): Promise<Map<number, DiscoveredContract[]>> {
     // Not a delegate wallet: still answer for every requested index, since an
     // omission would read as indeterminate and truncate the scan.
-    const delegatePubKey = deps.delegatePubKey;
-    if (!delegatePubKey) {
+    if (!deps.delegatePubKey) {
         return Promise.resolve(new Map(entries.map((e) => [e.index, []])));
     }
 
     return discoverIndexerCandidates(
         deps.indexerProvider,
         entries,
-        // The delegate key is constant across the cross-product, so it rides
-        // the closure rather than being repeated on every candidate.
-        (_index, descriptor) =>
-            buildSignerTimelockCandidates(
-                descriptor,
-                deps,
-                (opts) => new DelegateVtxo.Script({ ...opts, delegatePubKey }),
-            ),
-        // The matched signer is threaded through script, params, and address so
-        // signing/forfeit later resolves the right key.
-        (c, index, descriptor) => ({
-            type: "delegate",
-            params: {
-                pubKey: hex.encode(c.pubKey),
-                serverPubKey: hex.encode(c.serverPubKey),
-                delegatePubKey: hex.encode(delegatePubKey),
-                csvTimelock: timelockToSequence(c.csvTimelock).toString(),
-            },
-            script: c.scriptHex,
-            address: c.script.address(deps.network.hrp, c.serverPubKey).encode(),
-            ...rotatedReceiveMetadata(index, descriptor),
-        }),
+        (index, descriptor) => delegateCandidatesAt(index, descriptor, deps),
+        (c, index, descriptor) => ({ ...c, ...rotatedReceiveMetadata(index, descriptor) }),
     );
 }

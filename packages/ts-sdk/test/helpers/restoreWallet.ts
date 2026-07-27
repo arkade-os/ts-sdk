@@ -149,7 +149,7 @@ export interface MockIndexer extends IndexerProvider {
     subscribeCalls: string[][];
 }
 
-function makeMockIndexer(usedScripts: Set<string>): MockIndexer {
+export function makeMockIndexer(usedScripts: Set<string>): MockIndexer {
     const getVtxosCalls: { scripts: string[]; after?: number }[] = [];
     const vtxoCreatedAt = new Map<string, Date>();
     const subscribeCalls: string[][] = [];
@@ -301,6 +301,10 @@ export interface HdRestoreWalletHandle extends RestoreWalletHandle {
 export async function makeHdWalletForTest(
     usedScripts: Set<string> = new Set(),
     fundedOnchain: Set<string> = new Set(),
+    opts?: {
+        /** Compressed hex; present ⇒ delegate wallet (stub delegate provider). */
+        delegatePubKey?: string;
+    },
 ): Promise<HdRestoreWalletHandle> {
     const indexer = makeMockIndexer(usedScripts);
     const walletRepository = new InMemoryWalletRepository();
@@ -314,6 +318,16 @@ export async function makeHdWalletForTest(
         indexerProvider: indexer,
         onchainProvider: makeMockOnchain(fundedOnchain),
         storage: { walletRepository, contractRepository },
+        ...(opts?.delegatePubKey && {
+            delegateProvider: {
+                async getDelegateInfo() {
+                    return { pubkey: opts.delegatePubKey!, fee: 0, address: "" };
+                },
+                async delegate() {
+                    throw new Error("delegate() not used by look-ahead tests");
+                },
+            } as unknown as Parameters<typeof Wallet.create>[0]["delegateProvider"],
+        }),
     });
     const resolved = (wallet as unknown as { _descriptorProvider?: unknown })._descriptorProvider;
     if (
