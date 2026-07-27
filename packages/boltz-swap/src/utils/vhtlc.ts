@@ -128,7 +128,7 @@ export const createVHTLCScript = (args: {
  * arkd advertises in `ArkInfo.deprecatedSigners` are exactly the historical
  * signers a stale swap may be locked to, so probing the current key first
  * (the no-rotation fast path) and then the deprecated set lets
- * {@link resolveVHTLCScript} recover the original lockup. Mirrors how
+ * `ArkadeSwaps.resolveVHTLCForLockup` recover the original lockup. Mirrors how
  * `Wallet.restore()` scans current + deprecated signers for stale VTXOs.
  */
 export const candidateServerPubkeys = (arkInfo: ArkInfo): string[] => {
