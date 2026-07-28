@@ -16,7 +16,7 @@ import {
     CSVMultisigTapscript,
     combineTapscriptSigs,
     Transaction,
-    TapLeafScript,
+    scriptFromTapLeafScript,
 } from "@arkade-os/sdk";
 import { logger } from "../logger";
 import { BoltzRefundError } from "../errors";
@@ -511,7 +511,3 @@ export const refundVHTLCwithOffchainTx = async (
     // finalize the transaction
     await arkProvider.finalizeTx(arkTxid, [base64.encode(finalCheckpointTx.toPSBT())]);
 };
-
-function scriptFromTapLeafScript(leaf: TapLeafScript): Uint8Array {
-    return leaf[1].subarray(0, leaf[1].length - 1); // remove the version byte
-}
