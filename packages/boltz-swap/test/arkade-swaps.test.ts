@@ -1084,6 +1084,29 @@ describe("ArkadeSwaps", () => {
                     "Transaction ID not available for settled swap",
                 );
             });
+
+            it("should claim only once when the lockup is seen in mempool and then confirms", async () => {
+                // arrange
+                const pendingSwap = mockReverseSwap;
+
+                const claimVHTLC = vi.spyOn(swaps, "claimVHTLC").mockResolvedValue(undefined);
+                vi.spyOn(swapProvider, "getReverseSwapTxId").mockResolvedValue({
+                    id: mock.txid,
+                    timeoutBlockHeight: 123,
+                });
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation(async (_id, update) => {
+                    await update("transaction.mempool");
+                    await update("transaction.confirmed");
+                    await update("invoice.settled");
+                });
+
+                // act
+                const result = await swaps.waitAndClaim(pendingSwap);
+
+                // assert
+                expect(result.txid).toBe(mock.txid);
+                expect(claimVHTLC).toHaveBeenCalledTimes(1);
+            });
         });
     });
 

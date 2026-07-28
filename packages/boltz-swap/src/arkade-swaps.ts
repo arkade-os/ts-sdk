@@ -704,6 +704,7 @@ export class ArkadeSwaps {
 
         // Otherwise use manual monitoring
         return new Promise<{ txid: string }>((resolve, reject) => {
+            let claimStarted = false;
             const onStatusUpdate = async (status: BoltzSwapStatus, data: any) => {
                 const saveStatus = (additionalFields?: Partial<BoltzReverseSwap>) =>
                     updateReverseSwapStatus(
@@ -717,6 +718,11 @@ export class ArkadeSwaps {
                     case "transaction.mempool":
                     case "transaction.confirmed":
                         await saveStatus();
+                        // Both statuses fire for the same lockup; a second
+                        // claim would fail on the spent VHTLC and reject the
+                        // promise despite the first claim succeeding.
+                        if (claimStarted) return;
+                        claimStarted = true;
                         this.claimVHTLC(pendingSwap).catch(reject);
                         break;
                     case "invoice.settled": {
