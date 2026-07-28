@@ -1,0 +1,47 @@
+{
+    "name": "@arkade-os/snap",
+    "version": "0.1.2",
+    "description": "Arkade Wallet Snap - Bitcoin Layer 2 wallet with Arkade protocol support",
+    "license": "MIT",
+    "main": "./dist/bundle.js",
+    "files": [
+        "dist/",
+        "images/",
+        "snap.manifest.json",
+        "README.md"
+    ],
+    "scripts": {
+        "build": "mm-snap build",
+        "typecheck": "tsc --noEmit",
+        "lint": "prettier --check src test",
+        "test": "vitest run",
+        "test:unit": "vitest run --exclude test/e2e",
+        "serve": "mm-snap serve",
+        "start": "mm-snap watch",
+        "manifest:check": "mm-snap manifest"
+    },
+    "dependencies": {
+        "@arkade-os/sdk": "workspace:^",
+        "@metamask/snaps-sdk": "^6.0.0",
+        "@noble/curves": "^2.0.1",
+        "@scure/base": "^2.0.0",
+        "@scure/btc-signer": "^2.0.1"
+    },
+    "devDependencies": {
+        "@metamask/snaps-cli": "^6.0.0"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/arkade-os/ts-sdk.git",
+        "directory": "packages/snap"
+    },
+    "keywords": [
+        "metamask",
+        "snap",
+        "bitcoin",
+        "arkade",
+        "layer2",
+        "lightning",
+        "vtxo"
+    ]
+}

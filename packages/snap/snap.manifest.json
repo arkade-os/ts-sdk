@@ -1,0 +1,32 @@
+{
+  "version": "0.1.2",
+  "description": "Arkade Wallet Snap - Bitcoin Layer 2 wallet with Lightning Network support",
+  "proposedName": "Arkade Wallet",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/arkade-os/ts-sdk.git",
+    "directory": "packages/snap"
+  },
+  "source": {
+    "shasum": "i7E7xBKGi3+lYFjVjYoQ901muuPGuPPcYHYBQswmSuc=",
+    "location": {
+      "npm": {
+        "filePath": "dist/bundle.js",
+        "iconPath": "images/icon.svg",
+        "packageName": "@arkade-os/snap",
+        "registry": "https://registry.npmjs.org/"
+      }
+    }
+  },
+  "initialPermissions": {
+    "snap_manageState": {},
+    "snap_getEntropy": {},
+    "endowment:rpc": {
+      "dapps": true,
+      "snaps": false
+    },
+    "endowment:network-access": {}
+  },
+  "platformVersion": "6.24.0",
+  "manifestVersion": "0.1"
+}
