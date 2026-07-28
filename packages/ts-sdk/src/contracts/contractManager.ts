@@ -1443,15 +1443,17 @@ export class ContractManager implements IContractManager {
         }
     }
 
-    /** Outpoints the indexer still knows, across all pages (absent = truly gone). */
+    /** Outpoints the indexer still knows (absent = truly gone). */
     private async fetchPresentOutpoints(vtxos: ExtendedVirtualCoin[]): Promise<Set<string>> {
         const outpoints = vtxos.map((v) => ({ txid: v.txid, vout: v.vout }));
         const present = new Set<string>();
         const BATCH_SIZE = 100;
 
         for (let i = 0; i < outpoints.length; i += BATCH_SIZE) {
+            // pageSize >= BATCH_SIZE so a live coin is never paged out and mistaken for gone.
             const { vtxos: found } = await getNormalizedVtxos(this.config.indexerProvider, {
                 outpoints: outpoints.slice(i, i + BATCH_SIZE),
+                pageSize: DEFAULT_PAGE_SIZE,
             });
             for (const v of found) present.add(vtxoOutpoint(v));
         }

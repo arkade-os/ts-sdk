@@ -289,6 +289,8 @@ export type IncomingFunds =
           type: "vtxo";
           newVtxos: ExtendedVirtualCoin[];
           spentVtxos: ExtendedVirtualCoin[];
+          // Coins dropped without a spend (chain reset/reorg); never a payment.
+          vanishedVtxos?: ExtendedVirtualCoin[];
       };
 
 /**
@@ -1612,7 +1614,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
             let annotationQueue: Promise<void> = Promise.resolve();
 
             indexerStopFunc = cm.onContractEvent((event) => {
-                if (event.type !== "vtxo_received" && event.type !== "vtxo_spent") {
+                if (
+                    event.type !== "vtxo_received" &&
+                    event.type !== "vtxo_spent" &&
+                    event.type !== "vtxo_vanished"
+                ) {
                     return;
                 }
                 if (event.contract.type !== "default" && event.contract.type !== "delegate") {
@@ -1628,6 +1634,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                             type: "vtxo",
                             newVtxos: event.type === "vtxo_received" ? annotated : [],
                             spentVtxos: event.type === "vtxo_spent" ? annotated : [],
+                            vanishedVtxos: event.type === "vtxo_vanished" ? annotated : [],
                         });
                     } catch (error) {
                         console.warn(
@@ -1770,10 +1777,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     private async initializeContractManager(): Promise<ContractManager> {
         // When a virtualTxRepository is configured, capture each received VTXO's
-        // unilateral-exit branch and prune it on spend (both best-effort).
+        // unilateral-exit branch and prune it on spend or vanish (all best-effort).
         const virtualTxRepository = this.virtualTxRepository;
         let onVtxosPersisted: ContractManagerConfig["onVtxosPersisted"];
         let onVtxosSpent: ContractManagerConfig["onVtxosSpent"];
+        let onVtxosVanished: ContractManagerConfig["onVtxosVanished"];
         if (virtualTxRepository) {
             const capture = this.exitDataCapture;
             const resolver = createExitChainResolver({
@@ -1797,6 +1805,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 }
             };
             onVtxosSpent = (vtxos) => pruneExitBranches(virtualTxRepository, vtxos);
+            onVtxosVanished = (vtxos) => pruneExitBranches(virtualTxRepository, vtxos);
         }
         const manager = await ContractManager.create({
             indexerProvider: this.indexerProvider,
@@ -1805,6 +1814,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             intentRepository: this.intentRepository,
             onVtxosPersisted,
             onVtxosSpent,
+            onVtxosVanished,
             watcherConfig: this.watcherConfig,
         });
 
