@@ -1,6 +1,7 @@
 import bolt11 from "light-bolt11-decoder";
 import { DecodedInvoice } from "../types";
-import { ArkAddress } from "@arkade-os/sdk";
+
+export { isValidArkAddress } from "@arkade-os/sdk";
 
 /**
  * Decodes a Lightning invoice.
@@ -34,13 +35,4 @@ export const getInvoiceSatoshis = (invoice: string): number => {
 
 export const getInvoicePaymentHash = (invoice: string): string => {
     return decodeInvoice(invoice).paymentHash;
-};
-
-export const isValidArkAddress = (address: string): boolean => {
-    try {
-        ArkAddress.decode(address);
-        return true;
-    } catch (e) {
-        return false;
-    }
 };

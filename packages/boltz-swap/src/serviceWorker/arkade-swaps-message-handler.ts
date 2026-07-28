@@ -225,24 +225,6 @@ export type ResponseRestoreSwaps = ResponseEnvelope & {
     };
 };
 
-export type RequestEnrichReverseSwapPreimage = RequestEnvelope & {
-    type: "ENRICH_REVERSE_SWAP_PREIMAGE";
-    payload: { swap: BoltzReverseSwap; preimage: string };
-};
-export type ResponseEnrichReverseSwapPreimage = ResponseEnvelope & {
-    type: "REVERSE_SWAP_PREIMAGE_ENRICHED";
-    payload: BoltzReverseSwap;
-};
-
-export type RequestEnrichSubmarineSwapInvoice = RequestEnvelope & {
-    type: "ENRICH_SUBMARINE_SWAP_INVOICE";
-    payload: { swap: BoltzSubmarineSwap; invoice: string };
-};
-export type ResponseEnrichSubmarineSwapInvoice = ResponseEnvelope & {
-    type: "SUBMARINE_SWAP_INVOICE_ENRICHED";
-    payload: BoltzSubmarineSwap;
-};
-
 export type RequestGetFees = RequestEnvelope & {
     type: "GET_FEES";
     payload?: { from: Chain; to: Chain };
@@ -553,8 +535,6 @@ export type ArkadeSwapsUpdaterRequest =
     | RequestWaitForSwapSettlement
     | RequestWaitForSwapFunded
     | RequestRestoreSwaps
-    | RequestEnrichReverseSwapPreimage
-    | RequestEnrichSubmarineSwapInvoice
     | RequestGetFees
     | RequestGetLimits
     | RequestGetSwapStatus
@@ -603,8 +583,6 @@ export type ArkadeSwapsUpdaterResponse =
     | ResponseWaitForSwapSettlement
     | ResponseWaitForSwapFunded
     | ResponseRestoreSwaps
-    | ResponseEnrichReverseSwapPreimage
-    | ResponseEnrichSubmarineSwapInvoice
     | ResponseGetFees
     | ResponseGetLimits
     | ResponseGetSwapStatus
@@ -920,30 +898,6 @@ export class ArkadeSwapsMessageHandler
                     return this.tagged({
                         id,
                         type: "SWAPS_RESTORED",
-                        payload: res,
-                    });
-                }
-
-                case "ENRICH_REVERSE_SWAP_PREIMAGE": {
-                    const res = this.handler.enrichReverseSwapPreimage(
-                        message.payload.swap,
-                        message.payload.preimage,
-                    );
-                    return this.tagged({
-                        id,
-                        type: "REVERSE_SWAP_PREIMAGE_ENRICHED",
-                        payload: res,
-                    });
-                }
-
-                case "ENRICH_SUBMARINE_SWAP_INVOICE": {
-                    const res = this.handler.enrichSubmarineSwapInvoice(
-                        message.payload.swap,
-                        message.payload.invoice,
-                    );
-                    return this.tagged({
-                        id,
-                        type: "SUBMARINE_SWAP_INVOICE_ENRICHED",
                         payload: res,
                     });
                 }
