@@ -27,6 +27,20 @@ The snap panel invokes the snap over RPC through MetaMask and resolves it from n
 the **published** package, not this working tree. That is why `@arkade-os/snap` is not a dependency
 here.
 
+### The checkout mount path is fixed, not configurable
+
+Checkout's route handlers **must** be mounted at `/api/arkade`. `Checkout.tsx` and `useCheckout.tsx`
+hardcode `/api/arkade/status`, `/api/arkade/claim` and `/api/arkade/create`, and `webhook.ts`
+self-calls `/api/arkade/claim`. Mounting anywhere else builds and typechecks cleanly but 404s the
+moment you click through — a build-time gate cannot catch a hardcoded fetch path.
+
+### These handlers have no authentication
+
+`create`, `claim` and `webhook` ship with no auth, no rate limiting, and no origin check. `create`
+mints Boltz reverse swaps using the server's key, and the checkout id is the Boltz payment hash,
+which is not secret. **Mount them behind app-level authentication before exposing them publicly.**
+This is inherited from the source repo, not introduced by the port.
+
 ## Running it
 
 ```bash

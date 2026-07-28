@@ -10,14 +10,21 @@ export function CheckoutPanel() {
     async function create() {
         setError(null);
         try {
-            const res = await fetch("/api/checkout/create", {
+            // Path, request shape and response field all match handleCreate:
+            // it destructures { title, description, amountSats, metadata } and
+            // returns { checkoutId }.
+            const res = await fetch("/api/arkade/create", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ amount: 1000, description: "playground test payment" }),
+                body: JSON.stringify({
+                    title: "Playground test payment",
+                    description: "Integration playground",
+                    amountSats: 1000,
+                }),
             });
             const body = await res.json();
             if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
-            setId(body.id);
+            setId(body.checkoutId);
         } catch (e) {
             setError(e instanceof Error ? e.message : String(e));
         }
@@ -27,8 +34,9 @@ export function CheckoutPanel() {
         <section>
             <h2>@arkade-os/checkout</h2>
             <p>
-                Route handlers are mounted at <code>/api/checkout</code> from this package&apos;s{" "}
-                <code>./server/route</code> subpath export. Server flows need
+                Route handlers are mounted at <code>/api/arkade</code> from this package&apos;s{" "}
+                <code>./server/route</code> subpath export — that path is required, not chosen,
+                because the client component hardcodes it. Server flows need
                 <code> ARKADE_PRIVATE_KEY_HEX</code> set — see the package README.
             </p>
             <button onClick={create}>create checkout</button>
