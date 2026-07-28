@@ -67,7 +67,8 @@ import type {
 } from "./arkade-swaps-message-handler";
 import {
     getRandomId,
-    MESSAGE_BUS_NOT_INITIALIZED,
+    isMessageBusInitializingError,
+    isMessageBusNotInitializedError,
     ServiceWorkerTimeoutError,
     type ArkInfo,
     type ArkTxInput,
@@ -86,14 +87,16 @@ import {
 import type { Actions, SwapManagerClient } from "../swap-manager";
 import { logger } from "../logger";
 
-// Check by error message content instead of instanceof because postMessage uses the
-// structured clone algorithm which strips the prototype chain — the page
-// receives a plain Error, not the original MessageBusNotInitializedError.
-function isMessageBusNotInitializedError(error: unknown): boolean {
-    return error instanceof Error && error.message.includes(MESSAGE_BUS_NOT_INITIALIZED);
-}
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-// Same structured-clone caveat as above: match by message string. Triggered
+// Bounded backoff for waiting out an in-flight init: ~100ms, 200ms, … capped at
+// 2s, so a stuck init still surfaces an error instead of hanging the caller.
+const INIT_WAIT_BACKOFF_CAP_MS = 2_000;
+const MAX_INIT_WAITS = 8;
+const initWaitBackoffMs = (attempt: number) =>
+    Math.min(100 * 2 ** attempt, INIT_WAIT_BACKOFF_CAP_MS);
+
+// Matched by message string (structured clone strips the prototype chain). Triggered
 // when the bus has been re-initialized (e.g. by the wallet's restart-recovery
 // path) but the ArkadeSwaps handler's own init payload has not been re-sent,
 // leaving `handler.handler` undefined. Reinitialize from cached initPayload.
@@ -289,6 +292,8 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         const tag = this.messageTag;
 
         const proxy = {
+            // No payload: the SW side loads pending swaps from the repository itself
+            // (see ArkadeSwaps.startSwapManager).
             start: async () => {
                 await send({
                     id: getRandomId(),
@@ -1177,10 +1182,19 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             : DEFAULT_MESSAGE_TIMEOUT_MS;
 
         const maxRetries = 2;
-        for (let attempt = 0; ; attempt++) {
+        for (let attempt = 0, initWaits = 0; ; attempt++) {
             try {
                 return await this.sendMessageDirect(request, timeoutMs);
             } catch (error: any) {
+                // Must precede the not-initialized check: an in-flight init reports a
+                // superset message, and reinitializing would burn every retry at once.
+                if (isMessageBusInitializingError(error)) {
+                    if (initWaits >= MAX_INIT_WAITS) throw error;
+                    await sleep(initWaitBackoffMs(initWaits++));
+                    attempt--;
+                    continue;
+                }
+
                 const recoverable =
                     isMessageBusNotInitializedError(error) || isHandlerNotInitializedError(error);
                 if (!recoverable || attempt >= maxRetries) {

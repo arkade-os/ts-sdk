@@ -10,7 +10,11 @@ import { BoltzSwapStatus } from "../../src/boltz-swap-provider";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { hex } from "@scure/base";
 import { decodeInvoice } from "../../src/utils/decoding";
-import { MESSAGE_BUS_NOT_INITIALIZED, ServiceWorkerTimeoutError } from "@arkade-os/sdk";
+import {
+    MESSAGE_BUS_INITIALIZING,
+    MESSAGE_BUS_NOT_INITIALIZED,
+    ServiceWorkerTimeoutError,
+} from "@arkade-os/sdk";
 import { QuoteRejectedError } from "../../src/errors";
 
 class FakeServiceWorker {
@@ -361,6 +365,7 @@ const createRuntimeWithConfig = (
 describe("sendMessage reinitialize on SW restart", () => {
     afterEach(() => {
         vi.unstubAllGlobals();
+        vi.useRealTimers();
     });
 
     it("retries after re-initializing when SW returns 'MessageBus not initialized'", async () => {
@@ -543,6 +548,80 @@ describe("sendMessage reinitialize on SW restart", () => {
             ([msg]: any) => msg.type === "INIT_ARKADE_SWAPS",
         );
         expect(initCalls).toHaveLength(1);
+    });
+
+    it("waits out an in-flight init without reinitializing or consuming retries", async () => {
+        vi.useFakeTimers();
+
+        // More initializing responses than the 2-retry budget: if they were
+        // classified as not-initialized the request would fail on the 3rd send.
+        let initializing = 3;
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "GET_FEES") return null;
+            if (initializing-- > 0) {
+                return {
+                    id: message.id,
+                    tag: TAG,
+                    error: new Error(MESSAGE_BUS_INITIALIZING),
+                };
+            }
+            return {
+                id: message.id,
+                tag: TAG,
+                type: "FEES",
+                payload: { minerFees: 7 },
+            };
+        });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        const feesPromise = runtime.getFees();
+
+        // Backoff is 100ms, 200ms, 400ms
+        await vi.advanceTimersByTimeAsync(1_000);
+
+        expect(await feesPromise).toEqual({ minerFees: 7 });
+
+        const feesCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_FEES",
+        );
+        expect(feesCalls).toHaveLength(4);
+
+        const initCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "INIT_ARKADE_SWAPS",
+        );
+        expect(initCalls).toHaveLength(0);
+    });
+
+    it("gives up on a stuck init instead of waiting forever", async () => {
+        vi.useFakeTimers();
+
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
+            id: message.id,
+            tag: TAG,
+            error: new Error(MESSAGE_BUS_INITIALIZING),
+        }));
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        const assertion = expect(runtime.refreshSwapsStatus()).rejects.toThrow(
+            MESSAGE_BUS_INITIALIZING,
+        );
+
+        // Sum of the capped backoff over the 8 permitted waits
+        await vi.advanceTimersByTimeAsync(20_000);
+        await assertion;
+
+        const refreshCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "REFRESH_SWAPS_STATUS",
+        );
+        expect(refreshCalls).toHaveLength(9);
     });
 
     it("does not retry for errors other than 'not initialized'", async () => {

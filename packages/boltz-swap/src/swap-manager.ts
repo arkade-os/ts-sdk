@@ -97,8 +97,12 @@ type SwapUpdateCallback = (swap: BoltzSwap, oldStatus: BoltzSwapStatus) => void;
 
 /** Public interface for SwapManager consumers. Provides swap monitoring, event subscription, and lifecycle control. */
 export interface SwapManagerClient {
-    /** Starts the manager, loading initial swaps and connecting WebSocket. */
-    start(pendingSwaps: BoltzSwap[]): Promise<void>;
+    /**
+     * Starts the manager, loading initial swaps and connecting WebSocket.
+     * Omit `pendingSwaps` when the implementation sources them itself — the
+     * service-worker proxy does, loading from the repository on the SW side.
+     */
+    start(pendingSwaps?: BoltzSwap[]): Promise<void>;
     /** Stops the manager, closes WebSocket, and clears all timers. */
     stop(): Promise<void>;
     /** Adds a new swap to be monitored. Immediately subscribes via WebSocket. */
@@ -415,7 +419,7 @@ export class SwapManager implements SwapManagerClient {
      * 3. Poll all swaps after connection
      * 4. Resume any actionable swaps
      */
-    async start(pendingSwaps: BoltzSwap[]): Promise<void> {
+    async start(pendingSwaps: BoltzSwap[] = []): Promise<void> {
         if (this.isRunning) {
             logger.warn("SwapManager is already running");
             return;
