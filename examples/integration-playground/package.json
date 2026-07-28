@@ -1,0 +1,30 @@
+{
+    "name": "@arkade-os/example-integration-playground",
+    "version": "0.0.0",
+    "private": true,
+    "description": "Minimal unified example exercising every ported Arkade web package",
+    "scripts": {
+        "dev": "next dev",
+        "build": "next build",
+        "start": "next start",
+        "typecheck": "tsc --noEmit",
+        "lint": "prettier --check app components"
+    },
+    "dependencies": {
+        "@arkade-os/checkout": "workspace:^",
+        "@arkade-os/sats-connect": "workspace:^",
+        "@arkade-os/sats-connect-react": "workspace:^",
+        "@arkade-os/sdk": "workspace:^",
+        "@arkade-os/wallet-providers": "workspace:^",
+        "@scure/base": "^2.0.0",
+        "next": "^15.0.0",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
+        "sats-connect": "^4.2.1"
+    },
+    "devDependencies": {
+        "@types/node": "^22.0.0",
+        "@types/react": "^19.0.0",
+        "@types/react-dom": "^19.0.0"
+    }
+}

@@ -1,0 +1,14 @@
+{
+    "extends": "../../config/tsconfig.base.json",
+    "compilerOptions": {
+        "lib": ["es2022", "dom", "dom.iterable"],
+        "jsx": "preserve",
+        "types": ["node"],
+        "noEmit": true,
+        "allowJs": true,
+        "moduleResolution": "bundler",
+        "plugins": [{ "name": "next" }]
+    },
+    "include": ["next-env.d.ts", "app", "components", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+    "exclude": ["node_modules", ".next"]
+}
