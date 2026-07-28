@@ -7,7 +7,7 @@
 // miss multi-line call chains and aliased receivers.
 
 import ts from "typescript";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const pkgRoot = join(fileURLToPath(new URL(".", import.meta.url)), "..");
@@ -29,7 +29,9 @@ const findings = [];
 
 for (const sourceFile of program.getSourceFiles()) {
     if (sourceFile.isDeclarationFile) continue;
-    const rel = relative(pkgRoot, sourceFile.fileName);
+    // Normalize to POSIX separators: `relative()` yields backslashes on Windows, where the
+    // "src/" prefix test would then skip every file and the guard would pass having checked none.
+    const rel = relative(pkgRoot, sourceFile.fileName).split(sep).join("/");
     if (!rel.startsWith("src/")) continue;
     if (ALLOWLIST.includes(rel)) continue;
 
