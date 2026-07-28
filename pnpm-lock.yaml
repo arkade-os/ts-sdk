@@ -145,6 +145,16 @@ importers:
         specifier: ^0.28.19
         version: 0.28.19(typescript@5.9.2)
 
+  packages/wallet-providers:
+    dependencies:
+      '@scure/base':
+        specifier: ^2.0.0
+        version: 2.0.0
+    devDependencies:
+      '@arkade-os/sdk':
+        specifier: workspace:*
+        version: link:../ts-sdk
+
 packages:
 
   '@ampproject/remapping@2.3.0':
