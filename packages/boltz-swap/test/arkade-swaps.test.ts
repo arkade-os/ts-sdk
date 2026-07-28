@@ -1107,6 +1107,35 @@ describe("ArkadeSwaps", () => {
                 expect(result.txid).toBe(mock.txid);
                 expect(claimVHTLC).toHaveBeenCalledTimes(1);
             });
+
+            it("should retry the claim on the confirmed status when the mempool claim fails", async () => {
+                // arrange
+                const pendingSwap = mockReverseSwap;
+
+                const claimVHTLC = vi
+                    .spyOn(swaps, "claimVHTLC")
+                    .mockRejectedValueOnce(new Error("indexer not ready"))
+                    .mockResolvedValueOnce(undefined);
+                vi.spyOn(swapProvider, "getReverseSwapTxId").mockResolvedValue({
+                    id: mock.txid,
+                    timeoutBlockHeight: 123,
+                });
+                let monitorDone: Promise<void> = Promise.resolve();
+                vi.spyOn(swapProvider, "monitorSwap").mockImplementation((_id, update) => {
+                    monitorDone = (async () => {
+                        await update("transaction.mempool");
+                        await update("transaction.confirmed");
+                        await update("invoice.settled");
+                    })();
+                    return monitorDone;
+                });
+
+                // act & assert: the first failure rejects the promise, but the
+                // confirmed status still retries the claim in the background.
+                await expect(swaps.waitAndClaim(pendingSwap)).rejects.toThrow("indexer not ready");
+                await monitorDone;
+                expect(claimVHTLC).toHaveBeenCalledTimes(2);
+            });
         });
     });
 

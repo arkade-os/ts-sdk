@@ -720,10 +720,14 @@ export class ArkadeSwaps {
                         await saveStatus();
                         // Both statuses fire for the same lockup; a second
                         // claim would fail on the spent VHTLC and reject the
-                        // promise despite the first claim succeeding.
+                        // promise despite the first claim succeeding. Reset on
+                        // failure so the other status can still retry the claim.
                         if (claimStarted) return;
                         claimStarted = true;
-                        this.claimVHTLC(pendingSwap).catch(reject);
+                        this.claimVHTLC(pendingSwap).catch((error) => {
+                            claimStarted = false;
+                            reject(error);
+                        });
                         break;
                     case "invoice.settled": {
                         await saveStatus();
