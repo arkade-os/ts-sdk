@@ -113,28 +113,42 @@ ok(`declarations scanned: ${dtsChecked}, relative imports verified: ${dtsImports
 // ── 3. root entry CJS + ESM load ──────────────────────────────────────
 // Validates the dual-package layout and that the package can resolve its
 // workspace deps via the local node_modules symlink.
+//
+// --skip-runtime-load opts out for packages whose root entry cannot load in a
+// bare Node process because it requires a framework runtime (e.g. a Next.js
+// package importing next/navigation). The exports-map and declaration checks
+// above still run. The skip is logged loudly and names its reason, so it can
+// never be mistaken for a pass.
 section("root entry: CJS + ESM load");
+
+const skipRuntimeLoad = process.argv.includes("--skip-runtime-load");
 
 const runNode = (args) => spawnSync(process.execPath, args, { cwd: repoRoot, encoding: "utf8" });
 
-if (pkg.main) {
-    const cjsProbe = `
+if (skipRuntimeLoad) {
+    console.log("SKIP: CJS/ESM root load — --skip-runtime-load set");
+    console.log("      This package's root entry needs a framework runtime to import.");
+    console.log("      Export-map and declaration checks above still ran and passed.");
+} else {
+    if (pkg.main) {
+        const cjsProbe = `
 const mod = require(${JSON.stringify("./" + pkg.main.replace(/^\.\//, ""))});
 if (Object.keys(mod).length === 0) throw new Error("empty exports");
 `;
-    const r = runNode(["-e", cjsProbe]);
-    if (r.status === 0) ok("CJS root require");
-    else fail("CJS root require: " + (r.stderr || r.stdout).trim());
-}
+        const r = runNode(["-e", cjsProbe]);
+        if (r.status === 0) ok("CJS root require");
+        else fail("CJS root require: " + (r.stderr || r.stdout).trim());
+    }
 
-if (pkg.module) {
-    const esmProbe = `
+    if (pkg.module) {
+        const esmProbe = `
 const mod = await import(${JSON.stringify("./" + pkg.module.replace(/^\.\//, ""))});
 if (Object.keys(mod).length === 0) throw new Error("empty exports");
 `;
-    const r = runNode(["--input-type=module", "-e", esmProbe]);
-    if (r.status === 0) ok("ESM root import");
-    else fail("ESM root import: " + (r.stderr || r.stdout).trim());
+        const r = runNode(["--input-type=module", "-e", esmProbe]);
+        if (r.status === 0) ok("ESM root import");
+        else fail("ESM root import: " + (r.stderr || r.stdout).trim());
+    }
 }
 
 console.log("");

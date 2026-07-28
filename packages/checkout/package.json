@@ -1,0 +1,90 @@
+{
+    "name": "@arkade-os/checkout",
+    "version": "0.1.0",
+    "description": "Checkout widget to accept Bitcoin payments for Next.js using Arkade SDK + Boltz swaps",
+    "license": "MIT",
+    "type": "module",
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "import": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.js"
+            },
+            "require": {
+                "types": "./dist/index.d.cts",
+                "default": "./dist/index.cjs"
+            }
+        },
+        "./server/route": {
+            "import": {
+                "types": "./dist/server/route.d.ts",
+                "default": "./dist/server/route.js"
+            },
+            "require": {
+                "types": "./dist/server/route.d.cts",
+                "default": "./dist/server/route.cjs"
+            }
+        },
+        "./next-plugin": {
+            "import": {
+                "types": "./dist/next-plugin.d.ts",
+                "default": "./dist/next-plugin.js"
+            },
+            "require": {
+                "types": "./dist/next-plugin.d.cts",
+                "default": "./dist/next-plugin.cjs"
+            }
+        }
+    },
+    "files": [
+        "dist",
+        "README.md",
+        "VSS_SETUP.md"
+    ],
+    "scripts": {
+        "build": "tsup",
+        "typecheck": "tsc --noEmit",
+        "lint": "prettier --check src test cli",
+        "smoke:dist": "node ../../config/smoke-dist.mjs --skip-runtime-load",
+        "test": "vitest run",
+        "test:unit": "vitest run --exclude test/e2e"
+    },
+    "dependencies": {
+        "@arkade-os/boltz-swap": "workspace:^",
+        "@arkade-os/sdk": "workspace:^",
+        "qrcode": "^1.5.4"
+    },
+    "peerDependencies": {
+        "@vercel/kv": ">=1.0.0",
+        "next": ">=15.0.0",
+        "react": ">=18.0.0"
+    },
+    "peerDependenciesMeta": {
+        "@vercel/kv": {
+            "optional": true
+        }
+    },
+    "devDependencies": {
+        "@types/qrcode": "^1.5.5",
+        "@types/react": "^18.3.0",
+        "next": "^15.0.0",
+        "react": "^18.3.0"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/arkade-os/ts-sdk.git",
+        "directory": "packages/checkout"
+    },
+    "keywords": [
+        "arkade",
+        "checkout",
+        "lightning",
+        "bitcoin",
+        "boltz",
+        "nextjs",
+        "payment"
+    ]
+}
