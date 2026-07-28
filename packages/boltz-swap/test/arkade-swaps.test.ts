@@ -28,7 +28,7 @@ import {
     getNetwork,
     maybeArkError,
 } from "@arkade-os/sdk";
-import { VHTLC } from "@arkade-os/sdk";
+import { ArkAddress, VHTLC } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
 import { randomBytes } from "@noble/hashes/utils.js";
 import { schnorr } from "@noble/curves/secp256k1.js";
@@ -37,6 +37,7 @@ import { ripemd160 } from "@noble/hashes/legacy.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { Address, OutScript, Script, ScriptNum } from "@scure/btc-signer";
 import { decodeInvoice } from "../src/utils/decoding";
+import { createVHTLCScript } from "../src/utils/vhtlc";
 import { CovclaimdProvider } from "../src/covclaimd-provider";
 import { eciesDecrypt } from "../src/utils/covclaimd-ecies";
 import { logger } from "../src/logger";
@@ -872,50 +873,155 @@ describe("ArkadeSwaps", () => {
                 expect(spy.mock.calls[0]![0]).not.toHaveProperty("description");
             });
 
-            it("delegates the claim to covclaimd for a nonInteractive reverse swap", async () => {
-                // covclaimd claims the VHTLC server-side, so the funds are
-                // recovered even with the app closed. At creation we hand it the
-                // preimage encrypted to its key; prove the reveal packet decrypts
-                // back to this swap's preimage — all covclaimd needs to claim.
-                const covSwaps = new ArkadeSwaps({
-                    wallet,
-                    arkProvider,
-                    swapProvider,
-                    indexerProvider,
-                    swapRepository: mockSwapRepository,
-                    swapManager: false,
-                    covclaimdUrl: "http://cov:7071",
-                });
-
+            describe("nonInteractive reverse swaps", () => {
                 const covclaimdSecretKey = schnorr.utils.randomSecretKey();
                 const covclaimdPubKey = secp256k1.getPublicKey(covclaimdSecretKey, true);
                 const emulatorPubKey = secp256k1.getPublicKey(
                     schnorr.utils.randomSecretKey(),
                     true,
                 );
-                vi.spyOn(CovclaimdProvider.prototype, "getPubKeys").mockResolvedValue({
-                    covclaimdPubKey,
-                    emulatorPubKey,
-                });
-                const revealSpy = vi
-                    .spyOn(CovclaimdProvider.prototype, "reveal")
-                    .mockResolvedValue(undefined);
-                vi.mocked(wallet.getAddress).mockResolvedValue(mock.address.ark);
-                vi.spyOn(swapProvider, "createReverseSwap").mockImplementationOnce(
-                    reverseSwapResponseFor(createReverseSwapResponse),
-                );
 
-                const pendingSwap = await covSwaps.createReverseSwap({
-                    amount: mock.invoice.amount,
-                    nonInteractive: true,
+                // The VHTLC Boltz is expected to build: same six leaves as a
+                // plain one plus the covenant claim leaf, so its address only
+                // reproduces when the covenant really pays our claim address.
+                const nonInteractiveLockupAddress = (
+                    preimageHash: string,
+                    claimPublicKey: string,
+                    claimAddress: string,
+                ) =>
+                    createVHTLCScript({
+                        network: mockArkInfo.network,
+                        preimageHash: hex.decode(preimageHash),
+                        receiverPubkey: claimPublicKey,
+                        senderPubkey: compressedPubkeys.boltz,
+                        serverPubkey: mockArkInfo.signerPubkey,
+                        timeoutBlockHeights: createReverseSwapResponse.timeoutBlockHeights!,
+                        nonInteractiveClaim: {
+                            claimAddress,
+                            emulatorPublicKey: hex.encode(emulatorPubKey),
+                        },
+                    }).vhtlcAddress;
+
+                // Stand in for Boltz: build the VHTLC from the request we
+                // actually sent. `covenantPaysTo` overrides who the covenant
+                // pins the claim output to.
+                const setup = (covenantPaysTo?: string) => {
+                    vi.spyOn(CovclaimdProvider.prototype, "getPubKeys").mockResolvedValue({
+                        covclaimdPubKey,
+                        emulatorPubKey,
+                    });
+                    const revealSpy = vi
+                        .spyOn(CovclaimdProvider.prototype, "reveal")
+                        .mockResolvedValue(undefined);
+                    vi.mocked(wallet.getAddress).mockResolvedValue(mock.address.ark);
+                    vi.spyOn(arkProvider, "getInfo").mockResolvedValue(mockArkInfo);
+                    vi.spyOn(swapProvider, "createReverseSwap").mockImplementationOnce(
+                        async (req) => {
+                            decodeInvoiceOverride.paymentHash = req.preimageHash!;
+                            return {
+                                ...createReverseSwapResponse,
+                                lockupAddress: nonInteractiveLockupAddress(
+                                    req.preimageHash!,
+                                    req.claimPublicKey!,
+                                    covenantPaysTo ?? req.nonInteractiveClaim!.claimAddress,
+                                ),
+                            };
+                        },
+                    );
+                    return {
+                        revealSpy,
+                        swaps: new ArkadeSwaps({
+                            wallet,
+                            arkProvider,
+                            swapProvider,
+                            indexerProvider,
+                            swapRepository: mockSwapRepository,
+                            swapManager: false,
+                            covclaimdUrl: "http://cov:7071",
+                        }),
+                    };
+                };
+
+                it("delegates the claim to covclaimd", async () => {
+                    // covclaimd claims the VHTLC server-side, so the funds are
+                    // recovered even with the app closed. At creation we hand it
+                    // the preimage encrypted to its key; prove the reveal packet
+                    // decrypts back to this swap's preimage — all covclaimd needs.
+                    const { swaps, revealSpy } = setup();
+
+                    const pendingSwap = await swaps.createReverseSwap({
+                        amount: mock.invoice.amount,
+                        nonInteractive: true,
+                    });
+
+                    expect(revealSpy).toHaveBeenCalledOnce();
+                    const revealArg = revealSpy.mock.calls[0]![0];
+                    expect(revealArg.swapAddress).toBe(pendingSwap.response.lockupAddress);
+                    expect(eciesDecrypt(covclaimdSecretKey, revealArg.ciphertext)).toEqual(
+                        hex.decode(pendingSwap.preimage!),
+                    );
+                    // The emulator key is persisted so the leaf — and with it the
+                    // address and every control block — can be re-derived at claim
+                    // time without covclaimd being reachable.
+                    expect(pendingSwap.nonInteractiveClaim).toEqual({
+                        claimAddress: mock.address.ark,
+                        emulatorPublicKey: hex.encode(emulatorPubKey),
+                    });
                 });
 
-                expect(revealSpy).toHaveBeenCalledOnce();
-                const revealArg = revealSpy.mock.calls[0]![0];
-                expect(revealArg.swapAddress).toBe(mock.lockupAddress);
-                expect(eciesDecrypt(covclaimdSecretKey, revealArg.ciphertext)).toEqual(
-                    hex.decode(pendingSwap.preimage!),
-                );
+                it("refuses to reveal the preimage for a covenant paying someone else", async () => {
+                    // Boltz builds the VHTLC; a covenant pinned to an address that
+                    // is not ours would let anyone we reveal to sweep the funds.
+                    const { swaps, revealSpy } = setup(
+                        // an Ark address that is not ours
+                        new ArkAddress(
+                            mock.pubkeys.server,
+                            mock.pubkeys.fulmine,
+                            ArkAddress.decode(mock.address.ark).hrp,
+                        ).encode(),
+                    );
+
+                    await expect(
+                        swaps.createReverseSwap({
+                            amount: mock.invoice.amount,
+                            nonInteractive: true,
+                        }),
+                    ).rejects.toThrow(/VHTLC address mismatch/);
+                    expect(revealSpy).not.toHaveBeenCalled();
+                });
+
+                it("re-derives the 7-leaf VHTLC when claiming without covclaimd", () => {
+                    const nic = {
+                        claimAddress: mock.address.ark,
+                        emulatorPublicKey: hex.encode(emulatorPubKey),
+                    };
+                    const swaps = new ArkadeSwaps({
+                        wallet,
+                        arkProvider,
+                        swapProvider,
+                        indexerProvider,
+                        swapRepository: mockSwapRepository,
+                        swapManager: false,
+                    });
+
+                    const { vhtlcScript } = (swaps as any).resolveVHTLCForLockup({
+                        arkInfo: mockArkInfo,
+                        preimageHash: hex.decode(mock.invoice.paymentHash),
+                        receiverPubkey: compressedPubkeys.alice,
+                        senderPubkey: compressedPubkeys.boltz,
+                        timeoutBlockHeights: createReverseSwapResponse.timeoutBlockHeights!,
+                        lockupAddress: nonInteractiveLockupAddress(
+                            mock.invoice.paymentHash,
+                            compressedPubkeys.alice,
+                            mock.address.ark,
+                        ),
+                        swapId: mock.id,
+                        nonInteractiveClaim: nic,
+                    });
+
+                    expect(vhtlcScript.scripts).toHaveLength(7);
+                    expect(() => vhtlcScript.claim()).not.toThrow();
+                });
             });
         });
 

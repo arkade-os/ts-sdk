@@ -10,6 +10,8 @@ import {
 } from "./tapscript";
 import { hex } from "@scure/base";
 import { TapLeafScript, VtxoScript } from "./base";
+import { ArkadeScript } from "../arkade/script";
+import { computeArkadeScriptPublicKey } from "../arkade/tweak";
 
 /** Virtual Hash Time Lock Contract (VHTLC) namespace. */
 export namespace VHTLC {
@@ -22,6 +24,11 @@ export namespace VHTLC {
         unilateralClaimDelay: RelativeTimelock;
         unilateralRefundDelay: RelativeTimelock;
         unilateralRefundWithoutReceiverDelay: RelativeTimelock;
+        // optional non interactive claim leaf
+        nonInteractiveClaim?: {
+            receiverPkScript: Bytes;
+            emulatorPubkey: Bytes;
+        };
     }
 
     /**
@@ -58,6 +65,8 @@ export namespace VHTLC {
         readonly unilateralClaimScript: string;
         readonly unilateralRefundScript: string;
         readonly unilateralRefundWithoutReceiverScript: string;
+        readonly nonInteractiveClaimScript?: string;
+        readonly nonInteractiveClaimArkadeScript?: Bytes;
 
         /** Create a VHTLC script from the supplied participant keys, hash, and timelocks. */
         constructor(readonly options: Options) {
@@ -106,15 +115,40 @@ export namespace VHTLC {
                 pubkeys: [sender],
             }).script;
 
-            super([
+            const scripts = [
                 claimScript,
                 refundScript,
                 refundWithoutReceiverScript,
                 unilateralClaimScript,
                 unilateralRefundScript,
                 unilateralRefundWithoutReceiverScript,
-            ]);
+            ];
 
+            let arkadeScriptNic = undefined;
+            let nonInteractiveClaimScript = undefined;
+
+            if (options.nonInteractiveClaim) {
+                arkadeScriptNic = enforcePayTo(options.nonInteractiveClaim.receiverPkScript);
+                nonInteractiveClaimScript = ConditionMultisigTapscript.encode({
+                    conditionScript,
+                    pubkeys: [
+                        server,
+                        computeArkadeScriptPublicKey(
+                            options.nonInteractiveClaim.emulatorPubkey,
+                            arkadeScriptNic,
+                        ),
+                    ],
+                }).script;
+
+                scripts.push(nonInteractiveClaimScript);
+            }
+
+            super(scripts);
+
+            if (nonInteractiveClaimScript) {
+                this.nonInteractiveClaimScript = hex.encode(nonInteractiveClaimScript);
+                this.nonInteractiveClaimArkadeScript = arkadeScriptNic;
+            }
             this.claimScript = hex.encode(claimScript);
             this.refundScript = hex.encode(refundScript);
             this.refundWithoutReceiverScript = hex.encode(refundWithoutReceiverScript);
@@ -154,6 +188,17 @@ export namespace VHTLC {
         unilateralRefundWithoutReceiver(): TapLeafScript {
             return this.findLeaf(this.unilateralRefundWithoutReceiverScript);
         }
+
+        /** Return the non-interactive claim tapleaf script as well as the ArkadeScript */
+        nonInteractiveClaim(): [TapLeafScript, Bytes] {
+            if (!this.nonInteractiveClaimScript || !this.nonInteractiveClaimArkadeScript) {
+                throw new Error("VHTLC has no non-interactive claim leaf");
+            }
+            return [
+                this.findLeaf(this.nonInteractiveClaimScript),
+                this.nonInteractiveClaimArkadeScript,
+            ];
+        }
     }
 
     function validateOptions(options: Options): void {
@@ -170,6 +215,16 @@ export namespace VHTLC {
 
         if (!preimageHash || preimageHash.length !== 20) {
             throw new Error("preimage hash must be 20 bytes");
+        }
+        if (options.nonInteractiveClaim) {
+            const { emulatorPubkey, receiverPkScript } = options.nonInteractiveClaim;
+            if (!emulatorPubkey || (emulatorPubkey.length !== 32 && emulatorPubkey.length !== 33)) {
+                throw new Error("Invalid public key length (emulator)");
+            }
+
+            if (receiverPkScript.length !== 34) {
+                throw new Error("Invalid P2TR script");
+            }
         }
         if (!receiver || receiver.length !== 32) {
             throw new Error("Invalid public key length (receiver)");
@@ -233,4 +288,24 @@ export namespace VHTLC {
 
 function preimageConditionScript(preimageHash: Bytes): Bytes {
     return Script.encode(["HASH160", preimageHash, "EQUAL"]);
+}
+
+function enforcePayTo(receiverPkScript: Bytes): Bytes {
+    if (receiverPkScript.length < 34) {
+        throw new Error("invalid P2TR script");
+    }
+
+    return ArkadeScript.encode([
+        "PUSHCURRENTINPUTINDEX",
+        "DUP",
+        "INSPECTOUTPUTSCRIPTPUBKEY",
+        1,
+        "EQUALVERIFY",
+        receiverPkScript.subarray(2),
+        "EQUALVERIFY",
+        "INSPECTOUTPUTVALUE",
+        "PUSHCURRENTINPUTINDEX",
+        "INSPECTINPUTVALUE",
+        "GREATERTHANOREQUAL",
+    ]);
 }

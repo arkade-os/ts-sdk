@@ -11,7 +11,6 @@ import {
     networks,
     NetworkName,
     ArkAddress,
-    ConditionMultisigTapscript,
     VHTLC,
     VtxoScript,
     VtxoTaprootTree,
@@ -19,14 +18,13 @@ import {
     combineTapscriptSigs,
     Transaction,
     TapLeafScript,
-    arkade,
 } from "@arkade-os/sdk";
 import { logger } from "../logger";
 import { BoltzRefundError } from "../errors";
 import { hex, base64 } from "@scure/base";
 import { createVHTLCBatchHandler } from "../batch";
 import { ripemd160 } from "@noble/hashes/legacy.js";
-import { Address, OutScript, Script } from "@scure/btc-signer";
+import { Address, OutScript } from "@scure/btc-signer";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { normalizeToXOnlyKey, verifySignatures } from "./signatures";
 import { TransactionOutput, TransactionInput } from "@scure/btc-signer/psbt.js";
@@ -115,32 +113,22 @@ export const createVHTLCScript = (args: {
         unilateralRefundWithoutReceiverDelay: toBip68RelativeTimelock(
             vhtlcTimeouts.unilateralRefundWithoutReceiver,
         ),
+        ...(nonInteractiveClaim
+            ? {
+                  nonInteractiveClaim: {
+                      receiverPkScript: ArkAddress.decode(nonInteractiveClaim.claimAddress)
+                          .pkScript,
+                      emulatorPubkey: hex.decode(nonInteractiveClaim.emulatorPublicKey),
+                  },
+              }
+            : {}),
     });
 
     if (!vhtlcScript.claimScript) throw new Error("Failed to create VHTLC script");
 
     // validate vhtlc script
     const hrp = getNetwork(network as NetworkName).hrp;
-
-    if (!nonInteractiveClaim) {
-        const vhtlcAddress = vhtlcScript.address(hrp, serverXOnlyPublicKey).encode();
-        return { vhtlcScript, vhtlcAddress };
-    }
-
-    const receiverTapKey = ArkAddress.decode(nonInteractiveClaim.claimAddress).vtxoTaprootKey;
-    const enforcement = enforcePayTo(receiverTapKey);
-    const emulatorTweaked = arkade.computeArkadeScriptPublicKey(
-        hex.decode(nonInteractiveClaim.emulatorPublicKey),
-        enforcement,
-    );
-    const conditionScript = Script.encode(["HASH160", ripemd160(preimageHash), "EQUAL"]);
-    const claimLeaf = ConditionMultisigTapscript.encode({
-        conditionScript,
-        pubkeys: [serverXOnlyPublicKey, emulatorTweaked],
-    }).script;
-
-    const withClaimLeaf = new VtxoScript([...vhtlcScript.scripts, claimLeaf]);
-    const vhtlcAddress = withClaimLeaf.address(hrp, serverXOnlyPublicKey).encode();
+    const vhtlcAddress = vhtlcScript.address(hrp, serverXOnlyPublicKey).encode();
 
     return { vhtlcScript, vhtlcAddress };
 };
@@ -541,22 +529,4 @@ export const refundVHTLCwithOffchainTx = async (
 
 function scriptFromTapLeafScript(leaf: TapLeafScript): Uint8Array {
     return leaf[1].subarray(0, leaf[1].length - 1); // remove the version byte
-}
-
-export function enforcePayTo(receiverTapKey: Uint8Array): Uint8Array {
-    if (receiverTapKey.length !== 32)
-        throw new Error(`enforcePayTo: expected 32-byte tap key, got ${receiverTapKey.length}`);
-    return arkade.ArkadeScript.encode([
-        "PUSHCURRENTINPUTINDEX",
-        "DUP",
-        "INSPECTOUTPUTSCRIPTPUBKEY",
-        1,
-        "EQUALVERIFY",
-        receiverTapKey,
-        "EQUALVERIFY",
-        "INSPECTOUTPUTVALUE",
-        "PUSHCURRENTINPUTINDEX",
-        "INSPECTINPUTVALUE",
-        "GREATERTHANOREQUAL",
-    ]);
 }
