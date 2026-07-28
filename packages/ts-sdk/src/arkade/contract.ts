@@ -75,7 +75,7 @@ import type { EmulatorProvider } from "../providers/emulator";
 import type { IndexerProvider } from "../providers/indexer";
 import type { Identity } from "../identity";
 import type { VirtualCoin } from "../wallet";
-import { isSpendable } from "../wallet";
+import { getNormalizedVtxos, hasTerminalSpend } from "../wallet";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import type { TapLeafScript } from "../script/base";
 import { buildOffchainTx, type ArkTxInput } from "../utils/arkTransaction";
@@ -491,13 +491,13 @@ export class ArkadeContract<P extends Program = Program> {
             const [registered] = await manager.getContracts({ script: scriptHex });
             if (registered) {
                 const [withVtxos] = await manager.getContractsWithVtxos({ script: scriptHex });
-                return (withVtxos?.vtxos ?? []).filter(isSpendable);
+                return (withVtxos?.vtxos ?? []).filter((v) => !hasTerminalSpend(v));
             }
         }
         if (!this.client.indexer) {
             throw new Error("ArkadeContract.getUtxos: an indexer is required");
         }
-        const { vtxos } = await this.client.indexer.getVtxos({
+        const { vtxos } = await getNormalizedVtxos(this.client.indexer, {
             scripts: [scriptHex],
             spendableOnly: true,
         });

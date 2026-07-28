@@ -120,11 +120,11 @@ function cloneContractTapscripts(tapscripts: ContractTapscripts): ContractTapscr
     };
 }
 
-function extendVtxoFromContract(
-    vtxo: VirtualCoin,
+function extendVtxoFromContract<T extends VirtualCoin>(
+    vtxo: T,
     contract: Contract,
     cache?: ContractTapscriptCache,
-): ExtendedVirtualCoin {
+): T & ExtendedVirtualCoin {
     if (!cache) {
         return { ...vtxo, ...deriveContractTapscripts(contract) };
     }
@@ -157,11 +157,11 @@ function extendVtxoFromContract(
  * caller (typically `ContractManager.annotateVtxos`) should fetch the owning
  * contract first.
  */
-export function extendVirtualCoinForContract(
-    vtxo: VirtualCoin,
+export function extendVirtualCoinForContract<T extends VirtualCoin>(
+    vtxo: T,
     contractOrMap?: Contract | ReadonlyMap<string, Contract>,
     cache?: ContractTapscriptCache,
-): ExtendedVirtualCoin {
+): T & ExtendedVirtualCoin {
     const contract = resolveContract(vtxo, contractOrMap);
     if (!contract) {
         throw new Error(

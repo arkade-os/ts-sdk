@@ -23,6 +23,7 @@ import {
 import {
     arkdExec,
     beforeEachFaucet,
+    coreBlockCount,
     createTestArkWallet,
     createTestIdentity,
     execCommand,
@@ -277,14 +278,21 @@ describe("vhtlc", () => {
             // seconds-CLTV would need both wall-clock passage and a later block to
             // carry that time forward, so neither mining nor waiting alone gets there.
             //
-            // The buffer is wide (not a tight +1) because `height` comes from
-            // EsploraProvider (mempool, polling Fulcrum every 2s), while arkd matures
-            // the CLTV against its own nbxplorer-derived tip — a separate indexing
-            // pipeline with no sync guarantee against mempool's. A thin margin here
-            // previously let indexer lag alone satisfy the locktime before the first
-            // submitTx below, failing this test's premature-rejection assertion.
-            const { height } = await onchainProvider.getChainTip();
-            const refundLocktime = BigInt(height + 30);
+            // The baseline comes from Bitcoin Core, not from an indexer. arkd matures
+            // the CLTV against its nbxplorer-derived tip, and every indexer in the
+            // stack trails Core by an unbounded amount: the preceding test mines 10
+            // blocks and returns, so an EsploraProvider tip read here can still be
+            // those 10 blocks stale — a locktime built on it is then *already* matured
+            // against arkd, and the premature-rejection assertion below fails. Core's
+            // count is an upper bound on every indexer, so `+5` is immature everywhere.
+            //
+            // The buffer stays small because the whole maturation must fit inside the
+            // funding VTXO's batch lifetime — ARKD_VTXO_TREE_EXPIRY=20 blocks — an
+            // expired batch makes the input recoverable-only, and the retry then fails
+            // VTXO_RECOVERABLE instead of exercising the regression. With
+            // AUTOMINE_INTERVAL=0 (see .env.regtest) nothing advances the tip between
+            // this read and the first submitTx below.
+            const refundLocktime = BigInt(coreBlockCount() + 5);
 
             const preimageHash = hash160(new TextEncoder().encode("preimage"));
             const vhtlcScript = new VHTLC.Script({
@@ -352,7 +360,7 @@ describe("vhtlc", () => {
             expect(isArkError(rejection, ArkErrorName.FORFEIT_CLOSURE_LOCKED)).toBe(true);
             expect((rejection as ArkError).metadata?.type).toBe("height");
 
-            mineBlocks(31);
+            mineBlocks(6);
             await waitFor(
                 async () => (await onchainProvider.getChainTip()).height >= Number(refundLocktime),
             );

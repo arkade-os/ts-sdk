@@ -1,5 +1,6 @@
 import { IndexerProvider, SubscriptionResponse } from "../providers/indexer";
 import { VirtualCoin } from "../wallet";
+import { normalizeVtxo } from "../wallet/vtxo";
 import { extendVirtualCoinForContract } from "../wallet/utils";
 import { WalletRepository } from "../repositories/walletRepository";
 import { Contract, ContractVtxo, ContractEventCallback, ContractEvent } from "./types";
@@ -139,6 +140,9 @@ export class ContractWatcher {
     private reconnectAttempts = 0;
     private reconnectTimeoutId?: ReturnType<typeof setTimeout>;
     private failsafePollIntervalId?: ReturnType<typeof setInterval>;
+    /** See {@link withCoalescedSubscription}. */
+    private subscriptionBatchDepth = 0;
+    private subscriptionUpdateDeferred = false;
 
     /**
      * Create a contract watcher with the given providers and polling settings.
@@ -156,10 +160,10 @@ export class ContractWatcher {
     /**
      * Add a contract to be watched.
      *
-     * Active contracts are immediately subscribed.
+     * Once watching, every contract is subscribed and polled whatever
+     * its state.
      *
-     * All contracts are polled to discover any existing virtual outputs
-     * (which may cause them to be watched even if inactive).
+     * @see getWatchedContracts
      */
     async addContract(contract: Contract): Promise<void> {
         const state: ContractState = {
@@ -176,11 +180,10 @@ export class ContractWatcher {
         // app launch and can confuse consumers that react to the event.
         await this.seedLastKnownVtxos(state);
 
-        // If we're already watching, poll to discover virtual outputs and update subscription
+        // If we're already watching, poll to seed virtual outputs and fold
+        // this script into the subscription.
         if (this.isWatching) {
-            // Poll first to discover virtual outputs (may affect whether we watch this contract).
             await this.pollContracts([contract.script]);
-            // Update subscription based on active state and virtual outputs.
             await this.tryUpdateSubscription();
         }
     }
@@ -253,20 +256,18 @@ export class ContractWatcher {
     }
 
     /**
-     * Contracts the watcher is actually tracking:
-     * - all active contracts, plus
-     * - inactive contracts that still hold known virtual outputs
-     *   (the subscription keeps watching them so `vtxo_spent` events for
-     *   those unspent outputs are still observed).
+     * Every registered contract, retired (`inactive`) ones included.
      *
-     * This is the single source of truth for "contracts whose VTXO state
-     * we still care about" — callers and the subscription itself fan out
-     * over the same set so nothing is reconciled that isn't also watched.
+     * Feeds both the subscription and the indexer sweep scope, so
+     * narrowing it drops a contract from every background channel at
+     * once. Nothing may be narrowed out: an Ark receive address can be
+     * paid again after the wallet has rotated past it, and a payment
+     * that lands outside every background channel is invisible until
+     * some foreground read happens to sweep it. Retirement therefore
+     * governs receive-address selection, not coverage.
      */
     getWatchedContracts(): Contract[] {
-        return Array.from(this.contracts.values())
-            .filter((s) => s.contract.state === "active" || s.lastKnownVtxos.size > 0)
-            .map((s) => s.contract);
+        return this.getAllContracts();
     }
 
     /**
@@ -311,7 +312,7 @@ export class ContractWatcher {
     }
 
     /**
-     * Start watching for virtual output events across all active contracts.
+     * Start watching for virtual output events across all watched contracts.
      */
     async startWatching(callback: ContractEventCallback): Promise<() => void> {
         if (this.isWatching) {
@@ -378,7 +379,7 @@ export class ContractWatcher {
     }
 
     /**
-     * Force a poll of all active contracts.
+     * Force a poll of all watched contracts.
      * Useful for manual refresh or after app resume.
      */
     async forcePoll(): Promise<void> {
@@ -551,7 +552,43 @@ export class ContractWatcher {
         }
     }
 
+    /**
+     * Run `fn` with subscription updates coalesced into a single
+     * `subscribeForScripts` on the way out.
+     *
+     * {@link addContract} re-subscribes eagerly (the watcher may already be
+     * running), and every subscribe posts the *whole* accumulated script list —
+     * so a restore scan that discovers N contracts sends N growing POSTs,
+     * quadratic in script-slots. Inside this scope those updates are only
+     * marked dirty, flushed once on the way out (success and error path alike).
+     *
+     * A contract added inside the scope is therefore not streaming until the
+     * flush. Nothing in the watcher closes that window — the failsafe poll
+     * replays repository state and cannot see VTXOs no one has fetched yet. The
+     * one caller, `scanContracts`, is covered because `Wallet.restore` follows
+     * it with a bulk `refreshVtxos`. A new caller must provide its own
+     * equivalent catch-up, or keep the scope short enough not to need one.
+     */
+    async withCoalescedSubscription<T>(fn: () => Promise<T>): Promise<T> {
+        this.subscriptionBatchDepth++;
+        try {
+            return await fn();
+        } finally {
+            this.subscriptionBatchDepth--;
+            if (this.subscriptionBatchDepth === 0 && this.subscriptionUpdateDeferred) {
+                this.subscriptionUpdateDeferred = false;
+                // Never throws (see tryUpdateSubscription), so a flush cannot
+                // mask an error `fn` was already rejecting with.
+                if (this.isWatching) await this.tryUpdateSubscription();
+            }
+        }
+    }
+
     private async tryUpdateSubscription() {
+        if (this.subscriptionBatchDepth > 0) {
+            this.subscriptionUpdateDeferred = true;
+            return;
+        }
         const hadSubscription = this.subscriptionId !== undefined;
         try {
             await this.updateSubscription();
@@ -582,7 +619,7 @@ export class ContractWatcher {
     /**
      * Update the subscription with scripts that should be watched.
      *
-     * Watches both active contracts and contracts with virtual outputs.
+     * @see getWatchedContracts
      */
     private async updateSubscription(): Promise<void> {
         const scriptsToWatch = this.getWatchedContracts().map((c) => c.script);
@@ -653,6 +690,10 @@ export class ContractWatcher {
 
     /**
      * Handle a subscription update.
+     *
+     * Normalization boundary: `getSubscription` is part of the public `IndexerProvider` interface,
+     * so a consumer implementation may yield legacy-shaped VTXOs. Normalizing on ingest also fixes
+     * the shape of the payloads emitted to external event consumers.
      */
     private handleSubscriptionUpdate(update: SubscriptionResponse): void {
         if (!this.eventCallback) return;
@@ -660,11 +701,19 @@ export class ContractWatcher {
         const timestamp = Date.now();
 
         if (update.newVtxos?.length) {
-            this.processSubscriptionVtxos(update.newVtxos, "vtxo_received", timestamp);
+            this.processSubscriptionVtxos(
+                update.newVtxos.map(normalizeVtxo),
+                "vtxo_received",
+                timestamp,
+            );
         }
 
         if (update.spentVtxos?.length) {
-            this.processSubscriptionVtxos(update.spentVtxos, "vtxo_spent", timestamp);
+            this.processSubscriptionVtxos(
+                update.spentVtxos.map(normalizeVtxo),
+                "vtxo_spent",
+                timestamp,
+            );
         }
     }
 

@@ -29,6 +29,7 @@ import {
     BoltzSubmarineSwap,
     type SendLightningPaymentRequest,
     type OptimisticSendLightningPaymentResponse,
+    type SerializableSwapManagerConfig,
     type SubmarineRecoveryInfo,
     type SubmarineRecoveryResult,
     type SubmarineRefundOutcome,
@@ -61,15 +62,28 @@ export class HandlerNotInitializedError extends Error {
     }
 }
 
+/**
+ * Every field here crosses a `postMessage` boundary, so nothing that structured
+ * clone rejects may survive the `Omit`: the providers are live objects (the ark
+ * and indexer ones are rebuilt worker-side from `arkServerUrl`), and
+ * `swapManager` is re-added in its {@link SerializableSwapManagerConfig} projection.
+ */
 export type RequestInitArkSwaps = RequestEnvelope & {
     type: "INIT_ARKADE_SWAPS";
     payload: Omit<
         ArkadeSwapsConfig,
-        "wallet" | "swapRepository" | "swapProvider" | "indexerProvider"
+        | "wallet"
+        | "swapRepository"
+        | "swapProvider"
+        | "indexerProvider"
+        | "arkProvider"
+        | "onchainProvider"
+        | "swapManager"
     > & {
         network: Network;
         arkServerUrl: string;
         referralId?: string;
+        swapManager?: SerializableSwapManagerConfig;
         swapProvider: {
             baseUrl: string;
         };
@@ -209,24 +223,6 @@ export type ResponseRestoreSwaps = ResponseEnvelope & {
         reverseSwaps: BoltzReverseSwap[];
         submarineSwaps: BoltzSubmarineSwap[];
     };
-};
-
-export type RequestEnrichReverseSwapPreimage = RequestEnvelope & {
-    type: "ENRICH_REVERSE_SWAP_PREIMAGE";
-    payload: { swap: BoltzReverseSwap; preimage: string };
-};
-export type ResponseEnrichReverseSwapPreimage = ResponseEnvelope & {
-    type: "REVERSE_SWAP_PREIMAGE_ENRICHED";
-    payload: BoltzReverseSwap;
-};
-
-export type RequestEnrichSubmarineSwapInvoice = RequestEnvelope & {
-    type: "ENRICH_SUBMARINE_SWAP_INVOICE";
-    payload: { swap: BoltzSubmarineSwap; invoice: string };
-};
-export type ResponseEnrichSubmarineSwapInvoice = ResponseEnvelope & {
-    type: "SUBMARINE_SWAP_INVOICE_ENRICHED";
-    payload: BoltzSubmarineSwap;
 };
 
 export type RequestGetFees = RequestEnvelope & {
@@ -539,8 +535,6 @@ export type ArkadeSwapsUpdaterRequest =
     | RequestWaitForSwapSettlement
     | RequestWaitForSwapFunded
     | RequestRestoreSwaps
-    | RequestEnrichReverseSwapPreimage
-    | RequestEnrichSubmarineSwapInvoice
     | RequestGetFees
     | RequestGetLimits
     | RequestGetSwapStatus
@@ -589,8 +583,6 @@ export type ArkadeSwapsUpdaterResponse =
     | ResponseWaitForSwapSettlement
     | ResponseWaitForSwapFunded
     | ResponseRestoreSwaps
-    | ResponseEnrichReverseSwapPreimage
-    | ResponseEnrichSubmarineSwapInvoice
     | ResponseGetFees
     | ResponseGetLimits
     | ResponseGetSwapStatus
@@ -906,30 +898,6 @@ export class ArkadeSwapsMessageHandler
                     return this.tagged({
                         id,
                         type: "SWAPS_RESTORED",
-                        payload: res,
-                    });
-                }
-
-                case "ENRICH_REVERSE_SWAP_PREIMAGE": {
-                    const res = this.handler.enrichReverseSwapPreimage(
-                        message.payload.swap,
-                        message.payload.preimage,
-                    );
-                    return this.tagged({
-                        id,
-                        type: "REVERSE_SWAP_PREIMAGE_ENRICHED",
-                        payload: res,
-                    });
-                }
-
-                case "ENRICH_SUBMARINE_SWAP_INVOICE": {
-                    const res = this.handler.enrichSubmarineSwapInvoice(
-                        message.payload.swap,
-                        message.payload.invoice,
-                    );
-                    return this.tagged({
-                        id,
-                        type: "SUBMARINE_SWAP_INVOICE_ENRICHED",
                         payload: res,
                     });
                 }

@@ -1,6 +1,7 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { EncodedVtxoScript, TapLeafScript, VtxoScript } from "../script/base";
 import { ExtendedVirtualCoin, VirtualCoin, TapLeaves } from "../wallet";
+import type { NormalizedExtendedVirtualCoin } from "../wallet/vtxo";
 import { ContractFilter } from "../repositories";
 import type { RelativeTimelock } from "../script/tapscript";
 import type { IndexerProvider } from "../providers/indexer";
@@ -8,7 +9,12 @@ import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 
 /**
- * Contract state indicating whether it should be actively monitored.
+ * Contract lifecycle state. Both states stay monitored — the watcher
+ * subscribes and sweeps every registered contract regardless
+ * (see {@link ContractWatcher.getWatchedContracts}), because a retired
+ * receive address can still be paid. `inactive` only demotes a contract
+ * out of receive-address selection; it does **not** unsubscribe it.
+ * Use {@link IContractManager.deleteContract} to stop watching.
  */
 export type ContractState = "active" | "inactive";
 
@@ -100,7 +106,7 @@ export type ContractVtxo = VirtualCoin &
  * should enforce that annotation has happened — e.g. `saveVtxos` and
  * forfeit transaction construction.
  */
-export type ExtendedContractVtxo = ExtendedVirtualCoin & {
+export type ExtendedContractVtxo = NormalizedExtendedVirtualCoin & {
     contractScript: string;
 };
 
@@ -302,6 +308,14 @@ export interface DiscoveryDeps {
 }
 
 /**
+ * The I/O-free subset of {@link DiscoveryDeps}: the axes a receive script can
+ * be anchored to. `DiscoveryDeps` satisfies it structurally, so one
+ * {@link Discoverable.candidatesAt} serves the scan and the look-ahead band.
+ */
+export type CandidateDeps = Pick<DiscoveryDeps, "network" | "serverPubKey" | "csvTimelocks"> &
+    Pick<Partial<DiscoveryDeps>, "deprecatedSignerPubKeys" | "delegatePubKey">;
+
+/**
  * Optional capability a {@link ContractHandler} implements to participate
  * in `wallet.restore()`'s gap-limit scan. The scanner owns the index
  * loop and the gap counter; the handler answers "do I own a contract
@@ -315,6 +329,46 @@ export interface Discoverable {
         descriptor: string,
         deps: DiscoveryDeps,
     ): Promise<DiscoveredContract[]>;
+
+    /**
+     * Optional: answer for a whole scan window in one batched round-trip.
+     * The scanner prefers it over per-index `discoverAt` calls when present,
+     * which is what keeps a 10-index window to 1-2 indexer requests instead
+     * of one per index. Handlers whose source is inherently per-address (e.g.
+     * boarding, on Esplora) implement only `discoverAt`.
+     *
+     * **All-or-nothing per call.** Either resolve with a map covering *every*
+     * requested index (empty array = confirmed miss), or reject — a handler
+     * whose inner chunk fails partway must discard the partial results and
+     * reject, because a missing index would otherwise read as "no funds here"
+     * and let restore close its gap window on a failed request. The scanner
+     * enforces this rather than trusting it: an incomplete map is treated as a
+     * rejection, making the whole requested range indeterminate (hits present
+     * in it are still persisted) and truncating the scan at the range's first
+     * index. Indices that were not requested are ignored.
+     */
+    discoverRange?(
+        entries: readonly { index: number; descriptor: string }[],
+        deps: DiscoveryDeps,
+    ): Promise<Map<number, DiscoveredContract[]>>;
+
+    /**
+     * Optional: every unverified contract this handler could own at one HD
+     * index — pure derivation, no I/O, no metadata. `discoverRange` probes
+     * these scripts and the look-ahead band subscribes to them, so the two
+     * cannot cover different sets.
+     *
+     * `boarding` omits it: its probe is an on-chain address lookup, and that
+     * keeps it out of the band (deposits are watched on their own channel).
+     */
+    candidatesAt?(index: number, descriptor: string, deps: CandidateDeps): DiscoveredContract[];
+}
+
+/** Duck-typed guard for the pure candidate surface. @see Discoverable.candidatesAt */
+export function hasCandidates(
+    handler: ContractHandler<unknown> | undefined,
+): handler is ContractHandler<unknown> & Required<Pick<Discoverable, "candidatesAt">> {
+    return !!handler && typeof (handler as Partial<Discoverable>).candidatesAt === "function";
 }
 
 /** Duck-typed guard (mirrors `hasReceiveRotatorFactory`). */

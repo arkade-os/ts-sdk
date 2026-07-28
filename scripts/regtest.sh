@@ -5,12 +5,12 @@
 # .env.regtest overrides (packages/<pkg>/.env.regtest). This script wires the
 # right override file into the regtest Node CLI via --env.
 #
-# Usage: scripts/regtest.sh <ts-sdk|boltz-swap> <up|down|reset|setup|test|cycle>
+# Usage: scripts/regtest.sh <ts-sdk|boltz-swap> <up|down|reset|setup|test|cycle> [test file...]
 #   up     – clean + start with the package's .env.regtest
 #   down   – stop the stack (preserves data)
 #   reset  – clean (remove containers, volumes)
 #   setup  – run the package's test/setup waiter
-#   test   – run the package's vitest e2e suite (assumes stack is up)
+#   test   – run the package's vitest e2e suite or selected files (assumes stack is up)
 #   cycle  – reset + up + setup + test (full integration run)
 
 set -euo pipefail
@@ -18,14 +18,22 @@ set -euo pipefail
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REGTEST_DIR="$ROOT_DIR/regtest"
 
-PKG="${1:-}"
-CMD="${2:-}"
-TFN="${3:-}"
-
 usage() {
-  echo "Usage: $0 <ts-sdk|boltz-swap> <up|down|reset|setup|test|cycle> [test file name]" >&2
+  echo "Usage: $0 <ts-sdk|boltz-swap> <up|down|reset|setup|test|cycle> [test file...]" >&2
   exit 1
 }
+
+if [ "$#" -lt 2 ]; then
+  usage
+fi
+
+PKG="$1"
+CMD="$2"
+shift 2
+if [ "${1:-}" = "--" ]; then
+  shift
+fi
+TEST_FILES=("$@")
 
 case "$PKG" in
   ts-sdk|boltz-swap) ;;
@@ -71,10 +79,18 @@ cmd_setup() {
 cmd_test() {
   case "$PKG" in
     ts-sdk)
-      ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/ts-sdk" run test:integration "$TFN"
+      if [ "${#TEST_FILES[@]}" -gt 0 ]; then
+        ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/ts-sdk" exec vitest run "${TEST_FILES[@]}"
+      else
+        ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/ts-sdk" run test:integration
+      fi
       ;;
     boltz-swap)
-      pnpm -C "$ROOT_DIR/packages/boltz-swap" run test:integration "$TFN"
+      if [ "${#TEST_FILES[@]}" -gt 0 ]; then
+        pnpm -C "$ROOT_DIR/packages/boltz-swap" exec vitest run "${TEST_FILES[@]}"
+      else
+        pnpm -C "$ROOT_DIR/packages/boltz-swap" run test:integration
+      fi
       ;;
   esac
 }

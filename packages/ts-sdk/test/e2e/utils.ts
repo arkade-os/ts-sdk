@@ -198,6 +198,7 @@ export async function createTestArkWalletFromMnemonic(
     mnemonic: string,
     repos?: SharedRepos,
     walletMode?: WalletMode,
+    lookAheadWindow?: number,
 ): Promise<TestArkWallet> {
     const identity = MnemonicIdentity.fromMnemonic(mnemonic, {
         isMainnet: false,
@@ -207,6 +208,7 @@ export async function createTestArkWalletFromMnemonic(
     const wallet = await Wallet.create({
         identity,
         ...(walletMode !== undefined ? { walletMode } : {}),
+        ...(lookAheadWindow !== undefined ? { lookAheadWindow } : {}),
         arkServerUrl: "http://localhost:7070",
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
@@ -238,6 +240,20 @@ export function faucetOnchain(address: string, amount: number): void {
 
 export function mineBlocks(n: number = 1): void {
     execCommand(`node regtest/regtest.mjs mine ${n}`);
+}
+
+/**
+ * Bitcoin Core's block count, read straight from the node.
+ *
+ * Every indexer in the stack (mempool/Fulcrum behind EsploraProvider, nbxplorer
+ * behind arkd) trails this by an unbounded amount — right after `mineBlocks(10)`
+ * they still report the pre-mine tip for a second or two. Use this, not an
+ * indexer's tip, whenever a test needs a height no consumer can already be past:
+ * every indexer height is <= this one, so a locktime built on it is guaranteed
+ * immature everywhere at the moment it is read.
+ */
+export function coreBlockCount(): number {
+    return Number(execCommand(`node regtest/regtest.mjs rpc getblockcount`));
 }
 
 export async function createVtxo(alice: TestArkWallet, amount: number): Promise<string> {

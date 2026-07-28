@@ -34,20 +34,37 @@ import { validateBatchRecipients } from "../wallet/validation";
 import { buildForfeitTx } from "../forfeit";
 import { Batch } from "../wallet/batch";
 import { Intent } from "../intent";
-import { isRecoverable, isSubdust } from "../wallet";
+import { isRecoverable, isSubdust, isVirtualCoin } from "../wallet";
 import type { ExtendedVirtualCoin } from "../wallet";
 import type { TxTree } from "../tree/txTree";
 
+/** An onchain boarding input to an arkade batch. */
 export type ArkadeExtendedCoin = ExtendedCoin & {
     arkadeScriptBytes: Uint8Array;
 };
 
-const isVtxoCoin = (input: ArkadeExtendedCoin): input is ArkadeExtendedCoin & ExtendedVirtualCoin =>
-    "virtualStatus" in input;
+/** A virtual output input to an arkade batch. */
+export type ArkadeExtendedVirtualCoin = ExtendedVirtualCoin & {
+    arkadeScriptBytes: Uint8Array;
+};
+
+/**
+ * An input to {@link createArkadeBatchHandler}, boarding or virtual.
+ *
+ * @remarks
+ * Spelled as a union so the discriminant {@link isVtxoCoin} reads — `script`, required on
+ * `VirtualCoin` and absent from `ExtendedCoin` — is visible in the type. `ArkadeExtendedCoin[]`
+ * alone would let a caller hand over a virtual output with no `script`, which the handler would
+ * silently treat as boarding and settle without a forfeit.
+ */
+export type ArkadeBatchInput = ArkadeExtendedCoin | ArkadeExtendedVirtualCoin;
+
+const isVtxoCoin = (input: ArkadeBatchInput): input is ArkadeExtendedVirtualCoin =>
+    isVirtualCoin(input);
 
 export function createArkadeBatchHandler(
     intentId: string,
-    inputs: ArkadeExtendedCoin[],
+    inputs: ArkadeBatchInput[],
     signer: Identity,
     signedProof: string,
     message: Intent.RegisterMessage,
@@ -173,7 +190,18 @@ export function createArkadeBatchHandler(
                         }
                     }
 
-                    if (boardingIdx === null) continue;
+                    if (boardingIdx === null) {
+                        // Either the server left a registered boarding input out of the
+                        // commitment tx, or this is a virtual output that reached us without
+                        // `script` and so read as boarding. Both settle without the forfeit
+                        // the server expects, which surfaces as an opaque `Bad Request` from
+                        // `submitSignedForfeitTxs` — name the input here instead.
+                        throw new Error(
+                            `input ${input.txid}:${input.vout} is neither a virtual output nor ` +
+                                `an input of the commitment tx; a virtual output must carry its ` +
+                                `\`script\``,
+                        );
+                    }
 
                     commitmentPsbt.updateInput(boardingIdx, {
                         tapLeafScript: [input.forfeitTapLeafScript],

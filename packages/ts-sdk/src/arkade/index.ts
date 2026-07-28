@@ -35,7 +35,12 @@ export { ArkadeScript, type ArkadeScriptType, type ArkadeScriptOP, ARKADE_OPS } 
 export { toASM, fromASM, asmToBytes, bytesToASM } from "./script";
 export { arkadeScriptHash, arkadeWitnessHash, computeArkadeScriptPublicKey } from "./tweak";
 export * as BigNum from "./bignum";
-export { createArkadeBatchHandler, type ArkadeExtendedCoin } from "./batch";
+export {
+    createArkadeBatchHandler,
+    type ArkadeBatchInput,
+    type ArkadeExtendedCoin,
+    type ArkadeExtendedVirtualCoin,
+} from "./batch";
 export {
     ArkadeProgramScript,
     stringifyArtifact,
