@@ -1,4 +1,5 @@
 import { Transaction, SingleKey, ArkAddress, DefaultVtxo } from "@arkade-os/sdk";
+import { divider, heading, panel, text } from "@metamask/snaps-sdk";
 import { base64, hex } from "@scure/base";
 
 import type { ArkadeAddress, PubKeyHex, XOnlyPubKeyHex } from "./types";
@@ -114,10 +115,15 @@ export async function getAddress(params: unknown): Promise<{ address: ArkadeAddr
 
 /**
  * Sign a PSBT with the snap's Bitcoin key.
+ *
+ * Prompts the user for confirmation before signing, showing the requesting
+ * origin. Any dapp with RPC access can call this, so the prompt is the only
+ * thing standing between a hostile page and a signature over the user's VTXOs.
  * @param params - The parameters object containing psbt and inputIndexes.
+ * @param origin - The origin of the requesting dapp, shown in the prompt.
  * @returns An object containing the signed PSBT in base64 format.
  */
-export async function signPsbt(params: unknown): Promise<{ psbt: string }> {
+export async function signPsbt(params: unknown, origin: string): Promise<{ psbt: string }> {
     // Validate params structure
     if (!params || typeof params !== "object") {
         throw new Error("Invalid params: expected object");
@@ -140,6 +146,35 @@ export async function signPsbt(params: unknown): Promise<{ psbt: string }> {
     }
 
     const tx = Transaction.fromPSBT(psbtBytes);
+
+    // Ask the user before touching key material.
+    //
+    // `endowment:rpc` is granted with `dapps: true`, so ANY page the user visits
+    // that can reach MetaMask may call arkade_signPsbt once the snap is
+    // installed. Without this gate a malicious dapp could obtain a signature
+    // over inputs of its choosing, including a spend of the user's VTXOs.
+    // Placed after decode so the prompt can describe the real transaction, and
+    // before snap_getEntropy so a rejection never unlocks the key.
+    const approved = await snap.request({
+        method: "snap_dialog",
+        params: {
+            type: "confirmation",
+            content: panel([
+                heading("Sign Arkade transaction?"),
+                text(`**${origin}** is requesting a signature.`),
+                divider(),
+                text(`Inputs to sign: **${validatedInputIndexes.join(", ")}**`),
+                text(`Transaction inputs: **${tx.inputsLength}**`),
+                text(`Transaction outputs: **${tx.outputsLength}**`),
+                divider(),
+                text("Only approve this if you recognise the site and expect this transaction."),
+            ]),
+        },
+    });
+
+    if (approved !== true) {
+        throw new Error("User rejected the signature request");
+    }
 
     // Get the private key and create identity (consistent with getAddress())
     const entropy = await snap.request({

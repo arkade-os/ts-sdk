@@ -28,7 +28,7 @@ import { getAddress, getPublicKey, signPsbt } from "./wallet";
  * @param args.request - The JSON-RPC request object.
  * @returns The result of the RPC method.
  */
-export const onRpcRequest: OnRpcRequestHandler = async ({ origin: _origin, request }) => {
+export const onRpcRequest: OnRpcRequestHandler = async ({ origin, request }) => {
     switch (request.method) {
         case "arkade_getPublicKey":
             // No params required
@@ -39,8 +39,9 @@ export const onRpcRequest: OnRpcRequestHandler = async ({ origin: _origin, reque
             return await getAddress(request.params);
 
         case "arkade_signPsbt":
-            // Params validated inside signPsbt
-            return await signPsbt(request.params);
+            // Params validated inside signPsbt, which also prompts the user for
+            // confirmation and shows them the requesting origin.
+            return await signPsbt(request.params, origin);
 
         default:
             throw new Error(`Method not found: ${request.method}`);
