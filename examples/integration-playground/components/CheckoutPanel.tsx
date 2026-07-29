@@ -6,8 +6,15 @@ import { useState } from "react";
 export function CheckoutPanel() {
     const [id, setId] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [creating, setCreating] = useState(false);
 
     async function create() {
+        // Every create mints a Boltz reverse swap using the server's key, and the
+        // handlers have no rate limiting, so a double-click really does cost
+        // something. Guard on state as well as disabling the button, since the
+        // disabled attribute alone loses the race on a fast second click.
+        if (creating) return;
+        setCreating(true);
         setError(null);
         try {
             // Path, request shape and response field all match handleCreate:
@@ -27,6 +34,8 @@ export function CheckoutPanel() {
             setId(body.checkoutId);
         } catch (e) {
             setError(e instanceof Error ? e.message : String(e));
+        } finally {
+            setCreating(false);
         }
     }
 
@@ -39,7 +48,9 @@ export function CheckoutPanel() {
                 because the client component hardcodes it. Server flows need
                 <code> ARKADE_PRIVATE_KEY_HEX</code> set — see the package README.
             </p>
-            <button onClick={create}>create checkout</button>
+            <button onClick={create} disabled={creating}>
+                {creating ? "creating..." : "create checkout"}
+            </button>
             {error ? (
                 <pre style={{ background: "#f4f4f4", padding: 12, whiteSpace: "pre-wrap" }}>
                     error: {error}
