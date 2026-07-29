@@ -29,6 +29,7 @@ import {
     TapLeafScript,
     TapTreeCoder,
     getSequence,
+    scriptFromTapLeafScript,
 } from "./script/base";
 import { assembleBtcdTaprootTree } from "./script/taprootTree";
 import {
@@ -457,6 +458,7 @@ export {
     VtxoScript,
     VHTLC,
     assembleBtcdTaprootTree,
+    scriptFromTapLeafScript,
 
     // Enums
     TxType,

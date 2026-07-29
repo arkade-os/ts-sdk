@@ -211,6 +211,8 @@ function formatSighash(type: number): string {
  * @param requiredSigners List of required signer pubkeys (hex encoded)
  * @param excludePubkeys List of pubkeys to exclude from verification (hex encoded, e.g., server key not yet signed)
  * @param allowedSighashTypes List of allowed sighash types (defaults to [SigHash.DEFAULT])
+ * @param expectedLeafHash Tapscript leaf hash the signatures must commit to. When omitted, a
+ * signature over any leaf carried by the input is accepted.
  * @throws Error if verification fails
  */
 export function verifyTapscriptSignatures(
@@ -219,6 +221,7 @@ export function verifyTapscriptSignatures(
     requiredSigners: string[],
     excludePubkeys: string[] = [],
     allowedSighashTypes: number[] = [SigHash.DEFAULT],
+    expectedLeafHash?: Uint8Array,
 ): void {
     const input = tx.getInput(inputIndex);
 
@@ -240,6 +243,8 @@ export function verifyTapscriptSignatures(
         throw new Error(`Input ${inputIndex} is missing tapScriptSig`);
     }
 
+    const expectedLeafHashHex = expectedLeafHash ? hex.encode(expectedLeafHash) : undefined;
+
     // Verify each signature in tapScriptSig
     for (const [tapScriptSigData, signature] of input.tapScriptSig) {
         const pubKey = tapScriptSigData.pubKey;
@@ -248,6 +253,15 @@ export function verifyTapscriptSignatures(
         // Skip verification for excluded pubkeys
         if (excludePubkeys.includes(pubKeyHex)) {
             continue;
+        }
+
+        if (expectedLeafHashHex !== undefined) {
+            const signedLeafHex = hex.encode(tapScriptSigData.leafHash);
+            if (signedLeafHex !== expectedLeafHashHex) {
+                throw new Error(
+                    `Input ${inputIndex}: signature from ${pubKeyHex} commits to leaf ${signedLeafHex}, expected ${expectedLeafHashHex}`,
+                );
+            }
         }
 
         // Extract sighash type from signature
