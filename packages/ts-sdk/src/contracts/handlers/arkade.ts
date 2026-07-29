@@ -149,8 +149,13 @@ function pathsFor(
  * signer keys) as string params, so any contract created via
  * `arkade.contract(program, args)` participates in the standard contract
  * pipeline: ContractManager persistence and validation, watcher events,
- * repository-backed balances, and offline script re-derivation. Rebuild a
+ * repository-backed VTXO tracking, and offline script re-derivation. Rebuild a
  * callable contract from a stored row with `ArkadeContract.fromContract`.
+ *
+ * Tracked is not the same as counted: `wallet.getBalance()` is scoped to the
+ * wallet-owned types (`default`/`delegate`), so these VTXOs are visible to
+ * `wallet.getVtxos()` but excluded from wallet balance. See
+ * {@link ArkadeContract.register}.
  */
 export const ArkadeContractHandler: ContractHandler<ArkadeContractParams, ArkadeProgramScript> &
     TapscriptDeriving<ArkadeProgramScript> = {

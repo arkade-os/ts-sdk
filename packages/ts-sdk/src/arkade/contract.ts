@@ -456,9 +456,16 @@ export class ArkadeContract<P extends Program = Program> {
     /**
      * Persist this contract through the wallet's {@link IContractManager} so it
      * is tracked like any other contract type: stored in the contract
-     * repository, watched for VTXO events, counted in repository-backed
-     * balances, and re-derivable offline via the `"arkade"` contract handler.
-     * Idempotent — re-registering the same script is a no-op.
+     * repository, watched for VTXO events, visible to `wallet.getVtxos()` and
+     * the transaction history, and re-derivable offline via the `"arkade"`
+     * contract handler. Idempotent — re-registering the same script is a no-op.
+     *
+     * Registering does NOT add this contract's VTXOs to `wallet.getBalance()`.
+     * That balance is scoped to the contract types the wallet owns outright
+     * (`default`/`delegate`) — the same scope `getWalletScripts()` uses — and an
+     * arkade contract is program-gated rather than unilaterally spendable by the
+     * wallet key. Use {@link ArkadeContract.getBalance} for this contract's own
+     * balance.
      */
     async register(options?: {
         label?: string;

@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { hex } from "@scure/base";
 import {
+    arkade,
+    ArkadeContractHandler,
     ReadonlyWallet,
     InMemoryWalletRepository,
     InMemoryContractRepository,
@@ -9,6 +11,7 @@ import {
     type OnchainProvider,
     type ExtendedVirtualCoin,
 } from "../src";
+import { TEST_PUB_KEY, TEST_SERVER_PUB_KEY, TEST_DELEGATE_PUB_KEY } from "./contracts/helpers";
 import type { ArkInfo } from "../src/providers/ark";
 import type { Contract } from "../src/contracts/types";
 import { VHTLCContractHandler } from "../src/contracts/handlers/vhtlc";
@@ -84,11 +87,37 @@ const vtxoAt = (script: string, txid: string, value: number): ExtendedVirtualCoi
         virtualStatus: { state: "settled" },
     }) as unknown as ExtendedVirtualCoin;
 
+/** A wallet whose repository holds exactly one contract, funded with one VTXO. */
+async function walletHolding(contract: Contract, txidByte: string, value: number) {
+    const walletRepository = new InMemoryWalletRepository();
+    const contractRepository = new InMemoryContractRepository();
+
+    await contractRepository.saveContract(contract);
+    await saveVtxosForContract(walletRepository, contract, [
+        vtxoAt(contract.script, txidByte.repeat(64), value),
+    ]);
+
+    const identity = ReadonlySingleKey.fromPublicKey(
+        await SingleKey.fromHex(privKeyHex).compressedPublicKey(),
+    );
+    return ReadonlyWallet.create({
+        identity,
+        arkServerUrl: "http://localhost:7070",
+        arkProvider: {
+            getInfo: async () => arkInfo(),
+        } as Partial<ArkProvider> as ArkProvider,
+        indexerProvider: quietIndexer(),
+        // getBalance also sums boarding UTXOs; keep that side empty so the
+        // assertions below are about contract-type scope alone.
+        onchainProvider: {
+            getCoins: async () => [],
+        } as Partial<OnchainProvider> as OnchainProvider,
+        storage: { walletRepository, contractRepository },
+    });
+}
+
 describe("getBalance contract-type scope", () => {
     async function walletWithEscrow() {
-        const walletRepository = new InMemoryWalletRepository();
-        const contractRepository = new InMemoryContractRepository();
-
         const vhtlcScript = VHTLCContractHandler.createScript(vhtlcParams);
         const vhtlcContract: Contract = {
             type: "vhtlc",
@@ -98,29 +127,7 @@ describe("getBalance contract-type scope", () => {
             state: "active",
             createdAt: Date.now(),
         };
-        await contractRepository.saveContract(vhtlcContract);
-        await saveVtxosForContract(walletRepository, vhtlcContract, [
-            vtxoAt(vhtlcContract.script, "e".repeat(64), ESCROW_SATS),
-        ]);
-
-        const identity = ReadonlySingleKey.fromPublicKey(
-            await SingleKey.fromHex(privKeyHex).compressedPublicKey(),
-        );
-        const wallet = await ReadonlyWallet.create({
-            identity,
-            arkServerUrl: "http://localhost:7070",
-            arkProvider: {
-                getInfo: async () => arkInfo(),
-            } as Partial<ArkProvider> as ArkProvider,
-            indexerProvider: quietIndexer(),
-            // getBalance also sums boarding UTXOs; keep that side empty so the
-            // assertions below are about contract-type scope alone.
-            onchainProvider: {
-                getCoins: async () => [],
-            } as Partial<OnchainProvider> as OnchainProvider,
-            storage: { walletRepository, contractRepository },
-        });
-
+        const wallet = await walletHolding(vhtlcContract, "e", ESCROW_SATS);
         return { wallet, vhtlcContract };
     }
 
@@ -158,5 +165,84 @@ describe("getBalance contract-type scope", () => {
         expect(
             (await wallet.getVtxos({ type: ["vhtlc", "default"] })).map((v) => v.script),
         ).toEqual([vhtlcContract.script]);
+    });
+});
+
+/**
+ * Unlike `vhtlc`, an `arkade` contract is registrable today through public API
+ * (`ArkadeContract.register()`), so the `["default", "delegate"]` balance scope
+ * is an observable behavior change for it rather than a latent one.
+ *
+ * The intended behavior is exclusion, for the same reason as vhtlc: an arkade
+ * contract is program-gated, not unilaterally spendable by the wallet key, and
+ * it carries its own `ArkadeContract.getBalance()` for per-contract accounting.
+ * These tests pin that decision so it cannot be reverted silently.
+ */
+describe("getBalance contract-type scope - arkade program contracts", () => {
+    const ARKADE_SATS = 25_000;
+
+    /** Multisig + CSV-exit program — the "default vtxo" shape as a Program. */
+    const multisigProgram = {
+        version: 0,
+        params: ["server", "user"],
+        functions: {
+            cooperative: { tapscript: { signers: ["$user", "$server"] } },
+            exit: {
+                tapscript: {
+                    signers: ["$user"],
+                    csv: { type: "blocks", value: 144n },
+                },
+            },
+        },
+    } satisfies arkade.Program;
+
+    async function walletWithArkadeContract() {
+        const params = ArkadeContractHandler.serializeParams({
+            program: multisigProgram,
+            args: { user: TEST_PUB_KEY, server: TEST_SERVER_PUB_KEY },
+            serverKey: TEST_SERVER_PUB_KEY,
+            userKey: TEST_PUB_KEY,
+            emulatorKey: TEST_DELEGATE_PUB_KEY,
+        });
+        const script = ArkadeContractHandler.createScript(params);
+        const arkadeContract: Contract = {
+            type: "arkade",
+            params,
+            script: hex.encode(script.pkScript),
+            address: "ark1arkade-program",
+            state: "active",
+            createdAt: Date.now(),
+        };
+        const wallet = await walletHolding(arkadeContract, "a", ARKADE_SATS);
+        return { wallet, arkadeContract };
+    }
+
+    it("excludes a registered arkade contract from every balance bucket", async () => {
+        const { wallet } = await walletWithArkadeContract();
+
+        const balance = await wallet.getBalance();
+
+        expect(balance.total).toBe(0);
+        expect(balance.available).toBe(0);
+    });
+
+    it("still tracks the arkade VTXO through the unfiltered getVtxos()", async () => {
+        const { wallet, arkadeContract } = await walletWithArkadeContract();
+
+        const vtxos = await wallet.getVtxos();
+
+        // Registering is still meaningful: the contract is watched and its
+        // VTXOs remain readable — they just aren't wallet balance.
+        expect(vtxos.map((v) => v.script)).toContain(arkadeContract.script);
+        expect(vtxos.reduce((sum, v) => sum + v.value, 0)).toBe(ARKADE_SATS);
+    });
+
+    it("scopes getVtxos to the arkade type on request", async () => {
+        const { wallet, arkadeContract } = await walletWithArkadeContract();
+
+        expect(await wallet.getVtxos({ type: ["default", "delegate"] })).toEqual([]);
+        expect((await wallet.getVtxos({ type: "arkade" })).map((v) => v.script)).toEqual([
+            arkadeContract.script,
+        ]);
     });
 });
