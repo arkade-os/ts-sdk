@@ -30,6 +30,7 @@ export class CovclaimdProvider {
         swapAddress: string;
         ciphertext: Uint8Array;
         arkadeScript: Uint8Array;
+        taptree: Uint8Array;
     }): Promise<void> {
         const res = await fetch(`${this.baseUrl}/v1/reveal`, {
             method: "POST",
@@ -40,6 +41,7 @@ export class CovclaimdProvider {
                     ciphertext: base64.encode(args.ciphertext),
                     arkade_script: base64.encode(args.arkadeScript),
                 },
+                taptree: hex.encode(args.taptree),
             }),
             signal: AbortSignal.timeout(this.timeoutMs),
         });

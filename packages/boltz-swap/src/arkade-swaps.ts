@@ -579,6 +579,7 @@ export class ArkadeSwaps {
                 swapAddress: lockupAddress,
                 ciphertext: eciesEncrypt(covPubKeys.covclaimdPubKey, preimage),
                 arkadeScript: vhtlcScript.nonInteractiveClaim()[1],
+                taptree: vhtlcScript.encode(),
             });
         }
 
@@ -2538,6 +2539,7 @@ export class ArkadeSwaps {
                 swapAddress: lockupAddress,
                 ciphertext: eciesEncrypt(covPubKeys.covclaimdPubKey, preimage),
                 arkadeScript: vhtlcScript.nonInteractiveClaim()[1],
+                taptree: vhtlcScript.encode(),
             });
         }
 

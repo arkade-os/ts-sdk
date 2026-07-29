@@ -28,7 +28,7 @@ import {
     getNetwork,
     maybeArkError,
 } from "@arkade-os/sdk";
-import { ArkAddress, VHTLC } from "@arkade-os/sdk";
+import { ArkAddress, VHTLC, VtxoScript } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
 import { randomBytes } from "@noble/hashes/utils.js";
 import { schnorr } from "@noble/curves/secp256k1.js";
@@ -959,6 +959,11 @@ describe("ArkadeSwaps", () => {
                     expect(revealArg.swapAddress).toBe(pendingSwap.response.lockupAddress);
                     expect(eciesDecrypt(covclaimdSecretKey, revealArg.ciphertext)).toEqual(
                         hex.decode(pendingSwap.preimage!),
+                    );
+                    // covclaimd rejects a taptree that does not hash to the swap
+                    // address, so it must be the lockup's own tree.
+                    expect(VtxoScript.decode(revealArg.taptree).tweakedPublicKey).toEqual(
+                        ArkAddress.decode(pendingSwap.response.lockupAddress!).vtxoTaprootKey,
                     );
                     // The emulator key is persisted so the leaf — and with it the
                     // address and every control block — can be re-derived at claim
