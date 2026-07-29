@@ -220,9 +220,25 @@ export class SatsConnectIdentity implements Identity {
             });
         });
 
+        // Validate the whole response before decoding any of it. A wallet that
+        // returns fewer PSBTs than were requested would otherwise fail mid-loop
+        // with "Cannot read properties of undefined", which says nothing about
+        // the real cause — and would do so only after some transactions had
+        // already been merged.
+        if (!Array.isArray(responses) || responses.length !== requests.length) {
+            throw new Error(
+                `Wallet returned ${Array.isArray(responses) ? responses.length : "a non-array"} ` +
+                    `signed PSBT(s) for ${requests.length} request(s). Refusing to continue.`,
+            );
+        }
+        for (const [i, entry] of responses.entries()) {
+            if (typeof entry?.psbtBase64 !== "string") {
+                throw new Error(`Wallet returned no signed PSBT at index ${i}.`);
+            }
+        }
+
         return requests.map((req, i) => {
-            const signedPsbtBase64 = responses[i].psbtBase64;
-            const signedPsbtBytes = base64.decode(signedPsbtBase64);
+            const signedPsbtBytes = base64.decode(responses[i].psbtBase64);
             return this.mergeAndValidate(req.tx, signedPsbtBytes);
         });
     }

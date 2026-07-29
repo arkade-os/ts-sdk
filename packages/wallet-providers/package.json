@@ -71,7 +71,7 @@
         "test:unit": "vitest run --exclude test/e2e"
     },
     "peerDependencies": {
-        "@arkade-os/sdk": ">=0.4.15"
+        "@arkade-os/sdk": ">=0.4.15 <1.0.0"
     },
     "dependencies": {
         "@scure/base": "^2.0.0"

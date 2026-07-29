@@ -8,12 +8,40 @@ Next.js package for Checkout widget that accepts Lightning payments with a hoste
 npm install @arkade-os/checkout
 ```
 
+## ⚠️ Before you deploy this
+
+### The route handlers have no authentication
+
+`create`, `claim` and `webhook` ship with **no authentication, no rate limiting, and
+no origin check**. Anyone who can reach the route can:
+
+- call `create`, which mints Boltz reverse swaps using **your server's key** —
+  unbounded calls drain Lightning inbound liquidity and accumulate Boltz swap state
+- call `claim` for any checkout id. The checkout id **is the Boltz payment hash**,
+  which is not a secret
+- POST to `webhook` to trigger background claim attempts
+
+**Mount these behind your own authentication, rate limiting, and origin allowlist
+before exposing them publicly.** Treat the handlers as internal plumbing, not as a
+public API.
+
+### Concurrent updates can lose writes
+
+`updateCheckout` reads the current record and writes it back with no compare-and-set
+or lock. Status polling, claim, and webhook callbacks all run concurrently in the
+normal payment flow, so two overlapping updates can silently overwrite each other —
+for example losing a `txid` written by another handler.
+
+The in-memory store is single-process, which limits the window. The `@vercel/kv`
+path is a remote store and is genuinely racy across instances. If you need durable
+status transitions, wrap them in your own lock or conditional write.
+
 ## Quick Start
 
 ### 1. Generate Credentials
 
 ```bash
-node ./node_modules/@arkade-os/checkout/cli/create.js
+node ./node_modules/@arkade-os/checkout/dist/cli/create.js
 ```
 
 This creates `.env.local` with your private key and configuration:
@@ -32,6 +60,11 @@ Create `app/api/arkade/[[...path]]/route.ts`:
 ```ts
 export { POST, GET } from "@arkade-os/checkout/server/route";
 ```
+
+> **This path is required, not conventional.** `Checkout` and `useCheckout` fetch
+> `/api/arkade/{create,status,claim}`, and the webhook handler self-calls
+> `/api/arkade/claim`. Mounting anywhere else compiles and typechecks cleanly but
+> returns 404 at runtime. The mount point is not configurable today.
 
 ### 3. Add Checkout Page
 

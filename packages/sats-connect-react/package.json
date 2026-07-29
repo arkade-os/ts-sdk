@@ -31,8 +31,8 @@
         "test:unit": "vitest run --exclude test/e2e"
     },
     "peerDependencies": {
-        "@arkade-os/boltz-swap": ">=0.3.0",
-        "@arkade-os/sdk": ">=0.4.15",
+        "@arkade-os/boltz-swap": ">=0.3.0 <1.0.0",
+        "@arkade-os/sdk": ">=0.4.15 <1.0.0",
         "react": ">=18.0.0",
         "sats-connect": ">=4.0.0"
     },

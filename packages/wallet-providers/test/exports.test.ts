@@ -43,6 +43,14 @@ describe("@arkade-os/wallet-providers export surface", () => {
         ]);
     });
 
+    it("bounds the SDK peer range below the next major", async () => {
+        // An open-ended >=0.4.15 would let npm resolve this package against a
+        // future SDK major with breaking Identity/Transaction changes, failing
+        // at runtime inside sign(). Widen deliberately, per SDK major.
+        const pkg = await import("../package.json");
+        expect(pkg.default.peerDependencies["@arkade-os/sdk"]).toBe(">=0.4.15 <1.0.0");
+    });
+
     it("keeps the SDK a peer dependency so it is never bundled twice", async () => {
         const pkg = await import("../package.json");
         expect(pkg.default.peerDependencies["@arkade-os/sdk"]).toBeDefined();
