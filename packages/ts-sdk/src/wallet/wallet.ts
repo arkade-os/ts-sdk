@@ -1038,7 +1038,16 @@ export class ReadonlyWallet implements IReadonlyWallet {
     async getBalance(): Promise<WalletBalance> {
         const [boardingUtxos, vtxos, pendingOutpoints] = await Promise.all([
             this.getBoardingUtxos(),
-            this.getVtxos(),
+            // Scoped to the wallet's own receiving contracts (default +
+            // delegate), same as getWalletScripts(). Excludes contract types
+            // the wallet does not own outright, such as "vhtlc": HTLC escrow
+            // is not spendable balance until it resolves — by claim or
+            // refund — into a wallet-owned contract.
+            this.getVtxos({
+                withRecoverable: true,
+                withUnrolled: false,
+                type: ["default", "delegate"],
+            }),
             this.pendingRecoveryOutpoints(),
         ]);
         const isPendingRecovery = (coin: ExtendedVirtualCoin) =>
@@ -1138,12 +1147,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
     /**
      * Return virtual outputs tracked by the wallet.
      *
-     * @param filter - Optional flags controlling whether recoverable or unrolled VTXOs are included
+     * @param filter - Optional flags controlling whether recoverable or unrolled VTXOs are included, and which contract type(s) to scope to
      */
     async getVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
         const f = filter ?? { withRecoverable: true, withUnrolled: false };
         const contractManager = await this.getContractManager();
-        const vtxos = await contractManager.getContractsWithVtxos();
+        const vtxos = await contractManager.getContractsWithVtxos(
+            f.type ? { type: f.type } : undefined,
+        );
 
         // No chain tip, for the same reason as `getBalance`, which this must agree with.
         const now = { timestamp: new Date() };
