@@ -76,7 +76,9 @@ function createSession(
     let tweakBytes: Uint8Array | undefined;
 
     if (options?.taprootTweak !== undefined) {
-        const { preTweakedKey } = aggregateKeys(keys, true);
+        // `keys` is already in the session's final order; the tweak must
+        // commit to that same order, so don't re-sort here.
+        const { preTweakedKey } = aggregateKeys(keys, false);
 
         tweakBytes = schnorr.utils.taggedHash(
             "TapTweak",

@@ -22,6 +22,8 @@ describe("musig2", () => {
             });
             expect(hex.encode(preTweakedKey.slice(1))).toBe(expectedAggregatedKey);
             expect(hex.encode(finalKey.slice(1))).toBe(expectedFinalKey);
+            // fixture keys are unsorted: sorting must copy, not reorder the input
+            expect(publicKeys.map((key) => hex.encode(key))).toEqual(pubkeys);
         });
     });
 
@@ -55,7 +57,7 @@ describe("musig2", () => {
         // aggregated nonce — the shape tree signing uses. `order` fixes the
         // caller's key order relative to the sorted order the session uses, so
         // the nonce permutation is exercised deterministically.
-        function session(order: "sorted" | "reversed" = "reversed") {
+        function session(order: "sorted" | "reversed" = "reversed", opts = options) {
             const signers = [1, 2]
                 .map(() => {
                     const secretKey = secp256k1.utils.randomSecretKey();
@@ -70,7 +72,7 @@ describe("musig2", () => {
             const publicKeys = signers.map((s) => s.publicKey);
             const pubNonces = signers.map((s) => s.pubNonce);
             const shares = signers.map((s) =>
-                sign(s.secNonce, s.secretKey, combinedNonce, publicKeys, message, options),
+                sign(s.secNonce, s.secretKey, combinedNonce, publicKeys, message, opts),
             );
             return { signers, combinedNonce, publicKeys, pubNonces, shares };
         }
@@ -135,6 +137,35 @@ describe("musig2", () => {
                 ),
             ).toThrow(/not part of the session/);
         });
+
+        it.each([true, false])(
+            "sign and verify leave the caller's arrays untouched (sortKeys: %s)",
+            (sortKeys) => {
+                const opts = { sortKeys, taprootTweak };
+                const s = session("reversed", opts);
+                const keys = s.publicKeys.map((k) => hex.encode(k));
+                const nonces = s.pubNonces.map((n) => hex.encode(n));
+
+                // session() already ran sign() twice over this array; the
+                // reversed construction order must have survived it.
+                expect(keys).toEqual([...keys].sort().reverse());
+
+                expect(
+                    partialSigVerify(
+                        s.shares[0],
+                        s.signers[0].publicKey,
+                        s.pubNonces,
+                        s.combinedNonce,
+                        s.publicKeys,
+                        message,
+                        opts,
+                    ),
+                ).toBe(true);
+
+                expect(s.publicKeys.map((k) => hex.encode(k))).toEqual(keys);
+                expect(s.pubNonces.map((n) => hex.encode(n))).toEqual(nonces);
+            },
+        );
 
         it("throws on a nonce/key count mismatch", () => {
             const s = session();
