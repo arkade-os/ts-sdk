@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { syncSnapManifestVersion, verifySnapManifest } from "./snap-release-hook.mjs";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, "..");
@@ -26,10 +28,58 @@ const PACKAGES = [
         tagPrefix: "@arkade-os/boltz-swap/",
         order: 2,
     },
+    // Ported web packages. Unlike boltz-swap these are NOT fan-out dependents of
+    // the SDK: they declare it as a peer range or via workspace:^, both of which
+    // survive an SDK patch/minor untouched. Releasing the SDK must not bump them.
+    {
+        key: "wallet-providers",
+        name: "@arkade-os/wallet-providers",
+        dir: path.join(ROOT_DIR, "packages/wallet-providers"),
+        pkgJson: path.join(ROOT_DIR, "packages/wallet-providers/package.json"),
+        tagPrefix: "@arkade-os/wallet-providers/",
+        order: 3,
+    },
+    {
+        key: "sats-connect",
+        name: "@arkade-os/sats-connect",
+        dir: path.join(ROOT_DIR, "packages/sats-connect"),
+        pkgJson: path.join(ROOT_DIR, "packages/sats-connect/package.json"),
+        tagPrefix: "@arkade-os/sats-connect/",
+        order: 4,
+    },
+    {
+        // Depends on @arkade-os/sats-connect via workspace:^, so it must publish
+        // after it when both are selected.
+        key: "sats-connect-react",
+        name: "@arkade-os/sats-connect-react",
+        dir: path.join(ROOT_DIR, "packages/sats-connect-react"),
+        pkgJson: path.join(ROOT_DIR, "packages/sats-connect-react/package.json"),
+        tagPrefix: "@arkade-os/sats-connect-react/",
+        order: 5,
+    },
+    {
+        key: "checkout",
+        name: "@arkade-os/checkout",
+        dir: path.join(ROOT_DIR, "packages/checkout"),
+        pkgJson: path.join(ROOT_DIR, "packages/checkout/package.json"),
+        tagPrefix: "@arkade-os/checkout/",
+        order: 6,
+    },
+    {
+        key: "snap",
+        name: "@arkade-os/snap",
+        dir: path.join(ROOT_DIR, "packages/snap"),
+        pkgJson: path.join(ROOT_DIR, "packages/snap/package.json"),
+        tagPrefix: "@arkade-os/snap/",
+        order: 7,
+        // snap.manifest.json carries its own version and shasum and must be
+        // committed alongside package.json.
+        extraFiles: [path.join(ROOT_DIR, "packages/snap/snap.manifest.json")],
+    },
 ];
 
 const PACKAGE_BY_KEY = Object.fromEntries(PACKAGES.map((p) => [p.key, p]));
-const VALID_TARGETS = new Set(["sdk", "boltz-swap", "all"]);
+const VALID_TARGETS = new Set([...PACKAGES.map((p) => p.key), "all"]);
 const BUMP_TYPES = new Set([
     "patch",
     "minor",
@@ -195,7 +245,8 @@ function showHelp() {
        scripts/release.mjs --cleanup [target]
 
 Targets:
-  sdk | boltz-swap | all
+  sdk | boltz-swap | wallet-providers | sats-connect | sats-connect-react |
+  checkout | snap | all
 
 Bump or version:
   patch | minor | major | prepatch | preminor | premajor | prerelease |
@@ -217,6 +268,19 @@ Options:
 Releasing SDK implies a dependent boltz-swap release because boltz-swap
 depends on SDK via workspace:* (pnpm rewrites this to an exact version on
 pack/publish).
+
+boltz-swap is the ONLY fan-out dependent. wallet-providers, sats-connect,
+sats-connect-react, checkout and snap depend on the SDK via peer ranges or
+workspace:^, both of which publish as caret ranges and survive an SDK
+patch/minor untouched. Releasing the SDK does not bump them; release them
+individually as needed.
+
+'all' means every package, not just sdk + boltz-swap.
+
+Releasing snap also syncs snap.manifest.json's version, regenerates its
+source.shasum via 'mm-snap build', and aborts the release if the built
+bundle and manifest disagree. Note that snap 0.1.2 as published to npm no
+longer matches this source tree, so snap releases must always move forward.
 
 Stable releases (patch/minor/major or a literal non-prerelease version) must
 be run from master. Prerelease releases (prepatch/preminor/premajor/
@@ -278,7 +342,7 @@ function parseArgs(argv) {
 
 function validateTarget(target) {
     if (!VALID_TARGETS.has(target)) {
-        die(`Invalid target: ${target}. Use sdk, boltz-swap, or all.`);
+        die(`Invalid target: ${target}. Use one of: ${[...VALID_TARGETS].join(", ")}.`);
     }
 }
 
@@ -295,9 +359,15 @@ function validatePreid(preid) {
 }
 
 function primarySelection(target) {
-    if (target === "all") return ["sdk", "boltz-swap"];
+    // 'sdk' pulls in boltz-swap because it pins the SDK via workspace:*, which
+    // pnpm rewrites to an exact version on publish. No other package does that,
+    // so none of them are fan-out dependents.
+    //
+    // 'all' means every package. It meant sdk + boltz-swap when those were the
+    // only two; keeping that after the port would have made the name a lie.
+    if (target === "all") return PACKAGES.map((p) => p.key);
     if (target === "sdk") return ["sdk", "boltz-swap"];
-    if (target === "boltz-swap") return ["boltz-swap"];
+    if (PACKAGE_BY_KEY[target]) return [target];
     die(`Invalid target: ${target}`);
 }
 
@@ -629,10 +699,33 @@ function release(args) {
             console.log(`Set ${pkg.name} to ${plan.get(key).next}`);
         }
 
+        // Must run before the build: `mm-snap build` reads the manifest version
+        // and recomputes source.shasum from the bundle it emits.
+        if (plan.has("snap")) {
+            const snapVersion = plan.get("snap").next;
+            syncSnapManifestVersion(ROOT_DIR, snapVersion);
+            console.log(`Set snap.manifest.json to ${snapVersion}`);
+        }
+
         console.log("Building packages...");
         run("pnpm", ["-r", "build"]);
 
-        const manifestPaths = selectedKeys.map((k) => PACKAGE_BY_KEY[k].pkgJson);
+        // Abort before anything is committed, tagged or published if the built
+        // snap and its manifest disagree. A bad shasum bricks install for every
+        // already-installed MetaMask user.
+        if (plan.has("snap")) {
+            try {
+                const { version, shasum } = verifySnapManifest(ROOT_DIR, plan.get("snap").next);
+                console.log(`Verified snap manifest: ${version} shasum ${shasum}`);
+            } catch (error) {
+                die(error.message);
+            }
+        }
+
+        const manifestPaths = selectedKeys.flatMap((k) => [
+            PACKAGE_BY_KEY[k].pkgJson,
+            ...(PACKAGE_BY_KEY[k].extraFiles ?? []),
+        ]);
         run("git", ["add", ...manifestPaths]);
         const stagedCheck = spawnSync("git", ["diff", "--cached", "--quiet"], { cwd: ROOT_DIR });
         if (stagedCheck.status === 0) {

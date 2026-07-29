@@ -1,0 +1,56 @@
+{
+    "name": "@arkade-os/sats-connect",
+    "version": "0.1.0",
+    "description": "Arkade SDK integration for Sats Connect wallets",
+    "license": "MIT",
+    "type": "module",
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "import": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.js"
+            },
+            "require": {
+                "types": "./dist/index.d.cts",
+                "default": "./dist/index.cjs"
+            }
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "build": "tsup",
+        "typecheck": "tsc --noEmit",
+        "lint": "prettier --check src test",
+        "smoke:dist": "node ../../config/smoke-dist.mjs",
+        "test": "vitest run",
+        "test:unit": "vitest run --exclude test/e2e"
+    },
+    "peerDependencies": {
+        "@arkade-os/sdk": ">=0.4.15 <1.0.0",
+        "sats-connect": ">=4.0.0"
+    },
+    "dependencies": {
+        "@scure/base": "^2.0.0"
+    },
+    "devDependencies": {
+        "@arkade-os/sdk": "workspace:*",
+        "sats-connect": "^4.2.1"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/arkade-os/ts-sdk.git",
+        "directory": "packages/sats-connect"
+    },
+    "keywords": [
+        "arkade",
+        "bitcoin",
+        "sats-connect",
+        "xverse",
+        "wallet"
+    ]
+}

@@ -30,29 +30,31 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # `pnpm -r <script>` silently SKIPS packages that lack the script, so a
+      # package missing `test:unit` or `lint` would look green while running
+      # nothing. This guard fails instead.
+      - name: Verify package scripts
+        run: node scripts/check-package-scripts.mjs
+
       - name: Lint
         run: pnpm run lint
 
-      - name: Type-check ts-sdk
-        run: pnpm -C packages/ts-sdk run typecheck
-
+      # Build must precede type-check: packages resolve @arkade-os/sdk's types
+      # from packages/ts-sdk/dist, so `pnpm -r typecheck` on an unbuilt tree
+      # fails with TS2307.
       - name: Build
         run: pnpm run build
 
-      - name: Type-check boltz-swap
-        run: pnpm -C packages/boltz-swap run typecheck
+      - name: Type-check
+        run: pnpm -r typecheck
 
-      - name: Smoke-test ts-sdk dist
-        run: pnpm -C packages/ts-sdk run smoke:dist
+      - name: Smoke-test dist
+        run: pnpm -r smoke:dist
 
-      - name: Verify ts-sdk publish shape
-        run: cd packages/ts-sdk && npm pack --dry-run --ignore-scripts
-
-      - name: Smoke-test boltz-swap dist
-        run: pnpm -C packages/boltz-swap run smoke:dist
-
-      - name: Verify boltz-swap publish shape
-        run: cd packages/boltz-swap && npm pack --dry-run --ignore-scripts
+      # Filtered to packages/*: examples/* holds a private integration example
+      # that is a workspace member but is never published.
+      - name: Verify publish shapes
+        run: pnpm --filter "./packages/*" exec npm pack --dry-run --ignore-scripts
 
       - name: Unit tests
         run: pnpm run test:unit
