@@ -116,6 +116,16 @@ export class HDDescriptorProvider implements DescriptorProvider, ReceiveRotatorF
     }
 
     /**
+     * The most recently allocated index, or `undefined` when nothing has ever
+     * been allocated on this repo. Read-only peek at the watermark that
+     * {@link getNextSigningDescriptor} advances.
+     */
+    async getLastIndexUsed(): Promise<number | undefined> {
+        const state = await this.walletRepository.getWalletState();
+        return this.parseSettings(state ?? ({} as WalletState)).lastIndexUsed;
+    }
+
+    /**
      * Monotonically advance the allocation watermark so the next
      * `getNextSigningDescriptor()` skips indices discovered by a restore
      * scan. Never rewinds: a lower or equal `index` is a no-op.

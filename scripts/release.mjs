@@ -217,6 +217,11 @@ Options:
 Releasing SDK implies a dependent boltz-swap release because boltz-swap
 depends on SDK via workspace:* (pnpm rewrites this to an exact version on
 pack/publish).
+
+Stable releases (patch/minor/major or a literal non-prerelease version) must
+be run from master. Prerelease releases (prepatch/preminor/premajor/
+prerelease, or a literal -alpha/-beta/-rc/-next version) may be run from any
+branch and publish under a matching npm dist-tag, never 'latest'.
 `,
     );
 }
@@ -254,8 +259,9 @@ function parseArgs(argv) {
                 args.boltzBump = argv[++i];
                 break;
             case "--":
-                positional.push(...argv.slice(i + 1));
-                i = argv.length;
+                // pnpm forwards a literal "--" separator before script args; ignore it
+                // rather than treating the remainder as positional (that would swallow
+                // subsequent options like --preid).
                 break;
             default:
                 if (arg.startsWith("--")) die(`Unknown option: ${arg}`);
@@ -403,11 +409,15 @@ function gitCurrentBranch() {
     }).trim();
 }
 
-function assertReleaseBranch() {
+function assertReleaseBranch(plan) {
+    const hasStableVersion = [...plan.values()].some((v) => !parseVersion(v.next).pre);
+    if (!hasStableVersion) return;
+
     const branch = gitCurrentBranch();
     if (branch !== RELEASE_BRANCH) {
         die(
-            `Releases must be run from ${RELEASE_BRANCH}; current branch is ${branch || "detached HEAD"}`,
+            `Stable releases must be run from ${RELEASE_BRANCH}; current branch is ${branch || "detached HEAD"}. ` +
+                `Prerelease versions (prepatch/preminor/premajor/prerelease, or a literal -alpha/-beta/-rc/-next version) may be run from any branch.`,
         );
     }
 }
@@ -588,7 +598,7 @@ function dryRun(args) {
 
 function release(args) {
     const plan = computeTargetVersions(args);
-    assertReleaseBranch();
+    assertReleaseBranch(plan);
     summarizePlan({ ...args, plan });
 
     if (!gitClean()) {

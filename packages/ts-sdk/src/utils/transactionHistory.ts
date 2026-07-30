@@ -1,4 +1,5 @@
 import { ArkTransaction, Asset, TxKey, TxType, VirtualCoin } from "../wallet";
+import { normalizeVtxo } from "../wallet/vtxo";
 
 type ExtendedArkTransaction = ArkTransaction & {
     tag: "offchain" | "boarding" | "exit" | "batch";
@@ -77,7 +78,9 @@ export async function buildTransactionHistory(
     commitmentsToIgnore: Set<string>,
     getTxCreatedAt?: (txid: string) => Promise<number | undefined>,
 ): Promise<ExtendedArkTransaction[]> {
-    const fromOldestVtxo = [...vtxos].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    const fromOldestVtxo = vtxos
+        .map(normalizeVtxo)
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
     const unmatchedSettledBoardingTxs = allBoardingTxs
         .filter(isSettledBoardingReceive)
         .sort((a, b) => a.createdAt - b.createdAt);
@@ -89,7 +92,7 @@ export async function buildTransactionHistory(
         if (vtxo.status.isLeaf) {
             // If this virtual output is a leaf and it's not the settlement of a boarding or there's no virtual output refreshed by it,
             // it's translated into a received batch transaction
-            const commitmentTxid = vtxo.virtualStatus.commitmentTxIds![0];
+            const commitmentTxid = vtxo.commitmentTxIds[0];
             const vtxoCreatedAt = vtxo.createdAt.getTime();
             const ignoredCommitment =
                 commitmentsToIgnore.has(commitmentTxid) ||
@@ -104,8 +107,7 @@ export async function buildTransactionHistory(
                             tx.key.commitmentTxid === vtxo.settledBy),
                 );
             } else if (
-                fromOldestVtxo.filter((v) => v.settledBy === vtxo.virtualStatus.commitmentTxIds![0])
-                    .length === 0
+                fromOldestVtxo.filter((v) => v.settledBy === vtxo.commitmentTxIds[0]).length === 0
             ) {
                 const duplicateBoardingReceive = consumeBoardingReceive(
                     unmatchedSettledBoardingTxs,
@@ -201,7 +203,8 @@ export async function buildTransactionHistory(
                 const changes = fromOldestVtxo.filter(
                     (v) =>
                         v.status.isLeaf &&
-                        v.virtualStatus.commitmentTxIds?.every((_) => vtxo.settledBy === _),
+                        v.commitmentTxIds.length > 0 &&
+                        v.commitmentTxIds.every((_) => vtxo.settledBy === _),
                 );
 
                 const forfeitVtxos = fromOldestVtxo.filter((v) => v.settledBy === vtxo.settledBy);

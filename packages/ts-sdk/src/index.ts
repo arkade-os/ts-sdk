@@ -29,6 +29,7 @@ import {
     TapLeafScript,
     TapTreeCoder,
     getSequence,
+    scriptFromTapLeafScript,
 } from "./script/base";
 import { assembleBtcdTaprootTree } from "./script/taprootTree";
 import {
@@ -59,6 +60,13 @@ import {
     isSubdust,
     isRecoverable,
     isExpired,
+    // VTXO capability predicates
+    canRecoverOnchain,
+    canSpendOffchain,
+    hasTerminalSpend,
+    isPastExpiry,
+    isVirtualCoin,
+    TimeHeight,
     // Asset types
     Asset,
     Recipient,
@@ -87,10 +95,16 @@ import {
     ReadonlyWallet,
     waitForIncomingFunds,
     IncomingFunds,
+    selectVirtualCoins,
     BoardingUtxoGroup,
+    type ArkadeCashClaimResult,
+    type ArkadeCashUnclaimedReason,
+    type ArkadeCashUnclaimedVtxo,
+    ArkadeCashCreateError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./wallet/wallet";
+import { createAssetPacket, selectCoinsWithAsset } from "./wallet/asset";
 import { TxTree, TxTreeNode } from "./tree/txTree";
 import { SignerSession, TreeNonces, TreePartialSigs } from "./tree/signingSession";
 import { DustChangeError, Ramps } from "./wallet/ramps";
@@ -194,6 +208,8 @@ import { getRandomId } from "./wallet/utils";
 import {
     VtxoTaprootTree,
     ConditionWitness,
+    PrevArkTxField,
+    PrevoutTxField,
     getArkPsbtFields,
     setArkPsbtField,
     ArkPsbtFieldCoder,
@@ -205,6 +221,7 @@ import {
 import { Intent } from "./intent";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
+import { ArkadeCash } from "./arkadeCash";
 import { getNetwork, networks, Network, NetworkName } from "./networks";
 import {
     RestIndexerProvider,
@@ -224,6 +241,17 @@ import {
     SubscriptionHeartbeat,
     SubscriptionEvent,
 } from "./providers/indexer";
+import {
+    RestEmulatorProvider,
+    type EmulatorProvider,
+    type EmulatorInfo,
+    type ConnectorTreeNode,
+} from "./providers/emulator";
+import type {
+    ArkadeBatchInput,
+    ArkadeExtendedCoin,
+    ArkadeExtendedVirtualCoin,
+} from "./arkade/batch";
 import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
@@ -305,7 +333,10 @@ import {
 } from "./wallet/delegate";
 
 export * from "./arkfee";
+export * from "./extension";
 export * as asset from "./extension/asset";
+export * as arkade from "./arkade";
+export * from "./extension/emulator";
 
 // BIP21 codec (reused by the payment rails) + the modular payment router.
 export * from "./utils/bip21";
@@ -336,6 +367,8 @@ import type { VHTLCContractParams } from "./contracts/handlers/vhtlc";
 import { isCsvSpendable, isCltvSatisfied } from "./contracts/handlers/helpers";
 import { BoardingContractHandler } from "./contracts/handlers/boarding";
 import type { BoardingContractParams } from "./contracts/handlers/boarding";
+import { ArkadeContractHandler } from "./contracts/handlers/arkade";
+import type { ArkadeContractParams } from "./arkade/program";
 import {
     encodeArkContract,
     decodeArkContract,
@@ -344,7 +377,7 @@ import {
     isArkContract,
 } from "./contracts/arkcontract";
 import type { ParsedArkContract } from "./contracts/arkcontract";
-import { isDiscoverable } from "./contracts/types";
+import { hasCandidates, isDiscoverable } from "./contracts/types";
 import type {
     Contract,
     ContractVtxo,
@@ -360,6 +393,7 @@ import type {
     Discoverable,
     DiscoveryDeps,
     DiscoveredContract,
+    CandidateDeps,
 } from "./contracts/types";
 import type { ScanResult, ScanContractsOptions, HandlerError } from "./contracts/contractManager";
 import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
@@ -378,6 +412,8 @@ import {
     MessageBusInitializingError,
     MessageBusNotInitializedError,
     ServiceWorkerTimeoutError,
+    isMessageBusInitializingError,
+    isMessageBusNotInitializedError,
 } from "./worker/errors";
 import { AssetManager, ReadonlyAssetManager } from "./wallet/asset-manager";
 
@@ -417,6 +453,7 @@ export {
     DigestMismatchError,
     FetchError,
     RestIndexerProvider,
+    RestEmulatorProvider,
 
     // Script-related
     ArkAddress,
@@ -425,6 +462,7 @@ export {
     VtxoScript,
     VHTLC,
     assembleBtcdTaprootTree,
+    scriptFromTapLeafScript,
 
     // Enums
     TxType,
@@ -445,6 +483,8 @@ export {
     MessageBusInitializingError,
     MessageBusNotInitializedError,
     ServiceWorkerTimeoutError,
+    isMessageBusInitializingError,
+    isMessageBusNotInitializedError,
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
     DEFAULT_MESSAGE_TIMEOUTS,
@@ -467,7 +507,8 @@ export {
     VtxoTreeExpiry,
     VtxoTaprootTree,
     ConditionWitness,
-
+    PrevArkTxField,
+    PrevoutTxField,
     // Utils
     buildOffchainTx,
     verifyTapscriptSignatures,
@@ -480,8 +521,17 @@ export {
     buildVersion,
     sdkVersion,
 
+    // Asset utilities
+    createAssetPacket,
+    selectCoinsWithAsset,
+    selectVirtualCoins,
+
     // Arknote
     ArkNote,
+
+    // ArkadeCash
+    ArkadeCash,
+    ArkadeCashCreateError,
 
     // Network
     getNetwork,
@@ -553,6 +603,13 @@ export {
     isExpired,
     getSequence,
 
+    // VTXO capability predicates
+    canRecoverOnchain,
+    canSpendOffchain,
+    hasTerminalSpend,
+    isPastExpiry,
+    isVirtualCoin,
+
     // Contracts
     ContractManager,
     ContractWatcher,
@@ -561,12 +618,14 @@ export {
     DelegateContractHandler,
     VHTLCContractHandler,
     BoardingContractHandler,
+    ArkadeContractHandler,
     encodeArkContract,
     decodeArkContract,
     contractFromArkContract,
     contractFromArkContractWithAddress,
     isArkContract,
     isDiscoverable,
+    hasCandidates,
     // Contract handler authoring helpers (spending-path selection)
     isCsvSpendable,
     isCltvSatisfied,
@@ -600,6 +659,7 @@ export type {
     VirtualStatus,
     Outpoint,
     VirtualCoin,
+    TimeHeight,
     TxKey,
     TapscriptType,
     ArkTxInput,
@@ -622,6 +682,11 @@ export type {
     Vtxo,
     VtxoChain,
     Tx,
+
+    // Emulator types
+    EmulatorProvider,
+    EmulatorInfo,
+    ConnectorTreeNode,
 
     // Provider types
     OnchainProvider,
@@ -668,6 +733,9 @@ export type {
     // Wallet types
     GetVtxosFilter,
     BoardingUtxoGroup,
+    ArkadeCashClaimResult,
+    ArkadeCashUnclaimedReason,
+    ArkadeCashUnclaimedVtxo,
     SettlementConfig,
     IVtxoManager,
     RenewVtxosOptions,
@@ -754,9 +822,11 @@ export type {
     DelegateContractParams,
     VHTLCContractParams,
     BoardingContractParams,
+    ArkadeContractParams,
     Discoverable,
     DiscoveryDeps,
     DiscoveredContract,
+    CandidateDeps,
     ScanResult,
     ScanContractsOptions,
     HandlerError,
@@ -767,6 +837,11 @@ export type {
     ResponseEnvelope,
     MessageTimeouts,
     ServiceWorkerWalletMode,
+
+    // Arkade types
+    ArkadeBatchInput,
+    ArkadeExtendedCoin,
+    ArkadeExtendedVirtualCoin,
 
     // Delegate types (Delegator* aliases deprecated)
     IDelegateManager,

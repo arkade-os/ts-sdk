@@ -105,6 +105,11 @@ function makeVtxo(
         value,
         contractScript,
         isSpent,
+        isSwept: state === "swept",
+        isPreconfirmed: state === "preconfirmed",
+        spentBy: "",
+        commitmentTxIds: [],
+        expiresAt: new Date(DEFAULT_BATCH_EXPIRY),
         status: { confirmed: true },
         createdAt: new Date(),
         isUnrolled: false,
@@ -296,6 +301,7 @@ describe("VtxoManager - deprecated-signer migration", () => {
         // classification must leave it out while still migrating the valid ones.
         const script = "default-" + DEP_DUE;
         const noExpiry = makeVtxo(script, 4000);
+        noExpiry.expiresAt = undefined;
         (noExpiry.virtualStatus as { batchExpiry?: number }).batchExpiry = undefined;
         const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
             info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
@@ -886,6 +892,11 @@ function makeVtxoWithExpiry(
         value,
         contractScript,
         isSpent: false,
+        isSwept: state === "swept",
+        isPreconfirmed: state === "preconfirmed",
+        spentBy: "",
+        commitmentTxIds: [],
+        expiresAt: new Date(batchExpiry),
         status: { confirmed: true },
         createdAt: new Date(),
         isUnrolled: false,
@@ -1158,5 +1169,124 @@ describe("VtxoManager - recovery destination pins the active signer (Section 6)"
         await newManager(wallet).renewVtxos();
 
         expect(rotateServerSigner).not.toHaveBeenCalled();
+    });
+});
+
+describe("VtxoManager - migration leg partitions inputs the send path would reject", () => {
+    // The send path validates its batch as a whole: before partitioning, a single input it
+    // rejected threw and aborted the entire leg, stranding every other migratable VTXO until
+    // the next pass. These cover both rejection conditions and both expiry units.
+
+    /** A migratable VTXO whose wall-clock batch expiry has already passed. */
+    function pastExpiryVtxo(contractScript: string, value: number): ExtendedContractVtxo {
+        const expired = Date.now() - 60_000;
+        return {
+            ...makeVtxo(contractScript, value),
+            expiresAt: new Date(expired),
+            virtualStatus: { state: "settled", batchExpiry: expired },
+        } as unknown as ExtendedContractVtxo;
+    }
+
+    /** The regtest shape: expiry encoded as a block height already below the tip. */
+    function pastHeightVtxo(contractScript: string, value: number): ExtendedContractVtxo {
+        return {
+            ...makeVtxo(contractScript, value),
+            expiresAt: undefined,
+            expiresAtHeight: TIP_HEIGHT - 10,
+            virtualStatus: { state: "settled", batchExpiry: (TIP_HEIGHT - 10) * 1000 },
+        } as unknown as ExtendedContractVtxo;
+    }
+
+    it("excludes a past-expiry VTXO and still migrates the healthy ones", async () => {
+        const script = "default-" + DEP_DUE;
+        const healthy = makeVtxo(script, 5000);
+        const stale = pastExpiryVtxo(script, 7000);
+        const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
+            contractsWithVtxos: [cwv(DEP_DUE, [healthy, stale])],
+        });
+
+        const report = await newManager(wallet).migrateDeprecatedSignerVtxos();
+
+        // The healthy VTXO migrated rather than being taken down with the stale one.
+        expect(sendSelectedVtxosToSelf).toHaveBeenCalledOnce();
+        const sent = sendSelectedVtxosToSelf.mock.calls[0][0] as ExtendedContractVtxo[];
+        expect(sent.map((v) => v.txid)).toEqual([healthy.txid]);
+        expect(report.vtxos?.txid).toBe("vtxo-send-txid");
+        expect(report.vtxos?.migrated.map((r) => r.txid)).toEqual([healthy.txid]);
+        // ...and the stale one is reported, not silently dropped.
+        expect(report.vtxos?.notSpendableOffchain?.map((r) => r.txid)).toEqual([stale.txid]);
+        expect(report.vtxos?.error).toBeUndefined();
+    });
+
+    it("excludes a height-expired VTXO, evaluated against the pass's chain tip", async () => {
+        const script = "default-" + DEP_DUE;
+        const healthy = makeVtxo(script, 5000);
+        const stale = pastHeightVtxo(script, 7000);
+        const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
+            contractsWithVtxos: [cwv(DEP_DUE, [healthy, stale])],
+        });
+
+        const report = await newManager(wallet).migrateDeprecatedSignerVtxos();
+
+        const sent = sendSelectedVtxosToSelf.mock.calls[0][0] as ExtendedContractVtxo[];
+        expect(sent.map((v) => v.txid)).toEqual([healthy.txid]);
+        expect(report.vtxos?.notSpendableOffchain?.map((r) => r.txid)).toEqual([stale.txid]);
+    });
+
+    it("hands the send path the same chain tip it partitioned with", async () => {
+        // The invariant that makes the partition airtight: if the send path fetched its own
+        // tip, the two could still disagree at the expiry boundary and abort the leg.
+        const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
+            contractsWithVtxos: [cwv(DEP_DUE, [makeVtxo("default-" + DEP_DUE, 5000)])],
+        });
+
+        await newManager(wallet).migrateDeprecatedSignerVtxos();
+
+        const now = sendSelectedVtxosToSelf.mock.calls[0][1];
+        expect(now).toBeDefined();
+        expect(now.height).toBe(TIP_HEIGHT);
+        expect(now.timestamp).toBeInstanceOf(Date);
+    });
+
+    it("skips the leg as not-spendable-only when every candidate is past expiry", async () => {
+        const script = "default-" + DEP_DUE;
+        const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
+            contractsWithVtxos: [cwv(DEP_DUE, [pastExpiryVtxo(script, 5000)])],
+        });
+
+        const report = await newManager(wallet).migrateDeprecatedSignerVtxos();
+
+        // Attributed to eligibility, not misreported as a dust problem.
+        expect(report.vtxos?.skipped).toBe("not-spendable-only");
+        expect(report.vtxos?.migrated).toEqual([]);
+        expect(report.vtxos?.notSpendableOffchain).toHaveLength(1);
+        expect(sendSelectedVtxosToSelf).not.toHaveBeenCalled();
+    });
+
+    it("degrades to wall-clock only when the chain tip is unreachable", async () => {
+        // resolveTimeHeight swallows the failure, so a height-encoded expiry reads as not
+        // expired and the VTXO still migrates rather than the leg failing outright.
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const script = "default-" + DEP_DUE;
+        const stale = pastHeightVtxo(script, 7000);
+        const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
+            contractsWithVtxos: [cwv(DEP_DUE, [stale])],
+        });
+        (
+            wallet as unknown as { onchainProvider: { getChainTip: () => Promise<never> } }
+        ).onchainProvider.getChainTip = () => Promise.reject(new Error("esplora down"));
+
+        const report = await newManager(wallet).migrateDeprecatedSignerVtxos();
+
+        expect(sendSelectedVtxosToSelf).toHaveBeenCalledOnce();
+        expect(report.vtxos?.migrated.map((r) => r.txid)).toEqual([stale.txid]);
+        expect(report.vtxos?.notSpendableOffchain).toBeUndefined();
+        expect(sendSelectedVtxosToSelf.mock.calls[0][1].height).toBeUndefined();
+        warn.mockRestore();
     });
 });

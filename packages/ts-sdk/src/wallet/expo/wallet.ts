@@ -12,7 +12,6 @@ import type {
     GetVtxosFilter,
     ArkTransaction,
     ExtendedCoin,
-    ExtendedVirtualCoin,
     Recipient,
 } from "..";
 import type { SettlementEvent } from "../../providers/ark";
@@ -26,6 +25,7 @@ import { contractPollProcessor, CONTRACT_POLL_TASK_TYPE } from "../../worker/exp
 import { extendVirtualCoinForContract, getRandomId } from "../utils";
 import type { PersistedBackgroundConfig } from "./background";
 import type { AsyncStorageTaskQueue } from "../../worker/expo/asyncStorageTaskQueue";
+import type { NormalizedExtendedVirtualCoin } from "../vtxo";
 
 /**
  * Background processing configuration for @see ExpoWallet.
@@ -304,7 +304,7 @@ export class ExpoWallet implements IWallet {
         return this.wallet.getBalance();
     }
 
-    getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
+    getVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
         return this.wallet.getVtxos(filter);
     }
 

@@ -1,4 +1,4 @@
 export type { Nonces } from "./nonces";
 export { generateNonces, aggregateNonces } from "./nonces";
-export { PartialSig, sign } from "./sign";
+export { PartialSig, PartialSignatureError, sign, partialSigVerify } from "./sign";
 export { aggregateKeys } from "./keys";

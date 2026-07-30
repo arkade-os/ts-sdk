@@ -1,4 +1,4 @@
-import { Script, Address, p2tr, TAPROOT_UNSPENDABLE_KEY, NETWORK } from "@scure/btc-signer";
+import { Address, p2tr, TAPROOT_UNSPENDABLE_KEY, NETWORK } from "@scure/btc-signer";
 import { TAP_LEAF_VERSION } from "@scure/btc-signer/payment.js";
 import { PSBTOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes } from "@scure/btc-signer/utils.js";
@@ -42,6 +42,7 @@ export function scriptFromTapLeafScript(leaf: TapLeafScript): Bytes {
 export class VtxoScript {
     readonly leaves: TapLeafScript[];
     readonly tweakedPublicKey: Bytes;
+    readonly pkScript: Bytes;
 
     /**
      * Decode a virtual output script from an encoded TapTree.
@@ -80,6 +81,7 @@ export class VtxoScript {
 
         this.leaves = payment.tapLeafScript;
         this.tweakedPublicKey = payment.tweakedPubkey;
+        this.pkScript = payment.script;
     }
 
     /**
@@ -109,10 +111,6 @@ export class VtxoScript {
      */
     address(prefix: string = DEFAULT_NETWORK.hrp, serverPubKey: Bytes): ArkAddress {
         return new ArkAddress(serverPubKey, this.tweakedPublicKey, prefix);
-    }
-
-    get pkScript(): Bytes {
-        return Script.encode(["OP_1", this.tweakedPublicKey]);
     }
 
     /**

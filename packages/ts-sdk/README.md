@@ -1247,9 +1247,35 @@ This is required for MuSig2 settlements and cryptographic operations.
 
 ### Contract Management
 
-Both `Wallet` and `ServiceWorkerWallet` use a `ContractManager` internally to watch for virtual outputs. This provides resilient connection handling with automatic reconnection and failsafe polling - for your wallet's default address and any external contracts you register (Boltz swaps, HTLCs, etc.).
+Both `Wallet` and `ServiceWorkerWallet` use a `ContractManager` internally to watch for virtual outputs and persist them into repositories. This provides resilient connection handling with automatic reconnection and failsafe polling - for your wallet's default address and any external contracts you register (Boltz swaps, HTLCs, etc.).
 
-When you call `wallet.notifyIncomingFunds()` or use `waitForIncomingFunds()`, it uses the ContractManager under the hood, giving you automatic reconnection and failsafe polling for free - no code changes needed.
+When you call `wallet.notifyIncomingFunds()` or use `waitForIncomingFunds()`, it uses the ContractManager under the hood, giving you automatic reconnection and repository-backed event replay for free - no code changes needed.
+
+`watcherConfig.failsafePollIntervalMs` (default `20_000`) controls how often the watcher replays repository changes into contract events; it does not fetch fresh VTXOs from the indexer.
+
+#### HD look-ahead window
+
+HD wallets (`walletMode: 'hd'`, or an explicit HD `DescriptorProvider`) also watch a band of *unused* offchain receive scripts around their allocation watermark, so a payment to an address that some other party issued from the same seed — a merchant backend such as BTCPay Server, or the .NET SDK driving the same wallet — arrives without the user calling `restore()`. `lookAheadWindow` (default `20`) is the per-side width of that band: the wallet watches `[watermark - N, watermark + N]`. Speculative entries are subscription-only; they become contract rows, and enter balances, only once funded.
+
+The issuer, not the wallet, picks the contract shape, so each index is watched at *every* variant the wallet could own there: `default` and `delegate`, crossed with the unilateral-exit timelock matrix and the operator's current plus deprecated signers. That is the candidate set `restore()` probes too, so watching and restoring cover identical scripts.
+
+```typescript
+const wallet = await Wallet.create({
+  identity,
+  walletMode: 'hd',
+  lookAheadWindow: 50,  // issuer hands out long runs of unpaid invoices
+})
+
+// Same option on the service-worker wallet; it is forwarded to the worker's inner wallet.
+const swWallet = await ServiceWorkerWallet.setup({
+  serviceWorkerPath: '/service-worker.js',
+  identity,
+  walletMode: 'hd',
+  lookAheadWindow: 50,
+})
+```
+
+Raise it when the external issuer is expected to burn more than `N` consecutive addresses without any of them being paid — every index in such a run is a miss, and the funded one sits past the band. When that happens the funds are invisible until a `restore()` whose `gapLimit` is large enough to cross the run (`wallet.restore({ gapLimit: 200 })`); a default restore closes its gap window before reaching the funded index. Keep the value modest: the band adds up to `2N + 1` indices × the candidate matrix (typically 1-4 scripts each) to the wallet's subscription.
 
 For advanced use cases, you can access the ContractManager directly to register external contracts:
 
@@ -1312,21 +1338,22 @@ const allPaths = await manager.getAllSpendingPaths({
 // Fetch contracts together with their current virtual outputs
 const contractsWithVtxos = await manager.getContractsWithVtxos()
 
-// Force a full refresh from the indexer when needed
+// Force an indexer refresh of the watched contracts when needed
 await manager.refreshVtxos()
 
 // Stop watching
 unsubscribe()
 ```
 
-The watcher features:
-- **Automatic reconnection** with exponential backoff (1s → 30s max)
-- **Failsafe polling** every 60 seconds to catch missed events
-- **Immediate sync** on connection and after failures
+Contract freshness behavior:
+- **Automatic reconnection** with exponential backoff (1s → 5s max)
+- **Immediate sync** on manager initialization, subscription reconnect, and contract events
+- **Failsafe polling** every 20 seconds by default to catch missed events, configurable via `watcherConfig.failsafePollIntervalMs`
+- **Manual refresh** through `manager.refreshVtxos()`; pass `{ includeInactive: true }` to sweep every repository contract
 
 ### Repository Pattern
 
-Most users don't need to touch repositories directly — `Wallet` and `ContractManager` already read and write through them. They are documented here for advanced integrations (custom storage backends, offline-first apps, repository inspection).
+Most users don't need to touch repositories directly — `Wallet` reads through them and `ContractManager` owns VTXO/contract synchronization into them. They are documented here for advanced integrations (custom storage backends, offline-first apps, repository inspection).
 
 ```typescript
 // Wallet repository — VTXOs, UTXOs, transaction history, settings

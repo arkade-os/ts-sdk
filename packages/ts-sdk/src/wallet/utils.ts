@@ -7,6 +7,7 @@ import {
     type VirtualCoin,
 } from "..";
 import type { Contract } from "../contracts/types";
+import { isTapscriptDeriving } from "../contracts/types";
 import { contractHandlers } from "../contracts/handlers";
 import { DefaultVtxo } from "../script/default";
 import { DelegateVtxo } from "../script/delegate";
@@ -83,13 +84,17 @@ function deriveContractTapscripts(contract: Contract): ContractTapscripts {
     if (!handler) {
         throw new Error(`No handler for contract type '${contract.type}'`);
     }
-    const script = handler.createScript(contract.params) as
-        | DefaultVtxo.Script
-        | DelegateVtxo.Script;
+    const script = handler.createScript(contract.params);
+    // Handlers whose script shape has no `forfeit()` (e.g. program-compiled
+    // arkade contracts) provide the annotation tapscripts themselves.
+    if (isTapscriptDeriving(handler)) {
+        return handler.deriveTapscripts(script, contract);
+    }
+    const legacy = script as DefaultVtxo.Script | DelegateVtxo.Script;
     return {
-        forfeitTapLeafScript: script.forfeit(),
-        intentTapLeafScript: script.forfeit(),
-        tapTree: script.encode(),
+        forfeitTapLeafScript: legacy.forfeit(),
+        intentTapLeafScript: legacy.forfeit(),
+        tapTree: legacy.encode(),
     };
 }
 
@@ -115,11 +120,11 @@ function cloneContractTapscripts(tapscripts: ContractTapscripts): ContractTapscr
     };
 }
 
-function extendVtxoFromContract(
-    vtxo: VirtualCoin,
+function extendVtxoFromContract<T extends VirtualCoin>(
+    vtxo: T,
     contract: Contract,
     cache?: ContractTapscriptCache,
-): ExtendedVirtualCoin {
+): T & ExtendedVirtualCoin {
     if (!cache) {
         return { ...vtxo, ...deriveContractTapscripts(contract) };
     }
@@ -152,11 +157,11 @@ function extendVtxoFromContract(
  * caller (typically `ContractManager.annotateVtxos`) should fetch the owning
  * contract first.
  */
-export function extendVirtualCoinForContract(
-    vtxo: VirtualCoin,
+export function extendVirtualCoinForContract<T extends VirtualCoin>(
+    vtxo: T,
     contractOrMap?: Contract | ReadonlyMap<string, Contract>,
     cache?: ContractTapscriptCache,
-): ExtendedVirtualCoin {
+): T & ExtendedVirtualCoin {
     const contract = resolveContract(vtxo, contractOrMap);
     if (!contract) {
         throw new Error(
@@ -200,7 +205,10 @@ export function isValidArkAddress(address: string): boolean {
     }
 }
 
-type ValidatedRecipient = Required<Recipient> & { script: Bytes };
+type ValidatedRecipient = Required<Omit<Recipient, "extensions">> & {
+    script: Bytes;
+    extensions?: Recipient["extensions"];
+};
 
 export function validateRecipients(
     recipients: Recipient[],

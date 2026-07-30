@@ -3,6 +3,7 @@ import {
     printSetupBanner,
     waitForArkServer,
     waitForBoltzPairs,
+    waitForEmulator,
 } from "../../../scripts/regtest-wait.mjs";
 
 function initArkCli() {
@@ -26,6 +27,7 @@ async function setup() {
     try {
         await waitForArkServer();
         initArkCli();
+        await waitForEmulator();
         await waitForBoltzPairs();
         printSetupBanner();
     } catch (error) {

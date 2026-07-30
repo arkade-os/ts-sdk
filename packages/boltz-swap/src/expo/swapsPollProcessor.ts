@@ -38,7 +38,14 @@ export const swapsPollProcessor: TaskProcessor<SwapTaskDependencies> = {
         item: TaskItem,
         deps: SwapTaskDependencies,
     ): Promise<Omit<TaskResult, "id" | "executedAt">> {
-        const { swapRepository, swapProvider, wallet, arkProvider, indexerProvider } = deps;
+        const {
+            swapRepository,
+            swapProvider,
+            wallet,
+            arkProvider,
+            indexerProvider,
+            onchainProvider,
+        } = deps;
 
         const allSwaps = await swapRepository.getAllSwaps();
 
@@ -60,6 +67,7 @@ export const swapsPollProcessor: TaskProcessor<SwapTaskDependencies> = {
             wallet,
             arkProvider,
             indexerProvider,
+            onchainProvider,
             swapProvider,
             swapManager: false,
             swapRepository,

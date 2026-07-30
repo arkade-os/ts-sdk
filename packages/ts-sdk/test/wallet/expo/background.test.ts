@@ -185,8 +185,18 @@ describe("expo background task helpers", () => {
         await unregisterExpoBackgroundTask("ark-background-task");
 
         expect(registerTaskAsyncMock).toHaveBeenCalledWith("ark-background-task", {
-            minimumInterval: 17 * 60,
+            minimumInterval: 17,
         });
         expect(unregisterTaskAsyncMock).toHaveBeenCalledWith("ark-background-task");
+    });
+
+    it("defaults the background interval to 15 minutes", async () => {
+        const { registerExpoBackgroundTask } = await loadBackground();
+
+        await registerExpoBackgroundTask("ark-background-task");
+
+        expect(registerTaskAsyncMock).toHaveBeenCalledWith("ark-background-task", {
+            minimumInterval: 15,
+        });
     });
 });

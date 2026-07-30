@@ -147,6 +147,8 @@ type Initialize = {
         settlementConfig?: SettlementConfig | false;
         walletMode?: "auto" | "static" | "hd";
         watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
+        /** @see WalletConfig.lookAheadWindow */
+        lookAheadWindow?: number;
         /**
          * Page-supplied per-operation timeout map. Keys are message types
          * (e.g. "SETTLE"). Overrides constructor-supplied
@@ -413,6 +415,7 @@ export class MessageBus {
                 settlementConfig: config.settlementConfig,
                 walletMode: config.walletMode,
                 watcherConfig: config.watcherConfig,
+                lookAheadWindow: config.lookAheadWindow,
             });
             return { wallet, arkProvider, readonlyWallet: wallet };
         }

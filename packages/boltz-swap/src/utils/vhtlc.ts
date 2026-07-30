@@ -16,7 +16,7 @@ import {
     CSVMultisigTapscript,
     combineTapscriptSigs,
     Transaction,
-    TapLeafScript,
+    scriptFromTapLeafScript,
 } from "@arkade-os/sdk";
 import { logger } from "../logger";
 import { BoltzRefundError } from "../errors";
@@ -32,8 +32,9 @@ import { TransactionOutput, TransactionInput } from "@scure/btc-signer/psbt.js";
  * Boltz-Ark VHTLC timeouts. The shape matches Boltz's `timeoutBlockHeights`
  * API field, but the legacy name is misleading — these are not all block
  * heights:
- * - `refund` is an absolute Unix timestamp in seconds (CLTV with timestamp
- *   semantics, BIP65 threshold ≥ 500_000_000).
+ * - `refund` is an absolute CLTV locktime, in either form Boltz's
+ *   `useLocktimeSeconds` setting produces: a block height below the BIP65
+ *   threshold of 500_000_000, a Unix timestamp in seconds at or above it.
  * - `unilateralClaim`, `unilateralRefund`, `unilateralRefundWithoutReceiver`
  *   are BIP68 *relative* delays measured from the lockup confirmation. Values
  *   ≥ 512 are interpreted as seconds (BIP68 type-flag). For Boltz Ark mainnet
@@ -67,8 +68,7 @@ const toBip68RelativeTimelock = (value: number) =>
  * @param args.preimageHash - The SHA256 digest of the preimage (not the raw preimage or RIPEMD160 hash).
  * The function will apply ripemd160(preimageHash) internally to create the final commitment.
  * @param args.timeoutBlockHeights - Boltz timeout fields. Despite the legacy
- *   field name, see {@link VhtlcTimeouts} for the actual semantics — `refund`
- *   is a Unix timestamp, the unilateral fields are BIP68 relative delays.
+ *   field name, see {@link VhtlcTimeouts} for the actual semantics.
  * @returns The created VHTLC script and address.
  */
 export const createVHTLCScript = (args: {
@@ -128,7 +128,7 @@ export const createVHTLCScript = (args: {
  * arkd advertises in `ArkInfo.deprecatedSigners` are exactly the historical
  * signers a stale swap may be locked to, so probing the current key first
  * (the no-rotation fast path) and then the deprecated set lets
- * {@link resolveVHTLCScript} recover the original lockup. Mirrors how
+ * `ArkadeSwaps.resolveVHTLCForLockup` recover the original lockup. Mirrors how
  * `Wallet.restore()` scans current + deprecated signers for stale VTXOs.
  */
 export const candidateServerPubkeys = (arkInfo: ArkInfo): string[] => {
@@ -511,7 +511,3 @@ export const refundVHTLCwithOffchainTx = async (
     // finalize the transaction
     await arkProvider.finalizeTx(arkTxid, [base64.encode(finalCheckpointTx.toPSBT())]);
 };
-
-function scriptFromTapLeafScript(leaf: TapLeafScript): Uint8Array {
-    return leaf[1].subarray(0, leaf[1].length - 1); // remove the version byte
-}
