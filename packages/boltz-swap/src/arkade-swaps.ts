@@ -146,6 +146,8 @@ type SubmarineVHTLCContext = {
      * fields are BIP68 relative delays.
      */
     vhtlcTimeouts: NonNullable<BoltzSubmarineSwap["response"]["timeoutBlockHeights"]>;
+    /** Signer for the swap's key — descriptor-scoped when the swap is bound. */
+    identity: Identity;
     ourXOnlyPublicKey: Uint8Array;
     serverXOnlyPublicKey: Uint8Array;
     boltzXOnlyPublicKey: Uint8Array;
@@ -173,6 +175,7 @@ type SubmarineScanPrepared =
  */
 type RefundWithoutReceiverContext = {
     arkInfo: ArkInfo;
+    identity: Identity;
     vhtlcScript: VHTLC.Script;
     serverXOnlyPublicKey: Uint8Array;
     refundWithoutReceiverLeaf: ArkTxInput["tapLeafScript"];
@@ -495,7 +498,10 @@ export class ArkadeSwaps {
         // validate amount
         if (args.amount <= 0) throw new SwapError({ message: "Amount must be greater than 0" });
 
-        const claimPublicKey = hex.encode(await this.wallet.identity.compressedPublicKey());
+        const signingDescriptor = await this.currentSigningDescriptor();
+        const claimPublicKey = hex.encode(
+            await (await this.swapSigner({ signingDescriptor })).compressedPublicKey(),
+        );
         if (!claimPublicKey)
             throw new SwapError({
                 message: "Failed to get claim public key from wallet",
@@ -539,6 +545,7 @@ export class ArkadeSwaps {
             request: swapRequest,
             response: swapResponse,
             status: "swap.created",
+            signingDescriptor,
         };
 
         // save pending swap to storage
@@ -573,9 +580,10 @@ export class ArkadeSwaps {
         const preimage = hex.decode(pendingSwap.preimage);
         const arkInfo = await this.arkProvider.getInfo();
         const address = await this.wallet.getAddress();
+        const signer = await this.swapSigner(pendingSwap);
 
         const receiverXOnly = normalizeToXOnlyKey(
-            await this.wallet.identity.xOnlyPublicKey(),
+            await signer.xOnlyPublicKey(),
             "our",
             pendingSwap.id,
         );
@@ -628,7 +636,7 @@ export class ArkadeSwaps {
             throw new Error(`Swap ${pendingSwap.id}: VHTLC is already spent`);
         }
 
-        const vhtlcIdentity = claimVHTLCIdentity(this.wallet.identity, preimage);
+        const vhtlcIdentity = claimVHTLCIdentity(signer, preimage);
         const outputScript = ArkAddress.decode(address).pkScript;
 
         // Asymmetry with `refundArk` is deliberate: this path is all-or-
@@ -892,7 +900,10 @@ export class ArkadeSwaps {
      * @throws {SwapError} If invoice is missing or key retrieval fails.
      */
     async createSubmarineSwap(args: SendLightningPaymentRequest): Promise<BoltzSubmarineSwap> {
-        const refundPublicKey = hex.encode(await this.wallet.identity.compressedPublicKey());
+        const signingDescriptor = await this.currentSigningDescriptor();
+        const refundPublicKey = hex.encode(
+            await (await this.swapSigner({ signingDescriptor })).compressedPublicKey(),
+        );
         if (!refundPublicKey)
             throw new SwapError({
                 message: "Failed to get refund public key from wallet",
@@ -917,6 +928,7 @@ export class ArkadeSwaps {
             request: swapRequest,
             response: swapResponse,
             status: "invoice.set",
+            signingDescriptor,
         };
 
         // save pending swap to storage
@@ -951,8 +963,9 @@ export class ArkadeSwaps {
 
         const resolvedArkInfo = arkInfo ?? (await this.arkProvider.getInfo());
 
+        const identity = await this.swapSigner(swap);
         const ourXOnlyPublicKey = normalizeToXOnlyKey(
-            await this.wallet.identity.xOnlyPublicKey(),
+            await identity.xOnlyPublicKey(),
             "our",
             swap.id,
         );
@@ -995,6 +1008,7 @@ export class ArkadeSwaps {
             vhtlcAddress,
             vhtlcPkScriptHex,
             vhtlcTimeouts,
+            identity,
             ourXOnlyPublicKey,
             serverXOnlyPublicKey,
             boltzXOnlyPublicKey,
@@ -1172,6 +1186,7 @@ export class ArkadeSwaps {
 
         const {
             arkInfo,
+            identity,
             vhtlcScript,
             vhtlcTimeouts,
             ourXOnlyPublicKey,
@@ -1197,6 +1212,7 @@ export class ArkadeSwaps {
         const refundWithoutReceiverLeaf = vhtlcScript.refundWithoutReceiver();
         const refundContext: RefundWithoutReceiverContext = {
             arkInfo,
+            identity,
             vhtlcScript,
             serverXOnlyPublicKey,
             refundWithoutReceiverLeaf,
@@ -1936,8 +1952,9 @@ export class ArkadeSwaps {
 
         const address = await this.wallet.getAddress();
 
+        const identity = await this.swapSigner(pendingSwap);
         const ourXOnlyPublicKey = normalizeToXOnlyKey(
-            await this.wallet.identity.xOnlyPublicKey(),
+            await identity.xOnlyPublicKey(),
             "user",
             pendingSwap.id,
         );
@@ -1992,6 +2009,7 @@ export class ArkadeSwaps {
         const refundLocktime = pendingSwap.response.lockupDetails.timeouts!.refund;
         const refundContext: RefundWithoutReceiverContext = {
             arkInfo,
+            identity,
             vhtlcScript,
             serverXOnlyPublicKey,
             refundWithoutReceiverLeaf,
@@ -2253,7 +2271,7 @@ export class ArkadeSwaps {
         };
 
         // Use shared identity utility for preimage witness
-        const vhtlcIdentity = claimVHTLCIdentity(this.wallet.identity, preimage);
+        const vhtlcIdentity = claimVHTLCIdentity(await this.swapSigner(pendingSwap), preimage);
 
         // The claim transaction we broadcast is the swap's on-chain completion;
         // its id is the txid callers expect back from waitAndClaimArk.
@@ -2420,10 +2438,14 @@ export class ArkadeSwaps {
         // ephemeral keys for BTC chain claim/refund
         const ephemeralKey = secp256k1.utils.randomSecretKey();
 
+        // Only the ARK leg is ours; the BTC leg is signed by the ephemeral key.
+        const signingDescriptor = await this.currentSigningDescriptor();
+        const arkPublicKey = hex.encode(
+            await (await this.swapSigner({ signingDescriptor })).compressedPublicKey(),
+        );
+
         const refundPublicKey =
-            to === "ARK"
-                ? hex.encode(secp256k1.getPublicKey(ephemeralKey))
-                : hex.encode(await this.wallet.identity.compressedPublicKey());
+            to === "ARK" ? hex.encode(secp256k1.getPublicKey(ephemeralKey)) : arkPublicKey;
 
         if (!refundPublicKey)
             throw new SwapError({
@@ -2431,9 +2453,7 @@ export class ArkadeSwaps {
             });
 
         const claimPublicKey =
-            to === "ARK"
-                ? hex.encode(await this.wallet.identity.compressedPublicKey())
-                : hex.encode(secp256k1.getPublicKey(ephemeralKey));
+            to === "ARK" ? arkPublicKey : hex.encode(secp256k1.getPublicKey(ephemeralKey));
 
         if (!claimPublicKey)
             throw new SwapError({
@@ -2462,6 +2482,7 @@ export class ArkadeSwaps {
             preimage: hex.encode(preimage),
             request: swapRequest,
             response: swapResponse,
+            signingDescriptor,
             status: "swap.created",
             toAddress: args.toAddress,
             type: "chain",
@@ -2791,10 +2812,10 @@ export class ArkadeSwaps {
         };
         const output = { amount: BigInt(vtxo.value), script: ctx.outputScript };
         if (isRecoverable(vtxo)) {
-            await this.joinBatch(this.wallet.identity, input, output, ctx.arkInfo, true);
+            await this.joinBatch(ctx.identity, input, output, ctx.arkInfo, true);
         } else {
             await refundWithoutReceiverVHTLCwithOffchainTx(
-                this.wallet.identity,
+                ctx.identity,
                 ctx.vhtlcScript,
                 ctx.serverXOnlyPublicKey,
                 input,
@@ -2945,7 +2966,7 @@ export class ArkadeSwaps {
                 boltzCallCount++;
                 await refundVHTLCwithOffchainTx(
                     swapId,
-                    this.wallet.identity,
+                    refundContext.identity,
                     this.arkProvider,
                     boltzXOnlyPublicKey,
                     ourXOnlyPublicKey,
@@ -3242,6 +3263,30 @@ export class ArkadeSwaps {
     // =========================================================================
     // Swap restoration and enrichment
     // =========================================================================
+
+    /**
+     * The HD descriptor a swap created now should be bound to, or `undefined`
+     * for static wallets and HD wallets that have never rotated. Swap creation
+     * never allocates an index of its own: rotation is driven by the wallet's
+     * receive events, and a swap simply rides the index that is current.
+     */
+    private async currentSigningDescriptor(): Promise<string | undefined> {
+        return isHDWalletCapable(this.wallet)
+            ? this.wallet.getCurrentSigningDescriptor()
+            : undefined;
+    }
+
+    /**
+     * The identity that owns a swap's VHTLC legs. Swaps stored before
+     * descriptor binding — and every swap of a static wallet — carry no
+     * descriptor and stay on the baseline identity.
+     */
+    private async swapSigner(swap: { signingDescriptor?: string }): Promise<Identity> {
+        if (!swap.signingDescriptor || !isHDWalletCapable(this.wallet)) {
+            return this.wallet.identity;
+        }
+        return this.wallet.signerForDescriptor(swap.signingDescriptor);
+    }
 
     /**
      * Every compressed key the wallet may hold swaps under: one per used HD

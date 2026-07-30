@@ -5488,4 +5488,169 @@ describe("ArkadeSwaps", () => {
             ).rejects.toThrow(/invalid BTC address/);
         });
     });
+    describe("HD index binding", () => {
+        const rotatedIdentity = SingleKey.fromPrivateKey(seckeys.fulmine);
+        const rotatedDescriptor = "tr([73c5da0a/86'/1'/0']tpubROTATED/0/7)";
+        const rotatedXOnly = hex.encode(mock.pubkeys.fulmine);
+
+        /** Turn the mock wallet into an HD wallet parked on a rotated index. */
+        const rotateWallet = () => {
+            (wallet as any).getCurrentSigningDescriptor = vi
+                .fn()
+                .mockResolvedValue(rotatedDescriptor);
+            (wallet as any).getUsedSigningDescriptors = vi
+                .fn()
+                .mockResolvedValue([rotatedDescriptor]);
+            (wallet as any).signerForDescriptor = vi.fn().mockResolvedValue(rotatedIdentity);
+        };
+
+        it("creates a reverse swap under the current index", async () => {
+            rotateWallet();
+            vi.spyOn(swapProvider, "createReverseSwap").mockImplementationOnce(
+                reverseSwapResponseFor(createReverseSwapResponse),
+            );
+
+            const pendingSwap = await swaps.createReverseSwap({ amount: mock.invoice.amount });
+
+            expect(pendingSwap.request.claimPublicKey).toBe(compressedPubkeys.fulmine);
+            expect(pendingSwap.signingDescriptor).toBe(rotatedDescriptor);
+        });
+
+        it("creates a submarine swap under the current index", async () => {
+            rotateWallet();
+            vi.spyOn(swapProvider, "createSubmarineSwap").mockResolvedValueOnce(
+                createSubmarineSwapResponse,
+            );
+
+            const pendingSwap = await swaps.createSubmarineSwap({
+                invoice: mock.invoice.address,
+            });
+
+            expect(pendingSwap.request.refundPublicKey).toBe(compressedPubkeys.fulmine);
+            expect(pendingSwap.signingDescriptor).toBe(rotatedDescriptor);
+        });
+
+        it("binds only the ARK leg of a chain swap to the current index", async () => {
+            rotateWallet();
+            vi.spyOn(swapProvider, "createChainSwap").mockResolvedValueOnce(
+                createArkBtcChainSwapResponse,
+            );
+
+            const arkToBtc = await swaps.createChainSwap({
+                to: "BTC",
+                from: "ARK",
+                feeSatsPerByte: 1,
+                senderLockAmount: mock.amount,
+                toAddress: mock.address.btc,
+            });
+
+            expect(arkToBtc.request.refundPublicKey).toBe(compressedPubkeys.fulmine);
+            expect(arkToBtc.request.claimPublicKey).not.toBe(compressedPubkeys.fulmine);
+            expect(arkToBtc.signingDescriptor).toBe(rotatedDescriptor);
+
+            vi.spyOn(swapProvider, "createChainSwap").mockResolvedValueOnce(
+                createBtcArkChainSwapResponse,
+            );
+            const btcToArk = await swaps.createChainSwap({
+                to: "ARK",
+                from: "BTC",
+                feeSatsPerByte: 1,
+                senderLockAmount: mock.amount,
+                toAddress: mock.address.ark,
+            });
+
+            expect(btcToArk.request.claimPublicKey).toBe(compressedPubkeys.fulmine);
+            expect(btcToArk.request.refundPublicKey).not.toBe(compressedPubkeys.fulmine);
+        });
+
+        it("stays on the baseline key when the wallet has no HD state", async () => {
+            vi.spyOn(swapProvider, "createReverseSwap").mockImplementationOnce(
+                reverseSwapResponseFor(createReverseSwapResponse),
+            );
+
+            const pendingSwap = await swaps.createReverseSwap({ amount: mock.invoice.amount });
+
+            expect(pendingSwap.request.claimPublicKey).toBe(compressedPubkeys.alice);
+            expect(pendingSwap.signingDescriptor).toBeUndefined();
+        });
+
+        describe("claim and refund routing", () => {
+            const mockVHTLC = {
+                vhtlcAddress: mock.lockupAddress,
+                vhtlcScript: {
+                    claimScript: new Uint8Array([1]),
+                    refundScript: new Uint8Array([1]),
+                    pkScript: new Uint8Array([2]),
+                    claim: () => [{}, new Uint8Array([3]), 0xc0] as any,
+                    refund: () => [{}, new Uint8Array([3]), 0xc0] as any,
+                    refundWithoutReceiver: () => [{}, new Uint8Array([3]), 0xc0] as any,
+                    encode: () => [] as any,
+                },
+            };
+
+            const reverseSwapWith = (signingDescriptor?: string): BoltzReverseSwap => ({
+                id: mock.id,
+                type: "reverse",
+                createdAt: Date.now(),
+                preimage: hex.encode(randomBytes(32)),
+                request: createReverseSwapRequest,
+                response: { ...createReverseSwapResponse, lockupAddress: mock.lockupAddress },
+                status: "swap.created",
+                signingDescriptor,
+            });
+
+            let scriptSpy: ReturnType<typeof vi.spyOn>;
+
+            beforeEach(() => {
+                vi.mocked(arkProvider.getInfo).mockResolvedValue(mockArkInfo);
+                vi.mocked(wallet.getAddress).mockResolvedValue(mock.address.ark);
+                scriptSpy = vi.spyOn(swaps, "createVHTLCScript").mockReturnValue(mockVHTLC as any);
+                vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({ vtxos: [] as any });
+            });
+
+            it("claims a bound reverse swap with the swap's key", async () => {
+                rotateWallet();
+
+                // No VTXOs at the lockup: the claim throws after the VHTLC has
+                // been rebuilt, which is the part under test.
+                await expect(swaps.claimVHTLC(reverseSwapWith(rotatedDescriptor))).rejects.toThrow(
+                    /no spendable virtual coins/,
+                );
+
+                expect(wallet.signerForDescriptor).toHaveBeenCalledWith(rotatedDescriptor);
+                expect((scriptSpy.mock.calls[0][0] as any).receiverPubkey).toBe(rotatedXOnly);
+            });
+
+            it("claims an unbound reverse swap with the baseline key", async () => {
+                rotateWallet();
+
+                await expect(swaps.claimVHTLC(reverseSwapWith())).rejects.toThrow(
+                    /no spendable virtual coins/,
+                );
+
+                expect(wallet.signerForDescriptor).not.toHaveBeenCalled();
+                expect((scriptSpy.mock.calls[0][0] as any).receiverPubkey).toBe(
+                    hex.encode(mock.pubkeys.alice),
+                );
+            });
+
+            it("refunds a bound submarine swap with the swap's key", async () => {
+                rotateWallet();
+                const submarineSwap: BoltzSubmarineSwap = {
+                    id: mock.id,
+                    type: "submarine",
+                    createdAt: Date.now(),
+                    status: "invoice.set",
+                    request: createSubmarineSwapRequest,
+                    response: { ...createSubmarineSwapResponse, address: mock.lockupAddress },
+                    signingDescriptor: rotatedDescriptor,
+                };
+
+                await expect(swaps.refundVHTLC(submarineSwap)).rejects.toThrow(/VHTLC not found/);
+
+                expect(wallet.signerForDescriptor).toHaveBeenCalledWith(rotatedDescriptor);
+                expect((scriptSpy.mock.calls[0][0] as any).senderPubkey).toBe(rotatedXOnly);
+            });
+        });
+    });
 });
