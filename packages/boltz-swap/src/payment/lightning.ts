@@ -1,21 +1,7 @@
 import type { PaymentRail, RouterContext } from "@arkade-os/sdk";
-import { isLightningInvoice, makeHandle, BIP21, assertSendableAmount } from "@arkade-os/sdk";
+import { invoiceTarget, makeHandle, assertSendableAmount } from "@arkade-os/sdk";
 import type { ArkadeSwaps } from "../arkade-swaps";
 import { getInvoiceSatoshis } from "../utils/decoding";
-
-/** The bolt11 invoice in `raw`: bare (minus any `lightning:` prefix) or the
- *  `lightning=` param of a unified BIP21 URI. */
-function invoiceOf(raw: string): string | undefined {
-    if (isLightningInvoice(raw)) return raw.replace(/^lightning:/i, "");
-    try {
-        const l = BIP21.parse(raw).params.lightning;
-        return typeof l === "string" && isLightningInvoice(l)
-            ? l.replace(/^lightning:/i, "")
-            : undefined;
-    } catch {
-        return undefined;
-    }
-}
 
 /** Amount encoded in a bolt11 invoice (sats), or 0 if amountless/undecodable. */
 function invoiceSats(invoice: string): number {
@@ -35,10 +21,10 @@ function invoiceSats(invoice: string): number {
 export function lightningRail(): PaymentRail {
     return {
         id: "lightning",
-        match: (req) => invoiceOf(req.raw) !== undefined,
+        match: (req) => invoiceTarget(req.raw) !== undefined,
         available: async (req, ctx) => {
             if (ctx.swaps == null) return false;
-            const invoice = invoiceOf(req.raw);
+            const invoice = invoiceTarget(req.raw);
             if (!invoice) return false;
             const amt = invoiceSats(invoice);
             if (amt <= 0) return true; // amountless-invoice error deferred to quote()
@@ -46,7 +32,7 @@ export function lightningRail(): PaymentRail {
             return amt >= min && amt <= max;
         },
         quote: async (req, ctx: RouterContext) => {
-            const invoice = invoiceOf(req.raw)!;
+            const invoice = invoiceTarget(req.raw)!;
             // The bolt11 invoice carries the amount; reject amountless or
             // undecodable invoices instead of surfacing a `total: 0` quote.
             const amount = invoiceSats(invoice);

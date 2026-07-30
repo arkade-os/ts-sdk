@@ -20,10 +20,13 @@ export function makeHandle(
             // ignore subscriber errors
         }
     };
+    const isTerminal = (s: PaymentStatus) => s === "settled" || s === "failed";
     const emit = (u: Update) => {
         status = u.status;
         last = u;
         for (const f of subs) notify(f, u);
+        // Nothing follows a terminal update, so hold no subscriber references.
+        if (isTerminal(u.status)) subs.clear();
     };
     const done = run(emit);
     // Surface a terminal failure on the observable stream: rails only emit() on
@@ -42,6 +45,7 @@ export function makeHandle(
         },
         subscribe(fn) {
             notify(fn, last);
+            if (isTerminal(status)) return () => {};
             subs.add(fn);
             return () => subs.delete(fn);
         },

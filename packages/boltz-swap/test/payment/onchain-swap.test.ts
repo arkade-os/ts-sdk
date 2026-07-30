@@ -49,6 +49,21 @@ describe("onchainSwapRail", () => {
         expect(await r.available?.(req, ctx(swaps(1000, 103_571)))).toBe(false);
     });
 
+    it.each([100, 150])(
+        "available() drops the rail at a %s%% fee rate instead of inverting the gate",
+        async (percentage) => {
+            const swaps = {
+                getLimits: vi.fn().mockResolvedValue({ min: 1000, max: 1_000_000 }),
+                getFees: vi.fn().mockResolvedValue({
+                    percentage,
+                    minerFees: { server: 1000, user: { claim: 500, lockup: 60 } },
+                }),
+            };
+            const req = { raw: btcAddr, amount: 100_000 };
+            expect(await onchainSwapRail().available?.(req, ctx(swaps))).toBe(false);
+        },
+    );
+
     it("available() defers to quote() when no amount is present (no limit I/O)", async () => {
         const swaps = { getLimits: vi.fn(), getFees: vi.fn() };
         expect(await onchainSwapRail().available?.({ raw: btcAddr }, ctx(swaps))).toBe(true);

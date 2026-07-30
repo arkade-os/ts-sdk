@@ -1,5 +1,6 @@
 export * from "./types";
 export * from "./predicates";
+export * from "./targets";
 export * from "./amount";
 export * from "./handle";
 export { PaymentRouter, AmbiguousRouteError } from "./router";

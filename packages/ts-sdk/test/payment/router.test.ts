@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { PaymentRouter, AmbiguousRouteError } from "../../src/payment/router";
 import type { PaymentRail, PaymentRequest, RouterContext } from "../../src/payment/types";
 
@@ -113,8 +113,15 @@ describe("PaymentRouter", () => {
                 send: async () => ({ id: "boom", status: "pending" }) as any,
             }),
         };
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         const r = new PaymentRouter(ctx).use(boom).use(rail("ark", true));
         const opts = await r.options({ raw: "x" }, { priority: ["boom", "ark"] });
         expect(opts.map((o) => o.railId)).toEqual(["ark"]);
+        // The drop is warned, so a rail broken by a bug is diagnosable.
+        expect(warn).toHaveBeenCalledWith(
+            expect.stringContaining('"boom"'),
+            expect.any(Error) as Error,
+        );
+        warn.mockRestore();
     });
 });

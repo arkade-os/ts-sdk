@@ -1,23 +1,6 @@
 import type { PaymentRail, RouterContext } from "@arkade-os/sdk";
-import {
-    isBtcAddress,
-    makeHandle,
-    BIP21,
-    resolveSendAmount,
-    tryResolveSendAmount,
-} from "@arkade-os/sdk";
+import { btcTarget, makeHandle, resolveSendAmount, tryResolveSendAmount } from "@arkade-os/sdk";
 import type { ArkadeSwaps } from "../arkade-swaps";
-
-/** The on-chain BTC address in `raw`: bare, or the address of a BIP21 URI. */
-function btcTarget(raw: string): string | undefined {
-    if (isBtcAddress(raw)) return raw;
-    try {
-        const addr = BIP21.parse(raw).params.address;
-        return typeof addr === "string" && isBtcAddress(addr) ? addr : undefined;
-    } catch {
-        return undefined;
-    }
-}
 
 /**
  * On-chain BTC send via an Ark → BTC chain swap. Matches a bare BTC address or
@@ -63,6 +46,9 @@ export function onchainSwapRail(): PaymentRail {
             // ambiguous band self-heals to the `onchain` collaborative exit.
             const serverLockAmount = amt + fees.minerFees.user.claim;
             const feeRate = fees.percentage / 100;
+            // A rate at or above 100% makes the gross-up divisor zero or
+            // negative, which would flip the max check into passing.
+            if (!(feeRate < 1)) return false;
             const userLockAmount = Math.ceil(
                 (serverLockAmount + fees.minerFees.server) / (1 - feeRate),
             );
@@ -84,6 +70,12 @@ export function onchainSwapRail(): PaymentRail {
                             receiverLockAmount: amt,
                         });
                         // Fund the Ark lockup off-chain, then the swap settles to BTC.
+                        // A rejection here is outside the refund contract below:
+                        // nothing was locked, so Boltz just times the swap out —
+                        // unless the send broadcast and only the response failed,
+                        // in which case the lockup is stranded without a
+                        // `pendingSwap` on the handle. Reconcile via
+                        // `swaps.getPendingChainSwaps()`.
                         await ctx.wallet.send({ address: arkAddress, amount: amountToPay });
                         emit({ status: "sent" });
                         const { txid } = await swaps.waitAndClaimBtc(pendingSwap);

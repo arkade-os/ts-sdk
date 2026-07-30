@@ -55,6 +55,19 @@ describe("makeHandle", () => {
         expect(failed?.error).toBe(boom);
     });
 
+    it("still replays to a post-terminal subscriber without retaining it", async () => {
+        const h = makeHandle("op6", (emit) => {
+            const result = { railId: "ark", txid: "tx" };
+            emit({ status: "settled", result });
+            return Promise.resolve(result);
+        });
+        await h.settled();
+        const seen: string[] = [];
+        const unsub = h.subscribe((u) => seen.push(u.status));
+        expect(seen).toEqual(["settled"]);
+        expect(() => unsub()).not.toThrow();
+    });
+
     it("keeps the settled status when the run rejects after emitting settled", async () => {
         const h = makeHandle("op5", (emit) => {
             emit({ status: "settled", result: { railId: "ark", txid: "tx" } });
