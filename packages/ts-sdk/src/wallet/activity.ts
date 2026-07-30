@@ -231,7 +231,7 @@ export function collabExitResolver(): ActivityResolver {
     return {
         id: "collab-exit",
         resolve(tx) {
-            if (tx.tag !== "exit") return undefined;
+            if (tx.tag !== "exit" || !tx.key.commitmentTxid) return undefined;
             return [
                 {
                     groupId: `exit:${tx.key.commitmentTxid}`,
@@ -244,11 +244,10 @@ export function collabExitResolver(): ActivityResolver {
 }
 
 /**
- * Built-in resolver: labels the genesis transaction of a minted asset. An asset
- * id encodes its genesis txid, so a tx is the mint of an asset exactly when it
- * carries that asset and its `arkTxid` is the asset's genesis. Reissues and
- * transfers carry the asset but key off a different genesis, so they are left
- * plain.
+ * Built-in resolver: labels the genesis transaction of a minted asset — "Asset
+ * mint" on the issuer's sent tx, "Asset receive" when the fresh supply arrives
+ * in the genesis tx itself. An asset id encodes its genesis txid; reissues and
+ * transfers carry the asset under a different `arkTxid`, so they are left plain.
  */
 export function assetMintResolver(): ActivityResolver {
     return {
@@ -263,10 +262,11 @@ export function assetMintResolver(): ActivityResolver {
                 }
             });
             if (minted.length === 0) return undefined;
+            const received = tx.type === TxType.TxReceived;
             return minted.map((a) => ({
                 groupId: `mint:${a.assetId}`,
-                label: "Asset mint",
-                kind: "asset-mint",
+                label: received ? "Asset receive" : "Asset mint",
+                kind: received ? "asset-receive" : "asset-mint",
                 metadata: { assetId: a.assetId, amount: a.amount.toString() },
             }));
         },

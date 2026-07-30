@@ -298,6 +298,30 @@ describe("assetMintResolver", () => {
         expect(r.resolve(transfer)).toBeUndefined();
         expect(r.resolve(tx("a"))).toBeUndefined();
     });
+
+    it("tags fresh supply received in the genesis tx as an asset receive", () => {
+        const r = assetMintResolver();
+        const genesisTxid = "33".repeat(32);
+        const assetId = AssetId.create(genesisTxid, 0).toString();
+
+        const receive: ArkTransaction = {
+            key: { arkTxid: genesisTxid, commitmentTxid: "", boardingTxid: "" },
+            type: TxType.TxReceived,
+            amount: 0,
+            settled: true,
+            createdAt: 1,
+            assets: [{ assetId, amount: 250n }],
+            tag: "offchain",
+        };
+        expect(r.resolve(receive)).toEqual([
+            {
+                groupId: `mint:${assetId}`,
+                label: "Asset receive",
+                kind: "asset-receive",
+                metadata: { assetId, amount: "250" },
+            },
+        ]);
+    });
 });
 
 describe("createDefaultActivityRegistry", () => {
