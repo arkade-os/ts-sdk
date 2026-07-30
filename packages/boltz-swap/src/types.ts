@@ -171,6 +171,11 @@ export interface BoltzReverseSwap {
     request: CreateReverseSwapRequest;
     /** Boltz API response with lockup address, invoice, and timeout details. */
     response: CreateReverseSwapResponse;
+    /**
+     * Materialized HD descriptor whose key owns this swap's VHTLC. Absent for
+     * swaps bound to the wallet's baseline identity key.
+     */
+    signingDescriptor?: string;
 }
 
 /** Tracks an in-progress submarine swap (Arkade → Lightning). */
@@ -197,6 +202,11 @@ export interface BoltzSubmarineSwap {
     request: CreateSubmarineSwapRequest;
     /** Boltz API response with payment address and expected amount. */
     response: CreateSubmarineSwapResponse;
+    /**
+     * Materialized HD descriptor whose key owns this swap's VHTLC. Absent for
+     * swaps bound to the wallet's baseline identity key.
+     */
+    signingDescriptor?: string;
 }
 
 /**
@@ -320,6 +330,11 @@ export interface BoltzChainSwap {
     request: CreateChainSwapRequest;
     /** Boltz API response with lockup and claim details. */
     response: CreateChainSwapResponse;
+    /**
+     * Materialized HD descriptor whose key owns this swap's VHTLC. Absent for
+     * swaps bound to the wallet's baseline identity key.
+     */
+    signingDescriptor?: string;
     /** Destination address for the received funds. */
     toAddress?: string;
     /** Swap amount in satoshis. */

@@ -24,6 +24,8 @@ import {
     Identity,
     VirtualCoin,
     getNetwork,
+    deriveDescriptorLeafCompressedPubKey,
+    isHDWalletCapable,
     type NetworkName,
 } from "@arkade-os/sdk";
 import type {
@@ -119,6 +121,14 @@ import {
     refundWithoutReceiverVHTLCwithOffchainTx,
     type VhtlcTimeouts,
 } from "./utils/vhtlc";
+
+/** A wallet key a swap may be locked to, with the descriptor that derives it. */
+type SwapOwnerKey = {
+    /** Compressed public key, hex. */
+    publicKey: string;
+    /** Absent for the baseline identity key. */
+    signingDescriptor?: string;
+};
 
 type SubmarineVHTLCDiagnostic = {
     totalVtxoCount: number;
@@ -3234,7 +3244,81 @@ export class ArkadeSwaps {
     // =========================================================================
 
     /**
+     * Every compressed key the wallet may hold swaps under: one per used HD
+     * signing descriptor plus the baseline identity key, which covers static
+     * wallets and swaps created before descriptor binding existed.
+     */
+    private async swapOwnerKeys(): Promise<SwapOwnerKey[]> {
+        const identityKey = hex.encode(await this.wallet.identity.compressedPublicKey());
+        if (!identityKey) throw new Error("Failed to get public key from wallet");
+
+        const keys = new Map<string, SwapOwnerKey>([[identityKey, { publicKey: identityKey }]]);
+        if (!isHDWalletCapable(this.wallet)) return [...keys.values()];
+
+        for (const signingDescriptor of await this.wallet.getUsedSigningDescriptors()) {
+            try {
+                const publicKey = hex.encode(
+                    deriveDescriptorLeafCompressedPubKey(signingDescriptor),
+                );
+                if (!keys.has(publicKey)) keys.set(publicKey, { publicKey, signingDescriptor });
+            } catch (error) {
+                logger.warn(`Skipping signing descriptor with no derivable key`, error);
+            }
+        }
+        return [...keys.values()];
+    }
+
+    /**
+     * Find which of our keys owns a restored swap by rebuilding its VHTLC until
+     * the lockup address matches — Boltz's own `keyIndex` says nothing about
+     * our derivation. Probes every candidate key against every candidate server
+     * signer (current + deprecated), so a swap that straddles an arkd signer
+     * rotation still resolves.
+     *
+     * `undefined` means no key of ours reproduces the address: the swap is not
+     * attributable and must be skipped rather than recorded under a key that
+     * cannot spend it.
+     */
+    private matchSwapOwner(args: {
+        arkInfo: ArkInfo;
+        candidates: SwapOwnerKey[];
+        /** Our side of this VHTLC — claim leg for reverse, refund leg for submarine. */
+        ourRole: "receiver" | "sender";
+        counterpartyPubkey: string;
+        preimageHash: string;
+        timeoutBlockHeights: VhtlcTimeouts;
+        lockupAddress: string;
+        swapId: string;
+    }): SwapOwnerKey | undefined {
+        for (const candidate of args.candidates) {
+            try {
+                this.resolveVHTLCForLockup({
+                    arkInfo: args.arkInfo,
+                    preimageHash: hex.decode(args.preimageHash),
+                    receiverPubkey:
+                        args.ourRole === "receiver" ? candidate.publicKey : args.counterpartyPubkey,
+                    senderPubkey:
+                        args.ourRole === "sender" ? candidate.publicKey : args.counterpartyPubkey,
+                    timeoutBlockHeights: args.timeoutBlockHeights,
+                    lockupAddress: args.lockupAddress,
+                    swapId: args.swapId,
+                });
+                return candidate;
+            } catch {
+                continue;
+            }
+        }
+        return undefined;
+    }
+
+    /**
      * Restore swaps from Boltz API.
+     *
+     * Queries the whole key set the wallet may have used ({@link swapOwnerKeys})
+     * and attributes each restored swap to the key that actually owns it, so
+     * swaps created under a rotated HD index — or by another SDK sharing the
+     * seed — come back claimable/refundable. A swap no key of ours reproduces
+     * is skipped, never recorded under the wrong key.
      *
      * Note: restored swaps may lack local-only data such as the original
      * Lightning invoice or preimage. They are intended primarily for
@@ -3245,36 +3329,58 @@ export class ArkadeSwaps {
         reverseSwaps: BoltzReverseSwap[];
         submarineSwaps: BoltzSubmarineSwap[];
     }> {
-        const publicKey = hex.encode(await this.wallet.identity.compressedPublicKey());
-        if (!publicKey) throw new Error("Failed to get public key from wallet");
-
+        const candidates = await this.swapOwnerKeys();
         const fees = boltzFees ?? (await this.swapProvider.getFees());
+        const arkInfo = await this.arkProvider.getInfo();
 
         const chainSwaps: BoltzChainSwap[] = [];
         const reverseSwaps: BoltzReverseSwap[] = [];
         const submarineSwaps: BoltzSubmarineSwap[] = [];
 
-        const restoredSwaps = await this.swapProvider.restoreSwaps(publicKey);
+        const restoredSwaps = await this.swapProvider.restoreSwaps(
+            candidates.map((c) => c.publicKey),
+        );
+
+        const skip = (id: string) =>
+            logger.warn(
+                `Skipping restored swap ${id}: no wallet key reproduces its lockup address`,
+            );
 
         for (const swap of restoredSwaps) {
             const { id, createdAt, status } = swap;
 
             if (isRestoredReverseSwap(swap)) {
-                const {
-                    amount,
-                    lockupAddress,
-                    preimageHash,
-                    serverPublicKey,
+                const { amount, lockupAddress, serverPublicKey, tree } = swap.claimDetails;
+                const preimageHash = swap.claimDetails.preimageHash ?? swap.preimageHash;
+                const timeoutBlockHeights = resolveVhtlcTimeouts(
                     tree,
-                    timeoutBlockHeights,
-                } = swap.claimDetails;
+                    swap.claimDetails.timeoutBlockHeights,
+                );
+
+                const owner =
+                    preimageHash && timeoutBlockHeights
+                        ? this.matchSwapOwner({
+                              arkInfo,
+                              candidates,
+                              ourRole: "receiver",
+                              counterpartyPubkey: serverPublicKey,
+                              preimageHash,
+                              timeoutBlockHeights,
+                              lockupAddress,
+                              swapId: id,
+                          })
+                        : undefined;
+                if (!owner) {
+                    skip(id);
+                    continue;
+                }
 
                 reverseSwaps.push({
                     id,
                     createdAt,
                     request: {
                         invoiceAmount: extractInvoiceAmount(amount, fees),
-                        claimPublicKey: publicKey,
+                        claimPublicKey: owner.publicKey,
                         preimageHash,
                     },
                     response: {
@@ -3283,15 +3389,38 @@ export class ArkadeSwaps {
                         onchainAmount: amount,
                         lockupAddress,
                         refundPublicKey: serverPublicKey,
-                        timeoutBlockHeights: resolveVhtlcTimeouts(tree, timeoutBlockHeights),
+                        timeoutBlockHeights,
                     },
                     status,
                     type: "reverse",
                     preimage: "",
+                    signingDescriptor: owner.signingDescriptor,
                 } as BoltzReverseSwap);
             } else if (isRestoredSubmarineSwap(swap)) {
-                const { amount, lockupAddress, serverPublicKey, tree, timeoutBlockHeights } =
-                    swap.refundDetails;
+                const { amount, lockupAddress, serverPublicKey, tree } = swap.refundDetails;
+                const preimageHash = swap.preimageHash ?? swap.refundDetails.preimageHash;
+                const timeoutBlockHeights = resolveVhtlcTimeouts(
+                    tree,
+                    swap.refundDetails.timeoutBlockHeights,
+                );
+
+                const owner =
+                    preimageHash && timeoutBlockHeights
+                        ? this.matchSwapOwner({
+                              arkInfo,
+                              candidates,
+                              ourRole: "sender",
+                              counterpartyPubkey: serverPublicKey,
+                              preimageHash,
+                              timeoutBlockHeights,
+                              lockupAddress,
+                              swapId: id,
+                          })
+                        : undefined;
+                if (!owner) {
+                    skip(id);
+                    continue;
+                }
 
                 let preimage = "";
                 // Skip preimage fetch for terminal swaps — nothing actionable
@@ -3314,29 +3443,45 @@ export class ArkadeSwaps {
                     status,
                     request: {
                         invoice: swap.invoice ?? "",
-                        refundPublicKey: publicKey,
+                        refundPublicKey: owner.publicKey,
                     },
                     response: {
                         id,
                         address: lockupAddress,
                         expectedAmount: amount,
                         claimPublicKey: serverPublicKey,
-                        timeoutBlockHeights: resolveVhtlcTimeouts(tree, timeoutBlockHeights),
+                        timeoutBlockHeights,
                     },
+                    signingDescriptor: owner.signingDescriptor,
                 } as BoltzSubmarineSwap);
             } else if (isRestoredChainSwap(swap)) {
-                const refundDetails = swap.refundDetails;
-                if (!refundDetails) continue;
+                // The ARK leg is the one we hold a key on: our refund leg when
+                // we locked ARK, our claim leg when we receive it.
+                const weLockArk = swap.from === "ARK";
+                const arkLeg = weLockArk ? swap.refundDetails : swap.claimDetails;
+                const lockupLeg = swap.refundDetails ?? arkLeg;
+                if (!arkLeg || !lockupLeg) continue;
 
-                const {
-                    amount,
-                    lockupAddress,
-                    serverPublicKey,
-                    timeoutBlockHeight,
-                    tree,
-                    timeoutBlockHeights,
-                } = refundDetails;
+                const arkTimeouts = resolveVhtlcTimeouts(arkLeg.tree, arkLeg.timeoutBlockHeights);
+                const owner =
+                    swap.preimageHash && arkTimeouts
+                        ? this.matchSwapOwner({
+                              arkInfo,
+                              candidates,
+                              ourRole: weLockArk ? "sender" : "receiver",
+                              counterpartyPubkey: arkLeg.serverPublicKey,
+                              preimageHash: swap.preimageHash,
+                              timeoutBlockHeights: arkTimeouts,
+                              lockupAddress: arkLeg.lockupAddress,
+                              swapId: id,
+                          })
+                        : undefined;
+                if (!owner) {
+                    skip(id);
+                    continue;
+                }
 
+                const { amount } = lockupLeg;
                 chainSwaps.push({
                     id,
                     type: "chain",
@@ -3350,22 +3495,43 @@ export class ArkadeSwaps {
                         to: swap.to,
                         from: swap.from,
                         preimageHash: swap.preimageHash,
-                        claimPublicKey: "",
+                        // Only the ARK leg is ours; the BTC leg is signed by an
+                        // ephemeral key restore cannot recover.
+                        claimPublicKey: weLockArk ? "" : owner.publicKey,
                         feeSatsPerByte: 1,
-                        refundPublicKey: "",
+                        refundPublicKey: weLockArk ? owner.publicKey : "",
                         serverLockAmount: amount,
                         userLockAmount: amount,
                     },
                     response: {
                         id,
                         lockupDetails: {
-                            amount,
-                            lockupAddress,
-                            serverPublicKey,
-                            timeoutBlockHeight,
-                            timeouts: resolveVhtlcTimeouts(tree, timeoutBlockHeights),
+                            amount: lockupLeg.amount,
+                            lockupAddress: lockupLeg.lockupAddress,
+                            serverPublicKey: lockupLeg.serverPublicKey,
+                            timeoutBlockHeight: lockupLeg.timeoutBlockHeight,
+                            timeouts: resolveVhtlcTimeouts(
+                                lockupLeg.tree,
+                                lockupLeg.timeoutBlockHeights,
+                            ),
                         },
+                        // Claiming ARK reads its VHTLC from claimDetails.
+                        ...(swap.claimDetails
+                            ? {
+                                  claimDetails: {
+                                      amount: swap.claimDetails.amount,
+                                      lockupAddress: swap.claimDetails.lockupAddress,
+                                      serverPublicKey: swap.claimDetails.serverPublicKey,
+                                      timeoutBlockHeight: swap.claimDetails.timeoutBlockHeight,
+                                      timeouts: resolveVhtlcTimeouts(
+                                          swap.claimDetails.tree,
+                                          swap.claimDetails.timeoutBlockHeights,
+                                      ),
+                                  },
+                              }
+                            : {}),
                     },
+                    signingDescriptor: owner.signingDescriptor,
                 } as BoltzChainSwap);
             }
         }

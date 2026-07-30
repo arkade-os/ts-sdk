@@ -27,6 +27,8 @@ import {
     ArkInfo,
     getNetwork,
     maybeArkError,
+    MnemonicIdentity,
+    deriveDescriptorLeafCompressedPubKey,
 } from "@arkade-os/sdk";
 import { VHTLC } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
@@ -37,6 +39,7 @@ import { ripemd160 } from "@noble/hashes/legacy.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { Address, OutScript, Script, ScriptNum } from "@scure/btc-signer";
 import { decodeInvoice } from "../src/utils/decoding";
+import { resolveVhtlcTimeouts } from "../src/utils/restoration";
 import { logger } from "../src/logger";
 import { pubECDSA } from "@scure/btc-signer/utils.js";
 import { create as createMusig } from "../src/utils/musig";
@@ -3166,69 +3169,6 @@ describe("ArkadeSwaps", () => {
             unilateralRefundLeaf: mockLeaf,
             unilateralRefundWithoutBoltzLeaf: mockLeaf,
         };
-        const mockDetails = {
-            tree: mockTree,
-            amount: 50000,
-            keyIndex: 0,
-            lockupAddress: "mock-lockup",
-            serverPublicKey: compressedPubkeys.boltz,
-            timeoutBlockHeight: 100,
-        };
-
-        const pendingReverse = {
-            id: "rev-pending",
-            type: "reverse" as const,
-            to: "ARK" as const,
-            from: "BTC" as const,
-            status: "swap.created" as BoltzSwapStatus,
-            createdAt: 1000,
-            preimageHash: hex.encode(sha256(randomBytes(32))),
-            claimDetails: mockDetails,
-        };
-
-        const finalReverse = {
-            ...pendingReverse,
-            id: "rev-final",
-            status: "invoice.settled" as BoltzSwapStatus,
-        };
-
-        const pendingSubmarine = {
-            id: "sub-pending",
-            type: "submarine" as const,
-            to: "BTC" as const,
-            from: "ARK" as const,
-            status: "transaction.mempool" as BoltzSwapStatus,
-            createdAt: 2000,
-            preimageHash: hex.encode(sha256(randomBytes(32))),
-            refundDetails: mockDetails,
-        };
-
-        const finalSubmarine = {
-            ...pendingSubmarine,
-            id: "sub-final",
-            status: "transaction.claimed" as BoltzSwapStatus,
-        };
-
-        const pendingChain = {
-            id: "chain-pending",
-            type: "chain" as const,
-            to: "BTC" as const,
-            from: "ARK" as const,
-            status: "transaction.server.mempool" as BoltzSwapStatus,
-            createdAt: 3000,
-            preimageHash: hex.encode(sha256(randomBytes(32))),
-            refundDetails: {
-                ...mockDetails,
-                tree: mockTree,
-            },
-        };
-
-        const finalChain = {
-            ...pendingChain,
-            id: "chain-final",
-            status: "transaction.claimed" as BoltzSwapStatus,
-        };
-
         const mockFees = {
             submarine: { percentage: 0.1, minerFees: 100 },
             reverse: {
@@ -3280,6 +3220,113 @@ describe("ArkadeSwaps", () => {
             unilateralRefund: 19456,
             unilateralRefundWithoutReceiver: 38400,
         };
+
+        // Restore attributes a swap by rebuilding its VHTLC until the lockup
+        // address matches, so fixtures must carry a real address built from the
+        // same key pair and timeouts Boltz would have used.
+        const makeDetails = (opts: {
+            ourRole: "receiver" | "sender";
+            preimageHash: string;
+            tree?: any;
+            timeoutBlockHeights?: typeof serverTimeouts;
+            ourKey?: string;
+        }) => {
+            const tree = opts.tree ?? mockTree;
+            const ourKey = opts.ourKey ?? compressedPubkeys.alice;
+            const timeouts = resolveVhtlcTimeouts(tree, opts.timeoutBlockHeights);
+            const lockupAddress = timeouts
+                ? createVHTLCScriptReal({
+                      network: "regtest",
+                      preimageHash: hex.decode(opts.preimageHash),
+                      receiverPubkey:
+                          opts.ourRole === "receiver" ? ourKey : compressedPubkeys.boltz,
+                      senderPubkey: opts.ourRole === "sender" ? ourKey : compressedPubkeys.boltz,
+                      serverPubkey: hex.encode(mock.pubkeys.server),
+                      timeoutBlockHeights: timeouts,
+                  }).vhtlcAddress
+                : "unresolvable-lockup";
+            return {
+                tree,
+                amount: 50000,
+                keyIndex: 0,
+                lockupAddress,
+                serverPublicKey: compressedPubkeys.boltz,
+                timeoutBlockHeight: 100,
+                ...(opts.timeoutBlockHeights
+                    ? { timeoutBlockHeights: opts.timeoutBlockHeights }
+                    : {}),
+            };
+        };
+
+        const reversePreimageHash = hex.encode(sha256(randomBytes(32)));
+        const pendingReverse = {
+            id: "rev-pending",
+            type: "reverse" as const,
+            to: "ARK" as const,
+            from: "BTC" as const,
+            status: "swap.created" as BoltzSwapStatus,
+            createdAt: 1000,
+            preimageHash: reversePreimageHash,
+            claimDetails: makeDetails({
+                ourRole: "receiver",
+                preimageHash: reversePreimageHash,
+                timeoutBlockHeights: serverTimeouts,
+            }),
+        };
+
+        const finalReverse = {
+            ...pendingReverse,
+            id: "rev-final",
+            status: "invoice.settled" as BoltzSwapStatus,
+        };
+
+        const submarinePreimageHash = hex.encode(sha256(randomBytes(32)));
+        const pendingSubmarine = {
+            id: "sub-pending",
+            type: "submarine" as const,
+            to: "BTC" as const,
+            from: "ARK" as const,
+            status: "transaction.mempool" as BoltzSwapStatus,
+            createdAt: 2000,
+            preimageHash: submarinePreimageHash,
+            refundDetails: makeDetails({
+                ourRole: "sender",
+                preimageHash: submarinePreimageHash,
+                timeoutBlockHeights: serverTimeouts,
+            }),
+        };
+
+        const finalSubmarine = {
+            ...pendingSubmarine,
+            id: "sub-final",
+            status: "transaction.claimed" as BoltzSwapStatus,
+        };
+
+        const chainPreimageHash = hex.encode(sha256(randomBytes(32)));
+        const pendingChain = {
+            id: "chain-pending",
+            type: "chain" as const,
+            to: "BTC" as const,
+            from: "ARK" as const,
+            status: "transaction.server.mempool" as BoltzSwapStatus,
+            createdAt: 3000,
+            preimageHash: chainPreimageHash,
+            refundDetails: makeDetails({
+                ourRole: "sender",
+                preimageHash: chainPreimageHash,
+                timeoutBlockHeights: serverTimeouts,
+            }),
+        };
+
+        const finalChain = {
+            ...pendingChain,
+            id: "chain-final",
+            status: "transaction.claimed" as BoltzSwapStatus,
+        };
+
+        beforeEach(() => {
+            vi.mocked(arkProvider.getInfo).mockResolvedValue(mockArkInfo);
+        });
 
         it("should include terminal swaps in results without extra API fetches", async () => {
             const restoreSpy = vi
@@ -3359,15 +3406,7 @@ describe("ArkadeSwaps", () => {
         });
 
         it("populates chain lockupDetails.timeouts from server-provided timeoutBlockHeights", async () => {
-            const chainWithTimeouts = {
-                ...pendingChain,
-                refundDetails: {
-                    ...mockDetails,
-                    tree: mockTree,
-                    timeoutBlockHeights: serverTimeouts,
-                },
-            };
-            vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([chainWithTimeouts]);
+            vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([pendingChain]);
             vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
 
             const result = await swaps.restoreSwaps();
@@ -3379,7 +3418,11 @@ describe("ArkadeSwaps", () => {
         it("derives chain lockupDetails.timeouts from the VHTLC tree when timeoutBlockHeights is absent", async () => {
             const chainDerived = {
                 ...pendingChain,
-                refundDetails: { ...mockDetails, tree: realVhtlcTree },
+                refundDetails: makeDetails({
+                    ourRole: "sender",
+                    preimageHash: chainPreimageHash,
+                    tree: realVhtlcTree,
+                }),
             };
             vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([chainDerived]);
             vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
@@ -3389,34 +3432,47 @@ describe("ArkadeSwaps", () => {
             expect(result.chainSwaps[0].response.lockupDetails.timeouts).toEqual(derivedTimeouts);
         });
 
-        it("leaves chain lockupDetails.timeouts undefined when the tree is incomplete (zero-guard)", async () => {
-            // pendingChain uses the empty mockTree and carries no timeoutBlockHeights,
-            // so every derived locktime is 0 — the guard must skip rather than build a
-            // VHTLC with zeroed timeouts (which would fail refundArk's address check).
-            vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([pendingChain]);
+        it("skips a chain swap whose timeouts cannot be resolved (zero-guard)", async () => {
+            // An empty tree with no timeoutBlockHeights derives every locktime as
+            // 0: the VHTLC can't be rebuilt, so the swap can't be attributed to
+            // any of our keys and must be dropped rather than mis-recorded.
+            const chainUnresolvable = {
+                ...pendingChain,
+                refundDetails: makeDetails({
+                    ourRole: "sender",
+                    preimageHash: chainPreimageHash,
+                }),
+            };
+            vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([chainUnresolvable]);
             vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
 
             const result = await swaps.restoreSwaps();
 
-            expect(result.chainSwaps[0].response.lockupDetails.timeouts).toBeUndefined();
+            expect(result.chainSwaps).toHaveLength(0);
         });
 
         it("applies the same timeouts resolution to restored reverse and submarine swaps", async () => {
             const reverseDerived = {
                 ...pendingReverse,
                 id: "rev-derived",
-                claimDetails: { ...mockDetails, tree: realVhtlcTree },
+                claimDetails: makeDetails({
+                    ourRole: "receiver",
+                    preimageHash: reversePreimageHash,
+                    tree: realVhtlcTree,
+                }),
             };
             const submarineDerived = {
                 ...pendingSubmarine,
                 id: "sub-derived",
-                refundDetails: { ...mockDetails, tree: realVhtlcTree },
+                refundDetails: makeDetails({
+                    ourRole: "sender",
+                    preimageHash: submarinePreimageHash,
+                    tree: realVhtlcTree,
+                }),
             };
             vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([
                 reverseDerived,
                 submarineDerived,
-                pendingReverse, // empty tree -> undefined
-                pendingSubmarine, // empty tree -> undefined
             ]);
             vi.spyOn(swapProvider, "getSwapPreimage").mockResolvedValue({
                 preimage: hex.encode(randomBytes(32)),
@@ -3425,21 +3481,122 @@ describe("ArkadeSwaps", () => {
 
             const result = await swaps.restoreSwaps();
 
-            const byId = <T extends { id: string }>(swaps: T[], id: string) =>
-                swaps.find((s) => s.id === id)!;
+            expect(result.reverseSwaps[0].response.timeoutBlockHeights).toEqual(derivedTimeouts);
+            expect(result.submarineSwaps[0].response.timeoutBlockHeights).toEqual(derivedTimeouts);
+        });
 
-            expect(byId(result.reverseSwaps, "rev-derived").response.timeoutBlockHeights).toEqual(
-                derivedTimeouts,
+        describe("multi-key attribution", () => {
+            const hdIdentity = MnemonicIdentity.fromMnemonic(
+                "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+                { isMainnet: false },
             );
-            expect(
-                byId(result.reverseSwaps, "rev-pending").response.timeoutBlockHeights,
-            ).toBeUndefined();
-            expect(byId(result.submarineSwaps, "sub-derived").response.timeoutBlockHeights).toEqual(
-                derivedTimeouts,
-            );
-            expect(
-                byId(result.submarineSwaps, "sub-pending").response.timeoutBlockHeights,
-            ).toBeUndefined();
+            const rotatedDescriptor = hdIdentity.descriptor.replace("/*)", "/7)");
+            const rotatedKey = hex.encode(deriveDescriptorLeafCompressedPubKey(rotatedDescriptor));
+
+            /** Wallet reporting one rotated descriptor beyond the baseline key. */
+            const withRotatedDescriptor = () => {
+                (wallet as any).getUsedSigningDescriptors = vi
+                    .fn()
+                    .mockResolvedValue([rotatedDescriptor]);
+                (wallet as any).getCurrentSigningDescriptor = vi
+                    .fn()
+                    .mockResolvedValue(rotatedDescriptor);
+                (wallet as any).signerForDescriptor = vi.fn().mockResolvedValue(identity);
+            };
+
+            it("queries every used descriptor key alongside the identity key", async () => {
+                withRotatedDescriptor();
+                const restoreSpy = vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([]);
+                vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+                await swaps.restoreSwaps();
+
+                expect(restoreSpy).toHaveBeenCalledWith([compressedPubkeys.alice, rotatedKey]);
+            });
+
+            it("attributes a swap locked to a rotated key and records its descriptor", async () => {
+                withRotatedDescriptor();
+                const rotatedReverse = {
+                    ...pendingReverse,
+                    id: "rev-rotated",
+                    claimDetails: makeDetails({
+                        ourRole: "receiver",
+                        preimageHash: reversePreimageHash,
+                        timeoutBlockHeights: serverTimeouts,
+                        ourKey: rotatedKey,
+                    }),
+                };
+                vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([rotatedReverse]);
+                vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+                const result = await swaps.restoreSwaps();
+
+                expect(result.reverseSwaps).toHaveLength(1);
+                expect(result.reverseSwaps[0].request.claimPublicKey).toBe(rotatedKey);
+                expect(result.reverseSwaps[0].signingDescriptor).toBe(rotatedDescriptor);
+            });
+
+            it("leaves the baseline key undescribed", async () => {
+                vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([pendingReverse]);
+                vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+                const result = await swaps.restoreSwaps();
+
+                expect(result.reverseSwaps[0].request.claimPublicKey).toBe(compressedPubkeys.alice);
+                expect(result.reverseSwaps[0].signingDescriptor).toBeUndefined();
+            });
+
+            it("skips a swap no key of ours reproduces", async () => {
+                const foreignReverse = {
+                    ...pendingReverse,
+                    id: "rev-foreign",
+                    claimDetails: makeDetails({
+                        ourRole: "receiver",
+                        preimageHash: reversePreimageHash,
+                        timeoutBlockHeights: serverTimeouts,
+                        ourKey: compressedPubkeys.fulmine,
+                    }),
+                };
+                vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([foreignReverse]);
+                vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+                const result = await swaps.restoreSwaps();
+
+                expect(result.reverseSwaps).toHaveLength(0);
+            });
+
+            it("gives a restored ARK-lockup chain swap a usable refund key", async () => {
+                vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([pendingChain]);
+                vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+                const result = await swaps.restoreSwaps();
+
+                expect(result.chainSwaps[0].request.refundPublicKey).toBe(compressedPubkeys.alice);
+            });
+
+            it("gives a restored ARK-claim chain swap a usable claim key", async () => {
+                const btcToArk = {
+                    id: "chain-to-ark",
+                    type: "chain" as const,
+                    to: "ARK" as const,
+                    from: "BTC" as const,
+                    status: "transaction.server.mempool" as BoltzSwapStatus,
+                    createdAt: 4000,
+                    preimageHash: chainPreimageHash,
+                    claimDetails: makeDetails({
+                        ourRole: "receiver",
+                        preimageHash: chainPreimageHash,
+                        timeoutBlockHeights: serverTimeouts,
+                    }),
+                };
+                vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([btcToArk]);
+                vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+                const result = await swaps.restoreSwaps();
+
+                expect(result.chainSwaps[0].request.claimPublicKey).toBe(compressedPubkeys.alice);
+                expect(result.chainSwaps[0].response.claimDetails.timeouts).toEqual(serverTimeouts);
+            });
         });
     });
 
