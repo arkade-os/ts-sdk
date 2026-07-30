@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import transactionHistory from "./fixtures/transaction_history.json";
 import { VirtualCoin, TxType, ArkTransaction } from "../src/wallet";
 import { buildTransactionHistory } from "../src/utils/transactionHistory";
@@ -1007,6 +1007,97 @@ describe("buildTransactionHistory", () => {
         });
     });
 
+    describe("batched createdAt resolver", () => {
+        const baseDate = new Date("2025-11-01T10:00:00Z");
+
+        const spentVtxo = (txid: string, arkTxId: string, createdAt = baseDate): VirtualCoin => ({
+            txid,
+            vout: 0,
+            value: 1000,
+            status: { confirmed: false },
+            virtualStatus: { state: "preconfirmed" },
+            createdAt,
+            isUnrolled: false,
+            isSpent: true,
+            arkTxId,
+        });
+
+        it("calls the resolver once with all distinct txids, deduped", async () => {
+            const resolver = vi.fn((txids: string[]) =>
+                Promise.resolve(new Map(txids.map((t, i) => [t, 1_700_000_000_000 + i] as const))),
+            );
+
+            const txs = await buildTransactionHistory(
+                [
+                    spentVtxo("in-a", "ark-tx-1"),
+                    spentVtxo("in-b", "ark-tx-1", new Date(baseDate.getTime() + 1000)),
+                    spentVtxo("in-c", "ark-tx-2"),
+                ],
+                [],
+                new Set(),
+                resolver,
+            );
+
+            expect(resolver).toHaveBeenCalledTimes(1);
+            expect(resolver.mock.calls[0][0].slice().sort()).toStrictEqual([
+                "ark-tx-1",
+                "ark-tx-2",
+            ]);
+
+            const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
+            expect(sentTxs).toHaveLength(2);
+            const byTxid = new Map(sentTxs.map((t) => [t.key.arkTxid, t.createdAt]));
+            expect(byTxid.get("ark-tx-1")).toBe(1_700_000_000_000);
+            expect(byTxid.get("ark-tx-2")).toBe(1_700_000_000_001);
+        });
+
+        it("does not call the resolver when every spending tx has a change output", async () => {
+            const resolver = vi.fn((txids: string[]) => Promise.resolve(new Map<string, number>()));
+
+            const changeVtxo: VirtualCoin = {
+                txid: "ark-tx-1",
+                vout: 0,
+                value: 400,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: new Date(baseDate.getTime() + 1000),
+                isUnrolled: false,
+                isSpent: false,
+            };
+
+            const txs = await buildTransactionHistory(
+                [spentVtxo("in-a", "ark-tx-1"), changeVtxo],
+                [],
+                new Set(),
+                resolver,
+            );
+
+            expect(resolver).not.toHaveBeenCalled();
+            const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
+            expect(sentTxs).toHaveLength(1);
+            expect(sentTxs[0].createdAt).toBe(baseDate.getTime() + 1000);
+        });
+
+        it("falls back to createdAt + 1 for txids missing from a partial map", async () => {
+            const resolver = vi.fn((_txids: string[]) =>
+                Promise.resolve(new Map([["ark-tx-1", 1_700_000_000_000]])),
+            );
+
+            const txs = await buildTransactionHistory(
+                [spentVtxo("in-a", "ark-tx-1"), spentVtxo("in-b", "ark-tx-2")],
+                [],
+                new Set(),
+                resolver,
+            );
+
+            const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
+            expect(sentTxs).toHaveLength(2);
+            const byTxid = new Map(sentTxs.map((t) => [t.key.arkTxid, t.createdAt]));
+            expect(byTxid.get("ark-tx-1")).toBe(1_700_000_000_000);
+            expect(byTxid.get("ark-tx-2")).toBe(baseDate.getTime() + 1);
+        });
+    });
+
     describe("Handles real-life histories correctly", () => {
         transactionHistory.forEach(
             ({
@@ -1019,8 +1110,16 @@ describe("buildTransactionHistory", () => {
                 sendAllTxTime,
             }) => {
                 it(`should handle history from ${address}`, async () => {
-                    const getTxCreatedAt = sendAllTxTime
-                        ? (txid: string) => Promise.resolve((sendAllTxTime as any)[txid] ?? 0)
+                    // `?? 0` matches the pre-batching callback: absent txids resolve to 0.
+                    const resolveTxCreatedAt = sendAllTxTime
+                        ? (txids: string[]) =>
+                              Promise.resolve(
+                                  new Map(
+                                      txids.map(
+                                          (t) => [t, (sendAllTxTime as any)[t] ?? 0] as const,
+                                      ),
+                                  ),
+                              )
                         : undefined;
                     const transactions = await buildTransactionHistory(
                         vtxos.map((_) => ({
@@ -1029,7 +1128,7 @@ describe("buildTransactionHistory", () => {
                         })) as VirtualCoin[],
                         allBoardingTxs as ArkTransaction[],
                         new Set(commitmentsToIgnore),
-                        getTxCreatedAt,
+                        resolveTxCreatedAt,
                     );
                     expect(transactions).toStrictEqual(expected);
 

@@ -64,23 +64,47 @@ function subtractAssets(spent: VirtualCoin[], change: VirtualCoin[]): Asset[] | 
 }
 
 /**
+ * Ark txids the main loop needs a `createdAt` for: spent virtual outputs whose
+ * spending tx left no change output in the wallet. Exactly the loop's fetch set.
+ */
+function collectArkTxidsNeedingCreatedAt(vtxos: VirtualCoin[]): string[] {
+    const txids = new Set<string>();
+    for (const vtxo of vtxos) {
+        if (vtxo.isSpent && vtxo.arkTxId && !vtxos.some((v) => v.txid === vtxo.arkTxId)) {
+            txids.add(vtxo.arkTxId);
+        }
+    }
+    return [...txids];
+}
+
+/**
  * Builds the transaction history by analyzing virtual outputs, boarding transactions, and ignored commitments.
  * History is sorted from newest to oldest and is composed only of SENT and RECEIVED transactions.
  *
  * @param {VirtualCoin[]} vtxos - An array of virtual outputs representing the user's transactions and balances.
  * @param {ArkTransaction[]} allBoardingTxs - An array of boarding transactions to include in the history.
  * @param {Set<string>} commitmentsToIgnore - A set of commitment IDs that should be excluded from processing.
+ * @param resolveTxCreatedAt - Batched `createdAt` resolver, called at most once; missing txids
+ * fall back to the spent output's `createdAt + 1`.
  * @return {ExtendedArkTransaction[]} A sorted array of extended Arkade transactions, representing the transaction history.
  */
 export async function buildTransactionHistory(
     vtxos: VirtualCoin[],
     allBoardingTxs: ArkTransaction[],
     commitmentsToIgnore: Set<string>,
-    getTxCreatedAt?: (txid: string) => Promise<number | undefined>,
+    resolveTxCreatedAt?: (txids: string[]) => Promise<Map<string, number>>,
 ): Promise<ExtendedArkTransaction[]> {
     const fromOldestVtxo = vtxos
         .map(normalizeVtxo)
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+    const txidsNeedingCreatedAt = resolveTxCreatedAt
+        ? collectArkTxidsNeedingCreatedAt(fromOldestVtxo)
+        : [];
+    const resolvedCreatedAt =
+        txidsNeedingCreatedAt.length > 0
+            ? await resolveTxCreatedAt!(txidsNeedingCreatedAt)
+            : new Map<string, number>();
     const unmatchedSettledBoardingTxs = allBoardingTxs
         .filter(isSettledBoardingReceive)
         .sort((a, b) => a.createdAt - b.createdAt);
@@ -166,10 +190,7 @@ export async function buildTransactionHistory(
                     txTime = changes[0].createdAt.getTime();
                 } else {
                     txAmount = spentAmount;
-                    // TODO: fetch the virtual output with /v1/indexer/vtxos?outpoints=<vtxo.arkTxid:0> to know when the tx was made
-                    txTime = getTxCreatedAt
-                        ? ((await getTxCreatedAt(vtxo.arkTxId!)) ?? vtxo.createdAt.getTime() + 1)
-                        : vtxo.createdAt.getTime() + 1;
+                    txTime = resolvedCreatedAt.get(vtxo.arkTxId) ?? vtxo.createdAt.getTime() + 1;
                 }
 
                 const assets = subtractAssets(allSpent, changes);
