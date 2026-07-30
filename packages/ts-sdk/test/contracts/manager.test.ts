@@ -11,6 +11,7 @@ import {
 } from "../../src";
 import { ContractRepository } from "../../src/repositories";
 import { contractHandlers } from "../../src/contracts/handlers";
+import { OVERLAP_MS } from "../../src/utils/syncCursors";
 import { hex } from "@scure/base";
 import {
     createDefaultContractParams,
@@ -346,11 +347,9 @@ describe("ContractManager", () => {
     });
 
     describe("refreshVtxos includeInactive", () => {
-        // Default `refreshVtxos()` syncs only the watched set
-        // (active contracts + inactives that still have known VTXOs).
-        // `includeInactive: true` widens the query to every contract in
-        // the repository — the audit path for "did anyone send funds
-        // to a stale rotated address?".
+        // Default `refreshVtxos()` syncs the watched set;
+        // `includeInactive: true` widens it to every repository row,
+        // which differs only for rows the watcher never registered.
         //
         // The manager validates that `script` is derived from `params`,
         // so these tests seed the repository directly with synthetic
@@ -403,7 +402,7 @@ describe("ContractManager", () => {
             expect(requested.has(inactiveScript)).toBe(true);
         });
 
-        it("default path (no flag) skips inactive contracts that have no known VTXOs", async () => {
+        it("default path (no flag) skips repository rows the watcher never registered", async () => {
             await seedActive();
             await seedRaw(inactiveScript, "stale-address", "inactive");
 
@@ -412,22 +411,15 @@ describe("ContractManager", () => {
 
             await manager.refreshVtxos();
 
-            // The inactive script must NOT appear in any `scripts`
-            // filter — that's the privacy/perf saving the watcher
-            // gives us. `includeInactive` is the explicit override.
+            // `seedRaw` bypasses `createContract`, so the watcher never
+            // saw this script.
             const requested = collectRequestedScripts(mockIndexer);
             expect(requested.has(inactiveScript)).toBe(false);
         });
 
-        it("default path skips contracts the watcher itself transitioned to inactive", async () => {
-            // The `seedRaw` variants above prove unmanaged repository
-            // rows are ignored. This test exercises the path that
-            // actually happens in production: a contract registered
-            // through `manager.createContract` is later transitioned
-            // to `inactive` via `setContractState`. If the watcher
-            // leaked the now-inactive script back into its watched
-            // set, the default `refreshVtxos()` would still hit the
-            // indexer for it — defeating the privacy/perf rationale.
+        it("default path still covers contracts the watcher transitioned to inactive", async () => {
+            // The production shape the `seedRaw` variants can't reach: a
+            // registered contract later retired via `setContractState`.
             await seedActive();
             await manager.createContract({
                 type: "default",
@@ -445,7 +437,7 @@ describe("ContractManager", () => {
 
             const requested = collectRequestedScripts(mockIndexer);
             expect(requested.has(TEST_DEFAULT_SCRIPT)).toBe(true);
-            expect(requested.has(SECOND_DEFAULT_SCRIPT)).toBe(false);
+            expect(requested.has(SECOND_DEFAULT_SCRIPT)).toBe(true);
         });
 
         it("explicit scripts filter takes precedence over includeInactive", async () => {
@@ -566,6 +558,86 @@ describe("ContractManager", () => {
 
                 const stateAfter = await walletRepo.getWalletState();
                 expect(stateAfter?.lastSyncTime).toBe(SEEDED_CURSOR);
+            } finally {
+                await mgr.dispose();
+            }
+        });
+    });
+
+    describe("retired contract coverage", () => {
+        // Detection is asserted through *background* channels only, with
+        // no read API involved, so these keep guarding once reads become
+        // repository-only.
+
+        it("a retired, fully-spent contract that receives is picked up by the reconnect sweep", async () => {
+            const walletRepo = new InMemoryWalletRepository();
+            const contractRepo = new InMemoryContractRepository();
+            const mgr = await ContractManager.create({
+                indexerProvider: mockIndexer,
+                contractRepository: contractRepo,
+                walletRepository: walletRepo,
+                watcherConfig: {
+                    failsafePollIntervalMs: 1000,
+                    reconnectDelayMs: 500,
+                },
+            });
+
+            try {
+                await mgr.createContract({
+                    type: "default",
+                    params: createDefaultContractParams(),
+                    script: TEST_DEFAULT_SCRIPT,
+                    address: "retired-address",
+                });
+                // Retired with no VTXOs left: neither arm of the old
+                // `active || lastKnownVtxos.size > 0` filter held it.
+                await mgr.setContractState(TEST_DEFAULT_SCRIPT, "inactive");
+
+                const incoming = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
+                    txid: "ab".repeat(32),
+                });
+                (mockIndexer.getVtxos as any).mockClear();
+                (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [incoming] });
+
+                // Background channel: the reconnect reconcile.
+                await (mgr as any).handleContractEvent({
+                    type: "connection_reset",
+                    timestamp: Date.now(),
+                });
+
+                expect(collectRequestedScripts(mockIndexer).has(TEST_DEFAULT_SCRIPT)).toBe(true);
+                const stored = await walletRepo.getVtxos("retired-address");
+                expect(stored.map((v) => v.txid)).toContain(incoming.txid);
+            } finally {
+                await mgr.dispose();
+            }
+        });
+
+        it("keeps a retired contract in the subscription", async () => {
+            const mgr = await ContractManager.create({
+                indexerProvider: mockIndexer,
+                contractRepository: new InMemoryContractRepository(),
+                walletRepository: new InMemoryWalletRepository(),
+                watcherConfig: {
+                    failsafePollIntervalMs: 1000,
+                    reconnectDelayMs: 500,
+                },
+            });
+
+            try {
+                await mgr.createContract({
+                    type: "default",
+                    params: createDefaultContractParams(),
+                    script: TEST_DEFAULT_SCRIPT,
+                    address: "retired-address",
+                });
+                (mockIndexer.subscribeForScripts as any).mockClear();
+                await mgr.setContractState(TEST_DEFAULT_SCRIPT, "inactive");
+
+                const subscribed = (mockIndexer.subscribeForScripts as any).mock.calls.flatMap(
+                    (c: any) => c[0],
+                );
+                expect(subscribed).toContain(TEST_DEFAULT_SCRIPT);
             } finally {
                 await mgr.dispose();
             }
@@ -802,6 +874,49 @@ describe("ContractManager", () => {
 
             // Cursor untouched — caller-supplied windows are targeted and
             // must not move the global high-water mark.
+            const stateAfter = await repo.getWalletState();
+            expect(stateAfter?.lastSyncTime).toBe(SEEDED_CURSOR);
+        });
+
+        // Regression for restore's bulk hydration: contracts a scan just
+        // discovered have no prior sync state, so their first fetch must be
+        // unbounded. `after: 0` bypasses the cursor the boot-time reconcile
+        // already advanced past their history.
+        it("`after: 0` fetches history predating the cursor without advancing it", async () => {
+            const { mgr, repo } = await makeFreshManager();
+
+            await repo.saveWalletState({
+                lastSyncTime: SEEDED_CURSOR,
+                settings: { vtxoCursorMigrated: true },
+            });
+
+            const ancient = new Date(Date.now() - 30 * OVERLAP_MS);
+            (mockIndexer.getVtxos as any).mockClear();
+            // Honours the `after` bound, so a cursor-derived window would
+            // come back empty — without this the assertions pass either way.
+            (mockIndexer.getVtxos as any).mockImplementation(async (opts: any) => {
+                const vtxo = createMockVtxo({
+                    script: TEST_DEFAULT_SCRIPT,
+                    createdAt: ancient,
+                });
+                const visible = !opts?.after || ancient.getTime() > opts.after;
+                return { vtxos: visible ? [vtxo] : [] };
+            });
+
+            await mgr.refreshVtxos({ includeInactive: true, after: 0 });
+
+            const calls = (mockIndexer.getVtxos as any).mock.calls;
+            expect(calls.length).toBeGreaterThan(0);
+            for (const args of calls) {
+                expect(args[0]?.after).toBe(0);
+            }
+
+            const stored = await repo.getVtxos("address");
+            expect(stored).toHaveLength(1);
+            expect(stored[0].createdAt).toEqual(ancient);
+
+            // Same invariant as the explicit-window case above: a targeted
+            // superset fetch must not move the global watermark.
             const stateAfter = await repo.getWalletState();
             expect(stateAfter?.lastSyncTime).toBe(SEEDED_CURSOR);
         });

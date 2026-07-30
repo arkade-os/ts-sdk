@@ -165,7 +165,7 @@ export async function registerExpoBackgroundTask(
     options?: { minimumInterval?: number },
 ): Promise<void> {
     await BackgroundTask.registerTaskAsync(taskName, {
-        minimumInterval: (options?.minimumInterval ?? 15) * 60,
+        minimumInterval: options?.minimumInterval ?? 15,
     });
 }
 

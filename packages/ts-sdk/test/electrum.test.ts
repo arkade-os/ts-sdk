@@ -414,6 +414,20 @@ describe("ElectrumOnchainProvider", () => {
             });
         });
 
+        it("returns confirmed=false when the not-in-block error arrives space-stripped", async () => {
+            // ws-electrumx-client's frame parser splits incoming frames on
+            // spaces (and CR/LF) and reassembles the pieces without re-adding
+            // the delimiters, so multi-word server errors reach us with their
+            // internal spaces removed. The classifier must match the collapsed
+            // wording — this is the actual shape behind the recurring CI flake.
+            wsMock.request.mockRejectedValueOnce(
+                new Error("Noconfirmedtransactionmatchingtherequestedhashwasfound"),
+            );
+            expect(await provider.getTxStatus("abc")).toEqual({
+                confirmed: false,
+            });
+        });
+
         it("returns confirmed=false when transaction.get_merkle reports block_height <= 0", async () => {
             wsMock.request.mockResolvedValueOnce({ block_height: 0 });
             expect(await provider.getTxStatus("abc")).toEqual({

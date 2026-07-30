@@ -8,10 +8,17 @@ import { RenewalConfig, SettlementConfig } from "./vtxo-manager";
 import { IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
 import { ContractWatcherConfig } from "../contracts/contractWatcher";
-import { ContractRepository, WalletRepository } from "../repositories";
+import {
+    ContractRepository,
+    WalletRepository,
+    IntentRepository,
+    VirtualTxRepository,
+} from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
 import { IDelegateManager } from "./delegate";
 import type { Activity, ActivityRegistry } from "./activity";
+import type { ExitCaptureMode } from "./exit/capture";
+import type { ExitDataSource } from "./exit/resolver";
 export {
     ActivityRegistry,
     boardingResolver,
@@ -214,6 +221,21 @@ export interface WalletConfig extends ReadonlyWalletConfig {
      * @defaultValue `'auto'`
      */
     walletMode?: WalletMode;
+
+    /**
+     * Per-side width of the HD look-ahead watch window: the wallet watches
+     * missing offchain receive scripts across `[watermark - N, watermark + N]`
+     * so funds paid to an address issued by an external party (a merchant
+     * backend sharing the seed) arrive without an explicit `restore()`.
+     *
+     * Only meaningful for HD wallets (`walletMode: 'hd'` or an HD
+     * {@link DescriptorProvider}); ignored otherwise. Raise it when the issuer
+     * is expected to hand out more than `N` consecutive addresses without any
+     * of them being paid. Must be a positive integer.
+     *
+     * @defaultValue `20`
+     */
+    lookAheadWindow?: number;
 }
 
 /**
@@ -228,6 +250,35 @@ export type StorageConfig = {
     walletRepository: WalletRepository;
     /** Contract-state repository implementation. */
     contractRepository: ContractRepository;
+    /**
+     * Optional intent-lifecycle repository. Opt-in: when present, the wallet
+     * persists settlement intents and excludes intent-locked VTXOs from
+     * spendable balance. Absent ⇒ those code paths are no-ops.
+     */
+    intentRepository?: IntentRepository;
+    /**
+     * **Experimental / inert.** Optional virtual-tx (exit-branch) repository.
+     * Today it is only a best-effort raw-PSBT cache that unilateral exit
+     * ({@link Unroll}) reads and writes when a caller passes it to
+     * `Unroll.Session.create`. Normal wallet/contract sync does NOT populate,
+     * maintain, or prune it, and {@link ContractManager} is never given it —
+     * branch/full-mode persistence is out of scope for this release. Treat this
+     * option as experimental until those paths land. Absent ⇒ no-op.
+     */
+    virtualTxRepository?: VirtualTxRepository;
+    /**
+     * Optional exit-data capture settings (only in effect when
+     * `virtualTxRepository` is set). `mode` "lite" (default) stores structure
+     * only; "full" stores PSBTs so a unilateral exit needs no Ark indexer.
+     * `minExitWorthSats` (default 1000) skips dust. `sources` are extra
+     * `ExitDataSource`s (e.g. a wallet-provider) tried before the indexer for
+     * both capture and exit reads.
+     */
+    exitDataCapture?: {
+        mode?: ExitCaptureMode;
+        minExitWorthSats?: number;
+        sources?: ExitDataSource[];
+    };
 };
 
 /**
@@ -268,7 +319,11 @@ export interface WalletBalance {
     settled: number;
     /** Spendable preconfirmed (unfinalized) balance. */
     preconfirmed: number;
-    /** Spendable offchain balance (`settled + preconfirmed`). */
+    /**
+     * Immediately spendable offchain balance: the `settled + preconfirmed`
+     * rule applied only to VTXOs not locked by an in-flight (non-terminal)
+     * intent. Equals `settled + preconfirmed` when nothing is intent-locked.
+     */
     available: number;
     /** Recoverable balance from subdust or expired (swept) virtual outputs. */
     recoverable: number;
@@ -341,16 +396,15 @@ export interface Asset {
  */
 export interface Recipient {
     address: string;
-
     /**
      * BTC amount in satoshis.
      *
      * @defaultValue Dust amount (`330`).
      */
     amount?: number;
-
     /** Assets to send to the same recipient (`assetId` & `amount`) */
     assets?: Asset[];
+    extensions?: Array<{ type: number; payload: Uint8Array }>; // custom extension packets to embed in the tx
 }
 
 /**
@@ -468,7 +522,13 @@ export interface BurnParams {
  * @see Output
  */
 export interface SettleParams {
-    /** Offchain virtual outputs and/or onchain boarding inputs to settle. */
+    /**
+     * Offchain virtual outputs and/or onchain boarding inputs to settle.
+     *
+     * @remarks
+     * Arknotes are settled by passing the `ArkNote` itself (it is an `ExtendedCoin`), not its
+     * string form — `ArkNote.fromString(note)`.
+     */
     inputs: ExtendedCoin[];
     /** Optional onchain outputs to create (i.e., exit to). */
     outputs: Output[];
@@ -501,7 +561,13 @@ export interface Status {
 }
 
 /**
- * Virtual output status
+ * Virtual output status.
+ *
+ * @deprecated Use the canonical facts on {@link VirtualCoin} — `isSwept`, `isPreconfirmed`,
+ * `isSpent`, `expiresAt`, `expiresAtHeight`, `commitmentTxIds`, `spentBy`, `settledBy` — and the
+ * capability predicates {@link canSpendOffchain}, {@link canRecoverOnchain},
+ * {@link hasTerminalSpend}, {@link isPastExpiry}. `state` collapses independent facts into one
+ * lossy label; this object is retained only as a backward-compatible projection.
  */
 export interface VirtualStatus {
     /**
@@ -512,27 +578,26 @@ export interface VirtualStatus {
      * - `swept`: expired/swept and recoverable in a new batch
      * - `spent`: destroyed by a later transaction
      *
-     * @remarks
-     * `state` is the high-level lifecycle summary used throughout wallet balance,
-     * recovery, and transaction history logic.
+     * @deprecated Lossy: the states are not orthogonal and collapse with precedence
+     * `spent` > `swept` > `preconfirmed` > `settled`, so a spent VTXO that was also swept reports
+     * only `spent`. Read `isSpent`/`isSwept`/`isPreconfirmed` instead, or a capability predicate.
      */
     state: "preconfirmed" | "settled" | "swept" | "spent";
 
     /**
      * Which batch commitment transaction(s) this virtual output depends on.
      *
-     * @remarks
-     * The history builder uses these ids to group received batch transactions and
-     * relate refreshed or forfeited virtual outputs back to the same batch.
+     * @deprecated Use {@link VirtualCoin.commitmentTxIds}.
      */
     commitmentTxIds?: string[];
 
     /**
-     * The earliest point at which this virtual output stops being safely preconfirmed.
+     * The earliest point at which this virtual output stops being safely preconfirmed,
+     * in milliseconds.
      *
-     * @remarks
-     * The value is stored in milliseconds in the wallet model and is used by expiry
-     * and recovery logic to decide when a virtual output can be swept or renewed.
+     * @deprecated Unit-ambiguous: the server returns a single scalar that is either unix seconds or
+     * a block height, and both land here multiplied by 1000. Use {@link VirtualCoin.expiresAt} and
+     * {@link VirtualCoin.expiresAtHeight}, which disambiguate the two.
      */
     batchExpiry?: number;
 }
@@ -560,8 +625,16 @@ export interface Coin extends Outpoint {
 /**
  * Virtual output data.
  *
+ * @remarks
+ * The canonical facts (`isSwept`, `isPreconfirmed`, `isSpent`, `expiresAt`, `expiresAtHeight`,
+ * `commitmentTxIds`) are optional because `VirtualCoin` is also a *construction* type: custom
+ * {@link IndexerProvider} and {@link WalletRepository} implementations may hand back coins without
+ * them. The SDK normalizes every incoming coin, so coins it returns always carry the facts that are
+ * determinable; do not read these fields off a coin the SDK has not returned to you — use
+ * {@link canSpendOffchain} / {@link canRecoverOnchain} / {@link hasTerminalSpend} /
+ * {@link isPastExpiry}, which normalize defensively.
+ *
  * @see Coin
- * @see VirtualStatus
  */
 export interface VirtualCoin extends Coin {
     /** Creation time of the virtual output. */
@@ -575,13 +648,40 @@ export interface VirtualCoin extends Coin {
      * This is not set to true if the virtual output is unrolled or swept, only when it's spent offchain.
      */
     isSpent?: boolean;
+    /** Whether the server has swept the batch this virtual output belongs to. */
+    isSwept?: boolean;
+    /** Whether this virtual output is not yet finalized in a batch. */
+    isPreconfirmed?: boolean;
     /** ID of the onchain commitment transaction that settled this output, if applicable. */
     settledBy?: string;
-    /** ID of the offchain checkpoint transaction that spent this output, if applicable. */
+    /**
+     * ID of the offchain checkpoint transaction that spent this output.
+     *
+     * @remarks
+     * The empty string means "not spent by anything" — test truthiness, never presence.
+     */
     spentBy?: string;
     /** ID of the offchain Arkade transaction that spent the above checkpoint output, if applicable. */
     arkTxId?: string;
-    /** Virtual output status */
+    /** Batch commitment transaction(s) this virtual output depends on. */
+    commitmentTxIds?: string[];
+    /**
+     * Wall-clock batch expiry, when the server expressed expiry as a timestamp.
+     *
+     * @remarks
+     * Mutually exclusive with `expiresAtHeight`; both are absent when there is no expiry.
+     */
+    expiresAt?: Date;
+    /**
+     * Block-height batch expiry, when the server expressed expiry as a height (regtest-like
+     * deployments). Evaluating it needs a chain tip — see {@link isPastExpiry}.
+     */
+    expiresAtHeight?: number;
+    /**
+     * Virtual output status.
+     *
+     * @deprecated See {@link VirtualStatus}.
+     */
     virtualStatus: VirtualStatus;
     /** Assets carried by this virtual output, if any. */
     assets?: Asset[];
@@ -690,60 +790,27 @@ export type ExtendedVirtualCoin = TapLeaves &
     EncodedVtxoScript &
     VirtualCoin & { extraWitness?: Bytes[] };
 
-/**
- * Return whether a virtual output is still spendable.
- *
- * @param vtxo - virtual output to inspect
- * @returns `true` when the virtual output is not marked as spent
- *
- * @see isRecoverable
- * @see isExpired
- */
-export function isSpendable(vtxo: VirtualCoin): boolean {
-    return !vtxo.isSpent;
-}
+import type { NormalizedExtendedVirtualCoin } from "./vtxo";
 
-/**
- * Return whether a virtual output is recoverable.
- *
- * @param vtxo - virtual output to inspect
- * @returns `true` when the virtual output is swept but still spendable
- *
- * @remarks
- * Recoverable virtual outputs are typically re-settled into fresh virtual outputs by the virtual output manager.
- *
- * @see isSpendable
- * @see isExpired
- */
-export function isRecoverable(vtxo: VirtualCoin): boolean {
-    return vtxo.virtualStatus.state === "swept" && isSpendable(vtxo);
-}
-
-/**
- * Return whether a virtual output should be treated as expired.
- *
- * @param vtxo - virtual output to inspect
- * @returns `true` when the virtual output is swept or its batch expiry has passed
- * @remarks
- * On regtest-like environments the upstream expiry value may be expressed as a block
- * height instead of a timestamp. This helper intentionally ignores obviously non-time
- * values to avoid false positives.
- *
- * @see VirtualStatus.batchExpiry
- */
-export function isExpired(vtxo: VirtualCoin): boolean {
-    if (vtxo.virtualStatus.state === "swept") return true; // swept by server = expired
-
-    const expiry = vtxo.virtualStatus.batchExpiry;
-    if (!expiry) return false;
-    // we use this as a workaround to avoid issue on regtest where expiry date is expressed in blockheight instead of timestamp
-    // if expiry, as Date, is before 2025, then we admit it's too small to be a timestamp
-    // TODO: API should return the expiry unit
-    const expireAt = new Date(expiry);
-    if (expireAt.getFullYear() < 2025) return false;
-
-    return expiry <= Date.now();
-}
+export {
+    canRecoverOnchain,
+    canSpendOffchain,
+    convertVtxo,
+    getAllNormalizedVtxos,
+    getNormalizedVtxos,
+    hasTerminalSpend,
+    isExpired,
+    isPastExpiry,
+    isRecoverable,
+    isSpendable,
+    isVirtualCoin,
+    normalizeVtxo,
+    toVirtualStatus,
+    type NormalizedExtendedVirtualCoin,
+    type NormalizedVirtualCoin,
+    type TimeHeight,
+    type VtxoScriptQuery,
+} from "./vtxo";
 
 /**
  * Return whether a virtual output is below the dust threshold.
@@ -754,7 +821,8 @@ export function isExpired(vtxo: VirtualCoin): boolean {
  *
  * @see isRecoverable
  */
-export function isSubdust(vtxo: VirtualCoin, dust: bigint): boolean {
+export function isSubdust(vtxo: { value: number } | bigint, dust: bigint): boolean {
+    if (typeof vtxo === "bigint") return vtxo < dust;
     return vtxo.value < dust;
 }
 
@@ -908,10 +976,11 @@ export interface IReadonlyWallet {
      * Get virtual outputs tracked by the wallet.
      *
      * @param filter - Optional filtering flags
-     * @returns virtual outputs with tapscript and witness data
+     * @returns virtual outputs with tapscript and witness data, normalized: every canonical fact
+     * the capability predicates read is populated, whatever the underlying repository stored
      * @see GetVtxosFilter
      */
-    getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]>;
+    getVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
 
     /** @returns Onchain boarding inputs tracked by the wallet. */
     getBoardingUtxos(): Promise<ExtendedCoin[]>;
@@ -919,10 +988,10 @@ export interface IReadonlyWallet {
     /** @returns Wallet transaction history derived from boarding and Arkade activity. */
     getTransactionHistory(): Promise<ArkTransaction[]>;
 
-    /** Registry of resolvers that group/label {@link getActivityHistory} rows. */
+    /** Resolvers that group/label {@link getActivityHistory} rows. */
     readonly activity: ActivityRegistry;
 
-    /** @returns Wallet history grouped into logical activities via the registered resolvers. */
+    /** @returns Wallet history grouped into logical activities with signed net amounts. */
     getActivityHistory(): Promise<Activity[]>;
 
     /**
@@ -935,4 +1004,10 @@ export interface IReadonlyWallet {
 
     /** Readonly asset manager bound to this wallet instance. */
     assetManager: IReadonlyAssetManager;
+
+    /**
+     * Wipe all locally persisted wallet data (VTXOs, UTXOs, history, sync
+     * cursor, contracts).
+     */
+    clear(): Promise<void>;
 }

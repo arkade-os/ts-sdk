@@ -39,6 +39,39 @@ describe("ArkadeSwapsMessageHandler broadcastEvent", () => {
             expect.objectContaining({ type: "SM-EVENT-SWAP_UPDATE" }),
         );
     });
+
+    it("includes uncontrolled windows so pages before SW claim receive events", async () => {
+        await (handler as any).broadcastEvent({
+            tag: "TAG",
+            type: "SM-EVENT-SWAP_UPDATE",
+            payload: { swap: { id: "s1" }, oldStatus: "swap.created" as BoltzSwapStatus },
+        });
+
+        expect((globalThis as any).self.clients.matchAll).toHaveBeenCalledWith({
+            includeUncontrolled: true,
+            type: "window",
+        });
+    });
+});
+
+describe("ArkadeSwapsMessageHandler SM-START", () => {
+    // The runtime proxy sends SM-START with no payload: the SW side sources its
+    // swaps from the repository (see ArkadeSwaps.startSwapManager).
+    it("dispatches to the SW-side manager without a client swap set", async () => {
+        const arkadeSwaps = { startSwapManager: vi.fn().mockResolvedValue(undefined) };
+        const handler = new ArkadeSwapsMessageHandler({} as SwapRepository);
+        (handler as any).handler = arkadeSwaps;
+        (handler as any).wallet = {};
+
+        const response = await handler.handleMessage({
+            id: "req",
+            tag: handler.messageTag,
+            type: "SM-START",
+        } as any);
+
+        expect(response).toMatchObject({ type: "SM-STARTED" });
+        expect(arkadeSwaps.startSwapManager).toHaveBeenCalledWith();
+    });
 });
 
 describe("ArkadeSwapsMessageHandler long-running requests", () => {

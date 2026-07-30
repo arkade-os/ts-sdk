@@ -1,4 +1,10 @@
-import { ArkProvider, IndexerProvider, IWallet, NetworkName } from "@arkade-os/sdk";
+import {
+    ArkProvider,
+    IndexerProvider,
+    IWallet,
+    NetworkName,
+    OnchainProvider,
+} from "@arkade-os/sdk";
 import {
     CreateReverseSwapResponse,
     CreateSubmarineSwapResponse,
@@ -66,14 +72,25 @@ export interface CreateLightningInvoiceRequest {
     amount: number;
     /** Optional description embedded in the BOLT11 invoice. */
     description?: string;
+    /**
+     * Optional SHA256 description hash (hex, 32 bytes) to commit into the
+     * BOLT11 invoice instead of a plaintext description. A BOLT11 invoice
+     * carries either a description or a description hash, never both, so when
+     * this is set `description` is ignored. Use this for flows that must bind
+     * the invoice to an external document — e.g. NIP-57 zaps, where the hash
+     * is SHA256 of the zap request and the receipt later proves the match.
+     */
+    descriptionHash?: string;
 }
 
 /** Response containing the created Lightning invoice and swap details. */
 export interface CreateLightningInvoiceResponse {
     /** The on-chain amount in satoshis (after Boltz fees). */
     amount: number;
-    /** Invoice expiry timestamp (Unix seconds). */
+    /** Invoice expiry: seconds from invoice creation (timestamp) until it expires. */
     expiry: number;
+    /** Invoice creation timestamp (Unix seconds). Always present in a valid BOLT11 invoice; `0` should not occur in practice. */
+    timestamp: number;
     /** The BOLT11-encoded Lightning invoice string. */
     invoice: string;
     /** The payment hash (hex-encoded). */
@@ -130,6 +147,14 @@ export interface OptimisticSendLightningPaymentResponse {
     txid: string;
 }
 
+/** Persisted state for a locally deferred refund retry. */
+export interface RefundRetryState {
+    /** True while SwapManager still needs to retry the local refund path. */
+    pending: true;
+    /** Unix timestamp (seconds) for the next retry attempt. */
+    nextRetryAt: number;
+}
+
 /** Tracks an in-progress reverse swap (Lightning → Arkade). */
 export interface BoltzReverseSwap {
     /** Unique swap ID from Boltz. */
@@ -164,6 +189,8 @@ export interface BoltzSubmarineSwap {
     refunded?: boolean;
     /** Whether the swap is eligible for refund. */
     refundable?: boolean;
+    /** Deferred local refund retry state, if any. */
+    refundRetry?: RefundRetryState;
     /** Current Boltz swap status. */
     status: BoltzSwapStatus;
     /** The original request sent to Boltz. */
@@ -207,13 +234,25 @@ export interface SubmarineRecoveryInfo {
     /** Total satoshis across the unspent VTXOs. */
     amountSats: number;
     /**
-     * Absolute Unix-timestamp CLTV from the swap's VHTLC, when available.
-     * Compared against wall-clock seconds for refund readiness.
+     * Absolute CLTV locktime from the swap's VHTLC, when available. Either BIP65
+     * form: a block height below 500_000_000, a Unix timestamp in seconds at or
+     * above it. Refund readiness compares it against the chain tip or the wall
+     * clock accordingly.
      */
     refundLocktime?: number;
     /** Reason populated when `status === "invalid_swap"`. */
     error?: string;
 }
+
+/**
+ * Earliest Unix timestamp (seconds) at which retrying the deferred VTXOs could
+ * make progress, or `undefined` when nothing was deferred. Deferrals do not all
+ * last the same time — a server-side CLTV rejection clears as soon as a later
+ * block carries the locktime, whereas a pre-CLTV VTXO must wait out the whole
+ * refund locktime — so callers schedule from this instead of polling at a fixed
+ * interval. It is a lower bound, not a promise: a retry may defer again.
+ */
+type RefundRetryAt = number | undefined;
 
 /** Outcome of a single `refundVHTLC` call: how many VTXOs were swept vs. deferred. */
 export interface SubmarineRefundOutcome {
@@ -225,6 +264,8 @@ export interface SubmarineRefundOutcome {
      * is expected to retry these later.
      */
     skipped: number;
+    /** When a retry could first succeed; see {@link RefundRetryAt}. */
+    retryAt?: RefundRetryAt;
 }
 
 /** Outcome of a single `refundArk` call: how many VTXOs were swept vs. deferred. */
@@ -237,6 +278,8 @@ export interface ChainArkRefundOutcome {
      * is expected to retry these later.
      */
     skipped: number;
+    /** When a retry could first succeed; see {@link RefundRetryAt}. */
+    retryAt?: RefundRetryAt;
 }
 
 /** Per-swap outcome of a bulk recovery call. */
@@ -271,6 +314,8 @@ export interface BoltzChainSwap {
     feeSatsPerByte: number;
     /** Current Boltz swap status. */
     status: BoltzSwapStatus;
+    /** Deferred local ARK refund retry state, if any. */
+    refundRetry?: RefundRetryState;
     /** The original chain swap request sent to Boltz. */
     request: CreateChainSwapRequest;
     /** Boltz API response with lockup and claim details. */
@@ -301,6 +346,11 @@ export interface ArkadeSwapsConfig {
     /** Explicit IndexerProvider. Falls back to wallet.indexerProvider if omitted. */
     indexerProvider?: IndexerProvider;
     /**
+     * Explicit OnchainProvider. Falls back to wallet.onchainProvider if omitted.
+     * Used to resolve block-height refund locktimes against the chain tip.
+     */
+    onchainProvider?: OnchainProvider;
+    /**
      * Background swap monitoring and autonomous actions (enabled by default).
      * - `undefined` or `true`: SwapManager enabled with default configuration
      * - `false`: SwapManager disabled
@@ -316,6 +366,24 @@ export interface ArkadeSwapsConfig {
 }
 
 /**
+ * The subset of {@link ArkadeSwapsConfig.swapManager} that survives a
+ * `postMessage` structured clone.
+ *
+ * `events` is a bag of function callbacks, which structured clone rejects with a
+ * `DataCloneError` — and which could never fire across the boundary anyway,
+ * since the manager lives in the worker. Service-worker clients register
+ * listeners through `ServiceWorkerArkadeSwaps.on*` instead. Everything else in
+ * `SwapManagerConfig` is a number or boolean, as is `autoStart`, so this
+ * projection is exact.
+ *
+ * Enforced at runtime by `toSerializableSwapManagerConfig`, since `Omit` alone
+ * does not stop a pre-typed config from carrying `events` through.
+ */
+export type SerializableSwapManagerConfig =
+    | boolean
+    | (Omit<SwapManagerConfig, "events"> & { autoStart?: boolean });
+
+/**
  * Configuration for {@link ArkadeSwaps.create} — same as ArkadeSwapsConfig but
  * `swapProvider` is optional (auto-created from the wallet's network if omitted).
  */
@@ -327,10 +395,14 @@ export type ArkadeSwapsCreateConfig = Omit<ArkadeSwapsConfig, "swapProvider"> & 
 export interface DecodedInvoice {
     /** Invoice expiry timestamp (Unix seconds). */
     expiry: number;
+    /** Invoice creation timestamp (Unix seconds). Always present in a valid BOLT11 invoice; `0` should not occur in practice. */
+    timestamp: number;
     /** Invoice amount in satoshis. */
     amountSats: number;
-    /** Invoice description string. */
+    /** Invoice description string (BOLT11 `d` field; "" if none). */
     description: string;
+    /** Invoice description hash (BOLT11 `h` field, hex; "" if none). */
+    descriptionHash: string;
     /** Payment hash (hex-encoded). */
     paymentHash: string;
 }

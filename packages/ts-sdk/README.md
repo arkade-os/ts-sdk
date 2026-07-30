@@ -363,8 +363,9 @@ const txid = await wallet.send({
 ### Activity history
 
 Group the wallet's transaction history into labelled, logical activities. Register an
-`ActivityResolver` — a pure `tx -> memberships` function — and `getActivityHistory()`
-buckets the transactions into `Activity` rows. The `boarding` built-in is pre-registered,
+`ActivityResolver` object; its optional `prepare()` can refresh correlation data, and
+its synchronous `resolve(tx)` returns memberships. `getActivityHistory()` buckets
+the transactions into `Activity` rows. The `boarding` built-in is pre-registered,
 and a transaction can belong to multiple groups (e.g. a batched settlement).
 
 ```typescript
@@ -379,6 +380,7 @@ wallet.activity.use({
 
 // Built-ins (boarding) + your resolver; txs grouped oldest-first per activity
 const activities = await wallet.getActivityHistory()
+// amount is signed sats: positive received, negative sent; same-key change rows are excluded
 // each Activity: { id, intent?, txs, amount, createdAt, settled }
 ```
 
@@ -795,6 +797,106 @@ await Unroll.completeUnroll(
 - The `completeUnroll` method can only be called after all virtual outputs are fully unrolled and the timelock has expired
 - You need sufficient onchain funds in the `OnchainWallet` to pay for P2A transaction fees
 
+### Unilateral Exit Packages (pre-signed)
+
+`Unroll.Session` requires the wallet (keys + indexer access) to stay online for the whole
+multi-day exit. `UnilateralExit` removes that requirement: it pre-signs **every** transaction
+needed to unroll a VTXO's offchain transaction chain onchain **and** sweep each matured output
+to an address you solely control, then emits a versioned JSON package that anything with an
+Esplora-compatible endpoint can execute — no keys, no Arkade infrastructure.
+
+> **Note:** Unilateral exit handles **BTC value only** and does not represent any assets a
+> VTXO carries — do not pass asset-bearing VTXOs (those with a non-empty `assets` field).
+
+The flow is **quote → fund → prepare → execute**:
+
+```typescript
+import { UnilateralExit, OnchainWallet, serializeExitPackage } from '@arkade-os/sdk'
+
+const onchainWallet = await OnchainWallet.create(identity, 'mainnet')
+
+// 1. Quote: how many txs, how many sats (no funds needed, nothing signed)
+const quote = await UnilateralExit.estimate({
+  wallet,
+  onchainWallet,
+  sweepAddress: 'bc1p...',      // where the exited funds land
+  // feeRate: 2,                // sat/vB — defaults to the provider estimate
+})
+console.log(quote.totals.txCount, quote.totals.fundingRequiredSats, quote.shortfallSats)
+
+// 2. Deposit quote.shortfallSats to quote.fundingAddress, wait for confirmation
+
+// 3. Prepare: signs everything and broadcasts the fee-funding splitter,
+//    reserving the fee budget onchain
+const pkg = await UnilateralExit.prepare({ wallet, onchainWallet, sweepAddress: 'bc1p...' })
+const json = serializeExitPackage(pkg) // hand this to any executor
+
+// 4. Execute anywhere — here, or on a machine that has only an Esplora URL
+const executor = new UnilateralExit.Executor(pkg, wallet.onchainProvider)
+for await (const event of executor) {
+  console.log(event.stepIndex, event.kind, event.status)
+}
+```
+
+Every exit terminates in a **sweep**. Unrolling only lands a VTXO back onchain still encumbered
+by its Arkade script; the funds become yours unilaterally only once a sweep spends that output
+through the CSV-timelocked exit path to `sweepAddress`. So the package always pairs each exited
+VTXO with a pre-signed sweep, and `totals.recoveredSats` is what arrives at `sweepAddress` after
+the timelocks mature. A VTXO whose sweep cannot be signed — e.g. a contract path that needs
+another party — is dropped from the package rather than left half-exited onchain.
+
+Key properties:
+
+- **Contract-aware**: exit paths are resolved through the contract handler registry, so
+  contract VTXOs (e.g. a VHTLC whose preimage is in the contract params) are pre-signable
+  too — paths needing other parties' signatures are skipped with a reason.
+- **Shared ancestors are paid once**: VTXOs under the same commitment share tree
+  transactions; the package contains one step (and one fee) per unique transaction.
+- **Idempotent execution**: the executor re-checks the chain before every action, so it can
+  be killed, moved, and re-run at any point; already-confirmed steps are skipped.
+- **Per-VTXO isolation**: one sweep per VTXO plus fan-out fee funding means one failed
+  branch never blocks the others.
+- **Confidentiality**: packages contain no key material, but sweeps of condition paths embed
+  the condition witness (e.g. a VHTLC preimage) — treat the file as confidential until
+  broadcast.
+- `validUntil` carries the earliest batch expiry: execute before it, or the operator may
+  sweep the expired batch first.
+
+### Exit data available offline
+
+The exit above resolves a VTXO's transaction chain from the Ark **indexer** at
+exit time. To make a unilateral exit work even when the indexer is unreachable,
+configure a `virtualTxRepository` (SQLite / Realm / IndexedDB / InMemory): the
+wallet then captures each received VTXO's exit branch locally and prunes it on
+spend, and `estimate` / `prepare` read that data **local-first**, falling back to
+the indexer only on a miss.
+
+```typescript
+import { Wallet, InMemoryVirtualTxRepository } from '@arkade-os/sdk'
+
+const wallet = await Wallet.create({
+  identity,
+  storage: {
+    walletRepository,
+    contractRepository,
+    virtualTxRepository: new InMemoryVirtualTxRepository(),
+    // Optional. `mode` defaults to "lite" (structure only, cheap — most VTXOs
+    // never exit). Use "full" to also store the pre-signed PSBTs, so an exit
+    // needs no Ark indexer (only an Esplora endpoint to broadcast).
+    exitDataCapture: { mode: 'full' },
+  },
+})
+```
+
+- **Lite (default)** stores only the chain structure; an exit still fetches PSBTs
+  from the indexer. **Full** stores the PSBTs too, so the exit is fully
+  indexer-independent. `minExitWorthSats` (default 1000) skips dust VTXOs.
+- Capture and prune are best-effort — a persistence failure never blocks sync or
+  the exit. Pruning is ref-counted, so tree ancestors shared by other VTXOs survive.
+- **Provider tier:** pass extra sources via `exitDataCapture.sources` to resolve
+  exit data from your own service before the indexer — implement the
+  `ExitDataSource` interface (`getVtxoChain` / `getVirtualTxs`).
+
 ### Running the wallet in a service worker
 
 The SDK provides a `MessageBus` orchestrator that runs inside a service worker
@@ -1145,9 +1247,35 @@ This is required for MuSig2 settlements and cryptographic operations.
 
 ### Contract Management
 
-Both `Wallet` and `ServiceWorkerWallet` use a `ContractManager` internally to watch for virtual outputs. This provides resilient connection handling with automatic reconnection and failsafe polling - for your wallet's default address and any external contracts you register (Boltz swaps, HTLCs, etc.).
+Both `Wallet` and `ServiceWorkerWallet` use a `ContractManager` internally to watch for virtual outputs and persist them into repositories. This provides resilient connection handling with automatic reconnection and failsafe polling - for your wallet's default address and any external contracts you register (Boltz swaps, HTLCs, etc.).
 
-When you call `wallet.notifyIncomingFunds()` or use `waitForIncomingFunds()`, it uses the ContractManager under the hood, giving you automatic reconnection and failsafe polling for free - no code changes needed.
+When you call `wallet.notifyIncomingFunds()` or use `waitForIncomingFunds()`, it uses the ContractManager under the hood, giving you automatic reconnection and repository-backed event replay for free - no code changes needed.
+
+`watcherConfig.failsafePollIntervalMs` (default `20_000`) controls how often the watcher replays repository changes into contract events; it does not fetch fresh VTXOs from the indexer.
+
+#### HD look-ahead window
+
+HD wallets (`walletMode: 'hd'`, or an explicit HD `DescriptorProvider`) also watch a band of *unused* offchain receive scripts around their allocation watermark, so a payment to an address that some other party issued from the same seed — a merchant backend such as BTCPay Server, or the .NET SDK driving the same wallet — arrives without the user calling `restore()`. `lookAheadWindow` (default `20`) is the per-side width of that band: the wallet watches `[watermark - N, watermark + N]`. Speculative entries are subscription-only; they become contract rows, and enter balances, only once funded.
+
+The issuer, not the wallet, picks the contract shape, so each index is watched at *every* variant the wallet could own there: `default` and `delegate`, crossed with the unilateral-exit timelock matrix and the operator's current plus deprecated signers. That is the candidate set `restore()` probes too, so watching and restoring cover identical scripts.
+
+```typescript
+const wallet = await Wallet.create({
+  identity,
+  walletMode: 'hd',
+  lookAheadWindow: 50,  // issuer hands out long runs of unpaid invoices
+})
+
+// Same option on the service-worker wallet; it is forwarded to the worker's inner wallet.
+const swWallet = await ServiceWorkerWallet.setup({
+  serviceWorkerPath: '/service-worker.js',
+  identity,
+  walletMode: 'hd',
+  lookAheadWindow: 50,
+})
+```
+
+Raise it when the external issuer is expected to burn more than `N` consecutive addresses without any of them being paid — every index in such a run is a miss, and the funded one sits past the band. When that happens the funds are invisible until a `restore()` whose `gapLimit` is large enough to cross the run (`wallet.restore({ gapLimit: 200 })`); a default restore closes its gap window before reaching the funded index. Keep the value modest: the band adds up to `2N + 1` indices × the candidate matrix (typically 1-4 scripts each) to the wallet's subscription.
 
 For advanced use cases, you can access the ContractManager directly to register external contracts:
 
@@ -1210,21 +1338,22 @@ const allPaths = await manager.getAllSpendingPaths({
 // Fetch contracts together with their current virtual outputs
 const contractsWithVtxos = await manager.getContractsWithVtxos()
 
-// Force a full refresh from the indexer when needed
+// Force an indexer refresh of the watched contracts when needed
 await manager.refreshVtxos()
 
 // Stop watching
 unsubscribe()
 ```
 
-The watcher features:
-- **Automatic reconnection** with exponential backoff (1s → 30s max)
-- **Failsafe polling** every 60 seconds to catch missed events
-- **Immediate sync** on connection and after failures
+Contract freshness behavior:
+- **Automatic reconnection** with exponential backoff (1s → 5s max)
+- **Immediate sync** on manager initialization, subscription reconnect, and contract events
+- **Failsafe polling** every 20 seconds by default to catch missed events, configurable via `watcherConfig.failsafePollIntervalMs`
+- **Manual refresh** through `manager.refreshVtxos()`; pass `{ includeInactive: true }` to sweep every repository contract
 
 ### Repository Pattern
 
-Most users don't need to touch repositories directly — `Wallet` and `ContractManager` already read and write through them. They are documented here for advanced integrations (custom storage backends, offline-first apps, repository inspection).
+Most users don't need to touch repositories directly — `Wallet` reads through them and `ContractManager` owns VTXO/contract synchronization into them. They are documented here for advanced integrations (custom storage backends, offline-first apps, repository inspection).
 
 ```typescript
 // Wallet repository — VTXOs, UTXOs, transaction history, settings

@@ -10,7 +10,11 @@ import { BoltzSwapStatus } from "../../src/boltz-swap-provider";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { hex } from "@scure/base";
 import { decodeInvoice } from "../../src/utils/decoding";
-import { MESSAGE_BUS_NOT_INITIALIZED, ServiceWorkerTimeoutError } from "@arkade-os/sdk";
+import {
+    MESSAGE_BUS_INITIALIZING,
+    MESSAGE_BUS_NOT_INITIALIZED,
+    ServiceWorkerTimeoutError,
+} from "@arkade-os/sdk";
 import { QuoteRejectedError } from "../../src/errors";
 
 class FakeServiceWorker {
@@ -361,6 +365,7 @@ const createRuntimeWithConfig = (
 describe("sendMessage reinitialize on SW restart", () => {
     afterEach(() => {
         vi.unstubAllGlobals();
+        vi.useRealTimers();
     });
 
     it("retries after re-initializing when SW returns 'MessageBus not initialized'", async () => {
@@ -543,6 +548,80 @@ describe("sendMessage reinitialize on SW restart", () => {
             ([msg]: any) => msg.type === "INIT_ARKADE_SWAPS",
         );
         expect(initCalls).toHaveLength(1);
+    });
+
+    it("waits out an in-flight init without reinitializing or consuming retries", async () => {
+        vi.useFakeTimers();
+
+        // More initializing responses than the 2-retry budget: if they were
+        // classified as not-initialized the request would fail on the 3rd send.
+        let initializing = 3;
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "GET_FEES") return null;
+            if (initializing-- > 0) {
+                return {
+                    id: message.id,
+                    tag: TAG,
+                    error: new Error(MESSAGE_BUS_INITIALIZING),
+                };
+            }
+            return {
+                id: message.id,
+                tag: TAG,
+                type: "FEES",
+                payload: { minerFees: 7 },
+            };
+        });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        const feesPromise = runtime.getFees();
+
+        // Backoff is 100ms, 200ms, 400ms
+        await vi.advanceTimersByTimeAsync(1_000);
+
+        expect(await feesPromise).toEqual({ minerFees: 7 });
+
+        const feesCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_FEES",
+        );
+        expect(feesCalls).toHaveLength(4);
+
+        const initCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "INIT_ARKADE_SWAPS",
+        );
+        expect(initCalls).toHaveLength(0);
+    });
+
+    it("gives up on a stuck init instead of waiting forever", async () => {
+        vi.useFakeTimers();
+
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
+            id: message.id,
+            tag: TAG,
+            error: new Error(MESSAGE_BUS_INITIALIZING),
+        }));
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        const assertion = expect(runtime.refreshSwapsStatus()).rejects.toThrow(
+            MESSAGE_BUS_INITIALIZING,
+        );
+
+        // Sum of the capped backoff over the 8 permitted waits
+        await vi.advanceTimersByTimeAsync(20_000);
+        await assertion;
+
+        const refreshCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "REFRESH_SWAPS_STATUS",
+        );
+        expect(refreshCalls).toHaveLength(9);
     });
 
     it("does not retry for errors other than 'not initialized'", async () => {
@@ -1072,5 +1151,117 @@ describe("quote rejection error reconstruction", () => {
             quotedAmount: 500,
             floor: 1000,
         });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// create(): init payload is structured-cloneable, and the swapManager default
+// ---------------------------------------------------------------------------
+
+describe("create() init payload", () => {
+    let fakeSw: FakeServiceWorker;
+    let sendMessageSpy: ReturnType<typeof vi.spyOn>;
+
+    const baseConfig = {
+        swapProvider: { getApiUrl: () => "http://example.com" } as any,
+        network: "regtest" as const,
+        arkServerUrl: "http://ark.example.com",
+    };
+
+    const createWith = async (overrides: Record<string, unknown>) => {
+        const runtime = await ServiceWorkerArkadeSwaps.create({
+            ...baseConfig,
+            serviceWorker: fakeSw as any,
+            ...overrides,
+        } as any);
+        const sent = sendMessageSpy.mock.calls[0][0] as RequestInitArkSwaps;
+        return { runtime, payload: sent.payload };
+    };
+
+    beforeEach(() => {
+        fakeSw = new FakeServiceWorker();
+        Object.defineProperty(globalThis, "navigator", {
+            configurable: true,
+            value: { serviceWorker: fakeSw },
+        });
+        sendMessageSpy = vi.spyOn(ServiceWorkerArkadeSwaps.prototype as any, "sendMessage");
+        sendMessageSpy.mockResolvedValue({
+            id: "init",
+            tag: TAG,
+            type: "ARKADE_SWAPS_INITIALIZED",
+        } as any);
+    });
+
+    afterEach(() => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        delete (globalThis as any).navigator;
+        vi.restoreAllMocks();
+    });
+
+    it("strips swapManager.events and warns exactly once", async () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        // Cast to simulate the width-subtyping hole the types cannot close: a
+        // pre-typed (non-literal) config carrying `events` assigns fine, and a
+        // JS caller never sees the types at all.
+        const { payload } = await createWith({
+            swapManager: {
+                pollInterval: 1234,
+                autoStart: false,
+                events: { onSwapUpdate: () => {}, onSwapFailed: () => {} },
+            },
+        });
+
+        expect(payload.swapManager).not.toHaveProperty("events");
+        // Everything cloneable survives — dropping autoStart would silently
+        // re-enable a manager the caller asked not to start.
+        expect(payload.swapManager).toEqual({ pollInterval: 1234, autoStart: false });
+        expect(structuredClone(payload)).toEqual(payload);
+        expect(
+            warnSpy.mock.calls.filter(([first]) =>
+                /swapManager\.events was dropped/.test(String(first)),
+            ),
+        ).toHaveLength(1);
+    });
+
+    it("does not warn when events is absent or empty", async () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        await createWith({ swapManager: { pollInterval: 1, events: {} } });
+
+        expect(
+            warnSpy.mock.calls.filter(([f]) => /events was dropped/.test(String(f))),
+        ).toHaveLength(0);
+    });
+
+    it("treats an omitted swapManager as enabled, matching the worker", async () => {
+        const { runtime, payload } = await createWith({});
+
+        // The worker maps `undefined` to enabled-with-defaults and autostarts,
+        // so the client reading omitted as *disabled* left getSwapManager() null
+        // and stopSwapManager() a no-op against a manager that was running.
+        expect(payload.swapManager).toBe(true);
+        expect(runtime.getSwapManager()).not.toBeNull();
+        await expect(runtime.startSwapManager()).resolves.toBeUndefined();
+    });
+
+    it("propagates an explicit false and disables the client APIs", async () => {
+        const { runtime, payload } = await createWith({ swapManager: false });
+
+        expect(payload.swapManager).toBe(false);
+        expect(runtime.getSwapManager()).toBeNull();
+        await expect(runtime.startSwapManager()).rejects.toThrow(/not enabled/i);
+    });
+
+    it("omits every non-cloneable field even when the caller supplies one", async () => {
+        const { payload } = await createWith({
+            arkProvider: { subscribe: () => {} },
+            onchainProvider: { getChainTip: () => {} },
+        });
+
+        expect(payload).not.toHaveProperty("arkProvider");
+        expect(payload).not.toHaveProperty("onchainProvider");
+        expect(payload).not.toHaveProperty("wallet");
+        expect(structuredClone(payload)).toEqual(payload);
     });
 });

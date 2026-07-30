@@ -67,7 +67,15 @@ export async function openDatabase(
             reject(request.error);
         };
         request.onsuccess = () => {
-            resolve(request.result);
+            const db = request.result;
+            // Close on versionchange so an external indexedDB.deleteDatabase()
+            // (or a version upgrade in another tab) isn't blocked by this connection.
+            db.onversionchange = () => {
+                db.close();
+                dbCache.delete(dbName);
+                refCounts.delete(dbName);
+            };
+            resolve(db);
         };
         request.onupgradeneeded = (event) => {
             const db = request.result;

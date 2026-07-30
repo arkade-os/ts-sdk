@@ -110,9 +110,9 @@ function drainQueue(db: SQLiteDatabase, tx: WebSQLTransaction): void {
     while (tx._queue.length > 0) {
         const stmt = tx._queue.shift()!;
         try {
-            const rs = buildResultSet(db, stmt.sql, stmt.args);
+            const resultSet = buildResultSet(db, stmt.sql, stmt.args);
             if (stmt.successCb) {
-                stmt.successCb(tx, rs);
+                stmt.successCb(tx, resultSet);
             }
         } catch (err: any) {
             const sqlError: SQLError = {

@@ -103,7 +103,7 @@ export class Estimator {
      * @param onchainOutputs - Array of onchain outputs to evaluate
      * @returns The total fee amount
      */
-    eval(
+    evaluate(
         offchainInputs: OffchainInput[],
         onchainInputs: OnchainInput[],
         offchainOutputs: FeeOutput[],

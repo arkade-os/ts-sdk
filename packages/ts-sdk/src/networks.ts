@@ -10,7 +10,11 @@ export interface Network {
     wif: number;
 }
 export const getNetwork = (network: NetworkName): Network => {
-    return networks[network];
+    const found = networks[network];
+    // Fail closed: an unknown network must never silently fall through to
+    // mainnet params (e.g. via Address()'s default) when validating addresses.
+    if (!found) throw new Error(`Unsupported network: ${network}`);
+    return found;
 };
 
 export const networks = {

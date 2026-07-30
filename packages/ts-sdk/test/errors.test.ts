@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ArkError, maybeArkError } from "../src/providers/errors";
+import { ArkError, ArkErrorName, isArkError, maybeArkError } from "../src/providers/errors";
 
 describe("maybeArkError", () => {
     it("parses a structured ark.v1.ErrorDetails in details[]", () => {
@@ -55,5 +55,16 @@ describe("maybeArkError", () => {
     it("returns undefined for non-JSON / non-Error input", () => {
         expect(maybeArkError(new Error("not json"))).toBeUndefined();
         expect(maybeArkError("nope" as unknown as Error)).toBeUndefined();
+    });
+});
+
+describe("isArkError", () => {
+    it("matches an ArkError, optionally narrowing by name", () => {
+        const err = new ArkError(6, "already spent", ArkErrorName.VTXO_ALREADY_SPENT);
+        expect(isArkError(err)).toBe(true);
+        expect(isArkError(err, ArkErrorName.VTXO_ALREADY_SPENT)).toBe(true);
+        expect(isArkError(err, ArkErrorName.DIGEST_MISMATCH)).toBe(false);
+        expect(isArkError(new Error("plain"))).toBe(false);
+        expect(isArkError(undefined)).toBe(false);
     });
 });

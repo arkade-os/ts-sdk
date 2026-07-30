@@ -53,6 +53,19 @@ describe("RestIndexerProvider", () => {
             expect(requestUrl.searchParams.get("page.size")).toBe("50");
         });
 
+        it("serializes the renewableOnly filter", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ vtxos: [] }),
+            });
+
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            await provider.getVtxos({ scripts: ["script-a"], renewableOnly: true });
+
+            const requestUrl = new URL(mockFetch.mock.calls[0][0]);
+            expect(requestUrl.searchParams.get("renewableOnly")).toBe("true");
+        });
+
         it("serializes outpoints and legacy filters alongside the new bounds", async () => {
             mockFetch.mockResolvedValueOnce({
                 ok: true,
@@ -112,8 +125,29 @@ describe("RestIndexerProvider", () => {
                     spentOnly: true,
                 }),
             ).rejects.toThrow(
-                "spendableOnly, spentOnly, and recoverableOnly are mutually exclusive options",
+                "spendableOnly, spentOnly, recoverableOnly, pendingOnly, and renewableOnly are mutually exclusive options",
             );
+
+            expect(mockFetch).not.toHaveBeenCalled();
+        });
+
+        it("treats renewableOnly and pendingOnly as part of the exclusive filter set", async () => {
+            const provider = new RestIndexerProvider("http://localhost:7070");
+
+            await expect(
+                provider.getVtxos({
+                    scripts: ["script-a"],
+                    renewableOnly: true,
+                    spendableOnly: true,
+                }),
+            ).rejects.toThrow("mutually exclusive");
+            await expect(
+                provider.getVtxos({
+                    scripts: ["script-a"],
+                    pendingOnly: true,
+                    recoverableOnly: true,
+                }),
+            ).rejects.toThrow("mutually exclusive");
 
             expect(mockFetch).not.toHaveBeenCalled();
         });

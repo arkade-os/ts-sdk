@@ -10,6 +10,7 @@ import {
     initDatabase,
     STORE_VTXOS,
     backfillVtxoScripts,
+    DB_VERSION,
 } from "../../src/repositories/indexedDB/schema";
 import { IndexedDBWalletRepository } from "../../src/repositories/indexedDB/walletRepository";
 import { SQLiteWalletRepository } from "../../src/repositories/sqlite/walletRepository";
@@ -81,6 +82,58 @@ describe("Realm migration: runArkRealmMigrations", () => {
         runArkRealmMigrations(makeRealm(10, newVtxos), makeRealm(11, newVtxos));
 
         expect(newVtxos[0].script).toBe(EXPECTED_PK_SCRIPT_HEX);
+    });
+
+    // A Realm handle exposing both `.schema` and multi-type `.objects`, needed
+    // for the v3 → v4 ArkVirtualTx.hex → psbt rename backfill.
+    function makeRealmWithVirtualTxs(
+        schemaNames: string[],
+        objectsByName: Record<string, Record<string, unknown>[]>,
+    ) {
+        return {
+            schema: schemaNames.map((name) => ({ name })),
+            objects: (name: string) => objectsByName[name] ?? [],
+        };
+    }
+
+    it("copies legacy ArkVirtualTx.hex into psbt on the v3 → v4 rename", () => {
+        // old rows carry `hex`; new rows start with psbt undefined (the rename
+        // drops the old property). The migration must carry the payload over,
+        // but never clobber a psbt the new schema already populated.
+        const oldTxs = [{ hex: "70736274ff00" }, { hex: "deadbeef" }];
+        const newTxs: Record<string, unknown>[] = [{ psbt: undefined }, { psbt: "already-set" }];
+
+        runArkRealmMigrations(
+            makeRealmWithVirtualTxs(["ArkVtxo", "ArkVirtualTx"], {
+                ArkVtxo: [],
+                ArkVirtualTx: oldTxs,
+            }),
+            makeRealmWithVirtualTxs(["ArkVtxo", "ArkVirtualTx"], {
+                ArkVtxo: [],
+                ArkVirtualTx: newTxs,
+            }),
+        );
+
+        expect(newTxs[0].psbt).toBe("70736274ff00");
+        expect(newTxs[1].psbt).toBe("already-set");
+    });
+
+    it("skips the psbt backfill when the old schema never had ArkVirtualTx", () => {
+        // Migrating from v1/v2 (no ArkVirtualTx) must not touch the type —
+        // reading objects of an unknown type would throw on a real Realm.
+        const newTxs: Record<string, unknown>[] = [{ psbt: undefined }];
+
+        expect(() =>
+            runArkRealmMigrations(
+                makeRealmWithVirtualTxs(["ArkVtxo"], { ArkVtxo: [] }),
+                makeRealmWithVirtualTxs(["ArkVtxo", "ArkVirtualTx"], {
+                    ArkVtxo: [],
+                    ArkVirtualTx: newTxs,
+                }),
+            ),
+        ).not.toThrow();
+
+        expect(newTxs[0].psbt).toBeUndefined();
     });
 });
 
@@ -208,7 +261,10 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
                 },
             ]);
 
-            const db = await openDatabase(dbName, 3, initDatabase);
+            // Reopen at the current DB_VERSION: the repo above already
+            // created this DB at DB_VERSION, and IndexedDB rejects opening
+            // an existing database at a lower version.
+            const db = await openDatabase(dbName, DB_VERSION, initDatabase);
             await new Promise<void>((resolve, reject) => {
                 const tx = db.transaction([STORE_VTXOS], "readwrite");
                 const store = tx.objectStore(STORE_VTXOS);

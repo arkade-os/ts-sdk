@@ -1,37 +1,8 @@
-import { RestIndexerProvider, SubscriptionResponse, Vtxo } from "./indexer";
+import { RestIndexerProvider, SubscriptionResponse } from "./indexer";
 import { isFetchTimeoutError } from "./ark";
-import { VirtualCoin } from "../wallet";
+import { convertVtxo } from "../wallet/vtxo";
 import { getExpoFetch, sseStreamIterator } from "./expoUtils";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
-
-// Helper function to convert Vtxo to VirtualCoin (same as in indexer.ts)
-function convertVtxo(vtxo: Vtxo): VirtualCoin {
-    return {
-        txid: vtxo.outpoint.txid,
-        vout: vtxo.outpoint.vout,
-        value: Number(vtxo.amount),
-        status: {
-            confirmed: !vtxo.isSwept && !vtxo.isPreconfirmed,
-            isLeaf: !vtxo.isPreconfirmed,
-        },
-        virtualStatus: {
-            state: vtxo.isSwept ? "swept" : vtxo.isPreconfirmed ? "preconfirmed" : "settled",
-            commitmentTxIds: vtxo.commitmentTxids,
-            batchExpiry: vtxo.expiresAt ? Number(vtxo.expiresAt) * 1000 : undefined,
-        },
-        spentBy: vtxo.spentBy ?? "",
-        settledBy: vtxo.settledBy,
-        arkTxId: vtxo.arkTxid,
-        createdAt: new Date(Number(vtxo.createdAt) * 1000),
-        isUnrolled: vtxo.isUnrolled,
-        isSpent: vtxo.isSpent,
-        script: vtxo.script,
-        assets: vtxo.assets?.map((a) => ({
-            assetId: a.assetId,
-            amount: BigInt(a.amount),
-        })),
-    };
-}
 
 /**
  * Expo-compatible Indexer provider implementation using expo/fetch for streaming support.

@@ -108,13 +108,13 @@ function uniqueTxid(script: string): string {
 }
 
 /** A settled, unspent, confirmed VTXO of `value` sats locked by `script`. */
-function makeVtxo(script: string, value: number): VirtualCoin {
+function makeVtxo(script: string, value: number, createdAt: Date = new Date()): VirtualCoin {
     return {
         txid: uniqueTxid(script),
         vout: 0,
         value,
         status: { confirmed: true },
-        createdAt: new Date(),
+        createdAt,
         script,
         isUnrolled: false,
         isSpent: false,
@@ -132,30 +132,49 @@ function makeVtxo(script: string, value: number): VirtualCoin {
  * empty. The remaining `IndexerProvider` surface is stubbed because the
  * restore path never touches it.
  *
- * `getVtxosCalls` counts the `scripts`-shaped probes so a test can
- * assert the scan ran exactly once when calls coalesce.
+ * The `after` lower bound is honoured, so a caller that queries with a
+ * delta-sync window cannot see VTXOs minted before it. Without this a
+ * test cannot distinguish a windowed fetch from an unbounded one.
+ *
+ * `getVtxosCalls` records the `scripts`-shaped probes so a test can
+ * assert the scan ran exactly once when calls coalesce, and inspect the
+ * window each probe carried; `subscribeCalls` records each subscription
+ * POST's script list for the same reason.
  */
 export interface MockIndexer extends IndexerProvider {
     usedScripts: Set<string>;
-    getVtxosCalls: { scripts: string[] }[];
+    /** Per-script VTXO creation time; scripts absent from the map mint at "now". */
+    vtxoCreatedAt: Map<string, Date>;
+    getVtxosCalls: { scripts: string[]; after?: number }[];
+    subscribeCalls: string[][];
 }
 
-function makeMockIndexer(usedScripts: Set<string>): MockIndexer {
-    const getVtxosCalls: { scripts: string[] }[] = [];
+export function makeMockIndexer(usedScripts: Set<string>): MockIndexer {
+    const getVtxosCalls: { scripts: string[]; after?: number }[] = [];
+    const vtxoCreatedAt = new Map<string, Date>();
+    const subscribeCalls: string[][] = [];
     const indexer = {
         usedScripts,
+        vtxoCreatedAt,
         getVtxosCalls,
-        async getVtxos(opts?: { scripts?: string[]; outpoints?: unknown[] }) {
+        subscribeCalls,
+        async getVtxos(opts?: { scripts?: string[]; outpoints?: unknown[]; after?: number }) {
             const scripts = opts?.scripts;
             if (!scripts) return { vtxos: [] };
-            getVtxosCalls.push({ scripts });
-            const vtxos = scripts.filter((s) => usedScripts.has(s)).map((s) => makeVtxo(s, 50_000));
+            getVtxosCalls.push({ scripts, after: opts?.after });
+            // `after: 0` is the bootstrap sentinel — unbounded, same as omitting it.
+            const after = opts?.after;
+            const vtxos = scripts
+                .filter((s) => usedScripts.has(s))
+                .map((s) => makeVtxo(s, 50_000, vtxoCreatedAt.get(s)))
+                .filter((v) => !after || v.createdAt.getTime() > after);
             return { vtxos };
         },
         async getAssetDetails() {
             throw new Error("getAssetDetails not used by restore");
         },
-        async subscribeForScripts() {
+        async subscribeForScripts(scripts: string[]) {
+            subscribeCalls.push(scripts);
             return "sub-1";
         },
         async unsubscribeForScripts() {
@@ -282,6 +301,10 @@ export interface HdRestoreWalletHandle extends RestoreWalletHandle {
 export async function makeHdWalletForTest(
     usedScripts: Set<string> = new Set(),
     fundedOnchain: Set<string> = new Set(),
+    opts?: {
+        /** Compressed hex; present ⇒ delegate wallet (stub delegate provider). */
+        delegatePubKey?: string;
+    },
 ): Promise<HdRestoreWalletHandle> {
     const indexer = makeMockIndexer(usedScripts);
     const walletRepository = new InMemoryWalletRepository();
@@ -295,6 +318,16 @@ export async function makeHdWalletForTest(
         indexerProvider: indexer,
         onchainProvider: makeMockOnchain(fundedOnchain),
         storage: { walletRepository, contractRepository },
+        ...(opts?.delegatePubKey && {
+            delegateProvider: {
+                async getDelegateInfo() {
+                    return { pubkey: opts.delegatePubKey!, fee: 0, address: "" };
+                },
+                async delegate() {
+                    throw new Error("delegate() not used by look-ahead tests");
+                },
+            } as unknown as Parameters<typeof Wallet.create>[0]["delegateProvider"],
+        }),
     });
     const resolved = (wallet as unknown as { _descriptorProvider?: unknown })._descriptorProvider;
     if (

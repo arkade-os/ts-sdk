@@ -1,7 +1,7 @@
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { hex } from "@scure/base";
 import { Bytes, compareBytes } from "@scure/btc-signer/utils.js";
-import { BufferReader, BufferWriter } from "./utils";
+import { BufferReader, BufferWriter } from "../utils";
 
 /**
  * Metadata represents a key-value pair.

@@ -5,7 +5,7 @@ import { DescriptorProvider } from "../identity/descriptorProvider";
 import { isHDCapableIdentity } from "../identity/hdCapableIdentity";
 import { ContractRepository } from "../repositories/contractRepository";
 import { WalletRepository } from "../repositories/walletRepository";
-import { IContractManager } from "../contracts/contractManager";
+import { CreateContractParams, IContractManager } from "../contracts/contractManager";
 import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
 import { DefaultVtxo } from "../script/default";
 import { DelegateVtxo } from "../script/delegate";
@@ -547,57 +547,16 @@ export class WalletReceiveRotator {
         // displaying the OLD (registered) address — no
         // unwatched-display-window.
         const descriptor = await this.provider.getNextSigningDescriptor();
-        const pubKey = deriveLeafPubkey(descriptor);
-        const newTapscript = rebuildTapscript(wallet.offchainTapscript, pubKey);
-        const newScript = hex.encode(newTapscript.pkScript);
-        const newAddress = newTapscript
-            .address(wallet.network.hrp, wallet.arkServerPublicKey)
-            .encode();
+        const { tapscript: newTapscript, params } = buildReceiveContract(
+            wallet.offchainTapscript,
+            descriptor,
+            wallet.network.hrp,
+            true,
+        );
+        const newScript = params.script;
 
         const manager = await wallet.getContractManager();
-        const csvTimelock = newTapscript.options.csvTimelock;
-        const csvTimelockStr = timelockToSequence(csvTimelock).toString();
-        const serverPubKeyHex = hex.encode(newTapscript.options.serverPubKey);
-
-        const baseParams = {
-            script: newScript,
-            address: newAddress,
-            state: "active" as const,
-            // Persist the materialized signing descriptor alongside the
-            // source tag. The wallet's spending paths read this at sign
-            // time to route inputs locked by a rotated pubkey through
-            // `DescriptorProvider.signWithDescriptor` instead of the
-            // identity's index-0 key. Without it, post-rotation sends
-            // produce unsigned PSBTs that the server rejects with
-            // `INVALID_PSBT_INPUT (5): missing tapscript spend sig`.
-            metadata: {
-                source: WALLET_RECEIVE_SOURCE,
-                signingDescriptor: descriptor,
-            },
-        };
-
-        if (newTapscript instanceof DelegateVtxo.Script) {
-            await manager.createContract({
-                ...baseParams,
-                type: "delegate",
-                params: {
-                    pubKey: hex.encode(pubKey),
-                    serverPubKey: serverPubKeyHex,
-                    delegatePubKey: hex.encode(newTapscript.options.delegatePubKey),
-                    csvTimelock: csvTimelockStr,
-                },
-            });
-        } else {
-            await manager.createContract({
-                ...baseParams,
-                type: "default",
-                params: {
-                    pubKey: hex.encode(pubKey),
-                    serverPubKey: serverPubKeyHex,
-                    csvTimelock: csvTimelockStr,
-                },
-            });
-        }
+        await manager.createContract(params);
 
         // Persistence succeeded — commit the new tapscript to the
         // wallet's visible state. From this point onward
@@ -616,6 +575,16 @@ export class WalletReceiveRotator {
             await manager.setContractState(previousTagged, "inactive");
         }
         this.currentTaggedScript = newScript;
+
+        // The watermark moved — slide the look-ahead band with it. Last, so a
+        // refill failure cannot leave a persisted-but-uncommitted rotation, and
+        // best-effort: the rotation has committed, so a failed band slide must
+        // not make `runRotateWithBackoff` retry (and burn another index).
+        try {
+            await manager.refillLookAhead();
+        } catch (err) {
+            this.logger.error("WalletReceiveRotator: look-ahead refill failed", err);
+        }
     }
 }
 
@@ -634,6 +603,71 @@ function deriveLeafPubkey(descriptor: string): Uint8Array {
             { cause: e },
         );
     }
+}
+
+/**
+ * Build the offchain receive contract owned by `descriptor`'s leaf pubkey,
+ * keeping every other option of `current` (including its `default` vs
+ * `delegate` shape). Returns the rebuilt tapscript alongside the contract
+ * params so the caller can commit it once persistence succeeds.
+ *
+ * Shared by {@link WalletReceiveRotator.rotate} and the wallet's look-ahead
+ * `materialize` so the two cannot drift.
+ *
+ * @param tagSource - Tag the row {@link WALLET_RECEIVE_SOURCE}. Only for
+ * addresses the wallet generated for itself: the tag makes the next boot adopt
+ * the contract as the advertised display address, which must never happen for a
+ * speculative index an external party may have issued.
+ */
+export function buildReceiveContract(
+    current: DefaultVtxo.Script | DelegateVtxo.Script,
+    descriptor: string,
+    hrp: string,
+    tagSource: boolean,
+): { tapscript: DefaultVtxo.Script | DelegateVtxo.Script; params: CreateContractParams } {
+    const pubKey = deriveLeafPubkey(descriptor);
+    const tapscript = rebuildTapscript(current, pubKey);
+    const serverPubKey = tapscript.options.serverPubKey;
+    const csvTimelock = timelockToSequence(tapscript.options.csvTimelock).toString();
+
+    const base = {
+        script: hex.encode(tapscript.pkScript),
+        address: tapscript.address(hrp, serverPubKey).encode(),
+        state: "active" as const,
+        // The materialized signing descriptor is read at sign time to route
+        // inputs locked by a rotated pubkey through
+        // `DescriptorProvider.signWithDescriptor` instead of the identity's
+        // index-0 key. Without it, spends produce unsigned PSBTs that the
+        // server rejects with `INVALID_PSBT_INPUT (5): missing tapscript spend sig`.
+        metadata: {
+            ...(tagSource && { source: WALLET_RECEIVE_SOURCE }),
+            signingDescriptor: descriptor,
+        },
+    };
+
+    const params: CreateContractParams =
+        tapscript instanceof DelegateVtxo.Script
+            ? {
+                  ...base,
+                  type: "delegate",
+                  params: {
+                      pubKey: hex.encode(pubKey),
+                      serverPubKey: hex.encode(serverPubKey),
+                      delegatePubKey: hex.encode(tapscript.options.delegatePubKey),
+                      csvTimelock,
+                  },
+              }
+            : {
+                  ...base,
+                  type: "default",
+                  params: {
+                      pubKey: hex.encode(pubKey),
+                      serverPubKey: hex.encode(serverPubKey),
+                      csvTimelock,
+                  },
+              };
+
+    return { tapscript, params };
 }
 
 /**

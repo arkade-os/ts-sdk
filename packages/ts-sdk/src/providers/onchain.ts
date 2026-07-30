@@ -21,6 +21,17 @@ export const ESPLORA_URL: Record<NetworkName, string> = {
 
 export type ExplorerTransaction = {
     txid: string;
+    /**
+     * Inputs as returned by Esplora's `/address/:addr/txs`, each carrying the
+     * outpoint it spends (`txid:vout`). Optional: not every provider populates
+     * it (the electrum provider omits inputs), so consumers that correlate
+     * spenders must tolerate its absence. Used to recover a boarding output's
+     * spending (commitment) tx when `/outspends` omits the spender txid.
+     */
+    vin?: {
+        txid: string;
+        vout: number;
+    }[];
     vout: {
         scriptpubkey_address: string;
         value: string;
@@ -64,10 +75,12 @@ export interface OnchainProvider {
      * Fetch outspend information for every output in a transaction.
      *
      * @param txid - Transaction id to inspect
-     * @returns Per-output spend status information
+     * @returns Per-output spend status information. `txid` (the spender) may be
+     *   absent even when `spent` is true: some Esplora deployments
+     *   (e.g. mempool.arkade.sh) omit it from `/outspends`.
      * @see getTxStatus
      */
-    getTxOutspends(txid: string): Promise<{ spent: boolean; txid: string }[]>;
+    getTxOutspends(txid: string): Promise<{ spent: boolean; txid?: string }[]>;
 
     /**
      * Fetch transactions associated with an address.
@@ -179,7 +192,7 @@ export class EsploraProvider implements OnchainProvider {
         }
     }
 
-    async getTxOutspends(txid: string): Promise<{ spent: boolean; txid: string }[]> {
+    async getTxOutspends(txid: string): Promise<{ spent: boolean; txid?: string }[]> {
         const response = await baseFetch(`${this.baseUrl}/tx/${txid}/outspends`);
         if (!response.ok) {
             const error = await response.text();
@@ -425,6 +438,11 @@ function isValidBlocksTip(tip: any): tip is { id: string; height: number; median
 const isExplorerTransaction = (tx: any): tx is ExplorerTransaction => {
     return (
         typeof tx.txid === "string" &&
+        (tx.vin === undefined ||
+            (Array.isArray(tx.vin) &&
+                tx.vin.every(
+                    (vin: any) => typeof vin.txid === "string" && typeof vin.vout === "number",
+                ))) &&
         Array.isArray(tx.vout) &&
         tx.vout.every(
             (vout: any) =>
