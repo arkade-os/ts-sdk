@@ -92,8 +92,17 @@ export {
     normalizeToDescriptor,
     extractPubKey,
     parseHDDescriptor,
+    deriveDescriptorLeafCompressedPubKey,
 } from "./descriptor";
 export type { ParsedHDDescriptor } from "./descriptor";
+
+// Descriptor-scoped identity adapter
+export { DescriptorIdentity, isHDDeterministicSignCapable } from "./descriptorIdentity";
+export type {
+    DescriptorIdentityOptions,
+    DescriptorSigner,
+    HDDeterministicSignCapable,
+} from "./descriptorIdentity";
 
 // Descriptor provider interface
 export type { DescriptorProvider, DescriptorSigningRequest } from "./descriptorProvider";
