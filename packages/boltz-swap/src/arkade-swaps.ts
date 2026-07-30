@@ -2610,6 +2610,9 @@ export class ArkadeSwaps {
         });
 
         if (lockupAddress !== vhtlcAddress) {
+            console.log("lockupAddress", lockupAddress);
+            console.log("vhtlcAddress", vhtlcAddress);
+            console.log("swap resp", JSON.stringify(swap));
             throw new SwapError({
                 message: "Boltz is trying to scam us (invalid address)",
             });
@@ -2661,8 +2664,10 @@ export class ArkadeSwaps {
         );
 
         const expectedScript = OutScript.encode(Address(network).decode(btcDetails.lockupAddress));
-        if (!equalBytes(p2trScript(musig.aggPubkey), expectedScript))
+        if (!equalBytes(p2trScript(musig.aggPubkey), expectedScript)) {
+            console.log("swap resp", JSON.stringify(swap));
             throw new SwapError({ message: "Boltz is trying to scam us (invalid BTC address)" });
+        }
 
         const boltzXOnly = toXOnly(hex.decode(btcDetails.serverPublicKey));
         const userXOnly = toXOnly(ephemeralPub);
@@ -2674,6 +2679,7 @@ export class ArkadeSwaps {
                 timeoutBlockHeight: btcDetails.timeoutBlockHeight,
             });
         } catch (err) {
+            console.log("swap resp", JSON.stringify(swap));
             throw new SwapError({
                 message: `Boltz is trying to scam us (invalid BTC HTLC: ${(err as Error).message})`,
             });
