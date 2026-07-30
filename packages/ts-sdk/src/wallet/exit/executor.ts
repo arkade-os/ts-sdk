@@ -1,6 +1,24 @@
 import { OnchainProvider } from "../../providers/onchain";
 import { ExitPackage, ExitStep, SweepStep } from "./types";
 
+/**
+ * `AbortSignal.prototype.throwIfAborted` is not reliably present on Hermes /
+ * React Native, and this SDK ships Expo providers — so resolve the error here.
+ * A spec-compliant engine supplies `signal.reason` (a DOMException named
+ * "AbortError"); otherwise fall back to an Error carrying the same `name`, so
+ * consumers can always match on `err.name === "AbortError"`.
+ */
+function abortErrorFor(signal: AbortSignal): unknown {
+    if (signal.reason !== undefined) return signal.reason;
+    const e = new Error("The operation was aborted");
+    e.name = "AbortError";
+    return e;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+    if (signal?.aborted) throw abortErrorFor(signal);
+}
+
 export type ExecutorEvent = {
     stepIndex: number;
     kind: ExitStep["kind"];
@@ -38,17 +56,49 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
 
     private readonly feeWallet?: ExitFeeWallet;
 
+    private readonly signal?: AbortSignal;
+
     constructor(
         readonly pkg: ExitPackage,
         readonly provider: OnchainProvider,
-        opts?: { pollIntervalMs?: number; feeWallet?: ExitFeeWallet },
+        opts?: {
+            pollIntervalMs?: number;
+            feeWallet?: ExitFeeWallet;
+            /** Abort to stop execution. Iteration then rejects with an error
+             * whose `name` is "AbortError". Already-broadcast transactions are
+             * not recalled; the executor is idempotent, so a later run resumes. */
+            signal?: AbortSignal;
+        },
     ) {
         this.pollIntervalMs = opts?.pollIntervalMs ?? 5_000;
         this.feeWallet = opts?.feeWallet;
+        this.signal = opts?.signal;
     }
 
+    /**
+     * Poll delay. Nearly all wall-clock time is spent here, so it must be the
+     * thing that reacts to abort — checking only between polls would leave
+     * cancellation up to a full interval late and the timer still pending.
+     */
     private sleep(): Promise<void> {
-        return new Promise((r) => setTimeout(r, this.pollIntervalMs));
+        const signal = this.signal;
+        if (!signal) return new Promise((r) => setTimeout(r, this.pollIntervalMs));
+        return new Promise((resolve, reject) => {
+            if (signal.aborted) return reject(abortErrorFor(signal));
+            const onAbort = () => {
+                clearTimeout(timer);
+                reject(abortErrorFor(signal));
+            };
+            // `{ once: true }` releases the listener on the abort path; the
+            // explicit removal covers the timeout path. A long exit sleeps
+            // hundreds of times, so an unreleased listener would just trade a
+            // polling leak for a listener leak.
+            const timer = setTimeout(() => {
+                signal.removeEventListener("abort", onAbort);
+                resolve();
+            }, this.pollIntervalMs);
+            signal.addEventListener("abort", onAbort, { once: true });
+        });
     }
 
     private async status(txid: string): Promise<TxStatus | undefined> {
@@ -63,11 +113,15 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
         for (;;) {
             const s = await this.status(txid);
             if (s?.confirmed) return s;
+            // Checked here as well as inside sleep() so an abort that lands
+            // during the status read doesn't cost one more network poll.
+            throwIfAborted(this.signal);
             await this.sleep();
         }
     }
 
     async *[Symbol.asyncIterator](): AsyncIterator<ExecutorEvent> {
+        throwIfAborted(this.signal); // before anything is broadcast
         const dead = new Set<string>(); // outpoints whose branch failed
 
         if (this.pkg.validUntil && Date.now() / 1000 > this.pkg.validUntil) {
@@ -195,6 +249,7 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
         while (done.size < pending.length) {
             for (const { index, step } of pending) {
                 if (done.has(index)) continue;
+                throwIfAborted(this.signal);
 
                 const swept = await this.status(step.txid);
                 if (swept?.confirmed) {
