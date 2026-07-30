@@ -3835,7 +3835,13 @@ describe("ArkadeSwaps", () => {
                         forfeitClosureLocked(refundableSwap.response.timeoutBlockHeights!.refund),
                     );
 
-                    const nowSec = Math.floor(Date.now() / 1000);
+                    // Pin the clock: retryAt is Date.now() + CLTV_IMMATURE_RETRY_SEC
+                    // read inside refundVHTLC, so a second boundary crossing between
+                    // that read and this one would yield nowSec + 61 and flake the
+                    // upper bound below.
+                    const fixedMs = Date.now();
+                    vi.spyOn(Date, "now").mockReturnValue(fixedMs);
+                    const nowSec = Math.floor(fixedMs / 1000);
                     const outcome = await swaps.refundVHTLC(refundableSwap);
 
                     expect(outcome.swept).toBe(0);
@@ -3867,10 +3873,14 @@ describe("ArkadeSwaps", () => {
                     // Boltz rejection falls through to refundWithoutReceiver. This
                     // site sits inside a catch block — an inline try/catch here would
                     // throw straight past the enclosing handler.
-                    const nowSec = Math.floor(Date.now() / 1000);
+                    const fixedMs = Date.now();
+                    const nowSec = Math.floor(fixedMs / 1000);
                     const dateSpy = vi.spyOn(Date, "now");
                     dateSpy.mockReturnValueOnce((futureRefundTimestamp - 60) * 1000);
                     dateSpy.mockReturnValueOnce((futureRefundTimestamp + 60) * 1000);
+                    // Pin every later read, including the one retryAt is derived
+                    // from, so the bound below cannot straddle a second boundary.
+                    dateSpy.mockReturnValue(fixedMs);
 
                     const outcome = await swaps.refundVHTLC(refundableSwapPreCltv);
 
