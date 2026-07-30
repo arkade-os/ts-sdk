@@ -4,13 +4,19 @@ import { onchainRail } from "../../src/payment/rails/onchain";
 import { Ramps } from "../../src/wallet/ramps";
 import type { RouterContext } from "../../src/payment/types";
 
-const btcAddr = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7k";
+const btcAddr = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 const arkAddr = new ArkAddress(new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)).encode();
 
 const fees = { intentFee: {}, txFeeRate: "1" };
 
-const ctx = (wallet: Partial<Record<string, any>>): RouterContext => ({
-    wallet: { arkProvider: { getInfo: vi.fn().mockResolvedValue({ fees }) }, ...wallet } as any,
+const ctx = (
+    wallet: Partial<Record<string, any>>,
+    feeInfo: Record<string, any> = fees,
+): RouterContext => ({
+    wallet: {
+        arkProvider: { getInfo: vi.fn().mockResolvedValue({ fees: feeInfo }) },
+        ...wallet,
+    } as any,
     prefs: {},
 });
 
@@ -51,6 +57,31 @@ describe("onchainRail (collaborative exit)", () => {
         expect(q.amount).toBe(1000);
         await q.send().then((h) => h.settled());
         expect(offboard).toHaveBeenCalledWith(btcAddr, fees, 1000n);
+    });
+
+    it("grosses the offboard amount up so the recipient receives exactly `amount`", async () => {
+        // Ramps.offboard deducts the output fee from the amount it is handed, so
+        // the rail must hand it `amount + fee` to stay receiver-exact like the
+        // other rails. A 1% fee is amount-dependent, so the gross-up is a
+        // fixpoint: 10000 -> 10100 (fee 101, one sat short) -> 10102 (fee 102).
+        const feeInfo = { intentFee: { onchainOutput: "amount * 0.01" }, txFeeRate: "1" };
+        const q = await onchainRail().quote({ raw: btcAddr, amount: 10_000 }, ctx({}, feeInfo));
+
+        expect(q.amount).toBe(10_000); // what the recipient receives
+        expect(q.fee).toBe(102);
+        expect(q.total).toBe(10_102); // what leaves the wallet
+
+        await q.send().then((h) => h.settled());
+        expect(offboard).toHaveBeenCalledWith(btcAddr, feeInfo, 10_102n);
+    });
+
+    it("reports an amount-independent offboard fee on the quote", async () => {
+        const feeInfo = { intentFee: { onchainOutput: "200.0" }, txFeeRate: "1" };
+        const q = await onchainRail().quote({ raw: btcAddr, amount: 1000 }, ctx({}, feeInfo));
+
+        expect(q).toMatchObject({ amount: 1000, fee: 200, total: 1200 });
+        await q.send().then((h) => h.settled());
+        expect(offboard).toHaveBeenCalledWith(btcAddr, feeInfo, 1200n);
     });
 
     it("rejects a non-positive or fractional amount up front", async () => {

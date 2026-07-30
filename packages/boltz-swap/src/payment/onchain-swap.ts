@@ -1,6 +1,31 @@
 import type { PaymentRail, RouterContext } from "@arkade-os/sdk";
 import { btcTarget, makeHandle, resolveSendAmount, tryResolveSendAmount } from "@arkade-os/sdk";
 import type { ArkadeSwaps } from "../arkade-swaps";
+import type { ChainFeesResponse } from "../types";
+
+/**
+ * Reconstruct the ARK→BTC *source* amounts from the receiver amount this rail
+ * knows, since Boltz prices and bounds the swap on what the user locks.
+ *
+ * `serverLock` is a lower bound; `userLock` inverts Boltz's percentage gross-up
+ * (the fee is charged on the user-lock total, so divide by `1 - feeRate` —
+ * adding `feeRate * serverLock` under-estimates near max) and is the upper bound.
+ *
+ * Returns `undefined` when the fee rate cannot gross up: only a rate in `[0, 1)`
+ * works — at or above 100% the divisor turns zero or negative, and a negative
+ * rate shrinks the estimate, either of which would silently produce a wrong
+ * number. `NaN` fails the range test too.
+ */
+function grossUpUserLock(
+    receiverAmount: number,
+    fees: ChainFeesResponse,
+): { serverLock: number; userLock: number } | undefined {
+    const serverLock = receiverAmount + fees.minerFees.user.claim;
+    const feeRate = fees.percentage / 100;
+    if (!(feeRate >= 0 && feeRate < 1)) return undefined;
+    const userLock = Math.ceil((serverLock + fees.minerFees.server) / (1 - feeRate));
+    return { serverLock, userLock };
+}
 
 /**
  * On-chain BTC send via an Ark → BTC chain swap. Matches a bare BTC address or
@@ -36,34 +61,32 @@ export function onchainSwapRail(): PaymentRail {
                 swaps.getLimits("ARK", "BTC"),
                 swaps.getFees("ARK", "BTC"),
             ]);
-            // Boltz enforces the ARK→BTC limits on the *source* (user-lock)
-            // amount, not the receiver amount we know. Bracket the source:
-            // `serverLock` is a lower bound, and `userLock` — Boltz's percentage
-            // gross-up inverted (the fee is charged on the user-lock total, so
-            // divide by (1 - feeRate); adding feeRate * serverLock under-estimates
-            // near max) — is the upper bound. Gate min on the lower bound
-            // (conservative) and max on the upper bound; an amount in the
-            // ambiguous band self-heals to the `onchain` collaborative exit.
-            const serverLockAmount = amt + fees.minerFees.user.claim;
-            const feeRate = fees.percentage / 100;
-            // Only a rate in [0, 1) grosses up correctly: at or above 100% the
-            // divisor turns zero or negative, and a negative rate shrinks the
-            // estimate — either way the max check flips into passing. NaN fails
-            // the range test too.
-            if (!(feeRate >= 0 && feeRate < 1)) return false;
-            const userLockAmount = Math.ceil(
-                (serverLockAmount + fees.minerFees.server) / (1 - feeRate),
-            );
-            return serverLockAmount >= min && userLockAmount <= max;
+            // Gate min on the lower bound (conservative) and max on the upper
+            // bound; an amount in the ambiguous band self-heals to the `onchain`
+            // collaborative exit.
+            const bracket = grossUpUserLock(amt, fees);
+            if (!bracket) return false;
+            return bracket.serverLock >= min && bracket.userLock <= max;
         },
         quote: async (req, ctx: RouterContext) => {
             const address = btcTarget(req.raw)!;
             const amt = resolveSendAmount("onchain-swap", req.raw, req.amount);
+            // Estimated from the same reconstruction available() brackets on, so
+            // the gate and the quote cannot disagree. Boltz returns the
+            // authoritative lockup amount from `arkToBtc` at send time.
+            const fees = await (ctx.swaps as ArkadeSwaps).getFees("ARK", "BTC");
+            const bracket = grossUpUserLock(amt, fees);
+            if (!bracket) {
+                throw new Error(
+                    `onchain-swap: cannot quote at a ${fees.percentage}% fee rate ` +
+                        `(expected a rate in [0, 100))`,
+                );
+            }
             return {
                 railId: "onchain-swap",
                 amount: amt,
-                fee: 0,
-                total: amt,
+                fee: bracket.userLock - amt,
+                total: bracket.userLock,
                 send: async () =>
                     makeHandle("onchain-swap", async (emit) => {
                         const swaps = ctx.swaps as ArkadeSwaps;

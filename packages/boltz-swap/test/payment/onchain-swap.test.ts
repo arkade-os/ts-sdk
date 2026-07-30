@@ -3,11 +3,23 @@ import type { RouterContext } from "@arkade-os/sdk";
 import { onchainSwapRail } from "../../src/payment/onchain-swap";
 import { SwapError } from "../../src/errors";
 
-const btcAddr = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7k";
+const btcAddr = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 const ctx = (swaps: unknown, wallet: unknown = {}): RouterContext => ({
     wallet: wallet as any,
     swaps,
     prefs: {},
+});
+
+// fees: 2% + server 1000 + user.claim 500
+const chainFees = {
+    percentage: 2,
+    minerFees: { server: 1000, user: { claim: 500, lockup: 60 } },
+};
+
+/** quote() prices the swap from getFees, so any stub reaching it needs one. */
+const withFees = (swaps: Record<string, unknown>, fees: unknown = chainFees) => ({
+    getFees: vi.fn().mockResolvedValue(fees),
+    ...swaps,
 });
 
 describe("onchainSwapRail", () => {
@@ -71,6 +83,35 @@ describe("onchainSwapRail", () => {
         expect(swaps.getFees).not.toHaveBeenCalled();
     });
 
+    it("quote() reports the estimated swap fee and the user-lock total", async () => {
+        // Same bracket as available(): serverLock = 100_000 + 500 = 100_500,
+        // userLock = ceil((100_500 + 1000) / 0.98) = 103_572. The recipient
+        // still receives 100_000, so the fee is the 3_572 difference.
+        const swaps = {
+            getFees: vi.fn().mockResolvedValue({
+                percentage: 2,
+                minerFees: { server: 1000, user: { claim: 500, lockup: 60 } },
+            }),
+        };
+        const q = await onchainSwapRail().quote({ raw: btcAddr, amount: 100_000 }, ctx(swaps));
+
+        expect(q.amount).toBe(100_000); // what the recipient receives
+        expect(q.fee).toBe(3_572);
+        expect(q.total).toBe(103_572); // what leaves the wallet
+    });
+
+    it("quote() rejects a fee rate that cannot gross up, matching available()", async () => {
+        const swaps = {
+            getFees: vi.fn().mockResolvedValue({
+                percentage: 100,
+                minerFees: { server: 1000, user: { claim: 500, lockup: 60 } },
+            }),
+        };
+        await expect(
+            onchainSwapRail().quote({ raw: btcAddr, amount: 100_000 }, ctx(swaps)),
+        ).rejects.toThrow(/fee rate/i);
+    });
+
     it("send() creates the chain swap, funds the lockup, then claims BTC", async () => {
         const pendingSwap = { id: "swap1" };
         const arkToBtc = vi
@@ -81,7 +122,7 @@ describe("onchainSwapRail", () => {
 
         const q = await onchainSwapRail().quote(
             { raw: btcAddr, amount: 1000 },
-            ctx({ arkToBtc, waitAndClaimBtc }, { send }),
+            ctx(withFees({ arkToBtc, waitAndClaimBtc }), { send }),
         );
         expect(q.amount).toBe(1000);
         const h = await q.send();
@@ -107,7 +148,7 @@ describe("onchainSwapRail", () => {
         const send = vi.fn().mockResolvedValue("fundTx");
         const q = await onchainSwapRail().quote(
             { raw: btcAddr, amount: 1000 },
-            ctx({ arkToBtc, waitAndClaimBtc }, { send }),
+            ctx(withFees({ arkToBtc, waitAndClaimBtc }), { send }),
         );
         const h = await q.send();
         const failures: unknown[] = [];
@@ -128,7 +169,7 @@ describe("onchainSwapRail", () => {
         const send = vi.fn().mockResolvedValue("fundTx");
         const q = await onchainSwapRail().quote(
             { raw: btcAddr, amount: 1000 },
-            ctx({ arkToBtc, waitAndClaimBtc }, { send }),
+            ctx(withFees({ arkToBtc, waitAndClaimBtc }), { send }),
         );
         const h = await q.send();
         let failed: SwapError | undefined;

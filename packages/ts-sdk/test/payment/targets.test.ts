@@ -3,7 +3,7 @@ import { ArkAddress } from "../../src";
 import { arkTarget, btcTarget, invoiceTarget } from "../../src/payment/targets";
 
 const arkAddr = new ArkAddress(new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)).encode();
-const btcAddr = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7k";
+const btcAddr = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 const invoice = "lnbc10n1pjexample";
 const unified = `bitcoin:${btcAddr}?ark=${arkAddr}&lightning=${invoice}`;
 

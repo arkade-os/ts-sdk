@@ -37,11 +37,18 @@ export function lightningRail(): PaymentRail {
             // undecodable invoices instead of surfacing a `total: 0` quote.
             const amount = invoiceSats(invoice);
             assertSendableAmount("lightning", amount);
+            // Estimated from Boltz's advertised submarine pricing: the percentage
+            // is charged on the invoice amount, plus a flat lockup miner fee. The
+            // payee always receives the invoice amount, so the fee sits on top.
+            // Boltz returns the authoritative `expectedAmount` when the swap is
+            // actually created inside `sendLightningPayment`.
+            const { submarine } = await (ctx.swaps as ArkadeSwaps).getFees();
+            const fee = Math.ceil((amount * submarine.percentage) / 100) + submarine.minerFees;
             return {
                 railId: "lightning",
                 amount,
-                fee: 0,
-                total: amount,
+                fee,
+                total: amount + fee,
                 send: async () =>
                     makeHandle("lightning", async (emit) => {
                         const swaps = ctx.swaps as ArkadeSwaps;

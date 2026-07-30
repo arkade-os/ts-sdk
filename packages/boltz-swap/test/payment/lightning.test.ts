@@ -46,11 +46,29 @@ describe("lightningRail", () => {
         expect(getLimits).not.toHaveBeenCalled();
     });
 
+    it("quote() reports the estimated submarine fee on top of the invoice amount", async () => {
+        // INVOICE is 250_000 sats; 0.1% = 250, plus a 500 sat lockup miner fee.
+        const getFees = vi
+            .fn()
+            .mockResolvedValue({ submarine: { percentage: 0.1, minerFees: 500 } });
+        const q = await lightningRail().quote({ raw: INVOICE }, ctx({ getFees }));
+
+        expect(q.amount).toBe(250_000); // what the payee receives
+        expect(q.fee).toBe(750);
+        expect(q.total).toBe(250_750); // what leaves the wallet
+    });
+
     it("send() pays the invoice via sendLightningPayment and surfaces the preimage", async () => {
         const sendLightningPayment = vi
             .fn()
             .mockResolvedValue({ amount: 1000, preimage: "pre", txid: "txID" });
-        const q = await lightningRail().quote({ raw: INVOICE }, ctx({ sendLightningPayment }));
+        const getFees = vi
+            .fn()
+            .mockResolvedValue({ submarine: { percentage: 0.1, minerFees: 500 } });
+        const q = await lightningRail().quote(
+            { raw: INVOICE },
+            ctx({ sendLightningPayment, getFees }),
+        );
         expect(q.amount).toBe(250_000);
         const h = await q.send();
         expect(await h.settled()).toMatchObject({

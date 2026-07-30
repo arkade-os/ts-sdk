@@ -6,6 +6,10 @@ import { makeHandle } from "../handle";
 /**
  * Off-chain Arkade send. Matches a bare ark address or the `ark=` param of a
  * unified BIP21 URI, and settles via `Wallet.send`.
+ *
+ * The only rail that is receiver-exact for free: an off-chain send delivers the
+ * full amount and carries no counterparty or on-chain fee, so `fee` is 0 and
+ * `total` equals `amount` (see {@link RouteQuote}).
  */
 export function arkRail(): PaymentRail {
     return {

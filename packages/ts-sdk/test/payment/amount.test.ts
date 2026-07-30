@@ -5,7 +5,7 @@ import {
     tryResolveSendAmount,
 } from "../../src/payment/amount";
 
-const btcAddr = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7k";
+const btcAddr = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 
 describe("assertSendableAmount", () => {
     it("accepts a positive integer", () => {

@@ -18,7 +18,7 @@ describe("arkRail", () => {
 
     it("does not match an on-chain address or a bolt11 invoice", () => {
         const r = arkRail();
-        expect(r.match({ raw: "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7k" }, ctx())).toBe(false);
+        expect(r.match({ raw: "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080" }, ctx())).toBe(false);
         expect(r.match({ raw: "lnbc10n1pjexample" }, ctx())).toBe(false);
     });
 

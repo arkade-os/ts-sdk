@@ -25,10 +25,31 @@ export interface PaymentHandle {
     settled(opts?: { timeoutMs?: number }): Promise<RouteResult>;
 }
 
+/**
+ * A priced route. The three amounts are **receiver-exact** and mean the same
+ * thing on every rail, so `options()` can be ranked on cost and a rail swapped
+ * without changing what the recipient gets:
+ *
+ * - `amount` — sats delivered **to the recipient**.
+ * - `fee` — sats charged **on top**, by the rail and its counterparty.
+ * - `total` — `amount + fee`; the sats that leave the wallet.
+ *
+ * Rails whose underlying primitive *deducts* its fee (the collaborative exit)
+ * gross the amount up to honour this; rails that add it on top pass it through.
+ *
+ * `fee` is a pre-send estimate wherever the true cost is only fixed later: the
+ * swap rails quote from Boltz's advertised pricing and are superseded by the
+ * amount Boltz returns at swap creation, and the collaborative exit does not
+ * include the per-input intent fees, which depend on the VTXO selection made at
+ * settlement. Treat it as a display and ranking figure, not a guarantee.
+ */
 export interface RouteQuote {
     railId: string;
+    /** Sats delivered to the recipient. */
     amount: number;
+    /** Sats charged on top of {@link amount}; an estimate on the swap rails. */
     fee: number;
+    /** `amount + fee` — what leaves the wallet. */
     total: number;
     /** Execute. Returns an observable handle, never a bare result. */
     send(): Promise<PaymentHandle>;
