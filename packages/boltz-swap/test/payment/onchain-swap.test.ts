@@ -49,7 +49,7 @@ describe("onchainSwapRail", () => {
         expect(await r.available?.(req, ctx(swaps(1000, 103_571)))).toBe(false);
     });
 
-    it.each([100, 150])(
+    it.each([100, 150, -5, NaN])(
         "available() drops the rail at a %s%% fee rate instead of inverting the gate",
         async (percentage) => {
             const swaps = {

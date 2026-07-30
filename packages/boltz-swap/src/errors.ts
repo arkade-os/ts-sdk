@@ -2,7 +2,8 @@ import type { BoltzSwap } from "./types";
 
 /** Options for constructing swap errors. */
 interface ErrorOptions {
-    /** Custom error message (overrides the default). */
+    /** Custom error message. `undefined` keeps the subclass default, so callers
+     *  can forward an optional upstream reason without erasing it. */
     message?: string;
     /** Whether the swap's funds can still be claimed. */
     isClaimable?: boolean;
@@ -45,7 +46,7 @@ export class SwapError extends Error {
 /** Thrown when a Lightning invoice expires before being paid. The swap may be refundable. */
 export class InvoiceExpiredError extends SwapError {
     constructor(options: ErrorOptions = {}) {
-        super({ message: "The invoice has expired.", ...options });
+        super({ ...options, message: options.message ?? "The invoice has expired." });
         this.name = "InvoiceExpiredError";
     }
 }
@@ -54,8 +55,8 @@ export class InvoiceExpiredError extends SwapError {
 export class InvoiceFailedToPayError extends SwapError {
     constructor(options: ErrorOptions = {}) {
         super({
-            message: "The provider failed to pay the invoice",
             ...options,
+            message: options.message ?? "The provider failed to pay the invoice",
         });
         this.name = "InvoiceFailedToPayError";
     }
@@ -64,7 +65,7 @@ export class InvoiceFailedToPayError extends SwapError {
 /** Thrown when the wallet does not have enough funds to complete the swap. */
 export class InsufficientFundsError extends SwapError {
     constructor(options: ErrorOptions = {}) {
-        super({ message: "Not enough funds available", ...options });
+        super({ ...options, message: options.message ?? "Not enough funds available" });
         this.name = "InsufficientFundsError";
     }
 }
@@ -114,7 +115,7 @@ export class SwapNotFoundError extends NetworkError {
 /** Thrown when the Boltz API returns a response that doesn't match the expected schema. */
 export class SchemaError extends SwapError {
     constructor(options: ErrorOptions = {}) {
-        super({ message: "Invalid API response", ...options });
+        super({ ...options, message: options.message ?? "Invalid API response" });
         this.name = "SchemaError";
     }
 }
@@ -122,7 +123,7 @@ export class SchemaError extends SwapError {
 /** Thrown when a swap exceeds its time limit. May be refundable depending on swap type. */
 export class SwapExpiredError extends SwapError {
     constructor(options: ErrorOptions = {}) {
-        super({ message: "The swap has expired", ...options });
+        super({ ...options, message: options.message ?? "The swap has expired" });
         this.name = "SwapExpiredError";
     }
 }
@@ -130,7 +131,7 @@ export class SwapExpiredError extends SwapError {
 /** Thrown when an on-chain or off-chain transaction fails. */
 export class TransactionFailedError extends SwapError {
     constructor(options: ErrorOptions = {}) {
-        super({ message: "The transaction has failed.", ...options });
+        super({ ...options, message: options.message ?? "The transaction has failed." });
         this.name = "TransactionFailedError";
     }
 }
@@ -142,8 +143,8 @@ export class TransactionFailedError extends SwapError {
 export class PreimageFetchError extends SwapError {
     constructor(options: ErrorOptions = {}) {
         super({
-            message: "The payment settled, but fetching the preimage failed.",
             ...options,
+            message: options.message ?? "The payment settled, but fetching the preimage failed.",
         });
         this.name = "PreimageFetchError";
     }
@@ -152,7 +153,7 @@ export class PreimageFetchError extends SwapError {
 /** Thrown when the lockup transaction fails (e.g. not confirmed or rejected). Typically refundable. */
 export class TransactionLockupFailedError extends SwapError {
     constructor(options: ErrorOptions = {}) {
-        super({ message: "The transaction lockup has failed.", ...options });
+        super({ ...options, message: options.message ?? "The transaction lockup has failed." });
         this.name = "TransactionLockupFailedError";
     }
 }
@@ -160,7 +161,7 @@ export class TransactionLockupFailedError extends SwapError {
 /** Thrown when a swap has already been refunded. Informational — no further action needed. */
 export class TransactionRefundedError extends SwapError {
     constructor(options: ErrorOptions = {}) {
-        super({ message: "The transaction has been refunded.", ...options });
+        super({ ...options, message: options.message ?? "The transaction has been refunded." });
         this.name = "TransactionRefundedError";
     }
 }
@@ -195,8 +196,8 @@ export class QuoteRejectedError extends SwapError {
 
     constructor(options: QuoteRejectedOptions) {
         super({
-            message: options.message ?? QuoteRejectedError.defaultMessage(options),
             ...options,
+            message: options.message ?? QuoteRejectedError.defaultMessage(options),
         });
         this.name = "QuoteRejectedError";
         this.reason = options.reason;

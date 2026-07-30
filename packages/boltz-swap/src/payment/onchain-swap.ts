@@ -46,9 +46,11 @@ export function onchainSwapRail(): PaymentRail {
             // ambiguous band self-heals to the `onchain` collaborative exit.
             const serverLockAmount = amt + fees.minerFees.user.claim;
             const feeRate = fees.percentage / 100;
-            // A rate at or above 100% makes the gross-up divisor zero or
-            // negative, which would flip the max check into passing.
-            if (!(feeRate < 1)) return false;
+            // Only a rate in [0, 1) grosses up correctly: at or above 100% the
+            // divisor turns zero or negative, and a negative rate shrinks the
+            // estimate — either way the max check flips into passing. NaN fails
+            // the range test too.
+            if (!(feeRate >= 0 && feeRate < 1)) return false;
             const userLockAmount = Math.ceil(
                 (serverLockAmount + fees.minerFees.server) / (1 - feeRate),
             );

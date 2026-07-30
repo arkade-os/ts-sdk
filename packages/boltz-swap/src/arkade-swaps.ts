@@ -770,7 +770,7 @@ export class ArkadeSwaps {
                         await saveStatus();
                         reject(
                             new TransactionFailedError({
-                                message: data?.failureReason ?? "Transaction failed",
+                                message: data?.failureReason,
                                 isRefundable: true,
                             }),
                         );

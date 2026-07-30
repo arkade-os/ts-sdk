@@ -301,6 +301,30 @@ describe("BoltzSwapProvider", () => {
             expect(mockFetch).toHaveBeenCalledTimes(2);
         });
 
+        // Literal expectations, not the fixture: the fetch mock hands `chainResponse`
+        // out by reference, so a leaked reference would corrupt the fixture too and
+        // any comparison against it would pass vacuously.
+        it("hands out detached copies, so a mutated result cannot poison the cache", async () => {
+            const mockFetch = pairFetch();
+            vi.stubGlobal("fetch", mockFetch);
+
+            // getChainFees returns the cached sub-object directly ...
+            const chainFees = await provider.getChainFees("ARK", "BTC");
+            chainFees.percentage = 999;
+            chainFees.minerFees.server = 999_999;
+            // ... and getFees lifts a nested minerFees reference out of it.
+            const fees = await provider.getFees();
+            (fees.reverse.minerFees as { claim: number }).claim = 999_999;
+
+            // Same TTL window, so both are cache hits.
+            const chainAgain = await provider.getChainFees("ARK", "BTC");
+            expect(chainAgain.percentage).toBe(0.1);
+            expect(chainAgain.minerFees.server).toBe(100);
+            expect((await provider.getFees()).reverse.minerFees).toEqual({ claim: 0, lockup: 0 });
+            // submarine + reverse + chain, each fetched once
+            expect(mockFetch).toHaveBeenCalledTimes(3);
+        });
+
         it("refetches once the 15-minute TTL expires", async () => {
             vi.useFakeTimers();
             try {

@@ -967,6 +967,11 @@ const isSwapNotFoundBody = (error: NetworkError): boolean => {
     return error.message.toLowerCase().includes(needle);
 };
 
+// Deep copy of a validated Boltz response, so a cached value can never be
+// reached by reference. JSON round-trip rather than `structuredClone`: these are
+// plain JSON payloads, and Hermes/older RN runtimes lack the global.
+const detach = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
 /**
  * API client for the Boltz swap service.
  * Handles swap creation, status monitoring, fee/limit queries, and cooperative signing
@@ -1656,6 +1661,10 @@ export class BoltzSwapProvider {
      * Only successfully validated responses are cached; HTTP and schema failures
      * refetch next time. The in-flight GET dedupe in {@link request} still applies
      * on a cache miss, so concurrent first callers share a single fetch.
+     *
+     * Every caller gets a detached copy: the fee/limit accessors hand nested
+     * values straight to consumers, and one mutation would otherwise poison
+     * routing for the rest of the TTL.
      */
     private async pairsMetadata<T>(
         path: string,
@@ -1664,14 +1673,16 @@ export class BoltzSwapProvider {
     ): Promise<T> {
         const cached = this.pairsCache.get(path);
         if (cached && Date.now() - cached.at < BoltzSwapProvider.PAIRS_CACHE_TTL_MS) {
-            return cached.value as T;
+            return detach(cached.value) as T;
         }
         const response = await this.request<unknown>(path, "GET");
         if (!validate(response)) {
             throw new SchemaError({ message: schemaErrorMessage });
         }
         this.pairsCache.set(path, { at: Date.now(), value: response });
-        return response;
+        // Detach on the miss path too: the caller would otherwise hold the very
+        // object just cached.
+        return detach(response) as T;
     }
 
     private async request<T>(path: string, method: "GET" | "POST", body?: unknown): Promise<T> {

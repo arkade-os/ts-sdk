@@ -2181,7 +2181,7 @@ describe("ArkadeSwaps", () => {
 
                 // assert — a no-manager caller recovers via the attached refund metadata
                 expect(error).toBeInstanceOf(TransactionFailedError);
-                expect(error.message).toBe("Error during swap.");
+                expect(error.message).toBe("The transaction has failed.");
                 expect(error.isRefundable).toBe(true);
                 expect(error.pendingSwap).toMatchObject({ id: pendingSwap.id });
             });
@@ -2638,7 +2638,7 @@ describe("ArkadeSwaps", () => {
                 const resultPromise = swaps.waitAndClaimArk(pendingSwap);
 
                 // assert
-                await expect(resultPromise).rejects.toThrow("Error during swap.");
+                await expect(resultPromise).rejects.toThrow("The transaction has failed.");
             });
 
             it("should reject with TransactionRefundedError when transaction is refunded", async () => {
