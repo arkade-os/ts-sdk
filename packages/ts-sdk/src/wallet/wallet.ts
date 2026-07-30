@@ -1191,17 +1191,74 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const { boardingTxs, commitmentsToIgnore } = await this.getBoardingTxs();
 
-        const getTxCreatedAt = (txid: string) =>
-            getNormalizedVtxos(this.indexerProvider, { outpoints: [{ txid, vout: 0 }] })
-                .then((res) => res.vtxos[0]?.createdAt.getTime())
-                // Best-effort createdAt enrichment: when the indexer is
-                // unavailable, leave it undefined (history still builds from
-                // repository VTXOs) rather than failing the whole read. Terminal
-                // failures still propagate.
-                .catch((err) => {
-                    if (isRetryableProviderError(err)) return undefined;
-                    throw err;
-                });
+        // Timestamps we already hold, earliest per txid so history ordering is
+        // stable. Free: no indexer round trip.
+        const vtxoCreatedAt = new Map<string, number>();
+        for (const vtxo of allVtxos) {
+            const existing = vtxoCreatedAt.get(vtxo.txid);
+            const ts = vtxo.createdAt.getTime();
+            if (existing === undefined || ts < existing) {
+                vtxoCreatedAt.set(vtxo.txid, ts);
+            }
+        }
+
+        // Pre-fetch whatever is left in BATCHED indexer calls.
+        // buildTransactionHistory needs these for spent offchain virtual outputs
+        // with no change output (arkTxId set, but no virtual output has
+        // txid === arkTxId).
+        //
+        // This used to be one indexer request per txid, and because
+        // buildTransactionHistory awaits getTxCreatedAt inside its per-VTXO
+        // loop, they ran strictly sequentially and repeated for every VTXO
+        // sharing an arkTxId. MEASURED in a browser HAR against mutinynet: 348
+        // single-outpoint requests covering only 123 distinct txids — 92% of the
+        // page's total traffic — at a median 181ms each, 23.9s in one burst.
+        // Cost grew linearly with wallet history, so a large wallet could exceed
+        // a caller's timeout and fail the read outright.
+        //
+        // The service-worker path (WalletMessageHandler.getTransactionHistory)
+        // has always batched this; that implementation is mirrored here.
+        const knownTxids = new Set(allVtxos.map((v) => v.txid));
+        const uncachedTxids = new Set<string>();
+        for (const vtxo of allVtxos) {
+            if (
+                vtxo.isSpent &&
+                vtxo.arkTxId &&
+                !vtxoCreatedAt.has(vtxo.arkTxId) &&
+                !knownTxids.has(vtxo.arkTxId)
+            ) {
+                uncachedTxids.add(vtxo.arkTxId);
+            }
+        }
+
+        if (uncachedTxids.size > 0) {
+            const outpoints = [...uncachedTxids].map((txid) => ({ txid, vout: 0 }));
+            // Same size the service-worker path uses. Outpoints cost about what
+            // scripts do in the query string, so this spends nearly the whole URL
+            // budget SCRIPT_QUERY_CHUNK_SIZE leaves unspent; lower it to the
+            // shared constant if this ever 414s.
+            const BATCH_SIZE = 100;
+            for (let i = 0; i < outpoints.length; i += BATCH_SIZE) {
+                try {
+                    const res = await getNormalizedVtxos(this.indexerProvider, {
+                        outpoints: outpoints.slice(i, i + BATCH_SIZE),
+                    });
+                    for (const v of res.vtxos) {
+                        vtxoCreatedAt.set(v.txid, v.createdAt.getTime());
+                    }
+                } catch (err) {
+                    // Best-effort createdAt enrichment, unchanged in spirit from
+                    // the per-txid version: when the indexer is unavailable leave
+                    // these undefined (history still builds from repository
+                    // VTXOs) rather than failing the whole read. Terminal
+                    // failures still propagate.
+                    if (!isRetryableProviderError(err)) throw err;
+                }
+            }
+        }
+
+        const getTxCreatedAt = async (txid: string): Promise<number | undefined> =>
+            vtxoCreatedAt.get(txid);
 
         return buildTransactionHistory(allVtxos, boardingTxs, commitmentsToIgnore, getTxCreatedAt);
     }
