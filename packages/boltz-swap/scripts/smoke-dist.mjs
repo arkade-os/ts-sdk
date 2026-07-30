@@ -102,8 +102,7 @@ ok(`declarations scanned: ${dtsChecked}, relative imports verified: ${dtsImports
 // workspace dep @arkade-os/sdk via the local node_modules symlink.
 section("root entry: CJS + ESM load");
 
-const runNode = (args) =>
-    spawnSync(process.execPath, args, { cwd: repoRoot, encoding: "utf8" });
+const runNode = (args) => spawnSync(process.execPath, args, { cwd: repoRoot, encoding: "utf8" });
 
 const cjsProbe = `
 const mod = require("./dist/index.cjs");

@@ -10,6 +10,7 @@ import {
     getNetwork,
     networks,
     NetworkName,
+    ArkAddress,
     VHTLC,
     VtxoScript,
     VtxoTaprootTree,
@@ -78,6 +79,10 @@ export const createVHTLCScript = (args: {
     senderPubkey: string;
     serverPubkey: string;
     timeoutBlockHeights: VhtlcTimeouts;
+    nonInteractiveClaim?: {
+        emulatorPublicKey: string;
+        claimAddress: string;
+    };
 }): { vhtlcScript: VHTLC.Script; vhtlcAddress: string } => {
     const {
         network,
@@ -86,6 +91,7 @@ export const createVHTLCScript = (args: {
         senderPubkey,
         serverPubkey,
         timeoutBlockHeights: vhtlcTimeouts,
+        nonInteractiveClaim,
     } = args;
     // validate we are using a x-only receiver public key
     const receiverXOnlyPublicKey = normalizeToXOnlyKey(hex.decode(receiverPubkey), "receiver");
@@ -107,6 +113,15 @@ export const createVHTLCScript = (args: {
         unilateralRefundWithoutReceiverDelay: toBip68RelativeTimelock(
             vhtlcTimeouts.unilateralRefundWithoutReceiver,
         ),
+        ...(nonInteractiveClaim
+            ? {
+                  nonInteractiveClaim: {
+                      receiverPkScript: ArkAddress.decode(nonInteractiveClaim.claimAddress)
+                          .pkScript,
+                      emulatorPubkey: hex.decode(nonInteractiveClaim.emulatorPublicKey),
+                  },
+              }
+            : {}),
     });
 
     if (!vhtlcScript.claimScript) throw new Error("Failed to create VHTLC script");

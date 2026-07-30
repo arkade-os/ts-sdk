@@ -1203,6 +1203,7 @@ export class ArkadeSwapsMessageHandler
             indexerProvider: this.indexerProvider,
             swapRepository: this.swapRepository,
             swapManager: payload.swapManager,
+            covclaimdUrl: payload.covclaimdUrl,
         });
         this.handler = handler;
 

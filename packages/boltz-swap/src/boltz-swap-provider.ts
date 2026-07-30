@@ -463,6 +463,23 @@ export type CreateReverseSwapRequest = {
      * or the other, never both; when set, `description` is omitted.
      */
     descriptionHash?: string;
+    /**
+     * Optional non-interactive claim config (Ark reverse swaps only). When set,
+     * Boltz builds the VHTLC with a covenant claim leaf so a covclaimd daemon
+     * can sweep it on the client's behalf.
+     */
+    nonInteractiveClaim?: NonInteractiveClaimConfig;
+};
+
+/**
+ * Non-interactive claim config. When set on an Ark-receiving swap, Boltz builds
+ * the VHTLC with a covenant claim leaf so a covclaimd daemon can sweep it on the
+ * client's behalf. The emulator key is configured on Boltz's fulmine, not sent
+ * per request.
+ */
+export type NonInteractiveClaimConfig = {
+    /** Ark address the solver must pay when claiming. */
+    claimAddress: string;
 };
 
 /** Response from creating a reverse swap. */
@@ -667,6 +684,7 @@ export type CreateChainSwapRequest = {
     userLockAmount?: number;
     /** Optional referral ID. */
     referralId?: string;
+    nonInteractiveClaim?: NonInteractiveClaimConfig;
 };
 
 /** Response from creating a chain swap. */
@@ -1139,6 +1157,7 @@ export class BoltzSwapProvider {
         preimageHash,
         description,
         descriptionHash,
+        nonInteractiveClaim,
     }: CreateReverseSwapRequest): Promise<CreateReverseSwapResponse> {
         // claimPublicKey must be in compressed version (33 bytes / 66 hex chars)
         if (claimPublicKey.length != 66) {
@@ -1163,6 +1182,7 @@ export class BoltzSwapProvider {
             ...(descriptionHash
                 ? { descriptionHash }
                 : { description: description?.trim() || "Send to Arkade address" }),
+            ...(nonInteractiveClaim ? { nonInteractiveClaim } : {}),
             ...(this.referralId ? { referralId: this.referralId } : {}),
         };
 
@@ -1188,6 +1208,7 @@ export class BoltzSwapProvider {
         refundPublicKey,
         serverLockAmount,
         userLockAmount,
+        nonInteractiveClaim,
     }: CreateChainSwapRequest): Promise<CreateChainSwapResponse> {
         // validate direction
         if (["BTC", "ARK"].indexOf(to) === -1)
@@ -1241,6 +1262,7 @@ export class BoltzSwapProvider {
             serverLockAmount,
             userLockAmount,
             ...(this.referralId ? { referralId: this.referralId } : {}),
+            ...(nonInteractiveClaim ? { nonInteractiveClaim } : {}),
         };
 
         const response = await this.request<CreateChainSwapResponse>(

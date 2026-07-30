@@ -81,6 +81,11 @@ export interface CreateLightningInvoiceRequest {
      * is SHA256 of the zap request and the receipt later proves the match.
      */
     descriptionHash?: string;
+    /**
+     * Let a covclaimd daemon claim the VHTLC (Ark reverse swaps only).
+     * Requires `covclaimdUrl` on the ArkadeSwaps config. Default false.
+     */
+    nonInteractive?: boolean;
 }
 
 /** Response containing the created Lightning invoice and swap details. */
@@ -155,6 +160,18 @@ export interface RefundRetryState {
     nextRetryAt: number;
 }
 
+/**
+ * Persisted parameters of the VHTLC's non-interactive claim leaf. Stored on the
+ * swap so the leaf — and therefore the lockup address and every control block —
+ * can be re-derived at claim time without covclaimd being reachable.
+ */
+export interface NonInteractiveClaimParams {
+    /** Ark address the covenant forces the claim tx to pay. */
+    claimAddress: string;
+    /** covclaimd's emulator co-signer key (hex). */
+    emulatorPublicKey: string;
+}
+
 /** Tracks an in-progress reverse swap (Lightning → Arkade). */
 export interface BoltzReverseSwap {
     /** Unique swap ID from Boltz. */
@@ -171,6 +188,8 @@ export interface BoltzReverseSwap {
     request: CreateReverseSwapRequest;
     /** Boltz API response with lockup address, invoice, and timeout details. */
     response: CreateReverseSwapResponse;
+    /** Set when the VHTLC carries a non-interactive claim leaf. */
+    nonInteractiveClaim?: NonInteractiveClaimParams;
 }
 
 /** Tracks an in-progress submarine swap (Arkade → Lightning). */
@@ -324,6 +343,8 @@ export interface BoltzChainSwap {
     toAddress?: string;
     /** Swap amount in satoshis. */
     amount: number;
+    /** Set when the Ark-side VHTLC carries a non-interactive claim leaf. */
+    nonInteractiveClaim?: NonInteractiveClaimParams;
 }
 
 /** Union type of all pending swap types. */
@@ -363,6 +384,11 @@ export interface ArkadeSwapsConfig {
      * - `SwapRepository` object: SwapRepository enabled with custom configuration
      */
     swapRepository?: SwapRepository;
+    /**
+     * Base URL of a covclaimd daemon. Enables non-interactive reverse swaps:
+     * the SDK reveals the preimage to covclaimd, which sweeps the VHTLC.
+     */
+    covclaimdUrl?: string;
 }
 
 /**
