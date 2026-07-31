@@ -1,8 +1,8 @@
-import { ArkTransaction, Asset, TxKey, TxType, VirtualCoin } from "../wallet";
+import { ArkTransaction, Asset, BuiltinTxTag, TxKey, TxType, VirtualCoin } from "../wallet";
 import { normalizeVtxo, type NormalizedVirtualCoin } from "../wallet/vtxo";
 
 type ExtendedArkTransaction = ArkTransaction & {
-    tag: "offchain" | "boarding" | "exit" | "batch";
+    tag: BuiltinTxTag;
 };
 const txKey: TxKey = {
     commitmentTxid: "",

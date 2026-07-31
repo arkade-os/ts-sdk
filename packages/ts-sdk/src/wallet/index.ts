@@ -22,6 +22,8 @@ import type { ExitDataSource } from "./exit/resolver";
 export {
     ActivityRegistry,
     boardingResolver,
+    collabExitResolver,
+    assetMintResolver,
     createDefaultActivityRegistry,
     type Activity,
     type ActivityIntent,
@@ -707,6 +709,17 @@ export interface TxKey {
     arkTxid: string;
 }
 
+/** The categories the history builder itself assigns. */
+export type BuiltinTxTag = "offchain" | "boarding" | "exit" | "batch";
+
+/**
+ * The category the history builder assigns to a transaction. The `(string & {})`
+ * arm keeps the union open — apps and resolvers can introduce their own
+ * categories without a breaking change — while preserving editor autocomplete
+ * for the built-in four.
+ */
+export type TxTag = BuiltinTxTag | (string & {});
+
 /**
  * Wallet transaction history entry.
  *
@@ -731,6 +744,13 @@ export interface ArkTransaction {
 
     /** Assets sent or received by this transaction, if any. */
     assets?: Asset[];
+
+    /**
+     * The {@link TxTag} category assigned by the history builder. Always set on
+     * transactions returned by the wallet's `getTransactionHistory()`; optional
+     * only because a hand-built `ArkTransaction` may omit it.
+     */
+    tag?: TxTag;
 }
 
 /**
