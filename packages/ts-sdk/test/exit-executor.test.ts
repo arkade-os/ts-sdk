@@ -487,6 +487,11 @@ describe("Executor cancellation", () => {
     // The whole point of making sleep() abortable rather than only checking
     // `aborted` between polls: abort latency must track the signal, not the
     // poll interval.
+    //
+    // This one needs the real clock. Fake timers would let the 10s interval
+    // elapse instantly, so the assertion would hold even for an implementation
+    // that merely checks `aborted` between polls — exactly the version this
+    // test exists to rule out. The 10s-vs-1s margin is the flake budget.
     it("aborts promptly rather than waiting out the poll interval", async () => {
         const { script, pkg } = neverConfirmingPkg();
         const ac = new AbortController();
@@ -543,8 +548,12 @@ describe("Executor cancellation", () => {
         await expect(consumed).rejects.toMatchObject({ name: "AbortError" });
 
         expect(added).toBeGreaterThan(1);
-        // Every registration is released: timeouts remove explicitly, the abort
-        // path is registered with { once: true }.
+        // Not `=== 0`: every sleep that ends by timing out calls
+        // removeEventListener explicitly, but the final sleep is the one that
+        // gets aborted, and its `{ once: true }` listener is dropped internally
+        // by the event target — that removal does not go through the proxied
+        // removeEventListener. So exactly one registration is unaccounted for,
+        // and a slack larger than 1 would mean a genuine leak.
         expect(added - removed).toBeLessThanOrEqual(1);
     });
 

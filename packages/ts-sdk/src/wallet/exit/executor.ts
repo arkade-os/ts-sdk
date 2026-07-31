@@ -2,11 +2,18 @@ import { OnchainProvider } from "../../providers/onchain";
 import { ExitPackage, ExitStep, SweepStep } from "./types";
 
 /**
- * `AbortSignal.prototype.throwIfAborted` is not reliably present on Hermes /
- * React Native, and this SDK ships Expo providers — so resolve the error here.
- * A spec-compliant engine supplies `signal.reason` (a DOMException named
- * "AbortError"); otherwise fall back to an Error carrying the same `name`, so
- * consumers can always match on `err.name === "AbortError"`.
+ * Resolve the value to throw for an aborted signal.
+ *
+ * `signal.reason` is forwarded verbatim, matching the platform: both
+ * `AbortSignal.prototype.throwIfAborted` and `fetch` throw a custom reason
+ * as-is — including non-`Error` values — so a consumer that calls
+ * `abort(new MyError())` catches `MyError` rather than something wrapping it.
+ * With a no-argument `abort()` a spec-compliant engine supplies a
+ * `DOMException` named `"AbortError"`.
+ *
+ * The fallback exists because `throwIfAborted` is not reliably present on
+ * Hermes / React Native, and this SDK ships Expo providers; there `reason` may
+ * be `undefined`, so an `Error` carrying the same `name` is constructed.
  */
 function abortErrorFor(signal: AbortSignal): unknown {
     if (signal.reason !== undefined) return signal.reason;
@@ -64,9 +71,15 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
         opts?: {
             pollIntervalMs?: number;
             feeWallet?: ExitFeeWallet;
-            /** Abort to stop execution. Iteration then rejects with an error
-             * whose `name` is "AbortError". Already-broadcast transactions are
-             * not recalled; the executor is idempotent, so a later run resumes. */
+            /** Abort to stop execution.
+             *
+             * Iteration then rejects with `signal.reason`. Calling `abort()`
+             * with no argument yields an error whose `name` is `"AbortError"`;
+             * a custom reason is forwarded as-is, matching `fetch` and
+             * `AbortSignal.prototype.throwIfAborted`.
+             *
+             * Already-broadcast transactions are not recalled; the executor is
+             * idempotent, so a later run resumes from the chain. */
             signal?: AbortSignal;
         },
     ) {
