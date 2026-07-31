@@ -1437,6 +1437,17 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // batch is spent; if any spendable VTXO is still there (an un-settled
         // overflow, or fresh funds at the address), keep the contract for a
         // later cycle.
+        //
+        // The view cannot shrink back to empty and strand the contract here:
+        // `getContractsWithVtxos` serves repository state, and every backend's
+        // `saveVtxos` upserts (merge / put / INSERT OR REPLACE) rather than
+        // replacing a script's set, so a sync never drops a VTXO the repo has
+        // already seen. Nothing prunes them either — `deleteVtxos*` has no
+        // caller outside the repositories, and `pruneForSpentVtxo` clears exit
+        // data in the virtual-tx repository, not these rows. So a re-entry
+        // after a crashed or failed purge still sees the spent set and
+        // completes. On the happy path this guard is moot anyway: `vtxos` is
+        // the pre-settle snapshot that held the VTXO just settled.
         if (vtxos.length === 0) return;
 
         const spent = new Set(batch.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`));

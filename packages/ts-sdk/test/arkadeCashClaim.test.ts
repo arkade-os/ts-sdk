@@ -580,6 +580,52 @@ describe("claimCash import-for-recovery", () => {
         expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cash.publicKey)})`)).toBe(false);
     });
 
+    it("purges on a later pass when the first pass's purge failed", async () => {
+        // Re-entry is what makes a failed `removeRecoveryContract` self-heal,
+        // and it needs the settled VTXO to still be in the view — spent, so
+        // nothing is re-settled, but present, so the `vtxos.length === 0`
+        // outage guard doesn't swallow the purge.
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        let view: VirtualCoin[] = [sweptCashVtxo(cashPkScript)];
+        const indexer = {
+            ...(cashIndexer(cashPkScript, []) as Record<string, unknown>),
+            getVtxos: vi.fn(async (opts?: { scripts?: string[] }) => ({
+                vtxos: opts?.scripts?.includes(cashPkScript) ? view : [],
+            })),
+        } as never;
+        const wallet = await makeWallet(indexer, { getPendingTxs: vi.fn(async () => []) });
+        const manager = await wallet.getVtxoManager();
+        const kick = vi.spyOn(manager, "recoverImportedContracts").mockResolvedValue();
+        await wallet.claimCash(cash.toString());
+        kick.mockRestore();
+
+        const settle = vi.spyOn(wallet, "settle").mockResolvedValue("recovery-txid");
+        const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+        try {
+            // Pass 1: the settle lands, the purge does not.
+            const purge = vi
+                .spyOn(wallet, "removeRecoveryContract")
+                .mockRejectedValueOnce(new Error("repo write failed"));
+            await manager.recoverImportedContracts();
+            expect(settle).toHaveBeenCalledOnce();
+            purge.mockRestore();
+
+            // The settled VTXO now reads back spent.
+            view = [spentCashVtxo(cashPkScript)];
+
+            // Pass 2: nothing left to settle, but the row and key still go.
+            await manager.recoverImportedContracts();
+            expect(settle).toHaveBeenCalledOnce();
+        } finally {
+            errorLog.mockRestore();
+        }
+
+        const cm = await wallet.getContractManager();
+        expect(await cm.getContracts({ script: cashPkScript })).toEqual([]);
+        expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cash.publicKey)})`)).toBe(false);
+    });
+
     it("isolates a failing recovery: siblings still settle, the failure retries next cycle", async () => {
         // Two independently imported notes; the FIRST one's settlement is
         // rejected, so the loop must carry on to the second — the per-contract
