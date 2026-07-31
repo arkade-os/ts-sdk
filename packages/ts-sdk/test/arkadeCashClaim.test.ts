@@ -9,6 +9,7 @@ import { ArkadeCash } from "../src/arkadeCash";
 import { ArkAddress } from "../src/script/address";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
 import { buildOffchainTx } from "../src/utils/arkTransaction";
+import { timelockToSequence } from "../src/utils/timelock";
 import type { VirtualCoin } from "../src/wallet";
 
 // claimCash's accounting across the drain-pending path: a claim interrupted
@@ -377,6 +378,85 @@ describe("claimCash import-for-recovery", () => {
         // recovery-only VTXO must not appear there, or it would poison them.
         expect(await wallet.getVtxos()).toEqual([]);
         expect(await wallet.getVtxos({ withRecoverable: true })).toEqual([]);
+    });
+
+    it("promotes a pre-existing unflagged contract at the cash script to recovery-only", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const wallet = await makeWallet(cashIndexer(cashPkScript, [sweptCashVtxo(cashPkScript)]), {
+            getPendingTxs: vi.fn(async () => []),
+        });
+        vi.spyOn(await wallet.getVtxoManager(), "recoverImportedContracts").mockResolvedValue();
+
+        // A consumer registered the cash address through the public surface
+        // (e.g. to watch a note it issued): same script, same type, no
+        // recovery flags. createContract's same-type idempotency keeps such a
+        // row as-is, so the import must promote it — left unflagged it would
+        // feed the wallet's own settles unsignable swept VTXOs while staying
+        // invisible to the recovery pass and its purge.
+        const cm = await wallet.getContractManager();
+        await cm.createContract({
+            type: "default",
+            params: {
+                pubKey: hex.encode(cash.publicKey),
+                serverPubKey: hex.encode(cash.serverPubKey),
+                csvTimelock: timelockToSequence(cash.csvTimelock).toString(),
+            },
+            script: cashPkScript,
+            address: cash.address("tark").encode(),
+            state: "inactive",
+            metadata: { consumerTag: "watching" },
+        });
+
+        const result = await wallet.claimCash(cash.toString());
+        expect(result.recovering.amount).toBe(CASH_VALUE);
+
+        const [contract] = await cm.getContracts({ script: cashPkScript });
+        expect(contract.metadata?.recoveryOnly).toBe(true);
+        expect(contract.metadata?.signingDescriptor).toBe(`tr(${hex.encode(cash.publicKey)})`);
+        // Unrelated consumer metadata survives until the post-recovery deletion.
+        expect(contract.metadata?.consumerTag).toBe("watching");
+        // An inactive row cannot dodge the recovery pass.
+        expect(contract.state).toBe("active");
+
+        // The promoted contract is now excluded from the wallet's own VTXOs...
+        expect(await wallet.getVtxos({ withRecoverable: true })).toEqual([]);
+        // ...and the recovery pass sees it.
+        expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cash.publicKey)})`)).toBe(true);
+    });
+
+    it("reports recovery-failed when the import cannot be persisted", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const wallet = await makeWallet(cashIndexer(cashPkScript, [sweptCashVtxo(cashPkScript)]), {
+            getPendingTxs: vi.fn(async () => []),
+        });
+        const manager = await wallet.getVtxoManager();
+        const kick = vi.spyOn(manager, "recoverImportedContracts").mockResolvedValue();
+
+        // The import's contract write fails: the swept funds can be neither
+        // swept nor handed to recovery, so they must surface as unclaimed
+        // with a reason — this is the only path that reports server-swept
+        // funds as unclaimable, and dropping them from the report entirely
+        // would hide recoverable money.
+        const cm = await wallet.getContractManager();
+        vi.spyOn(cm, "createContract").mockRejectedValue(new Error("repo write failed"));
+        const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        try {
+            const result = await wallet.claimCash(cash.toString());
+
+            expect(result.swept).toBe(0);
+            expect(result.recovering).toEqual({ amount: 0, vtxos: [] });
+            expect(result.unclaimed.amount).toBe(CASH_VALUE);
+            expect(result.unclaimed.vtxos).toEqual([
+                { txid: CASH_TXID, vout: 0, value: CASH_VALUE, reason: "recovery-failed" },
+            ]);
+            // Nothing was imported, so there is no recovery to kick.
+            expect(kick).not.toHaveBeenCalled();
+        } finally {
+            errorLog.mockRestore();
+        }
     });
 
     it("is idempotent: re-claiming does not duplicate the import", async () => {

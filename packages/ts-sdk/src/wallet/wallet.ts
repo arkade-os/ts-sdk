@@ -4512,6 +4512,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      *   settled in its own isolated intent, never bundled into the wallet's own
      *   renewal/recovery — a persistently rejected input then dents only its
      *   own recovery, never the wallet's funds).
+     *
+     * A row may already exist at the script WITHOUT the recovery flags — the
+     * public `createContract` surface lets a consumer register the cash
+     * address (e.g. to watch a note it issued) — and `createContract`'s
+     * same-type idempotency keeps such a row as-is. It is then promoted:
+     * presenting the bearer key IS the authorization to claim, and left
+     * unflagged the row would feed unsignable swept VTXOs into the wallet's
+     * own settles while being invisible to both the isolated recovery pass
+     * and `removeRecoveryContract`'s purge.
      */
     private async importArkadeCashForRecovery(
         cash: ArkadeCash,
@@ -4524,7 +4533,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const descriptor = await this._keyring.importKey(cash.privateKey);
 
         const manager = await this.getContractManager();
-        await manager.createContract({
+        const contract = await manager.createContract({
             type: "default",
             params: {
                 pubKey: hex.encode(cash.publicKey),
@@ -4539,6 +4548,23 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 recoveryOnly: true,
             },
         });
+
+        if (!isRecoveryOnlyContract(contract)) {
+            // Pre-existing unflagged row: promote it, preserving unrelated
+            // consumer metadata until the row's post-recovery deletion. The
+            // descriptor is overwritten unconditionally — we hold the actual
+            // key, whatever the old row claimed. `state: "active"` mirrors the
+            // fresh-import path so an inactive row cannot dodge the recovery
+            // pass.
+            await manager.updateContract(contract.script, {
+                state: "active",
+                metadata: {
+                    ...contract.metadata,
+                    signingDescriptor: descriptor,
+                    recoveryOnly: true,
+                },
+            });
+        }
     }
 
     /** Best-effort, non-blocking trigger of the isolated imported-recovery pass. */
