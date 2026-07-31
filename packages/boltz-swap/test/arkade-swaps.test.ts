@@ -3565,6 +3565,58 @@ describe("ArkadeSwaps", () => {
                 expect(result.reverseSwaps).toHaveLength(0);
             });
 
+            it("skips a swap with a malformed preimage hash without dropping the rest", async () => {
+                const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+                const brokenReverse = {
+                    ...pendingReverse,
+                    id: "rev-bad-preimage",
+                    preimageHash: "zz",
+                    claimDetails: { ...pendingReverse.claimDetails, preimageHash: "zz" },
+                };
+                vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([
+                    brokenReverse,
+                    pendingChain,
+                ]);
+                vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+                const result = await swaps.restoreSwaps();
+
+                expect(result.reverseSwaps).toHaveLength(0);
+                expect(result.chainSwaps).toHaveLength(1);
+                expect(warnSpy).toHaveBeenCalledWith(
+                    expect.stringContaining("malformed preimage hash"),
+                    expect.anything(),
+                );
+            });
+
+            it("skips an unbuildable swap, logs the cause, and keeps the rest", async () => {
+                const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+                const brokenReverse = {
+                    ...pendingReverse,
+                    id: "rev-bad-server-key",
+                    claimDetails: {
+                        ...pendingReverse.claimDetails,
+                        // Boltz key of an impossible length: no candidate of ours
+                        // can rebuild the VHTLC at all.
+                        serverPublicKey: hex.encode(randomBytes(31)),
+                    },
+                };
+                vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([
+                    brokenReverse,
+                    pendingChain,
+                ]);
+                vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+                const result = await swaps.restoreSwaps();
+
+                expect(result.reverseSwaps).toHaveLength(0);
+                expect(result.chainSwaps).toHaveLength(1);
+                expect(warnSpy).toHaveBeenCalledWith(
+                    expect.stringContaining("failed to rebuild the VHTLC"),
+                    expect.objectContaining({ message: expect.stringContaining("key length") }),
+                );
+            });
+
             it("gives a restored ARK-lockup chain swap a usable refund key", async () => {
                 vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([pendingChain]);
                 vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);

@@ -8,6 +8,7 @@ import {
     TransactionRefundedError,
     BoltzRefundError,
     QuoteRejectedError,
+    VHTLCAddressMismatchError,
 } from "./errors";
 import {
     ArkAddress,
@@ -3094,11 +3095,11 @@ export class ArkadeSwaps {
                 ),
             };
         }
-        throw new Error(
-            `Swap ${args.swapId}: VHTLC address mismatch. Expected ${args.lockupAddress}; ` +
-                `no current or deprecated server signer (${candidates.length} candidate(s) tried) ` +
-                `reproduced it`,
-        );
+        throw new VHTLCAddressMismatchError({
+            swapId: args.swapId,
+            lockupAddress: args.lockupAddress,
+            tried: candidates.length,
+        });
     }
 
     // =========================================================================
@@ -3320,9 +3321,11 @@ export class ArkadeSwaps {
      * signer (current + deprecated), so a swap that straddles an arkd signer
      * rotation still resolves.
      *
-     * `undefined` means no key of ours reproduces the address: the swap is not
-     * attributable and must be skipped rather than recorded under a key that
-     * cannot spend it.
+     * `undefined` means the swap is not attributable and must be skipped rather
+     * than recorded under a key that cannot spend it — either no key of ours
+     * reproduces the address, or the VHTLC could not be rebuilt at all (logged
+     * with its cause). Failures stay scoped to this swap: one unusable entry in
+     * the restore set must not cost the caller every other swap.
      */
     private matchSwapOwner(args: {
         arkInfo: ArkInfo;
@@ -3335,11 +3338,19 @@ export class ArkadeSwaps {
         lockupAddress: string;
         swapId: string;
     }): SwapOwnerKey | undefined {
+        let preimageHash: Uint8Array;
+        try {
+            preimageHash = hex.decode(args.preimageHash);
+        } catch (error) {
+            logger.warn(`Swap ${args.swapId}: malformed preimage hash, cannot attribute`, error);
+            return undefined;
+        }
+
         for (const candidate of args.candidates) {
             try {
                 this.resolveVHTLCForLockup({
                     arkInfo: args.arkInfo,
-                    preimageHash: hex.decode(args.preimageHash),
+                    preimageHash,
                     receiverPubkey:
                         args.ourRole === "receiver" ? candidate.publicKey : args.counterpartyPubkey,
                     senderPubkey:
@@ -3349,8 +3360,17 @@ export class ArkadeSwaps {
                     swapId: args.swapId,
                 });
                 return candidate;
-            } catch {
-                continue;
+            } catch (error) {
+                // A mismatch is the expected outcome for every key but the owning
+                // one. Anything else (unusable key length, malformed counterparty
+                // key, a builder bug) is a real failure that would otherwise be
+                // indistinguishable from "not ours" — surface it, then keep
+                // probing so a single bad candidate cannot hide a good one.
+                if (error instanceof VHTLCAddressMismatchError) continue;
+                logger.warn(
+                    `Swap ${args.swapId}: candidate key ${candidate.publicKey} failed to rebuild the VHTLC`,
+                    error,
+                );
             }
         }
         return undefined;
@@ -3387,9 +3407,7 @@ export class ArkadeSwaps {
         );
 
         const skip = (id: string) =>
-            logger.warn(
-                `Skipping restored swap ${id}: no wallet key reproduces its lockup address`,
-            );
+            logger.warn(`Skipping restored swap ${id}: not attributable to any wallet key`);
 
         for (const swap of restoredSwaps) {
             const { id, createdAt, status } = swap;

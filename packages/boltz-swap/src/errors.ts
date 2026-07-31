@@ -166,6 +166,32 @@ export class TransactionRefundedError extends SwapError {
     }
 }
 
+/**
+ * Thrown when no candidate server signer reproduces a swap's lockup address.
+ *
+ * Typed because callers that probe many keys (restore attribution) must tell an
+ * expected mismatch — every key but the owning one — apart from a real failure
+ * to rebuild the VHTLC, which would otherwise be swallowed as "not ours".
+ */
+export class VHTLCAddressMismatchError extends SwapError {
+    public readonly swapId: string;
+    public readonly lockupAddress: string;
+
+    constructor(options: ErrorOptions & { swapId: string; lockupAddress: string; tried: number }) {
+        super({
+            ...options,
+            message:
+                options.message ??
+                `Swap ${options.swapId}: VHTLC address mismatch. Expected ${options.lockupAddress}; ` +
+                    `no current or deprecated server signer (${options.tried} candidate(s) tried) ` +
+                    `reproduced it`,
+        });
+        this.name = "VHTLCAddressMismatchError";
+        this.swapId = options.swapId;
+        this.lockupAddress = options.lockupAddress;
+    }
+}
+
 /** Reason a `quoteSwap` was rejected before being posted to Boltz. */
 export type QuoteRejectionReason =
     | "below_floor"
