@@ -31,4 +31,10 @@ export {
     InMemoryAssetSwapRepository,
 } from "./repository";
 export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";
-export { restoreAssetSwaps, unscannedSwapCandidates, isCancelSpend, type Tx } from "./restore";
+export {
+    restoreAssetSwaps,
+    unscannedSwapCandidates,
+    isCancelSpend,
+    type RestoreIndexer,
+    type Tx,
+} from "./restore";

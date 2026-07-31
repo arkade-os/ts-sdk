@@ -90,6 +90,24 @@ describe("swap offer", () => {
         );
     });
 
+    it("rejects duplicate TLV records rather than letting the last one win", () => {
+        const full: Offer = { ...goldens[0][0], swapPkScript: new Uint8Array(34) };
+        const encoded = encodeOffer(full);
+        // same bytes twice: another implementation taking the first record would
+        // derive a different offer from an identical payload
+        const doubled = new Uint8Array(encoded.length * 2);
+        doubled.set(encoded, 0);
+        doubled.set(encoded, encoded.length);
+        expect(() => decodeOffer(doubled)).toThrow("duplicate TLV record");
+    });
+
+    it("rejects a swapPkScript that is not a 34-byte taproot output", () => {
+        // restore.ts uses this value as the vtxo lookup key, so a wrong-width
+        // script yields a record that can never bind to its deposit
+        const full: Offer = { ...goldens[0][0], swapPkScript: new Uint8Array(33) };
+        expect(() => decodeOffer(encodeOffer(full))).toThrow("missing/invalid swapPkScript");
+    });
+
     it("rejects a wantAmount that is not exactly the u64 wire width", () => {
         const full: Offer = { ...goldens[0][0], swapPkScript: new Uint8Array(34) };
         const encoded = encodeOffer(full);

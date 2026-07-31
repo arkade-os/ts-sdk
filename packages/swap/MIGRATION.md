@@ -43,8 +43,16 @@ The store/scan calls become async and take the repository:
   (repository methods now; `SWAP_RESTORE_SCAN_KEY` is gone).
 - **One-time data migration** (not written yet — the wallet owns it, like
   `migrateToSwapRepository` for Boltz): read the legacy `localStorage` keys `assetSwaps` and
-  `assetSwapsScanned`, `saveSwap`/`markTxidsScanned` them into the repository, then remove the
-  keys. ~15 lines next to the existing Boltz migration call in `providers/wallet.tsx`.
+  `assetSwapsScanned` and write them into the repository with `saveSwap`/`markTxidsScanned`.
+  ~15 lines next to the existing Boltz migration call in `providers/wallet.tsx`. Order matters,
+  because the package's persistence deliberately never throws:
+    - `await` the migration before the first repository read, or the UI renders an empty list
+      and the restore scan re-fetches history it already had.
+    - Delete the legacy keys **only after reading back what you wrote** — `saveSwap` swallows
+      backend failures, so a successful-looking write is not proof the data landed. If any
+      record or txid is missing, leave both keys in place and let the next boot retry.
+    - Both writes are keyed upserts (`saveSwap` by id, `markTxidsScanned` into a set), so a
+      retried migration is idempotent — it can neither duplicate nor lose records.
 - Ordering note: newest-first is by `createdAt` alone; equal-timestamp insertion order is no
   longer guaranteed (records stamp `Date.now()` ms, so this never bites in practice).
 

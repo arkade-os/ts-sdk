@@ -67,7 +67,9 @@ export const addAssetSwap = async (
 export const updateAssetSwap = async (
     repository: AssetSwapRepository,
     id: string,
-    changes: Partial<AssetSwap>,
+    // the id is the storage key: rewriting it here would leave the original
+    // record stored under the old key and report one swap twice
+    changes: Partial<Omit<AssetSwap, "id">>,
 ): Promise<AssetSwap[]> => {
     const swaps = (await getAssetSwaps(repository)).map((s) =>
         s.id === id ? { ...s, ...changes } : s,

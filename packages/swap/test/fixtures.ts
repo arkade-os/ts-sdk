@@ -1,6 +1,6 @@
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 
-// registry-shaped test markets in the 0.1.3 registry schema; asset ids are
+// registry-shaped test markets in the 0.1.4 registry schema; asset ids are
 // arbitrary 68-hex values, tickers limited to BTC/USD/CHF/XAU
 export const USD_ID = "f121ac9b7656797cc68d1e8fecacfbaa2069ec1461edf0bf2f3c37404cb9791a0000";
 export const CHF_ID = "47004bf4a5fbdb2221f708030528de68ea28f5980044e546b7bb5a352457d1f30000";

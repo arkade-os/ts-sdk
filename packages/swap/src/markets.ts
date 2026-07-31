@@ -16,7 +16,7 @@ export const BTC_ASSET_ID = "btc";
 /** Shared quote options so every quote path agrees.
  * No safety margin on top of the market fee: pricing drift between quote
  * and fill is the solver's risk to manage, not the maker's to prepay. */
-export const QUOTE_OPTIONS = { safetyBps: 0 };
+export const QUOTE_OPTIONS = { safetyBps: 0 } as const;
 
 /** Feed fetcher with a short per-URL TTL cache. A quote UI refetches the
  * market's price feed on every debounced keystroke, and public feeds
@@ -46,7 +46,7 @@ export const makeCachedFeedFetch = (
 
 const MARKETS_CACHE_TTL_MS = 60 * 60 * 1000;
 
-const isMarketShaped = (m: unknown): boolean => {
+const isMarketShaped = (m: unknown): m is DiscoveredMarket => {
     const market = m as DiscoveredMarket | null;
     return Boolean(
         market &&
@@ -88,8 +88,14 @@ export interface DiscoverMarketsOptions {
     localCards?: LocalCardInput[];
     /** Receives discovery warnings (stale index, skipped cards, …). */
     logger?: (...args: unknown[]) => void;
-    /** Custom fetch (tests, mobile runtimes). Defaults to global fetch. */
+    /** Custom fetch (tests, mobile runtimes). Defaults to global fetch.
+     * ponytail: no request deadline here — a caller that needs one wraps its
+     * own fetchImpl with an AbortSignal; add one if a hung registry ever
+     * strands discovery in practice. */
     fetchImpl?: typeof fetch;
+    /** `false` forces a refetch past a fresh cache (a user-triggered reload).
+     * It does not disable the stale-cache fallback: an unreachable registry
+     * still serves the last known markets rather than none. */
     useCache?: boolean;
 }
 

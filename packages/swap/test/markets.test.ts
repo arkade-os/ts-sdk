@@ -122,6 +122,46 @@ describe("makeCachedFeedFetch", () => {
         expect(first.receive.atomic).toBe(BigInt(997));
         expect(second.receive.atomic).toBe(BigInt(1_994));
     });
+
+    it("refetches once the TTL has elapsed", async () => {
+        const underlying = vi.fn(
+            async () => new Response(JSON.stringify({ bitcoin: { usd: 100000 } })),
+        );
+        // a 0ms TTL expires before the second call, so the window must reopen
+        const fetchImpl = makeCachedFeedFetch(0, underlying as unknown as typeof fetch);
+        const quote = () =>
+            quoteOffer(btcUsd, {
+                give: "base",
+                giveAmount: BigInt(10_000),
+                fetchImpl,
+                ...QUOTE_OPTIONS,
+            });
+        await quote();
+        await quote();
+        expect(underlying).toHaveBeenCalledTimes(2);
+    });
+
+    it("never caches a rate-limited response", async () => {
+        // the rate-limit case is the whole reason the cache exists — caching a
+        // 429 body would pin the failure for the rest of the TTL window
+        const underlying = vi
+            .fn()
+            .mockResolvedValueOnce(new Response("rate limited", { status: 429 }))
+            .mockResolvedValue(new Response(JSON.stringify({ bitcoin: { usd: 100000 } })));
+        const fetchImpl = makeCachedFeedFetch(30_000, underlying as unknown as typeof fetch);
+        const quote = () =>
+            quoteOffer(btcUsd, {
+                give: "base",
+                giveAmount: BigInt(10_000),
+                fetchImpl,
+                ...QUOTE_OPTIONS,
+            });
+
+        await expect(quote()).rejects.toThrow();
+        // the retry reaches the network and succeeds rather than replaying the 429
+        expect((await quote()).receive.atomic).toBe(BigInt(997));
+        expect(underlying).toHaveBeenCalledTimes(2);
+    });
 });
 
 describe("discoverMarkets caching", () => {
@@ -206,6 +246,32 @@ describe("discoverMarkets caching", () => {
         });
         expect(markets).toHaveLength(1);
         expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
+    it("refetches past a fresh cache when useCache is false, keeping the stale fallback", async () => {
+        await seedCache(Date.now());
+        const fetchImpl = jsonFetch([registryIndex()]);
+        const markets = await discoverMarkets({
+            network: "mutinynet",
+            registryUrl: REGISTRY_URL,
+            repository,
+            fetchImpl,
+            useCache: false,
+        });
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+        expect(markets).toHaveLength(1);
+
+        // useCache: false forces the refetch but must not disable the stale
+        // fallback — an unreachable registry still serves the last known markets
+        const downImpl = jsonFetch([new Error("network down")]);
+        const served = await discoverMarkets({
+            network: "mutinynet",
+            registryUrl: REGISTRY_URL,
+            repository,
+            fetchImpl: downImpl,
+            useCache: false,
+        });
+        expect(served).toHaveLength(1);
     });
 
     it("skips the cache entirely when no repository is given", async () => {

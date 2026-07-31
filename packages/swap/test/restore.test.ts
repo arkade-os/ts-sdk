@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { base64, hex } from "@scure/base";
 import { asset, Extension, Transaction, UnknownPacket } from "@arkade-os/sdk";
 import { encodeOffer, Offer, OFFER_PACKET_TYPE } from "../src/offer";
-import { restoreAssetSwaps, type Tx } from "../src/restore";
+import { restoreAssetSwaps, type RestoreIndexer, type Tx } from "../src/restore";
 
 const ASSET_ID = "f1".repeat(34);
 const OTHER_ASSET_ID = "a2".repeat(34);
@@ -38,7 +38,11 @@ const walletTx = (redeemTxid: string, type: string, overrides: Partial<Tx> = {})
     ...overrides,
 });
 
-const makeIndexer = (psbts: string[], vtxos: any[]) => {
+type FakeIndexer = RestoreIndexer & { calls: string[][] };
+
+// typed against the production contract so a change to RestoreIndexer breaks
+// these fakes at compile time instead of leaving them on a stale shape
+const makeIndexer = (psbts: string[], vtxos: any[]): FakeIndexer => {
     const calls: string[][] = [];
     return {
         calls,
@@ -47,7 +51,7 @@ const makeIndexer = (psbts: string[], vtxos: any[]) => {
             return { txs: psbts };
         },
         getVtxos: async () => ({ vtxos }),
-    } as any;
+    } as unknown as FakeIndexer;
 };
 
 const spentVtxo = (txid: string, spentBy: string) => ({
@@ -301,5 +305,37 @@ describe("restoreAssetSwaps", () => {
         const result = await restoreAssetSwaps(indexer, [walletTx(txid, "sent")], new Set());
 
         expect(result).toEqual({ restored: [], scannedTxids: [] });
+    });
+
+    it("keeps one chunk's failure from marking another chunk's txids scanned", async () => {
+        // TXS_PER_REQUEST is 50, so 51 candidates split into two requests. If a
+        // failed chunk let its txids be marked scanned, those swaps could never
+        // be rebuilt — later scans skip answered txids.
+        const funded = Array.from({ length: 51 }, (_, i) =>
+            fundingPsbt(encodeOffer(makeOffer("want-asset", BigInt(1_000 + i)))),
+        );
+        const firstChunk = funded.slice(0, 50);
+        const lastTxid = funded[50].txid;
+
+        const indexer = {
+            getVirtualTxs: async (txids: string[]) => {
+                if (txids.includes(lastTxid)) throw new Error("indexer down for this chunk");
+                return { txs: firstChunk.map((f) => f.psbt) };
+            },
+            getVtxos: async () => ({
+                vtxos: funded.map((f) => spentVtxo(f.txid, "fill-txid")),
+            }),
+        } as unknown as FakeIndexer;
+
+        const result = await restoreAssetSwaps(
+            indexer,
+            funded.map((f) => walletTx(f.txid, "sent")),
+            new Set(),
+        );
+
+        expect(result.restored).toHaveLength(50);
+        expect(result.scannedTxids).toHaveLength(50);
+        expect(result.scannedTxids).not.toContain(lastTxid);
+        expect(new Set(result.scannedTxids)).toEqual(new Set(firstChunk.map((f) => f.txid)));
     });
 });

@@ -130,10 +130,14 @@ const NAMES = Object.fromEntries(Object.entries(T).map(([k, v]) => [v, k])) as R
  * bytes and price the offer at an amount the covenant never bound. */
 const WIDTH = {
     wantAmount: 8,
+    swapPkScript: 34,
     makerPkScript: 34,
     makerPublicKey: 32,
     emulatorPubkey: 32,
 } as const;
+
+/** Drop the prefix of a 33-byte compressed key; pass an x-only key through. */
+const xOnly = (key: Uint8Array): Uint8Array => (key.length === 33 ? key.slice(1) : key);
 
 function tlv(type: number, value: Uint8Array): Uint8Array {
     const rec = new Uint8Array(3 + value.length);
@@ -184,6 +188,9 @@ export function decodeOffer(data: Uint8Array): Offer {
             throw new Error(`truncated TLV value for type 0x${type.toString(16)}`);
         const name = NAMES[type];
         if (!name) throw new Error(`unknown TLV type: 0x${type.toString(16)}`);
+        // last-wins would let the same bytes decode to different offers in
+        // another implementation that takes the first record
+        if (fields[name] !== undefined) throw new Error(`duplicate TLV record: ${name}`);
         fields[name] = data.slice(off, off + length);
         off += length;
     }
@@ -198,7 +205,7 @@ export function decodeOffer(data: Uint8Array): Offer {
         throw new Error("offer must carry exactly one of wantAsset or offerAsset");
     }
     return {
-        swapPkScript: need("swapPkScript"),
+        swapPkScript: need("swapPkScript", WIDTH.swapPkScript),
         wantAmount: new DataView(amount.buffer, amount.byteOffset).getBigUint64(0, false),
         ...(fields.wantAsset && { wantAsset: asset.AssetId.fromBytes(fields.wantAsset) }),
         ...(fields.offerAsset && { offerAsset: asset.AssetId.fromBytes(fields.offerAsset) }),
@@ -245,8 +252,10 @@ export async function createOffer(
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
-    const serverPubKey = hex.decode(info.signerPubkey).slice(1);
-    const emuKey = hex.decode(emulatorInfo.signerPubkey);
+    // both keys arrive compressed (33B) today; drop the prefix by length so an
+    // already-x-only key is passed through rather than shortened to 31 bytes
+    const serverPubKey = xOnly(hex.decode(info.signerPubkey));
+    const emuKey = xOnly(hex.decode(emulatorInfo.signerPubkey));
 
     const offer: Offer = {
         swapPkScript: new Uint8Array(0), // placeholder, computed below
@@ -255,7 +264,7 @@ export async function createOffer(
         offerAsset: params.offerAsset,
         makerPkScript: ArkAddress.decode(makerAddress).pkScript,
         makerPublicKey,
-        emulatorPubkey: emuKey.length === 33 ? emuKey.slice(1) : emuKey,
+        emulatorPubkey: emuKey,
     };
     const script = offerVtxoScript(offer, serverPubKey);
     offer.swapPkScript = script.pkScript;

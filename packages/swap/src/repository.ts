@@ -93,6 +93,8 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
     }
 
     async [Symbol.asyncDispose](): Promise<void> {
-        await this.clear();
+        // dispose releases resources, it does not delete data — the IndexedDB
+        // backend keeps its records too, and `await using` must not mean
+        // different durability per backend. Callers wanting deletion call clear().
     }
 }

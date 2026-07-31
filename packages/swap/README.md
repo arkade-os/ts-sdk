@@ -2,8 +2,10 @@
 
 Maker-side [Arkade Intents](https://arkade.money) atomic swaps: discover markets, quote and
 validate, create offers, track them, cancel them, and rebuild the whole record set from chain after
-a wallet restore. Pure TypeScript over `@arkade-os/sdk` — no framework, no DOM, no Node-specific
-APIs; usable from Node, the browser, or React Native.
+a wallet restore. Framework-free TypeScript over `@arkade-os/sdk`: the core API and
+`InMemoryAssetSwapRepository` use no DOM and no Node-specific APIs, so they run in Node, the
+browser, and React Native alike. `IndexedDbAssetSwapRepository` is the one exception — it needs a
+platform-provided or polyfilled IndexedDB.
 
 ## The four layers
 

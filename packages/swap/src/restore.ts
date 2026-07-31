@@ -32,7 +32,8 @@ export interface Tx {
     assets?: { assetId: string; amount: bigint }[];
 }
 
-type RestoreIndexer = Pick<RestIndexerProvider, "getVirtualTxs" | "getVtxos">;
+/** The indexer surface the restore scan needs — narrower than a full provider. */
+export type RestoreIndexer = Pick<RestIndexerProvider, "getVirtualTxs" | "getVtxos">;
 
 /** The candidate txs a scan would fetch: sent virtual txs with no stored swap
  * record and no previous authoritative answer. */

@@ -75,10 +75,20 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         await request(store.put(entry, marketsCacheKey(network, registry)));
     }
 
+    /** All stores in one transaction: clearing swaps but keeping scanned txids
+     * would leave the restore scan permanently skipping those funding txs, so
+     * a partial clear must not be observable. */
     async clear(): Promise<void> {
-        for (const name of [STORE_SWAPS, STORE_SCANNED, STORE_MARKETS]) {
-            await request((await this.store(name, "readwrite")).clear());
-        }
+        const stores = [STORE_SWAPS, STORE_SCANNED, STORE_MARKETS];
+        if (!this.db) this.db = await openDatabase(this.dbName, DB_VERSION, initDatabase);
+        const tx = this.db.transaction(stores, "readwrite");
+        const done = new Promise<void>((resolve, reject) => {
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+        });
+        for (const name of stores) tx.objectStore(name).clear();
+        await done;
     }
 
     async [Symbol.asyncDispose](): Promise<void> {
