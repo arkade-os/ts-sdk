@@ -338,4 +338,46 @@ describe("BucketSyncClient — session expiry", () => {
         expect(handshakes).toBe(1);
         expect(client.authenticated).toBe(false);
     });
+
+    it("keeps a token another request already refreshed when a stale 401 arrives late", async () => {
+        let handshakes = 0;
+        let tokenSeq = 0;
+        let releaseLate: () => void = () => {};
+        const late = new Promise<void>((resolve) => {
+            releaseLate = resolve;
+        });
+        let calls = 0;
+
+        const client = new BucketSyncClient({
+            baseUrl: "http://server",
+            fetch: mockFetch({
+                ...authRoutes(
+                    () => handshakes++,
+                    () => `tok-${++tokenSeq}`,
+                ),
+                "/v1/bucket/head": async (init) => {
+                    const auth = (init?.headers as Record<string, string>)?.authorization;
+                    const n = ++calls;
+                    if (auth === "Bearer tok-1") {
+                        // Hold the second stale request's 401 until the first request
+                        // has already completed its refresh.
+                        if (n === 2) await late;
+                        return json({ message: "unauthorized" }, 401);
+                    }
+                    return json({ currentSeq: n, contentHash: "h" });
+                },
+            }),
+        });
+        await client.authenticate(stubSigner);
+
+        const first = client.head();
+        const second = client.head(); // also sent with the soon-to-be-stale tok-1
+        await first; // refreshes to tok-2
+        releaseLate(); // now the stale 401 lands
+        await second;
+
+        // The late 401 must replay with tok-2, not discard it and handshake again.
+        expect(handshakes).toBe(2);
+        expect(client.authenticated).toBe(true);
+    });
 });

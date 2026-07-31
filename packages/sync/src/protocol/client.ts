@@ -185,13 +185,14 @@ export class BucketSyncClient {
             return this.fetchImpl(`${this.baseUrl}/v1/bucket/stream`, { headers, signal });
         };
 
+        const used = this.token;
         let res = await open();
         // This is the connection most likely to outlive its token, so recover the
         // same way the request path does. `Last-Event-ID` is re-sent, so resuming
         // after a refresh loses no events.
         if (res.status === 401 && this.signer) {
-            this.token = null;
-            await this.refresh();
+            // Same stale-401 guard as authed(): only refresh if nobody already did.
+            if (this.token === used) await this.refresh();
             res = await open();
         }
         if (!res.ok || !res.body) throw new BucketSyncHttpError(res.status, await res.text());
@@ -254,11 +255,21 @@ export class BucketSyncClient {
                 headers: { ...(init.headers as Record<string, string>), ...this.bearer() },
             });
 
+        // Captured before the call: `bearer()` reads `this.token` synchronously when
+        // send() is invoked, so this is exactly the token this attempt used.
+        const used = this.token;
         const res = await send();
         if (res.status !== 401 || !retry || !this.signer) return res;
 
-        this.token = null;
-        await this.refresh();
+        // A concurrent request may have refreshed while this one was in flight, in
+        // which case this 401 is stale news about a token that is already replaced,
+        // and replaying with the current one is correct. Refreshing again would
+        // discard a freshly-minted valid session.
+        //
+        // The token is never cleared first: refresh() replaces it on success, and
+        // blanking it would strand any other in-flight request, whose replay reads
+        // the token synchronously and would throw "not authenticated".
+        if (this.token === used) await this.refresh();
         return send();
     }
 

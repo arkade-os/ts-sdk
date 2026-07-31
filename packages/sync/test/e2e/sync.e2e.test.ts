@@ -221,9 +221,8 @@ suite("e2e: @arkade-os/sync <-> real bucket-sync server", () => {
         });
         await syncA.backup();
 
-        // The fresh device's stores. The SAME swap repository is restored twice —
-        // once by a sync configured without SwapSource and once with it — so the
-        // only variable is the source list, not which repository we inspect.
+        // The fresh device's stores. Both restores below target these same two
+        // repositories; the only thing that changes is the source list.
         const contractsB = new InMemoryContractRepository();
         const swapsB = new InMemorySwapRepository();
 
@@ -236,15 +235,24 @@ suite("e2e: @arkade-os/sync <-> real bucket-sync server", () => {
             encryptionKey: kwk,
             sources: [new ContractSource(contractsB)],
         });
-        await syncContractsOnly.restore();
+        // restore() counts records the pull DELIVERED, not records applied. Two came
+        // down and only the contract landed, which is what makes the "swaps are
+        // empty" assertion below meaningful: the swap reached this device and was
+        // dropped for want of an owning source, rather than never arriving.
+        expect(await syncContractsOnly.restore()).toBe(2);
         expect((await contractsB.getContracts()).map((c) => c.script)).toEqual(["vhtlcscript"]);
 
         // Prove the swap really is in the bucket, so the assertion below is about
         // the source list rather than about a repository nothing ever touched.
         const probe = new BucketSyncClient({ baseUrl: URL!, device: "probe" });
         await probe.authenticate(identity);
+        // Assert the decrypted contents, not just non-null: fetchDecrypted omits keys
+        // the server does not hold, so a missing record reads as `undefined` and a
+        // `not.toBeNull()` check would pass for exactly the case being ruled out.
         const remote = await new BucketSync(probe, kwk).fetchDecrypted(["swap:swap-1"]);
-        expect(remote.get("swap:swap-1")).not.toBeNull();
+        const remoteSwap = remote.get("swap:swap-1");
+        expect(remoteSwap).toBeInstanceOf(Uint8Array);
+        expect(JSON.parse(dec(remoteSwap!)!).id).toBe("swap-1");
 
         expect(await swapsB.getAllSwaps()).toEqual([]);
 
