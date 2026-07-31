@@ -89,4 +89,30 @@ describe("swap offer", () => {
             "missing/invalid",
         );
     });
+
+    it("rejects a wantAmount that is not exactly the u64 wire width", () => {
+        const full: Offer = { ...goldens[0][0], swapPkScript: new Uint8Array(34) };
+        const encoded = encodeOffer(full);
+        // the wantAmount record is [type 0x02][len 0x0008][8 bytes]; rewrite it
+        // wider and narrower. A short value would make getBigUint64 throw a raw
+        // RangeError; a long one would be silently truncated to its first 8
+        // bytes — an amount the covenant never bound.
+        const at = encoded.indexOf(0x02);
+        const reweave = (value: Uint8Array) => {
+            const out = new Uint8Array(encoded.length - 8 + value.length);
+            out.set(encoded.subarray(0, at + 1), 0);
+            out[at + 1] = (value.length >> 8) & 0xff;
+            out[at + 2] = value.length & 0xff;
+            out.set(value, at + 3);
+            out.set(encoded.subarray(at + 3 + 8), at + 3 + value.length);
+            return out;
+        };
+        // rewriting with the original 8 bytes must reproduce the payload exactly
+        // — that is what makes the two width cases below meaningful
+        expect(hex.encode(reweave(encoded.slice(at + 3, at + 3 + 8)))).toBe(hex.encode(encoded));
+        expect(() => decodeOffer(reweave(new Uint8Array(4)))).toThrow("missing/invalid wantAmount");
+        expect(() => decodeOffer(reweave(new Uint8Array(12)))).toThrow(
+            "missing/invalid wantAmount",
+        );
+    });
 });

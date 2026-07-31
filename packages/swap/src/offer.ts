@@ -123,6 +123,18 @@ const NAMES = Object.fromEntries(Object.entries(T).map(([k, v]) => [v, k])) as R
     keyof typeof T
 >;
 
+/** Fixed-width fields, shared by encode and decode so the pair can never
+ * disagree: a big-endian u64 amount, a taproot scriptPubKey, x-only keys.
+ * Decode rejects any other length — a short value would make getBigUint64
+ * throw a RangeError, a long one would be silently truncated to its first 8
+ * bytes and price the offer at an amount the covenant never bound. */
+const WIDTH = {
+    wantAmount: 8,
+    makerPkScript: 34,
+    makerPublicKey: 32,
+    emulatorPubkey: 32,
+} as const;
+
 function tlv(type: number, value: Uint8Array): Uint8Array {
     const rec = new Uint8Array(3 + value.length);
     rec[0] = type;
@@ -140,7 +152,7 @@ export function encodeOffer(offer: Offer): Uint8Array {
     if (offer.wantAmount < BigInt(0) || offer.wantAmount >> BigInt(64) > BigInt(0)) {
         throw new Error("wantAmount does not fit the offer wire format (u64)");
     }
-    const amount = new Uint8Array(8);
+    const amount = new Uint8Array(WIDTH.wantAmount);
     new DataView(amount.buffer).setBigUint64(0, offer.wantAmount, false);
     const recs = [tlv(T.swapPkScript, offer.swapPkScript), tlv(T.wantAmount, amount)];
     if (offer.wantAsset) recs.push(tlv(T.wantAsset, offer.wantAsset.serialize()));
@@ -181,7 +193,7 @@ export function decodeOffer(data: Uint8Array): Offer {
             throw new Error(`missing/invalid ${name}`);
         return v;
     };
-    const amount = need("wantAmount", 8);
+    const amount = need("wantAmount", WIDTH.wantAmount);
     if (!fields.wantAsset === !fields.offerAsset) {
         throw new Error("offer must carry exactly one of wantAsset or offerAsset");
     }
@@ -190,9 +202,9 @@ export function decodeOffer(data: Uint8Array): Offer {
         wantAmount: new DataView(amount.buffer, amount.byteOffset).getBigUint64(0, false),
         ...(fields.wantAsset && { wantAsset: asset.AssetId.fromBytes(fields.wantAsset) }),
         ...(fields.offerAsset && { offerAsset: asset.AssetId.fromBytes(fields.offerAsset) }),
-        makerPkScript: need("makerPkScript", 34),
-        makerPublicKey: need("makerPublicKey", 32),
-        emulatorPubkey: need("emulatorPubkey", 32),
+        makerPkScript: need("makerPkScript", WIDTH.makerPkScript),
+        makerPublicKey: need("makerPublicKey", WIDTH.makerPublicKey),
+        emulatorPubkey: need("emulatorPubkey", WIDTH.emulatorPubkey),
     };
 }
 
