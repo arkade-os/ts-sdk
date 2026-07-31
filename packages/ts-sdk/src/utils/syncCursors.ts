@@ -1,4 +1,5 @@
 import { WalletRepository, WalletState } from "../repositories/walletRepository";
+import { withWebLock } from "./webLock";
 
 /** Lag behind real-time to avoid racing with indexer writes. */
 export const SAFETY_LAG_MS = 30_000;
@@ -14,19 +15,39 @@ export const OVERLAP_MS = 24 * 60 * 60 * 1000;
 const walletStateLocks = new WeakMap<WalletRepository, Promise<void>>();
 
 /**
+ * Web Locks name serializing wallet-state read-modify-write across
+ * same-origin contexts. `saveWalletState` persists the whole state blob,
+ * so ANY two concurrent updaters — even ones touching unrelated fields,
+ * in different tabs over one shared store — can lose each other's write
+ * without cross-context coordination. A single fixed name over-serializes
+ * distinct wallets on one origin, which is acceptable: state writes are
+ * rare and short.
+ */
+const WALLET_STATE_LOCK_NAME = "arkade-wallet-state";
+
+/**
  * Atomically read, mutate, and persist wallet state.
  * All callers that modify wallet state should go through this helper
  * to avoid lost-update races between interleaved async operations.
+ *
+ * Two layers of serialization: an in-process promise chain per repo
+ * object (the only coordination available in Node/React Native), plus a
+ * queueing cross-context Web Lock where the runtime has one, covering
+ * tabs/workers that share a persistent store through distinct repo
+ * objects. `updater` must be synchronous and must not call back into
+ * this helper — the Web Lock is not reentrant.
  */
 export async function updateWalletState(
     repo: WalletRepository,
     updater: (state: WalletState) => WalletState,
 ): Promise<void> {
     const prev = walletStateLocks.get(repo) ?? Promise.resolve();
-    const op = prev.then(async () => {
-        const state = (await repo.getWalletState()) ?? {};
-        await repo.saveWalletState(updater(state));
-    });
+    const op = prev.then(() =>
+        withWebLock(WALLET_STATE_LOCK_NAME, async () => {
+            const state = (await repo.getWalletState()) ?? {};
+            await repo.saveWalletState(updater(state));
+        }),
+    );
     // Store a version that never rejects so the chain doesn't break.
     walletStateLocks.set(
         repo,

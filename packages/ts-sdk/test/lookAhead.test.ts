@@ -235,6 +235,31 @@ describe("Wallet HD look-ahead", () => {
         }
     });
 
+    it("survives an HD provider handed in keyring-wrapped as walletMode", async () => {
+        const probe = await makeHdWalletForTest();
+        const issued = defaultScriptHex(
+            probe.hdProvider.materializeDescriptorAt(1),
+            probe.wallet.offchainTapscript.options.serverPubKey,
+            probe.wallet.offchainTapscript.options.csvTimelock!,
+        );
+        await probe.wallet.dispose();
+
+        // The keyring forwards duck-typed capabilities but not its base's
+        // class, so an `instanceof HDDescriptorProvider` that skips the
+        // unwrap silently drops the band and the payment never lands.
+        const { wallet, contractRepository } = await makeHdWalletForTest(
+            new Set([issued]),
+            new Set(),
+            { wrapInKeyring: true },
+        );
+        try {
+            expect(await contractRepository.getContracts({ script: [issued] })).toHaveLength(1);
+            expect((await wallet.getBalance()).total).toBeGreaterThan(0);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
     it("stays off for a static wallet (no watermark to look ahead of)", async () => {
         const probe = await makeHdWalletForTest();
         const descriptor = probe.hdProvider.materializeDescriptorAt(1);

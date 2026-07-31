@@ -8,6 +8,7 @@ import type {
     GetContractsFilter,
     PathSelection,
 } from "../../contracts";
+import { isRecoveryOnlyContract } from "../../contracts";
 import type {
     ContractSyncState,
     CreateContractParams,
@@ -979,7 +980,10 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_TRANSACTION_HISTORY": {
-                    const allVtxos = await this.getVtxosFromRepo();
+                    // Include recovery-only contracts: transaction history mirrors
+                    // the non-worker getTransactionHistory, which reads contracts
+                    // directly and does not exclude them (unlike balance/VTXOs).
+                    const allVtxos = await this.getVtxosFromRepo({ includeRecoveryOnly: true });
                     const transactions =
                         (await this.buildTransactionHistoryFromCache(allVtxos)) ?? [];
                     return this.tagged({
@@ -1596,8 +1600,11 @@ export class WalletMessageHandler
             return;
         }
 
-        // Read virtual outputs from repository (now populated by contract manager)
-        const vtxos = await this.getVtxosFromRepo();
+        // Read virtual outputs from repository (now populated by contract
+        // manager). Include recovery-only contracts here: these VTXOs feed the
+        // transaction-history cache below, and the non-worker
+        // getTransactionHistory includes them too (it reads contracts directly).
+        const vtxos = await this.getVtxosFromRepo({ includeRecoveryOnly: true });
 
         // Fetch boarding inputs across the full boarding-address set (current +
         // historical rotated; plan §6-IV.2). Fetch FIRST: getBoardingUtxos
@@ -1767,8 +1774,18 @@ export class WalletMessageHandler
     /**
      * Read all virtual outputs from the repository, aggregated across all contract
      * addresses and the wallet's primary address, with deduplication.
+     *
+     * Recovery-only contracts (imported by `claimCash` for server-swept
+     * arkcash) are excluded by default, mirroring {@link ReadonlyWallet.getVtxos}:
+     * they are settled in their own isolated intent and must stay out of the
+     * wallet's balance / VTXO / coin-selection / pending-tx views that read this.
+     * The transaction-history caller opts back in via `includeRecoveryOnly` to
+     * match the non-worker `getTransactionHistory`, which reads contracts
+     * directly and does include them.
      */
-    private async getVtxosFromRepo(): Promise<NormalizedExtendedVirtualCoin[]> {
+    private async getVtxosFromRepo({
+        includeRecoveryOnly = false,
+    }: { includeRecoveryOnly?: boolean } = {}): Promise<NormalizedExtendedVirtualCoin[]> {
         if (!this.walletRepository || !this.readonlyWallet) return [];
         const seen = new Set<string>();
         const allVtxos: NormalizedExtendedVirtualCoin[] = [];
@@ -1790,6 +1807,7 @@ export class WalletMessageHandler
         const manager = await this.readonlyWallet.getContractManager();
         const contracts = await manager.getContracts();
         for (const contract of contracts) {
+            if (!includeRecoveryOnly && isRecoveryOnlyContract(contract)) continue;
             addVtxos(await getVtxosForContract(this.walletRepository, contract));
         }
 
