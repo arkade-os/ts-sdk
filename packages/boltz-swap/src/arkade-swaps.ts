@@ -3508,6 +3508,9 @@ export class ArkadeSwaps {
             const candidates = await this.swapOwnerKeys({ lookAhead: RESTORE_LOOK_AHEAD });
             const fresh = candidates.filter((c) => {
                 if (queriedKeys.has(c.publicKey)) return false;
+                // The cap only bounds HD-derived descriptor indices. The baseline
+                // identity key has no descriptor, so it remains queryable for
+                // static wallets and pre-descriptor-binding swaps.
                 if (signingDescriptorIndex(c.signingDescriptor) > MAX_RESTORE_INDEX) {
                     cappedKeys.add(c.publicKey);
                     return false;
