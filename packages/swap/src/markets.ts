@@ -39,7 +39,16 @@ export const makeCachedFeedFetch = (
         const hit = cache.get(url);
         if (hit && Date.now() - hit.at < ttlMs) return new Response(hit.body);
         const response = await fetchImpl(input, init);
-        if (response.ok) cache.set(url, { at: Date.now(), body: await response.clone().text() });
+        // caching is best effort: a body read that fails mid-stream must not
+        // take the live response down with it (the caller would see an internal
+        // error instead of the quote it actually got)
+        if (response.ok) {
+            try {
+                cache.set(url, { at: Date.now(), body: await response.clone().text() });
+            } catch {
+                // unreadable body: serve the response uncached
+            }
+        }
         return response;
     };
 };

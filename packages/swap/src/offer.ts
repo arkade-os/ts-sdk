@@ -136,8 +136,16 @@ const WIDTH = {
     emulatorPubkey: 32,
 } as const;
 
-/** Drop the prefix of a 33-byte compressed key; pass an x-only key through. */
-const xOnly = (key: Uint8Array): Uint8Array => (key.length === 33 ? key.slice(1) : key);
+/** Drop the prefix of a 33-byte compressed key; pass an x-only key through.
+ * A malformed key would otherwise bind silently into the covenant and only
+ * surface as an unspendable address once the maker funds it. */
+const xOnly = (key: Uint8Array, label: string): Uint8Array => {
+    if (key.length === WIDTH.makerPublicKey) return key;
+    if (key.length !== 33 || (key[0] !== 0x02 && key[0] !== 0x03)) {
+        throw new Error(`${label} is not a compressed or x-only public key`);
+    }
+    return key.slice(1);
+};
 
 function tlv(type: number, value: Uint8Array): Uint8Array {
     const rec = new Uint8Array(3 + value.length);
@@ -201,7 +209,7 @@ export function decodeOffer(data: Uint8Array): Offer {
         return v;
     };
     const amount = need("wantAmount", WIDTH.wantAmount);
-    if (!fields.wantAsset === !fields.offerAsset) {
+    if (Boolean(fields.wantAsset) === Boolean(fields.offerAsset)) {
         throw new Error("offer must carry exactly one of wantAsset or offerAsset");
     }
     return {
@@ -243,7 +251,7 @@ export async function createOffer(
     address: string;
     swapPkScript: Uint8Array;
 }> {
-    if (!params.wantAsset === !params.offerAsset) {
+    if (Boolean(params.wantAsset) === Boolean(params.offerAsset)) {
         throw new Error("set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC)");
     }
     const [info, emulatorInfo, makerAddress, makerPublicKey] = await Promise.all([
@@ -254,8 +262,8 @@ export async function createOffer(
     ]);
     // both keys arrive compressed (33B) today; drop the prefix by length so an
     // already-x-only key is passed through rather than shortened to 31 bytes
-    const serverPubKey = xOnly(hex.decode(info.signerPubkey));
-    const emuKey = xOnly(hex.decode(emulatorInfo.signerPubkey));
+    const serverPubKey = xOnly(hex.decode(info.signerPubkey), "ark signer key");
+    const emuKey = xOnly(hex.decode(emulatorInfo.signerPubkey), "emulator signer key");
 
     const offer: Offer = {
         swapPkScript: new Uint8Array(0), // placeholder, computed below

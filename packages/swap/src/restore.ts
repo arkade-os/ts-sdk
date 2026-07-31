@@ -66,6 +66,25 @@ export function isCancelSpend(offer: Offer, spend: Tx): boolean {
  * records the store lost. Returns the rebuilt swaps plus the txids that got
  * an authoritative answer (fetched fine, vtxo lookup fine) — the caller
  * persists those so they are never fetched again.
+ *
+ * ## Caller contract: cancelled swaps can be restored as `fulfilled`
+ *
+ * Whether a spent deposit was filled or cancelled is only decidable from the
+ * spending tx, which this scan looks up in the `txs` you pass. When the
+ * deposit reads as spent but its spender is not in `txs` yet (the wallet's own
+ * history still syncing), the swap is restored as `fulfilled` — the likelier
+ * reading, since a maker-initiated cancel normally has its tx locally.
+ *
+ * That guess is **not** revisited: once you persist the record, its id lands
+ * in `existingIds` and every later scan skips it. A swap the user cancelled
+ * can therefore stay labelled `fulfilled` forever.
+ *
+ * A restore-only integration has no way to correct this, so callers should
+ * also feed live spend events (the solver's SSE stream) into
+ * `updateAssetSwap`, which is what closes the window in practice. If you
+ * cannot, and a mislabel is worse for you than a re-scan, drop the affected
+ * record from the repository: a swap that is no longer in `existingIds` is
+ * scanned again and re-decided against a fuller `txs`.
  */
 export async function restoreAssetSwaps(
     indexer: RestoreIndexer,
