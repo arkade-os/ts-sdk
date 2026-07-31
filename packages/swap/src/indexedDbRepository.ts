@@ -3,6 +3,10 @@ import { marketsCacheKey, type AssetSwapRepository, type MarketsCacheEntry } fro
 import type { AssetSwap } from "./store";
 
 const DEFAULT_DB_NAME = "arkade-intents";
+/** Bump when adding an object store or index. `initDatabase` only runs inside
+ * `onupgradeneeded`, which fires on a version *increase* — its contains-guard
+ * cannot backfill a store into a database already open at this version, so a
+ * new store added without a bump is simply missing for existing users. */
 const DB_VERSION = 1;
 const STORE_SWAPS = "swaps";
 const STORE_SCANNED = "scannedTxids";
