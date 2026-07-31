@@ -3773,6 +3773,47 @@ describe("ArkadeSwaps", () => {
                 };
             };
 
+            /** A chain swap owned by the ARK leg key at `index`, on a derived preimage. */
+            const derivedChainAt = async (
+                hd: ReturnType<typeof installHdWallet>,
+                index: number,
+                id: string,
+                direction: "arkToBtc" | "btcToArk",
+            ) => {
+                const preimage = await hd.preimageAt(index);
+                const preimageHash = hex.encode(sha256(preimage));
+                if (direction === "arkToBtc") {
+                    return {
+                        swap: {
+                            ...pendingChain,
+                            id,
+                            preimageHash,
+                            refundDetails: makeDetails({
+                                ourRole: "sender" as const,
+                                preimageHash,
+                                timeoutBlockHeights: serverTimeouts,
+                                ourKey: hd.keyAt(index),
+                            }),
+                        },
+                        preimage: hex.encode(preimage),
+                    };
+                }
+                return {
+                    swap: {
+                        ...btcToArk,
+                        id,
+                        preimageHash,
+                        claimDetails: makeDetails({
+                            ourRole: "receiver" as const,
+                            preimageHash,
+                            timeoutBlockHeights: serverTimeouts,
+                            ourKey: hd.keyAt(index),
+                        }),
+                    },
+                    preimage: hex.encode(preimage),
+                };
+            };
+
             /** Answer a restore query with whichever fixtures the keys own. */
             const restoreByKey = (owned: { key: string; swap: any }[]) =>
                 vi
@@ -3795,6 +3836,42 @@ describe("ArkadeSwaps", () => {
                 // identity to derive under.
                 expect(result.reverseSwaps[0].signingDescriptor).toBe(hd.descriptorAt(0));
                 expect(result.reverseSwaps[0].preimage).toBe(preimage);
+            });
+
+            it("re-derives the preimage of an ARK-lockup chain swap", async () => {
+                const hd = installHdWallet(wallet);
+                hd.setWatermark(3);
+                const { swap, preimage } = await derivedChainAt(
+                    hd,
+                    3,
+                    "chain-ark-lockup",
+                    "arkToBtc",
+                );
+                vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([swap]);
+                vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+                const result = await swaps.restoreSwaps();
+
+                expect(result.chainSwaps[0].signingDescriptor).toBe(hd.descriptorAt(3));
+                expect(result.chainSwaps[0].preimage).toBe(preimage);
+            });
+
+            it("re-derives the preimage of an ARK-claim chain swap", async () => {
+                const hd = installHdWallet(wallet);
+                hd.setWatermark(4);
+                const { swap, preimage } = await derivedChainAt(
+                    hd,
+                    4,
+                    "chain-ark-claim",
+                    "btcToArk",
+                );
+                vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([swap]);
+                vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+                const result = await swaps.restoreSwaps();
+
+                expect(result.chainSwaps[0].signingDescriptor).toBe(hd.descriptorAt(4));
+                expect(result.chainSwaps[0].preimage).toBe(preimage);
             });
 
             it("leaves a legacy random-preimage swap unclaimed rather than guessing", async () => {
