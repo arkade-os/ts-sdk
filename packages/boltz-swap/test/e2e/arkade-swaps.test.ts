@@ -51,6 +51,16 @@ const payInvoice = async (invoice: string) => {
     return execAsync(`${lncli} payinvoice --force ${invoice}`);
 };
 
+/**
+ * Pays an invoice out of band, once the caller is already waiting on the swap.
+ * Never resolves, so it can be raced against the wait: only a payment *failure*
+ * settles it, turning what would be a claim timeout into the real error.
+ */
+const payInvoiceOrFail = (invoice: string): Promise<never> =>
+    sleep(1000)
+        .then(() => payInvoice(invoice))
+        .then(() => new Promise<never>(() => {}));
+
 const getNewLightningInvoice = async (
     amount: number,
 ): Promise<{ invoice: string; r_hash: string }> => {
@@ -1722,14 +1732,11 @@ describe("ArkadeSwaps", () => {
                 hex.encode(await hdWallet.identity.compressedPublicKey()),
             );
 
-            sleep(1000).then(() =>
-                payInvoice(pendingSwap.response.invoice).catch((err) =>
-                    console.error("Error paying invoice:", err),
-                ),
-            );
-
             // Claiming proves the VHTLC was signed with the rotated key.
-            const { txid } = await hdSwaps.waitAndClaim(pendingSwap);
+            const { txid } = await Promise.race([
+                hdSwaps.waitAndClaim(pendingSwap),
+                payInvoiceOrFail(pendingSwap.response.invoice),
+            ]);
             expect(txid).toHaveLength(64);
 
             // A restore that only knew the baseline key would miss it.
