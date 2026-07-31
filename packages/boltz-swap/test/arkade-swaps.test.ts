@@ -47,7 +47,12 @@ import {
     refundVHTLCwithOffchainTx,
     refundWithoutReceiverVHTLCwithOffchainTx,
 } from "../src/utils/vhtlc";
-import { BoltzRefundError, InvoiceFailedToPayError, SwapError } from "../src/errors";
+import {
+    BoltzRefundError,
+    InvoiceFailedToPayError,
+    SwapError,
+    TransactionFailedError,
+} from "../src/errors";
 
 // Mock the @arkade-os/sdk modules
 vi.mock("@arkade-os/sdk", async () => {
@@ -2161,7 +2166,7 @@ describe("ArkadeSwaps", () => {
                 await expect(resultPromise).rejects.toThrow("The swap has expired");
             });
 
-            it("should reject with TransactionFailedError when transaction fails", async () => {
+            it("should reject with a refundable TransactionFailedError carrying the pending swap", async () => {
                 // arrange
                 const pendingSwap: BoltzChainSwap = {
                     ...mockArkBtcChainSwap,
@@ -2172,10 +2177,13 @@ describe("ArkadeSwaps", () => {
                 });
 
                 // act
-                const resultPromise = swaps.waitAndClaimBtc(pendingSwap);
+                const error = await swaps.waitAndClaimBtc(pendingSwap).catch((e): SwapError => e);
 
-                // assert
-                await expect(resultPromise).rejects.toThrow("Error during swap.");
+                // assert — a no-manager caller recovers via the attached refund metadata
+                expect(error).toBeInstanceOf(TransactionFailedError);
+                expect(error.message).toBe("The transaction has failed.");
+                expect(error.isRefundable).toBe(true);
+                expect(error.pendingSwap).toMatchObject({ id: pendingSwap.id });
             });
 
             it("should reject with TransactionRefundedError when transaction is refunded", async () => {
@@ -2630,7 +2638,7 @@ describe("ArkadeSwaps", () => {
                 const resultPromise = swaps.waitAndClaimArk(pendingSwap);
 
                 // assert
-                await expect(resultPromise).rejects.toThrow("Error during swap.");
+                await expect(resultPromise).rejects.toThrow("The transaction has failed.");
             });
 
             it("should reject with TransactionRefundedError when transaction is refunded", async () => {
@@ -3827,7 +3835,13 @@ describe("ArkadeSwaps", () => {
                         forfeitClosureLocked(refundableSwap.response.timeoutBlockHeights!.refund),
                     );
 
-                    const nowSec = Math.floor(Date.now() / 1000);
+                    // Pin the clock: retryAt is Date.now() + CLTV_IMMATURE_RETRY_SEC
+                    // read inside refundVHTLC, so a second boundary crossing between
+                    // that read and this one would yield nowSec + 61 and flake the
+                    // upper bound below.
+                    const fixedMs = Date.now();
+                    vi.spyOn(Date, "now").mockReturnValue(fixedMs);
+                    const nowSec = Math.floor(fixedMs / 1000);
                     const outcome = await swaps.refundVHTLC(refundableSwap);
 
                     expect(outcome.swept).toBe(0);
@@ -3859,10 +3873,14 @@ describe("ArkadeSwaps", () => {
                     // Boltz rejection falls through to refundWithoutReceiver. This
                     // site sits inside a catch block — an inline try/catch here would
                     // throw straight past the enclosing handler.
-                    const nowSec = Math.floor(Date.now() / 1000);
+                    const fixedMs = Date.now();
+                    const nowSec = Math.floor(fixedMs / 1000);
                     const dateSpy = vi.spyOn(Date, "now");
                     dateSpy.mockReturnValueOnce((futureRefundTimestamp - 60) * 1000);
                     dateSpy.mockReturnValueOnce((futureRefundTimestamp + 60) * 1000);
+                    // Pin every later read, including the one retryAt is derived
+                    // from, so the bound below cannot straddle a second boundary.
+                    dateSpy.mockReturnValue(fixedMs);
 
                     const outcome = await swaps.refundVHTLC(refundableSwapPreCltv);
 
