@@ -146,6 +146,22 @@ export function signingDescriptorIndex(descriptor: unknown): number {
 }
 
 /**
+ * Strict counterpart of {@link signingDescriptorIndex}: throws instead of
+ * defaulting to 0. For callers that act on the index — advancing the
+ * allocation watermark — where a silent 0 turns a caller bug (a bare
+ * `tr(pubkey)` descriptor, say) into a no-op that drops the very protection
+ * the call exists to provide.
+ */
+export function requireSigningDescriptorIndex(descriptor: string): number {
+    const m = descriptor.match(/\/(\d+)\)\s*$/);
+    const n = m ? Number(m[1]) : NaN;
+    if (!Number.isInteger(n) || n < 0) {
+        throw new Error(`Descriptor carries no HD child index: ${descriptor}`);
+    }
+    return n;
+}
+
+/**
  * Thrown when a descriptor expected to be rangeable (have a wildcard
  * leaf) cannot produce a leaf pubkey. Surfaces from the rotator's
  * `defaultBoot` path so `resolveBoot` can distinguish a legitimate
