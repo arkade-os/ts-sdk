@@ -3525,6 +3525,12 @@ describe("ArkadeSwaps", () => {
                 (wallet as any).getCurrentSigningDescriptor = vi
                     .fn()
                     .mockResolvedValue(rotatedDescriptor);
+                (wallet as any).getNextSigningDescriptor = vi
+                    .fn()
+                    .mockResolvedValue(rotatedDescriptor);
+                (wallet as any).advanceSigningDescriptorWatermark = vi
+                    .fn()
+                    .mockResolvedValue(undefined);
                 (wallet as any).signerForDescriptor = vi.fn().mockResolvedValue(identity);
             };
 
@@ -5589,13 +5595,17 @@ describe("ArkadeSwaps", () => {
             (wallet as any).getCurrentSigningDescriptor = vi
                 .fn()
                 .mockResolvedValue(rotatedDescriptor);
+            (wallet as any).getNextSigningDescriptor = vi.fn().mockResolvedValue(rotatedDescriptor);
             (wallet as any).getUsedSigningDescriptors = vi
                 .fn()
                 .mockResolvedValue([rotatedDescriptor]);
+            (wallet as any).advanceSigningDescriptorWatermark = vi
+                .fn()
+                .mockResolvedValue(undefined);
             (wallet as any).signerForDescriptor = vi.fn().mockResolvedValue(rotatedIdentity);
         };
 
-        it("creates a reverse swap under the current index", async () => {
+        it("creates a reverse swap under a freshly allocated index", async () => {
             rotateWallet();
             vi.spyOn(swapProvider, "createReverseSwap").mockImplementationOnce(
                 reverseSwapResponseFor(createReverseSwapResponse),
@@ -5607,7 +5617,7 @@ describe("ArkadeSwaps", () => {
             expect(pendingSwap.signingDescriptor).toBe(rotatedDescriptor);
         });
 
-        it("creates a submarine swap under the current index", async () => {
+        it("creates a submarine swap under a freshly allocated index", async () => {
             rotateWallet();
             vi.spyOn(swapProvider, "createSubmarineSwap").mockResolvedValueOnce(
                 createSubmarineSwapResponse,
@@ -5621,7 +5631,7 @@ describe("ArkadeSwaps", () => {
             expect(pendingSwap.signingDescriptor).toBe(rotatedDescriptor);
         });
 
-        it("binds only the ARK leg of a chain swap to the current index", async () => {
+        it("binds only the ARK leg of a chain swap to a freshly allocated index", async () => {
             rotateWallet();
             vi.spyOn(swapProvider, "createChainSwap").mockResolvedValueOnce(
                 createArkBtcChainSwapResponse,
