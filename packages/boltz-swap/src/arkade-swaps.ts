@@ -3522,8 +3522,13 @@ export class ArkadeSwaps {
                 // we locked ARK, our claim leg when we receive it.
                 const weLockArk = swap.from === "ARK";
                 const arkLeg = weLockArk ? swap.refundDetails : swap.claimDetails;
-                const lockupLeg = swap.refundDetails ?? arkLeg;
-                if (!arkLeg || !lockupLeg) continue;
+                if (!arkLeg) continue;
+                // The leg we funded, and the only one we can refund. For BTC→ARK
+                // that is the BTC leg, which Boltz may omit — the ARK leg is not
+                // a stand-in for it: `lockupDetails` is what callers pay into and
+                // refund from, so an ark address there would mis-route a BTC
+                // refund. Leave it absent instead of wrong.
+                const lockupLeg = swap.refundDetails;
 
                 const arkTimeouts = resolveVhtlcTimeouts(arkLeg.tree, arkLeg.timeoutBlockHeights);
                 const owner =
@@ -3544,7 +3549,9 @@ export class ArkadeSwaps {
                     continue;
                 }
 
-                const { amount } = lockupLeg;
+                // Falls back to the ARK leg only as a display amount when our
+                // lockup leg is missing.
+                const amount = lockupLeg?.amount ?? arkLeg.amount;
                 chainSwaps.push({
                     id,
                     type: "chain",
@@ -3568,16 +3575,20 @@ export class ArkadeSwaps {
                     },
                     response: {
                         id,
-                        lockupDetails: {
-                            amount: lockupLeg.amount,
-                            lockupAddress: lockupLeg.lockupAddress,
-                            serverPublicKey: lockupLeg.serverPublicKey,
-                            timeoutBlockHeight: lockupLeg.timeoutBlockHeight,
-                            timeouts: resolveVhtlcTimeouts(
-                                lockupLeg.tree,
-                                lockupLeg.timeoutBlockHeights,
-                            ),
-                        },
+                        ...(lockupLeg
+                            ? {
+                                  lockupDetails: {
+                                      amount: lockupLeg.amount,
+                                      lockupAddress: lockupLeg.lockupAddress,
+                                      serverPublicKey: lockupLeg.serverPublicKey,
+                                      timeoutBlockHeight: lockupLeg.timeoutBlockHeight,
+                                      timeouts: resolveVhtlcTimeouts(
+                                          lockupLeg.tree,
+                                          lockupLeg.timeoutBlockHeights,
+                                      ),
+                                  },
+                              }
+                            : {}),
                         // Claiming ARK reads its VHTLC from claimDetails.
                         ...(swap.claimDetails
                             ? {

@@ -3485,6 +3485,30 @@ describe("ArkadeSwaps", () => {
             expect(result.submarineSwaps[0].response.timeoutBlockHeights).toEqual(derivedTimeouts);
         });
 
+        /** BTC leg of a BTC→ARK chain swap: the leg we lock and could refund. */
+        const btcLockupDetails = {
+            tree: mockTree,
+            amount: 60000,
+            lockupAddress: "bcrt1qlockupaddress",
+            serverPublicKey: compressedPubkeys.boltz,
+            timeoutBlockHeight: 200,
+        };
+
+        const btcToArk = {
+            id: "chain-to-ark",
+            type: "chain" as const,
+            to: "ARK" as const,
+            from: "BTC" as const,
+            status: "transaction.server.mempool" as BoltzSwapStatus,
+            createdAt: 4000,
+            preimageHash: chainPreimageHash,
+            claimDetails: makeDetails({
+                ourRole: "receiver",
+                preimageHash: chainPreimageHash,
+                timeoutBlockHeights: serverTimeouts,
+            }),
+        };
+
         describe("multi-key attribution", () => {
             const hdIdentity = MnemonicIdentity.fromMnemonic(
                 "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
@@ -3627,20 +3651,6 @@ describe("ArkadeSwaps", () => {
             });
 
             it("gives a restored ARK-claim chain swap a usable claim key", async () => {
-                const btcToArk = {
-                    id: "chain-to-ark",
-                    type: "chain" as const,
-                    to: "ARK" as const,
-                    from: "BTC" as const,
-                    status: "transaction.server.mempool" as BoltzSwapStatus,
-                    createdAt: 4000,
-                    preimageHash: chainPreimageHash,
-                    claimDetails: makeDetails({
-                        ourRole: "receiver",
-                        preimageHash: chainPreimageHash,
-                        timeoutBlockHeights: serverTimeouts,
-                    }),
-                };
                 vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([btcToArk]);
                 vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
 
@@ -3648,6 +3658,35 @@ describe("ArkadeSwaps", () => {
 
                 expect(result.chainSwaps[0].request.claimPublicKey).toBe(compressedPubkeys.alice);
                 expect(result.chainSwaps[0].response.claimDetails.timeouts).toEqual(serverTimeouts);
+            });
+
+            it("keeps the BTC leg as the lockup details of a BTC→ARK swap", async () => {
+                vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([
+                    { ...btcToArk, refundDetails: btcLockupDetails },
+                ]);
+                vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+                const result = await swaps.restoreSwaps();
+
+                expect(result.chainSwaps[0].response.lockupDetails.lockupAddress).toBe(
+                    btcLockupDetails.lockupAddress,
+                );
+                expect(result.chainSwaps[0].amount).toBe(btcLockupDetails.amount);
+            });
+
+            it("omits lockup details rather than substituting the ARK leg", async () => {
+                vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([btcToArk]);
+                vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+                const result = await swaps.restoreSwaps();
+
+                // Boltz omitted the BTC leg: the swap stays claimable, but
+                // nothing may present the ARK leg as a BTC lockup.
+                expect(result.chainSwaps).toHaveLength(1);
+                expect(result.chainSwaps[0].response.lockupDetails).toBeUndefined();
+                expect(result.chainSwaps[0].response.claimDetails.lockupAddress).toBe(
+                    btcToArk.claimDetails.lockupAddress,
+                );
             });
         });
     });
