@@ -233,3 +233,109 @@ describe("BucketSyncClient — SSE stream", () => {
         expect(seqs).toEqual([7]);
     });
 });
+
+describe("BucketSyncClient — session expiry", () => {
+    // Counts handshakes so we can assert a refresh happened exactly once.
+    const authRoutes = (onRegister: () => void, token = () => "tok") => ({
+        "/v1/auth/schnorr/challenge": () => json({ nonce: nonce("ab"), expiresAt: "" }),
+        "/v1/auth/schnorr/register": () => {
+            onRegister();
+            return json({ token: token(), expiresAt: "" });
+        },
+    });
+
+    it("re-authenticates and replays the request after a 401", async () => {
+        let handshakes = 0;
+        let tokenSeq = 0;
+        const seenAuth: (string | undefined)[] = [];
+        const client = new BucketSyncClient({
+            baseUrl: "http://server",
+            fetch: mockFetch({
+                ...authRoutes(
+                    () => handshakes++,
+                    () => `tok-${++tokenSeq}`,
+                ),
+                "/v1/bucket/head": (init) => {
+                    const auth = (init?.headers as Record<string, string>)?.authorization;
+                    seenAuth.push(auth);
+                    // The first token is stale; the replay carries the refreshed one.
+                    return auth === "Bearer tok-1"
+                        ? json({ message: "unauthorized" }, 401)
+                        : json({ currentSeq: 7, contentHash: "h" });
+                },
+            }),
+        });
+        await client.authenticate(stubSigner);
+        expect(handshakes).toBe(1);
+
+        expect((await client.head()).currentSeq).toBe(7);
+        expect(handshakes).toBe(2); // refreshed once
+        expect(seenAuth).toEqual(["Bearer tok-1", "Bearer tok-2"]);
+    });
+
+    it("refreshes once for concurrent requests that all see a 401", async () => {
+        let handshakes = 0;
+        let tokenSeq = 0;
+        const client = new BucketSyncClient({
+            baseUrl: "http://server",
+            fetch: mockFetch({
+                ...authRoutes(
+                    () => handshakes++,
+                    () => `tok-${++tokenSeq}`,
+                ),
+                "/v1/bucket/head": (init) =>
+                    (init?.headers as Record<string, string>)?.authorization === "Bearer tok-1"
+                        ? json({ message: "unauthorized" }, 401)
+                        : json({ currentSeq: 1, contentHash: "h" }),
+            }),
+        });
+        await client.authenticate(stubSigner);
+
+        await Promise.all([client.head(), client.head(), client.head()]);
+
+        // One initial handshake plus exactly one shared refresh, not one per request.
+        expect(handshakes).toBe(2);
+    });
+
+    it("gives up when re-authentication itself fails", async () => {
+        const client = new BucketSyncClient({
+            baseUrl: "http://server",
+            fetch: mockFetch({
+                "/v1/auth/schnorr/challenge": () => json({ nonce: nonce("ab"), expiresAt: "" }),
+                "/v1/auth/schnorr/register": (() => {
+                    let first = true;
+                    return () => {
+                        if (first) {
+                            first = false;
+                            return json({ token: "tok", expiresAt: "" });
+                        }
+                        return json({ message: "nope" }, 401);
+                    };
+                })(),
+                "/v1/auth/schnorr/verify": () => json({ message: "nope" }, 401),
+                "/v1/bucket/head": () => json({ message: "unauthorized" }, 401),
+            }),
+        });
+        await client.authenticate(stubSigner);
+        await expect(client.head()).rejects.toBeInstanceOf(BucketSyncAuthError);
+    });
+
+    it("does not re-authenticate when revoking a session", async () => {
+        let handshakes = 0;
+        const client = new BucketSyncClient({
+            baseUrl: "http://server",
+            fetch: mockFetch({
+                ...authRoutes(() => handshakes++),
+                // Session already gone server-side.
+                "/v1/auth/session": () => json({ message: "unauthorized" }, 401),
+            }),
+        });
+        await client.authenticate(stubSigner);
+
+        await client.revokeSession();
+
+        // Minting a fresh session purely to revoke it would be absurd.
+        expect(handshakes).toBe(1);
+        expect(client.authenticated).toBe(false);
+    });
+});

@@ -49,6 +49,12 @@ export class SyncedSwapRepository implements SwapRepository {
         return this.base.getAllSwaps<T>(filter);
     }
 
+    /**
+     * Deliberately NOT mirrored, for the same reason as
+     * {@link SyncedContractRepository.clear} — and more so here: clearing swaps
+     * locally must never destroy the remote copy of a preimage that is still the
+     * only way to claim an outstanding VHTLC.
+     */
     clear(): Promise<void> {
         return this.base.clear();
     }

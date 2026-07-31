@@ -45,6 +45,10 @@ export interface BucketSyncClientOptions {
  */
 export class BucketSyncClient {
     private token: string | null = null;
+    /** Kept so an expired or revoked session can be re-established transparently. */
+    private signer: SchnorrSigner | null = null;
+    /** In-flight re-authentication, shared so concurrent 401s trigger only one. */
+    private reauth: Promise<void> | null = null;
     private readonly baseUrl: string;
     private readonly fetchImpl: typeof fetch;
     private readonly device?: string;
@@ -68,11 +72,34 @@ export class BucketSyncClient {
      * back to `verify`. On success the bearer token is stored for later calls.
      */
     async authenticate(signer: SchnorrSigner): Promise<void> {
+        this.signer = signer;
+        await this.handshake();
+    }
+
+    private async handshake(): Promise<void> {
+        const signer = this.signer;
+        if (!signer) throw new BucketSyncAuthError("not authenticated; call authenticate() first");
         const pubkey = hex.encode(await signer.xOnlyPublicKey());
         this.token =
             (await this.attempt("register", pubkey, signer)) ??
             (await this.attempt("verify", pubkey, signer));
         if (!this.token) throw new BucketSyncAuthError("schnorr authentication failed");
+    }
+
+    /**
+     * Re-run the handshake, collapsing concurrent callers onto a single attempt.
+     *
+     * Sessions expire, and `WalletSync.start()` holds a long-lived SSE tail plus
+     * periodic diffs, so a session routinely outlives its token; the server can also
+     * revoke it or restart. Recovering reactively from a 401 covers all three,
+     * whereas scheduling against `expiresAt` would cover only the first — and would
+     * drift with clock skew.
+     */
+    private refresh(): Promise<void> {
+        this.reauth ??= this.handshake().finally(() => {
+            this.reauth = null;
+        });
+        return this.reauth;
     }
 
     private async attempt(
@@ -151,9 +178,22 @@ export class BucketSyncClient {
      * connection closes.
      */
     async *stream(lastEventId?: number, signal?: AbortSignal): AsyncGenerator<number> {
-        const headers: Record<string, string> = { ...this.bearer() };
-        if (lastEventId != null) headers["Last-Event-ID"] = String(lastEventId);
-        const res = await this.fetchImpl(`${this.baseUrl}/v1/bucket/stream`, { headers, signal });
+        // Built per attempt so a replay carries the refreshed bearer.
+        const open = () => {
+            const headers: Record<string, string> = { ...this.bearer() };
+            if (lastEventId != null) headers["Last-Event-ID"] = String(lastEventId);
+            return this.fetchImpl(`${this.baseUrl}/v1/bucket/stream`, { headers, signal });
+        };
+
+        let res = await open();
+        // This is the connection most likely to outlive its token, so recover the
+        // same way the request path does. `Last-Event-ID` is re-sent, so resuming
+        // after a refresh loses no events.
+        if (res.status === 401 && this.signer) {
+            this.token = null;
+            await this.refresh();
+            res = await open();
+        }
         if (!res.ok || !res.body) throw new BucketSyncHttpError(res.status, await res.text());
 
         const reader = res.body.getReader();
@@ -181,8 +221,12 @@ export class BucketSyncClient {
     /** Revoke the current session (lost-device kill). Clears the local token. */
     async revokeSession(): Promise<void> {
         if (!this.token) return;
-        await this.authed("/v1/auth/session", { method: "DELETE" });
+        // No retry: a 401 means the session is already gone, and re-authenticating
+        // would mint a fresh one purely to revoke it. Drop the signer too, so
+        // nothing can transparently re-establish the session we just gave up.
+        await this.authed("/v1/auth/session", { method: "DELETE" }, { retry: false });
         this.token = null;
+        this.signer = null;
     }
 
     // ── internals ─────────────────────────────────────────────────────────
@@ -193,9 +237,29 @@ export class BucketSyncClient {
         return { authorization: `Bearer ${this.token}` };
     }
 
-    private async authed(path: string, init: RequestInit = {}): Promise<Response> {
-        const headers = { ...(init.headers as Record<string, string>), ...this.bearer() };
-        return this.fetchImpl(`${this.baseUrl}${path}`, { ...init, headers });
+    /**
+     * Send an authenticated request, re-authenticating and replaying once on a 401.
+     * Bodies here are always strings, so a replay is safe. Pass `retry: false` where
+     * a fresh session would defeat the point — see `revokeSession`.
+     */
+    private async authed(
+        path: string,
+        init: RequestInit = {},
+        { retry = true }: { retry?: boolean } = {},
+    ): Promise<Response> {
+        // Headers are rebuilt per attempt so the replay carries the NEW bearer.
+        const send = () =>
+            this.fetchImpl(`${this.baseUrl}${path}`, {
+                ...init,
+                headers: { ...(init.headers as Record<string, string>), ...this.bearer() },
+            });
+
+        const res = await send();
+        if (res.status !== 401 || !retry || !this.signer) return res;
+
+        this.token = null;
+        await this.refresh();
+        return send();
     }
 
     private async json<T>(res: Response): Promise<T> {

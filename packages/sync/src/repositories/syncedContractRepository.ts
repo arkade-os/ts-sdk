@@ -41,6 +41,14 @@ export class SyncedContractRepository implements ContractRepository {
         return this.base.getContracts(filter);
     }
 
+    /**
+     * Deliberately NOT mirrored. `clear()` wipes local storage — a wallet reset, a
+     * logout, a cache drop — and propagating that would turn a local action into the
+     * destruction of the user's backup on every other device. The backup surviving a
+     * local wipe is the point of having one; a later `restore()` re-populating from
+     * the bucket is the feature, not a bug. Revoke the session or delete records
+     * explicitly if you really mean to discard remote state.
+     */
     clear(): Promise<void> {
         return this.base.clear();
     }
