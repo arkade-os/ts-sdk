@@ -4552,40 +4552,62 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         if (!this._keyring) {
             throw new Error("Cannot import arkadeCash for recovery: wallet has no keyring");
         }
+        // Whether the key is already filed decides whether a failed contract
+        // write may purge it below. Read BEFORE the import, which is idempotent
+        // and would otherwise erase the distinction.
+        const preExisting = this._keyring.hasKey(`tr(${hex.encode(cash.publicKey)})`);
         const descriptor = await this._keyring.importKey(cash.privateKey);
 
-        const manager = await this.getContractManager();
-        const contract = await manager.createContract({
-            type: "default",
-            params: {
-                pubKey: hex.encode(cash.publicKey),
-                serverPubKey: hex.encode(cash.serverPubKey),
-                csvTimelock: timelockToSequence(cash.csvTimelock).toString(),
-            },
-            script: hex.encode(cashScript.pkScript),
-            address: cashAddress.encode(),
-            state: "active",
-            metadata: {
-                signingDescriptor: descriptor,
-                recoveryOnly: true,
-            },
-        });
-
-        if (!isRecoveryOnlyContract(contract)) {
-            // Pre-existing unflagged row: promote it, preserving unrelated
-            // consumer metadata until the row's post-recovery deletion. The
-            // descriptor is overwritten unconditionally — we hold the actual
-            // key, whatever the old row claimed. `state: "active"` mirrors the
-            // fresh-import path so an inactive row cannot dodge the recovery
-            // pass.
-            await manager.updateContract(contract.script, {
+        try {
+            const manager = await this.getContractManager();
+            const contract = await manager.createContract({
+                type: "default",
+                params: {
+                    pubKey: hex.encode(cash.publicKey),
+                    serverPubKey: hex.encode(cash.serverPubKey),
+                    csvTimelock: timelockToSequence(cash.csvTimelock).toString(),
+                },
+                script: hex.encode(cashScript.pkScript),
+                address: cashAddress.encode(),
                 state: "active",
                 metadata: {
-                    ...contract.metadata,
                     signingDescriptor: descriptor,
                     recoveryOnly: true,
                 },
             });
+
+            if (!isRecoveryOnlyContract(contract)) {
+                // Pre-existing unflagged row: promote it, preserving unrelated
+                // consumer metadata until the row's post-recovery deletion. The
+                // descriptor is overwritten unconditionally — we hold the actual
+                // key, whatever the old row claimed. `state: "active"` mirrors the
+                // fresh-import path so an inactive row cannot dodge the recovery
+                // pass.
+                await manager.updateContract(contract.script, {
+                    state: "active",
+                    metadata: {
+                        ...contract.metadata,
+                        signingDescriptor: descriptor,
+                        recoveryOnly: true,
+                    },
+                });
+            }
+        } catch (error) {
+            // Compensate: the two writes aren't atomic (separate repositories),
+            // and a key with no contract row naming it is unreachable — nothing
+            // walks the keyring, so it would sit at rest forever. Only purge a
+            // key THIS call filed: on a re-claim the row from the successful
+            // claim still needs it. Best-effort — a failed purge just leaves the
+            // pre-fix residue, and the caller's error is what matters.
+            if (!preExisting) {
+                await this._keyring.deleteKey(descriptor).catch((purgeError) => {
+                    console.error(
+                        "Failed to purge the arkadeCash key after a failed import:",
+                        purgeError,
+                    );
+                });
+            }
+            throw error;
         }
     }
 
@@ -4608,6 +4630,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * regular wallet contract — and idempotent: a second call (the contract
      * already gone) is a no-op. Invoked by the isolated recovery pass in
      * `VtxoManager` (see its `RecoveryContractCapableWallet` capability).
+     *
+     * The write order is load-bearing; do not swap it. The two repositories
+     * cannot be written atomically, so one of them leaks on a partial failure.
+     * Purging the key first leaves a contract row with a dangling descriptor:
+     * visible, harmless, and retried to completion by the next recovery pass
+     * (its VTXOs read back spent, so nothing is signed). The reverse leaves an
+     * unencrypted key that nothing references — the descriptor lived only in
+     * the row just deleted — so no retry can ever find it, breaking the
+     * purge-on-completion bound that justifies storing it in the clear.
      */
     async removeRecoveryContract(script: string): Promise<void> {
         const manager = await this.getContractManager();

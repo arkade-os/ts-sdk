@@ -122,7 +122,11 @@ function sweptCashVtxo(cashPkScript: string): VirtualCoin {
 
 /** White-box reach for the wallet's keyring (private) in these unit tests. */
 function keyringOf(wallet: Wallet) {
-    return (wallet as unknown as { _keyring: { hasKey(d: string): boolean } })._keyring;
+    return (
+        wallet as unknown as {
+            _keyring: { hasKey(d: string): boolean; listKeyringDescriptors(): string[] };
+        }
+    )._keyring;
 }
 
 /** A distinct spent arkadeCash VTXO, one per index, all at the same pkScript. */
@@ -496,11 +500,50 @@ describe("claimCash import-for-recovery", () => {
             expect(result.unclaimed.vtxos).toEqual([
                 { txid: CASH_TXID, vout: 0, value: CASH_VALUE, reason: "recovery-failed" },
             ]);
-            // Nothing was imported, so there is no recovery to kick.
+            // No contract row, so there is no recovery to kick.
             expect(kick).not.toHaveBeenCalled();
+            // And the key filed before the failing write was rolled back: with
+            // no row naming its descriptor it would be unreachable at rest.
+            expect(keyringOf(wallet).listKeyringDescriptors()).toEqual([]);
         } finally {
             errorLog.mockRestore();
         }
+    });
+
+    it("keeps the key when a re-claim's contract write fails", async () => {
+        // The row from the successful first claim still needs the key, so the
+        // rollback must not fire for a key this call didn't file.
+        const cash = makeCash();
+        const { wallet } = await claimSwept(cash);
+        const descriptor = `tr(${hex.encode(cash.publicKey)})`;
+        expect(keyringOf(wallet).hasKey(descriptor)).toBe(true);
+
+        const cm = await wallet.getContractManager();
+        vi.spyOn(cm, "createContract").mockRejectedValue(new Error("repo write failed"));
+        const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+        try {
+            await wallet.claimCash(cash.toString());
+            expect(keyringOf(wallet).hasKey(descriptor)).toBe(true);
+        } finally {
+            errorLog.mockRestore();
+        }
+    });
+
+    it("purges the key even when the contract row delete fails", async () => {
+        // Write order is load-bearing: the key goes first so a failed row
+        // delete leaves a retryable dangling row, never an unreferenced key.
+        const cash = makeCash();
+        const { wallet, cashPkScript } = await claimSwept(cash);
+        const descriptor = `tr(${hex.encode(cash.publicKey)})`;
+
+        const cm = await wallet.getContractManager();
+        vi.spyOn(cm, "deleteContract").mockRejectedValue(new Error("repo write failed"));
+
+        await expect(wallet.removeRecoveryContract(cashPkScript)).rejects.toThrow(
+            "repo write failed",
+        );
+        expect(keyringOf(wallet).hasKey(descriptor)).toBe(false);
+        expect(await cm.getContracts({ script: cashPkScript })).toHaveLength(1);
     });
 
     it("is idempotent: re-claiming does not duplicate the import", async () => {
