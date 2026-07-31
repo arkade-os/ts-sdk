@@ -425,6 +425,50 @@ describe("claimCash import-for-recovery", () => {
         expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cash.publicKey)})`)).toBe(true);
     });
 
+    it("boots keyringless on corrupt keyring settings; claims degrade to recovery-failed", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        // A corrupt persisted keyring blob fails loud in parseSettings — but
+        // an auxiliary recovery feature must not make the wallet's own funds
+        // unreachable, so Wallet.create logs and boots without a keyring.
+        const walletRepository = new InMemoryWalletRepository();
+        await walletRepository.saveWalletState({
+            settings: { keyring: { keys: "corrupt" } },
+        });
+        const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        try {
+            const wallet = await Wallet.create({
+                identity: SingleKey.fromHex("1".repeat(64)),
+                settlementConfig: false,
+                arkProvider: {
+                    getInfo: vi.fn(async () => info),
+                    getPendingTxs: vi.fn(async () => []),
+                } as never,
+                indexerProvider: cashIndexer(cashPkScript, [sweptCashVtxo(cashPkScript)]),
+                onchainProvider: idleOnchain(),
+                storage: {
+                    walletRepository,
+                    contractRepository: new InMemoryContractRepository(),
+                },
+            });
+
+            // The wallet's own surface works...
+            expect(await wallet.getAddress()).toBeTruthy();
+            expect(errorLog).toHaveBeenCalled();
+
+            // ...and a claim of swept funds degrades to a reported failure
+            // (importArkadeCashForRecovery throws "no keyring", caught by
+            // claimCash) instead of throwing.
+            const result = await wallet.claimCash(cash.toString());
+            expect(result.unclaimed.vtxos).toEqual([
+                { txid: CASH_TXID, vout: 0, value: CASH_VALUE, reason: "recovery-failed" },
+            ]);
+        } finally {
+            errorLog.mockRestore();
+        }
+    });
+
     it("reports recovery-failed when the import cannot be persisted", async () => {
         const cash = makeCash();
         const cashPkScript = hex.encode(cash.vtxoScript.pkScript);

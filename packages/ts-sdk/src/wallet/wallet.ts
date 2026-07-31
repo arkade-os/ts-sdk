@@ -2981,10 +2981,29 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // and the signer router can resolve it. This does NOT feed HD
         // boarding/receive rotation — that still keys off `boot?.provider`
         // below — so a static wallet keeps its single fixed address.
-        const keyring = await KeyringDescriptorProvider.create(
-            boot?.provider ?? (await StaticDescriptorProvider.create(config.identity)),
-            setup.walletRepository,
-        );
+        //
+        // A failure here (a corrupt persisted keyring blob fails loud in
+        // `parseSettings`) must not brick the wallet: the keyring is an
+        // auxiliary recovery feature, and every consumer already degrades
+        // without one — the router falls back to the bare provider,
+        // `claimCash` reports swept funds as `recovery-failed`, and the
+        // recovery pass never throws. Log and boot keyringless instead of
+        // making the wallet's own funds unreachable.
+        let keyring: KeyringDescriptorProvider | undefined;
+        try {
+            keyring = await KeyringDescriptorProvider.create(
+                boot?.provider ?? (await StaticDescriptorProvider.create(config.identity)),
+                setup.walletRepository,
+            );
+        } catch (error) {
+            console.error(
+                "Failed to load the keyring; arkcash recovery is unavailable this " +
+                    "session. The persisted keyring settings are likely corrupt — " +
+                    "in-flight arkcash recoveries stall until they are cleared and " +
+                    "the notes re-claimed.",
+                error,
+            );
+        }
 
         const wallet = new Wallet(
             config.identity,
