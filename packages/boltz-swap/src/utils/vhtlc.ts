@@ -16,7 +16,7 @@ import {
     CSVMultisigTapscript,
     combineTapscriptSigs,
     Transaction,
-    TapLeafScript,
+    scriptFromTapLeafScript,
 } from "@arkade-os/sdk";
 import { logger } from "../logger";
 import { BoltzRefundError } from "../errors";
@@ -128,7 +128,7 @@ export const createVHTLCScript = (args: {
  * arkd advertises in `ArkInfo.deprecatedSigners` are exactly the historical
  * signers a stale swap may be locked to, so probing the current key first
  * (the no-rotation fast path) and then the deprecated set lets
- * {@link resolveVHTLCScript} recover the original lockup. Mirrors how
+ * `ArkadeSwaps.resolveVHTLCForLockup` recover the original lockup. Mirrors how
  * `Wallet.restore()` scans current + deprecated signers for stale VTXOs.
  */
 export const candidateServerPubkeys = (arkInfo: ArkInfo): string[] => {
@@ -511,7 +511,3 @@ export const refundVHTLCwithOffchainTx = async (
     // finalize the transaction
     await arkProvider.finalizeTx(arkTxid, [base64.encode(finalCheckpointTx.toPSBT())]);
 };
-
-function scriptFromTapLeafScript(leaf: TapLeafScript): Uint8Array {
-    return leaf[1].subarray(0, leaf[1].length - 1); // remove the version byte
-}

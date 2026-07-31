@@ -6,7 +6,7 @@
 // forms that slipped through before — are caught too.
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const pkgRoot = join(fileURLToPath(new URL(".", import.meta.url)), "..");
@@ -39,7 +39,9 @@ function* walk(dir) {
 
 const findings = [];
 for (const file of walk(srcRoot)) {
-    const rel = relative(pkgRoot, file);
+    // ALLOWLIST is written with forward slashes; relative() yields the platform
+    // separator, so on Windows every allowlisted file would otherwise be reported.
+    const rel = relative(pkgRoot, file).split(sep).join("/");
     if (ALLOWLIST.includes(rel)) continue;
     const lines = readFileSync(file, "utf8").split("\n");
     lines.forEach((line, i) => {

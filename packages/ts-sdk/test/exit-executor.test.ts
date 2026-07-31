@@ -380,3 +380,222 @@ describe("Executor", () => {
         expect(events[0].maturesAtTime).toBe(60_000 + 512);
     });
 });
+
+describe("Executor cancellation", () => {
+    /** A package whose single step never confirms, so the executor parks in
+     * waitConfirmed — the loop that `iterator.return()` cannot interrupt. */
+    function neverConfirmingPkg() {
+        const script = scriptedProvider();
+        script.register("parent1-hex", P1);
+        const pkg = pkgOf([
+            {
+                kind: "package",
+                parentTxid: P1,
+                parentHex: "parent1-hex",
+                childTxid: C1,
+                childHex: "child1-hex",
+                forVtxos: [`${P1}:0`],
+            },
+        ]);
+        return { script, pkg };
+    }
+
+    it("rejects with AbortError when aborted while waiting for confirmation", async () => {
+        const { script, pkg } = neverConfirmingPkg();
+        const ac = new AbortController();
+        const executor = new Executor(pkg, script.provider, {
+            pollIntervalMs: 5,
+            signal: ac.signal,
+        });
+
+        const events: ExecutorEvent[] = [];
+        const consumed = (async () => {
+            for await (const e of executor) events.push(e);
+        })();
+
+        // Let it broadcast and enter waitConfirmed, then stop it.
+        await new Promise((r) => setTimeout(r, 30));
+        ac.abort();
+
+        await expect(consumed).rejects.toMatchObject({ name: "AbortError" });
+        // It broadcast once and never progressed past the un-confirming step.
+        expect(script.broadcasts).toHaveLength(1);
+        expect(events.map((e) => e.status)).toEqual(["broadcast"]);
+    });
+
+    it("throws before broadcasting anything when the signal is already aborted", async () => {
+        const { script, pkg } = neverConfirmingPkg();
+        const ac = new AbortController();
+        ac.abort();
+        const executor = new Executor(pkg, script.provider, {
+            pollIntervalMs: 5,
+            signal: ac.signal,
+        });
+
+        await expect(
+            (async () => {
+                for await (const _ of executor) void _;
+            })(),
+        ).rejects.toMatchObject({ name: "AbortError" });
+        expect(script.broadcasts).toEqual([]);
+    });
+
+    it("rejects when aborted during the sweep wait loop, broadcasting no sweep", async () => {
+        const script = scriptedProvider();
+        script.register("parent1-hex", P1);
+        script.register("sweep1-hex", SW1);
+        const pkg = pkgOf([
+            {
+                kind: "package",
+                parentTxid: P1,
+                parentHex: "parent1-hex",
+                childTxid: C1,
+                childHex: "child1-hex",
+                forVtxos: [`${P1}:0`],
+            },
+            {
+                kind: "sweep",
+                vtxo: `${P1}:0`,
+                txid: SW1,
+                hex: "sweep1-hex",
+                dependsOnTxid: P1,
+                // Far in the future, so the sweep never matures on its own.
+                delay: { type: "blocks", value: 10_000 },
+            },
+        ]);
+
+        const ac = new AbortController();
+        const executor = new Executor(pkg, script.provider, {
+            pollIntervalMs: 5,
+            signal: ac.signal,
+        });
+
+        const consumed = (async () => {
+            for await (const e of executor) {
+                if (e.status === "broadcast" && e.txid) script.confirm(e.txid);
+            }
+        })();
+
+        await new Promise((r) => setTimeout(r, 40));
+        ac.abort();
+
+        await expect(consumed).rejects.toMatchObject({ name: "AbortError" });
+        // Only the package was broadcast; the sweep never went out.
+        expect(script.broadcasts).toEqual([["parent1-hex", "child1-hex"]]);
+    });
+
+    // The whole point of making sleep() abortable rather than only checking
+    // `aborted` between polls: abort latency must track the signal, not the
+    // poll interval.
+    //
+    // This one needs the real clock. Fake timers would let the 10s interval
+    // elapse instantly, so the assertion would hold even for an implementation
+    // that merely checks `aborted` between polls — exactly the version this
+    // test exists to rule out. The 10s-vs-1s margin is the flake budget.
+    it("aborts promptly rather than waiting out the poll interval", async () => {
+        const { script, pkg } = neverConfirmingPkg();
+        const ac = new AbortController();
+        const executor = new Executor(pkg, script.provider, {
+            pollIntervalMs: 10_000,
+            signal: ac.signal,
+        });
+
+        const consumed = (async () => {
+            for await (const _ of executor) void _;
+        })();
+
+        await new Promise((r) => setTimeout(r, 20));
+        const started = Date.now();
+        ac.abort();
+        await expect(consumed).rejects.toMatchObject({ name: "AbortError" });
+        expect(Date.now() - started).toBeLessThan(1_000);
+    });
+
+    it("removes every abort listener it registers", async () => {
+        const { script, pkg } = neverConfirmingPkg();
+        const ac = new AbortController();
+        let added = 0;
+        let removed = 0;
+        // Wrap the real signal so listener bookkeeping stays honest while abort
+        // still works for real.
+        const signal = new Proxy(ac.signal, {
+            get(target, prop) {
+                if (prop === "addEventListener") {
+                    return (...args: Parameters<AbortSignal["addEventListener"]>) => {
+                        added++;
+                        return target.addEventListener(...args);
+                    };
+                }
+                if (prop === "removeEventListener") {
+                    return (...args: Parameters<AbortSignal["removeEventListener"]>) => {
+                        removed++;
+                        return target.removeEventListener(...args);
+                    };
+                }
+                const v = Reflect.get(target, prop, target);
+                return typeof v === "function" ? v.bind(target) : v;
+            },
+        });
+
+        const executor = new Executor(pkg, script.provider, { pollIntervalMs: 5, signal });
+        const consumed = (async () => {
+            for await (const _ of executor) void _;
+        })();
+
+        // Long enough for many sleep cycles to complete via timeout.
+        await new Promise((r) => setTimeout(r, 60));
+        ac.abort();
+        await expect(consumed).rejects.toMatchObject({ name: "AbortError" });
+
+        expect(added).toBeGreaterThan(1);
+        // Not `=== 0`: every sleep that ends by timing out calls
+        // removeEventListener explicitly, but the final sleep is the one that
+        // gets aborted, and its `{ once: true }` listener is dropped internally
+        // by the event target — that removal does not go through the proxied
+        // removeEventListener. So exactly one registration is unaccounted for,
+        // and a slack larger than 1 would mean a genuine leak.
+        expect(added - removed).toBeLessThanOrEqual(1);
+    });
+
+    it("behaves exactly as before when no signal is passed", async () => {
+        const script = scriptedProvider();
+        script.register("parent1-hex", P1);
+        script.register("sweep1-hex", SW1);
+        const pkg = pkgOf([
+            {
+                kind: "package",
+                parentTxid: P1,
+                parentHex: "parent1-hex",
+                childTxid: C1,
+                childHex: "child1-hex",
+                forVtxos: [`${P1}:0`],
+            },
+            {
+                kind: "sweep",
+                vtxo: `${P1}:0`,
+                txid: SW1,
+                hex: "sweep1-hex",
+                dependsOnTxid: P1,
+                delay: { type: "blocks", value: 10 },
+            },
+        ]);
+
+        const executor = new Executor(pkg, script.provider, { pollIntervalMs: 1 });
+        const events = await run(
+            executor,
+            (e, s) => {
+                if (e.status === "broadcast" && e.txid) s.confirm(e.txid);
+                if (e.status === "waiting_csv") s.tip.height = e.maturesAtHeight!;
+            },
+            script,
+        );
+
+        expect(events.map((e) => `${e.kind}:${e.status}`)).toEqual([
+            "package:broadcast",
+            "package:confirmed",
+            "sweep:waiting_csv",
+            "sweep:broadcast",
+            "sweep:confirmed",
+        ]);
+    });
+});

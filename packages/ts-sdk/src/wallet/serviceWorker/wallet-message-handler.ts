@@ -39,7 +39,7 @@ import { DelegateInfo } from "../../providers/delegate";
 import {
     canRecoverOnchain,
     canSpendOffchain,
-    getNormalizedVtxos,
+    fetchVtxoCreatedAtByTxid,
     hasTerminalSpend,
     type NormalizedExtendedVirtualCoin,
 } from "../vtxo";
@@ -1838,8 +1838,8 @@ export class WalletMessageHandler
     }
 
     /**
-     * Build transaction history from cached virtual outputs without hitting the indexer.
-     * Falls back to indexer only for uncached transaction timestamps.
+     * Build transaction history from cached virtual outputs, hitting the indexer only for
+     * uncached timestamps. Best-effort, like the plain Wallet path.
      */
     private async buildTransactionHistoryFromCache(
         vtxos: ExtendedVirtualCoin[],
@@ -1848,61 +1848,12 @@ export class WalletMessageHandler
 
         const { boardingTxs, commitmentsToIgnore } = await this.readonlyWallet.getBoardingTxs();
 
-        // Build a lookup for cached virtual output timestamps, keyed by txid.
-        // Multiple virtual outputs can share a txid (different vouts) — we keep the
-        // earliest createdAt so the history ordering is stable.
-        const vtxoCreatedAt = new Map<string, number>();
-        for (const vtxo of vtxos) {
-            const existing = vtxoCreatedAt.get(vtxo.txid);
-            const ts = vtxo.createdAt.getTime();
-            if (existing === undefined || ts < existing) {
-                vtxoCreatedAt.set(vtxo.txid, ts);
-            }
-        }
+        const indexerProvider = this.indexerProvider;
+        const resolveTxCreatedAt = indexerProvider
+            ? (txids: string[]) => fetchVtxoCreatedAtByTxid(indexerProvider, txids)
+            : undefined;
 
-        // Pre-fetch uncached timestamps in a single batched indexer call.
-        // buildTransactionHistory needs these for spent-offchain virtual outputs with
-        // no change outputs (i.e. arkTxId is set but no virtual output has txid === arkTxId).
-        if (this.indexerProvider) {
-            const uncachedTxids = new Set<string>();
-            for (const vtxo of vtxos) {
-                if (
-                    vtxo.isSpent &&
-                    vtxo.arkTxId &&
-                    !vtxoCreatedAt.has(vtxo.arkTxId) &&
-                    !vtxos.some((v) => v.txid === vtxo.arkTxId)
-                ) {
-                    uncachedTxids.add(vtxo.arkTxId);
-                }
-            }
-
-            if (uncachedTxids.size > 0) {
-                const outpoints = [...uncachedTxids].map((txid) => ({
-                    txid,
-                    vout: 0,
-                }));
-                // Outpoints cost about what scripts do in the query string, so
-                // this spends nearly the whole URL budget that
-                // SCRIPT_QUERY_CHUNK_SIZE leaves unspent. Left as-is because
-                // this path has never 414'd; lower it to the shared constant if
-                // it ever does.
-                const BATCH_SIZE = 100;
-                for (let i = 0; i < outpoints.length; i += BATCH_SIZE) {
-                    const res = await getNormalizedVtxos(this.indexerProvider, {
-                        outpoints: outpoints.slice(i, i + BATCH_SIZE),
-                    });
-                    for (const v of res.vtxos) {
-                        vtxoCreatedAt.set(v.txid, v.createdAt.getTime());
-                    }
-                }
-            }
-        }
-
-        const getTxCreatedAt = async (txid: string): Promise<number | undefined> => {
-            return vtxoCreatedAt.get(txid);
-        };
-
-        return buildTransactionHistory(vtxos, boardingTxs, commitmentsToIgnore, getTxCreatedAt);
+        return buildTransactionHistory(vtxos, boardingTxs, commitmentsToIgnore, resolveTxCreatedAt);
     }
 
     private async ensureContractEventBroadcasting() {

@@ -809,7 +809,11 @@ export const isTree = (data: any): data is Tree => {
 export type Details = {
     tree: Tree;
     amount?: number;
-    keyIndex: number;
+    /**
+     * Boltz's own key index for the swap. Carries no information about which
+     * of *our* keys owns it — attribution matches the lockup address locally.
+     */
+    keyIndex?: number;
     transaction?: {
         id: string;
         vout: number;
@@ -827,7 +831,7 @@ export const isDetails = (data: any): data is Details => {
         typeof data === "object" &&
         isTree(data.tree) &&
         (data.amount === undefined || typeof data.amount === "number") &&
-        typeof data.keyIndex === "number" &&
+        (data.keyIndex === undefined || typeof data.keyIndex === "number") &&
         (data.transaction === undefined ||
             (data.transaction &&
                 typeof data.transaction === "object" &&
@@ -928,9 +932,7 @@ export const isRestoredReverseSwap = (data: any): data is RestoredReverseSwap =>
     );
 };
 
-export type CreateSwapsRestoreRequest = {
-    publicKey: string;
-};
+export type CreateSwapsRestoreRequest = { publicKey: string } | { publicKeys: string[] };
 
 export type CreateSwapsRestoreResponse = (
     | RestoredChainSwap
@@ -967,6 +969,11 @@ const isSwapNotFoundBody = (error: NetworkError): boolean => {
     return error.message.toLowerCase().includes(needle);
 };
 
+// Deep copy of a validated Boltz response, so a cached value can never be
+// reached by reference. JSON round-trip rather than `structuredClone`: these are
+// plain JSON payloads, and Hermes/older RN runtimes lack the global.
+const detach = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
 /**
  * API client for the Boltz swap service.
  * Handles swap creation, status monitoring, fee/limit queries, and cooperative signing
@@ -978,6 +985,16 @@ export class BoltzSwapProvider {
     private readonly network: Network;
     private readonly referralId?: string;
     private readonly inflightGets = new Map<string, Promise<unknown>>();
+    /** In-memory TTL cache of validated Boltz pair-metadata responses, keyed by
+     *  endpoint path. Both limits and fees derive from these, so routing's
+     *  `available()` checks reuse one response instead of refetching per call. */
+    private readonly pairsCache = new Map<string, { at: number; value: unknown }>();
+
+    /** Pair-metadata cache lifetime — 15 min, matching NArk's `CachedBoltzClient`. */
+    private static readonly PAIRS_CACHE_TTL_MS = 15 * 60 * 1000;
+
+    /** Keys per `/v2/swap/restore` request. @see restoreSwaps */
+    private static readonly RESTORE_KEYS_PER_REQUEST = 100;
 
     /** @param config Provider configuration with network and optional API URL. */
     constructor(config: SwapProviderConfig) {
@@ -1008,13 +1025,17 @@ export class BoltzSwapProvider {
     /** Returns current Lightning swap fees (submarine + reverse) from Boltz. */
     async getFees(): Promise<FeesResponse> {
         const [submarine, reverse] = await Promise.all([
-            this.request<GetSubmarinePairsResponse>("/v2/swap/submarine", "GET"),
-            this.request<GetReversePairsResponse>("/v2/swap/reverse", "GET"),
+            this.pairsMetadata(
+                "/v2/swap/submarine",
+                isGetSubmarinePairsResponse,
+                "error fetching submarine fees",
+            ),
+            this.pairsMetadata(
+                "/v2/swap/reverse",
+                isGetReversePairsResponse,
+                "error fetching reverse fees",
+            ),
         ]);
-        if (!isGetSubmarinePairsResponse(submarine))
-            throw new SchemaError({ message: "error fetching submarine fees" });
-        if (!isGetReversePairsResponse(reverse))
-            throw new SchemaError({ message: "error fetching reverse fees" });
         return {
             submarine: {
                 percentage: submarine.ARK.BTC.fees.percentage,
@@ -1029,9 +1050,11 @@ export class BoltzSwapProvider {
 
     /** Returns current Lightning swap min/max limits from Boltz. */
     async getLimits(): Promise<LimitsResponse> {
-        const response = await this.request<GetSubmarinePairsResponse>("/v2/swap/submarine", "GET");
-        if (!isGetSubmarinePairsResponse(response))
-            throw new SchemaError({ message: "error fetching limits" });
+        const response = await this.pairsMetadata(
+            "/v2/swap/submarine",
+            isGetSubmarinePairsResponse,
+            "error fetching limits",
+        );
         return {
             min: response.ARK.BTC.limits.minimal,
             max: response.ARK.BTC.limits.maximal,
@@ -1495,10 +1518,11 @@ export class BoltzSwapProvider {
             throw new SwapError({ message: "Invalid chain pair" });
         }
 
-        const response = await this.request<GetChainPairsResponse>("/v2/swap/chain", "GET");
-
-        if (!isGetChainPairsResponse(response))
-            throw new SchemaError({ message: "error fetching fees" });
+        const response = await this.pairsMetadata(
+            "/v2/swap/chain",
+            isGetChainPairsResponse,
+            "error fetching fees",
+        );
 
         if (!response[from]?.[to]) {
             throw new SchemaError({
@@ -1514,10 +1538,11 @@ export class BoltzSwapProvider {
             throw new SwapError({ message: "Invalid chain pair" });
         }
 
-        const response = await this.request<GetChainPairsResponse>("/v2/swap/chain", "GET");
-
-        if (!isGetChainPairsResponse(response))
-            throw new SchemaError({ message: "error fetching limits" });
+        const response = await this.pairsMetadata(
+            "/v2/swap/chain",
+            isGetChainPairsResponse,
+            "error fetching limits",
+        );
 
         if (!response[from]?.[to]) {
             throw new SchemaError({
@@ -1611,24 +1636,76 @@ export class BoltzSwapProvider {
         return response;
     }
 
-    /** Restores swaps from Boltz API using the wallet's public key. */
-    async restoreSwaps(publicKey: string): Promise<CreateSwapsRestoreResponse> {
-        const requestBody: CreateSwapsRestoreRequest = {
-            publicKey,
-        };
+    /**
+     * Restores swaps from Boltz API for one key or a set of keys.
+     *
+     * An HD wallet spreads its swaps across every index that has been current,
+     * so restore has to ask about all of them. The set is chunked (Boltz
+     * documents no array limit, so the bound is defensive) and the chunk
+     * responses are concatenated; a failed chunk fails the whole restore rather
+     * than returning a silently partial set.
+     *
+     * Non-ARK legs are dropped — the same filter NArk applies.
+     */
+    async restoreSwaps(keys: string | string[]): Promise<CreateSwapsRestoreResponse> {
+        const publicKeys = typeof keys === "string" ? [keys] : keys;
+        if (publicKeys.length === 0) return [];
 
-        const response = await this.request<CreateSwapsRestoreResponse>(
-            "/v2/swap/restore",
-            "POST",
-            requestBody,
-        );
+        const restored: CreateSwapsRestoreResponse = [];
+        for (let i = 0; i < publicKeys.length; i += BoltzSwapProvider.RESTORE_KEYS_PER_REQUEST) {
+            const chunk = publicKeys.slice(i, i + BoltzSwapProvider.RESTORE_KEYS_PER_REQUEST);
+            const requestBody: CreateSwapsRestoreRequest =
+                typeof keys === "string" ? { publicKey: keys } : { publicKeys: chunk };
 
-        if (!isCreateSwapsRestoreResponse(response))
-            throw new SchemaError({
-                message: "Invalid schema in response for swap restoration",
-            });
+            const response = await this.request<CreateSwapsRestoreResponse>(
+                "/v2/swap/restore",
+                "POST",
+                requestBody,
+            );
 
-        return response;
+            if (!isCreateSwapsRestoreResponse(response))
+                throw new SchemaError({
+                    message: "Invalid schema in response for swap restoration",
+                });
+
+            restored.push(...response);
+        }
+
+        return restored.filter((swap) => swap.from === "ARK" || swap.to === "ARK");
+    }
+
+    /**
+     * Fetch a Boltz pair-metadata endpoint (`/v2/swap/{submarine,reverse,chain}`),
+     * validated and cached with a 15-minute TTL. Routing reads limits/fees on
+     * every `options()`/`route()`, so caching keeps that route-time I/O bounded
+     * and — for ARK→BTC — keeps the `available()` fee snapshot consistent with
+     * the `createChainSwap()` fee lookup when both land inside the TTL.
+     *
+     * Only successfully validated responses are cached; HTTP and schema failures
+     * refetch next time. The in-flight GET dedupe in {@link request} still applies
+     * on a cache miss, so concurrent first callers share a single fetch.
+     *
+     * Every caller gets a detached copy: the fee/limit accessors hand nested
+     * values straight to consumers, and one mutation would otherwise poison
+     * routing for the rest of the TTL.
+     */
+    private async pairsMetadata<T>(
+        path: string,
+        validate: (data: any) => data is T,
+        schemaErrorMessage: string,
+    ): Promise<T> {
+        const cached = this.pairsCache.get(path);
+        if (cached && Date.now() - cached.at < BoltzSwapProvider.PAIRS_CACHE_TTL_MS) {
+            return detach(cached.value) as T;
+        }
+        const response = await this.request<unknown>(path, "GET");
+        if (!validate(response)) {
+            throw new SchemaError({ message: schemaErrorMessage });
+        }
+        this.pairsCache.set(path, { at: Date.now(), value: response });
+        // Detach on the miss path too: the caller would otherwise hold the very
+        // object just cached.
+        return detach(response) as T;
     }
 
     private async request<T>(path: string, method: "GET" | "POST", body?: unknown): Promise<T> {

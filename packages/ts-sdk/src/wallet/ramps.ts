@@ -28,6 +28,41 @@ export class DustChangeError extends Error {
     }
 }
 
+const offboardNetworkNames: NetworkName[] = [
+    "bitcoin",
+    "regtest",
+    "testnet",
+    "signet",
+    "mutinynet",
+];
+
+/**
+ * Decode an offboard destination address to its output script, trying each
+ * supported network in turn.
+ *
+ * Exported so the payment router's `onchain` rail can price an offboard against
+ * the very script {@link Ramps.offboard} will settle to — a fee program may be
+ * script-size dependent, so quoting against anything else would drift.
+ *
+ * @param destinationAddress - The on-chain address to decode.
+ * @returns The output script for the address.
+ * @throws Error if the address cannot be decoded on any supported network.
+ */
+export function offboardDestinationScript(destinationAddress: string): Uint8Array {
+    for (const networkName of offboardNetworkNames) {
+        try {
+            const network = networks[networkName];
+            const addr = Address(network).decode(destinationAddress);
+            return OutScript.encode(addr);
+        } catch {
+            // Try next network
+            continue;
+        }
+    }
+
+    throw new Error(`Failed to decode destination address: ${destinationAddress}`);
+}
+
 /**
  * Ramps is a class wrapping `settle` method to provide a more convenient interface for onboarding and offboarding operations.
  *
@@ -218,30 +253,7 @@ export class Ramps {
 
         amount = amount ?? totalAmount;
 
-        const networkNames: NetworkName[] = [
-            "bitcoin",
-            "regtest",
-            "testnet",
-            "signet",
-            "mutinynet",
-        ];
-        let destinationScript: Uint8Array | undefined;
-
-        for (const networkName of networkNames) {
-            try {
-                const network = networks[networkName];
-                const addr = Address(network).decode(destinationAddress);
-                destinationScript = OutScript.encode(addr);
-                break;
-            } catch {
-                // Try next network
-                continue;
-            }
-        }
-
-        if (!destinationScript) {
-            throw new Error(`Failed to decode destination address: ${destinationAddress}`);
-        }
+        const destinationScript = offboardDestinationScript(destinationAddress);
 
         const outputFee = estimator.evalOnchainOutput({
             amount,

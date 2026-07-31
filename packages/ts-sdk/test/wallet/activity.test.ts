@@ -3,9 +3,12 @@ import {
     buildActivities,
     ActivityRegistry,
     boardingResolver,
+    collabExitResolver,
+    assetMintResolver,
     createDefaultActivityRegistry,
     type ActivityResolver,
 } from "../../src/wallet/activity";
+import { AssetId } from "../../src/extension/asset/assetId";
 import {
     makeStaticWalletForTest,
     installRestoreHarness,
@@ -240,8 +243,117 @@ describe("boardingResolver", () => {
     });
 });
 
+describe("collabExitResolver", () => {
+    it("tags an exit tx by its commitment; ignores non-exit", () => {
+        const r = collabExitResolver();
+        const exit: ArkTransaction = {
+            key: { arkTxid: "", commitmentTxid: "cX", boardingTxid: "" },
+            type: TxType.TxSent,
+            amount: -100,
+            settled: true,
+            createdAt: 1,
+            tag: "exit",
+        };
+        expect(r.resolve(exit)).toEqual([
+            { groupId: "exit:cX", label: "Collaborative exit", kind: "exit" },
+        ]);
+        expect(r.resolve(tx("a", { tag: "offchain" }))).toBeUndefined();
+    });
+});
+
+describe("assetMintResolver", () => {
+    it("tags the genesis tx of a minted asset; ignores reissue and non-asset txs", () => {
+        const r = assetMintResolver();
+        const genesisTxid = "11".repeat(32);
+        const assetId = AssetId.create(genesisTxid, 0).toString();
+
+        const mint: ArkTransaction = {
+            key: { arkTxid: genesisTxid, commitmentTxid: "", boardingTxid: "" },
+            type: TxType.TxSent,
+            amount: 0,
+            settled: true,
+            createdAt: 1,
+            assets: [{ assetId, amount: 1000n }],
+            tag: "offchain",
+        };
+        expect(r.resolve(mint)).toEqual([
+            {
+                groupId: `mint:${assetId}`,
+                label: "Asset mint",
+                kind: "asset-mint",
+                metadata: { assetId, amount: "1000" },
+            },
+        ]);
+
+        // an asset carried by a tx that is NOT its genesis (transfer/reissue) is not a mint here
+        const transfer: ArkTransaction = {
+            key: { arkTxid: "22".repeat(32), commitmentTxid: "", boardingTxid: "" },
+            type: TxType.TxSent,
+            amount: 0,
+            settled: true,
+            createdAt: 1,
+            assets: [{ assetId, amount: 500n }],
+            tag: "offchain",
+        };
+        expect(r.resolve(transfer)).toBeUndefined();
+        expect(r.resolve(tx("a"))).toBeUndefined();
+    });
+
+    it("matches the genesis txid byte-for-byte, at any group index", () => {
+        const r = assetMintResolver();
+        // Asymmetric on purpose: a byte-order slip between the assetId's embedded
+        // txid and tx.key.arkTxid would survive a palindromic txid unnoticed.
+        const genesisTxid = "01020304" + "aa".repeat(24) + "0b0c0d0e";
+        const assetId = AssetId.create(genesisTxid, 7).toString();
+
+        const mint: ArkTransaction = {
+            key: { arkTxid: genesisTxid, commitmentTxid: "", boardingTxid: "" },
+            type: TxType.TxSent,
+            amount: 0,
+            settled: true,
+            createdAt: 1,
+            assets: [{ assetId, amount: 1n }],
+            tag: "offchain",
+        };
+        expect(r.resolve(mint)?.[0].groupId).toBe(`mint:${assetId}`);
+
+        // same bytes reversed: must not be taken for the genesis tx
+        const reversed = (genesisTxid.match(/../g) ?? []).reverse().join("");
+        expect(reversed).not.toBe(genesisTxid);
+        expect(r.resolve({ ...mint, key: { ...mint.key, arkTxid: reversed } })).toBeUndefined();
+    });
+
+    it("tags fresh supply received in the genesis tx as an asset receive", () => {
+        const r = assetMintResolver();
+        const genesisTxid = "33".repeat(32);
+        const assetId = AssetId.create(genesisTxid, 0).toString();
+
+        const receive: ArkTransaction = {
+            key: { arkTxid: genesisTxid, commitmentTxid: "", boardingTxid: "" },
+            type: TxType.TxReceived,
+            amount: 0,
+            settled: true,
+            createdAt: 1,
+            assets: [{ assetId, amount: 250n }],
+            tag: "offchain",
+        };
+        expect(r.resolve(receive)).toEqual([
+            {
+                groupId: `mint:${assetId}`,
+                label: "Asset receive",
+                kind: "asset-receive",
+                metadata: { assetId, amount: "250" },
+            },
+        ]);
+    });
+});
+
 describe("createDefaultActivityRegistry", () => {
-    it("pre-registers the boarding built-in", () => {
-        expect(createDefaultActivityRegistry().list()).toContain("boarding");
+    it("pre-registers the built-in resolvers in order", () => {
+        expect(createDefaultActivityRegistry().list()).toEqual([
+            "boarding",
+            "collab-exit",
+            "asset-mint",
+        ]);
     });
 });

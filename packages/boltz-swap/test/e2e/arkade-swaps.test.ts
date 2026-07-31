@@ -13,6 +13,7 @@ import {
     Identity,
     Wallet,
     SingleKey,
+    SeedIdentity,
     EsploraProvider,
     ArkNote,
     InMemoryWalletRepository,
@@ -20,6 +21,7 @@ import {
 } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
+import { randomBytes } from "@noble/hashes/utils.js";
 import { decodeInvoice } from "../../src/utils/decoding";
 import { pubECDSA, sha256 } from "@scure/btc-signer/utils.js";
 import { candidateServerPubkeys } from "../../src/utils/vhtlc";
@@ -48,6 +50,16 @@ const cancelInvoice = async (r_hash: string) => {
 const payInvoice = async (invoice: string) => {
     return execAsync(`${lncli} payinvoice --force ${invoice}`);
 };
+
+/**
+ * Pays an invoice out of band, once the caller is already waiting on the swap.
+ * Never resolves, so it can be raced against the wait: only a payment *failure*
+ * settles it, turning what would be a claim timeout into the real error.
+ */
+const payInvoiceOrFail = (invoice: string): Promise<never> =>
+    sleep(1000)
+        .then(() => payInvoice(invoice))
+        .then(() => new Promise<never>(() => {}));
 
 const getNewLightningInvoice = async (
     amount: number,
@@ -1687,6 +1699,51 @@ describe("ArkadeSwaps", () => {
                     swapId: "deprecated-signer-recon-neg",
                 }),
             ).toThrow(/VHTLC address mismatch/);
+        }, 60_000);
+    });
+    describe("HD swap keys", () => {
+        it("creates, claims and restores a swap bound to a rotated HD index", async () => {
+            const hdWallet = await Wallet.create({
+                identity: SeedIdentity.fromSeed(randomBytes(64), { isMainnet: false }),
+                walletMode: "hd",
+                arkServerUrl: arkUrl,
+                settlementConfig: false,
+                storage: createWalletStorage(),
+            });
+
+            // Boarding shares the HD index stream, so allocating one moves
+            // the wallet off index 0 without needing an incoming payment.
+            await hdWallet.getNewBoardingAddress();
+            const descriptor = await hdWallet.getCurrentSigningDescriptor();
+            expect(descriptor).toBeDefined();
+
+            const hdSwaps = new ArkadeSwaps({
+                wallet: hdWallet,
+                swapProvider,
+                arkProvider,
+                indexerProvider,
+                swapRepository: new InMemorySwapRepository(),
+                swapManager: false,
+            });
+
+            const pendingSwap = await hdSwaps.createReverseSwap({ amount: 1000 });
+            expect(pendingSwap.signingDescriptor).toBe(descriptor);
+            expect(pendingSwap.request.claimPublicKey).not.toBe(
+                hex.encode(await hdWallet.identity.compressedPublicKey()),
+            );
+
+            // Claiming proves the VHTLC was signed with the rotated key.
+            const { txid } = await Promise.race([
+                hdSwaps.waitAndClaim(pendingSwap),
+                payInvoiceOrFail(pendingSwap.response.invoice),
+            ]);
+            expect(txid).toHaveLength(64);
+
+            // A restore that only knew the baseline key would miss it.
+            const restored = await hdSwaps.restoreSwaps();
+            const match = restored.reverseSwaps.find((s) => s.id === pendingSwap.id);
+            expect(match?.request.claimPublicKey).toBe(pendingSwap.request.claimPublicKey);
+            expect(match?.signingDescriptor).toBe(descriptor);
         }, 60_000);
     });
 });

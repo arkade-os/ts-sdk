@@ -151,20 +151,12 @@ import type { DelegateInfo } from "../../providers/delegate";
 import { getRandomId } from "../utils";
 import type { VirtualCoin } from "..";
 import {
-    MESSAGE_BUS_INITIALIZING,
-    MESSAGE_BUS_NOT_INITIALIZED,
+    isMessageBusInitializingError,
+    isMessageBusNotInitializedError,
     ServiceWorkerTimeoutError,
 } from "../../worker/errors";
 import { getArkadeServerUrl, type ProviderConnectionState } from "../wallet";
 import { normalizeVtxo, type NormalizedExtendedVirtualCoin } from "../vtxo";
-
-function isMessageBusNotInitializedError(error: unknown): boolean {
-    return error instanceof Error && error.message.includes(MESSAGE_BUS_NOT_INITIALIZED);
-}
-
-function isMessageBusInitializingError(error: unknown): boolean {
-    return error instanceof Error && error.message.includes(MESSAGE_BUS_INITIALIZING);
-}
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 

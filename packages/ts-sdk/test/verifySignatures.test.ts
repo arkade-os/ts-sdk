@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { Transaction, SigHash } from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import { randomPrivateKeyBytes } from "@scure/btc-signer/utils.js";
-import { VtxoScript } from "../src/script/base";
+import { tapLeafHash } from "@scure/btc-signer/payment.js";
+import { VtxoScript, TapLeafScript, scriptFromTapLeafScript } from "../src/script/base";
 import { MultisigTapscript } from "../src/script/tapscript";
 import { SingleKey } from "../src/identity/singleKey";
 import { verifyTapscriptSignatures, combineTapscriptSigs } from "../src/utils/arkTransaction";
@@ -210,6 +211,102 @@ describe("verifyTapscriptSignatures", async () => {
     // Note: Additional edge case tests (invalid signature, invalid length, missing tapLeafScript, etc.)
     // are skipped because the Transaction API doesn't allow easy manipulation of signed data.
     // The core functionality is well-tested by the positive test cases above.
+});
+
+describe("verifyTapscriptSignatures expectedLeafHash", async () => {
+    const alice = SingleKey.fromPrivateKey(randomPrivateKeyBytes());
+    const alicePubKey = await alice.xOnlyPublicKey();
+    const bob = SingleKey.fromPrivateKey(randomPrivateKeyBytes());
+    const bobPubKey = await bob.xOnlyPublicKey();
+
+    // Two single-signer leaves: each key can only sign its own leaf.
+    const scriptA = MultisigTapscript.encode({
+        pubkeys: [alicePubKey],
+        type: MultisigTapscript.MultisigType.CHECKSIG,
+    }).script;
+    const scriptB = MultisigTapscript.encode({
+        pubkeys: [bobPubKey],
+        type: MultisigTapscript.MultisigType.CHECKSIG,
+    }).script;
+    const vtxoScript = new VtxoScript([scriptA, scriptB]);
+
+    const leafOf = (script: Uint8Array): TapLeafScript =>
+        vtxoScript.leaves.find(
+            (leaf) => hex.encode(scriptFromTapLeafScript(leaf)) === hex.encode(script),
+        )!;
+
+    const leafHashOf = (script: Uint8Array): Uint8Array => {
+        const leaf = leafOf(script);
+        return tapLeafHash(scriptFromTapLeafScript(leaf), leaf[1][leaf[1].length - 1]);
+    };
+
+    // Both leaves are carried on the input, so a signature over either one is
+    // structurally valid — only expectedLeafHash distinguishes them.
+    function txSignedBy(signer: SingleKey): Transaction {
+        const tx = new Transaction();
+        tx.addInput({
+            txid: new Uint8Array(32).fill(0),
+            index: 0,
+            witnessUtxo: { script: vtxoScript.pkScript, amount: 1000n },
+            tapLeafScript: vtxoScript.leaves,
+        });
+        tx.addOutputAddress("bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq", 900n);
+        tx.signIdx(signer["key"], 0, [SigHash.DEFAULT]);
+        return tx;
+    }
+
+    it("accepts a signature on the expected leaf", () => {
+        const tx = txSignedBy(bob);
+
+        expect(() => {
+            verifyTapscriptSignatures(
+                tx,
+                0,
+                [hex.encode(bobPubKey)],
+                undefined,
+                undefined,
+                leafHashOf(scriptB),
+            );
+        }).not.toThrow();
+    });
+
+    it("rejects a signature valid over a different leaf", () => {
+        const tx = txSignedBy(bob);
+
+        expect(() => {
+            verifyTapscriptSignatures(
+                tx,
+                0,
+                [hex.encode(bobPubKey)],
+                undefined,
+                undefined,
+                leafHashOf(scriptA),
+            );
+        }).toThrow(/commits to leaf/);
+    });
+
+    it("accepts any carried leaf when expectedLeafHash is omitted", () => {
+        const tx = txSignedBy(bob);
+
+        expect(() => {
+            verifyTapscriptSignatures(tx, 0, [hex.encode(bobPubKey)]);
+        }).not.toThrow();
+    });
+
+    it("does not constrain the leaf of excluded pubkeys", () => {
+        const tx = txSignedBy(bob);
+
+        expect(() => {
+            verifyTapscriptSignatures(
+                tx,
+                0,
+                [],
+                [hex.encode(bobPubKey)],
+                undefined,
+                leafHashOf(scriptA),
+            );
+        }).not.toThrow();
+    });
 });
 
 describe("combineTapscriptSigs", async () => {

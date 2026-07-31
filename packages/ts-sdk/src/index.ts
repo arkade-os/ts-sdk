@@ -17,7 +17,17 @@ import {
     BatchSignableIdentity,
     SignRequest,
     isBatchSignable,
+    DescriptorIdentity,
+    isHDDeterministicSignCapable,
+    deriveDescriptorLeafCompressedPubKey,
 } from "./identity";
+import type {
+    DescriptorIdentityOptions,
+    DescriptorSigner,
+    HDDeterministicSignCapable,
+} from "./identity";
+import { isHDWalletCapable } from "./wallet/hdWalletCapable";
+import type { HDWalletCapable } from "./wallet/hdWalletCapable";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
@@ -29,6 +39,7 @@ import {
     TapLeafScript,
     TapTreeCoder,
     getSequence,
+    scriptFromTapLeafScript,
 } from "./script/base";
 import { assembleBtcdTaprootTree } from "./script/taprootTree";
 import {
@@ -82,11 +93,14 @@ import {
 export {
     ActivityRegistry,
     boardingResolver,
+    collabExitResolver,
+    assetMintResolver,
     createDefaultActivityRegistry,
     type Activity,
     type ActivityIntent,
     type GroupMembership,
     type ActivityResolver,
+    type TxTag,
 } from "./wallet";
 import { Batch } from "./wallet/batch";
 import {
@@ -341,6 +355,10 @@ export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
 export * from "./extension/emulator";
 
+// BIP21 codec (reused by the payment rails) + the modular payment router.
+export * from "./utils/bip21";
+export * from "./payment";
+
 // Contracts
 // Side-effect import: registers the built-in handlers with `contractHandlers`.
 // Kept as a bare import so the registration runs even though the named
@@ -411,6 +429,8 @@ import {
     MessageBusInitializingError,
     MessageBusNotInitializedError,
     ServiceWorkerTimeoutError,
+    isMessageBusInitializingError,
+    isMessageBusNotInitializedError,
 } from "./worker/errors";
 import { AssetManager, ReadonlyAssetManager } from "./wallet/asset-manager";
 
@@ -424,6 +444,10 @@ export {
     MnemonicIdentity,
     ReadonlyDescriptorIdentity,
     isBatchSignable,
+    DescriptorIdentity,
+    isHDDeterministicSignCapable,
+    isHDWalletCapable,
+    deriveDescriptorLeafCompressedPubKey,
     OnchainWallet,
     Ramps,
     DustChangeError,
@@ -461,6 +485,7 @@ export {
     VtxoScript,
     VHTLC,
     assembleBtcdTaprootTree,
+    scriptFromTapLeafScript,
 
     // Enums
     TxType,
@@ -481,6 +506,8 @@ export {
     MessageBusInitializingError,
     MessageBusNotInitializedError,
     ServiceWorkerTimeoutError,
+    isMessageBusInitializingError,
+    isMessageBusNotInitializedError,
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
     DEFAULT_MESSAGE_TIMEOUTS,
@@ -672,6 +699,10 @@ export type {
     MnemonicOptions,
     NetworkOptions,
     DescriptorOptions,
+    DescriptorIdentityOptions,
+    DescriptorSigner,
+    HDDeterministicSignCapable,
+    HDWalletCapable,
     // Indexer types
     IndexerProvider,
     PageResponse,

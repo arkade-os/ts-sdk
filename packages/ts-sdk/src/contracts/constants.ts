@@ -27,3 +27,10 @@ export const DEFAULT_PAGE_SIZE = 500;
  * onto different budgets for the same URL constraint.
  */
 export const SCRIPT_QUERY_CHUNK_SIZE = 32;
+
+/**
+ * Maximum outpoints per `getVtxos` query string. ~79 encoded bytes each, so 64
+ * is ~5 KB — real margin under the common 8 KB request-line ceiling, against
+ * the same unpublished `arkd` limit that budgets scripts at 32.
+ */
+export const OUTPOINT_QUERY_CHUNK_SIZE = 64;

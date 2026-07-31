@@ -162,6 +162,39 @@ export function deriveDescriptorLeafPubKey(descriptor: string): Uint8Array {
     return key.pubkey;
 }
 
+/**
+ * Compressed (33-byte) counterpart of {@link deriveDescriptorLeafPubKey}, for
+ * protocols that key on the parity byte (Boltz swap keys).
+ *
+ * Only HD descriptors are supported: a bare `tr(xonly)` has lost its parity and
+ * synthesizing `02||xonly` would silently produce the wrong key half the time.
+ */
+export function deriveDescriptorLeafCompressedPubKey(descriptor: string): Uint8Array {
+    const network = isMainnetDescriptor(descriptor) ? networks.bitcoin : networks.testnet;
+    let expansion;
+    try {
+        expansion = expand({ descriptor, network });
+    } catch (e) {
+        throw new Error(
+            `Cannot derive compressed leaf pubkey from descriptor (length=${descriptor.length}): ` +
+                `ensure it is materialized (no wildcard) and parsable.`,
+            { cause: e },
+        );
+    }
+    const key = expansion.expansionMap?.["@0"];
+    if (!key?.bip32) {
+        throw new Error(
+            `Cannot derive compressed leaf pubkey from descriptor (length=${descriptor.length}): ` +
+                `not an HD descriptor, so the key parity is unrecoverable.`,
+        );
+    }
+    // derivePath returns a fresh node; keyPath is relative to the xpub and the
+    // library's derivePath prepends "m/" itself.
+    return key.keyPath
+        ? key.bip32.derivePath(key.keyPath.replace(/^\//, "")).publicKey
+        : key.bip32.publicKey;
+}
+
 /** Parsed HD descriptor components. */
 export interface ParsedHDDescriptor {
     fingerprint: string;

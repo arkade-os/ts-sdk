@@ -17,7 +17,8 @@ export function aggregateKeys(
     options: Partial<KeyAggOptions> = {},
 ): AggregateKey {
     if (sort) {
-        publicKeys = musig.sortKeys(publicKeys);
+        // sortKeys sorts in place; copy so the caller's array survives.
+        publicKeys = musig.sortKeys([...publicKeys]);
     }
 
     const { aggPublicKey: preTweakedKey } = musig.keyAggregate(publicKeys);
