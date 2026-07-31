@@ -7,7 +7,7 @@ import {
     QUOTE_OPTIONS,
     validatePlan,
 } from "../src/markets";
-import { memoryStorage } from "./memoryStorage";
+import { InMemoryAssetSwapRepository } from "../src/repository";
 import { btcChf, btcUsd, CHF_ID, USD_ID, XAU_ID, xauUsd } from "./fixtures";
 
 const markets = [btcUsd, btcChf];
@@ -126,7 +126,6 @@ describe("makeCachedFeedFetch", () => {
 
 describe("discoverMarkets caching", () => {
     const REGISTRY_URL = "https://arkade-os.github.io/solver-registry/mutinynet.json";
-    const CACHE_KEY = `arkade-intents-markets-mutinynet-${REGISTRY_URL}`;
     // a valid registry index entry: btcUsd without the fields discover() adds
     const indexMarket: Record<string, unknown> = { ...btcUsd };
     delete indexMarket.source;
@@ -139,12 +138,15 @@ describe("discoverMarkets caching", () => {
         markets: [indexMarket],
     });
 
-    let storage: ReturnType<typeof memoryStorage>;
+    let repository: InMemoryAssetSwapRepository;
     const discoverWith = (fetchImpl: typeof fetch) =>
-        discoverMarkets({ network: "mutinynet", registryUrl: REGISTRY_URL, storage, fetchImpl });
+        discoverMarkets({ network: "mutinynet", registryUrl: REGISTRY_URL, repository, fetchImpl });
+    const cache = () => repository.getCachedMarkets("mutinynet", REGISTRY_URL);
+    const seedCache = (fetchedAt: number, markets: DiscoveredMarket[] = [btcUsd]) =>
+        repository.saveCachedMarkets("mutinynet", REGISTRY_URL, { markets, fetchedAt });
 
     beforeEach(() => {
-        storage = memoryStorage();
+        repository = new InMemoryAssetSwapRepository();
     });
 
     it("fetches on a cold start and caches the result", async () => {
@@ -153,11 +155,11 @@ describe("discoverMarkets caching", () => {
         expect(markets).toHaveLength(1);
         expect(markets[0].pair).toBe("BTC/USD");
         expect(fetchImpl).toHaveBeenCalledTimes(1);
-        expect(JSON.parse(storage.map.get(CACHE_KEY)!).markets).toHaveLength(1);
+        expect((await cache())?.markets).toHaveLength(1);
     });
 
     it("serves a fresh cache without fetching", async () => {
-        storage.set(CACHE_KEY, JSON.stringify({ markets: [btcUsd], fetchedAt: Date.now() }));
+        await seedCache(Date.now());
         const fetchImpl = jsonFetch([registryIndex()]);
         const markets = await discoverWith(fetchImpl);
         expect(markets).toHaveLength(1);
@@ -165,7 +167,7 @@ describe("discoverMarkets caching", () => {
     });
 
     it("falls back to a stale cache when the registry is unreachable", async () => {
-        storage.set(CACHE_KEY, JSON.stringify({ markets: [btcUsd], fetchedAt: 0 }));
+        await seedCache(0);
         const fetchImpl = jsonFetch([new Error("network down")]);
         const markets = await discoverWith(fetchImpl);
         expect(markets).toHaveLength(1);
@@ -173,27 +175,45 @@ describe("discoverMarkets caching", () => {
     });
 
     it("clears the stale cache when the registry is reachable but emptied", async () => {
-        storage.set(CACHE_KEY, JSON.stringify({ markets: [btcUsd], fetchedAt: 0 }));
+        await seedCache(0);
         const markets = await discoverWith(jsonFetch([{ ...registryIndex(), markets: [] }]));
         expect(markets).toHaveLength(0);
-        expect(JSON.parse(storage.map.get(CACHE_KEY)!).markets).toHaveLength(0);
+        expect((await cache())?.markets).toHaveLength(0);
     });
 
     it("refetches when a cached market is malformed", async () => {
-        storage.set(CACHE_KEY, JSON.stringify({ markets: [null], fetchedAt: Date.now() }));
+        // a stored entry outlives the schema that wrote it
+        await seedCache(Date.now(), [null as unknown as DiscoveredMarket]);
         const fetchImpl = jsonFetch([registryIndex()]);
         const markets = await discoverWith(fetchImpl);
         expect(markets).toHaveLength(1);
         expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
 
-    it("resets a corrupt cache blob and fetches", async () => {
-        storage.set(CACHE_KEY, "{not json");
+    it("fetches when the cache backend itself is unreadable", async () => {
+        // a broken backend must degrade to a network fetch, never throw out
+        const broken = Object.assign(new InMemoryAssetSwapRepository(), {
+            getCachedMarkets: async () => {
+                throw new Error("backend gone");
+            },
+        });
         const fetchImpl = jsonFetch([registryIndex()]);
-        const markets = await discoverWith(fetchImpl);
+        const markets = await discoverMarkets({
+            network: "mutinynet",
+            registryUrl: REGISTRY_URL,
+            repository: broken,
+            fetchImpl,
+        });
         expect(markets).toHaveLength(1);
         expect(fetchImpl).toHaveBeenCalledTimes(1);
-        expect(JSON.parse(storage.map.get(CACHE_KEY)!).markets).toHaveLength(1);
+    });
+
+    it("skips the cache entirely when no repository is given", async () => {
+        const fetchImpl = jsonFetch([registryIndex()]);
+        const opts = { network: "mutinynet" as const, registryUrl: REGISTRY_URL, fetchImpl };
+        expect(await discoverMarkets(opts)).toHaveLength(1);
+        expect(await discoverMarkets(opts)).toHaveLength(1);
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
     });
 });
 

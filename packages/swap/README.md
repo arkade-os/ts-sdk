@@ -24,13 +24,13 @@ APIs; usable from Node, the browser, or React Native.
    remembered in the repository (`getScannedTxids`/`markTxidsScanned`) so nothing is fetched
    twice.
 
-Durable state (swap records + scan cursor) lives in an `AssetSwapRepository`, following the
-Arkade repository convention (versioned interface, `AsyncDisposable`, one backend per platform).
-Two backends ship here: `InMemoryAssetSwapRepository` and `IndexedDbAssetSwapRepository` (built
-on the SDK's shared IndexedDB manager, like the Boltz plugin's repositories). The refetchable
-markets cache uses the tiny synchronous `SwapStorage` interface
-(`{ get(key): string | null; set(key, value): void }`) instead — back it with web storage, MMKV,
-or a `Map`.
+Everything the package persists — swap records, the restore-scan cursor, and the markets cache —
+goes through a single `AssetSwapRepository`, following the Arkade repository convention
+(versioned interface, `AsyncDisposable`, one backend per platform). Two backends ship here:
+`InMemoryAssetSwapRepository` and `IndexedDbAssetSwapRepository` (built on the SDK's shared
+IndexedDB manager, like the Boltz plugin's repositories). Construct one and pass it wherever the
+package asks for a repository; `discoverMarkets` also accepts none, for a one-shot uncached
+discovery.
 
 ## Creating an offer
 

@@ -9,19 +9,9 @@ import {
     type OfferPlan,
     type Side,
 } from "@arkade-os/solver-discovery";
+import type { AssetSwapRepository, MarketsCacheEntry } from "./repository";
 
 export const BTC_ASSET_ID = "btc";
-
-/** Minimal synchronous key-value cache the markets layer persists into. Only
- * refetchable cache data lives here (durable swap records go through
- * AssetSwapRepository); any backend works: web storage, an in-memory Map,
- * MMKV, … the caller owns the instance and its lifetime.
- * ponytail: no remove(); nothing here deletes keys — add it when a consumer
- * needs deletion. */
-export interface SwapStorage {
-    get(key: string): string | null;
-    set(key: string, value: string): void;
-}
 
 /** Shared quote options so every quote path agrees.
  * No safety margin on top of the market fee: pricing drift between quote
@@ -54,18 +44,7 @@ export const makeCachedFeedFetch = (
     };
 };
 
-const MARKETS_CACHE_KEY = "arkade-intents-markets";
 const MARKETS_CACHE_TTL_MS = 60 * 60 * 1000;
-
-interface MarketsCacheEntry {
-    markets: DiscoveredMarket[];
-    fetchedAt: number;
-}
-
-// keyed by network AND registry so a redeployed registry override never
-// serves markets cached from a different registry
-const cacheKey = (network: Network, registry: string) =>
-    `${MARKETS_CACHE_KEY}-${network}-${registry}`;
 
 const isMarketShaped = (m: unknown): boolean => {
     const market = m as DiscoveredMarket | null;
@@ -80,20 +59,19 @@ const isMarketShaped = (m: unknown): boolean => {
     );
 };
 
-// a missing, corrupt, or malformed cache reads as a miss; the refetch overwrites it
-const readMarketsCache = (
-    storage: SwapStorage,
+// a missing, malformed, or unreadable cache reads as a miss; the refetch
+// overwrites it. Shape is re-checked on read because a stored entry outlives
+// the schema that wrote it.
+const readMarketsCache = async (
+    repository: AssetSwapRepository,
     network: Network,
     registry: string,
-): MarketsCacheEntry | undefined => {
+): Promise<MarketsCacheEntry | undefined> => {
     try {
-        const blob = storage.get(cacheKey(network, registry));
-        if (blob === null) return undefined;
-        const entry = JSON.parse(blob);
+        const entry = await repository.getCachedMarkets(network, registry);
         if (!Array.isArray(entry?.markets) || typeof entry?.fetchedAt !== "number")
             return undefined;
-        if (!entry.markets.every(isMarketShaped)) return undefined;
-        return entry;
+        return entry.markets.every(isMarketShaped) ? entry : undefined;
     } catch {
         return undefined;
     }
@@ -103,8 +81,9 @@ export interface DiscoverMarketsOptions {
     network: Network;
     /** The network's solver registry index URL; no registry means no markets. */
     registryUrl: string | undefined;
-    /** Cache backend for the 1-hour markets cache and its stale fallback. */
-    storage: SwapStorage;
+    /** Backs the 1-hour markets cache and its stale fallback. Omit for a
+     * one-shot discovery that always hits the registry. */
+    repository?: AssetSwapRepository;
     /** Locally pinned solver cards to merge with the registry's markets. */
     localCards?: LocalCardInput[];
     /** Receives discovery warnings (stale index, skipped cards, …). */
@@ -125,14 +104,14 @@ export const discoverMarkets = async (
     const {
         network,
         registryUrl: registry,
-        storage,
+        repository,
         localCards = [],
         logger,
         fetchImpl,
         useCache = true,
     } = options;
     if (!registry || !isNetwork(network)) return [];
-    const cached = readMarketsCache(storage, network, registry);
+    const cached = repository && (await readMarketsCache(repository, network, registry));
     if (useCache && cached && Date.now() - cached.fetchedAt < MARKETS_CACHE_TTL_MS)
         return cached.markets;
     const { markets, sources, warnings } = await discover({
@@ -146,12 +125,12 @@ export const discoverMarkets = async (
     // cache; a reachable registry is authoritative even when it emptied out
     const reachable = sources.some((source) => source.ok);
     if (!reachable && cached) return cached.markets;
-    if (reachable) {
+    if (reachable && repository) {
         try {
-            storage.set(
-                cacheKey(network, registry),
-                JSON.stringify({ markets, fetchedAt: Date.now() }),
-            );
+            await repository.saveCachedMarkets(network, registry, {
+                markets,
+                fetchedAt: Date.now(),
+            });
         } catch {
             // best effort: a lost cache write just means a refetch
         }

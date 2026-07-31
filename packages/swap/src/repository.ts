@@ -1,11 +1,29 @@
+import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import type { AssetSwap } from "./store";
 
+/** A registry discovery result held for reuse. Refetchable — unlike a swap
+ * record, losing it costs one network round trip — but it must survive a cold
+ * boot: serving it stale is what keeps quoting alive while a registry is down. */
+export interface MarketsCacheEntry {
+    markets: DiscoveredMarket[];
+    fetchedAt: number;
+}
+
+/** Keyed by network AND registry so a redeployed registry override never
+ * serves markets cached from a different registry. */
+export const marketsCacheKey = (network: string, registry: string) =>
+    `arkade-intents-markets-${network}-${registry}`;
+
 /**
- * Persistence for asset-swap records, following the monorepo repository
+ * Everything the package persists, following the monorepo repository
  * convention (versioned interface, AsyncDisposable, one backend per
- * platform — see the Boltz plugin's SwapRepository). The restore scan's
- * incremental cursor (scanned txids) lives here too, so a backup that
- * captures the repository captures the scan state with it.
+ * platform — see the Boltz plugin's SwapRepository). Consumers construct
+ * exactly one of these; there is no second storage seam.
+ *
+ * Durable records (swaps) and rebuildable state (the restore scan's txid
+ * cursor, the markets cache) live side by side because they share a
+ * lifetime: all three belong to one wallet on one device, and a consumer
+ * that wipes one wants all three gone.
  *
  * ponytail: no query filters — every consumer reads all swaps and filters
  * in memory; mirror the Boltz plugin's GetSwapsFilter when a consumer needs
@@ -24,6 +42,10 @@ export interface AssetSwapRepository extends AsyncDisposable {
     getScannedTxids(): Promise<Set<string>>;
     markTxidsScanned(txids: Iterable<string>): Promise<void>;
 
+    /** Cached registry markets, or undefined on a miss. */
+    getCachedMarkets(network: string, registry: string): Promise<MarketsCacheEntry | undefined>;
+    saveCachedMarkets(network: string, registry: string, entry: MarketsCacheEntry): Promise<void>;
+
     clear(): Promise<void>;
 }
 
@@ -31,6 +53,7 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
     readonly version = 1 as const;
     private readonly swaps = new Map<string, AssetSwap>();
     private readonly scanned = new Set<string>();
+    private readonly markets = new Map<string, MarketsCacheEntry>();
 
     async saveSwap(swap: AssetSwap): Promise<void> {
         this.swaps.set(swap.id, swap);
@@ -48,9 +71,25 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
         for (const txid of txids) this.scanned.add(txid);
     }
 
+    async getCachedMarkets(
+        network: string,
+        registry: string,
+    ): Promise<MarketsCacheEntry | undefined> {
+        return this.markets.get(marketsCacheKey(network, registry));
+    }
+
+    async saveCachedMarkets(
+        network: string,
+        registry: string,
+        entry: MarketsCacheEntry,
+    ): Promise<void> {
+        this.markets.set(marketsCacheKey(network, registry), entry);
+    }
+
     async clear(): Promise<void> {
         this.swaps.clear();
         this.scanned.clear();
+        this.markets.clear();
     }
 
     async [Symbol.asyncDispose](): Promise<void> {

@@ -1,19 +1,23 @@
 import { closeDatabase, openDatabase } from "@arkade-os/sdk";
-import type { AssetSwapRepository } from "./repository";
+import { marketsCacheKey, type AssetSwapRepository, type MarketsCacheEntry } from "./repository";
 import type { AssetSwap } from "./store";
 
 const DEFAULT_DB_NAME = "arkade-intents";
 const DB_VERSION = 1;
 const STORE_SWAPS = "swaps";
 const STORE_SCANNED = "scannedTxids";
+const STORE_MARKETS = "markets";
 
 function initDatabase(db: IDBDatabase) {
     if (!db.objectStoreNames.contains(STORE_SWAPS)) {
         db.createObjectStore(STORE_SWAPS, { keyPath: "id" });
     }
+    // key-only stores: the txid / cache key is supplied at put time
     if (!db.objectStoreNames.contains(STORE_SCANNED)) {
-        // key-only store: the txid is both key and value
         db.createObjectStore(STORE_SCANNED);
+    }
+    if (!db.objectStoreNames.contains(STORE_MARKETS)) {
+        db.createObjectStore(STORE_MARKETS);
     }
 }
 
@@ -54,9 +58,27 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         await Promise.all([...txids].map((txid) => request(store.put(txid, txid))));
     }
 
+    async getCachedMarkets(
+        network: string,
+        registry: string,
+    ): Promise<MarketsCacheEntry | undefined> {
+        const store = await this.store(STORE_MARKETS, "readonly");
+        return request(store.get(marketsCacheKey(network, registry)));
+    }
+
+    async saveCachedMarkets(
+        network: string,
+        registry: string,
+        entry: MarketsCacheEntry,
+    ): Promise<void> {
+        const store = await this.store(STORE_MARKETS, "readwrite");
+        await request(store.put(entry, marketsCacheKey(network, registry)));
+    }
+
     async clear(): Promise<void> {
-        await request((await this.store(STORE_SWAPS, "readwrite")).clear());
-        await request((await this.store(STORE_SCANNED, "readwrite")).clear());
+        for (const name of [STORE_SWAPS, STORE_SCANNED, STORE_MARKETS]) {
+            await request((await this.store(name, "readwrite")).clear());
+        }
     }
 
     async [Symbol.asyncDispose](): Promise<void> {

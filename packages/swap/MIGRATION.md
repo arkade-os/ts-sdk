@@ -48,36 +48,26 @@ The store/scan calls become async and take the repository:
 - Ordering note: newest-first is by `createdAt` alone; equal-timestamp insertion order is no
   longer guaranteed (records stamp `Date.now()` ms, so this never bites in practice).
 
-## 3b. Markets cache: `SwapStorage` (~6 lines)
+## 3b. Markets discovery
 
-The refetchable markets cache stays on a tiny synchronous KV interface:
-
-```ts
-import type { SwapStorage } from "@arkade-os/swap";
-
-export const swapCacheStorage: SwapStorage = {
-    get: (key) => localStorage.getItem(key),
-    set: (key, value) => localStorage.setItem(key, value),
-};
-```
-
-Then thread it through the call sites:
+`discoverMarkets` takes that same repository — there is no second storage seam, so no
+localStorage adapter to write:
 
 - `discoverMarkets(network, useCache)` →
     ```ts
     discoverMarkets({
         network,
         registryUrl: getSolverRegistryUrl(network),
-        storage: swapCacheStorage,
+        repository: assetSwapRepository, // omit for a one-shot, uncached discovery
         localCards: readSolverCardsFromStorage().filter((c) => c.network === network),
         logger: consoleLog,
         useCache,
     });
     ```
     (The `network`-card filtering and registry-URL lookup stay wallet concerns.)
-    The cache key prefix changed from `swapMarkets-` to `arkade-intents-markets-`: old
-    localStorage entries are simply orphaned (one cold refetch); delete them in the data
-    migration if you want a tidy storage.
+    The markets cache moved out of localStorage into the repository, so the old
+    `swapMarkets-*` entries are orphaned — one cold refetch, and the data migration in §3
+    can delete them alongside the swap keys.
 - `makeCachedFeedFetch()` is unchanged (it now also accepts `(ttlMs, fetchImpl)`).
 - `createOffer` no longer returns `payload`; it returns the send-ready `extension` instead. In
   `providers/assetSwaps.tsx`: `extensions: [{ type: OFFER_PACKET_TYPE, payload: offer.payload }]`
@@ -112,8 +102,8 @@ Delete `src/test/lib/swap/` except the pieces that test wallet display code
 > delete `src/lib/swap/`, swap imports, rename `bancoPrograms` → `swapPrograms`, construct one
 > `IndexedDbAssetSwapRepository` and await the now-async store/scan calls, add the ~15-line
 > one-time localStorage→repository data migration next to the existing Boltz
-> `migrateToSwapRepository` call in `providers/wallet.tsx`, add the ~6-line `SwapStorage` cache
-> adapter and thread it plus `{ registryUrl, localCards, logger }` through the `discoverMarkets`
+> `migrateToSwapRepository` call in `providers/wallet.tsx`, pass that same repository plus
+> `{ registryUrl, localCards, logger }` through the `discoverMarkets`
 > call in `providers/assetSwaps.tsx`, keep `preFeeDisplayRate` and the quote-snapshot typing
 > wallet-side as described in the note, and move the display-only tests next to
 > `swapDisplay.ts`. Acceptance: wallet tests pass unchanged (especially the swap screen
