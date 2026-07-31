@@ -846,6 +846,23 @@ function isRecoveryContractCapable(
     );
 }
 
+/**
+ * Whether a contract's server signer classifies as non-`CURRENT` against the
+ * fresh signer set. Mirrors the per-contract classification inside
+ * `anyInputUnderDeprecatedSigner` (a missing `serverPubKey` contributes
+ * `false`, matching its `continue`), for callers that already know the one
+ * contract their inputs belong to.
+ */
+function isContractUnderDeprecatedSigner(
+    contract: Contract,
+    signerSet: SignerSet,
+    nowSeconds: number,
+): boolean {
+    const serverPubKey = contract.params.serverPubKey;
+    if (!serverPubKey) return false;
+    return classifyAgainstSignerSet(serverPubKey, signerSet, nowSeconds).status !== "CURRENT";
+}
+
 /** A deprecated-signer VTXO paired with its signer classification. */
 interface ClassifiedVtxo {
     vtxo: ExtendedContractVtxo;
@@ -1391,8 +1408,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // and the wallet's own snapshot is that old signer, pin the wallet
             // to the active signer BEFORE reading its address, so the recovered
             // output re-mints under the current key (mirrors recoverVtxos).
+            // Every input in `batch` belongs to `contract`, so pass it as the
+            // known owner — sparing the guard's outpoint→contract scan (an
+            // unscoped getContractsWithVtxos sync) on every pass a
+            // deprecated-snapshot wallet runs.
             if (info && isMigrationCapable(wallet)) {
-                await this.rotateForRecoverableInputs(batch, info);
+                await this.rotateForRecoverableInputs(batch, info, contract);
             }
 
             const arkAddress = await wallet.getAddress();
@@ -2469,10 +2490,18 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * Runs OUTSIDE any `renewalInProgress` window the caller sets, and
      * `rotateServerSigner` does not depend on that flag, so it cannot deadlock
      * against the receive rotator. Returns whether a rotation was applied.
+     *
+     * When every input belongs to one already-known contract (the imported-
+     * recovery path), pass it as `owningContract`: its signer is classified
+     * directly, sparing {@link anyInputUnderDeprecatedSigner}'s
+     * outpoint→contract scan — an unscoped `getContractsWithVtxos` sync that
+     * would otherwise run per imported contract on every pass of a
+     * deprecated-snapshot wallet.
      */
     private async rotateForRecoverableInputs(
         inputs: { txid: string; vout: number }[],
         info: ArkInfo,
+        owningContract?: Contract,
     ): Promise<boolean> {
         if (!isMigrationCapable(this.wallet)) return false;
 
@@ -2490,7 +2519,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             return false;
         }
 
-        if (!(await this.anyInputUnderDeprecatedSigner(inputs, signerSet, nowSeconds))) {
+        const hasDeprecatedInput = owningContract
+            ? inputs.length > 0 &&
+              isContractUnderDeprecatedSigner(owningContract, signerSet, nowSeconds)
+            : await this.anyInputUnderDeprecatedSigner(inputs, signerSet, nowSeconds);
+        if (!hasDeprecatedInput) {
             return false;
         }
 

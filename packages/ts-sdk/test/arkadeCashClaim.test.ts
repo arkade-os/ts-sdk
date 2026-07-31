@@ -493,6 +493,103 @@ describe("claimCash import-for-recovery", () => {
         expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cash.publicKey)})`)).toBe(false);
     });
 
+    it("isolates a failing recovery: siblings still settle, the failure retries next cycle", async () => {
+        // Two independently imported notes; the FIRST one's settlement is
+        // rejected, so the loop must carry on to the second — the per-contract
+        // isolation the "own isolated intent" design exists to guarantee.
+        const cashA = makeCash();
+        const cashB = makeCash();
+        const pkA = hex.encode(cashA.vtxoScript.pkScript);
+        const pkB = hex.encode(cashB.vtxoScript.pkScript);
+        const TXID_A = "c".repeat(64);
+        const TXID_B = "d".repeat(64);
+        const vtxosByScript: Record<string, VirtualCoin[]> = {
+            [pkA]: [{ ...sweptCashVtxo(pkA), txid: TXID_A }],
+            [pkB]: [{ ...sweptCashVtxo(pkB), txid: TXID_B }],
+        };
+        const indexer = {
+            ...(cashIndexer(pkA, []) as Record<string, unknown>),
+            getVtxos: vi.fn(async (opts?: { scripts?: string[] }) => ({
+                vtxos: (opts?.scripts ?? []).flatMap((s) => vtxosByScript[s] ?? []),
+            })),
+        } as never;
+        const wallet = await makeWallet(indexer, { getPendingTxs: vi.fn(async () => []) });
+        const manager = await wallet.getVtxoManager();
+        const kick = vi.spyOn(manager, "recoverImportedContracts").mockResolvedValue();
+        await wallet.claimCash(cashA.toString());
+        await wallet.claimCash(cashB.toString());
+        kick.mockRestore();
+
+        const settle = vi
+            .spyOn(wallet, "settle")
+            .mockImplementation(async (params) =>
+                params!.inputs.some((i) => (i as { txid: string }).txid === TXID_A)
+                    ? Promise.reject(new Error("intent rejected"))
+                    : "recovery-txid",
+            );
+        const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        try {
+            await manager.recoverImportedContracts();
+
+            // Both contracts were attempted — the first failure did not abort
+            // the pass — and only the failed one survives for the retry.
+            expect(settle).toHaveBeenCalledTimes(2);
+            const cm = await wallet.getContractManager();
+            expect(await cm.getContracts({ script: pkA })).toHaveLength(1);
+            expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cashA.publicKey)})`)).toBe(true);
+            expect(await cm.getContracts({ script: pkB })).toEqual([]);
+            expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cashB.publicKey)})`)).toBe(false);
+
+            // Next cycle: the rejection clears and the leftover recovers too.
+            settle.mockResolvedValue("recovery-txid");
+            await manager.recoverImportedContracts();
+            expect(await cm.getContracts({ script: pkA })).toEqual([]);
+            expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cashA.publicKey)})`)).toBe(false);
+        } finally {
+            errorLog.mockRestore();
+        }
+    });
+
+    it("rotation guard classifies the imported contract directly — no unscoped scan", async () => {
+        const cash = makeCash();
+        const { wallet, manager, kick } = await claimSwept(cash);
+        kick.mockRestore();
+
+        // The server rotates AFTER the import: the fresh info deprecates the
+        // wallet's snapshot signer (which is also the note's), so the guard
+        // must still fire — but by classifying the one imported contract the
+        // pass already holds, not by re-syncing every default/delegate
+        // contract in the repo on each cycle.
+        const rotatedInfo = {
+            ...info,
+            signerPubkey: "03" + "2".repeat(64),
+            deprecatedSigners: [{ pubkey: SERVER_PUBKEY_HEX, cutoffDate: 0n }],
+        };
+        (
+            wallet as unknown as { arkProvider: { getInfo: ReturnType<typeof vi.fn> } }
+        ).arkProvider.getInfo.mockResolvedValue(rotatedInfo);
+
+        const rotate = vi.spyOn(wallet, "rotateServerSigner").mockResolvedValue(undefined);
+        const settle = vi.spyOn(wallet, "settle").mockResolvedValue("recovery-txid");
+        const cm = await wallet.getContractManager();
+        const withVtxos = vi.spyOn(cm, "getContractsWithVtxos");
+
+        await manager.recoverImportedContracts();
+
+        // The deprecated input pinned the wallet to the active signer before
+        // the recovery settle read its address.
+        expect(rotate).toHaveBeenCalledOnce();
+        expect(settle).toHaveBeenCalledOnce();
+        // Every contract fetch in the pass is script-scoped; the guard never
+        // ran anyInputUnderDeprecatedSigner's unscoped type-filtered sync.
+        expect(withVtxos.mock.calls.length).toBeGreaterThan(0);
+        for (const call of withVtxos.mock.calls) {
+            expect(call[0]).toHaveProperty("script");
+            expect(call[0]).not.toHaveProperty("type");
+        }
+    });
+
     it("keeps the contract and key on an empty VTXO view (indexer outage)", async () => {
         const cash = makeCash();
         const { wallet, manager, kick, cashPkScript } = await claimSwept(cash);
