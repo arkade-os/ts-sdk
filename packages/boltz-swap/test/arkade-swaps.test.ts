@@ -3934,6 +3934,32 @@ describe("ArkadeSwaps", () => {
                 expect(hd.watermark()).toBe(30);
             });
 
+            it("does not attribute a restore response outside the queried key batch", async () => {
+                const hd = installHdWallet(wallet);
+                hd.setWatermark(0);
+                const near = await derivedReverseAt(hd, 18, "rev-near");
+                const speculative = await derivedReverseAt(hd, 5, "rev-speculative");
+                let round = 0;
+                const restoreSpy = vi
+                    .spyOn(swapProvider, "restoreSwaps")
+                    .mockImplementation(async (keys: string[]) => {
+                        round += 1;
+                        if (round === 1) return [near.swap] as any;
+                        if (round === 2) {
+                            expect(keys).not.toContain(hd.keyAt(5));
+                            return [speculative.swap] as any;
+                        }
+                        return [] as any;
+                    });
+                vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+                const result = await swaps.restoreSwaps();
+
+                expect(result.reverseSwaps.map((s) => s.id)).toEqual(["rev-near"]);
+                expect(restoreSpy).toHaveBeenCalledTimes(2);
+                expect(hd.watermark()).toBe(18);
+            });
+
             it("stops after one query when the band comes back dry", async () => {
                 const hd = installHdWallet(wallet);
                 hd.setWatermark(0);

@@ -3466,10 +3466,10 @@ export class ArkadeSwaps {
      * Restore swaps from Boltz API.
      *
      * Queries the whole key set the wallet may have used ({@link swapOwnerKeys})
-     * and attributes each restored swap to the key that actually owns it, so
-     * swaps created under a rotated HD index — or by another SDK sharing the
-     * seed — come back claimable/refundable. A swap no key of ours reproduces
-     * is skipped, never recorded under the wrong key.
+     * and attributes each restored swap to the queried key that actually owns
+     * it, so swaps created under a rotated HD index — or by another SDK sharing
+     * the seed — come back claimable/refundable. A swap no queried key
+     * reproduces is skipped, never recorded under the wrong key.
      *
      * Reverse and chain swaps come back with their preimage re-derived from
      * the owning descriptor key, so a wallet restored from seed alone can
@@ -3538,7 +3538,7 @@ export class ArkadeSwaps {
                         preimageHash && timeoutBlockHeights
                             ? this.matchSwapOwner({
                                   arkInfo,
-                                  candidates,
+                                  candidates: fresh,
                                   ourRole: "receiver",
                                   counterpartyPubkey: serverPublicKey,
                                   preimageHash,
@@ -3587,7 +3587,7 @@ export class ArkadeSwaps {
                         preimageHash && timeoutBlockHeights
                             ? this.matchSwapOwner({
                                   arkInfo,
-                                  candidates,
+                                  candidates: fresh,
                                   ourRole: "sender",
                                   counterpartyPubkey: serverPublicKey,
                                   preimageHash,
@@ -3660,7 +3660,7 @@ export class ArkadeSwaps {
                         swap.preimageHash && arkTimeouts
                             ? this.matchSwapOwner({
                                   arkInfo,
-                                  candidates,
+                                  candidates: fresh,
                                   ourRole: weLockArk ? "sender" : "receiver",
                                   counterpartyPubkey: arkLeg.serverPublicKey,
                                   preimageHash: swap.preimageHash,
