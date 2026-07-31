@@ -1,5 +1,5 @@
 import { ArkTransaction, Asset, TxKey, TxType, VirtualCoin } from "../wallet";
-import { normalizeVtxo } from "../wallet/vtxo";
+import { normalizeVtxo, type NormalizedVirtualCoin } from "../wallet/vtxo";
 
 type ExtendedArkTransaction = ArkTransaction & {
     tag: "offchain" | "boarding" | "exit" | "batch";
@@ -67,7 +67,7 @@ function subtractAssets(spent: VirtualCoin[], change: VirtualCoin[]): Asset[] | 
  * Ark txids the main loop needs a `createdAt` for: spent virtual outputs whose
  * spending tx left no change output in the wallet. Exactly the loop's fetch set.
  */
-function collectArkTxidsNeedingCreatedAt(vtxos: VirtualCoin[]): string[] {
+function collectArkTxidsNeedingCreatedAt(vtxos: NormalizedVirtualCoin[]): string[] {
     const txids = new Set<string>();
     for (const vtxo of vtxos) {
         if (vtxo.isSpent && vtxo.arkTxId && !vtxos.some((v) => v.txid === vtxo.arkTxId)) {
@@ -102,8 +102,8 @@ export async function buildTransactionHistory(
         ? collectArkTxidsNeedingCreatedAt(fromOldestVtxo)
         : [];
     const resolvedCreatedAt =
-        txidsNeedingCreatedAt.length > 0
-            ? await resolveTxCreatedAt!(txidsNeedingCreatedAt)
+        resolveTxCreatedAt && txidsNeedingCreatedAt.length > 0
+            ? await resolveTxCreatedAt(txidsNeedingCreatedAt)
             : new Map<string, number>();
     const unmatchedSettledBoardingTxs = allBoardingTxs
         .filter(isSettledBoardingReceive)
