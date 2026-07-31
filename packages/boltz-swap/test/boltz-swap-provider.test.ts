@@ -1335,4 +1335,79 @@ describe("BoltzSwapProvider", () => {
             }
         });
     });
+    describe("restoreSwaps", () => {
+        const restoredSwap = (id: string) => ({
+            id,
+            type: "reverse",
+            to: "ARK",
+            from: "BTC",
+            status: "swap.created",
+            createdAt: 1,
+            claimDetails: {
+                tree: {
+                    claimLeaf: { version: 0, output: "" },
+                    refundLeaf: { version: 0, output: "" },
+                },
+                lockupAddress: "lockup",
+                serverPublicKey: mockHexCompressedPubKey,
+            },
+        });
+
+        const bodyOf = (mockFetch: any, call = 0) => JSON.parse(mockFetch.mock.calls[call][1].body);
+
+        it("sends a single key as publicKey", async () => {
+            const mockFetch = vi.fn(() => createFetchResponse([]));
+            vi.stubGlobal("fetch", mockFetch);
+
+            await provider.restoreSwaps(mockHexCompressedPubKey);
+
+            expect(bodyOf(mockFetch)).toEqual({ publicKey: mockHexCompressedPubKey });
+        });
+
+        it("sends a key set as publicKeys", async () => {
+            const mockFetch = vi.fn(() => createFetchResponse([]));
+            vi.stubGlobal("fetch", mockFetch);
+
+            await provider.restoreSwaps([mockHexCompressedPubKey]);
+
+            expect(bodyOf(mockFetch)).toEqual({ publicKeys: [mockHexCompressedPubKey] });
+        });
+
+        it("chunks at 100 keys and concatenates the responses", async () => {
+            const keys = Array.from({ length: 250 }, (_, i) => `key-${i}`);
+            const mockFetch = vi
+                .fn()
+                .mockReturnValueOnce(createFetchResponse([restoredSwap("a")]))
+                .mockReturnValueOnce(createFetchResponse([restoredSwap("b")]))
+                .mockReturnValueOnce(createFetchResponse([restoredSwap("c")]));
+            vi.stubGlobal("fetch", mockFetch);
+
+            const restored = await provider.restoreSwaps(keys);
+
+            expect(mockFetch).toHaveBeenCalledTimes(3);
+            expect(bodyOf(mockFetch, 0).publicKeys).toHaveLength(100);
+            expect(bodyOf(mockFetch, 2).publicKeys).toEqual(keys.slice(200));
+            expect(restored.map((s) => s.id)).toEqual(["a", "b", "c"]);
+        });
+
+        it("does not call the API for an empty key set", async () => {
+            const mockFetch = vi.fn(() => createFetchResponse([]));
+            vi.stubGlobal("fetch", mockFetch);
+
+            expect(await provider.restoreSwaps([])).toEqual([]);
+            expect(mockFetch).not.toHaveBeenCalled();
+        });
+
+        it("drops swaps with no ARK leg", async () => {
+            const btcOnly = { ...restoredSwap("btc"), to: "BTC", from: "BTC", type: "chain" };
+            vi.stubGlobal(
+                "fetch",
+                vi.fn(() => createFetchResponse([btcOnly, restoredSwap("ark")])),
+            );
+
+            const restored = await provider.restoreSwaps(["a", "b"]);
+
+            expect(restored.map((s) => s.id)).toEqual(["ark"]);
+        });
+    });
 });

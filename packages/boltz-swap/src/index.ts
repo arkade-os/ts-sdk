@@ -50,6 +50,7 @@ export {
     TransactionFailedError,
     BoltzRefundError,
     QuoteRejectedError,
+    VHTLCAddressMismatchError,
 } from "./errors";
 export type { QuoteRejectionReason } from "./errors";
 export {

@@ -17,7 +17,17 @@ import {
     BatchSignableIdentity,
     SignRequest,
     isBatchSignable,
+    DescriptorIdentity,
+    isHDDeterministicSignCapable,
+    deriveDescriptorLeafCompressedPubKey,
 } from "./identity";
+import type {
+    DescriptorIdentityOptions,
+    DescriptorSigner,
+    HDDeterministicSignCapable,
+} from "./identity";
+import { isHDWalletCapable } from "./wallet/hdWalletCapable";
+import type { HDWalletCapable } from "./wallet/hdWalletCapable";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
@@ -427,6 +437,10 @@ export {
     MnemonicIdentity,
     ReadonlyDescriptorIdentity,
     isBatchSignable,
+    DescriptorIdentity,
+    isHDDeterministicSignCapable,
+    isHDWalletCapable,
+    deriveDescriptorLeafCompressedPubKey,
     OnchainWallet,
     Ramps,
     DustChangeError,
@@ -672,6 +686,10 @@ export type {
     MnemonicOptions,
     NetworkOptions,
     DescriptorOptions,
+    DescriptorIdentityOptions,
+    DescriptorSigner,
+    HDDeterministicSignCapable,
+    HDWalletCapable,
     // Indexer types
     IndexerProvider,
     PageResponse,

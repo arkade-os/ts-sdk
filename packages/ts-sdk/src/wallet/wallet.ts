@@ -135,6 +135,8 @@ import { validateVtxosForScript, saveVtxosForContract } from "../contracts/vtxoO
 import { WalletReceiveRotator, signingDescriptorIndex } from "./walletReceiveRotator";
 import { HDDescriptorProvider } from "./hdDescriptorProvider";
 import { DescriptorProvider } from "../identity/descriptorProvider";
+import { DescriptorIdentity } from "../identity/descriptorIdentity";
+import { HDWalletCapable } from "./hdWalletCapable";
 import { deriveDescriptorLeafPubKey } from "../identity/descriptor";
 import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
 import { CandidateDeps, DiscoveryDeps } from "../contracts/types";
@@ -2027,7 +2029,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
  * });
  * ```
  */
-export class Wallet extends ReadonlyWallet implements IWallet {
+export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     static MIN_FEE_RATE = 1; // sats/vbyte
 
     override readonly identity: Identity;
@@ -2295,6 +2297,54 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             console.warn("look-ahead refill after boarding allocation failed", e);
         }
         return newBoarding.onchainAddress(this.network);
+    }
+
+    /**
+     * @see HDWalletCapable.getCurrentSigningDescriptor
+     */
+    async getCurrentSigningDescriptor(): Promise<string | undefined> {
+        const provider = this._descriptorProvider;
+        if (!(provider instanceof HDDescriptorProvider)) return undefined;
+        return provider.getCurrentSigningDescriptor();
+    }
+
+    /**
+     * @see HDWalletCapable.getUsedSigningDescriptors
+     *
+     * Union of the watermark band and the descriptors persisted on contracts:
+     * the band alone would miss rows a restore scan wrote, and the contracts
+     * alone would miss indices allocated for something the wallet never
+     * persisted (a swap, an externally issued invoice).
+     */
+    async getUsedSigningDescriptors(): Promise<string[]> {
+        const provider = this._descriptorProvider;
+        const descriptors = new Set<string>();
+        if (provider instanceof HDDescriptorProvider) {
+            const lastIndexUsed = await provider.getLastIndexUsed();
+            for (let i = 0; i <= (lastIndexUsed ?? -1); i++) {
+                descriptors.add(provider.materializeDescriptorAt(i));
+            }
+        }
+        for (const contract of await this.contractRepository.getContracts()) {
+            const descriptor = contract.metadata?.signingDescriptor;
+            if (typeof descriptor === "string" && descriptor.length > 0) {
+                descriptors.add(descriptor);
+            }
+        }
+        return [...descriptors].sort(
+            (a, b) => signingDescriptorIndex(a) - signingDescriptorIndex(b),
+        );
+    }
+
+    /**
+     * @see HDWalletCapable.signerForDescriptor
+     */
+    async signerForDescriptor(descriptor: string): Promise<Identity> {
+        const provider = this._descriptorProvider;
+        if (!(provider instanceof HDDescriptorProvider) || !provider.isOurs(descriptor)) {
+            return this.identity;
+        }
+        return new DescriptorIdentity({ descriptor, signer: provider, base: this.identity });
     }
 
     /**

@@ -293,6 +293,22 @@ export class SeedIdentity implements HDCapableIdentity {
         return this.signMessageWithKey(key, message, signatureType);
     }
 
+    /**
+     * BIP-340 sign `messageHash` with the key derived from `descriptor`,
+     * aux_rand = 0. Backs {@link DescriptorIdentity.signSchnorrDeterministic},
+     * which swap preimage derivation reads through.
+     */
+    async signSchnorrDeterministicWithDescriptor(
+        descriptor: string,
+        messageHash: Uint8Array,
+    ): Promise<Uint8Array> {
+        if (!this.isOurs(descriptor)) {
+            throw new Error(`Descriptor ${descriptor} does not belong to this identity`);
+        }
+        const key = this.derivePrivateKeyForDescriptor(descriptor);
+        return schnorr.signAsync(messageHash, key, new Uint8Array(32));
+    }
+
     // ── internal helpers ─────────────────────────────────────────────
 
     private derivePrivateKeyForDescriptor(descriptor: string): Uint8Array {

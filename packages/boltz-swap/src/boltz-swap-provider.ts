@@ -809,7 +809,11 @@ export const isTree = (data: any): data is Tree => {
 export type Details = {
     tree: Tree;
     amount?: number;
-    keyIndex: number;
+    /**
+     * Boltz's own key index for the swap. Carries no information about which
+     * of *our* keys owns it — attribution matches the lockup address locally.
+     */
+    keyIndex?: number;
     transaction?: {
         id: string;
         vout: number;
@@ -827,7 +831,7 @@ export const isDetails = (data: any): data is Details => {
         typeof data === "object" &&
         isTree(data.tree) &&
         (data.amount === undefined || typeof data.amount === "number") &&
-        typeof data.keyIndex === "number" &&
+        (data.keyIndex === undefined || typeof data.keyIndex === "number") &&
         (data.transaction === undefined ||
             (data.transaction &&
                 typeof data.transaction === "object" &&
@@ -928,9 +932,7 @@ export const isRestoredReverseSwap = (data: any): data is RestoredReverseSwap =>
     );
 };
 
-export type CreateSwapsRestoreRequest = {
-    publicKey: string;
-};
+export type CreateSwapsRestoreRequest = { publicKey: string } | { publicKeys: string[] };
 
 export type CreateSwapsRestoreResponse = (
     | RestoredChainSwap
@@ -990,6 +992,9 @@ export class BoltzSwapProvider {
 
     /** Pair-metadata cache lifetime — 15 min, matching NArk's `CachedBoltzClient`. */
     private static readonly PAIRS_CACHE_TTL_MS = 15 * 60 * 1000;
+
+    /** Keys per `/v2/swap/restore` request. @see restoreSwaps */
+    private static readonly RESTORE_KEYS_PER_REQUEST = 100;
 
     /** @param config Provider configuration with network and optional API URL. */
     constructor(config: SwapProviderConfig) {
@@ -1631,24 +1636,42 @@ export class BoltzSwapProvider {
         return response;
     }
 
-    /** Restores swaps from Boltz API using the wallet's public key. */
-    async restoreSwaps(publicKey: string): Promise<CreateSwapsRestoreResponse> {
-        const requestBody: CreateSwapsRestoreRequest = {
-            publicKey,
-        };
+    /**
+     * Restores swaps from Boltz API for one key or a set of keys.
+     *
+     * An HD wallet spreads its swaps across every index that has been current,
+     * so restore has to ask about all of them. The set is chunked (Boltz
+     * documents no array limit, so the bound is defensive) and the chunk
+     * responses are concatenated; a failed chunk fails the whole restore rather
+     * than returning a silently partial set.
+     *
+     * Non-ARK legs are dropped — the same filter NArk applies.
+     */
+    async restoreSwaps(keys: string | string[]): Promise<CreateSwapsRestoreResponse> {
+        const publicKeys = typeof keys === "string" ? [keys] : keys;
+        if (publicKeys.length === 0) return [];
 
-        const response = await this.request<CreateSwapsRestoreResponse>(
-            "/v2/swap/restore",
-            "POST",
-            requestBody,
-        );
+        const restored: CreateSwapsRestoreResponse = [];
+        for (let i = 0; i < publicKeys.length; i += BoltzSwapProvider.RESTORE_KEYS_PER_REQUEST) {
+            const chunk = publicKeys.slice(i, i + BoltzSwapProvider.RESTORE_KEYS_PER_REQUEST);
+            const requestBody: CreateSwapsRestoreRequest =
+                typeof keys === "string" ? { publicKey: keys } : { publicKeys: chunk };
 
-        if (!isCreateSwapsRestoreResponse(response))
-            throw new SchemaError({
-                message: "Invalid schema in response for swap restoration",
-            });
+            const response = await this.request<CreateSwapsRestoreResponse>(
+                "/v2/swap/restore",
+                "POST",
+                requestBody,
+            );
 
-        return response;
+            if (!isCreateSwapsRestoreResponse(response))
+                throw new SchemaError({
+                    message: "Invalid schema in response for swap restoration",
+                });
+
+            restored.push(...response);
+        }
+
+        return restored.filter((swap) => swap.from === "ARK" || swap.to === "ARK");
     }
 
     /**
