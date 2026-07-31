@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { hex } from "@scure/base";
 import { p2tr } from "@scure/btc-signer";
 import { schnorr } from "@noble/secp256k1";
@@ -9,7 +9,7 @@ import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
 import { MnemonicIdentity } from "../src/identity/seedIdentity";
 import { SingleKey } from "../src/identity/singleKey";
 import { InMemoryWalletRepository } from "../src/repositories/inMemory/walletRepository";
-import { WalletRepository } from "../src/repositories/walletRepository";
+import { WalletRepository, WalletState } from "../src/repositories/walletRepository";
 import { Transaction } from "../src/utils/transaction";
 import type { DescriptorProvider } from "../src/identity/descriptorProvider";
 
@@ -384,6 +384,167 @@ describe("KeyringDescriptorProvider", () => {
             expect(
                 await schnorr.verifyAsync(sig, message, schnorr.getPublicKey(BASE_PRIVKEY)),
             ).toBe(true);
+        });
+    });
+
+    // Two provider instances over one repo simulate two tabs sharing a
+    // store: the mirror seeded at create() goes stale when the sibling
+    // imports or purges, and the async APIs must converge on storage.
+    describe("cross-instance convergence", () => {
+        const message = new Uint8Array(32).fill(7);
+        let sibling: KeyringDescriptorProvider;
+
+        beforeEach(async () => {
+            ({ provider: sibling } = await makeProvider(walletRepo));
+        });
+
+        it("signs with a key a sibling imported after this instance was seeded", async () => {
+            await sibling.importKey(FOREIGN_PRIVKEY);
+
+            const [signed] = await provider.signWithDescriptor([
+                { descriptor: foreignDescriptor, tx: makeSignableTx(FOREIGN_PRIVKEY) },
+            ]);
+
+            expect(signed.getInput(0).tapKeySig).toBeDefined();
+            signed.finalize();
+        });
+
+        it("signs a message with a sibling-imported key", async () => {
+            await sibling.importKey(FOREIGN_PRIVKEY);
+
+            const sig = await provider.signMessageWithDescriptor(foreignDescriptor, message);
+
+            expect(
+                await schnorr.verifyAsync(sig, message, schnorr.getPublicKey(FOREIGN_PRIVKEY)),
+            ).toBe(true);
+        });
+
+        it("purges a sibling-imported key from storage on deleteKey", async () => {
+            await sibling.importKey(FOREIGN_PRIVKEY);
+
+            expect(await provider.deleteKey(foreignDescriptor)).toBe(true);
+
+            const state = await walletRepo.getWalletState();
+            expect(state?.settings?.keyring.keys).toEqual({});
+        });
+
+        it("drops a sibling-purged key on refresh — replace, not merge", async () => {
+            await sibling.importKey(FOREIGN_PRIVKEY);
+            // a foreign-shaped miss re-seeds this instance's mirror
+            await provider.signWithDescriptor([
+                { descriptor: foreignDescriptor, tx: makeSignableTx(FOREIGN_PRIVKEY) },
+            ]);
+            await sibling.deleteKey(foreignDescriptor);
+
+            // the next miss-triggered refresh must drop the purged entry,
+            // even though this attempt itself ends in the base's throw
+            const unknown = `tr(${xOnlyHex(OTHER_FOREIGN_PRIVKEY)})`;
+            await expect(
+                provider.signWithDescriptor([
+                    { descriptor: unknown, tx: makeSignableTx(OTHER_FOREIGN_PRIVKEY) },
+                ]),
+            ).rejects.toThrow(/does not belong to this provider/);
+
+            expect(provider.hasKey(foreignDescriptor)).toBe(false);
+        });
+
+        it("reads storage at most once per signing call on a miss", async () => {
+            const reads = vi.spyOn(walletRepo, "getWalletState");
+            const unknown = `tr(${xOnlyHex(OTHER_FOREIGN_PRIVKEY)})`;
+
+            await expect(
+                provider.signWithDescriptor([
+                    { descriptor: unknown, tx: makeSignableTx(OTHER_FOREIGN_PRIVKEY) },
+                    { descriptor: unknown, tx: makeSignableTx(OTHER_FOREIGN_PRIVKEY) },
+                ]),
+            ).rejects.toThrow(/does not belong to this provider/);
+
+            expect(reads).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    // `updateWalletState` persists the WHOLE state blob, so two contexts
+    // (tabs) sharing one store through distinct repo objects race unless
+    // the RMW runs under the cross-context Web Lock.
+    describe("cross-context serialization of wallet-state writes", () => {
+        it("wraps the read-modify-write in the queueing wallet-state Web Lock", async () => {
+            const request = vi
+                .fn()
+                .mockImplementation(
+                    async (_name: string, _opts: unknown, cb: (l: unknown) => unknown) => cb({}),
+                );
+            vi.stubGlobal("navigator", { locks: { request } });
+            try {
+                const repo = new InMemoryWalletRepository();
+                const { provider } = await makeProvider(repo);
+                await provider.importKey(FOREIGN_PRIVKEY);
+
+                // exact-options match: exclusive, and crucially NO ifAvailable —
+                // a state write must queue, never be silently skipped
+                expect(request).toHaveBeenCalledWith(
+                    "arkade-wallet-state",
+                    { mode: "exclusive" },
+                    expect.any(Function),
+                );
+                const state = await repo.getWalletState();
+                expect(state?.settings?.keyring.keys[xOnlyHex(FOREIGN_PRIVKEY)]).toBe(
+                    hex.encode(FOREIGN_PRIVKEY),
+                );
+            } finally {
+                vi.unstubAllGlobals();
+            }
+        });
+
+        it("keeps concurrent imports from two contexts over one store from clobbering each other", async () => {
+            // Faithful queueing fake: grants strictly one requester at a time.
+            let tail: Promise<unknown> = Promise.resolve();
+            const request = vi
+                .fn()
+                .mockImplementation(
+                    (_name: string, _opts: unknown, cb: (l: unknown) => unknown) => {
+                        const run = tail.then(() => cb({}));
+                        tail = run.then(
+                            () => undefined,
+                            () => undefined,
+                        );
+                        return run;
+                    },
+                );
+            vi.stubGlobal("navigator", { locks: { request } });
+            try {
+                // One underlying store, two repo objects — the in-process
+                // per-repo mutex cannot see across them, only the lock can.
+                let shared: WalletState | null = null;
+                const makeSharedRepo = () =>
+                    ({
+                        getWalletState: async () => {
+                            // snapshot at entry, resolve later: without the
+                            // lock both RMWs observe the pre-import state
+                            // before either write commits, and one import
+                            // is lost
+                            const snapshot = shared;
+                            await new Promise((resolve) => setTimeout(resolve, 5));
+                            return snapshot;
+                        },
+                        saveWalletState: async (state: WalletState) => {
+                            shared = state;
+                        },
+                    }) as unknown as WalletRepository;
+
+                const { provider: a } = await makeProvider(makeSharedRepo());
+                const { provider: b } = await makeProvider(makeSharedRepo());
+
+                await Promise.all([
+                    a.importKey(FOREIGN_PRIVKEY),
+                    b.importKey(OTHER_FOREIGN_PRIVKEY),
+                ]);
+
+                expect(Object.keys(shared!.settings!.keyring.keys).sort()).toEqual(
+                    [xOnlyHex(FOREIGN_PRIVKEY), xOnlyHex(OTHER_FOREIGN_PRIVKEY)].sort(),
+                );
+            } finally {
+                vi.unstubAllGlobals();
+            }
         });
     });
 

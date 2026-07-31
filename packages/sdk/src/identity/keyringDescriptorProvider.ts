@@ -44,7 +44,10 @@ const KEYRING_SETTINGS_KEY = "keyring";
  * `WalletRepository.getWalletState().settings.keyring` (same
  * no-migration pattern as `HDDescriptorProvider`), so an import survives
  * the restarts a recovery spans, and {@link deleteKey} purges it when
- * recovery completes.
+ * recovery completes. The repository is the source of truth: the async
+ * signing/purge APIs converge on sibling instances' imports and purges
+ * (see {@link refresh}), so any tab/worker sharing the repo can complete
+ * a recovery another one started.
  *
  * **Keys are stored unencrypted.** This is a deliberate, scoped
  * decision: the intended use is a short-lived, purge-on-completion hold
@@ -66,9 +69,14 @@ export class KeyringDescriptorProvider implements DescriptorProvider {
     /**
      * In-memory mirror of the persisted keyring, keyed by x-only pubkey
      * hex. Required because {@link isOurs} is synchronous while
-     * persistence is not; kept in lockstep with storage by
-     * {@link importKey} / {@link deleteKey}, and seeded at
-     * {@link create}.
+     * persistence is not. The **repository is the source of truth**: the
+     * async APIs write through to it and {@link refresh} re-seeds this
+     * mirror from it when a signing request names a foreign key the
+     * mirror doesn't know — a sibling instance (another tab/worker on
+     * the same repo) may have imported it after this instance was
+     * constructed. The sync views ({@link isOurs}, {@link hasKey},
+     * {@link listKeyringDescriptors}) answer from the last-known
+     * snapshot.
      */
     private readonly keys: Map<string, SingleKey>;
 
@@ -97,12 +105,11 @@ export class KeyringDescriptorProvider implements DescriptorProvider {
         walletRepository: WalletRepository,
     ): Promise<KeyringDescriptorProvider> {
         const state = await walletRepository.getWalletState();
-        const settings = parseSettings(state ?? {});
-        const entries = new Map<string, SingleKey>();
-        for (const [pubKeyHex, privKeyHex] of Object.entries(settings.keys)) {
-            entries.set(pubKeyHex, SingleKey.fromHex(privKeyHex));
-        }
-        const provider = new KeyringDescriptorProvider(base, walletRepository, entries);
+        const provider = new KeyringDescriptorProvider(
+            base,
+            walletRepository,
+            loadEntries(state ?? {}),
+        );
         forwardOptionalCapabilities(provider, base);
         return provider;
     }
@@ -129,15 +136,22 @@ export class KeyringDescriptorProvider implements DescriptorProvider {
      * Purge a keyring entry. Returns `true` when an entry was removed,
      * `false` when the descriptor was not in the keyring (already
      * purged, or never ours) — so a repeated purge is a safe no-op.
+     *
+     * Always goes through storage, never trusting the in-memory mirror:
+     * the entry may have been imported by a sibling instance after this
+     * one was constructed, and skipping the persistent purge on a memory
+     * miss would leave that key at rest forever.
      */
     async deleteKey(descriptor: string): Promise<boolean> {
         const pubKeyHex = keyOf(descriptor);
-        if (!pubKeyHex || !this.keys.has(pubKeyHex)) return false;
+        if (!pubKeyHex) return false;
+        let removed = false;
         await this.mutate((settings) => {
+            removed = pubKeyHex in settings.keys;
             delete settings.keys[pubKeyHex];
         });
         this.keys.delete(pubKeyHex);
-        return true;
+        return removed;
     }
 
     /** True iff `descriptor` resolves to a key held in the keyring. */
@@ -172,16 +186,16 @@ export class KeyringDescriptorProvider implements DescriptorProvider {
      * requests split across the two signers.
      */
     async signWithDescriptor(requests: DescriptorSigningRequest[]): Promise<Transaction[]> {
-        const results = new Array<Transaction>(requests.length);
-        const delegated: { request: DescriptorSigningRequest; index: number }[] = [];
+        let split = this.splitRequests(requests);
+        if (split.mayBeStale) {
+            await this.refresh();
+            split = this.splitRequests(requests);
+        }
+        const { owned, delegated } = split;
 
-        for (const [index, request] of requests.entries()) {
-            const key = this.resolveKey(request.descriptor);
-            if (key) {
-                results[index] = await key.sign(request.tx, request.inputIndexes);
-            } else {
-                delegated.push({ request, index });
-            }
+        const results = new Array<Transaction>(requests.length);
+        for (const { request, index, key } of owned) {
+            results[index] = await key.sign(request.tx, request.inputIndexes);
         }
 
         if (delegated.length > 0) {
@@ -205,12 +219,70 @@ export class KeyringDescriptorProvider implements DescriptorProvider {
         message: Uint8Array,
         type: "schnorr" | "ecdsa" = "schnorr",
     ): Promise<Uint8Array> {
-        const key = this.resolveKey(descriptor);
+        let key = this.resolveKey(descriptor);
+        if (!key && this.isForeignShaped(descriptor)) {
+            await this.refresh();
+            key = this.resolveKey(descriptor);
+        }
         if (key) return key.signMessage(message, type);
         return this.base.signMessageWithDescriptor(descriptor, message, type);
     }
 
     // ── internals ────────────────────────────────────────────────────
+
+    /**
+     * Split requests into keyring-owned and base-delegated buckets.
+     * `mayBeStale` is set when a delegated descriptor is foreign-shaped —
+     * a sibling instance may have imported its key after this instance
+     * seeded the mirror, so the caller should {@link refresh} once and
+     * re-split before trusting the delegation.
+     */
+    private splitRequests(requests: DescriptorSigningRequest[]): {
+        owned: { request: DescriptorSigningRequest; index: number; key: SingleKey }[];
+        delegated: { request: DescriptorSigningRequest; index: number }[];
+        mayBeStale: boolean;
+    } {
+        const owned: { request: DescriptorSigningRequest; index: number; key: SingleKey }[] = [];
+        const delegated: { request: DescriptorSigningRequest; index: number }[] = [];
+        let mayBeStale = false;
+
+        for (const [index, request] of requests.entries()) {
+            const key = this.resolveKey(request.descriptor);
+            if (key) {
+                owned.push({ request, index, key });
+            } else {
+                delegated.push({ request, index });
+                mayBeStale ||= this.isForeignShaped(request.descriptor);
+            }
+        }
+
+        return { owned, delegated, mayBeStale };
+    }
+
+    /**
+     * True when `descriptor` is a bare `tr(<pubkey>)` the base provider
+     * does not own — the only shape a keyring entry can have, so the only
+     * kind of miss a {@link refresh} could turn into a hit.
+     */
+    private isForeignShaped(descriptor: string): boolean {
+        return !this.base.isOurs(descriptor) && keyOf(descriptor) !== undefined;
+    }
+
+    /**
+     * Re-seed the in-memory mirror from the repository, converging on
+     * imports and purges made by sibling instances on the same repo.
+     * Full replacement, not a merge, so sibling *deletions* propagate
+     * too — purged key material must not linger in this instance.
+     * Corrupt persisted settings throw, same as {@link create}.
+     */
+    private async refresh(): Promise<void> {
+        const state = await this.walletRepository.getWalletState();
+        const entries = loadEntries(state ?? {});
+        this.keys.clear();
+        for (const [pubKeyHex, key] of entries) {
+            this.keys.set(pubKeyHex, key);
+        }
+    }
 
     /**
      * The keyring key for `descriptor`, or `undefined` when the request
@@ -225,10 +297,10 @@ export class KeyringDescriptorProvider implements DescriptorProvider {
     }
 
     /**
-     * Read-modify-write the keyring settings inside the shared per-repo
-     * wallet-state mutex, so concurrent imports/purges — including those
-     * driven by separate provider instances on the same repo — cannot
-     * clobber each other's entries.
+     * Read-modify-write the keyring settings through `updateWalletState`,
+     * whose in-process mutex plus cross-context Web Lock keep concurrent
+     * imports/purges — including ones driven from other tabs/workers
+     * sharing the store — from clobbering each other's entries.
      */
     private async mutate(fn: (settings: KeyringSettings) => void): Promise<void> {
         await updateWalletState(this.walletRepository, (state) => {
@@ -317,6 +389,16 @@ function parseSettings(state: WalletState): KeyringSettings {
         keys[pubKeyHex] = privKeyHex;
     }
     return { keys };
+}
+
+/** Build the in-memory mirror entries from validated persisted state. */
+function loadEntries(state: WalletState): Map<string, SingleKey> {
+    const settings = parseSettings(state);
+    const entries = new Map<string, SingleKey>();
+    for (const [pubKeyHex, privKeyHex] of Object.entries(settings.keys)) {
+        entries.set(pubKeyHex, SingleKey.fromHex(privKeyHex));
+    }
+    return entries;
 }
 
 function isHexOfBytes(value: string, bytes: number): boolean {
