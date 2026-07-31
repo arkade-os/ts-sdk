@@ -75,7 +75,13 @@ Then thread it through the call sites:
     });
     ```
     (The `network`-card filtering and registry-URL lookup stay wallet concerns.)
+    The cache key prefix changed from `swapMarkets-` to `arkade-intents-markets-`: old
+    localStorage entries are simply orphaned (one cold refetch); delete them in the data
+    migration if you want a tidy storage.
 - `makeCachedFeedFetch()` is unchanged (it now also accepts `(ttlMs, fetchImpl)`).
+- `createOffer` no longer returns `payload`; it returns the send-ready `extension` instead. In
+  `providers/assetSwaps.tsx`: `extensions: [{ type: OFFER_PACKET_TYPE, payload: offer.payload }]`
+  → `extensions: [offer.extension]` (the `OFFER_PACKET_TYPE` import can go).
 - The `Network` type on these call sites is now `@arkade-os/solver-discovery`'s `Network`, not
   `@arkade-os/boltz-swap`'s — for the wallet's current networks they are the same strings.
 

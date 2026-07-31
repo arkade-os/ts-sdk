@@ -200,25 +200,30 @@ export function decodeOffer(data: Uint8Array): Offer {
 
 /**
  * Build a new offer for `wallet` (the maker). Fund `address` with the side
- * you deposit, embedding the payload, and the solver does the rest:
+ * you deposit, embedding the returned extension, and the solver does the rest:
  *
  *   // BTC -> asset
  *   const o = await createOffer(wallet, ARK, EMU, { wantAmount: 1000n, wantAsset })
- *   await wallet.send({ address: o.address, amount: 1000,
- *                       extensions: [{ type: OFFER_PACKET_TYPE, payload: o.payload }] })
+ *   await wallet.send({ address: o.address, amount: 1000, extensions: [o.extension] })
  *
  *   // asset -> BTC (the sats are the VTXO carrier for the asset)
  *   const o = await createOffer(wallet, ARK, EMU, { wantAmount: 1000n, offerAsset })
  *   await wallet.send({ address: o.address, amount: 500,
  *                       assets: [{ assetId, amount: 1000n }],
- *                       extensions: [{ type: OFFER_PACKET_TYPE, payload: o.payload }] })
+ *                       extensions: [o.extension] })
  */
 export async function createOffer(
     wallet: IWallet,
     arkServerUrl: string,
     emulatorUrl: string,
     params: { wantAmount: bigint; wantAsset?: asset.AssetId; offerAsset?: asset.AssetId },
-): Promise<{ offerHex: string; payload: Uint8Array; address: string; swapPkScript: Uint8Array }> {
+): Promise<{
+    offerHex: string;
+    /** Ready for `wallet.send`'s `extensions` — the caller never handles the packet type. */
+    extension: { type: number; payload: Uint8Array };
+    address: string;
+    swapPkScript: Uint8Array;
+}> {
     if (!params.wantAsset === !params.offerAsset) {
         throw new Error("set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC)");
     }
@@ -246,7 +251,7 @@ export async function createOffer(
     const payload = encodeOffer(offer);
     return {
         offerHex: hex.encode(payload),
-        payload,
+        extension: { type: OFFER_PACKET_TYPE, payload },
         address: new ArkAddress(
             serverPubKey,
             script.tweakedPublicKey,

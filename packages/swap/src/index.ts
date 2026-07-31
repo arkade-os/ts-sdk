@@ -17,6 +17,7 @@ export {
     QUOTE_OPTIONS,
     type DiscoverMarketsOptions,
     type PlanError,
+    type SwapStorage,
 } from "./markets";
 export {
     getAssetSwaps,
@@ -28,4 +29,3 @@ export {
 export { type AssetSwapRepository, InMemoryAssetSwapRepository } from "./repository";
 export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";
 export { restoreAssetSwaps, unscannedSwapCandidates, isCancelSpend, type Tx } from "./restore";
-export { type SwapStorage } from "./storage";

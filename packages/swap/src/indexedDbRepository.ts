@@ -2,7 +2,7 @@ import { closeDatabase, openDatabase } from "@arkade-os/sdk";
 import type { AssetSwapRepository } from "./repository";
 import type { AssetSwap } from "./store";
 
-const DEFAULT_DB_NAME = "arkade-asset-swap";
+const DEFAULT_DB_NAME = "arkade-intents";
 const DB_VERSION = 1;
 const STORE_SWAPS = "swaps";
 const STORE_SCANNED = "scannedTxids";

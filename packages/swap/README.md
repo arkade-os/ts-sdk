@@ -40,11 +40,7 @@ the rest:
 ```ts
 // BTC -> asset
 const o = await createOffer(wallet, ARK, EMU, { wantAmount: 1000n, wantAsset });
-await wallet.send({
-    address: o.address,
-    amount: 1000,
-    extensions: [{ type: OFFER_PACKET_TYPE, payload: o.payload }],
-});
+await wallet.send({ address: o.address, amount: 1000, extensions: [o.extension] });
 
 // asset -> BTC (the sats are the VTXO carrier for the asset)
 const o = await createOffer(wallet, ARK, EMU, { wantAmount: 1000n, offerAsset });
@@ -52,7 +48,7 @@ await wallet.send({
     address: o.address,
     amount: 500,
     assets: [{ assetId, amount: 1000n }],
-    extensions: [{ type: OFFER_PACKET_TYPE, payload: o.payload }],
+    extensions: [o.extension],
 });
 ```
 

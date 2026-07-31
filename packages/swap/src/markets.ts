@@ -9,9 +9,19 @@ import {
     type OfferPlan,
     type Side,
 } from "@arkade-os/solver-discovery";
-import { getStorageItem, setStorageItemSafely, type SwapStorage } from "./storage";
 
 export const BTC_ASSET_ID = "btc";
+
+/** Minimal synchronous key-value cache the markets layer persists into. Only
+ * refetchable cache data lives here (durable swap records go through
+ * AssetSwapRepository); any backend works: web storage, an in-memory Map,
+ * MMKV, … the caller owns the instance and its lifetime.
+ * ponytail: no remove(); nothing here deletes keys — add it when a consumer
+ * needs deletion. */
+export interface SwapStorage {
+    get(key: string): string | null;
+    set(key: string, value: string): void;
+}
 
 /** Shared quote options so every quote path agrees.
  * No safety margin on top of the market fee: pricing drift between quote
@@ -44,7 +54,7 @@ export const makeCachedFeedFetch = (
     };
 };
 
-const MARKETS_CACHE_KEY = "swapMarkets";
+const MARKETS_CACHE_KEY = "arkade-intents-markets";
 const MARKETS_CACHE_TTL_MS = 60 * 60 * 1000;
 
 interface MarketsCacheEntry {
@@ -70,23 +80,24 @@ const isMarketShaped = (m: unknown): boolean => {
     );
 };
 
+// a missing, corrupt, or malformed cache reads as a miss; the refetch overwrites it
 const readMarketsCache = (
     storage: SwapStorage,
     network: Network,
     registry: string,
-): MarketsCacheEntry | undefined =>
-    getStorageItem<MarketsCacheEntry | undefined>(
-        storage,
-        cacheKey(network, registry),
-        undefined,
-        (blob) => {
-            const entry = JSON.parse(blob);
-            if (!Array.isArray(entry?.markets) || typeof entry?.fetchedAt !== "number")
-                throw new Error("malformed cache");
-            if (!entry.markets.every(isMarketShaped)) throw new Error("malformed cached market");
-            return entry;
-        },
-    );
+): MarketsCacheEntry | undefined => {
+    try {
+        const blob = storage.get(cacheKey(network, registry));
+        if (blob === null) return undefined;
+        const entry = JSON.parse(blob);
+        if (!Array.isArray(entry?.markets) || typeof entry?.fetchedAt !== "number")
+            return undefined;
+        if (!entry.markets.every(isMarketShaped)) return undefined;
+        return entry;
+    } catch {
+        return undefined;
+    }
+};
 
 export interface DiscoverMarketsOptions {
     network: Network;
@@ -136,11 +147,14 @@ export const discoverMarkets = async (
     const reachable = sources.some((source) => source.ok);
     if (!reachable && cached) return cached.markets;
     if (reachable) {
-        setStorageItemSafely(
-            storage,
-            cacheKey(network, registry),
-            JSON.stringify({ markets, fetchedAt: Date.now() }),
-        );
+        try {
+            storage.set(
+                cacheKey(network, registry),
+                JSON.stringify({ markets, fetchedAt: Date.now() }),
+            );
+        } catch {
+            // best effort: a lost cache write just means a refetch
+        }
     }
     return markets;
 };

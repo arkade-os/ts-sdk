@@ -1,4 +1,4 @@
-import type { SwapStorage } from "../src/storage";
+import type { SwapStorage } from "../src/markets";
 
 /** In-memory SwapStorage with the backing map exposed for assertions. */
 export const memoryStorage = (): SwapStorage & { map: Map<string, string> } => {

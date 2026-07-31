@@ -126,7 +126,7 @@ describe("makeCachedFeedFetch", () => {
 
 describe("discoverMarkets caching", () => {
     const REGISTRY_URL = "https://arkade-os.github.io/solver-registry/mutinynet.json";
-    const CACHE_KEY = `swapMarkets-mutinynet-${REGISTRY_URL}`;
+    const CACHE_KEY = `arkade-intents-markets-mutinynet-${REGISTRY_URL}`;
     // a valid registry index entry: btcUsd without the fields discover() adds
     const indexMarket: Record<string, unknown> = { ...btcUsd };
     delete indexMarket.source;
