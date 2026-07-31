@@ -4,10 +4,13 @@ import {
     InMemoryWalletRepository,
     type Contract,
 } from "@arkade-os/sdk";
+import { InMemorySwapRepository, type BoltzReverseSwap } from "@arkade-os/boltz-swap";
 import {
     ContractSource,
+    SwapSource,
     WalletStateSource,
     CONTRACT_PREFIX,
+    SWAP_PREFIX,
     WALLET_STATE_KEY,
 } from "../src/sync/sources";
 
@@ -101,5 +104,66 @@ describe("WalletStateSource", () => {
     it("produces an empty snapshot when there is no state", async () => {
         const snap = await new WalletStateSource(new InMemoryWalletRepository()).snapshot();
         expect(snap.size).toBe(0);
+    });
+});
+
+// A reverse swap carries the preimage that claims its VHTLC. The contract that
+// ContractSource syncs only holds hash160(preimage), so this record is the sole
+// copy of the secret — losing it means the VHTLC can't be claimed.
+const reverseSwap = (id: string, preimage: string): BoltzReverseSwap =>
+    ({
+        id,
+        type: "reverse",
+        createdAt: 1_700_000_000,
+        preimage,
+        status: "invoice.paid",
+        request: { invoiceAmount: 50_000, preimageHash: "aa".repeat(32) },
+        response: { id, invoice: "lnbcrt500u1p...", lockupAddress: "ark1qlockup" },
+    }) as unknown as BoltzReverseSwap;
+
+describe("SwapSource", () => {
+    it("snapshots all swaps as swap:{id} → JSON plaintext", async () => {
+        const repo = new InMemorySwapRepository();
+        await repo.saveSwap(reverseSwap("swap-a", "11".repeat(32)));
+        await repo.saveSwap(reverseSwap("swap-b", "22".repeat(32)));
+
+        const snap = await new SwapSource(repo).snapshot();
+        expect([...snap.keys()].sort()).toEqual([SWAP_PREFIX + "swap-a", SWAP_PREFIX + "swap-b"]);
+    });
+
+    it("round-trips the preimage to a fresh device", async () => {
+        const source = new InMemorySwapRepository();
+        await source.saveSwap(reverseSwap("swap-a", "33".repeat(32)));
+        const snap = await new SwapSource(source).snapshot();
+
+        // A brand-new device with an empty repository applies the pulled record.
+        const restored = new InMemorySwapRepository();
+        const target = new SwapSource(restored);
+        for (const [key, value] of snap) await target.apply(key, value);
+
+        const [swap] = await restored.getAllSwaps<BoltzReverseSwap>();
+        expect(swap.id).toBe("swap-a");
+        expect(swap.preimage).toBe("33".repeat(32)); // the claim secret survived
+        expect(swap.type).toBe("reverse");
+    });
+
+    it("applies a tombstone as a delete", async () => {
+        const repo = new InMemorySwapRepository();
+        await repo.saveSwap(reverseSwap("swap-a", "44".repeat(32)));
+
+        await new SwapSource(repo).apply(SWAP_PREFIX + "swap-a", null);
+
+        expect(await repo.getAllSwaps()).toEqual([]);
+    });
+
+    it("owns only its own namespace", () => {
+        const source = new SwapSource(new InMemorySwapRepository());
+        expect(source.owns(SWAP_PREFIX + "swap-a")).toBe(true);
+        expect(source.owns(CONTRACT_PREFIX + "aaaa")).toBe(false);
+        expect(source.owns(WALLET_STATE_KEY)).toBe(false);
+    });
+
+    it("produces an empty snapshot when there are no swaps", async () => {
+        expect((await new SwapSource(new InMemorySwapRepository()).snapshot()).size).toBe(0);
     });
 });

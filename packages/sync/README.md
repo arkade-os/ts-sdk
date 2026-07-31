@@ -71,11 +71,18 @@ then hand the wrapper to the wallet:
 const synced = new SyncedContractRepository(contracts, sync);
 const wallet = await Wallet.create({ identity, storage: { contractRepository: synced } });
 // wallet.contractManager.createContract(...) now backs up automatically.
+
+// Same for swaps — a reverse swap's preimage is backed up the moment it exists,
+// rather than at the next periodic sync.
+const syncedSwaps = new SyncedSwapRepository(swaps, sync);
 ```
 
 Local writes complete first and return immediately; the encrypted push is
 fire-and-forget (failures surface via the optional `onError` callback and are
-reconciled on the next `backup()`/`sync()`).
+reconciled on the next `backup()`/`sync()`). That keeps an optional backup server
+off the critical path of a wallet operation, at the cost of a short window: a
+device lost between creating a swap and completing its push has no remote copy of
+that preimage.
 
 ## Security model
 
@@ -97,11 +104,22 @@ reconciled on the next `backup()`/`sync()`).
 | Source | Keys | Notes |
 |---|---|---|
 | `ContractSource` | `contract:{script}` | Per-contract CAS; JSON-safe. |
+| `SwapSource` | `swap:{id}` | Boltz swap records. Carries `preimage` — see below. |
 | `WalletStateSource` | `state:wallet` | Portable `settings` only — the device-local `lastSyncTime` indexer cursor is deliberately **not** synced. |
 
-Coins/UTXOs and transaction history are address-collection-keyed and require the
-SDK's internal serializers; they are a planned follow-up (this release focuses on
-contracts + settings, which are enumerable and JSON-safe).
+`SwapSource` is not optional if you use swaps. A VHTLC contract stores
+`preimageHash` (hash160 of the secret), never the secret; `BoltzReverseSwap.preimage`
+is the only copy, and it is what claims the VHTLC. Restoring contracts without
+swaps therefore yields a swap you can see but cannot claim, losing the funds to
+the Boltz refund timeout. It needs `@arkade-os/boltz-swap`, declared as an
+optional peer dependency and imported as types only, so wallets that never swap
+pull in nothing extra.
+
+**Coins/UTXOs and transaction history are deliberately not synced.** They are
+derivable cache — arkd's indexer and the chain are the source of truth — so
+mirroring them would let a stale device overwrite fresher local state and would
+grow the bucket to save a re-sync that happens anyway. What syncs here is the
+state no one else can give back to you.
 
 ## Conflict handling
 

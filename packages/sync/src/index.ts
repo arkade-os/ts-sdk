@@ -41,9 +41,12 @@ export {
 export {
     type SyncSource,
     ContractSource,
+    SwapSource,
     WalletStateSource,
     CONTRACT_PREFIX,
+    SWAP_PREFIX,
     WALLET_STATE_KEY,
 } from "./sync/sources";
 export { WalletSync, type WalletSyncOptions } from "./sync/walletSync";
 export { SyncedContractRepository } from "./repositories/syncedContractRepository";
+export { SyncedSwapRepository } from "./repositories/syncedSwapRepository";

@@ -1,12 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { SingleKey, InMemoryContractRepository, type Contract } from "@arkade-os/sdk";
+import { InMemorySwapRepository, type BoltzReverseSwap } from "@arkade-os/boltz-swap";
 import {
     BucketSyncClient,
     BucketSync,
     deriveKwk,
     WalletSync,
     ContractSource,
+    SwapSource,
     SyncedContractRepository,
+    SyncedSwapRepository,
 } from "../../src";
 
 const contract = (script: string, type = "default"): Contract => ({
@@ -17,6 +20,17 @@ const contract = (script: string, type = "default"): Contract => ({
     state: "active",
     createdAt: 1_700_000_000_000,
 });
+
+const reverseSwap = (id: string, preimage: string): BoltzReverseSwap =>
+    ({
+        id,
+        type: "reverse",
+        createdAt: 1_700_000_000,
+        preimage,
+        status: "invoice.paid",
+        request: { invoiceAmount: 50_000, preimageHash: "aa".repeat(32) },
+        response: { id, invoice: "lnbcrt500u1p...", lockupAddress: "ark1qlockup" },
+    }) as unknown as BoltzReverseSwap;
 
 /**
  * End-to-end integration against a real bucket-sync-server. Opt-in: set
@@ -186,5 +200,90 @@ suite("e2e: @arkade-os/sync <-> real bucket-sync server", () => {
         });
         await syncB.restore();
         expect((await repoB.getContracts()).map((c) => c.script)).toEqual(["dddd"]);
+    });
+
+    it("restores a swap preimage alongside its VHTLC contract on a fresh device", async () => {
+        const identity = SingleKey.fromRandomBytes();
+        const kwk = freshKwk();
+        const preimage = "5a".repeat(32);
+
+        // Device A holds a VHTLC contract and the swap record carrying its claim secret.
+        const contractsA = new InMemoryContractRepository();
+        const swapsA = new InMemorySwapRepository();
+        await contractsA.saveContract(contract("vhtlcscript", "vhtlc"));
+        await swapsA.saveSwap(reverseSwap("swap-1", preimage));
+
+        const syncA = await WalletSync.create({
+            baseUrl: URL!,
+            identity,
+            encryptionKey: kwk,
+            sources: [new ContractSource(contractsA), new SwapSource(swapsA)],
+        });
+        await syncA.backup();
+
+        // The fresh device's stores. The SAME swap repository is restored twice —
+        // once by a sync configured without SwapSource and once with it — so the
+        // only variable is the source list, not which repository we inspect.
+        const contractsB = new InMemoryContractRepository();
+        const swapsB = new InMemorySwapRepository();
+
+        // Contracts alone recover the VHTLC but not the secret that claims it. The
+        // swap record IS in the bucket; no configured source owns its key, and
+        // WalletSync.dispatch drops unowned keys. This is the gap being closed.
+        const syncContractsOnly = await WalletSync.create({
+            baseUrl: URL!,
+            identity,
+            encryptionKey: kwk,
+            sources: [new ContractSource(contractsB)],
+        });
+        await syncContractsOnly.restore();
+        expect((await contractsB.getContracts()).map((c) => c.script)).toEqual(["vhtlcscript"]);
+        expect(await swapsB.getAllSwaps()).toEqual([]);
+
+        // Same bucket, same repository — adding SwapSource is the only change, and
+        // it is what makes the swap restorable and therefore claimable.
+        const syncB = await WalletSync.create({
+            baseUrl: URL!,
+            identity,
+            encryptionKey: kwk,
+            sources: [new ContractSource(contractsB), new SwapSource(swapsB)],
+        });
+        await syncB.restore();
+
+        expect((await contractsB.getContracts()).map((c) => c.script)).toEqual(["vhtlcscript"]);
+        const [restored] = await swapsB.getAllSwaps<BoltzReverseSwap>();
+        expect(restored.id).toBe("swap-1");
+        expect(restored.preimage).toBe(preimage);
+    });
+
+    it("SyncedSwapRepository auto-pushes a swap; a fresh device restores it", async () => {
+        const identity = SingleKey.fromRandomBytes();
+        const kwk = freshKwk();
+        const preimage = "6b".repeat(32);
+
+        const syncA = await WalletSync.create({
+            baseUrl: URL!,
+            identity,
+            encryptionKey: kwk,
+            sources: [new SwapSource(new InMemorySwapRepository())],
+        });
+        const swapsA = new SyncedSwapRepository(new InMemorySwapRepository(), syncA);
+
+        await swapsA.saveSwap(reverseSwap("swap-2", preimage));
+        // The push is fire-and-forget; WalletSync serializes its operations, so an
+        // awaited empty push resolves only once the queued one has completed.
+        await syncA.push(new Map());
+
+        const swapsB = new InMemorySwapRepository();
+        const syncB = await WalletSync.create({
+            baseUrl: URL!,
+            identity,
+            encryptionKey: kwk,
+            sources: [new SwapSource(swapsB)],
+        });
+        await syncB.restore();
+
+        const [restored] = await swapsB.getAllSwaps<BoltzReverseSwap>();
+        expect(restored?.preimage).toBe(preimage);
     });
 });

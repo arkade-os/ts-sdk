@@ -1,4 +1,5 @@
 import type { Contract, ContractRepository, WalletRepository } from "@arkade-os/sdk";
+import type { BoltzSwap, SwapRepository } from "@arkade-os/boltz-swap";
 
 // `WalletState` is not part of the SDK's public export surface; derive it from
 // the repository interface so we stay in lockstep without a fragile deep import.
@@ -51,6 +52,48 @@ export class ContractSource implements SyncSource {
         const script = key.slice(CONTRACT_PREFIX.length);
         if (plaintext === null) await this.repo.deleteContract(script);
         else await this.repo.saveContract(JSON.parse(dec(plaintext)) as Contract);
+    }
+}
+
+export const SWAP_PREFIX = "swap:";
+
+/**
+ * Syncs Boltz swap records, keyed `swap:{id}`.
+ *
+ * This is the counterpart to {@link ContractSource}, and the pair is only useful
+ * together: a swap's VHTLC contract stores `preimageHash` (hash160 of the
+ * secret), never the secret itself. The preimage lives solely on the swap
+ * record, where `BoltzReverseSwap.preimage` is documented as *required for
+ * claiming the VHTLC*. Restoring contracts alone therefore recovers a swap you
+ * can see but cannot claim, so a device that restores without this source can
+ * lose funds to the Boltz refund timeout.
+ *
+ * Records are stored by the backends as an opaque JSON blob keyed by `id`, so
+ * each maps cleanly to one CAS entry — same shape as a contract.
+ */
+export class SwapSource implements SyncSource {
+    constructor(private readonly repo: SwapRepository) {}
+
+    owns(key: string): boolean {
+        return key.startsWith(SWAP_PREFIX);
+    }
+
+    keyFor(id: string): string {
+        return SWAP_PREFIX + id;
+    }
+
+    async snapshot(): Promise<Map<string, Uint8Array>> {
+        const out = new Map<string, Uint8Array>();
+        for (const s of await this.repo.getAllSwaps()) {
+            out.set(this.keyFor(s.id), enc(JSON.stringify(s)));
+        }
+        return out;
+    }
+
+    async apply(key: string, plaintext: Uint8Array | null): Promise<void> {
+        const id = key.slice(SWAP_PREFIX.length);
+        if (plaintext === null) await this.repo.deleteSwap(id);
+        else await this.repo.saveSwap(JSON.parse(dec(plaintext)) as BoltzSwap);
     }
 }
 

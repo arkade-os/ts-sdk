@@ -2,7 +2,7 @@
     "name": "@arkade-os/sync",
     "version": "0.0.1",
     "type": "module",
-    "description": "End-to-end-encrypted backup, restore and multi-device sync for Arkade wallet state (contracts, coins, history) via the bucket-sync protocol. The server only ever stores opaque ciphertext.",
+    "description": "End-to-end-encrypted backup, restore and multi-device sync for Arkade wallet state (contracts, Boltz swaps, settings) via the bucket-sync protocol. The server only ever stores opaque ciphertext.",
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",
     "exports": {
@@ -49,7 +49,16 @@
         "@noble/hashes": "2.0.1",
         "@scure/base": "2.0.0"
     },
+    "peerDependencies": {
+        "@arkade-os/boltz-swap": "workspace:*"
+    },
+    "peerDependenciesMeta": {
+        "@arkade-os/boltz-swap": {
+            "optional": true
+        }
+    },
     "devDependencies": {
+        "@arkade-os/boltz-swap": "workspace:*",
         "fake-indexeddb": "6.2.5"
     },
     "publishConfig": {
