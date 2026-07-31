@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import { hex } from "@scure/base";
 import { DescriptorIdentity, MnemonicIdentity, SeedIdentity, SingleKey } from "@arkade-os/sdk";
 import { expand, networks } from "@bitcoinerlab/descriptors-scure";
-import { buildPreimageMessage, derivePreimage } from "../src/utils/preimage";
+import {
+    buildPreimageMessage,
+    derivePreimage,
+    derivePreimageForMessageIndex,
+} from "../src/utils/preimage";
 import vectors from "./fixtures/preimage_vectors.json";
 
 /**
@@ -67,6 +71,13 @@ describe("swap preimage derivation", () => {
             expect(at1).not.toEqual(at0);
         });
 
+        it("uses the index-0 message for live swaps", async () => {
+            const descriptorIdentity = descriptorIdentityAt(identity, 0);
+
+            await expect(derivePreimage(descriptorIdentity)).resolves.toEqual(
+                await derivePreimageForMessageIndex(descriptorIdentity, 0),
+            );
+        });
         it("throws rather than falling back for an identity that cannot sign deterministically", async () => {
             await expect(derivePreimage(SingleKey.fromHex("11".repeat(32)))).rejects.toThrow(
                 /deterministic/,
@@ -92,7 +103,7 @@ describe("swap preimage derivation", () => {
                             await descriptorIdentity.xOnlyPublicKey(),
                             entry.derivationIndex,
                         );
-                        const preimage = await derivePreimage(
+                        const preimage = await derivePreimageForMessageIndex(
                             descriptorIdentity,
                             entry.derivationIndex,
                         );

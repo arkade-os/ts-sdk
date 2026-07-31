@@ -47,20 +47,37 @@ export function buildPreimageMessage(xonly: Uint8Array, index: number): Uint8Arr
 }
 
 /**
- * Derive a swap preimage from `identity`'s own key:
+ * Derive a swap preimage from the key owned by `identity`:
  * `sha256(BIP340_sign(sha256(message), aux_rand = 0))`.
  *
- * Same identity and index always yield the same preimage, so a wallet
- * restored from seed can re-derive the secret a rediscovered swap needs. The
- * signing key and the key in the message are necessarily the same one —
- * passing a key in separately would let create-time and restore-time diverge.
+ * Same identity always yields the same preimage, so a wallet restored from seed
+ * can re-derive the secret a rediscovered swap needs. The signing key and the
+ * key in the message are necessarily the same one; passing a key in separately
+ * would let create-time and restore-time diverge.
  *
- * `index` exists for the message format (and the cross-SDK vectors); callers
- * pass 0. Never falls back to randomness: that policy belongs to the caller.
+ * Live swaps intentionally fix the message index to 0. If a future live scheme
+ * needs another derivation dimension, bump the preimage tag and persist enough
+ * metadata to restore it instead of selecting another index here. Never falls
+ * back to randomness: that policy belongs to the caller.
  *
  * @throws if `identity` cannot sign deterministically.
  */
-export async function derivePreimage(identity: Identity, index = 0): Promise<Uint8Array> {
+export async function derivePreimage(identity: Identity): Promise<Uint8Array> {
+    return derivePreimageForMessageIndex(identity, 0);
+}
+
+/**
+ * Derive a preimage for a specific message index.
+ *
+ * @param index Message-format index. Must be 0 for live swaps; non-zero values
+ * are cross-SDK vector coverage only.
+ * @internal Live swap callers must use {@link derivePreimage}, which fixes the
+ * index to 0.
+ */
+export async function derivePreimageForMessageIndex(
+    identity: Identity,
+    index: number,
+): Promise<Uint8Array> {
     if (!isDeterministicSigner(identity)) {
         throw new Error("Identity cannot derive a deterministic preimage");
     }
