@@ -195,6 +195,12 @@ export function decodeOffer(data: Uint8Array): Offer {
         if (off + length > data.length)
             throw new Error(`truncated TLV value for type 0x${type.toString(16)}`);
         const name = NAMES[type];
+        // strict by design: this payload binds a covenant, so a record we
+        // cannot interpret must not be silently dropped — an offer whose terms
+        // are partly unintelligible should fail loudly, not display or cancel
+        // as if understood. Making unassigned tags ignorable is a change to the
+        // offer spec (e.g. adopting an odd/even "ok to be odd" rule), not a
+        // decision for one client.
         if (!name) throw new Error(`unknown TLV type: 0x${type.toString(16)}`);
         // last-wins would let the same bytes decode to different offers in
         // another implementation that takes the first record
