@@ -218,6 +218,51 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
+    it("getVtxosFromRepo excludes recovery-only contracts, but includes them for history", async () => {
+        const repo = new InMemoryWalletRepository();
+
+        const SCRIPT_NORMAL = "5120" + "11".repeat(32);
+        const SCRIPT_RECOVERY = "5120" + "22".repeat(32);
+        const vtxo = (txid: string, script: string, state: string) =>
+            ({
+                txid: txid.repeat(64),
+                vout: 0,
+                value: 1000,
+                script,
+                status: { confirmed: true },
+                virtualStatus: { state },
+                isSpent: false,
+                createdAt: new Date(),
+            }) as any;
+
+        await repo.saveVtxos("addr-normal", [vtxo("n", SCRIPT_NORMAL, "settled")]);
+        await repo.saveVtxos("addr-recovery", [vtxo("r", SCRIPT_RECOVERY, "swept")]);
+
+        const normal = { type: "default", script: SCRIPT_NORMAL, address: "addr-normal" };
+        const recovery = {
+            type: "default",
+            script: SCRIPT_RECOVERY,
+            address: "addr-recovery",
+            metadata: { recoveryOnly: true, signingDescriptor: "tr(00)" },
+        };
+
+        (updater as any).walletRepository = repo;
+        (updater as any).readonlyWallet = {
+            getContractManager: async () => ({ getContracts: async () => [normal, recovery] }),
+            getAddress: async () => TEST_DEFAULT_ARK_ADDRESS,
+        };
+
+        // Default (balance / VTXOS / coin selection): recovery-only excluded.
+        const excluded = await (updater as any).getVtxosFromRepo();
+        expect(excluded.map((v: any) => v.script)).toEqual([SCRIPT_NORMAL]);
+
+        // History opt-in: recovery-only included (parity with non-worker).
+        const included = await (updater as any).getVtxosFromRepo({ includeRecoveryOnly: true });
+        expect(included.map((v: any) => v.script).sort()).toEqual(
+            [SCRIPT_NORMAL, SCRIPT_RECOVERY].sort(),
+        );
+    });
+
     it("handles GET_BOARDING_UTXOS messages", async () => {
         (updater as any).readonlyWallet = {};
         const utxos = [{ txid: "tx", vout: 0, value: 1, status: { confirmed: true } }];
