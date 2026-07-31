@@ -89,6 +89,18 @@ describe("cse-v2 envelope", () => {
         );
     });
 
+    it("rejects a key-wrapping key that is not 32 bytes, on open as well as seal", () => {
+        const env = seal(enc("x"), kwk(), "swap:abc");
+        // AES-GCM accepts 16- and 24-byte keys, so without an explicit guard open()
+        // would decrypt envelopes wrapped under AES-128/192 — weaker than this scheme
+        // permits, and something seal() refuses to produce.
+        for (const len of [16, 24]) {
+            const short = new Uint8Array(len);
+            expect(() => seal(enc("x"), short, "swap:abc")).toThrow();
+            expect(() => open(env, short, "swap:abc")).toThrow();
+        }
+    });
+
     it("binds the envelope to its bucket key", () => {
         const k = kwk();
         const env = seal(enc("owned by swap:abc"), k, "swap:abc");

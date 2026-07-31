@@ -168,6 +168,11 @@ export function seal(
  *            to {@link seal}; a mismatch fails the GCM tag, which is the point.
  */
 export function open(envelopeBytes: Uint8Array, kwk: Uint8Array, key: string): Uint8Array {
+    // Same 32-byte contract as seal(). AES-GCM also accepts 16- and 24-byte keys, so
+    // without this, open() would decrypt envelopes wrapped under AES-128/192 — a weaker
+    // format than this scheme allows, and one seal() will not even produce.
+    if (kwk.length !== KWK_LEN) throw new Error(`key-wrapping key must be ${KWK_LEN} bytes`);
+
     let envelope: Envelope;
     try {
         envelope = JSON.parse(new TextDecoder().decode(envelopeBytes)) as Envelope;

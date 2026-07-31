@@ -5,10 +5,17 @@ state — contracts (VHTLCs, Boltz-swap contracts, the default receive contract)
 wallet settings, and any other keyed data — over the
 [bucket-sync protocol](https://github.com/Kukks/bucket-sync-server).
 
-The sync server only ever stores **opaque ciphertext**. It never sees your
-contract parameters, scripts, or settings: values are sealed client-side with
-`cse-v2` (AES-256-GCM envelope encryption) before they leave the device, and the
-key that decrypts them is derived from your seed and **never** sent to the server.
+**Values** are sealed client-side with `cse-v2` (AES-256-GCM envelope encryption)
+before they leave the device, and the key that decrypts them is derived from your
+seed and **never** sent to the server. So the server never sees contract
+parameters, swap preimages, or settings values.
+
+**Record keys are not encrypted.** The server needs them in the clear to do
+per-key CAS, and they are structural: `contract:{script}` puts the script itself
+in the key, and `swap:{id}` the Boltz swap id. A server therefore learns your
+scripts, your swap ids, and how many records you hold and when they change — it
+just cannot read what is inside them. If that metadata matters to your threat
+model, the key scheme is what you would have to change, not the envelope.
 
 ## Why
 
@@ -109,11 +116,12 @@ record is untidy, a missing preimage loses money.
   encrypts the value; that key is wrapped to you under a 32-byte key-wrapping key
   (KWK). The server stores the whole opaque envelope and reads only the scheme tag.
 - **Each envelope is bound to its bucket key.** The data tag covers
-  `bucket-sync:cse-v2:{key}` as GCM associated data, so a server cannot serve one
-  key's ciphertext in answer to a read of another — `open` fails. (`cse-v1` did not
-  bind, and is gone; the schemes are not interchangeable.) Rollback is still
-  *unauthenticated*: versions are server-assigned, so a server can serve an older
-  but genuine envelope for the right key.
+  `bucket-sync:cse-v2:{key}` as GCM associated data. A server can still *return* one
+  key's ciphertext for a read of another — nothing stops it — but `open` authenticates
+  against the key you asked for, so the client rejects it. The guarantee is client-side
+  detection, not server-side prevention. (`cse-v1` did not bind, and is gone; the
+  schemes are not interchangeable.) Rollback is still *unauthenticated*: versions are
+  server-assigned, so a server can serve an older but genuine envelope for the right key.
 - **The KWK is distinct from the signing key.** `deriveKwk(seed)` is HKDF-SHA256
   with a domain-separated label — still `bucket-sync:cse-v1:kwk`, deliberately: that
   labels a *key-derivation domain*, not the envelope format, and bumping it would
