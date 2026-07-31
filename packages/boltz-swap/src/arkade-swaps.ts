@@ -3502,15 +3502,18 @@ export class ArkadeSwaps {
         // side calls below single-shot across rounds.
         const seenSwapIds = new Set<string>();
         const queriedKeys = new Set<string>();
-        let cappedKeys = 0;
+        const cappedKeys = new Set<string>();
 
         for (;;) {
             const candidates = await this.swapOwnerKeys({ lookAhead: RESTORE_LOOK_AHEAD });
-            const unqueried = candidates.filter((c) => !queriedKeys.has(c.publicKey));
-            const fresh = unqueried.filter(
-                (c) => signingDescriptorIndex(c.signingDescriptor) <= MAX_RESTORE_INDEX,
-            );
-            cappedKeys += unqueried.length - fresh.length;
+            const fresh = candidates.filter((c) => {
+                if (queriedKeys.has(c.publicKey)) return false;
+                if (signingDescriptorIndex(c.signingDescriptor) > MAX_RESTORE_INDEX) {
+                    cappedKeys.add(c.publicKey);
+                    return false;
+                }
+                return true;
+            });
             if (fresh.length === 0) break;
             for (const c of fresh) queriedKeys.add(c.publicKey);
 
@@ -3735,9 +3738,9 @@ export class ArkadeSwaps {
             }
         }
 
-        if (cappedKeys > 0) {
+        if (cappedKeys.size > 0) {
             logger.warn(
-                `Restore stopped at HD index ${MAX_RESTORE_INDEX}: ${cappedKeys} higher key(s) were not queried`,
+                `Restore stopped at HD index ${MAX_RESTORE_INDEX}: ${cappedKeys.size} higher key(s) were not queried`,
             );
         }
 
