@@ -68,9 +68,12 @@ function subtractAssets(spent: VirtualCoin[], change: VirtualCoin[]): Asset[] | 
  * spending tx left no change output in the wallet. Exactly the loop's fetch set.
  */
 function collectArkTxidsNeedingCreatedAt(vtxos: NormalizedVirtualCoin[]): string[] {
+    // Set, not a scan per vtxo: this runs over the whole history, and the wallets
+    // that need the batching are the ones large enough for O(n²) to hurt.
+    const ownTxids = new Set(vtxos.map((v) => v.txid));
     const txids = new Set<string>();
     for (const vtxo of vtxos) {
-        if (vtxo.isSpent && vtxo.arkTxId && !vtxos.some((v) => v.txid === vtxo.arkTxId)) {
+        if (vtxo.isSpent && vtxo.arkTxId && !ownTxids.has(vtxo.arkTxId)) {
             txids.add(vtxo.arkTxId);
         }
     }

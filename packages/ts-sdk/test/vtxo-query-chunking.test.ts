@@ -4,6 +4,7 @@ import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
     type IndexerProvider,
+    TxType,
     type VirtualCoin,
 } from "../src";
 import type { Contract } from "../src/contracts";
@@ -298,5 +299,94 @@ describe("Wallet script queries stay under the URL cap", () => {
 
         expect(handle.indexer.getVtxosCalls.length).toBeGreaterThan(0);
         expect(widest(handle.indexer.getVtxosCalls)).toBeLessThanOrEqual(CAP);
+    });
+});
+
+/**
+ * The wiring, end to end: history used to issue one indexer request per spent
+ * VTXO, sequentially, repeating for every VTXO sharing an `arkTxId`. The unit
+ * tests above pin the resolver; these pin that `Wallet` actually reaches it.
+ */
+describe("Wallet.getTransactionHistory batches createdAt lookups", () => {
+    beforeEach(installRestoreHarness);
+    afterEach(() => {
+        teardownRestoreHarness();
+        vi.restoreAllMocks();
+    });
+
+    const arkTxIdAt = (i: number) => "f" + (i + 1).toString(16).padStart(63, "0");
+
+    /**
+     * A wallet holding one spent VTXO per contract, each spent by a distinct
+     * `arkTxId` unless `sharedArkTxId` — the send-everything shape, whose
+     * `createdAt` lives only at the indexer. Returns the outpoint-shaped queries
+     * `getTransactionHistory` makes.
+     */
+    const walletWithSpentVtxos = async (count: number, sharedArkTxId?: string) => {
+        const handle = await makeStaticWalletForTest();
+        const spent = new Map(
+            Array.from({ length: count }, (_, i) => {
+                const script = scriptAt(i);
+                return [
+                    script,
+                    {
+                        ...vtxoFor(script, i),
+                        isSpent: true,
+                        arkTxId: sharedArkTxId ?? arkTxIdAt(i),
+                    },
+                ] as const;
+            }),
+        );
+        for (const script of spent.keys()) {
+            await handle.contractRepository.saveContract(
+                contractAt(Number.parseInt(script.slice(4), 16)),
+            );
+        }
+
+        const outpointCalls: { txid: string; vout: number }[][] = [];
+        handle.indexer.getVtxos = (async (opts?: {
+            scripts?: string[];
+            outpoints?: { txid: string; vout: number }[];
+        }) => {
+            if (opts?.outpoints) {
+                outpointCalls.push(opts.outpoints);
+                return {
+                    vtxos: opts.outpoints.map((o) => ({
+                        ...vtxoFor(scriptAt(0), 0),
+                        txid: o.txid,
+                        createdAt: new Date(1_700_000_000_000),
+                    })),
+                };
+            }
+            return { vtxos: (opts?.scripts ?? []).map((s) => spent.get(s)).filter(Boolean) };
+        }) as IndexerProvider["getVtxos"];
+
+        return { wallet: handle.wallet, outpointCalls };
+    };
+
+    it("issues one request per chunk of txids, not one per spent vtxo", async () => {
+        const count = OUTPOINT_QUERY_CHUNK_SIZE + 5;
+        const { wallet, outpointCalls } = await walletWithSpentVtxos(count);
+
+        const history = await wallet.getTransactionHistory();
+
+        // Pre-batching: `count` sequential single-outpoint requests.
+        expect(outpointCalls.map((c) => c.length)).toEqual([OUTPOINT_QUERY_CHUNK_SIZE, 5]);
+        // Every fetched timestamp lands, so no send falls back to createdAt + 1.
+        const sent = history.filter((tx) => tx.type === TxType.TxSent);
+        expect(sent).toHaveLength(count);
+        for (const tx of sent) {
+            expect(tx.createdAt).toBe(1_700_000_000_000);
+        }
+    });
+
+    it("does not re-request a txid shared by several vtxos", async () => {
+        const shared = arkTxIdAt(0);
+        const { wallet, outpointCalls } = await walletWithSpentVtxos(5, shared);
+
+        await wallet.getTransactionHistory();
+
+        expect(outpointCalls).toHaveLength(1);
+        expect(outpointCalls[0]).toEqual([{ txid: shared, vout: 0 }]);
     });
 });
