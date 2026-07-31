@@ -1,11 +1,12 @@
 export {
-    CSE_V1_SCHEME,
+    CSE_V2_SCHEME,
+    cseAad,
     deriveKwk,
     seal,
     open,
     type RandomBytes,
     type SealOptions,
-} from "./crypto/cseV1";
+} from "./crypto/cseV2";
 
 export {
     BucketSyncClient,

@@ -145,7 +145,7 @@ describe("BucketSyncClient — bucket verbs", () => {
                 ),
         });
         const r = await client.commit([
-            { key: "k", expectedVersion: 2, scheme: "cse-v1", value: "", delete: false },
+            { key: "k", expectedVersion: 2, scheme: "cse-v2", value: "", delete: false },
         ]);
         expect(r.committed).toBe(false);
         expect(r.conflicts[0]).toEqual({ key: "k", currentVersion: 3 });
@@ -157,7 +157,7 @@ describe("BucketSyncClient — bucket verbs", () => {
         });
         await expect(
             client.commit([
-                { key: "k", expectedVersion: 0, scheme: "cse-v1", value: "", delete: false },
+                { key: "k", expectedVersion: 0, scheme: "cse-v2", value: "", delete: false },
             ]),
         ).rejects.toBeInstanceOf(BucketSyncHttpError);
     });
@@ -172,7 +172,7 @@ describe("BucketSyncClient — bucket verbs", () => {
                             version: 1,
                             seq: 1,
                             contentHash: "h",
-                            scheme: "cse-v1",
+                            scheme: "cse-v2",
                             deleted: false,
                             value: "dmFs",
                             updatedAt: "2026-01-01T00:00:00Z",

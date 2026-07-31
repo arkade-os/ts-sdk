@@ -7,7 +7,7 @@ wallet settings, and any other keyed data — over the
 
 The sync server only ever stores **opaque ciphertext**. It never sees your
 contract parameters, scripts, or settings: values are sealed client-side with
-`cse-v1` (AES-256-GCM envelope encryption) before they leave the device, and the
+`cse-v2` (AES-256-GCM envelope encryption) before they leave the device, and the
 key that decrypts them is derived from your seed and **never** sent to the server.
 
 ## Why
@@ -105,11 +105,19 @@ record is untidy, a missing preimage loses money.
 
 ## Security model
 
-- **Values are sealed with `cse-v1`** — a random per-record data key (AES-256-GCM)
+- **Values are sealed with `cse-v2`** — a random per-record data key (AES-256-GCM)
   encrypts the value; that key is wrapped to you under a 32-byte key-wrapping key
   (KWK). The server stores the whole opaque envelope and reads only the scheme tag.
+- **Each envelope is bound to its bucket key.** The data tag covers
+  `bucket-sync:cse-v2:{key}` as GCM associated data, so a server cannot serve one
+  key's ciphertext in answer to a read of another — `open` fails. (`cse-v1` did not
+  bind, and is gone; the schemes are not interchangeable.) Rollback is still
+  *unauthenticated*: versions are server-assigned, so a server can serve an older
+  but genuine envelope for the right key.
 - **The KWK is distinct from the signing key.** `deriveKwk(seed)` is HKDF-SHA256
-  with a domain-separated label (`bucket-sync:cse-v1:kwk`). Auth uses your BIP-340
+  with a domain-separated label — still `bucket-sync:cse-v1:kwk`, deliberately: that
+  labels a *key-derivation domain*, not the envelope format, and bumping it would
+  rotate every wallet's encryption key for no security gain. Auth uses your BIP-340
   Schnorr identity; encryption uses the KWK. Reusing one key for both is the
   antipattern this avoids.
 - **Auth is your existing identity.** The client proves ownership by signing a

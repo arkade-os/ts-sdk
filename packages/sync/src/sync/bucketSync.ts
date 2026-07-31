@@ -1,5 +1,5 @@
 import { base64 } from "@scure/base";
-import { CSE_V1_SCHEME, seal, open } from "../crypto/cseV1";
+import { CSE_V2_SCHEME, seal, open } from "../crypto/cseV2";
 import type {
     CommitResponse,
     DiffResponse,
@@ -52,7 +52,7 @@ export interface BucketSyncOptions {
 
 /**
  * The end-to-end-encrypted key-value sync core. Entity-agnostic: callers hand it
- * namespaced keys and plaintext bytes; it seals each value with `cse-v1`, drives
+ * namespaced keys and plaintext bytes; it seals each value with `cse-v2`, drives
  * per-key optimistic CAS against the server, and tracks the per-key version map
  * and the per-bucket seq cursor so pushes and pulls stay consistent.
  *
@@ -146,7 +146,10 @@ export class BucketSync {
         for (;;) {
             const page = await this.api.diff(this.cursor, this.pageLimit);
             for (const e of page.entries) {
-                await apply(e.key, e.deleted ? null : open(base64.decode(e.value), this.kwk));
+                await apply(
+                    e.key,
+                    e.deleted ? null : open(base64.decode(e.value), this.kwk, e.key),
+                );
                 this.versions.set(e.key, e.version);
                 applied++;
             }
@@ -168,15 +171,17 @@ export class BucketSync {
                 ? {
                       key,
                       expectedVersion: this.knownVersion(key),
-                      scheme: CSE_V1_SCHEME,
+                      scheme: CSE_V2_SCHEME,
                       value: "",
                       delete: true,
                   }
                 : {
                       key,
                       expectedVersion: this.knownVersion(key),
-                      scheme: CSE_V1_SCHEME,
-                      value: base64.encode(seal(pt, this.kwk)),
+                      scheme: CSE_V2_SCHEME,
+                      // The key is bound into the envelope's tag, so a record the server
+                      // relocates to another key will not open. See docs/cse-v2.md.
+                      value: base64.encode(seal(pt, this.kwk, key)),
                       delete: false,
                   },
         );
@@ -191,7 +196,7 @@ export class BucketSync {
         const out = new Map<string, Uint8Array | null>();
         const entries = await this.api.get(keys);
         for (const e of entries) {
-            out.set(e.key, e.deleted ? null : open(base64.decode(e.value), this.kwk));
+            out.set(e.key, e.deleted ? null : open(base64.decode(e.value), this.kwk, e.key));
             this.versions.set(e.key, e.version);
         }
         return out;
