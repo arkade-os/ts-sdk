@@ -1,6 +1,7 @@
-/** Minimal synchronous key-value storage the package persists into. Any
- * backend works: browser web storage, an in-memory Map, MMKV, … the caller
- * owns the instance and its lifetime.
+/** Minimal synchronous key-value cache the markets layer persists into. Only
+ * refetchable cache data lives here (durable swap records go through
+ * AssetSwapRepository); any backend works: web storage, an in-memory Map,
+ * MMKV, … the caller owns the instance and its lifetime.
  * ponytail: no remove(); nothing here deletes keys — add it when a consumer
  * needs deletion. */
 export interface SwapStorage {
@@ -30,6 +31,6 @@ export const setStorageItemSafely = (storage: SwapStorage, key: string, value: s
     try {
         storage.set(key, value);
     } catch {
-        // best effort: the data stays recoverable from chain (see restore.ts)
+        // best effort: a lost cache write just means a refetch
     }
 };

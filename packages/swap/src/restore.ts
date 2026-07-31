@@ -15,11 +15,7 @@
 import { base64, hex } from "@scure/base";
 import { Extension, RestIndexerProvider, Transaction } from "@arkade-os/sdk";
 import { decodeOffer, Offer, OFFER_PACKET_TYPE } from "./offer";
-import { getStorageItem, setStorageItemSafely, type SwapStorage } from "./storage";
 import type { AssetSwap, AssetSwapStatus } from "./store";
-
-/** Storage key: sent txids already checked for offer packets. */
-export const SWAP_RESTORE_SCAN_KEY = "assetSwapsScanned";
 
 // ponytail: fixed request size; tune only if histories outgrow it
 const TXS_PER_REQUEST = 50;
@@ -37,19 +33,6 @@ export interface Tx {
 }
 
 type RestoreIndexer = Pick<RestIndexerProvider, "getVirtualTxs" | "getVtxos">;
-
-export const getScannedTxids = (storage: SwapStorage): Set<string> =>
-    getStorageItem(storage, SWAP_RESTORE_SCAN_KEY, new Set<string>(), (val) => {
-        const parsed = JSON.parse(val);
-        return new Set(Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string") : []);
-    });
-
-export const markTxidsScanned = (storage: SwapStorage, txids: Iterable<string>): void => {
-    const merged = getScannedTxids(storage);
-    for (const txid of txids) merged.add(txid);
-    // persistence is an optimization; an unsaved set only means a re-scan
-    setStorageItemSafely(storage, SWAP_RESTORE_SCAN_KEY, JSON.stringify([...merged]));
-};
 
 /** The candidate txs a scan would fetch: sent virtual txs with no stored swap
  * record and no previous authoritative answer. */

@@ -25,13 +25,7 @@ export {
     type AssetSwap,
     type AssetSwapStatus,
 } from "./store";
-export {
-    restoreAssetSwaps,
-    unscannedSwapCandidates,
-    getScannedTxids,
-    markTxidsScanned,
-    isCancelSpend,
-    SWAP_RESTORE_SCAN_KEY,
-    type Tx,
-} from "./restore";
+export { type AssetSwapRepository, InMemoryAssetSwapRepository } from "./repository";
+export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";
+export { restoreAssetSwaps, unscannedSwapCandidates, isCancelSpend, type Tx } from "./restore";
 export { type SwapStorage } from "./storage";

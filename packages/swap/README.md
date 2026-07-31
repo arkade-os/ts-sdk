@@ -16,15 +16,21 @@ APIs; usable from Node, the browser, or React Native.
    registry fetch with stale-cache fallback), `findMarket`, `validatePlan` (balance, both-side
    limits, BTC-leg dust), `QUOTE_OPTIONS`, and `makeCachedFeedFetch` for rate-limited price feeds.
 3. **`store`** — the persisted `AssetSwap` records (`getAssetSwaps`/`addAssetSwap`/
-   `updateAssetSwap`). Persistence failures never throw: by the time a swap is stored its funding
-   tx is broadcast, and everything stays recoverable from chain.
+   `updateAssetSwap`), thin helpers over an `AssetSwapRepository`. Persistence failures never
+   throw: by the time a swap is stored its funding tx is broadcast, and everything stays
+   recoverable from chain.
 4. **`restore`** — `restoreAssetSwaps` rebuilds lost records by scanning sent virtual txs for
    offer packets and binding each funding vtxo to its spend. Incremental: answered txids are
-   remembered (`getScannedTxids`/`markTxidsScanned`) so nothing is fetched twice.
+   remembered in the repository (`getScannedTxids`/`markTxidsScanned`) so nothing is fetched
+   twice.
 
-All persistence goes through the tiny injected `SwapStorage` interface
-(`{ get(key): string | null; set(key, value): void }`) — back it with `localStorage`, MMKV, or a
-`Map`.
+Durable state (swap records + scan cursor) lives in an `AssetSwapRepository`, following the
+Arkade repository convention (versioned interface, `AsyncDisposable`, one backend per platform).
+Two backends ship here: `InMemoryAssetSwapRepository` and `IndexedDbAssetSwapRepository` (built
+on the SDK's shared IndexedDB manager, like the Boltz plugin's repositories). The refetchable
+markets cache uses the tiny synchronous `SwapStorage` interface
+(`{ get(key): string | null; set(key, value): void }`) instead — back it with web storage, MMKV,
+or a `Map`.
 
 ## Creating an offer
 

@@ -1,4 +1,4 @@
-import { getStorageItem, setStorageItemSafely, type SwapStorage } from "./storage";
+import type { AssetSwapRepository } from "./repository";
 
 export type AssetSwapStatus = "pending" | "cancelling" | "fulfilled" | "cancelled" | "recoverable";
 
@@ -28,41 +28,51 @@ export interface AssetSwap {
     completedAt?: number;
 }
 
-const KEY = "assetSwaps";
-
-export const getAssetSwaps = (storage: SwapStorage): AssetSwap[] => {
-    return getStorageItem(storage, KEY, [], (val) => {
-        const parsed = JSON.parse(val);
-        if (!Array.isArray(parsed)) return [];
-        // insertion order is not chronological — the restore scan rebuilds records
-        // in tx-scan order — so sort at read to keep newest-first canonical for
-        // every consumer (including the activity merge)
-        return parsed
+/** All swaps, newest-first. Insertion order is not chronological — the restore
+ * scan rebuilds records in tx-scan order — so sort at read to keep
+ * newest-first canonical for every consumer. A broken backend reads as no
+ * swaps rather than crashing the caller. */
+export const getAssetSwaps = async (repository: AssetSwapRepository): Promise<AssetSwap[]> => {
+    try {
+        return (await repository.getAllSwaps())
             .filter((s) => s && typeof s.id === "string" && typeof s.offerHex === "string")
             .sort((a, b) => b.createdAt - a.createdAt);
-    });
+    } catch {
+        return [];
+    }
 };
 
 // persistence must never fail the caller: by the time a swap is stored the
 // funding tx is already broadcast, and the offer stays recoverable from it
-const saveAssetSwaps = (storage: SwapStorage, swaps: AssetSwap[]): void => {
-    setStorageItemSafely(storage, KEY, JSON.stringify(swaps));
+const saveSwapSafely = async (repository: AssetSwapRepository, swap: AssetSwap): Promise<void> => {
+    try {
+        await repository.saveSwap(swap);
+    } catch {
+        // best effort: the record stays recoverable from chain (see restore.ts)
+    }
 };
 
-/** Prepend a swap; no-op if the id is already stored. */
-export const addAssetSwap = (storage: SwapStorage, swap: AssetSwap): AssetSwap[] => {
-    const swaps = getAssetSwaps(storage);
-    if (!swaps.some((s) => s.id === swap.id)) swaps.unshift(swap);
-    saveAssetSwaps(storage, swaps);
-    return swaps;
+/** Add a swap; no-op if the id is already stored. Returns the updated list. */
+export const addAssetSwap = async (
+    repository: AssetSwapRepository,
+    swap: AssetSwap,
+): Promise<AssetSwap[]> => {
+    const swaps = await getAssetSwaps(repository);
+    if (swaps.some((s) => s.id === swap.id)) return swaps;
+    await saveSwapSafely(repository, swap);
+    return [swap, ...swaps].sort((a, b) => b.createdAt - a.createdAt);
 };
 
-export const updateAssetSwap = (
-    storage: SwapStorage,
+/** Merge changes into a swap by id. Returns the updated list. */
+export const updateAssetSwap = async (
+    repository: AssetSwapRepository,
     id: string,
     changes: Partial<AssetSwap>,
-): AssetSwap[] => {
-    const swaps = getAssetSwaps(storage).map((s) => (s.id === id ? { ...s, ...changes } : s));
-    saveAssetSwaps(storage, swaps);
+): Promise<AssetSwap[]> => {
+    const swaps = (await getAssetSwaps(repository)).map((s) =>
+        s.id === id ? { ...s, ...changes } : s,
+    );
+    const updated = swaps.find((s) => s.id === id);
+    if (updated) await saveSwapSafely(repository, updated);
     return swaps;
 };

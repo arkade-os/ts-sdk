@@ -98,6 +98,10 @@ importers:
       '@scure/base':
         specifier: 2.0.0
         version: 2.0.0
+    devDependencies:
+      fake-indexeddb:
+        specifier: 6.2.5
+        version: 6.2.5
 
   packages/ts-sdk:
     dependencies:
