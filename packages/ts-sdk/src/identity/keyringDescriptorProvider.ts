@@ -272,8 +272,15 @@ export class KeyringDescriptorProvider implements DescriptorProvider {
      * Re-seed the in-memory mirror from the repository, converging on
      * imports and purges made by sibling instances on the same repo.
      * Full replacement, not a merge, so sibling *deletions* propagate
-     * too — purged key material must not linger in this instance.
-     * Corrupt persisted settings throw, same as {@link create}.
+     * too. Corrupt persisted settings throw, same as {@link create}.
+     *
+     * Only a *miss* triggers a refresh, so that convergence is one-sided:
+     * an entry this instance still believes it holds is never
+     * revalidated, and a sibling's purge can linger in this mirror until
+     * some unrelated foreign-shaped miss re-seeds it. Harmless today —
+     * `deleteKey`'s caller also deletes the contract row carrying the
+     * descriptor, so no signing request can name the stale entry — but it
+     * means the at-rest purge is not a memory purge for siblings.
      */
     private async refresh(): Promise<void> {
         const state = await this.walletRepository.getWalletState();
@@ -315,6 +322,24 @@ export class KeyringDescriptorProvider implements DescriptorProvider {
             };
         });
     }
+}
+
+/**
+ * Reach the concrete provider behind any keyring decorators.
+ *
+ * Callers that branch on a provider's concrete class (`instanceof
+ * HDDescriptorProvider`) must go through this: the decorator forwards
+ * duck-typed capabilities but cannot forward its base's class, so a
+ * wrapped HD provider would otherwise be mis-classified as non-HD.
+ * Loops rather than unwrapping once — nothing stops a caller from
+ * handing `Wallet.create` an already-wrapped provider as `walletMode`.
+ *
+ * @internal
+ */
+export function unwrapKeyring(provider?: DescriptorProvider): DescriptorProvider | undefined {
+    let current = provider;
+    while (current instanceof KeyringDescriptorProvider) current = current.base;
+    return current;
 }
 
 /**

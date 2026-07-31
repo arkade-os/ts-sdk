@@ -135,7 +135,7 @@ import { validateVtxosForScript, saveVtxosForContract } from "../contracts/vtxoO
 import { WalletReceiveRotator, signingDescriptorIndex } from "./walletReceiveRotator";
 import { HDDescriptorProvider } from "./hdDescriptorProvider";
 import { DescriptorProvider } from "../identity/descriptorProvider";
-import { KeyringDescriptorProvider } from "../identity/keyringDescriptorProvider";
+import { KeyringDescriptorProvider, unwrapKeyring } from "../identity/keyringDescriptorProvider";
 import { StaticDescriptorProvider } from "../identity/staticDescriptorProvider";
 import { deriveDescriptorLeafPubKey } from "../identity/descriptor";
 import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
@@ -2176,7 +2176,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * old-signer rows stay watched through the repository).
      */
     protected override lookAheadConfig(): ContractManagerConfig["lookAhead"] {
-        const provider = this._descriptorProvider;
+        const provider = unwrapKeyring(this._descriptorProvider);
         if (!(provider instanceof HDDescriptorProvider)) return undefined;
         return {
             size: this._lookAheadWindow,
@@ -2628,12 +2628,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
     private async _runRestore(gapLimit: number): Promise<void> {
         const manager = await this.getContractManager();
-        // Unwrap decorators before the HD check: a KeyringDescriptorProvider
-        // wrapping an HD provider is still an HD wallet for scan purposes,
-        // and the keyring's foreign keys are outside the derivation tree the
-        // gap scan walks — they contribute no indices to it.
-        const outer = this._descriptorProvider;
-        const provider = outer instanceof KeyringDescriptorProvider ? outer.base : outer;
+        // The keyring's foreign keys are outside the derivation tree the gap
+        // scan walks, so they contribute no indices to it — a wrapped HD
+        // provider is still an HD wallet for scan purposes.
+        const provider = unwrapKeyring(this._descriptorProvider);
         // Use `instanceof` rather than duck-typing the
         // materializeDescriptorAt / advanceLastIndexUsed surface: a
         // non-HD provider that happens to expose either method name

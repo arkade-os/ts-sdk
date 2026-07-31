@@ -10,6 +10,10 @@ import type { IndexerProvider } from "../../src/providers/indexer";
 import type { OnchainProvider } from "../../src/providers/onchain";
 import type { VirtualCoin } from "../../src";
 import { HDDescriptorProvider } from "../../src/wallet/hdDescriptorProvider";
+import {
+    KeyringDescriptorProvider,
+    unwrapKeyring,
+} from "../../src/identity/keyringDescriptorProvider";
 
 /**
  * Test harness for the `Wallet.restore()` suite.
@@ -304,16 +308,28 @@ export async function makeHdWalletForTest(
     opts?: {
         /** Compressed hex; present ⇒ delegate wallet (stub delegate provider). */
         delegatePubKey?: string;
+        /**
+         * Hand `Wallet.create` a keyring-wrapped HD provider instead of
+         * `'hd'` — the public `walletMode: DescriptorProvider` shape a
+         * consumer holding imported keys would use.
+         */
+        wrapInKeyring?: boolean;
     },
 ): Promise<HdRestoreWalletHandle> {
     const indexer = makeMockIndexer(usedScripts);
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
+    const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+        isMainnet: false,
+    });
     const wallet = await Wallet.create({
-        identity: MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
-            isMainnet: false,
-        }),
-        walletMode: "hd",
+        identity,
+        walletMode: opts?.wrapInKeyring
+            ? await KeyringDescriptorProvider.create(
+                  await HDDescriptorProvider.create(identity, walletRepository),
+                  walletRepository,
+              )
+            : "hd",
         arkServerUrl: "http://localhost:7070",
         indexerProvider: indexer,
         onchainProvider: makeMockOnchain(fundedOnchain),
@@ -329,7 +345,9 @@ export async function makeHdWalletForTest(
             } as unknown as Parameters<typeof Wallet.create>[0]["delegateProvider"],
         }),
     });
-    const resolved = (wallet as unknown as { _descriptorProvider?: unknown })._descriptorProvider;
+    const resolved = unwrapKeyring(
+        (wallet as unknown as { _descriptorProvider?: HDDescriptorProvider })._descriptorProvider,
+    );
     if (
         !resolved ||
         typeof (resolved as Partial<HDDescriptorProvider>).materializeDescriptorAt !== "function" ||
