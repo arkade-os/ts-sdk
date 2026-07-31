@@ -183,7 +183,7 @@ import {
 } from "./walletReceiveRotator";
 import { HDDescriptorProvider } from "./hdDescriptorProvider";
 import { DescriptorProvider } from "../identity/descriptorProvider";
-import { KeyringDescriptorProvider } from "../identity/keyringDescriptorProvider";
+import { KeyringDescriptorProvider, unwrapKeyring } from "../identity/keyringDescriptorProvider";
 import {
     AddressAllocationCapable,
     HDWalletCapable,
@@ -2267,7 +2267,7 @@ export class Wallet
      * band rebuilt after {@link rotateServerSigner} fans the new signer set.
      */
     protected override lookAheadConfig(): ContractManagerConfig["lookAhead"] {
-        const provider = this._descriptorProvider;
+        const provider = unwrapKeyring(this._descriptorProvider);
         if (!(provider instanceof HDDescriptorProvider)) return undefined;
         return {
             size: this._lookAheadWindow,
@@ -2889,10 +2889,9 @@ export class Wallet
 
     private async _runRestore(gapLimit: number): Promise<void> {
         const manager = await this.getContractManager();
-        // Unwrap decorators before the HD check: a KeyringDescriptorProvider wrapping an HD
-        // provider is still HD for scan purposes; its foreign keys add no indices to the gap scan.
-        const outer = this._descriptorProvider;
-        const provider = outer instanceof KeyringDescriptorProvider ? outer.base : outer;
+        // Keyring foreign keys sit outside the derivation tree the gap scan walks; a wrapped HD
+        // provider is still HD for scan purposes.
+        const provider = unwrapKeyring(this._descriptorProvider);
         // `instanceof`, not duck-typing: a non-HD provider exposing a same-named method would be
         // mis-classified and TypeError mid-scan. Lift into a type guard if custom HD providers
         // are ever supported.
