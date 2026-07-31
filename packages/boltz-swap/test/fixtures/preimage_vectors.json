@@ -1,0 +1,205 @@
+{
+    "seed": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+    "vectors": {
+        "mainnet": {
+            "keyIndexed": {
+                "0": [
+                    {
+                        "derivationIndex": 0,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d7631cc8a4bc64d897bddc5fbc2f670f7a8ba0b386779106cf1223c6fc5d7cd6fc11500000000",
+                        "expectedPreimage": "c14fc895dc5c88e914921d3fa040e524cfc6f108d572585d0aa5647de16b5812"
+                    },
+                    {
+                        "derivationIndex": 1,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d7631cc8a4bc64d897bddc5fbc2f670f7a8ba0b386779106cf1223c6fc5d7cd6fc11501000000",
+                        "expectedPreimage": "00c75291aff2edd52d1c2692b5ed76c5fc014bc3c71b802778983692cbf518a6"
+                    },
+                    {
+                        "derivationIndex": 7,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d7631cc8a4bc64d897bddc5fbc2f670f7a8ba0b386779106cf1223c6fc5d7cd6fc11507000000",
+                        "expectedPreimage": "f42acccc0669eb4b17005832a9f04f988aca905e3d667a805d58f5ab6425b528"
+                    },
+                    {
+                        "derivationIndex": 42,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d7631cc8a4bc64d897bddc5fbc2f670f7a8ba0b386779106cf1223c6fc5d7cd6fc1152a000000",
+                        "expectedPreimage": "311dbd2eb9519c5ca9363b8a74c5815434c1268f49e88b575004a4c6e81679ad"
+                    },
+                    {
+                        "derivationIndex": 100,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d7631cc8a4bc64d897bddc5fbc2f670f7a8ba0b386779106cf1223c6fc5d7cd6fc11564000000",
+                        "expectedPreimage": "8a4b49724da28ba7249b52a41cb4cdc0815e89c852ebce886df7eee363897d31"
+                    },
+                    {
+                        "derivationIndex": 999,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d7631cc8a4bc64d897bddc5fbc2f670f7a8ba0b386779106cf1223c6fc5d7cd6fc115e7030000",
+                        "expectedPreimage": "2b8341e645bcc9b683dcbc73f8ae9a1176eb319549cb3ee38cb828add82896a2"
+                    }
+                ],
+                "1": [
+                    {
+                        "derivationIndex": 0,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d763183dfe85a3151d2517290da461fe2815591ef69f2b18a2ce63f01697a8b31314500000000",
+                        "expectedPreimage": "16591d1af0f9b378f16e7f90de5dacd2d32ab91f392f04f90767b28aa1dfc840"
+                    },
+                    {
+                        "derivationIndex": 1,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d763183dfe85a3151d2517290da461fe2815591ef69f2b18a2ce63f01697a8b31314501000000",
+                        "expectedPreimage": "487b6e9818bcf2f3a923ce7fd304cd103b44ff95cb26ef8e2105d06154327561"
+                    },
+                    {
+                        "derivationIndex": 7,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d763183dfe85a3151d2517290da461fe2815591ef69f2b18a2ce63f01697a8b31314507000000",
+                        "expectedPreimage": "b1fca45c669ce75ece08d141cc639c4f37534c10f12d18444f0845caa0b76493"
+                    },
+                    {
+                        "derivationIndex": 42,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d763183dfe85a3151d2517290da461fe2815591ef69f2b18a2ce63f01697a8b3131452a000000",
+                        "expectedPreimage": "673faf5e09f9f795c1fe28e98e32dc4eb01863c50d167a99d7cffd7312ff3289"
+                    },
+                    {
+                        "derivationIndex": 100,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d763183dfe85a3151d2517290da461fe2815591ef69f2b18a2ce63f01697a8b31314564000000",
+                        "expectedPreimage": "d76cd8b85d5fe0998b108589b9e73a7de1f945047cbe3e726dcedd404eb4984d"
+                    },
+                    {
+                        "derivationIndex": 999,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d763183dfe85a3151d2517290da461fe2815591ef69f2b18a2ce63f01697a8b313145e7030000",
+                        "expectedPreimage": "6e4a5b596cb0100db4e27a9af4aa16ae75a7a40e714ef642cf87ba26f417d3b5"
+                    }
+                ],
+                "2": [
+                    {
+                        "derivationIndex": 0,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d7631a730a23ce8b47248a5ddfb32eef75262d91f0b55b084dd1ff0d2f9e032e0e53300000000",
+                        "expectedPreimage": "1da8a08eda71d0f95ce3decb251932448a025b42666be92ad2fd623802696a45"
+                    },
+                    {
+                        "derivationIndex": 1,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d7631a730a23ce8b47248a5ddfb32eef75262d91f0b55b084dd1ff0d2f9e032e0e53301000000",
+                        "expectedPreimage": "23650f7be6150d94947710a1bb8a1f59f4428acbbfb047c3238bdc2a1fc9b36f"
+                    },
+                    {
+                        "derivationIndex": 7,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d7631a730a23ce8b47248a5ddfb32eef75262d91f0b55b084dd1ff0d2f9e032e0e53307000000",
+                        "expectedPreimage": "75c826b8b858e44df633647f74ab87f50798a97bd831cc5b48b43da88627bc4c"
+                    },
+                    {
+                        "derivationIndex": 42,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d7631a730a23ce8b47248a5ddfb32eef75262d91f0b55b084dd1ff0d2f9e032e0e5332a000000",
+                        "expectedPreimage": "858c3ef9924411b33605f7b31bacb8a37bf242852fd967916bff13ad59e0521f"
+                    },
+                    {
+                        "derivationIndex": 100,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d7631a730a23ce8b47248a5ddfb32eef75262d91f0b55b084dd1ff0d2f9e032e0e53364000000",
+                        "expectedPreimage": "6f53e9733263b65e56500ddabb7cf2d5e018e971397cec4d36abb88a1f3fdd82"
+                    },
+                    {
+                        "derivationIndex": 999,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d7631a730a23ce8b47248a5ddfb32eef75262d91f0b55b084dd1ff0d2f9e032e0e533e7030000",
+                        "expectedPreimage": "1106b669ec51196a763d99758ee4c20a7e1509f55e6b96e3cd12371687aef30e"
+                    }
+                ]
+            }
+        },
+        "regtest": {
+            "keyIndexed": {
+                "0": [
+                    {
+                        "derivationIndex": 0,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d763155355ca83c973f1d97ce0e3843c85d78905af16b4dc531bc488e57212d23011600000000",
+                        "expectedPreimage": "59aa31de540a5e112ed6067c2dbda885f05f108aeca46cfe90ffbad21f3b3cdf"
+                    },
+                    {
+                        "derivationIndex": 1,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d763155355ca83c973f1d97ce0e3843c85d78905af16b4dc531bc488e57212d23011601000000",
+                        "expectedPreimage": "c7c7ccac369aa529154f07a27c49d4e44a4f439c02bc41c5154d4e463f9a202e"
+                    },
+                    {
+                        "derivationIndex": 7,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d763155355ca83c973f1d97ce0e3843c85d78905af16b4dc531bc488e57212d23011607000000",
+                        "expectedPreimage": "61a2ee48eff7eba221b6b0dcddd4b81564de9f5cb858922a74891cb0da8faa55"
+                    },
+                    {
+                        "derivationIndex": 42,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d763155355ca83c973f1d97ce0e3843c85d78905af16b4dc531bc488e57212d2301162a000000",
+                        "expectedPreimage": "624818916ee2a8cd33beb4872c90acb730f2653b59556ce953f48772809a7870"
+                    },
+                    {
+                        "derivationIndex": 100,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d763155355ca83c973f1d97ce0e3843c85d78905af16b4dc531bc488e57212d23011664000000",
+                        "expectedPreimage": "03777072f60da751e66dd8e3751cd144f3f08287938a0bbcaa0046ff886d3853"
+                    },
+                    {
+                        "derivationIndex": 999,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d763155355ca83c973f1d97ce0e3843c85d78905af16b4dc531bc488e57212d230116e7030000",
+                        "expectedPreimage": "5744216916a4ba7ecfdc72ba6ccac1d9fbc0779ba31edf2e613ad2d9dd765766"
+                    }
+                ],
+                "1": [
+                    {
+                        "derivationIndex": 0,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d76313058679f6d60b87ef921d98a2a9a1f1e0779dae27bedbd1cdb2f147a07835ac900000000",
+                        "expectedPreimage": "418eca194076bc70a423bd1ad129d409e772cb330cae0673e6fb4bf61c7a8c32"
+                    },
+                    {
+                        "derivationIndex": 1,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d76313058679f6d60b87ef921d98a2a9a1f1e0779dae27bedbd1cdb2f147a07835ac901000000",
+                        "expectedPreimage": "0244a05bda4716f5fb789b69e65f4b525e27180fa37e7732bddbe1c3529fe9b8"
+                    },
+                    {
+                        "derivationIndex": 7,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d76313058679f6d60b87ef921d98a2a9a1f1e0779dae27bedbd1cdb2f147a07835ac907000000",
+                        "expectedPreimage": "cfc98230be7cbba3792617b5d127f76b6aaf3c9e758d6dbd300a4d9af977d184"
+                    },
+                    {
+                        "derivationIndex": 42,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d76313058679f6d60b87ef921d98a2a9a1f1e0779dae27bedbd1cdb2f147a07835ac92a000000",
+                        "expectedPreimage": "8d0ac2c2052434f7abe1a9cb270a92b307b25577cf174ac0fbef059624b24c7a"
+                    },
+                    {
+                        "derivationIndex": 100,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d76313058679f6d60b87ef921d98a2a9a1f1e0779dae27bedbd1cdb2f147a07835ac964000000",
+                        "expectedPreimage": "2cd3c5a6b5a7b9e34c238893393c4b7a3e1796fadd846d339a30369c562da076"
+                    },
+                    {
+                        "derivationIndex": 999,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d76313058679f6d60b87ef921d98a2a9a1f1e0779dae27bedbd1cdb2f147a07835ac9e7030000",
+                        "expectedPreimage": "b5e66dd8fd2830c6c903a22be276f95c8096c60bd17b10274c31b36da21718c2"
+                    }
+                ],
+                "2": [
+                    {
+                        "derivationIndex": 0,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d7631b68df382cad577d8304d5a8e640c3cb42d77c10016ab754caa4d6e68b6cb296d00000000",
+                        "expectedPreimage": "b60fe5b91198f10ad037a3cf66c86e7c6f6e051cbe7c11fc3a537402ece7dfa4"
+                    },
+                    {
+                        "derivationIndex": 1,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d7631b68df382cad577d8304d5a8e640c3cb42d77c10016ab754caa4d6e68b6cb296d01000000",
+                        "expectedPreimage": "48e843aae11c713ce1825f014588a60f056f9054faeb0691512a958e50a7919e"
+                    },
+                    {
+                        "derivationIndex": 7,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d7631b68df382cad577d8304d5a8e640c3cb42d77c10016ab754caa4d6e68b6cb296d07000000",
+                        "expectedPreimage": "2d00446bc04cabbaf18d36b2bb0bc63a13826484d46c3b6a8668eb27f41e84c8"
+                    },
+                    {
+                        "derivationIndex": 42,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d7631b68df382cad577d8304d5a8e640c3cb42d77c10016ab754caa4d6e68b6cb296d2a000000",
+                        "expectedPreimage": "3fe3cb1ed35d0c462e25ac779b1bf9bdce4bbd15ecbd4095c025cc52ca230a41"
+                    },
+                    {
+                        "derivationIndex": 100,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d7631b68df382cad577d8304d5a8e640c3cb42d77c10016ab754caa4d6e68b6cb296d64000000",
+                        "expectedPreimage": "6694f07c6d55d73b67aedbd24f5da61d03acd595eae577d13a1d2bf7bc9972a0"
+                    },
+                    {
+                        "derivationIndex": 999,
+                        "expectedPreimageMessage": "41726b6164652d426f6c747a2d507265696d6167652d7631b68df382cad577d8304d5a8e640c3cb42d77c10016ab754caa4d6e68b6cb296de7030000",
+                        "expectedPreimage": "5db561e82482824d09ebb504f11ecd467c83ea8225a32f77f1013e1adba03591"
+                    }
+                ]
+            }
+        }
+    }
+}

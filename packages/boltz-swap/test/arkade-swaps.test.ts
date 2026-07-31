@@ -28,8 +28,10 @@ import {
     getNetwork,
     maybeArkError,
     MnemonicIdentity,
+    DescriptorIdentity,
     deriveDescriptorLeafCompressedPubKey,
 } from "@arkade-os/sdk";
+import { derivePreimage } from "../src/utils/preimage";
 import { VHTLC } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
 import { randomBytes } from "@noble/hashes/utils.js";
@@ -113,6 +115,56 @@ const reverseSwapResponseFor =
         decodeInvoiceOverride.paymentHash = req.preimageHash;
         return response;
     };
+
+const HD_MNEMONIC =
+    "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+
+/**
+ * Turn the mock wallet into an HD wallet with a live allocation watermark, so
+ * allocation, the restore look-ahead band and the watermark advance behave as
+ * they do on a real `Wallet` instead of returning canned values.
+ */
+function installHdWallet(wallet: any) {
+    const identity = MnemonicIdentity.fromMnemonic(HD_MNEMONIC, { isMainnet: false });
+    const descriptorAt = (index: number) => identity.descriptor.replace("/*)", `/${index})`);
+    const keyAt = (index: number) =>
+        hex.encode(deriveDescriptorLeafCompressedPubKey(descriptorAt(index)));
+    let watermark = -1;
+
+    wallet.identity = identity;
+    wallet.getNextSigningDescriptor = vi.fn(async () => descriptorAt(++watermark));
+    wallet.getCurrentSigningDescriptor = vi.fn(async () =>
+        watermark < 0 ? undefined : descriptorAt(watermark),
+    );
+    wallet.getUsedSigningDescriptors = vi.fn(async (opts?: { lookAhead?: number }) =>
+        Array.from({ length: watermark + 1 + (opts?.lookAhead ?? 0) }, (_, i) => descriptorAt(i)),
+    );
+    wallet.advanceSigningDescriptorWatermark = vi.fn(async (descriptor: string) => {
+        const index = Number(descriptor.match(/\/(\d+)\)$/)![1]);
+        if (index > watermark) watermark = index;
+    });
+    wallet.signerForDescriptor = vi.fn(
+        async (descriptor: string) =>
+            new DescriptorIdentity({ descriptor, signer: identity, base: identity }),
+    );
+
+    return {
+        descriptorAt,
+        keyAt,
+        preimageAt: (index: number) =>
+            derivePreimage(
+                new DescriptorIdentity({
+                    descriptor: descriptorAt(index),
+                    signer: identity,
+                    base: identity,
+                }),
+            ),
+        watermark: () => watermark,
+        setWatermark: (index: number) => {
+            watermark = index;
+        },
+    };
+}
 
 // Mock WebSocket - this needs to be at the top level
 vi.mock("ws", () => {
@@ -3695,6 +3747,161 @@ describe("ArkadeSwaps", () => {
                 );
             });
         });
+
+        describe("deterministic preimage recovery", () => {
+            /** A reverse swap owned by the key at `index`, on a derived preimage. */
+            const derivedReverseAt = async (
+                hd: ReturnType<typeof installHdWallet>,
+                index: number,
+                id: string,
+            ) => {
+                const preimage = await hd.preimageAt(index);
+                const preimageHash = hex.encode(sha256(preimage));
+                return {
+                    swap: {
+                        ...pendingReverse,
+                        id,
+                        preimageHash,
+                        claimDetails: makeDetails({
+                            ourRole: "receiver" as const,
+                            preimageHash,
+                            timeoutBlockHeights: serverTimeouts,
+                            ourKey: hd.keyAt(index),
+                        }),
+                    },
+                    preimage: hex.encode(preimage),
+                };
+            };
+
+            /** Answer a restore query with whichever fixtures the keys own. */
+            const restoreByKey = (owned: { key: string; swap: any }[]) =>
+                vi
+                    .spyOn(swapProvider, "restoreSwaps")
+                    .mockImplementation(async (keys: string[]) =>
+                        owned.filter((o) => keys.includes(o.key)).map((o) => o.swap),
+                    );
+
+            it("re-derives the preimage of a swap held at index 0", async () => {
+                const hd = installHdWallet(wallet);
+                hd.setWatermark(0);
+                const { swap, preimage } = await derivedReverseAt(hd, 0, "rev-index-0");
+                vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([swap]);
+                vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+                const result = await swaps.restoreSwaps();
+
+                // The baseline identity key *is* the index-0 leaf key: the owner
+                // must still carry the descriptor, or there is no descriptor
+                // identity to derive under.
+                expect(result.reverseSwaps[0].signingDescriptor).toBe(hd.descriptorAt(0));
+                expect(result.reverseSwaps[0].preimage).toBe(preimage);
+            });
+
+            it("leaves a legacy random-preimage swap unclaimed rather than guessing", async () => {
+                const hd = installHdWallet(wallet);
+                hd.setWatermark(0);
+                const legacy = {
+                    ...pendingReverse,
+                    id: "rev-legacy",
+                    claimDetails: makeDetails({
+                        ourRole: "receiver" as const,
+                        preimageHash: reversePreimageHash,
+                        timeoutBlockHeights: serverTimeouts,
+                        ourKey: hd.keyAt(0),
+                    }),
+                };
+                vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([legacy]);
+                vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+                const result = await swaps.restoreSwaps();
+
+                expect(result.reverseSwaps).toHaveLength(1);
+                expect(result.reverseSwaps[0].preimage).toBe("");
+            });
+
+            it("finds a swap burned above the watermark and moves the watermark past it", async () => {
+                const hd = installHdWallet(wallet);
+                hd.setWatermark(0);
+                const { swap, preimage } = await derivedReverseAt(hd, 5, "rev-above");
+                const restoreSpy = restoreByKey([{ key: hd.keyAt(5), swap }]);
+                vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+                const result = await swaps.restoreSwaps();
+
+                expect(restoreSpy.mock.calls[0][0]).toContain(hd.keyAt(5));
+                expect(result.reverseSwaps[0].preimage).toBe(preimage);
+                // The next allocation must not reissue the recovered index.
+                expect(await wallet.getNextSigningDescriptor()).toBe(hd.descriptorAt(6));
+            });
+
+            it("iterates the band to a fixpoint so a hit extends the reach", async () => {
+                const hd = installHdWallet(wallet);
+                hd.setWatermark(0);
+                const near = await derivedReverseAt(hd, 18, "rev-near");
+                const far = await derivedReverseAt(hd, 30, "rev-far");
+                const restoreSpy = restoreByKey([
+                    { key: hd.keyAt(18), swap: near.swap },
+                    { key: hd.keyAt(30), swap: far.swap },
+                ]);
+                vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+                const result = await swaps.restoreSwaps();
+
+                // Index 30 is outside the first 20-wide band; the hit at 18
+                // advances the watermark and the extended band reaches it.
+                expect(result.reverseSwaps.map((s) => s.id).sort()).toEqual([
+                    "rev-far",
+                    "rev-near",
+                ]);
+                expect(restoreSpy.mock.calls[1][0]).not.toContain(hd.keyAt(18));
+                expect(hd.watermark()).toBe(30);
+            });
+
+            it("stops after one query when the band comes back dry", async () => {
+                const hd = installHdWallet(wallet);
+                hd.setWatermark(0);
+                const restoreSpy = vi
+                    .spyOn(swapProvider, "restoreSwaps")
+                    .mockResolvedValue([] as any);
+                vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+                await swaps.restoreSwaps();
+
+                expect(restoreSpy).toHaveBeenCalledOnce();
+            });
+
+            it("returns a swap seen in several rounds once, fetching its preimage once", async () => {
+                const hd = installHdWallet(wallet);
+                hd.setWatermark(0);
+                const repeated = {
+                    ...pendingSubmarine,
+                    id: "sub-repeated",
+                    refundDetails: makeDetails({
+                        ourRole: "sender" as const,
+                        preimageHash: submarinePreimageHash,
+                        timeoutBlockHeights: serverTimeouts,
+                        ourKey: hd.keyAt(10),
+                    }),
+                };
+                // Answers every round with the same swap: the dedupe, not the
+                // query shape, is what has to keep the result single.
+                const restoreSpy = vi
+                    .spyOn(swapProvider, "restoreSwaps")
+                    .mockResolvedValue([repeated] as any);
+                const getPreimageSpy = vi
+                    .spyOn(swapProvider, "getSwapPreimage")
+                    .mockResolvedValue({ preimage: hex.encode(randomBytes(32)) } as any);
+                vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(mockFees as any);
+
+                const result = await swaps.restoreSwaps();
+
+                expect(result.submarineSwaps).toHaveLength(1);
+                expect(getPreimageSpy).toHaveBeenCalledOnce();
+                // Round 2 re-sees the swap, makes no progress, and ends the loop.
+                expect(restoreSpy).toHaveBeenCalledTimes(2);
+                expect(hd.watermark()).toBe(10);
+            });
+        });
     });
 
     describe("refundVHTLC — VTXO selection", () => {
@@ -5673,6 +5880,68 @@ describe("ArkadeSwaps", () => {
 
             expect(pendingSwap.request.claimPublicKey).toBe(compressedPubkeys.alice);
             expect(pendingSwap.signingDescriptor).toBeUndefined();
+        });
+
+        describe("deterministic preimages", () => {
+            it("allocates a fresh index per swap, so no two share a preimage", async () => {
+                const hd = installHdWallet(wallet);
+                vi.spyOn(swapProvider, "createReverseSwap").mockImplementation(
+                    reverseSwapResponseFor(createReverseSwapResponse),
+                );
+                vi.spyOn(swapProvider, "createSubmarineSwap").mockResolvedValue(
+                    createSubmarineSwapResponse,
+                );
+
+                const first = await swaps.createReverseSwap({ amount: mock.invoice.amount });
+                const submarine = await swaps.createSubmarineSwap({
+                    invoice: mock.invoice.address,
+                });
+                const second = await swaps.createReverseSwap({ amount: mock.invoice.amount });
+
+                expect([
+                    first.signingDescriptor,
+                    submarine.signingDescriptor,
+                    second.signingDescriptor,
+                ]).toEqual([hd.descriptorAt(0), hd.descriptorAt(1), hd.descriptorAt(2)]);
+                expect(second.preimage).not.toBe(first.preimage);
+                expect(second.request.preimageHash).not.toBe(first.request.preimageHash);
+                // Submarine derives no preimage — Boltz owns it — but still
+                // gets its own refund key.
+                expect(submarine.request.refundPublicKey).toBe(hd.keyAt(1));
+                expect(hd.watermark()).toBe(2);
+            });
+
+            it("derives from the swap's descriptor key, not the baseline key", async () => {
+                const hd = installHdWallet(wallet);
+                hd.setWatermark(4);
+                vi.spyOn(swapProvider, "createReverseSwap").mockImplementationOnce(
+                    reverseSwapResponseFor(createReverseSwapResponse),
+                );
+
+                const pendingSwap = await swaps.createReverseSwap({
+                    amount: mock.invoice.amount,
+                });
+
+                expect(pendingSwap.signingDescriptor).toBe(hd.descriptorAt(5));
+                expect(pendingSwap.preimage).toBe(hex.encode(await hd.preimageAt(5)));
+                expect(pendingSwap.preimage).not.toBe(hex.encode(await hd.preimageAt(0)));
+            });
+
+            it("falls back to a random preimage, loudly, on a wallet with no HD state", async () => {
+                const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+                vi.spyOn(swapProvider, "createReverseSwap").mockImplementation(
+                    reverseSwapResponseFor(createReverseSwapResponse),
+                );
+
+                const first = await swaps.createReverseSwap({ amount: mock.invoice.amount });
+                const second = await swaps.createReverseSwap({ amount: mock.invoice.amount });
+
+                expect(hex.decode(first.preimage)).toHaveLength(32);
+                expect(second.preimage).not.toBe(first.preimage);
+                expect(warnSpy).toHaveBeenCalledWith(
+                    expect.stringContaining("not be recoverable from seed"),
+                );
+            });
         });
 
         describe("claim and refund routing", () => {
