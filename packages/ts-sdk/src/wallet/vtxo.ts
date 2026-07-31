@@ -1,4 +1,9 @@
-import { DEFAULT_PAGE_SIZE, SCRIPT_QUERY_CHUNK_SIZE } from "../contracts/constants";
+import {
+    DEFAULT_PAGE_SIZE,
+    OUTPOINT_QUERY_CHUNK_SIZE,
+    SCRIPT_QUERY_CHUNK_SIZE,
+} from "../contracts/constants";
+import { isRetryableProviderError } from "../providers/availability";
 import type { GetVtxosOptions, IndexerProvider, PageResponse, Vtxo } from "../providers/indexer";
 import type { OnchainProvider } from "../providers/onchain";
 import type { ExtendedVirtualCoin, VirtualCoin, VirtualStatus } from "./index";
@@ -287,6 +292,38 @@ export async function getAllNormalizedVtxos(
     }
 
     return all;
+}
+
+/**
+ * Resolve `createdAt` (epoch ms) for txids by querying each txid's output 0 as a virtual
+ * outpoint, chunked at {@link OUTPOINT_QUERY_CHUNK_SIZE}. `pageSize` is explicit because the
+ * provider omits `page.size` when unset and a server default below the chunk size would
+ * silently short-page. Best-effort: a retryable failure drops its chunk and leaves the map
+ * partial; terminal errors propagate.
+ */
+export async function fetchVtxoCreatedAtByTxid(
+    provider: Pick<IndexerProvider, "getVtxos">,
+    txids: string[],
+): Promise<Map<string, number>> {
+    const unique = [...new Set(txids)].filter((txid) => txid !== "");
+    const createdAt = new Map<string, number>();
+
+    for (let i = 0; i < unique.length; i += OUTPOINT_QUERY_CHUNK_SIZE) {
+        const chunk = unique.slice(i, i + OUTPOINT_QUERY_CHUNK_SIZE);
+        try {
+            const { vtxos } = await getNormalizedVtxos(provider, {
+                outpoints: chunk.map((txid) => ({ txid, vout: 0 })),
+                pageSize: DEFAULT_PAGE_SIZE,
+            });
+            for (const v of vtxos) {
+                createdAt.set(v.txid, v.createdAt.getTime());
+            }
+        } catch (err) {
+            if (!isRetryableProviderError(err)) throw err;
+        }
+    }
+
+    return createdAt;
 }
 
 // --- capabilities ------------------------------------------------------------------------------

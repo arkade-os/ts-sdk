@@ -26,6 +26,7 @@ import { Identity, ReadonlyIdentity, isBatchSignable } from "../identity";
 import {
     canRecoverOnchain,
     canSpendOffchain,
+    fetchVtxoCreatedAtByTxid,
     getAllNormalizedVtxos,
     getNormalizedVtxos,
     hasTerminalSpend,
@@ -105,7 +106,6 @@ import {
 } from "./exit/capture";
 import { createExitChainResolver, ExitDataSource } from "./exit/resolver";
 import { ArkError, type ProviderKind } from "../providers/errors";
-import { isRetryableProviderError } from "../providers/availability";
 import {
     resolveArkInfo,
     saveValidatedArkInfoSnapshot,
@@ -1191,19 +1191,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const { boardingTxs, commitmentsToIgnore } = await this.getBoardingTxs();
 
-        const getTxCreatedAt = (txid: string) =>
-            getNormalizedVtxos(this.indexerProvider, { outpoints: [{ txid, vout: 0 }] })
-                .then((res) => res.vtxos[0]?.createdAt.getTime())
-                // Best-effort createdAt enrichment: when the indexer is
-                // unavailable, leave it undefined (history still builds from
-                // repository VTXOs) rather than failing the whole read. Terminal
-                // failures still propagate.
-                .catch((err) => {
-                    if (isRetryableProviderError(err)) return undefined;
-                    throw err;
-                });
+        // Best-effort: a retryable indexer failure yields a partial map, not a
+        // failed read; terminal failures still propagate.
+        const resolveTxCreatedAt = (txids: string[]) =>
+            fetchVtxoCreatedAtByTxid(this.indexerProvider, txids);
 
-        return buildTransactionHistory(allVtxos, boardingTxs, commitmentsToIgnore, getTxCreatedAt);
+        return buildTransactionHistory(
+            allVtxos,
+            boardingTxs,
+            commitmentsToIgnore,
+            resolveTxCreatedAt,
+        );
     }
 
     /**
