@@ -248,6 +248,12 @@ export function collabExitResolver(): ActivityResolver {
  * mint" on the issuer's sent tx, "Asset receive" when the fresh supply arrives
  * in the genesis tx itself. An asset id encodes its genesis txid; reissues and
  * transfers carry the asset under a different `arkTxid`, so they are left plain.
+ *
+ * `metadata.amount` is the decimal string of the asset's `bigint` amount, kept
+ * as a string so large supplies survive JSON round-trips without truncation.
+ * Recover the value with `BigInt(metadata.amount as string)` — using it
+ * directly in arithmetic coerces (`"10" + 1` is `"101"`, not `11`) and loses
+ * precision past `Number.MAX_SAFE_INTEGER`.
  */
 export function assetMintResolver(): ActivityResolver {
     return {
@@ -278,6 +284,10 @@ export function assetMintResolver(): ActivityResolver {
  * `collab-exit`, and `asset-mint`.
  */
 export function createDefaultActivityRegistry(): ActivityRegistry {
+    // Registration order is precedence, but only between resolvers that emit the
+    // same groupId (first one wins label/kind and metadata keys). The built-ins
+    // namespace their ids — `boarding:`, `exit:`, `mint:` — so they never
+    // collide and their relative order carries no meaning.
     const registry = new ActivityRegistry();
     registry.use(boardingResolver());
     registry.use(collabExitResolver());

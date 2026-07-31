@@ -299,6 +299,30 @@ describe("assetMintResolver", () => {
         expect(r.resolve(tx("a"))).toBeUndefined();
     });
 
+    it("matches the genesis txid byte-for-byte, at any group index", () => {
+        const r = assetMintResolver();
+        // Asymmetric on purpose: a byte-order slip between the assetId's embedded
+        // txid and tx.key.arkTxid would survive a palindromic txid unnoticed.
+        const genesisTxid = "01020304" + "aa".repeat(24) + "0b0c0d0e";
+        const assetId = AssetId.create(genesisTxid, 7).toString();
+
+        const mint: ArkTransaction = {
+            key: { arkTxid: genesisTxid, commitmentTxid: "", boardingTxid: "" },
+            type: TxType.TxSent,
+            amount: 0,
+            settled: true,
+            createdAt: 1,
+            assets: [{ assetId, amount: 1n }],
+            tag: "offchain",
+        };
+        expect(r.resolve(mint)?.[0].groupId).toBe(`mint:${assetId}`);
+
+        // same bytes reversed: must not be taken for the genesis tx
+        const reversed = (genesisTxid.match(/../g) ?? []).reverse().join("");
+        expect(reversed).not.toBe(genesisTxid);
+        expect(r.resolve({ ...mint, key: { ...mint.key, arkTxid: reversed } })).toBeUndefined();
+    });
+
     it("tags fresh supply received in the genesis tx as an asset receive", () => {
         const r = assetMintResolver();
         const genesisTxid = "33".repeat(32);
