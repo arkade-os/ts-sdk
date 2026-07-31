@@ -100,7 +100,14 @@ export class BucketSync {
             if (res.committed) {
                 for (const key of desired.keys())
                     this.versions.set(key, this.knownVersion(key) + 1);
-                this.cursor = res.newSeq;
+                // Deliberately does NOT advance the cursor. `newSeq` is the sequence
+                // assigned to THIS commit, not the sequence we have caught up to —
+                // another device's change can sit at a lower seq we never pulled.
+                // Adopting it would step the cursor over that change, and since the
+                // cursor only moves forward, `diff(since=...)` would never return it
+                // again. The cursor means "everything up to here has been applied",
+                // which only pull() can establish. The cost is that the next pull
+                // re-delivers our own records, which is idempotent.
                 return;
             }
 
@@ -175,8 +182,12 @@ export class BucketSync {
         );
     }
 
-    /** Fetch + decrypt the current server value for the given keys (null when absent/tombstoned). */
-    private async fetchDecrypted(keys: string[]): Promise<Map<string, Uint8Array | null>> {
+    /**
+     * Fetch + decrypt the current server value for the given keys (null when
+     * absent/tombstoned). Public so callers can compare local state against the
+     * server — see `WalletSync.reconcile()`.
+     */
+    async fetchDecrypted(keys: string[]): Promise<Map<string, Uint8Array | null>> {
         const out = new Map<string, Uint8Array | null>();
         const entries = await this.api.get(keys);
         for (const e of entries) {

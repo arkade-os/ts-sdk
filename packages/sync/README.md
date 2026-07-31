@@ -78,11 +78,30 @@ const syncedSwaps = new SyncedSwapRepository(swaps, sync);
 ```
 
 Local writes complete first and return immediately; the encrypted push is
-fire-and-forget (failures surface via the optional `onError` callback and are
-reconciled on the next `backup()`/`sync()`). That keeps an optional backup server
-off the critical path of a wallet operation, at the cost of a short window: a
-device lost between creating a swap and completing its push has no remote copy of
-that preimage.
+fire-and-forget (failures surface via the optional `onError` callback). That keeps
+an optional backup server off the critical path of a wallet operation — it should
+never be able to fail a swap — at the cost of a push that can go missing.
+
+### Repairing pushes that never landed
+
+`sync()` only applies remote → local, so a push that failed leaves a record living
+nowhere but this device, and nothing would notice. `reconcile()` closes that:
+
+```ts
+const repaired = await sync.reconcile(); // number of records re-pushed
+```
+
+It pulls, then re-pushes anything the server is missing or disagrees with. The
+pull is deliberate — diffing without it would let a reconcile push stale local
+state over another device's newer write. `start()` opens with a `reconcile()`, so
+long-running sessions self-heal; call it directly on app resume if you don't hold
+a live session.
+
+It repairs missing and divergent records only. A **delete** whose push failed is
+not detected — a record absent from the local snapshot is indistinguishable from
+one that was never there — so a deleted record can survive on the server and
+reappear on a later restore. The asymmetry is intentional: a resurrected stale
+record is untidy, a missing preimage loses money.
 
 ## Security model
 

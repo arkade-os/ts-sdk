@@ -3,6 +3,9 @@ import type { SchnorrSigner } from "../protocol/auth";
 import { BucketSync, type BucketSyncOptions } from "./bucketSync";
 import type { SyncSource } from "./sources";
 
+const sameBytes = (a: Uint8Array, b: Uint8Array): boolean =>
+    a.length === b.length && a.every((byte, i) => byte === b[i]);
+
 export interface WalletSyncOptions extends BucketSyncOptions {
     /** Base URL of the bucket-sync server. */
     baseUrl: string;
@@ -75,12 +78,56 @@ export class WalletSync {
     }
 
     /**
+     * Catch up, then re-push anything the server is missing or disagrees with, and
+     * report how many records were repaired.
+     *
+     * The pull path cannot fix this on its own: it only applies remote → local. A
+     * push that never landed — the repository wrappers are fire-and-forget, so an
+     * offline device or a crash between the local write and the push both do this —
+     * leaves a record that exists nowhere but this device, and nothing would
+     * otherwise notice. For a swap that record holds the preimage, which is the
+     * difference between a claimable VHTLC and a Boltz refund timeout.
+     *
+     * Pulls first, deliberately: that way "the server disagrees" can only mean this
+     * device is ahead. Diffing without pulling would let a reconcile push stale
+     * local state over another device's newer write.
+     *
+     * Repairs missing and divergent records only. A delete whose push failed is NOT
+     * detected — a record absent from the local snapshot is indistinguishable from
+     * one that was never here — so a deleted record can survive on the server and
+     * reappear on a later restore. That asymmetry is intentional: a resurrected
+     * stale record is untidy, a missing preimage loses money.
+     */
+    async reconcile(): Promise<number> {
+        await this.sync();
+        return this.serialize(async () => {
+            const local = new Map<string, Uint8Array>();
+            for (const source of this.sources) {
+                for (const [key, value] of await source.snapshot()) local.set(key, value);
+            }
+            if (local.size === 0) return 0;
+
+            const remote = await this.engine.fetchDecrypted([...local.keys()]);
+            const missing = new Map<string, Uint8Array | null>();
+            for (const [key, value] of local) {
+                const current = remote.get(key) ?? null;
+                if (current === null || !sameBytes(current, value)) missing.set(key, value);
+            }
+            if (missing.size > 0) await this.engine.put(missing);
+            return missing.size;
+        });
+    }
+
+    /**
      * Catch up, then live-tail: on each server SSE event, pull and apply. Resolves
      * when `signal` aborts or the stream closes. Errors from an individual sync
      * pass propagate (wrap in try/catch at the call site for a resilient loop).
+     *
+     * The initial catch-up is a {@link reconcile}, so every long-running session
+     * also repairs pushes that never landed.
      */
     async start(signal?: AbortSignal): Promise<void> {
-        await this.sync();
+        await this.reconcile();
         for await (const _seq of this.client.stream(this.engine.cursorSeq, signal)) {
             await this.sync();
         }

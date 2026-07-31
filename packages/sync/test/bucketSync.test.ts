@@ -114,14 +114,21 @@ describe("BucketSync — encrypted KV round-trip", () => {
         expect(wire).toContain("cse-v1");
     });
 
-    it("tracks per-key versions and the seq cursor across commits", async () => {
+    it("tracks per-key versions across commits without advancing the cursor", async () => {
         const bucket = new FakeBucket();
         const sync = new BucketSync(bucket, kwk());
         await sync.putOne("k", enc("v1"));
         expect(sync.knownVersion("k")).toBe(1);
-        expect(sync.cursorSeq).toBe(1);
         await sync.putOne("k", enc("v2"));
         expect(sync.knownVersion("k")).toBe(2);
+
+        // The cursor means "everything up to here has been applied", which a commit
+        // does not establish: `newSeq` is where OUR write landed, and another device's
+        // change can sit at a lower seq we never pulled. Adopting it would step over
+        // that change forever, since the cursor only moves forward. Only pull() may
+        // advance it.
+        expect(sync.cursorSeq).toBe(0);
+        await sync.pull(() => {});
         expect(sync.cursorSeq).toBe(2);
     });
 
@@ -139,7 +146,11 @@ describe("BucketSync — encrypted KV round-trip", () => {
         const key = kwk();
         const sync = new BucketSync(bucket, key);
         await sync.putOne("a", enc("1"));
-        // our own commit advanced the cursor, so nothing new to pull
+        // A commit does not advance the cursor, so the first pull re-delivers our own
+        // record. Re-applying a value we just wrote is idempotent, and it is the price
+        // of never stepping over another device's unpulled change.
+        expect(await sync.pull(() => {})).toBe(1);
+        // Now caught up: a second pull with no changes applies nothing.
         expect(await sync.pull(() => {})).toBe(0);
         // a separate writer (same KWK so pull can decrypt) adds b; pull sees exactly one
         const other = new BucketSync(bucket, key);
@@ -219,7 +230,9 @@ describe("BucketSync — batch atomicity", () => {
                 ["state:wallet", enc("S")],
             ]),
         );
-        expect(sync.cursorSeq).toBe(1); // one batch = one seq
+        // One batch = one seq: pulling the whole batch lands the cursor on seq 1.
+        await sync.pull(() => {});
+        expect(sync.cursorSeq).toBe(1);
         expect(await drain(new BucketSync(bucket, key))).toEqual({
             "contract:a": "A",
             "contract:b": "B",

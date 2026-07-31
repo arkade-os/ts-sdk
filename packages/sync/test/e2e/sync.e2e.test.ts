@@ -238,6 +238,14 @@ suite("e2e: @arkade-os/sync <-> real bucket-sync server", () => {
         });
         await syncContractsOnly.restore();
         expect((await contractsB.getContracts()).map((c) => c.script)).toEqual(["vhtlcscript"]);
+
+        // Prove the swap really is in the bucket, so the assertion below is about
+        // the source list rather than about a repository nothing ever touched.
+        const probe = new BucketSyncClient({ baseUrl: URL!, device: "probe" });
+        await probe.authenticate(identity);
+        const remote = await new BucketSync(probe, kwk).fetchDecrypted(["swap:swap-1"]);
+        expect(remote.get("swap:swap-1")).not.toBeNull();
+
         expect(await swapsB.getAllSwaps()).toEqual([]);
 
         // Same bucket, same repository — adding SwapSource is the only change, and
@@ -285,5 +293,81 @@ suite("e2e: @arkade-os/sync <-> real bucket-sync server", () => {
 
         const [restored] = await swapsB.getAllSwaps<BoltzReverseSwap>();
         expect(restored?.preimage).toBe(preimage);
+    });
+
+    it("reconcile() re-pushes a record whose push never landed", async () => {
+        const identity = SingleKey.fromRandomBytes();
+        const kwk = freshKwk();
+        const preimage = "7c".repeat(32);
+
+        const swapsA = new InMemorySwapRepository();
+        const syncA = await WalletSync.create({
+            baseUrl: URL!,
+            identity,
+            encryptionKey: kwk,
+            sources: [new SwapSource(swapsA)],
+        });
+        await syncA.backup();
+
+        // Write straight to the underlying repository: the local state changed but
+        // nothing was ever pushed. This is what a fire-and-forget push failing, or
+        // the process dying before it completed, leaves behind.
+        await swapsA.saveSwap(reverseSwap("swap-lost", preimage));
+
+        const restoreB = async () => {
+            const swapsB = new InMemorySwapRepository();
+            const syncB = await WalletSync.create({
+                baseUrl: URL!,
+                identity,
+                encryptionKey: kwk,
+                sources: [new SwapSource(swapsB)],
+            });
+            await syncB.restore();
+            return swapsB.getAllSwaps<BoltzReverseSwap>();
+        };
+
+        // The record exists only on device A — a restore cannot recover the preimage.
+        expect(await restoreB()).toEqual([]);
+
+        // Reconcile notices the server is missing it and re-pushes.
+        expect(await syncA.reconcile()).toBe(1);
+
+        const recovered = await restoreB();
+        expect(recovered.map((s) => s.id)).toEqual(["swap-lost"]);
+        expect(recovered[0].preimage).toBe(preimage);
+
+        // Idempotent: nothing left to repair once the server agrees.
+        expect(await syncA.reconcile()).toBe(0);
+    });
+
+    it("a local commit does not skip another device's unpulled changes", async () => {
+        const identity = SingleKey.fromRandomBytes();
+        const kwk = freshKwk();
+
+        const clientA = new BucketSyncClient({ baseUrl: URL!, device: "device-A" });
+        await clientA.authenticate(identity);
+        const engineA = new BucketSync(clientA, kwk);
+
+        const clientB = new BucketSyncClient({ baseUrl: URL!, device: "device-B" });
+        await clientB.authenticate(identity);
+        const engineB = new BucketSync(clientB, kwk);
+
+        // B starts caught up with an empty bucket.
+        await engineB.pull(async () => {});
+
+        // A writes a record B has not pulled yet.
+        await engineA.putOne("contract:from-a", enc("value-a"));
+
+        // B now commits its own record. The commit response reports the seq of B's
+        // OWN write, which is higher than A's — so treating it as "caught up to"
+        // would step B's cursor straight over A's record.
+        await engineB.putOne("contract:from-b", enc("value-b"));
+
+        const seen = new Map<string, string | null>();
+        await engineB.pull(async (key, pt) => {
+            seen.set(key, dec(pt));
+        });
+
+        expect(seen.get("contract:from-a")).toBe("value-a");
     });
 });

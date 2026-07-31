@@ -27,7 +27,7 @@
         "lint": "prettier --check src test",
         "test": "vitest run",
         "test:unit": "vitest run --exclude test/e2e",
-        "test:integration": "vitest run test/e2e/**",
+        "test:integration": "vitest run test/e2e",
         "prepack": "pnpm run build"
     },
     "keywords": [
