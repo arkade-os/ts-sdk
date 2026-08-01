@@ -16,6 +16,7 @@
  * format.
  */
 import { hex } from "@scure/base";
+import { concatBytes } from "@scure/btc-signer/utils.js";
 import {
     ArkAddress,
     RestArkProvider,
@@ -108,39 +109,35 @@ export function offerVtxoScript(
 /** Extension packet type tag for Arkade Intents offers. */
 export const OFFER_PACKET_TYPE = 0x03;
 
-const T = {
-    swapPkScript: 0x01,
-    wantAmount: 0x02,
-    wantAsset: 0x03,
-    makerPkScript: 0x05,
-    makerPublicKey: 0x07,
-    emulatorPubkey: 0x08,
-    offerAsset: 0x0b,
+/** The wire fields: tag, and for the fixed-width ones the exact byte length.
+ * One table so a tag can never drift from its width — a big-endian u64
+ * amount, taproot scriptPubKeys, x-only keys. Decode rejects any other
+ * length: a short value would make getBigUint64 throw a RangeError, a long
+ * one would be silently truncated to its first 8 bytes and price the offer at
+ * an amount the covenant never bound. `width: undefined` marks the
+ * variable-length asset ids, which are validated by AssetId.fromBytes. */
+const FIELDS = {
+    swapPkScript: { tag: 0x01, width: 34 },
+    wantAmount: { tag: 0x02, width: 8 },
+    wantAsset: { tag: 0x03, width: undefined },
+    makerPkScript: { tag: 0x05, width: 34 },
+    makerPublicKey: { tag: 0x07, width: 32 },
+    emulatorPubkey: { tag: 0x08, width: 32 },
+    offerAsset: { tag: 0x0b, width: undefined },
 } as const;
 
-const NAMES = Object.fromEntries(Object.entries(T).map(([k, v]) => [v, k])) as Record<
+type FieldName = keyof typeof FIELDS;
+
+const NAMES = Object.fromEntries(Object.entries(FIELDS).map(([k, f]) => [f.tag, k])) as Record<
     number,
-    keyof typeof T
+    FieldName
 >;
-
-/** Fixed-width fields, shared by encode and decode so the pair can never
- * disagree: a big-endian u64 amount, a taproot scriptPubKey, x-only keys.
- * Decode rejects any other length — a short value would make getBigUint64
- * throw a RangeError, a long one would be silently truncated to its first 8
- * bytes and price the offer at an amount the covenant never bound. */
-const WIDTH = {
-    wantAmount: 8,
-    swapPkScript: 34,
-    makerPkScript: 34,
-    makerPublicKey: 32,
-    emulatorPubkey: 32,
-} as const;
 
 /** Drop the prefix of a 33-byte compressed key; pass an x-only key through.
  * A malformed key would otherwise bind silently into the covenant and only
  * surface as an unspendable address once the maker funds it. */
 const xOnly = (key: Uint8Array, label: string): Uint8Array => {
-    if (key.length === WIDTH.makerPublicKey) return key;
+    if (key.length === FIELDS.makerPublicKey.width) return key;
     if (key.length !== 33 || (key[0] !== 0x02 && key[0] !== 0x03)) {
         throw new Error(`${label} is not a compressed or x-only public key`);
     }
@@ -148,12 +145,7 @@ const xOnly = (key: Uint8Array, label: string): Uint8Array => {
 };
 
 function tlv(type: number, value: Uint8Array): Uint8Array {
-    const rec = new Uint8Array(3 + value.length);
-    rec[0] = type;
-    rec[1] = (value.length >> 8) & 0xff;
-    rec[2] = value.length & 0xff;
-    rec.set(value, 3);
-    return rec;
+    return concatBytes(Uint8Array.of(type, (value.length >> 8) & 0xff, value.length & 0xff), value);
 }
 
 /** Serialize an offer to TLV bytes (the packet payload). */
@@ -164,28 +156,25 @@ export function encodeOffer(offer: Offer): Uint8Array {
     if (offer.wantAmount < BigInt(0) || offer.wantAmount >> BigInt(64) > BigInt(0)) {
         throw new Error("wantAmount does not fit the offer wire format (u64)");
     }
-    const amount = new Uint8Array(WIDTH.wantAmount);
+    const amount = new Uint8Array(FIELDS.wantAmount.width);
     new DataView(amount.buffer).setBigUint64(0, offer.wantAmount, false);
-    const recs = [tlv(T.swapPkScript, offer.swapPkScript), tlv(T.wantAmount, amount)];
-    if (offer.wantAsset) recs.push(tlv(T.wantAsset, offer.wantAsset.serialize()));
-    if (offer.offerAsset) recs.push(tlv(T.offerAsset, offer.offerAsset.serialize()));
+    const recs = [
+        tlv(FIELDS.swapPkScript.tag, offer.swapPkScript),
+        tlv(FIELDS.wantAmount.tag, amount),
+    ];
+    if (offer.wantAsset) recs.push(tlv(FIELDS.wantAsset.tag, offer.wantAsset.serialize()));
+    if (offer.offerAsset) recs.push(tlv(FIELDS.offerAsset.tag, offer.offerAsset.serialize()));
     recs.push(
-        tlv(T.makerPkScript, offer.makerPkScript),
-        tlv(T.makerPublicKey, offer.makerPublicKey),
-        tlv(T.emulatorPubkey, offer.emulatorPubkey),
+        tlv(FIELDS.makerPkScript.tag, offer.makerPkScript),
+        tlv(FIELDS.makerPublicKey.tag, offer.makerPublicKey),
+        tlv(FIELDS.emulatorPubkey.tag, offer.emulatorPubkey),
     );
-    const out = new Uint8Array(recs.reduce((s, r) => s + r.length, 0));
-    let off = 0;
-    for (const r of recs) {
-        out.set(r, off);
-        off += r.length;
-    }
-    return out;
+    return concatBytes(...recs);
 }
 
 /** Parse TLV bytes into an offer. Throws on malformed or unknown records. */
 export function decodeOffer(data: Uint8Array): Offer {
-    const fields: Partial<Record<keyof typeof T, Uint8Array>> = {};
+    const fields: Partial<Record<FieldName, Uint8Array>> = {};
     let off = 0;
     while (off < data.length) {
         if (off + 3 > data.length) throw new Error("truncated TLV header");
@@ -208,24 +197,25 @@ export function decodeOffer(data: Uint8Array): Offer {
         fields[name] = data.slice(off, off + length);
         off += length;
     }
-    const need = (name: keyof typeof T, len?: number) => {
+    const need = (name: FieldName) => {
         const v = fields[name];
+        const len: number | undefined = FIELDS[name].width;
         if (!v || (len !== undefined && v.length !== len))
             throw new Error(`missing/invalid ${name}`);
         return v;
     };
-    const amount = need("wantAmount", WIDTH.wantAmount);
+    const amount = need("wantAmount");
     if (Boolean(fields.wantAsset) === Boolean(fields.offerAsset)) {
         throw new Error("offer must carry exactly one of wantAsset or offerAsset");
     }
     return {
-        swapPkScript: need("swapPkScript", WIDTH.swapPkScript),
+        swapPkScript: need("swapPkScript"),
         wantAmount: new DataView(amount.buffer, amount.byteOffset).getBigUint64(0, false),
         ...(fields.wantAsset && { wantAsset: asset.AssetId.fromBytes(fields.wantAsset) }),
         ...(fields.offerAsset && { offerAsset: asset.AssetId.fromBytes(fields.offerAsset) }),
-        makerPkScript: need("makerPkScript", WIDTH.makerPkScript),
-        makerPublicKey: need("makerPublicKey", WIDTH.makerPublicKey),
-        emulatorPubkey: need("emulatorPubkey", WIDTH.emulatorPubkey),
+        makerPkScript: need("makerPkScript"),
+        makerPublicKey: need("makerPublicKey"),
+        emulatorPubkey: need("emulatorPubkey"),
     };
 }
 

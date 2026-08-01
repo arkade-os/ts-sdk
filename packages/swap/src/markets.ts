@@ -9,9 +9,9 @@ import {
     type OfferPlan,
     type Side,
 } from "@arkade-os/solver-discovery";
+import { isSubdust } from "@arkade-os/sdk";
 import type { AssetSwapRepository, MarketsCacheEntry } from "./repository";
-
-export const BTC_ASSET_ID = "btc";
+import { BTC_ASSET_ID } from "./store";
 
 /** Shared quote options so every quote path agrees.
  * No safety margin on top of the market fee: pricing drift between quote
@@ -207,7 +207,7 @@ export const validatePlan = (
     const receiveIsBtc = plan.receive.asset.id === BTC_ASSET_ID;
     if (depositIsBtc || receiveIsBtc) {
         const btcSide = depositIsBtc ? plan.deposit.atomic : plan.receive.atomic;
-        if (btcSide < dust) return "below-dust";
+        if (isSubdust(btcSide, dust)) return "below-dust";
     }
     return undefined;
 };

@@ -39,9 +39,13 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
 
     constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
 
-    private async store(name: string, mode: IDBTransactionMode): Promise<IDBObjectStore> {
+    private async ensureDb(): Promise<IDBDatabase> {
         if (!this.db) this.db = await openDatabase(this.dbName, DB_VERSION, initDatabase);
-        return this.db.transaction([name], mode).objectStore(name);
+        return this.db;
+    }
+
+    private async store(name: string, mode: IDBTransactionMode): Promise<IDBObjectStore> {
+        return (await this.ensureDb()).transaction([name], mode).objectStore(name);
     }
 
     async saveSwap(swap: AssetSwap): Promise<void> {
@@ -84,8 +88,7 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
      * a partial clear must not be observable. */
     async clear(): Promise<void> {
         const stores = [STORE_SWAPS, STORE_SCANNED, STORE_MARKETS];
-        if (!this.db) this.db = await openDatabase(this.dbName, DB_VERSION, initDatabase);
-        const tx = this.db.transaction(stores, "readwrite");
+        const tx = (await this.ensureDb()).transaction(stores, "readwrite");
         const done = new Promise<void>((resolve, reject) => {
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);

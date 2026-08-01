@@ -15,7 +15,7 @@
 import { base64, hex } from "@scure/base";
 import { Extension, RestIndexerProvider, Transaction } from "@arkade-os/sdk";
 import { decodeOffer, Offer, OFFER_PACKET_TYPE } from "./offer";
-import type { AssetSwap, AssetSwapStatus } from "./store";
+import { BTC_ASSET_ID, type AssetSwap, type AssetSwapStatus } from "./store";
 
 // ponytail: fixed request size; tune only if histories outgrow it
 const TXS_PER_REQUEST = 50;
@@ -181,10 +181,10 @@ export async function restoreAssetSwaps(
             vtxo.assets?.length === 1 && vtxo.assets[0].amount > BigInt(0)
                 ? vtxo.assets[0]
                 : undefined;
-        const fromAsset = offer.offerAsset?.toString() ?? depositRider?.assetId ?? "btc";
-        const toAsset = offer.wantAsset?.toString() ?? "btc";
+        const fromAsset = offer.offerAsset?.toString() ?? depositRider?.assetId ?? BTC_ASSET_ID;
+        const toAsset = offer.wantAsset?.toString() ?? BTC_ASSET_ID;
         const depositAmount =
-            fromAsset === "btc"
+            fromAsset === BTC_ASSET_ID
                 ? BigInt(vtxo.value)
                 : vtxo.assets?.find((a) => a.assetId === fromAsset)?.amount;
         if (depositAmount === undefined) {

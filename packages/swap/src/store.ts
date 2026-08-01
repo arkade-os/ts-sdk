@@ -2,6 +2,11 @@ import type { AssetSwapRepository } from "./repository";
 
 export type AssetSwapStatus = "pending" | "cancelling" | "fulfilled" | "cancelled" | "recoverable";
 
+/** The sentinel asset id for BTC itself, as opposed to a 68-hex asset id.
+ * Lives here with the {@link AssetSwap} fields it describes so the market and
+ * restore layers share one spelling instead of re-typing the literal. */
+export const BTC_ASSET_ID = "btc";
+
 // ponytail: records carry only chain-recoverable facts — no quote-time display
 // snapshot (tickers, fee bps, fiat value); add an optional snapshot field back
 // if a consumer must persist display metadata the restore scan cannot rebuild

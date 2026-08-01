@@ -13,12 +13,12 @@ export {
     findMarket,
     validatePlan,
     makeCachedFeedFetch,
-    BTC_ASSET_ID,
     QUOTE_OPTIONS,
     type DiscoverMarketsOptions,
     type PlanError,
 } from "./markets";
 export {
+    BTC_ASSET_ID,
     getAssetSwaps,
     addAssetSwap,
     updateAssetSwap,
