@@ -136,8 +136,12 @@ const NAMES = Object.fromEntries(Object.entries(FIELDS).map(([k, f]) => [f.tag, 
 /** Drop the prefix of a 33-byte compressed key; pass an x-only key through.
  * A malformed key would otherwise bind silently into the covenant and only
  * surface as an unspendable address once the maker funds it. */
+const XONLY_LEN = 32;
 const xOnly = (key: Uint8Array, label: string): Uint8Array => {
-    if (key.length === FIELDS.makerPublicKey.width) return key;
+    // deliberately not FIELDS.makerPublicKey.width: this also normalizes the ark
+    // and emulator signer keys, which have no TLV record of their own — the two
+    // lengths agree by spec, not because one derives from the other
+    if (key.length === XONLY_LEN) return key;
     if (key.length !== 33 || (key[0] !== 0x02 && key[0] !== 0x03)) {
         throw new Error(`${label} is not a compressed or x-only public key`);
     }

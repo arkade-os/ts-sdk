@@ -11,6 +11,13 @@ export const BTC_ASSET_ID = "btc";
 // snapshot (tickers, fee bps, fiat value); add an optional snapshot field back
 // if a consumer must persist display metadata the restore scan cannot rebuild
 
+// ponytail: store policy (newest-first order, insert-if-absent, id-is-the-key,
+// write-failure tolerance) lives in these repository-first functions, so a
+// consumer calling repository.saveSwap directly bypasses all of it — saveSwap
+// is an upsert, so it will not even preserve insert-if-absent. Promote to an
+// AssetSwapStore class holding the repository privately if a second consumer
+// starts writing swaps, or the first invariant gets violated in practice.
+
 export interface AssetSwap {
     /** Funding txid — the swap's identity. */
     id: string;

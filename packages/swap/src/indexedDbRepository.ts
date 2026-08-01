@@ -12,16 +12,19 @@ const STORE_SWAPS = "swaps";
 const STORE_SCANNED = "scannedTxids";
 const STORE_MARKETS = "markets";
 
+/** Every store, declared once. `clear()` wipes exactly this list, so a store
+ * added here cannot be forgotten there — which would leave a partial wipe the
+ * clear-all transaction exists to prevent. Key-only stores take no options:
+ * the txid / cache key is supplied at put time. */
+const STORES: readonly [name: string, options?: IDBObjectStoreParameters][] = [
+    [STORE_SWAPS, { keyPath: "id" }],
+    [STORE_SCANNED],
+    [STORE_MARKETS],
+];
+
 function initDatabase(db: IDBDatabase) {
-    if (!db.objectStoreNames.contains(STORE_SWAPS)) {
-        db.createObjectStore(STORE_SWAPS, { keyPath: "id" });
-    }
-    // key-only stores: the txid / cache key is supplied at put time
-    if (!db.objectStoreNames.contains(STORE_SCANNED)) {
-        db.createObjectStore(STORE_SCANNED);
-    }
-    if (!db.objectStoreNames.contains(STORE_MARKETS)) {
-        db.createObjectStore(STORE_MARKETS);
+    for (const [name, options] of STORES) {
+        if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, options);
     }
 }
 
@@ -35,13 +38,22 @@ const request = <T>(req: IDBRequest<T>): Promise<T> =>
  * infrastructure the wallet already uses for its Boltz swap repository. */
 export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     readonly version = 1 as const;
-    private db: IDBDatabase | null = null;
+    // the promise, not the resolved database: openDatabase bumps a refcount on
+    // every call including cache hits, while dispose closes once, so two
+    // concurrent first calls would strand the refcount above zero and leak the
+    // connection for the process lifetime. Cleared on failure so a failed open
+    // can be retried rather than cached forever.
+    private dbPromise: Promise<IDBDatabase> | null = null;
 
     constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
 
-    private async ensureDb(): Promise<IDBDatabase> {
-        if (!this.db) this.db = await openDatabase(this.dbName, DB_VERSION, initDatabase);
-        return this.db;
+    private ensureDb(): Promise<IDBDatabase> {
+        return (this.dbPromise ??= openDatabase(this.dbName, DB_VERSION, initDatabase).catch(
+            (err) => {
+                this.dbPromise = null;
+                throw err;
+            },
+        ));
     }
 
     private async store(name: string, mode: IDBTransactionMode): Promise<IDBObjectStore> {
@@ -87,7 +99,7 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
      * would leave the restore scan permanently skipping those funding txs, so
      * a partial clear must not be observable. */
     async clear(): Promise<void> {
-        const stores = [STORE_SWAPS, STORE_SCANNED, STORE_MARKETS];
+        const stores = STORES.map(([name]) => name);
         const tx = (await this.ensureDb()).transaction(stores, "readwrite");
         const done = new Promise<void>((resolve, reject) => {
             tx.oncomplete = () => resolve();
@@ -99,8 +111,8 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     }
 
     async [Symbol.asyncDispose](): Promise<void> {
-        if (!this.db) return;
+        if (!this.dbPromise) return;
         await closeDatabase(this.dbName);
-        this.db = null;
+        this.dbPromise = null;
     }
 }

@@ -89,15 +89,12 @@ export const makeCachedFeedFetch = (
 const MARKETS_CACHE_TTL_MS = 60 * 60 * 1000;
 
 const isMarketShaped = (m: unknown): m is DiscoveredMarket => {
-    const market = m as DiscoveredMarket | null;
-    return Boolean(
-        market &&
-            typeof market.pair === "string" &&
-            market.base_asset &&
-            typeof market.base_asset.id === "string" &&
-            market.quote_asset &&
-            typeof market.quote_asset.id === "string" &&
-            typeof market.quote_asset.decimals === "number",
+    const market = m as Partial<DiscoveredMarket> | null;
+    return (
+        typeof market?.pair === "string" &&
+        typeof market.base_asset?.id === "string" &&
+        typeof market.quote_asset?.id === "string" &&
+        typeof market.quote_asset.decimals === "number"
     );
 };
 

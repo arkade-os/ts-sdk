@@ -36,8 +36,10 @@ export interface Tx {
 export type RestoreIndexer = Pick<RestIndexerProvider, "getVirtualTxs" | "getVtxos">;
 
 /** The candidate txs a scan would fetch: sent virtual txs with no stored swap
- * record and no previous authoritative answer. */
-export const unscannedSwapCandidates = (
+ * record and no previous authoritative answer. Module-local: `restoreAssetSwaps`
+ * is the only caller, and exporting it would freeze this three-set signature
+ * into the package's public API. */
+const unscannedSwapCandidates = (
     txs: Tx[],
     existingIds: ReadonlySet<string>,
     scanned: ReadonlySet<string>,
