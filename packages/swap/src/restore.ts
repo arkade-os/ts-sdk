@@ -53,12 +53,13 @@ export const unscannedSwapCandidates = (
 /** The cancel spend returns the deposit: a BTC offer gets its sats back (no
  * want-asset delivered), an asset offer gets the asset back. */
 export function isCancelSpend(offer: Offer, spend: Tx): boolean {
-    if (offer.wantAsset) {
-        const wantId = offer.wantAsset.toString();
-        return !spend.assets?.some((a) => a.assetId === wantId && a.amount > BigInt(0));
-    }
-    const offerId = offer.offerAsset!.toString();
-    return Boolean(spend.assets?.some((a) => a.assetId === offerId && a.amount > BigInt(0)));
+    // exactly one of the two is set (createOffer enforces it); the spend either
+    // delivered the want-asset (a fill) or returned the offer-asset (a cancel)
+    const assetId = (offer.wantAsset ?? offer.offerAsset!).toString();
+    const carriesAsset = Boolean(
+        spend.assets?.some((a) => a.assetId === assetId && a.amount > BigInt(0)),
+    );
+    return offer.wantAsset ? !carriesAsset : carriesAsset;
 }
 
 /**

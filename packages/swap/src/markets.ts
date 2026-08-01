@@ -34,22 +34,55 @@ export const makeCachedFeedFetch = (
     fetchImpl: typeof fetch = fetch,
 ): typeof fetch => {
     const cache = new Map<string, { at: number; body: string }>();
+    // requests that have been sent but not yet answered, so a burst that starts
+    // inside one round trip collapses to a single upstream call — without this
+    // the cache only dedups *after* the first response lands, which is exactly
+    // the window a debounced quote UI fires its keystrokes in
+    const inflight = new Map<string, Promise<string | undefined>>();
     return async (input, init) => {
         const url = input instanceof Request ? input.url : String(input);
         const hit = cache.get(url);
-        if (hit && Date.now() - hit.at < ttlMs) return new Response(hit.body);
-        const response = await fetchImpl(input, init);
-        // caching is best effort: a body read that fails mid-stream must not
-        // take the live response down with it (the caller would see an internal
-        // error instead of the quote it actually got)
-        if (response.ok) {
-            try {
-                cache.set(url, { at: Date.now(), body: await response.clone().text() });
-            } catch {
-                // unreadable body: serve the response uncached
-            }
+        if (hit) {
+            if (Date.now() - hit.at < ttlMs) return new Response(hit.body);
+            cache.delete(url); // expired: drop it rather than retain every body seen
         }
-        return response;
+        const pending = inflight.get(url);
+        if (pending) {
+            const body = await pending;
+            // undefined means that response was not cacheable (not ok, or an
+            // unreadable body); fall through and make our own request
+            if (body !== undefined) return new Response(body);
+        }
+
+        let settle: (body: string | undefined) => void = () => {};
+        inflight.set(
+            url,
+            new Promise<string | undefined>((resolve) => {
+                settle = resolve;
+            }),
+        );
+        try {
+            const response = await fetchImpl(input, init);
+            // caching is best effort: a body read that fails mid-stream must not
+            // take the live response down with it (the caller would see an internal
+            // error instead of the quote it actually got)
+            let body: string | undefined;
+            if (response.ok) {
+                try {
+                    body = await response.clone().text();
+                    cache.set(url, { at: Date.now(), body });
+                } catch {
+                    body = undefined; // unreadable body: serve the response uncached
+                }
+            }
+            settle(body);
+            return response;
+        } catch (err) {
+            settle(undefined); // waiters make their own attempt rather than inheriting the failure
+            throw err;
+        } finally {
+            inflight.delete(url);
+        }
     };
 };
 

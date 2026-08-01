@@ -98,6 +98,9 @@ importers:
       '@scure/base':
         specifier: 2.0.0
         version: 2.0.0
+      '@scure/btc-signer':
+        specifier: 2.0.1
+        version: 2.0.1
     devDependencies:
       fake-indexeddb:
         specifier: 6.2.5

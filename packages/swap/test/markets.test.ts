@@ -123,6 +123,31 @@ describe("makeCachedFeedFetch", () => {
         expect(second.receive.atomic).toBe(BigInt(1_994));
     });
 
+    it("collapses concurrent quotes started inside one round trip to a single call", async () => {
+        // the sequential test above only proves the cache dedups *after* a
+        // response lands; a debounced UI fires its burst before that, so
+        // without in-flight dedup every keystroke still costs an upstream call
+        let release: () => void = () => {};
+        const arrived = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const underlying = vi.fn(async () => {
+            await arrived;
+            return new Response(JSON.stringify({ bitcoin: { usd: 100000 } }));
+        });
+        const fetchImpl = makeCachedFeedFetch(30_000, underlying as unknown as typeof fetch);
+        const quote = (giveAmount: bigint) =>
+            quoteOffer(btcUsd, { give: "base", giveAmount, fetchImpl, ...QUOTE_OPTIONS });
+
+        const all = Promise.all([quote(BigInt(10_000)), quote(BigInt(20_000))]);
+        release();
+        const [first, second] = await all;
+
+        expect(underlying).toHaveBeenCalledTimes(1);
+        expect(first.receive.atomic).toBe(BigInt(997));
+        expect(second.receive.atomic).toBe(BigInt(1_994));
+    });
+
     it("refetches once the TTL has elapsed", async () => {
         const underlying = vi.fn(
             async () => new Response(JSON.stringify({ bitcoin: { usd: 100000 } })),

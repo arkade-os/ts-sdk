@@ -33,6 +33,9 @@ export interface AssetSwap {
     completedAt?: number;
 }
 
+/** The canonical swap order, declared once so every read agrees on it. */
+const byNewest = (a: AssetSwap, b: AssetSwap): number => b.createdAt - a.createdAt;
+
 /** All swaps, newest-first. Insertion order is not chronological — the restore
  * scan rebuilds records in tx-scan order — so sort at read to keep
  * newest-first canonical for every consumer. A broken backend reads as no
@@ -41,7 +44,7 @@ export const getAssetSwaps = async (repository: AssetSwapRepository): Promise<As
     try {
         return (await repository.getAllSwaps())
             .filter((s) => s && typeof s.id === "string" && typeof s.offerHex === "string")
-            .sort((a, b) => b.createdAt - a.createdAt);
+            .sort(byNewest);
     } catch {
         return [];
     }
@@ -65,7 +68,12 @@ export const addAssetSwap = async (
     const swaps = await getAssetSwaps(repository);
     if (swaps.some((s) => s.id === swap.id)) return swaps;
     await saveSwapSafely(repository, swap);
-    return [swap, ...swaps].sort((a, b) => b.createdAt - a.createdAt);
+    // the list is already newest-first, so place the one new record rather than
+    // re-sorting the whole history around it
+    const at = swaps.findIndex((s) => byNewest(swap, s) <= 0);
+    const merged = [...swaps];
+    merged.splice(at === -1 ? merged.length : at, 0, swap);
+    return merged;
 };
 
 /** Merge changes into a swap by id. Returns the updated list. */

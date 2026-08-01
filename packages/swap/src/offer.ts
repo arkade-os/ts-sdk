@@ -261,8 +261,10 @@ export async function createOffer(
     const serverPubKey = xOnly(hex.decode(info.signerPubkey), "ark signer key");
     const emuKey = xOnly(hex.decode(emulatorInfo.signerPubkey), "emulator signer key");
 
-    const offer: Offer = {
-        swapPkScript: new Uint8Array(0), // placeholder, computed below
+    // the script derives from every field but the script itself, so build the
+    // binding first and complete the offer with it — an Offer value never
+    // exists in a state that would encode to an empty swapPkScript
+    const binding = {
         wantAmount: params.wantAmount,
         wantAsset: params.wantAsset,
         offerAsset: params.offerAsset,
@@ -270,18 +272,16 @@ export async function createOffer(
         makerPublicKey,
         emulatorPubkey: emuKey,
     };
-    const script = offerVtxoScript(offer, serverPubKey);
-    offer.swapPkScript = script.pkScript;
+    const script = offerVtxoScript(binding, serverPubKey);
+    const offer: Offer = { ...binding, swapPkScript: script.pkScript };
 
     const payload = encodeOffer(offer);
     return {
         offerHex: hex.encode(payload),
         extension: { type: OFFER_PACKET_TYPE, payload },
-        address: new ArkAddress(
-            serverPubKey,
-            script.tweakedPublicKey,
-            getNetwork(info.network as NetworkName).hrp,
-        ).encode(),
+        // VtxoScript.address owns address construction; assembling an ArkAddress
+        // from tweakedPublicKey here would silently miss any future step it gains
+        address: script.address(getNetwork(info.network as NetworkName).hrp, serverPubKey).encode(),
         swapPkScript: script.pkScript,
     };
 }

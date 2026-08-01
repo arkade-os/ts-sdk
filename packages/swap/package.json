@@ -41,7 +41,8 @@
     "dependencies": {
         "@arkade-os/sdk": "workspace:*",
         "@arkade-os/solver-discovery": "0.1.4",
-        "@scure/base": "2.0.0"
+        "@scure/base": "2.0.0",
+        "@scure/btc-signer": "2.0.1"
     },
     "publishConfig": {
         "access": "public",
