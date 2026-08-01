@@ -54,5 +54,47 @@ await wallet.send({
 });
 ```
 
-`cancelOffer(wallet, ARK, offerHex, fundingTxid?, swapAddress?)` spends the deposit back to the
-maker.
+### What `createOffer` gives you back
+
+`createOffer` is pure derivation — it broadcasts nothing. The offer only becomes real when the
+deposit lands at `address`.
+
+| Field          | What it is                                                                                                                                    |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `address`      | The swap address to fund with your deposit. Identical offers derive an identical address, so the **funding txid**, not the address, identifies one deposit. |
+| `extension`    | Pass straight to `wallet.send`'s `extensions`. It carries the offer inside the funding tx so the solver can discover the offer from the txid alone. |
+| `offerHex`     | The encoded offer. **Persist this** — it is the only input `cancelOffer` needs to rebuild the covenant.                                        |
+| `swapPkScript` | The covenant's scriptPubKey: the key an indexer watches to spot the deposit and its later spend.                                               |
+
+The minimum a maker must keep to stay in control of a swap is `offerHex` plus the funding txid.
+Everything else — status, amounts, timestamps — `restoreAssetSwaps` rebuilds from chain, and the
+offer bytes themselves are recoverable from the funding tx if the record is lost.
+
+## Cancelling an offer no taker filled
+
+```ts
+const txid = await cancelOffer(wallet, ARK, swap.offerHex, swap.fundingTxid, swap.swapAddress);
+```
+
+**An unfilled offer never expires.** Neither program carries a timelock, so a deposit no taker
+picked up sits at the swap address indefinitely — nothing reclaims it for the maker, and there is
+no "expired" state to wait for. Cancelling is the only way out, and the maker has to ask.
+
+The two ways out of the covenant are deliberately asymmetric:
+
+- **`fulfill`** is signed by the **server alone**, but the covenant constrains it to pay output 0
+  to the maker's script for at least `wantAmount`. A taker cannot take the deposit without
+  delivering the other side.
+- **`cancel`** is a **2-of-2 of the maker and the server**. Cancelling is cooperative, not a
+  unilateral withdrawal.
+
+So cancel *races* a fill rather than pre-empting it. If the solver fills in the same moment,
+`cancelOffer` throws `no spendable VTXO at the swap address` — that means the swap **completed**,
+not that anything went wrong. Re-read the swap's state before treating it as an error;
+`restoreAssetSwaps` tells the two spends apart afterwards and marks the record `fulfilled` rather
+than `cancelled`.
+
+Pass `fundingTxid` whenever you have it. Identical offers share an address, so without it cancel
+spends whichever deposit is first at that address — not necessarily the one you meant. Every
+`AssetSwap` carries the txid, so the call above is the shape to prefer. `swapAddress` pins the
+server key the covenant was built with, keeping cancel working across a server signer rotation.

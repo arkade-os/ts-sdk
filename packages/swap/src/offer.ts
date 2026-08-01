@@ -241,10 +241,19 @@ export async function createOffer(
     emulatorUrl: string,
     params: { wantAmount: bigint; wantAsset?: asset.AssetId; offerAsset?: asset.AssetId },
 ): Promise<{
+    /** The encoded offer, hex. **Persist this** — it is the only input
+     * `cancelOffer` needs to rebuild the covenant, and the restore scan reads
+     * the same bytes back off the funding tx into `AssetSwap.offerHex`. */
     offerHex: string;
     /** Ready for `wallet.send`'s `extensions` — the caller never handles the packet type. */
     extension: { type: number; payload: Uint8Array };
+    /** The swap address to fund. Nothing exists on chain until the deposit
+     * lands here: `createOffer` is pure derivation and broadcasts nothing.
+     * Identical offers derive an identical address, so the funding txid — not
+     * the address — is what identifies one deposit. */
     address: string;
+    /** The covenant's scriptPubKey: the key an indexer watches to spot the
+     * deposit and its later spend (`AssetSwap.swapPkScript`). */
     swapPkScript: Uint8Array;
 }> {
     if (Boolean(params.wantAsset) === Boolean(params.offerAsset)) {
@@ -286,11 +295,32 @@ export async function createOffer(
     };
 }
 
-/** Cancel an offer: spend the swap VTXO back to the maker. Returns the ark txid.
+/**
+ * Cancel an offer: spend the swap VTXO back to the maker. Returns the ark txid.
+ *
+ * This is how a maker exits an offer no taker filled. **Neither program carries
+ * a timelock**, so an unfilled deposit does not expire and nothing reclaims it
+ * on the maker's behalf — it sits at the swap address until cancelled. There is
+ * no "expired" state to wait for; a maker who wants the deposit back must ask.
+ *
+ * Both paths out of the covenant are deliberately asymmetric:
+ *   - `fulfill` is signed by the **server alone**, but the covenant constrains
+ *     it to pay output 0 to `makerWP` for at least `wantAmount` — the taker
+ *     cannot take the deposit without delivering.
+ *   - `cancel` is a **2-of-2 of the maker and the server**, so cancelling is
+ *     cooperative: the server co-signs. It is not a unilateral withdrawal.
+ *
+ * Cancel therefore races a fill rather than pre-empting it. An offer the solver
+ * is filling in the same moment may be spent by `fulfill` first, in which case
+ * this throws "no spendable VTXO at the swap address" — which means the swap
+ * completed, not that anything failed. `restoreAssetSwaps` classifies the two
+ * spends apart afterwards (see `isCancelSpend`).
+ *
  * Identical offers derive the same address, so `fundingTxid` selects the exact
  * deposit; without it the first spendable VTXO at the address is cancelled.
  * `swapAddress` (the funded address) pins the server key the covenant was
- * built with, so cancel keeps working across a server signer rotation. */
+ * built with, so cancel keeps working across a server signer rotation.
+ */
 export async function cancelOffer(
     wallet: IWallet,
     arkServerUrl: string,
