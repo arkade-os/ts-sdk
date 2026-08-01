@@ -6,9 +6,9 @@ wallet settings, and any other keyed data — over the
 [bucket-sync protocol](https://github.com/Kukks/bucket-sync-server).
 
 **Values** are sealed client-side with `cse-v1` (AES-256-GCM envelope encryption)
-before they leave the device, and the key that decrypts them is derived from your
-seed and **never** sent to the server. So the server never sees contract
-parameters, swap preimages, or settings values.
+before they leave the device. Each record gets its own random data key, wrapped
+under a key-wrapping key derived from your seed which **never** leaves the device.
+So the server never sees contract parameters, swap preimages, or settings values.
 
 **Record keys are not encrypted.** The server needs them in the clear to do
 per-key CAS, and they are structural: `contract:{script}` puts the script itself
@@ -122,9 +122,7 @@ record is untidy, a missing preimage loses money.
   detection, not server-side prevention. Rollback is still *unauthenticated*: versions
   are server-assigned, so a server can serve an older but genuine envelope for the right key.
 - **The KWK is distinct from the signing key.** `deriveKwk(seed)` is HKDF-SHA256
-  with a domain-separated label — still `bucket-sync:cse-v1:kwk`, deliberately: that
-  labels a *key-derivation domain*, not the envelope format, and bumping it would
-  rotate every wallet's encryption key for no security gain. Auth uses your BIP-340
+  with a domain-separated label (`bucket-sync:cse-v1:kwk`). Auth uses your BIP-340
   Schnorr identity; encryption uses the KWK. Reusing one key for both is the
   antipattern this avoids.
 - **Auth is your existing identity.** The client proves ownership by signing a
