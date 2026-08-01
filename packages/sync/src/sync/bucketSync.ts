@@ -1,5 +1,5 @@
 import { base64 } from "@scure/base";
-import { CSE_V2_SCHEME, seal, open } from "../crypto/cseV2";
+import { CSE_V1_SCHEME, seal, open } from "../crypto/cseV1";
 import type {
     CommitResponse,
     DiffResponse,
@@ -52,7 +52,7 @@ export interface BucketSyncOptions {
 
 /**
  * The end-to-end-encrypted key-value sync core. Entity-agnostic: callers hand it
- * namespaced keys and plaintext bytes; it seals each value with `cse-v2`, drives
+ * namespaced keys and plaintext bytes; it seals each value with `cse-v1`, drives
  * per-key optimistic CAS against the server, and tracks the per-key version map
  * and the per-bucket seq cursor so pushes and pulls stay consistent.
  *
@@ -171,16 +171,16 @@ export class BucketSync {
                 ? {
                       key,
                       expectedVersion: this.knownVersion(key),
-                      scheme: CSE_V2_SCHEME,
+                      scheme: CSE_V1_SCHEME,
                       value: "",
                       delete: true,
                   }
                 : {
                       key,
                       expectedVersion: this.knownVersion(key),
-                      scheme: CSE_V2_SCHEME,
+                      scheme: CSE_V1_SCHEME,
                       // The key is bound into the envelope's tag, so a record the server
-                      // relocates to another key will not open. See docs/cse-v2.md.
+                      // relocates to another key will not open. See docs/cse-v1.md.
                       value: base64.encode(seal(pt, this.kwk, key)),
                       delete: false,
                   },

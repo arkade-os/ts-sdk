@@ -70,7 +70,7 @@ class FakeBucket implements BucketApi {
             version: e.version,
             seq: e.seq,
             contentHash: "",
-            scheme: "cse-v2",
+            scheme: "cse-v1",
             deleted: e.deleted,
             value: e.value,
             updatedAt: "",
@@ -102,7 +102,7 @@ describe("BucketSync — encrypted KV round-trip", () => {
         expect(await drain(reader)).toEqual({ "contract:abc": '{"type":"vhtlc"}' });
     });
 
-    it("does not leak plaintext to the wire (value is a cse-v2 envelope)", async () => {
+    it("does not leak plaintext to the wire (value is a cse-v1 envelope)", async () => {
         const bucket = new FakeBucket();
         const sync = new BucketSync(bucket, kwk());
         await sync.putOne("state:wallet", enc("SECRET-SETTINGS"));
@@ -111,7 +111,7 @@ describe("BucketSync — encrypted KV round-trip", () => {
             Uint8Array.from(atob(entry.value), (c) => c.charCodeAt(0)),
         );
         expect(wire).not.toContain("SECRET-SETTINGS");
-        expect(wire).toContain("cse-v2");
+        expect(wire).toContain("cse-v1");
     });
 
     it("tracks per-key versions across commits without advancing the cursor", async () => {
@@ -197,7 +197,7 @@ describe("BucketSync — CAS conflict resolution", () => {
                     version: commits,
                     seq: commits,
                     contentHash: "",
-                    scheme: "cse-v2",
+                    scheme: "cse-v1",
                     deleted: true,
                     value: "",
                     updatedAt: "",

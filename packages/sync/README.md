@@ -5,7 +5,7 @@ state — contracts (VHTLCs, Boltz-swap contracts, the default receive contract)
 wallet settings, and any other keyed data — over the
 [bucket-sync protocol](https://github.com/Kukks/bucket-sync-server).
 
-**Values** are sealed client-side with `cse-v2` (AES-256-GCM envelope encryption)
+**Values** are sealed client-side with `cse-v1` (AES-256-GCM envelope encryption)
 before they leave the device, and the key that decrypts them is derived from your
 seed and **never** sent to the server. So the server never sees contract
 parameters, swap preimages, or settings values.
@@ -112,16 +112,15 @@ record is untidy, a missing preimage loses money.
 
 ## Security model
 
-- **Values are sealed with `cse-v2`** — a random per-record data key (AES-256-GCM)
+- **Values are sealed with `cse-v1`** — a random per-record data key (AES-256-GCM)
   encrypts the value; that key is wrapped to you under a 32-byte key-wrapping key
   (KWK). The server stores the whole opaque envelope and reads only the scheme tag.
 - **Each envelope is bound to its bucket key.** The data tag covers
-  `bucket-sync:cse-v2:{key}` as GCM associated data. A server can still *return* one
+  `bucket-sync:cse-v1:{key}` as GCM associated data. A server can still *return* one
   key's ciphertext for a read of another — nothing stops it — but `open` authenticates
   against the key you asked for, so the client rejects it. The guarantee is client-side
-  detection, not server-side prevention. (`cse-v1` did not bind, and is gone; the
-  schemes are not interchangeable.) Rollback is still *unauthenticated*: versions are
-  server-assigned, so a server can serve an older but genuine envelope for the right key.
+  detection, not server-side prevention. Rollback is still *unauthenticated*: versions
+  are server-assigned, so a server can serve an older but genuine envelope for the right key.
 - **The KWK is distinct from the signing key.** `deriveKwk(seed)` is HKDF-SHA256
   with a domain-separated label — still `bucket-sync:cse-v1:kwk`, deliberately: that
   labels a *key-derivation domain*, not the envelope format, and bumping it would

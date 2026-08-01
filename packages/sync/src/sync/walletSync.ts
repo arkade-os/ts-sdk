@@ -11,7 +11,7 @@ export interface WalletSyncOptions extends BucketSyncOptions {
     baseUrl: string;
     /** The wallet identity (an Arkade `Identity` satisfies this) used for schnorr auth. */
     identity: SchnorrSigner;
-    /** 32-byte key-wrapping key for `cse-v2` — derive from the seed via `deriveKwk`. */
+    /** 32-byte key-wrapping key for `cse-v1` — derive from the seed via `deriveKwk`. */
     encryptionKey: Uint8Array;
     /** The state slices to sync (e.g. `new ContractSource(repo)`). */
     sources: SyncSource[];

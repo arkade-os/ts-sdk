@@ -4,9 +4,9 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { base64 } from "@scure/base";
 
 /**
- * `cse-v2` client-side encryption envelope — TypeScript port of the reference
- * implementation in the bucket-sync-server repo (`src/BucketSync.Cse/CseV2Envelope.cs`),
- * following the wire format documented in `docs/cse-v2.md`.
+ * `cse-v1` client-side encryption envelope — TypeScript port of the reference
+ * implementation in the bucket-sync-server repo (`src/BucketSync.Cse/CseV1Envelope.cs`),
+ * following the wire format documented in `docs/cse-v1.md`.
  *
  * The data is sealed under a random per-record DEK (AES-256-GCM); the DEK is
  * wrapped (also AES-256-GCM) to the owner under a 32-byte key-wrapping key (KWK).
@@ -14,15 +14,15 @@ import { base64 } from "@scure/base";
  * the `scheme` tag. The KWK is derived from the seed and is deliberately
  * distinct from the BIP-340 signing key (see {@link deriveKwk}).
  *
- * What v2 adds over v1: the data encryption is **bound to the bucket key** it is
- * stored under, via the GCM AAD. v1's tag proved only that the bytes came from a
- * KWK holder and were unaltered — not where they belonged — so a malicious server
+ * The data encryption is **bound to the bucket key** it is stored under, via the
+ * GCM AAD. Without that the tag would prove only that the bytes came from a KWK
+ * holder and were unaltered — not where they belonged — so a malicious server
  * could serve one key's ciphertext in answer to a read of another and the client
- * would accept it. Under v2 a relocated envelope fails its tag.
+ * would accept it. Binding the key makes a relocated envelope fail its tag.
  */
 
 /** The scheme tag carried in the envelope and in the server entry's `scheme` field. */
-export const CSE_V2_SCHEME = "cse-v2";
+export const CSE_V1_SCHEME = "cse-v1";
 
 const DATA_ALG = "AES-256-GCM";
 const TAG_LEN = 16;
@@ -31,12 +31,7 @@ const DEK_LEN = 32;
 const KWK_LEN = 32;
 
 /**
- * HKDF `info` label that domain-separates the key-wrapping key from the signing key.
- *
- * Deliberately still says `cse-v1`: this labels a *key-derivation domain*, not the
- * envelope format. The KWK is the same key material under v2, and changing the label
- * would rotate every wallet's encryption key for no security gain.
- */
+ * HKDF `info` label that domain-separates the key-wrapping key from the signing key. */
 const KWK_INFO = "bucket-sync:cse-v1:kwk";
 
 /** Pluggable CSPRNG so tests can inject a deterministic source. */
@@ -75,7 +70,7 @@ export interface SealOptions {
  * encoding unambiguous whatever the key itself contains.
  */
 export function cseAad(key: string): Uint8Array {
-    return new TextEncoder().encode(`bucket-sync:${CSE_V2_SCHEME}:${key}`);
+    return new TextEncoder().encode(`bucket-sync:${CSE_V1_SCHEME}:${key}`);
 }
 
 /**
@@ -90,7 +85,7 @@ export function deriveKwk(seed: Uint8Array): Uint8Array {
     return hkdf(sha256, seed, undefined, new TextEncoder().encode(KWK_INFO), KWK_LEN);
 }
 
-/** AES-256-GCM encrypt; splits out the trailing 16-byte tag (cse-v2 stores ct and tag separately). */
+/** AES-256-GCM encrypt; splits out the trailing 16-byte tag (cse-v1 stores ct and tag separately). */
 function gcmEncrypt(key: Uint8Array, iv: Uint8Array, plaintext: Uint8Array, aad?: Uint8Array) {
     const out = gcm(key, iv, aad).encrypt(plaintext); // noble appends the tag: ct || tag
     return {
@@ -114,7 +109,7 @@ function gcmDecrypt(
 }
 
 /**
- * Seal plaintext into a `cse-v2` envelope (UTF-8 JSON bytes) under a 32-byte KWK.
+ * Seal plaintext into a `cse-v1` envelope (UTF-8 JSON bytes) under a 32-byte KWK.
  * The returned bytes are what a client base64-encodes into a commit op's `value`.
  *
  * @param key The bucket key this value will be stored under (e.g. `"swap:abc"`). Bound
@@ -141,7 +136,7 @@ export function seal(
         const wrap = gcmEncrypt(kwk, wrapNonce, dek);
 
         const envelope: Envelope = {
-            v: CSE_V2_SCHEME,
+            v: CSE_V1_SCHEME,
             alg: DATA_ALG,
             recipients: [
                 {
@@ -162,7 +157,7 @@ export function seal(
 }
 
 /**
- * Open a `cse-v2` envelope under a 32-byte KWK.
+ * Open a `cse-v1` envelope under a 32-byte KWK.
  *
  * @param key The bucket key the envelope was stored under. Must match the one passed
  *            to {@link seal}; a mismatch fails the GCM tag, which is the point.
@@ -177,9 +172,9 @@ export function open(envelopeBytes: Uint8Array, kwk: Uint8Array, key: string): U
     try {
         envelope = JSON.parse(new TextDecoder().decode(envelopeBytes)) as Envelope;
     } catch {
-        throw new Error("malformed cse-v2 envelope");
+        throw new Error("malformed cse-v1 envelope");
     }
-    if (envelope?.v !== CSE_V2_SCHEME) throw new Error(`unexpected scheme: ${envelope?.v}`);
+    if (envelope?.v !== CSE_V1_SCHEME) throw new Error(`unexpected scheme: ${envelope?.v}`);
 
     const recipient = envelope.recipients?.find((r) => r.type === "owner");
     if (!recipient) throw new Error("no owner recipient");

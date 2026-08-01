@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { base64 } from "@scure/base";
-import { seal, open, deriveKwk, cseAad, CSE_V2_SCHEME } from "../src/crypto/cseV2";
+import { seal, open, deriveKwk, cseAad, CSE_V1_SCHEME } from "../src/crypto/cseV1";
 
 const kwk = () => crypto.getRandomValues(new Uint8Array(32));
 const enc = (s: string) => new TextEncoder().encode(s);
 const dec = (b: Uint8Array) => new TextDecoder().decode(b);
 
-describe("cse-v2 envelope", () => {
+describe("cse-v1 envelope", () => {
     it("round-trips seal then open with the same key", () => {
         const k = kwk();
         const pt = enc(JSON.stringify({ vtxo: "abc", amount: 1000 }));
@@ -41,13 +41,13 @@ describe("cse-v2 envelope", () => {
         expect(() => open(enc(JSON.stringify(obj)), k, "swap:abc")).toThrow();
     });
 
-    it("advertises the cse-v2 scheme", () => {
-        expect(dec(seal(enc("x"), kwk(), "swap:abc"))).toContain(CSE_V2_SCHEME);
+    it("advertises the cse-v1 scheme", () => {
+        expect(dec(seal(enc("x"), kwk(), "swap:abc"))).toContain(CSE_V1_SCHEME);
     });
 
-    it("produces an envelope matching the documented cse-v2 wire format", () => {
+    it("produces an envelope matching the documented cse-v1 wire format", () => {
         const obj = JSON.parse(dec(seal(enc("hello world"), kwk(), "swap:abc")));
-        expect(obj.v).toBe("cse-v2");
+        expect(obj.v).toBe("cse-v1");
         expect(obj.alg).toBe("AES-256-GCM");
         expect(base64.decode(obj.iv).length).toBe(12);
         expect(base64.decode(obj.tag).length).toBe(16);
@@ -105,19 +105,19 @@ describe("cse-v2 envelope", () => {
         const k = kwk();
         const env = seal(enc("owned by swap:abc"), k, "swap:abc");
 
-        // The whole point of v2: a server that relocates a record's ciphertext to a
+        // The whole point of the binding: a server that relocates a record's ciphertext to a
         // different key cannot make the client accept it.
         expect(() => open(env, k, "swap:victim")).toThrow();
         expect(dec(open(env, k, "swap:abc"))).toBe("owned by swap:abc");
     });
 
     it("derives AAD that is domain-separated and key-bound", () => {
-        expect(dec(cseAad("swap:abc"))).toBe("bucket-sync:cse-v2:swap:abc");
+        expect(dec(cseAad("swap:abc"))).toBe("bucket-sync:cse-v1:swap:abc");
         expect(cseAad("a")).not.toEqual(cseAad("b"));
     });
 
     /**
-     * The interop vector published in docs/cse-v2.md of the bucket-sync-server repo,
+     * The interop vector published in docs/cse-v1.md of the bucket-sync-server repo,
      * also opened by the C# reference implementation's test of the same name. If the two
      * ever disagree the implementations have silently diverged — both can be internally
      * consistent and still mutually unreadable, and only a shared vector catches that.
@@ -126,11 +126,11 @@ describe("cse-v2 envelope", () => {
         const kwkHex = "4b2f8a1c6d3e5f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8";
         const kwk = Uint8Array.from(kwkHex.match(/../g)!.map((h) => parseInt(h, 16)));
         const envelope = base64.decode(
-            "eyJ2IjoiY3NlLXYyIiwiYWxnIjoiQUVTLTI1Ni1HQ00iLCJyZWNpcGllbnRzIjpbeyJ0eXBlIjoib3duZXIiLCJ3cmFwcGVk" +
-                "RGVrIjoiZEZyQVB4a05XTm9PVlZKdGRvYnR2ZDQxK0FLc3NVQmVPaDF0UTF6SWp1dz0iLCJub25jZSI6IkdmSjZURnovWnJp" +
-                "UkpSRVciLCJ0YWciOiIvSW82STVCWis5eXp1WkpncUdPV3N3PT0ifV0sIml2IjoiMGNqa0s3VTVyVXBKY0VzeSIsImN0Ijoi" +
-                "QUJMNTUvM1RGbWs4Z254bk5EeXZMZUE1a2UzZERZUkEzVW5HM1FiOVRBZ2tydzhKWTQ5SVBnR3JWdz09IiwidGFnIjoiNlZN" +
-                "Wm1GaFFNTUdpQ3orNnNhZUN3QT09In0=",
+            "eyJ2IjoiY3NlLXYxIiwiYWxnIjoiQUVTLTI1Ni1HQ00iLCJyZWNpcGllbnRzIjpbeyJ0eXBlIjoib3duZXIiLCJ3cmFwcGVk" +
+                "RGVrIjoiZTNIa3lzcU5XMFNOd1BSQWpZY1Qzd044S29LQk5UR3gyZ2pOSGVjT0I0dz0iLCJub25jZSI6IndmK2xBRWc0Z1l2" +
+                "bFF0Z3YiLCJ0YWciOiI4WkJneVJxTTNHSDlNeGNodmRkNnJBPT0ifV0sIml2IjoiOG55NElBN2JGQlduRjNSYiIsImN0Ijoi" +
+                "eUl0TjBkeThzVVh4MXk1ZTJVTGhqL0tSRFpUcGx0cXhPK1NDek5zWlJyMHFiNkFRR1dxMzN1Y0lhQT09IiwidGFnIjoidEJZ" +
+                "Mk0xZ21pNGxTZTJVK3dEZUdMdz09In0=",
         );
 
         expect(dec(open(envelope, kwk, "swap:interop"))).toBe(
