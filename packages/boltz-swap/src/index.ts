@@ -51,6 +51,7 @@ export {
     BoltzRefundError,
     QuoteRejectedError,
     VHTLCAddressMismatchError,
+    CooperativeSignRefusedError,
 } from "./errors";
 export type { QuoteRejectionReason } from "./errors";
 export {

@@ -339,6 +339,12 @@ export interface BoltzChainSwap {
     toAddress?: string;
     /** Swap amount in satoshis. */
     amount: number;
+    /**
+     * Txid of our claim of the swap's claim side, recorded once the claim
+     * succeeds. Absent on swaps created before this field existed and on
+     * swaps we have not claimed yet.
+     */
+    claimTxid?: string;
 }
 
 /** Union type of all pending swap types. */
