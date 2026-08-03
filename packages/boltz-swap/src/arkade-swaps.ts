@@ -9,6 +9,7 @@ import {
     BoltzRefundError,
     QuoteRejectedError,
     VHTLCAddressMismatchError,
+    CooperativeSignRefusedError,
 } from "./errors";
 import {
     ArkAddress,
@@ -2117,7 +2118,12 @@ export class ArkadeSwaps {
                         if (claimStarted) return;
                         claimStarted = true;
                         claimPromise = this.claimArk(swap);
-                        claimPromise.catch(reject);
+                        // Mirror the claim onto the local copy: later
+                        // updateSwapStatus() saves would otherwise write it
+                        // back out of the pre-claim snapshot.
+                        claimPromise.then(({ txid }) => {
+                            swap.claimTxid = txid;
+                        }, reject);
                         break;
                     case "transaction.claimed": {
                         await updateSwapStatus();
@@ -2135,6 +2141,10 @@ export class ArkadeSwaps {
                     }
                     case "transaction.claim.pending":
                         await updateSwapStatus();
+                        // Let a claim already in flight land — and persist its
+                        // txid — before co-signing. Its failure is surfaced by
+                        // the handler that owns it.
+                        await claimPromise?.catch(() => {});
                         await this.signCooperativeClaimForServer(swap).catch((err) => {
                             logger.error(`Failed to sign cooperative claim for ${swap.id}:`, err);
                         });
@@ -2187,6 +2197,54 @@ export class ArkadeSwaps {
     }
 
     /**
+     * Rebuild the VHTLC script of a chain swap's claim side — the side we
+     * claim with the preimage. Resolves across current and deprecated signers
+     * so a swap locked under a now-rotated signer still reconstructs; the
+     * returned `serverXOnlyPublicKey` is the matched key and MUST be threaded
+     * into downstream signing.
+     */
+    private resolveClaimSideVHTLC(
+        pendingSwap: BoltzChainSwap,
+        arkInfo: ArkInfo,
+    ): { vhtlcScript: VHTLC.Script; serverXOnlyPublicKey: Uint8Array } {
+        if (!pendingSwap.response.claimDetails.serverPublicKey)
+            throw new Error(`Swap ${pendingSwap.id}: missing server public key in claim details`);
+
+        if (!pendingSwap.response.claimDetails.timeouts)
+            throw new Error(`Swap ${pendingSwap.id}: missing timeouts in claim details`);
+
+        const receiverXOnlyPublicKey = normalizeToXOnlyKey(
+            pendingSwap.request.claimPublicKey,
+            "receiver",
+        );
+
+        const senderXOnlyPublicKey = normalizeToXOnlyKey(
+            pendingSwap.response.claimDetails.serverPublicKey,
+            "sender",
+        );
+
+        try {
+            return this.resolveVHTLCForLockup({
+                arkInfo,
+                preimageHash: hex.decode(pendingSwap.request.preimageHash),
+                senderPubkey: hex.encode(senderXOnlyPublicKey),
+                receiverPubkey: hex.encode(receiverXOnlyPublicKey),
+                timeoutBlockHeights: pendingSwap.response.claimDetails.timeouts,
+                lockupAddress: pendingSwap.response.claimDetails.lockupAddress,
+                swapId: pendingSwap.id,
+            });
+        } catch (error) {
+            // Preserve the SwapError contract on a total mismatch.
+            throw new SwapError({
+                message:
+                    error instanceof Error
+                        ? error.message
+                        : "Unable to claim: invalid VHTLC address",
+            });
+        }
+    }
+
+    /**
      * Claim sats on ARK chain by claiming the VHTLC.
      * Refactored to use claimVHTLCIdentity + claimVHTLCwithOffchainTx utilities.
      * @param pendingSwap - The pending chain swap.
@@ -2196,50 +2254,14 @@ export class ArkadeSwaps {
         if (!pendingSwap.toAddress)
             throw new Error(`Swap ${pendingSwap.id}: destination address is required`);
 
-        if (!pendingSwap.response.claimDetails.serverPublicKey)
-            throw new Error(`Swap ${pendingSwap.id}: missing server public key in claim details`);
-
-        if (!pendingSwap.response.claimDetails.timeouts)
-            throw new Error(`Swap ${pendingSwap.id}: missing timeouts in claim details`);
-
         const arkInfo = await this.arkProvider.getInfo();
         const preimage = hex.decode(pendingSwap.preimage);
         const address = await this.wallet.getAddress();
 
-        // build expected VHTLC script
-        const receiverXOnlyPublicKey = normalizeToXOnlyKey(
-            pendingSwap.request.claimPublicKey,
-            "receiver",
+        const { vhtlcScript, serverXOnlyPublicKey } = this.resolveClaimSideVHTLC(
+            pendingSwap,
+            arkInfo,
         );
-
-        const senderXOnlyPublicKey = normalizeToXOnlyKey(
-            pendingSwap.response.claimDetails.serverPublicKey!,
-            "sender",
-        );
-
-        // Resolve across current + deprecated signers so a chain swap locked
-        // under a now-rotated signer still claims; preserve the SwapError
-        // contract on a total mismatch.
-        let vhtlcScript: VHTLC.Script;
-        let serverXOnlyPublicKey: Uint8Array;
-        try {
-            ({ vhtlcScript, serverXOnlyPublicKey } = this.resolveVHTLCForLockup({
-                arkInfo,
-                preimageHash: hex.decode(pendingSwap.request.preimageHash),
-                senderPubkey: hex.encode(senderXOnlyPublicKey),
-                receiverPubkey: hex.encode(receiverXOnlyPublicKey),
-                timeoutBlockHeights: pendingSwap.response.claimDetails.timeouts!,
-                lockupAddress: pendingSwap.response.claimDetails.lockupAddress,
-                swapId: pendingSwap.id,
-            }));
-        } catch (error) {
-            throw new SwapError({
-                message:
-                    error instanceof Error
-                        ? error.message
-                        : "Unable to claim: invalid VHTLC address",
-            });
-        }
 
         let vtxo;
         for (let attempt = 1; attempt <= CLAIM_VTXO_RETRY_ATTEMPTS; attempt++) {
@@ -2293,6 +2315,7 @@ export class ArkadeSwaps {
         await this.savePendingChainSwap({
             ...pendingSwap,
             status: finalStatus.status,
+            claimTxid: txid,
         });
 
         return { txid };
@@ -2326,7 +2349,51 @@ export class ArkadeSwaps {
     }
 
     /**
+     * Assert that we have already claimed a chain swap's claim side.
+     *
+     * The cooperative signature authorizes a bare 32-byte hash — the claim
+     * details endpoint returns no transaction — so our own claim is the only
+     * thing the signature can be ordered against. The claim also publishes the
+     * preimage, which is what makes the counterparty's own claim possible, so
+     * signing after it is the natural order rather than an extra requirement.
+     */
+    private async assertClaimSideClaimed(pendingSwap: BoltzChainSwap): Promise<void> {
+        if (pendingSwap.claimTxid) return;
+
+        // Status callbacks carry a snapshot taken before the claim ran, so
+        // re-read the record rather than trusting the caller's copy.
+        const [stored] = await this.swapRepository.getAllSwaps<BoltzChainSwap>({
+            id: pendingSwap.id,
+            type: "chain",
+        });
+        if (stored?.claimTxid) return;
+
+        // Swaps that predate `claimTxid` — restored ones included — carry no
+        // txid even once claimed, so fall back to the indexer: before the CLTV
+        // the preimage path is ours alone, so a fully spent lockup is our claim.
+        const arkInfo = await this.arkProvider.getInfo();
+        const { vhtlcScript } = this.resolveClaimSideVHTLC(pendingSwap, arkInfo);
+        const { vtxos } = await this.indexerProvider.getVtxos({
+            scripts: [hex.encode(vhtlcScript.pkScript)],
+        });
+        if (vtxos.length > 0 && vtxos.every((vtxo) => vtxo.isSpent)) return;
+
+        throw new CooperativeSignRefusedError({
+            swapId: pendingSwap.id,
+            reason:
+                vtxos.length === 0
+                    ? "no virtual coins found at the claim-side lockup"
+                    : "the claim-side lockup is not spent by this wallet",
+            pendingSwap,
+        });
+    }
+
+    /**
      * Sign a cooperative claim for the server in BTC => ARK swaps.
+     *
+     * Only signs once our own claim of the swap's claim side is established;
+     * the request arrives on a provider-reported status, which is not by
+     * itself evidence of that ordering.
      * @param pendingSwap - The pending chain swap.
      */
     async signCooperativeClaimForServer(pendingSwap: BoltzChainSwap): Promise<void> {
@@ -2335,6 +2402,8 @@ export class ArkadeSwaps {
 
         if (!pendingSwap.response.lockupDetails.serverPublicKey)
             throw new Error(`Swap ${pendingSwap.id}: missing server public key in lockup details`);
+
+        await this.assertClaimSideClaimed(pendingSwap);
 
         const claimDetails = await this.swapProvider.getChainClaimDetails(pendingSwap.id);
 
