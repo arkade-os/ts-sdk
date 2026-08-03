@@ -22,7 +22,11 @@ import {
 import { SignerSession } from "../tree/signingSession";
 import { buildForfeitTx } from "../forfeit";
 import { validateConnectorsTxGraph, validateVtxoTxGraph } from "../tree/validation";
-import { assertFinalCommitmentMatchesValidated, validateBatchRecipients } from "./validation";
+import {
+    assertFinalCommitmentMatchesValidated,
+    validateBatchRecipients,
+    validateBatchRecipientsWithoutTree,
+} from "./validation";
 import { Identity, ReadonlyIdentity, isBatchSignable } from "../identity";
 import {
     canRecoverOnchain,
@@ -3629,6 +3633,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         event: BatchFinalizationEvent,
         inputs: SettleParams["inputs"],
         forfeitOutputScript: Bytes,
+        expectedRecipients: Recipient[],
         connectorsGraph?: TxTree,
         validatedCommitmentTxid?: string,
     ) {
@@ -3641,6 +3646,14 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             validatedCommitmentTxid,
             "settlement finalization",
         );
+
+        // No validated txid means tree signing never ran (onchain-only settle),
+        // so the recipients have not been checked yet and this commitment tx is
+        // the only thing to check them against. Before any signature is handed
+        // over, in either direction: boarding inputs below, forfeits after.
+        if (!validatedCommitmentTxid && expectedRecipients.length > 0) {
+            validateBatchRecipientsWithoutTree(settlementPsbt, expectedRecipients, this.network);
+        }
         let hasBoardingUtxos = false;
 
         let connectorIndex = 0;
@@ -3926,6 +3939,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     event,
                     inputs,
                     this.forfeitOutputScript,
+                    expectedRecipients,
                     connectorTree,
                     validatedCommitmentTxid,
                 );

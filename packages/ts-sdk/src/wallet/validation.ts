@@ -8,20 +8,34 @@ import { Address, OutScript } from "@scure/btc-signer";
 import type { Network } from "../networks";
 import { ServerResponseMismatchError } from "../providers/errors";
 
+// A requested recipient is absent from what the server built. Message text is
+// stable and greppable: past the service-worker boundary `message` is the only
+// field left to branch on, so it is the whole signal.
 export const ErrOffchainOutputNotFound = (address: string) =>
-    new Error(`offchain send output not found: ${address}`);
+    new ServerResponseMismatchError(`offchain send output not found: ${address}`);
 export const ErrInvalidAssetOutputAmount = (got: bigint, want: bigint, assetId: string) =>
-    new Error(`invalid asset output amount for ${assetId}: got ${got}, want ${want}`);
+    new ServerResponseMismatchError(
+        `invalid asset output amount for ${assetId}: got ${got}, want ${want}`,
+    );
 export const ErrAssetGroupNotFound = (assetId: string) =>
-    new Error(`asset group not found in batch leaf: ${assetId}`);
+    new ServerResponseMismatchError(`asset group not found in batch leaf: ${assetId}`);
 export const ErrAssetOutputNotFound = (assetId: string, outputIndex: number) =>
-    new Error(`asset output not found in asset group ${assetId} at index ${outputIndex}`);
+    new ServerResponseMismatchError(
+        `asset output not found in asset group ${assetId} at index ${outputIndex}`,
+    );
+export const ErrOnchainOutputNotFound = (address: string) =>
+    new ServerResponseMismatchError(`onchain output not found: ${address}`);
+export const ErrUnvalidatedOffchainOutput = (address: string) =>
+    new ServerResponseMismatchError(
+        `offchain output ${address} cannot be validated: virtual output tree signing did not run`,
+    );
+
+// Malformed recipient list from the caller, not a server response: plain
+// `Error`, since there is nothing for a consumer to branch on.
 export const ErrInvalidOnchainOutputAmount = (address: string) =>
     new Error(`invalid onchain output amount: ${address}`);
 export const ErrInvalidOnchainOutputAssets = (address: string) =>
     new Error(`onchain output ${address} cannot have assets`);
-export const ErrOnchainOutputNotFound = (address: string) =>
-    new Error(`onchain output not found: ${address}`);
 export const ErrInvalidOffchainOutputAmount = (address: string) =>
     new Error(`invalid offchain output ${address}, missing amount`);
 
@@ -55,6 +69,10 @@ export function assertFinalCommitmentMatchesValidated(
  * Onchain recipients are validated against the round transaction outputs (amounts and scripts)
  * via validateOnchainRecipient.
  *
+ * Presence only: the commitment tx and the tree are shared with every other intent in the batch,
+ * so outputs paying someone else are legitimate and cannot be rejected. What this asserts is that
+ * a settlement cannot consume our inputs and pay us nothing.
+ *
  * @param commitmentTx - The commitment transaction to validate against
  * @param vtxoTreeLeaves - The vtxo tree leaves to validate against
  * @param recipients - The expected recipients to validate (both offchain and onchain)
@@ -81,6 +99,38 @@ export function validateBatchRecipients(
         }
 
         validateOffchainRecipient(vtxoTreeLeaves, arkAddress, recipient, usedOutputs);
+    }
+}
+
+/**
+ * Same guarantee as {@link validateBatchRecipients}, for a batch whose virtual
+ * output tree was never validated — an onchain-only settle skips tree signing,
+ * so the commitment tx received at finalization is the only artifact to check
+ * against.
+ *
+ * Offchain recipients are rejected rather than checked: a leaf paying the right
+ * script proves nothing until {@link validateVtxoTxGraph} has shown the tree is
+ * rooted in the commitment tx, and that only runs during tree signing. A caller
+ * reaching finalization with offchain recipients and no signing session has
+ * asked for a settlement this function cannot vouch for.
+ *
+ * @throws if a recipient is absent from the commitment tx outputs, or is offchain
+ */
+export function validateBatchRecipientsWithoutTree(
+    commitmentTx: Transaction,
+    recipients: Recipient[],
+    network: Network,
+): void {
+    const usedOnchainOutputs = new Set<number>();
+    for (const recipient of recipients) {
+        try {
+            ArkAddress.decode(recipient.address);
+        } catch {
+            validateOnchainRecipient(commitmentTx, recipient, network, usedOnchainOutputs);
+            continue;
+        }
+
+        throw ErrUnvalidatedOffchainOutput(recipient.address);
     }
 }
 
