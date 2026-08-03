@@ -2369,23 +2369,82 @@ export class ArkadeSwaps {
         if (stored?.claimTxid) return;
 
         // Swaps that predate `claimTxid` — restored ones included — carry no
-        // txid even once claimed, so fall back to the indexer: before the CLTV
-        // the preimage path is ours alone, so a fully spent lockup is our claim.
+        // txid even once claimed, so fall back to the indexer.
         const arkInfo = await this.arkProvider.getInfo();
         const { vhtlcScript } = this.resolveClaimSideVHTLC(pendingSwap, arkInfo);
         const { vtxos } = await this.indexerProvider.getVtxos({
             scripts: [hex.encode(vhtlcScript.pkScript)],
         });
-        if (vtxos.length > 0 && vtxos.every((vtxo) => vtxo.isSpent)) return;
+        const spent = vtxos.filter((vtxo) => vtxo.isSpent);
+        if (vtxos.length > 0 && spent.length === vtxos.length) {
+            // `isSpent` says nothing about who spent it, so pin the spender:
+            // either the spending transaction paid us, or it ran while the
+            // sender's refund leaves were still locked, when no spend path
+            // exists that does not carry our signature.
+            if (await this.spentIntoOurWallet(pendingSwap, spent)) return;
+            if (!(await this.claimSideRefundReached(pendingSwap))) return;
+        }
 
         throw new CooperativeSignRefusedError({
             swapId: pendingSwap.id,
             reason:
                 vtxos.length === 0
                     ? "no virtual coins found at the claim-side lockup"
-                    : "the claim-side lockup is not spent by this wallet",
+                    : spent.length < vtxos.length
+                      ? "the claim-side lockup is not fully spent"
+                      : "the claim-side lockup spend is not attributable to this wallet",
             pendingSwap,
         });
+    }
+
+    /**
+     * Whether every given VTXO was spent by a transaction that paid this
+     * wallet — the ark tx that spent it created a VTXO at one of our scripts.
+     *
+     * Only the offchain path is attributable: a batch settlement records a
+     * commitment tx shared with every other participant of that round, so it
+     * identifies nobody.
+     */
+    private async spentIntoOurWallet(
+        pendingSwap: BoltzChainSwap,
+        spent: VirtualCoin[],
+    ): Promise<boolean> {
+        if (spent.some((vtxo) => !vtxo.arkTxId)) return false;
+
+        // The claim pays `wallet.getAddress()` as of claim time; `toAddress` is
+        // what the caller asked for. Under HD rotation neither alone covers
+        // every claim, so query both.
+        const scripts = [pendingSwap.toAddress, await this.wallet.getAddress()]
+            .filter((address): address is string => Boolean(address))
+            .flatMap((address) => {
+                try {
+                    return [hex.encode(ArkAddress.decode(address).pkScript)];
+                } catch {
+                    // Not an Ark address — a chain swap's BTC destination.
+                    return [];
+                }
+            });
+        if (scripts.length === 0) return false;
+
+        const { vtxos } = await this.indexerProvider.getVtxos({
+            scripts: [...new Set(scripts)],
+        });
+        const ourTxids = new Set(vtxos.map((vtxo) => vtxo.txid));
+        return spent.every((vtxo) => ourTxids.has(vtxo.arkTxId!));
+    }
+
+    /**
+     * Whether the claim-side refund locktime has been reached, i.e. the sender
+     * can spend the lockup without us. Unknown counts as reached: a
+     * block-height locktime with no chain tip cannot establish the window is
+     * still shut.
+     */
+    private async claimSideRefundReached(pendingSwap: BoltzChainSwap): Promise<boolean> {
+        const locktime = pendingSwap.response.claimDetails.timeouts?.refund;
+        if (locktime === undefined) return true;
+        const { height } = await this.chainTipSnapshotFor([locktime]);
+        if (isBlockHeightLocktime(locktime) && height === undefined) return true;
+        return isRefundLocktimeReached(locktime, height);
     }
 
     /**
