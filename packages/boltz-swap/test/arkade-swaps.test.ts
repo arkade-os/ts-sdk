@@ -2524,6 +2524,82 @@ describe("ArkadeSwaps", () => {
                 expect(post).toHaveBeenCalledOnce();
             });
 
+            it("does not sign when the spend paid our wallet less than it took", async () => {
+                // arrange — spender pays us dust; an unrelated full-value
+                // vtxo must not count toward the spender's total.
+                const swap = withRefundLocktime(makeBtcChainSwap("ARK"), PAST_LOCKTIME);
+                mockSwapRepository.getAllSwaps.mockResolvedValue([swap]);
+                stubClaimSideVHTLC();
+                const arkTxId = hex.encode(randomBytes(32));
+                vi.spyOn(indexerProvider, "getVtxos")
+                    .mockResolvedValueOnce({ vtxos: [lockupVtxo(true, arkTxId)] as any })
+                    .mockResolvedValueOnce({
+                        vtxos: [
+                            { ...lockupVtxo(false), txid: arkTxId, value: 1 },
+                            lockupVtxo(false),
+                        ] as any,
+                    });
+                const post = vi.spyOn(swapProvider, "postChainClaimDetails");
+
+                // act & assert
+                await expect(swaps.signCooperativeClaimForServer(swap)).rejects.toBeInstanceOf(
+                    CooperativeSignRefusedError,
+                );
+                expect(post).not.toHaveBeenCalled();
+            });
+
+            it("signs when one spending tx covers several lockup vtxos in aggregate", async () => {
+                // arrange
+                const swap = withRefundLocktime(makeBtcChainSwap("ARK"), PAST_LOCKTIME);
+                mockSwapRepository.getAllSwaps.mockResolvedValue([swap]);
+                stubClaimSideVHTLC();
+                const arkTxId = hex.encode(randomBytes(32));
+                vi.spyOn(indexerProvider, "getVtxos")
+                    .mockResolvedValueOnce({
+                        vtxos: [lockupVtxo(true, arkTxId), lockupVtxo(true, arkTxId)] as any,
+                    })
+                    .mockResolvedValueOnce({
+                        vtxos: [
+                            { ...lockupVtxo(false), txid: arkTxId },
+                            { ...lockupVtxo(false), txid: arkTxId },
+                        ] as any,
+                    });
+                vi.spyOn(swapProvider, "getChainClaimDetails").mockResolvedValue(
+                    chainClaimDetails(swap),
+                );
+                const post = vi
+                    .spyOn(swapProvider, "postChainClaimDetails")
+                    .mockResolvedValue({} as any);
+
+                // act
+                await swaps.signCooperativeClaimForServer(swap);
+
+                // assert
+                expect(post).toHaveBeenCalledOnce();
+            });
+
+            it("does not sign when the spending tx covers only part of what it spent", async () => {
+                // arrange — one full-value output cannot vouch for two vtxos
+                const swap = withRefundLocktime(makeBtcChainSwap("ARK"), PAST_LOCKTIME);
+                mockSwapRepository.getAllSwaps.mockResolvedValue([swap]);
+                stubClaimSideVHTLC();
+                const arkTxId = hex.encode(randomBytes(32));
+                vi.spyOn(indexerProvider, "getVtxos")
+                    .mockResolvedValueOnce({
+                        vtxos: [lockupVtxo(true, arkTxId), lockupVtxo(true, arkTxId)] as any,
+                    })
+                    .mockResolvedValueOnce({
+                        vtxos: [{ ...lockupVtxo(false), txid: arkTxId }] as any,
+                    });
+                const post = vi.spyOn(swapProvider, "postChainClaimDetails");
+
+                // act & assert
+                await expect(swaps.signCooperativeClaimForServer(swap)).rejects.toBeInstanceOf(
+                    CooperativeSignRefusedError,
+                );
+                expect(post).not.toHaveBeenCalled();
+            });
+
             it("signs for a swap predating the field when the lockup was spent before its refund locktime", async () => {
                 // arrange
                 const swap = withRefundLocktime(makeBtcChainSwap("ARK"), FUTURE_LOCKTIME);

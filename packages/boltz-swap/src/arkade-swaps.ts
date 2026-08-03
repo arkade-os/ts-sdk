@@ -2398,18 +2398,27 @@ export class ArkadeSwaps {
     }
 
     /**
-     * Whether every given VTXO was spent by a transaction that paid this
-     * wallet — the ark tx that spent it created a VTXO at one of our scripts.
+     * Whether every ark tx that spent the given VTXOs paid our scripts at
+     * least the value it took from the lockup — the spend made us whole. A
+     * bare paid-us check would accept a post-locktime refund carrying a dust
+     * output to our address.
      *
      * Only the offchain path is attributable: a batch settlement records a
      * commitment tx shared with every other participant of that round, so it
-     * identifies nobody.
+     * identifies nobody. Trusts the indexer — this guards against a malicious
+     * counterparty, not a colluding operator.
      */
     private async spentIntoOurWallet(
         pendingSwap: BoltzChainSwap,
         spent: VirtualCoin[],
     ): Promise<boolean> {
         if (spent.some((vtxo) => !vtxo.arkTxId)) return false;
+
+        // Summed per spending tx, so one output cannot vouch for two vtxos.
+        const takenByTx = new Map<string, number>();
+        for (const vtxo of spent) {
+            takenByTx.set(vtxo.arkTxId!, (takenByTx.get(vtxo.arkTxId!) ?? 0) + vtxo.value);
+        }
 
         // The claim pays `wallet.getAddress()` as of claim time; `toAddress` is
         // what the caller asked for. Under HD rotation neither alone covers
@@ -2429,8 +2438,15 @@ export class ArkadeSwaps {
         const { vtxos } = await this.indexerProvider.getVtxos({
             scripts: [...new Set(scripts)],
         });
-        const ourTxids = new Set(vtxos.map((vtxo) => vtxo.txid));
-        return spent.every((vtxo) => ourTxids.has(vtxo.arkTxId!));
+        const receivedByTx = new Map<string, number>();
+        for (const vtxo of vtxos) {
+            receivedByTx.set(vtxo.txid, (receivedByTx.get(vtxo.txid) ?? 0) + vtxo.value);
+        }
+
+        // `>=`: an overpaying spend still makes us whole. If a future claim
+        // path deducts a fee from its output, this basis must follow it, or
+        // legacy fallbacks refuse (fail closed).
+        return [...takenByTx].every(([txid, taken]) => (receivedByTx.get(txid) ?? 0) >= taken);
     }
 
     /**
