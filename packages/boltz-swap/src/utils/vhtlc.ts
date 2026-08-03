@@ -2,10 +2,12 @@ import {
     ArkInfo,
     ArkProvider,
     ArkTxInput,
+    assertSubmittedArkTxid,
     Batch,
     buildOffchainTx,
     getSequence,
     Identity,
+    matchServerCheckpoints,
     Intent,
     getNetwork,
     networks,
@@ -278,6 +280,9 @@ export const claimVHTLCwithOffchainTx = async (
         base64.encode(signedArkTx.toPSBT()),
         checkpoints.map((c) => base64.encode(c.toPSBT())),
     );
+    // The returned arkTxid keys finalizeTx and is what this function returns;
+    // reject a response that does not refer to the tx just submitted.
+    assertSubmittedArkTxid({ arkTxid, finalArkTx }, signedArkTx, "submitTx");
 
     // verify the server signed the transaction with correct key on the claim leaf
     const finalTx = Transaction.fromPSBT(base64.decode(finalArkTx));
@@ -289,18 +294,21 @@ export const claimVHTLCwithOffchainTx = async (
         }
     }
 
-    // verify and sign the checkpoint transactions pre signed by the server
+    // Reconcile each returned checkpoint with the one submitted before
+    // co-signing it: the signature check below confirms who signed, the txid
+    // match confirms which transaction.
     const finalCheckpoints = await Promise.all(
-        signedCheckpointTxs.map(async (c, idx) => {
-            const tx = Transaction.fromPSBT(base64.decode(c));
-            const checkpointLeaf = checkpoints[idx].getInput(0).tapLeafScript![0];
-            const cpLeafHash = tapLeafHash(scriptFromTapLeafScript(checkpointLeaf));
-            if (!verifySignatures(tx, 0, [serverPubkeyHex], cpLeafHash)) {
-                throw new Error("Invalid server signature in checkpoint transaction");
-            }
-            const signedCheckpoint = await identity.sign(tx, [0]);
-            return base64.encode(signedCheckpoint.toPSBT());
-        }),
+        matchServerCheckpoints(signedCheckpointTxs, checkpoints, "submitTx").map(
+            async ({ server, local }) => {
+                const checkpointLeaf = local.getInput(0).tapLeafScript![0];
+                const cpLeafHash = tapLeafHash(scriptFromTapLeafScript(checkpointLeaf));
+                if (!verifySignatures(server, 0, [serverPubkeyHex], cpLeafHash)) {
+                    throw new Error("Invalid server signature in checkpoint transaction");
+                }
+                const signedCheckpoint = await identity.sign(server, [0]);
+                return base64.encode(signedCheckpoint.toPSBT());
+            },
+        ),
     );
 
     // submit the final transaction to the Ark provider
@@ -352,6 +360,9 @@ export const refundWithoutReceiverVHTLCwithOffchainTx = async (
         base64.encode(signedArkTx.toPSBT()),
         checkpoints.map((c) => base64.encode(c.toPSBT())),
     );
+    // The returned arkTxid keys finalizeTx and is what this function returns;
+    // reject a response that does not refer to the tx just submitted.
+    assertSubmittedArkTxid({ arkTxid, finalArkTx }, signedArkTx, "submitTx");
 
     // verify the server signed the transaction with correct key on the refundWithoutReceiver leaf
     const finalTx = Transaction.fromPSBT(base64.decode(finalArkTx));
@@ -365,18 +376,20 @@ export const refundWithoutReceiverVHTLCwithOffchainTx = async (
         }
     }
 
-    // verify and sign the checkpoint transactions pre signed by the server
+    // Same as the claim path: reconcile each returned checkpoint with the one
+    // submitted before adding our share.
     const finalCheckpoints = await Promise.all(
-        signedCheckpointTxs.map(async (c, idx) => {
-            const tx = Transaction.fromPSBT(base64.decode(c));
-            const checkpointLeaf = checkpoints[idx].getInput(0).tapLeafScript![0];
-            const cpLeafHash = tapLeafHash(scriptFromTapLeafScript(checkpointLeaf));
-            if (!verifySignatures(tx, 0, [serverPubkeyHex], cpLeafHash)) {
-                throw new Error("Invalid server signature in checkpoint transaction");
-            }
-            const signedCheckpoint = await identity.sign(tx, [0]);
-            return base64.encode(signedCheckpoint.toPSBT());
-        }),
+        matchServerCheckpoints(signedCheckpointTxs, checkpoints, "submitTx").map(
+            async ({ server, local }) => {
+                const checkpointLeaf = local.getInput(0).tapLeafScript![0];
+                const cpLeafHash = tapLeafHash(scriptFromTapLeafScript(checkpointLeaf));
+                if (!verifySignatures(server, 0, [serverPubkeyHex], cpLeafHash)) {
+                    throw new Error("Invalid server signature in checkpoint transaction");
+                }
+                const signedCheckpoint = await identity.sign(server, [0]);
+                return base64.encode(signedCheckpoint.toPSBT());
+            },
+        ),
     );
 
     // submit the final transaction to the Ark provider
@@ -475,6 +488,9 @@ export const refundVHTLCwithOffchainTx = async (
         base64.encode(combinedSignedRefundTx.toPSBT()),
         [base64.encode(unsignedCheckpointTx.toPSBT())],
     );
+    // The returned arkTxid keys finalizeTx; reject a response that does not
+    // refer to the tx just submitted.
+    assertSubmittedArkTxid({ arkTxid, finalArkTx }, combinedSignedRefundTx, "submitTx");
 
     // verify the final tx is properly signed
     const tx = Transaction.fromPSBT(base64.decode(finalArkTx));
@@ -489,15 +505,15 @@ export const refundVHTLCwithOffchainTx = async (
         throw new Error("Invalid refund transaction");
     }
 
-    // validate we received exactly one checkpoint transaction
-    if (signedCheckpointTxs.length !== 1) {
-        throw new Error(
-            `Expected one signed checkpoint transaction, got ${signedCheckpointTxs.length}`,
-        );
-    }
-
-    // verify and combine the checkpoint signatures
-    const serverSignedCheckpointTx = Transaction.fromPSBT(base64.decode(signedCheckpointTxs[0]));
+    // Reconcile the returned checkpoint with the one submitted. The merge below
+    // grafts signatures computed over our own checkpoint's sighash, so a
+    // divergence would surface later as an unusable transaction; state the
+    // requirement here instead of relying on that.
+    const [{ server: serverSignedCheckpointTx }] = matchServerCheckpoints(
+        signedCheckpointTxs,
+        [unsignedCheckpointTx],
+        "submitTx",
+    );
     const serverPubkeyHex = hex.encode(serverXOnlyPublicKey);
     if (!verifySignatures(serverSignedCheckpointTx, 0, [serverPubkeyHex], checkpointLeafHash)) {
         throw new Error("Invalid server signature in checkpoint transaction");

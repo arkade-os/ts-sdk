@@ -41,6 +41,7 @@ import { Address, OutScript, Script, ScriptNum } from "@scure/btc-signer";
 import { decodeInvoice } from "../src/utils/decoding";
 import { resolveVhtlcTimeouts } from "../src/utils/restoration";
 import { logger } from "../src/logger";
+import { VHTLCAddressMismatchError } from "../src/errors";
 import { pubECDSA } from "@scure/btc-signer/utils.js";
 import { create as createMusig } from "../src/utils/musig";
 import { deserializeSwapTree, tweakMusig, p2trScript } from "../src/utils/boltz-swap-tx";
@@ -583,6 +584,16 @@ describe("ArkadeSwaps", () => {
                 lockupDetails: to === "ARK" ? btcDetails : arkDetails,
             },
         } as unknown as BoltzChainSwap;
+    };
+
+    /**
+     * Let `createSubmarineSwap`'s lockup-address check pass: the canned Boltz
+     * response is not a real VHTLC, and these tests cover request/response
+     * behavior rather than the check itself.
+     */
+    const stubLockupValidation = () => {
+        vi.mocked(arkProvider.getInfo).mockResolvedValue(mockArkInfo);
+        return vi.spyOn(swaps as any, "buildSubmarineVHTLCContext").mockResolvedValue({} as any);
     };
 
     beforeEach(async () => {
@@ -1164,6 +1175,7 @@ describe("ArkadeSwaps", () => {
         describe("Submarine Swaps", () => {
             it("should create a submarine swap", async () => {
                 // arrange
+                stubLockupValidation();
                 vi.spyOn(swapProvider, "createSubmarineSwap").mockResolvedValueOnce(
                     createSubmarineSwapResponse,
                 );
@@ -1179,8 +1191,36 @@ describe("ArkadeSwaps", () => {
                 expect(pendingSwap.response).toEqual(createSubmarineSwapResponse);
             });
 
+            // The refund paths reconstruct the VHTLC from the swap parameters,
+            // so a lockup address that does not reconcile with them is rejected
+            // before the swap is persisted.
+            it("rejects a swap whose lockup address is not the reconstructed VHTLC", async () => {
+                // arrange
+                vi.mocked(arkProvider.getInfo).mockResolvedValue(mockArkInfo);
+                const manager = { addSwap: vi.fn() };
+                (swaps as any).swapManager = manager;
+                vi.spyOn(swapProvider, "createSubmarineSwap").mockResolvedValueOnce(
+                    createSubmarineSwapResponse,
+                );
+                vi.spyOn(swaps as any, "buildSubmarineVHTLCContext").mockRejectedValue(
+                    new VHTLCAddressMismatchError({
+                        swapId: mock.id,
+                        lockupAddress: mock.address.ark,
+                        tried: 1,
+                    }),
+                );
+
+                // act & assert
+                await expect(
+                    swaps.createSubmarineSwap({ invoice: mock.invoice.address }),
+                ).rejects.toBeInstanceOf(VHTLCAddressMismatchError);
+                expect(mockSwapRepository.saveSwap).not.toHaveBeenCalled();
+                expect(manager.addSwap).not.toHaveBeenCalled();
+            });
+
             it("should get correct swap status", async () => {
                 // arrange
+                stubLockupValidation();
                 vi.spyOn(swapProvider, "createSubmarineSwap").mockResolvedValueOnce(
                     createSubmarineSwapResponse,
                 );
@@ -1241,6 +1281,32 @@ describe("ArkadeSwaps", () => {
                 expect(result.amount).toBe(mock.invoice.amount);
                 expect(result.preimage).toBeUndefined();
                 expect(result.txid).toBe(mock.txid);
+            });
+
+            it("does not fund a swap whose lockup address failed verification", async () => {
+                // arrange: the real createSubmarineSwap runs, its VHTLC check fails
+                vi.mocked(arkProvider.getInfo).mockResolvedValue(mockArkInfo);
+                vi.spyOn(swapProvider, "createSubmarineSwap").mockResolvedValueOnce(
+                    createSubmarineSwapResponse,
+                );
+                vi.spyOn(swaps as any, "buildSubmarineVHTLCContext").mockRejectedValue(
+                    new VHTLCAddressMismatchError({
+                        swapId: mock.id,
+                        lockupAddress: mock.address.ark,
+                        tried: 1,
+                    }),
+                );
+                const sendSpy = vi.spyOn(wallet, "send");
+                const fundedSpy = vi.spyOn(swaps, "waitForSwapFunded");
+                const settlementSpy = vi.spyOn(swaps, "waitForSwapSettlement");
+
+                // act & assert
+                await expect(
+                    swaps.sendLightningPayment({ invoice: mock.invoice.address }),
+                ).rejects.toBeInstanceOf(VHTLCAddressMismatchError);
+                expect(sendSpy).not.toHaveBeenCalled();
+                expect(fundedSpy).not.toHaveBeenCalled();
+                expect(settlementSpy).not.toHaveBeenCalled();
             });
 
             it("should warn on waitFor funded when the SwapManager is disabled", async () => {
@@ -2983,6 +3049,7 @@ describe("ArkadeSwaps", () => {
 
             it("should save submarine swap when creating swap", async () => {
                 // arrange
+                stubLockupValidation();
                 vi.spyOn(swapProvider, "createSubmarineSwap").mockResolvedValueOnce(
                     createSubmarineSwapResponse,
                 );
@@ -5609,6 +5676,7 @@ describe("ArkadeSwaps", () => {
 
         it("creates a submarine swap under the current index", async () => {
             rotateWallet();
+            stubLockupValidation();
             vi.spyOn(swapProvider, "createSubmarineSwap").mockResolvedValueOnce(
                 createSubmarineSwapResponse,
             );

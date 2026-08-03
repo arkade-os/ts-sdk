@@ -6,6 +6,7 @@ import { Packet } from "../extension/asset";
 import { Extension } from "../extension";
 import { Address, OutScript } from "@scure/btc-signer";
 import type { Network } from "../networks";
+import { ServerResponseMismatchError } from "../providers/errors";
 
 export const ErrOffchainOutputNotFound = (address: string) =>
     new Error(`offchain send output not found: ${address}`);
@@ -23,6 +24,30 @@ export const ErrOnchainOutputNotFound = (address: string) =>
     new Error(`onchain output not found: ${address}`);
 export const ErrInvalidOffchainOutputAmount = (address: string) =>
     new Error(`invalid offchain output ${address}, missing amount`);
+
+/**
+ * Assert the commitment tx received at batch finalization is the one validated
+ * at tree signing.
+ *
+ * The vtxo tree co-signed at tree signing spends `commitmentTxid:0`, so a
+ * finalization commitment carrying another txid does not correspond to the tree
+ * that was validated. The two are the same transaction by construction.
+ *
+ * No-op when `validatedCommitmentTxid` is undefined: tree signing was skipped
+ * (not a cosigner, or an onchain-only settle), so there is nothing to compare
+ * against.
+ */
+export function assertFinalCommitmentMatchesValidated(
+    finalCommitmentTx: Transaction,
+    validatedCommitmentTxid: string | undefined,
+    context: string,
+): void {
+    if (!validatedCommitmentTxid) return;
+    if (finalCommitmentTx.id === validatedCommitmentTxid) return;
+    throw new ServerResponseMismatchError(
+        `${context}: finalization commitment tx ${finalCommitmentTx.id} differs from the validated commitment tx ${validatedCommitmentTxid}`,
+    );
+}
 
 /**
  * Validates both offchain and onchain recipients.

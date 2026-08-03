@@ -30,7 +30,10 @@ import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { Transaction } from "../utils/transaction";
 import { validateConnectorsTxGraph, validateVtxoTxGraph } from "../tree/validation";
-import { validateBatchRecipients } from "../wallet/validation";
+import {
+    assertFinalCommitmentMatchesValidated,
+    validateBatchRecipients,
+} from "../wallet/validation";
 import { buildForfeitTx } from "../forfeit";
 import { Batch } from "../wallet/batch";
 import { Intent } from "../intent";
@@ -81,6 +84,9 @@ export function createArkadeBatchHandler(
 ): Batch.Handler {
     let batchId: string;
     let sweepTapTreeRoot: Uint8Array;
+    // Assigned only after the tree it commits to has been validated, so it
+    // always names a commitment tx this handler has checked.
+    let validatedCommitmentTxid: string | undefined;
 
     return {
         onBatchStarted: async (event: BatchStartedEvent): Promise<{ skip: boolean }> => {
@@ -133,6 +139,8 @@ export function createArkadeBatchHandler(
                 throw new Error("Shared output not found");
             }
 
+            validatedCommitmentTxid = commitmentTx.id;
+
             await session.init(vtxoTree, sweepTapTreeRoot, sharedOutput.amount);
 
             const pubkey = hex.encode(await session.getPublicKey());
@@ -169,6 +177,11 @@ export function createArkadeBatchHandler(
             }
 
             let commitmentPsbt = Transaction.fromPSBT(base64.decode(event.commitmentTx));
+            assertFinalCommitmentMatchesValidated(
+                commitmentPsbt,
+                validatedCommitmentTxid,
+                "arkade batch finalization",
+            );
             const signedForfeits: string[] = [];
             let connectorIndex = 0;
             const connectorLeaves = connectorTree?.leaves() || [];

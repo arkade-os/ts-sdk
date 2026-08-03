@@ -78,6 +78,26 @@ export class ProviderUnavailableError extends Error {
 }
 
 /**
+ * A response does not reconcile with what the SDK submitted or already
+ * validated — a checkpoint tx whose txid is not among those submitted, a
+ * commitment tx that differs from the one validated at tree signing. Terminal
+ * rather than retryable: the two are equal by construction in a well-formed
+ * exchange, so the same request would produce the same outcome.
+ *
+ * Own-properties do not cross the service-worker `postMessage` boundary (see
+ * {@link ProviderKind}), so `retryable` is an in-process convenience and every
+ * distinguishing detail belongs in `name`/`message`.
+ */
+export class ServerResponseMismatchError extends Error {
+    readonly retryable = false;
+
+    constructor(message: string, options?: { cause?: unknown }) {
+        super(message, { cause: options?.cause });
+        this.name = "ServerResponseMismatchError";
+    }
+}
+
+/**
  * Throw a typed {@link ProviderUnavailableError} for a temporary HTTP response
  * (429 rate-limit or any 5xx), otherwise return. `fetch()` resolves — rather
  * than rejects — on HTTP error status, so status-code classification has to live
