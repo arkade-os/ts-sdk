@@ -33,6 +33,7 @@ import { validateConnectorsTxGraph, validateVtxoTxGraph } from "../tree/validati
 import {
     assertFinalCommitmentMatchesValidated,
     validateBatchRecipients,
+    validateBatchRecipientsWithoutTree,
 } from "../wallet/validation";
 import { buildForfeitTx } from "../forfeit";
 import { Batch } from "../wallet/batch";
@@ -77,8 +78,10 @@ export function createArkadeBatchHandler(
     network: Network,
     /**
      * Expected recipients of the settlement, validated against the virtual
-     * output tree before co-signing it (mirrors `Wallet.createBatchHandler`).
-     * Without this the handler signs whatever tree the server proposes.
+     * output tree before co-signing it, and — when tree signing did not run —
+     * against the commitment tx before signing anything at finalization
+     * (mirrors `Wallet.createBatchHandler`). Without this the handler signs
+     * whatever the server proposes, on both paths.
      */
     recipients?: Recipient[],
 ): Batch.Handler {
@@ -182,6 +185,13 @@ export function createArkadeBatchHandler(
                 validatedCommitmentTxid,
                 "arkade batch finalization",
             );
+
+            // No validated txid means tree signing never ran, so the recipients
+            // have not been checked yet and this commitment tx is the only thing
+            // to check them against. Before any signature is handed over.
+            if (!validatedCommitmentTxid && recipients && recipients.length > 0) {
+                validateBatchRecipientsWithoutTree(commitmentPsbt, recipients, network);
+            }
             const signedForfeits: string[] = [];
             let connectorIndex = 0;
             const connectorLeaves = connectorTree?.leaves() || [];
