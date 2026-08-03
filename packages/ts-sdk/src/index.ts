@@ -211,6 +211,7 @@ import {
 import {
     hasBoardingTxExpired,
     buildOffchainTx,
+    matchServerCheckpoints,
     verifyTapscriptSignatures,
     ArkTxInput,
     OffchainTx,
@@ -297,6 +298,7 @@ import {
     isArkError,
     maybeArkError,
     ProviderUnavailableError,
+    ServerResponseMismatchError,
 } from "./providers/errors";
 import type { ProviderKind } from "./providers/errors";
 import { isRetryableProviderError } from "./providers/availability";
@@ -528,6 +530,7 @@ export {
     PrevoutTxField,
     // Utils
     buildOffchainTx,
+    matchServerCheckpoints,
     verifyTapscriptSignatures,
     waitForIncomingFunds,
     hasBoardingTxExpired,
@@ -605,6 +608,7 @@ export {
     isArkError,
     maybeArkError,
     ProviderUnavailableError,
+    ServerResponseMismatchError,
     isRetryableProviderError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,

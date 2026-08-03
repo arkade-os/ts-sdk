@@ -74,10 +74,24 @@ function mockIdentity(key = xOnly()) {
     return { identity, sign, key };
 }
 
+/** A valid PSBT that is not any of the submitted checkpoints. */
+function foreignCheckpoint(): string {
+    const tx = new Transaction();
+    tx.addInput({
+        txid: new Uint8Array(32).fill(0x11),
+        index: 0,
+        witnessUtxo: { script: p2tr(), amount: 1000n },
+    });
+    tx.addOutput({ script: p2tr(), amount: 900n });
+    return base64.encode(tx.toPSBT());
+}
+
 function providers(
     server: Uint8Array,
     emulatorKey: Uint8Array,
     coins: { txid: string; vout: number; value: number }[],
+    /** Rewrites what arkd answers `submitTx` with (default: echo). */
+    checkpointResponse: (cps: string[]) => string[] = (cps) => cps,
 ) {
     const checkpointTapscript = hex.encode(
         CSVMultisigTapscript.encode({ timelock: { type: "blocks", value: 10n }, pubkeys: [server] })
@@ -92,7 +106,11 @@ function providers(
             captured.arkTx = arkTx;
             captured.cps = cps;
             captured.via = "ark";
-            return { arkTxid: "arktxid", finalArkTx: arkTx, signedCheckpointTxs: cps };
+            return {
+                arkTxid: "arktxid",
+                finalArkTx: arkTx,
+                signedCheckpointTxs: checkpointResponse(cps),
+            };
         }),
         finalizeTx: vi.fn(async () => {}),
     };
@@ -283,6 +301,64 @@ describe("ArkadeContract — extended features", () => {
         expect(arkProvider.submitTx).toHaveBeenCalled();
         expect(arkProvider.finalizeTx).toHaveBeenCalled();
         expect(emulator.submitTx).not.toHaveBeenCalled();
+    });
+
+    // A pure-tapscript spend with one funded input: two checkpoints, so the
+    // server's response order can differ from the submission order.
+    async function sendTwoCheckpointSpend(
+        checkpointResponse?: (cps: string[]) => string[],
+    ): Promise<{ arkProvider: ReturnType<typeof providers>["arkProvider"]; send: Promise<void> }> {
+        const { identity } = mockIdentity();
+        const { arkProvider, indexer, emulator } = providers(
+            server,
+            emulatorKey,
+            [COIN],
+            checkpointResponse,
+        );
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer,
+            identity,
+            network: networks.regtest,
+        });
+        const c = ark.contract({
+            version: 0,
+            params: ["server", "user"],
+            functions: {
+                exit: {
+                    tapscript: {
+                        signers: ["$user", "$server"],
+                        csv: { type: "blocks", value: 20n },
+                    },
+                },
+            },
+        });
+        const send = c.functions
+            .exit()
+            .from(COIN)
+            .fund([fundingCoin(60_000)])
+            .to(p2tr(receiver), AMOUNT)
+            .change(p2tr())
+            .send()
+            .then(() => undefined);
+        return { arkProvider, send };
+    }
+
+    it("arkd path finalizes reordered server checkpoints in the server's order", async () => {
+        const { arkProvider, send } = await sendTwoCheckpointSpend((cps) => [...cps].reverse());
+        await send;
+
+        const submitted = arkProvider.submitTx.mock.calls[0][1] as string[];
+        expect(arkProvider.finalizeTx.mock.calls[0][1]).toEqual([...submitted].reverse());
+    });
+
+    it("arkd path rejects a checkpoint it did not submit", async () => {
+        const unsubmitted = foreignCheckpoint();
+        const { arkProvider, send } = await sendTwoCheckpointSpend((cps) => [unsubmitted, cps[1]]);
+
+        await expect(send).rejects.toThrow(/does not match any submitted checkpoint/);
+        expect(arkProvider.finalizeTx).not.toHaveBeenCalled();
     });
 
     it("rejects Arkade opcodes inside a tapscript segment", async () => {

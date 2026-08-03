@@ -10,6 +10,7 @@ import {
     DefaultVtxo,
     MissingSigningDescriptorError,
     buildOffchainTx,
+    CSVMultisigTapscript,
     type BatchSignableIdentity,
     type Identity,
     type SignRequest,
@@ -1445,14 +1446,21 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         };
     }
 
-    async function makeStaticBatchWallet(contractRepo?: InMemoryContractRepository) {
+    async function makeStaticBatchWallet(
+        contractRepo?: InMemoryContractRepository,
+        // Undecorated identity → `isBatchSignable` is false and the signer
+        // router path runs instead.
+        batchSignable = true,
+    ) {
         // Use a baseline SingleKey wallet (no HD rotation): every input
         // routes to the identity, so canBatch returns true and the batch
         // path is exercised.
         const base = SingleKey.fromHex(
             "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
         );
-        const identity = makeBatchSignable(base);
+        const identity = batchSignable
+            ? makeBatchSignable(base)
+            : (base as unknown as ReturnType<typeof makeBatchSignable>);
         const wallet = await Wallet.create({
             identity,
             arkServerUrl: "http://localhost:7070",
@@ -1718,6 +1726,138 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         await wallet.dispose();
     });
 
+    // ── finalizePendingTxs: checkpoints are rebuilt before co-signing ──
+
+    // The pending tx the server reports for `coin`, its checkpoint built under
+    // `unroll` (defaults to the wallet's own, i.e. what an honest server
+    // returns) and carrying the server's signature.
+    async function pendingTxFor(
+        wallet: Awaited<ReturnType<typeof makeStaticBatchWallet>>["wallet"],
+        coin: ExtendedVirtualCoin,
+        unroll: CSVMultisigTapscript.Type = wallet.serverUnrollScript,
+    ) {
+        const offchain = buildOffchainTx(
+            [{ ...coin, tapLeafScript: coin.forfeitTapLeafScript }],
+            [{ amount: BigInt(coin.value - 1000), script: wallet.arkAddress.pkScript }],
+            unroll,
+        );
+        return {
+            arkTxid: "cd".repeat(32),
+            signedCheckpointTxs: [
+                await serverSignCheckpoint(base64.encode(offchain.checkpoints[0].toPSBT())),
+            ],
+        };
+    }
+
+    /** A checkpoint unroll script under a server key this wallet does not use. */
+    function foreignUnrollScript(
+        wallet: Awaited<ReturnType<typeof makeStaticBatchWallet>>["wallet"],
+    ) {
+        // prettier-ignore
+        return CSVMultisigTapscript.encode({
+            ...wallet.serverUnrollScript.params,
+            pubkeys: [new Uint8Array(32).fill(9)],
+        });
+    }
+
+    async function runFinalizePending(
+        wallet: Awaited<ReturnType<typeof makeStaticBatchWallet>>["wallet"],
+        coins: ExtendedVirtualCoin[],
+        pendingTx: { arkTxid: string; signedCheckpointTxs: string[] },
+    ) {
+        await (wallet as any).setPendingTxFlag(true);
+        vi.spyOn(wallet.arkProvider, "getPendingTxs").mockResolvedValue([pendingTx] as never);
+        const finalizeSpy = vi.spyOn(wallet.arkProvider, "finalizeTx").mockResolvedValue(undefined);
+        const result = await wallet.finalizePendingTxs(coins);
+        return { result, finalizeSpy };
+    }
+
+    it("leaves a pending tx alone when its checkpoint does not rebuild", async () => {
+        const { wallet } = await makeStaticBatchWallet();
+        const coin = makeBaselineCoin(wallet);
+        // Same VTXO, but a checkpoint locked to a different server key.
+        const pending = await pendingTxFor(wallet, coin, foreignUnrollScript(wallet));
+
+        const { result, finalizeSpy } = await runFinalizePending(wallet, [coin], pending);
+
+        expect(finalizeSpy).not.toHaveBeenCalled();
+        expect(result.finalized).toEqual([]);
+        expect(result.pending).toEqual([pending.arkTxid]);
+
+        await wallet.dispose();
+    });
+
+    it("leaves a pending tx alone when its checkpoint spends an unrelated VTXO", async () => {
+        const { wallet } = await makeStaticBatchWallet();
+        const coin = makeBaselineCoin(wallet);
+        const other = { ...coin, txid: "22".repeat(32) };
+        const pending = await pendingTxFor(wallet, other);
+
+        const { result, finalizeSpy } = await runFinalizePending(wallet, [coin], pending);
+
+        expect(finalizeSpy).not.toHaveBeenCalled();
+        expect(result.finalized).toEqual([]);
+
+        await wallet.dispose();
+    });
+
+    // The proof is chunked at MAX_INPUTS_PER_INTENT, but an interrupted send
+    // spent whatever it spent: its checkpoints are matched against every VTXO
+    // of the run, not just the chunk whose proof surfaced the tx.
+    it("finalizes a pending tx whose input falls in a later proof chunk", async () => {
+        const { wallet } = await makeStaticBatchWallet();
+        const base = makeBaselineCoin(wallet);
+        const coins = Array.from({ length: 21 }, (_, i) => ({
+            ...base,
+            txid: i.toString(16).padStart(64, "0"),
+        }));
+        const pending = await pendingTxFor(wallet, coins[20]);
+
+        const { result, finalizeSpy } = await runFinalizePending(wallet, coins, pending);
+
+        expect(finalizeSpy).toHaveBeenCalledTimes(1);
+        expect(result.finalized).toEqual([pending.arkTxid]);
+
+        await wallet.dispose();
+    });
+
+    it("finalizes a rebuilt checkpoint on the signer-router path", async () => {
+        const { wallet } = await makeStaticBatchWallet(undefined, false);
+        const coin = makeBaselineCoin(wallet);
+        const pending = await pendingTxFor(wallet, coin);
+
+        const { result, finalizeSpy } = await runFinalizePending(wallet, [coin], pending);
+
+        expect(finalizeSpy).toHaveBeenCalledTimes(1);
+        expect(result.finalized).toEqual([pending.arkTxid]);
+
+        await wallet.dispose();
+    });
+
+    // A send submitted before a signer rotation must still finalize after it,
+    // or its funds stay pending forever.
+    it("finalizes a checkpoint built under a now-deprecated signer", async () => {
+        const { wallet } = await makeStaticBatchWallet();
+        const coin = makeBaselineCoin(wallet);
+        const deprecated = new Uint8Array(32).fill(3);
+        const deprecatedUnroll = CSVMultisigTapscript.encode({
+            ...wallet.serverUnrollScript.params,
+            pubkeys: [deprecated],
+        });
+        vi.spyOn(wallet.arkProvider, "getInfo").mockResolvedValue({
+            ...mockArkInfo,
+            deprecatedSigners: [{ pubkey: hex.encode(deprecated), cutoffDate: 0n }],
+        } as never);
+
+        const pending = await pendingTxFor(wallet, coin, deprecatedUnroll);
+        const { result, finalizeSpy } = await runFinalizePending(wallet, [coin], pending);
+
+        expect(finalizeSpy).toHaveBeenCalledTimes(1);
+        expect(result.finalized).toEqual([pending.arkTxid]);
+
+        await wallet.dispose();
+    });
+
     // ── sendSelectedVtxosToSelf: the deprecated-signer VTXO migration primitive ──
 
     // A spendable, batch-expiry-bearing baseline coin: the migration primitive
@@ -1739,9 +1879,11 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
     }
 
     // Drive a successful send round-trip (server signs checkpoints, finalize
-    // resolves) and return the arkTxid the wallet recorded against.
+    // resolves) and return the arkTxid the wallet recorded against. `reorder`
+    // rearranges the server's response, which submitTx is free to do.
     function stubSendRoundTrip(
         wallet: Awaited<ReturnType<typeof makeStaticBatchWallet>>["wallet"],
+        reorder: (checkpoints: string[]) => string[] = (c) => c,
     ) {
         const arkTxid = "ab".repeat(32);
         const submitSpy = vi
@@ -1749,13 +1891,50 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
             .mockImplementation(async (arkTxB64, checkpointsB64) => ({
                 arkTxid,
                 finalArkTx: arkTxB64,
-                signedCheckpointTxs: await Promise.all(
-                    checkpointsB64.map((c) => serverSignCheckpoint(c)),
+                signedCheckpointTxs: reorder(
+                    await Promise.all(checkpointsB64.map((c) => serverSignCheckpoint(c))),
                 ),
             }));
         const finalizeSpy = vi.spyOn(wallet.arkProvider, "finalizeTx").mockResolvedValue(undefined);
         return { arkTxid, submitSpy, finalizeSpy };
     }
+
+    // `spentBy` must name the checkpoint that actually spends the VTXO. The
+    // server may answer submitTx in any order, so reading its array by input
+    // index would cross-assign the two.
+    it("records spentBy by outpoint when the server reorders its checkpoints", async () => {
+        const { wallet } = await makeStaticBatchWallet();
+        const coins = [
+            makeMigratableCoin(wallet),
+            makeMigratableCoin(wallet, { txid: "33".repeat(32) }),
+        ];
+        const { submitSpy } = stubSendRoundTrip(wallet, (checkpoints) =>
+            [...checkpoints].reverse(),
+        );
+
+        await wallet.sendSelectedVtxosToSelf(coins);
+
+        // Submitted checkpoints are positional against `coins`.
+        const submitted = submitSpy.mock.calls[0][1] as string[];
+        const expected = new Map(
+            coins.map((coin, i) => [
+                coin.txid,
+                Transaction.fromPSBT(base64.decode(submitted[i])).id,
+            ]),
+        );
+
+        const persisted = await (wallet as any).walletRepository.getVtxos(
+            await wallet.getAddress(),
+        );
+        for (const coin of coins) {
+            const spent = persisted.find(
+                (v: ExtendedVirtualCoin) => v.txid === coin.txid && v.isSpent,
+            );
+            expect(spent?.spentBy).toBe(expected.get(coin.txid));
+        }
+
+        await wallet.dispose();
+    });
 
     it("sendSelectedVtxosToSelf persists the full-value self output when there is no change", async () => {
         const { wallet } = await makeStaticBatchWallet();

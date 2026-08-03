@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { base64, hex } from "@scure/base";
 import { sha256 } from "@scure/btc-signer/utils.js";
+import { Address } from "@scure/btc-signer";
 
 // The handler must delegate graph/recipient validation to the shared
 // validators; mock both so the test drives only the wiring.
@@ -8,7 +9,9 @@ vi.mock("../src/tree/validation", () => ({
     validateVtxoTxGraph: vi.fn(),
     validateConnectorsTxGraph: vi.fn(),
 }));
-vi.mock("../src/wallet/validation", () => ({
+// The commitment-equality assertion stays real: it is under test below.
+vi.mock("../src/wallet/validation", async (importActual) => ({
+    ...(await importActual<typeof import("../src/wallet/validation")>()),
     validateBatchRecipients: vi.fn(),
 }));
 
@@ -38,14 +41,36 @@ function makeSession() {
     } as unknown as SignerSession;
 }
 
+const FORFEIT_ADDRESS = Address(networks.regtest).encode({
+    type: "tr",
+    pubkey: hex.decode("22".repeat(32)),
+});
+
 function makeArkProvider() {
     return {
         confirmRegistration: vi.fn(async () => {}),
-        getInfo: vi.fn(async () => ({ forfeitPubkey: "02" + "22".repeat(32) })),
+        getInfo: vi.fn(async () => ({
+            forfeitPubkey: "02" + "22".repeat(32),
+            forfeitAddress: FORFEIT_ADDRESS,
+            dust: 1000,
+        })),
         submitTreeNonces: vi.fn(async () => {}),
         submitTreeSignatures: vi.fn(async () => {}),
         submitSignedForfeitTxs: vi.fn(async () => {}),
     } as unknown as ArkProvider;
+}
+
+function makeEmulator() {
+    return {
+        submitFinalization: vi.fn(async () => ({ signedForfeits: [], signedCommitmentTx: null })),
+    } as unknown as EmulatorProvider;
+}
+
+/** A commitment tx PSBT; `amount` makes distinct fixtures distinguishable. */
+function commitment(amount: bigint): string {
+    const tx = new Transaction({ allowUnknownOutputs: true });
+    tx.addOutput({ script: new Uint8Array([0x51]), amount });
+    return base64.encode(tx.toPSBT());
 }
 
 function makeEvents() {
@@ -69,7 +94,12 @@ function makeEvents() {
     return { batchStarted, treeSigningStarted, vtxoTree };
 }
 
-function makeHandler(session: SignerSession, arkProvider: ArkProvider, recipients?: Recipient[]) {
+function makeHandler(
+    session: SignerSession,
+    arkProvider: ArkProvider,
+    recipients?: Recipient[],
+    emulator: EmulatorProvider = {} as unknown as EmulatorProvider,
+) {
     return createArkadeBatchHandler(
         INTENT_ID,
         [],
@@ -78,7 +108,7 @@ function makeHandler(session: SignerSession, arkProvider: ArkProvider, recipient
         {} as unknown as Intent.RegisterMessage,
         session,
         arkProvider,
-        {} as unknown as EmulatorProvider,
+        emulator,
         networks.regtest,
         recipients,
     );
@@ -137,5 +167,44 @@ describe("createArkadeBatchHandler recipient validation", () => {
 
         expect(skip).toBe(false);
         expect(validateBatchRecipients).not.toHaveBeenCalled();
+    });
+});
+
+describe("createArkadeBatchHandler commitment tx equality", () => {
+    beforeEach(() => {
+        vi.mocked(validateBatchRecipients).mockReset();
+        vi.mocked(validateVtxoTxGraph).mockReset();
+    });
+
+    async function runUntilFinalization(finalCommitmentTx: string) {
+        const arkProvider = makeArkProvider();
+        const emulator = makeEmulator();
+        const handler = makeHandler(makeSession(), arkProvider, undefined, emulator);
+        const { batchStarted, treeSigningStarted, vtxoTree } = makeEvents();
+
+        await handler.onBatchStarted(batchStarted);
+        await handler.onTreeSigningStarted(treeSigningStarted, vtxoTree);
+
+        return {
+            arkProvider,
+            finalize: handler.onBatchFinalization({ commitmentTx: finalCommitmentTx } as never),
+        };
+    }
+
+    it("rejects a finalization commitment tx that differs from the validated one", async () => {
+        const { arkProvider, finalize } = await runUntilFinalization(commitment(9999n));
+
+        await expect(finalize).rejects.toThrow(
+            /finalization commitment tx .* differs from the validated commitment tx/,
+        );
+        expect(arkProvider.submitSignedForfeitTxs).not.toHaveBeenCalled();
+    });
+
+    it("accepts the validated commitment tx at finalization", async () => {
+        // Same 5000n output as makeEvents' tree-signing commitment.
+        const { arkProvider, finalize } = await runUntilFinalization(commitment(5000n));
+
+        await finalize;
+        expect(arkProvider.submitSignedForfeitTxs).toHaveBeenCalledTimes(1);
     });
 });

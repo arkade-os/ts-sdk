@@ -17,6 +17,7 @@ import { setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
 import { Transaction } from "./transaction";
 import { ArkAddress } from "../script/address";
 import { Extension } from "../extension";
+import { ServerResponseMismatchError } from "../providers/errors";
 
 export type ArkTxInput = {
     // the script used to spend the virtual output
@@ -128,7 +129,15 @@ function buildVirtualTx(inputs: ArkTxInput[], outputs: TransactionOutput[]) {
     return tx;
 }
 
-function buildCheckpointTx(
+/**
+ * Build the checkpoint transaction spending `vtxo`, plus the input that spends
+ * it (the ark tx's actual input).
+ *
+ * A pure function of `(vtxo, serverUnrollScript)` — nothing here is
+ * server-supplied — so finalization paths can rebuild the checkpoint they
+ * expect from their own VTXO data and reject any other one.
+ */
+export function buildCheckpointTx(
     vtxo: ArkTxInput,
     serverUnrollScript: CSVMultisigTapscript.Type,
 ): { tx: Transaction; input: ArkTxInput } {
@@ -438,6 +447,109 @@ export interface OffchainTxSigner {
 }
 
 /**
+ * Pair each server-returned checkpoint PSBT with the locally built checkpoint
+ * of the same txid, rejecting anything else.
+ *
+ * The ark tx signed just above spends each checkpoint at `checkpointTxid:0`, so
+ * the response is only usable if it carries the same txids: a checkpoint with
+ * any other txid leaves that ark tx unspendable. The two sets are therefore
+ * equal by construction, and this pairing is what the signing step below
+ * consumes.
+ *
+ * Matching is by txid rather than by position — nothing in the wire contract
+ * promises arkd echoes checkpoints in submission order — while the result keeps
+ * the server's order, so nothing downstream is reordered.
+ *
+ * Comparing txids is sound while checkpoint inputs are taproot-only: witness
+ * data does not affect the txid, so the server's signature cannot change it. A
+ * future P2SH-wrapped/scriptSig input could acquire a `finalScriptSig`
+ * server-side and legitimately change txid; that protocol shape would need a
+ * different comparison target.
+ */
+export function matchServerCheckpoints(
+    serverCheckpointTxs: string[],
+    expectedCheckpoints: Transaction[],
+    context: string,
+): { server: Transaction; local: Transaction }[] {
+    if (serverCheckpointTxs.length !== expectedCheckpoints.length) {
+        throw new ServerResponseMismatchError(
+            `${context} returned ${serverCheckpointTxs.length} checkpoints, expected ${expectedCheckpoints.length}`,
+        );
+    }
+
+    // Checkpoints spend distinct VTXOs, so their txids are distinct and the map
+    // cannot collapse two entries. Deleting on match keeps a duplicated server
+    // txid from satisfying two slots; with equal counts that gives a bijection.
+    const byTxid = new Map(expectedCheckpoints.map((c) => [c.id, c]));
+
+    return serverCheckpointTxs.map((encoded, index) => {
+        const server = Transaction.fromPSBT(base64.decode(encoded));
+        const local = byTxid.get(server.id);
+        if (!local) {
+            throw new ServerResponseMismatchError(
+                `${context} checkpoint ${index} txid ${server.id} does not match any submitted checkpoint`,
+            );
+        }
+        byTxid.delete(server.id);
+        return { server, local };
+    });
+}
+
+/**
+ * Assert every checkpoint in `checkpoints` is the one this wallet would build
+ * for one of `inputs`, by rebuilding it from local VTXO data.
+ *
+ * Used by the finalization paths, which resume a transaction submitted in an
+ * earlier process and so have no locally built set to compare against. The
+ * expected checkpoint is a pure function of `(VTXO, server unroll script)`, so
+ * it can simply be derived again.
+ *
+ * `unrollCandidates` accepts more than one script because the checkpoint output
+ * commits to the server key that was current when it was built — a tx submitted
+ * before a signer rotation and finalized after it must still match.
+ */
+export function assertCheckpointsMatchInputs(
+    checkpoints: Transaction[],
+    inputs: ArkTxInput[],
+    unrollCandidates: CSVMultisigTapscript.Type[],
+    context: string,
+): void {
+    const byOutpoint = new Map(inputs.map((input) => [`${input.txid}:${input.vout}`, input]));
+
+    for (const [index, checkpoint] of checkpoints.entries()) {
+        if (checkpoint.inputsLength !== 1) {
+            throw new ServerResponseMismatchError(
+                `${context}: checkpoint ${index} spends ${checkpoint.inputsLength} inputs, expected 1`,
+            );
+        }
+
+        const spent = checkpoint.getInput(0);
+        if (!spent.txid || spent.index === undefined) {
+            throw new ServerResponseMismatchError(
+                `${context}: checkpoint ${index} has no input outpoint`,
+            );
+        }
+
+        const outpoint = `${hex.encode(spent.txid)}:${spent.index}`;
+        const input = byOutpoint.get(outpoint);
+        if (!input) {
+            throw new ServerResponseMismatchError(
+                `${context}: checkpoint ${index} spends ${outpoint}, which is not one of the requested virtual outputs`,
+            );
+        }
+
+        const rebuilt = unrollCandidates.some(
+            (unroll) => buildCheckpointTx(input, unroll).tx.id === checkpoint.id,
+        );
+        if (!rebuilt) {
+            throw new ServerResponseMismatchError(
+                `${context}: checkpoint ${index} txid ${checkpoint.id} differs from the checkpoint built locally for ${outpoint}`,
+            );
+        }
+    }
+}
+
+/**
  * Submit a pre-built offchain transaction to the Ark server and finalize it.
  *
  * Owns the submit → checkpoint-sign → finalize sequence shared by every Ark
@@ -482,28 +594,26 @@ export async function submitOffchainTx(
         offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT())),
     );
 
-    // The server returns one signed checkpoint per submitted checkpoint; both
-    // branches below pair them positionally. A short response would silently
-    // drop the tail (→ incomplete finalizeTx), a long one would carry
-    // checkpoints that were never built.
-    if (signedCheckpointTxs.length !== offchainTx.checkpoints.length) {
-        throw new Error(
-            `submitTx returned ${signedCheckpointTxs.length} checkpoints, expected ${offchainTx.checkpoints.length}`,
-        );
-    }
+    // The server returns one signed checkpoint per submitted checkpoint, and
+    // each must be one we built: nothing below signs a checkpoint that has not
+    // been matched to a local one.
+    const matched = matchServerCheckpoints(signedCheckpointTxs, offchainTx.checkpoints, "submitTx");
 
     let finalCheckpoints: string[];
     if (userSignedCheckpoints) {
-        finalCheckpoints = signedCheckpointTxs.map((c, i) => {
-            const serverSigned = Transaction.fromPSBT(base64.decode(c));
-            combineTapscriptSigs(userSignedCheckpoints[i], serverSigned);
-            return base64.encode(serverSigned.toPSBT());
+        // The signer's array is positional against `offchainTx.checkpoints`, so
+        // it is indexed by txid too rather than paired with the server's order.
+        const userByTxid = new Map(
+            userSignedCheckpoints.map((c, i) => [offchainTx.checkpoints[i].id, c] as const),
+        );
+        finalCheckpoints = matched.map(({ server, local }) => {
+            combineTapscriptSigs(userByTxid.get(local.id)!, server);
+            return base64.encode(server.toPSBT());
         });
     } else {
         finalCheckpoints = await Promise.all(
-            signedCheckpointTxs.map(async (c) => {
-                const tx = Transaction.fromPSBT(base64.decode(c));
-                const signed = await signer.signCheckpoint(tx);
+            matched.map(async ({ server }) => {
+                const signed = await signer.signCheckpoint(server);
                 return base64.encode(signed.toPSBT());
             }),
         );

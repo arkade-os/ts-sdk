@@ -899,6 +899,9 @@ export class ArkadeSwaps {
      * @param args.invoice - BOLT11 Lightning invoice to pay.
      * @returns The pending submarine swap, added to SwapManager if enabled.
      * @throws {SwapError} If invoice is missing or key retrieval fails.
+     * @throws {VHTLCAddressMismatchError} If the lockup address Boltz returned
+     * is not the VHTLC reconstructed from the swap parameters. Nothing is
+     * persisted or registered in that case. Requires a reachable ark server.
      */
     async createSubmarineSwap(args: SendLightningPaymentRequest): Promise<BoltzSubmarineSwap> {
         const signingDescriptor = await this.currentSigningDescriptor();
@@ -918,6 +921,15 @@ export class ArkadeSwaps {
             refundPublicKey,
         };
 
+        // Fetch server info concurrently with the swap request: the VHTLC
+        // reconstruction below needs it, and it must be fresh — a signer
+        // rotation would make a cached snapshot reconstruct the wrong address.
+        const arkInfoPromise = this.arkProvider.getInfo();
+        // Awaited only after the swap request, which may reject first; keep a
+        // handler attached so that ordering never surfaces as an unhandled
+        // rejection.
+        arkInfoPromise.catch(() => {});
+
         // make submarine swap request
         const swapResponse = await this.swapProvider.createSubmarineSwap(swapRequest);
 
@@ -931,6 +943,12 @@ export class ArkadeSwaps {
             status: "invoice.set",
             signingDescriptor,
         };
+
+        // The lockup address must be the VHTLC these swap parameters describe —
+        // it is the script the refund paths later reconstruct from them. Checked
+        // before the swap is persisted or funded, so a swap that does not
+        // reconcile never reaches storage.
+        await this.buildSubmarineVHTLCContext(pendingSwap, await arkInfoPromise);
 
         // save pending swap to storage
         await this.savePendingSubmarineSwap(pendingSwap);

@@ -78,7 +78,7 @@ import type { VirtualCoin } from "../wallet";
 import { getNormalizedVtxos, hasTerminalSpend } from "../wallet";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import type { TapLeafScript } from "../script/base";
-import { buildOffchainTx, type ArkTxInput } from "../utils/arkTransaction";
+import { buildOffchainTx, matchServerCheckpoints, type ArkTxInput } from "../utils/arkTransaction";
 import { ConditionWitness, PrevArkTxField, setArkPsbtField } from "../utils/unknownFields";
 import { Transaction } from "../utils/transaction";
 import { ANCHOR_PKSCRIPT } from "../utils/anchor";
@@ -706,13 +706,10 @@ export class ArkadeTransactionBuilder {
             base64.encode(signedArk.toPSBT()),
             checkpoints.map((c) => base64.encode(c.toPSBT())),
         );
+        const matched = matchServerCheckpoints(res.signedCheckpointTxs, checkpoints, "submitTx");
         const finalCps = await Promise.all(
-            res.signedCheckpointTxs.map(async (b) =>
-                base64.encode(
-                    (
-                        await client.identity!.sign(Transaction.fromPSBT(base64.decode(b)), [0])
-                    ).toPSBT(),
-                ),
+            matched.map(async ({ server }) =>
+                base64.encode((await client.identity!.sign(server, [0])).toPSBT()),
             ),
         );
         await client.arkProvider.finalizeTx(res.arkTxid, finalCps);
