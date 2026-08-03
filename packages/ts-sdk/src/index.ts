@@ -211,6 +211,7 @@ import {
 import {
     hasBoardingTxExpired,
     buildOffchainTx,
+    assertSubmittedArkTxid,
     matchServerCheckpoints,
     verifyTapscriptSignatures,
     ArkTxInput,
@@ -530,6 +531,7 @@ export {
     PrevoutTxField,
     // Utils
     buildOffchainTx,
+    assertSubmittedArkTxid,
     matchServerCheckpoints,
     verifyTapscriptSignatures,
     waitForIncomingFunds,

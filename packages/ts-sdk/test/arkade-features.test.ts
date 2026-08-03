@@ -107,7 +107,7 @@ function providers(
             captured.cps = cps;
             captured.via = "ark";
             return {
-                arkTxid: "arktxid",
+                arkTxid: Transaction.fromPSBT(base64.decode(arkTx)).id,
                 finalArkTx: arkTx,
                 signedCheckpointTxs: checkpointResponse(cps),
             };

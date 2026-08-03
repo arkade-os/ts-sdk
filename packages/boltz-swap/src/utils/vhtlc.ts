@@ -2,6 +2,7 @@ import {
     ArkInfo,
     ArkProvider,
     ArkTxInput,
+    assertSubmittedArkTxid,
     Batch,
     buildOffchainTx,
     getSequence,
@@ -279,6 +280,9 @@ export const claimVHTLCwithOffchainTx = async (
         base64.encode(signedArkTx.toPSBT()),
         checkpoints.map((c) => base64.encode(c.toPSBT())),
     );
+    // The returned arkTxid keys finalizeTx and is what this function returns;
+    // reject a response that does not refer to the tx just submitted.
+    assertSubmittedArkTxid({ arkTxid, finalArkTx }, signedArkTx, "submitTx");
 
     // verify the server signed the transaction with correct key on the claim leaf
     const finalTx = Transaction.fromPSBT(base64.decode(finalArkTx));
@@ -356,6 +360,9 @@ export const refundWithoutReceiverVHTLCwithOffchainTx = async (
         base64.encode(signedArkTx.toPSBT()),
         checkpoints.map((c) => base64.encode(c.toPSBT())),
     );
+    // The returned arkTxid keys finalizeTx and is what this function returns;
+    // reject a response that does not refer to the tx just submitted.
+    assertSubmittedArkTxid({ arkTxid, finalArkTx }, signedArkTx, "submitTx");
 
     // verify the server signed the transaction with correct key on the refundWithoutReceiver leaf
     const finalTx = Transaction.fromPSBT(base64.decode(finalArkTx));
@@ -481,6 +488,9 @@ export const refundVHTLCwithOffchainTx = async (
         base64.encode(combinedSignedRefundTx.toPSBT()),
         [base64.encode(unsignedCheckpointTx.toPSBT())],
     );
+    // The returned arkTxid keys finalizeTx; reject a response that does not
+    // refer to the tx just submitted.
+    assertSubmittedArkTxid({ arkTxid, finalArkTx }, combinedSignedRefundTx, "submitTx");
 
     // verify the final tx is properly signed
     const tx = Transaction.fromPSBT(base64.decode(finalArkTx));

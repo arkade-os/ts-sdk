@@ -65,12 +65,22 @@ function signer(userSignedCheckpoints?: Transaction[]): OffchainTxSigner & {
     };
 }
 
-function provider(signedCheckpointTxs: string[]): OffchainTxSubmitProvider & {
+// Echoes the submitted ark tx's id (and optionally overrides it or attaches a
+// finalArkTx) so the arkTxid reconciliation guard passes unless a test says
+// otherwise.
+function provider(
+    signedCheckpointTxs: string[],
+    overrides?: { arkTxid?: string; finalArkTx?: string },
+): OffchainTxSubmitProvider & {
     submitTx: ReturnType<typeof vi.fn>;
     finalizeTx: ReturnType<typeof vi.fn>;
 } {
     return {
-        submitTx: vi.fn(async () => ({ arkTxid: "txid", signedCheckpointTxs })),
+        submitTx: vi.fn(async (arkTxB64: string) => ({
+            arkTxid: overrides?.arkTxid ?? Transaction.fromPSBT(base64.decode(arkTxB64)).id,
+            finalArkTx: overrides?.finalArkTx,
+            signedCheckpointTxs,
+        })),
         finalizeTx: vi.fn(async () => {}),
     };
 }
@@ -143,16 +153,52 @@ describe("submitOffchainTx checkpoint count guards", () => {
 
     it("finalizes every checkpoint when the counts line up", async () => {
         const p = provider(encode([checkpoint(1), checkpoint(2)]));
+        const otx = offchainTx([checkpoint(1), checkpoint(2)]);
 
-        const { arkTxid } = await submitOffchainTx(
-            p,
-            offchainTx([checkpoint(1), checkpoint(2)]),
-            signer(),
-        );
+        const { arkTxid } = await submitOffchainTx(p, otx, signer());
 
-        expect(arkTxid).toBe("txid");
+        expect(arkTxid).toBe(otx.arkTx.id);
         expect(p.finalizeTx).toHaveBeenCalledTimes(1);
         expect(p.finalizeTx.mock.calls[0][1]).toHaveLength(2);
+    });
+});
+
+describe("submitOffchainTx ark txid reconciliation", () => {
+    it("rejects a response whose arkTxid is not the submitted tx", async () => {
+        const p = provider(encode([checkpoint(1)]), { arkTxid: "ff".repeat(32) });
+        const s = signer();
+
+        await expect(submitOffchainTx(p, offchainTx([checkpoint(1)]), s)).rejects.toThrow(
+            /submitTx returned ark txid/,
+        );
+        expect(s.signCheckpoint).not.toHaveBeenCalled();
+        expect(p.finalizeTx).not.toHaveBeenCalled();
+    });
+
+    it("rejects a finalArkTx that is not the submitted tx", async () => {
+        // Correct arkTxid but a finalArkTx carrying some other transaction —
+        // isolates the finalArkTx half of the guard.
+        const foreign = checkpoint(3);
+        const p = provider(encode([checkpoint(1)]), {
+            finalArkTx: base64.encode(foreign.toPSBT()),
+        });
+
+        await expect(submitOffchainTx(p, offchainTx([checkpoint(1)]), signer())).rejects.toThrow(
+            new RegExp(`submitTx returned final ark tx ${foreign.id}`),
+        );
+        expect(p.finalizeTx).not.toHaveBeenCalled();
+    });
+
+    it("accepts a finalArkTx echoing the submitted tx", async () => {
+        const otx = offchainTx([checkpoint(1)]);
+        const p = provider(encode([checkpoint(1)]), {
+            finalArkTx: base64.encode(otx.arkTx.toPSBT()),
+        });
+
+        const { arkTxid } = await submitOffchainTx(p, otx, signer());
+
+        expect(arkTxid).toBe(otx.arkTx.id);
+        expect(p.finalizeTx).toHaveBeenCalledTimes(1);
     });
 });
 

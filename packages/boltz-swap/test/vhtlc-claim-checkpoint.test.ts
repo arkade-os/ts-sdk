@@ -85,16 +85,20 @@ async function divergentCheckpoint(input: ArkTxInput): Promise<string> {
 
 /**
  * arkd as the claim path expects it: co-signs the ark tx (so the pre-checkpoint
- * signature check passes) and answers with `checkpointResponse`.
+ * signature check passes), echoes the submitted tx's id as `arkTxid` unless
+ * `overrideArkTxid` fakes a misrouted response, and answers with
+ * `checkpointResponse`.
  */
-function arkProviderStub(checkpointResponse: (submitted: string[]) => Promise<string[]>) {
+function arkProviderStub(
+    checkpointResponse: (submitted: string[]) => Promise<string[]>,
+    overrideArkTxid?: string,
+) {
     return {
         submitTx: vi.fn(async (arkTxB64: string, checkpointsB64: string[]) => {
-            const signedArk = await serverKey.sign(Transaction.fromPSBT(base64.decode(arkTxB64)), [
-                0,
-            ]);
+            const submitted = Transaction.fromPSBT(base64.decode(arkTxB64));
+            const signedArk = await serverKey.sign(submitted, [0]);
             return {
-                arkTxid: "cd".repeat(32),
+                arkTxid: overrideArkTxid ?? submitted.id,
                 finalArkTx: base64.encode(signedArk.toPSBT()),
                 signedCheckpointTxs: await checkpointResponse(checkpointsB64),
             };
@@ -130,8 +134,29 @@ describe("claimVHTLCwithOffchainTx checkpoint reconciliation", () => {
             arkProvider,
         );
 
-        expect(arkTxid).toBe("cd".repeat(32));
+        const submittedId = Transaction.fromPSBT(
+            base64.decode(arkProvider.submitTx.mock.calls[0][0] as string),
+        ).id;
+        expect(arkTxid).toBe(submittedId);
         expect(arkProvider.finalizeTx).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects a response whose arkTxid is not the submitted tx", async () => {
+        const { vhtlcScript, server, input, output, arkInfo } = await fixture();
+        const arkProvider = arkProviderStub(serverSigned, "cd".repeat(32));
+
+        await expect(
+            claimVHTLCwithOffchainTx(
+                ourKey,
+                vhtlcScript,
+                server,
+                input,
+                output,
+                arkInfo,
+                arkProvider,
+            ),
+        ).rejects.toThrow(/submitTx returned ark txid/);
+        expect(arkProvider.finalizeTx).not.toHaveBeenCalled();
     });
 
     it("does not co-sign a checkpoint it did not submit", async () => {

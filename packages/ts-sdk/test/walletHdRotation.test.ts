@@ -1284,7 +1284,7 @@ describe("Wallet HD rotation", () => {
                 .mockImplementation(async (arkTxB64, checkpointsB64) => {
                     submittedArkTxB64 = arkTxB64;
                     return {
-                        arkTxid: "ee".repeat(32),
+                        arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
                         finalArkTx: arkTxB64,
                         signedCheckpointTxs: checkpointsB64,
                     };
@@ -1338,7 +1338,7 @@ describe("Wallet HD rotation", () => {
                 .mockImplementation(async (arkTxB64, checkpointsB64) => {
                     submittedArkTxB64 = arkTxB64;
                     return {
-                        arkTxid: "cc".repeat(32),
+                        arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
                         finalArkTx: arkTxB64,
                         signedCheckpointTxs: checkpointsB64,
                     };
@@ -1558,7 +1558,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
 
         vi.spyOn(wallet.arkProvider, "submitTx").mockImplementation(
             async (arkTxB64, checkpointsB64) => ({
-                arkTxid: "cc".repeat(32),
+                arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
                 finalArkTx: arkTxB64,
                 signedCheckpointTxs: checkpointsB64,
             }),
@@ -1596,7 +1596,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         const submitSpy = vi
             .spyOn(wallet.arkProvider, "submitTx")
             .mockImplementation(async (arkTxB64, checkpointsB64) => ({
-                arkTxid: "ab".repeat(32),
+                arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
                 finalArkTx: arkTxB64,
                 // Server adds its share to the *unsigned* checkpoints it
                 // was handed — exactly what arkd does in production.
@@ -1647,7 +1647,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
                     checkpointsB64.map((c) => serverSignCheckpoint(c)),
                 );
                 return {
-                    arkTxid: "ab".repeat(32),
+                    arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
                     finalArkTx: arkTxB64,
                     // One more checkpoint than the user signed → mismatch.
                     signedCheckpointTxs: [...signed, signed[0]],
@@ -1879,24 +1879,23 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
     }
 
     // Drive a successful send round-trip (server signs checkpoints, finalize
-    // resolves) and return the arkTxid the wallet recorded against. `reorder`
-    // rearranges the server's response, which submitTx is free to do.
+    // resolves), echoing the submitted tx's id as arkTxid the way arkd does.
+    // `reorder` rearranges the server's response, which submitTx is free to do.
     function stubSendRoundTrip(
         wallet: Awaited<ReturnType<typeof makeStaticBatchWallet>>["wallet"],
         reorder: (checkpoints: string[]) => string[] = (c) => c,
     ) {
-        const arkTxid = "ab".repeat(32);
         const submitSpy = vi
             .spyOn(wallet.arkProvider, "submitTx")
             .mockImplementation(async (arkTxB64, checkpointsB64) => ({
-                arkTxid,
+                arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
                 finalArkTx: arkTxB64,
                 signedCheckpointTxs: reorder(
                     await Promise.all(checkpointsB64.map((c) => serverSignCheckpoint(c))),
                 ),
             }));
         const finalizeSpy = vi.spyOn(wallet.arkProvider, "finalizeTx").mockResolvedValue(undefined);
-        return { arkTxid, submitSpy, finalizeSpy };
+        return { submitSpy, finalizeSpy };
     }
 
     // `spentBy` must name the checkpoint that actually spends the VTXO. The
@@ -1939,10 +1938,12 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
     it("sendSelectedVtxosToSelf persists the full-value self output when there is no change", async () => {
         const { wallet } = await makeStaticBatchWallet();
         const coin = makeMigratableCoin(wallet);
-        const { arkTxid } = stubSendRoundTrip(wallet);
+        const { submitSpy } = stubSendRoundTrip(wallet);
 
-        const returned = await wallet.sendSelectedVtxosToSelf([coin]);
-        expect(returned).toBe(arkTxid);
+        const arkTxid = await wallet.sendSelectedVtxosToSelf([coin]);
+        expect(arkTxid).toBe(
+            Transaction.fromPSBT(base64.decode(submitSpy.mock.calls[0][0] as string)).id,
+        );
 
         // The self output (output index 0) is persisted at the FULL input value
         // even though there is no separate change output, on the wallet's own
@@ -1975,9 +1976,9 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
                 { assetId: assetB, amount: 7n },
             ],
         });
-        const { arkTxid } = stubSendRoundTrip(wallet);
+        stubSendRoundTrip(wallet);
 
-        await wallet.sendSelectedVtxosToSelf([coin]);
+        const arkTxid = await wallet.sendSelectedVtxosToSelf([coin]);
 
         const primaryAddress = await wallet.getAddress();
         const persisted = await (wallet as any).walletRepository.getVtxos(primaryAddress);

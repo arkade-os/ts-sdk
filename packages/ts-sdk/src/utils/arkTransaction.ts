@@ -410,7 +410,7 @@ export interface OffchainTxSubmitProvider {
     submitTx(
         signedArkTx: string,
         checkpointTxs: string[],
-    ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }>;
+    ): Promise<{ arkTxid: string; finalArkTx?: string; signedCheckpointTxs: string[] }>;
     finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void>;
 }
 
@@ -493,6 +493,36 @@ export function matchServerCheckpoints(
         byTxid.delete(server.id);
         return { server, local };
     });
+}
+
+/**
+ * Assert a `submitTx` response refers to the ark transaction just submitted.
+ *
+ * The returned `arkTxid` is what gets passed to `finalizeTx` and persisted by
+ * callers, so a stale or misrouted response must be rejected before either
+ * happens: it must equal the locally signed transaction's txid, and when the
+ * response carries the counter-signed `finalArkTx`, that transaction's txid
+ * must match too. Server signatures live in the witness and cannot
+ * legitimately change either — with the same taproot-only caveat as
+ * {@link matchServerCheckpoints}.
+ */
+export function assertSubmittedArkTxid(
+    response: { arkTxid: string; finalArkTx?: string },
+    signedArkTx: Transaction,
+    context: string,
+): void {
+    if (response.arkTxid !== signedArkTx.id) {
+        throw new ServerResponseMismatchError(
+            `${context} returned ark txid ${response.arkTxid}, expected ${signedArkTx.id}`,
+        );
+    }
+    if (response.finalArkTx === undefined) return;
+    const finalTxid = Transaction.fromPSBT(base64.decode(response.finalArkTx)).id;
+    if (finalTxid !== signedArkTx.id) {
+        throw new ServerResponseMismatchError(
+            `${context} returned final ark tx ${finalTxid}, expected ${signedArkTx.id}`,
+        );
+    }
 }
 
 /**
@@ -589,10 +619,12 @@ export async function submitOffchainTx(
     // finalize, its recovery hook can retry from persisted state.
     await hooks?.beforeSubmit?.();
 
-    const { arkTxid, signedCheckpointTxs } = await provider.submitTx(
+    const response = await provider.submitTx(
         base64.encode(signedArkTx.toPSBT()),
         offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT())),
     );
+    assertSubmittedArkTxid(response, signedArkTx, "submitTx");
+    const { arkTxid, signedCheckpointTxs } = response;
 
     // The server returns one signed checkpoint per submitted checkpoint, and
     // each must be one we built: nothing below signs a checkpoint that has not
