@@ -1206,6 +1206,13 @@ export class SwapManager implements SwapManagerClient {
                         this.actionExecutedListeners.forEach((listener) =>
                             listener(swap, "claimArk"),
                         );
+                        // transaction.claim.pending can land while the claim
+                        // above is still in flight, where the in-progress lock
+                        // drops it; the status then never changes again, so no
+                        // later update re-triggers the co-sign. Pick it up here
+                        // instead — the claim it must be ordered after has just
+                        // completed.
+                        await this.signServerClaimIfSignable(swap);
                     } else if (swap.request.to === "BTC") {
                         logger.log(`Auto-claiming BTC chain swap ${swap.id}`);
                         await this.executeClaimBtcAction(swap);
@@ -1262,23 +1269,8 @@ export class SwapManager implements SwapManagerClient {
                             `Chain swap ${swap.id} expired: BTC lockup will be refunded by Boltz after timelock`,
                         );
                     }
-                } else if (swap.request.to === "ARK" && isChainSignableStatus(swap.status)) {
-                    logger.log(
-                        `Auto-signing server's cooperative claim for ARK chain swap ${swap.id}`,
-                    );
-                    try {
-                        const signed = await this.executeSignServerClaimAction(swap);
-                        if (signed) {
-                            this.actionExecutedListeners.forEach((listener) =>
-                                listener(swap, "signServerClaim"),
-                            );
-                        }
-                    } catch (error) {
-                        logger.error(
-                            `Non-fatal: failed to sign server claim for swap ${swap.id}:`,
-                            error,
-                        );
-                    }
+                } else {
+                    await this.signServerClaimIfSignable(swap);
                 }
             }
         } catch (error) {
@@ -1330,7 +1322,7 @@ export class SwapManager implements SwapManagerClient {
         }
 
         const claimPromise = this.claimArkCallback(swap);
-        this.rememberChainClaim(swap.id, claimPromise);
+        this.rememberChainClaim(swap, claimPromise);
         await claimPromise;
     }
 
@@ -1344,7 +1336,7 @@ export class SwapManager implements SwapManagerClient {
         }
 
         const claimPromise = this.claimBtcCallback(swap);
-        this.rememberChainClaim(swap.id, claimPromise);
+        this.rememberChainClaim(swap, claimPromise);
         await claimPromise;
     }
 
@@ -1356,14 +1348,25 @@ export class SwapManager implements SwapManagerClient {
      * window where the txid is not yet captured when transaction.claimed
      * arrives. Defensive against callbacks that don't return a promise (older
      * integrations, test doubles): those simply fall back to getSwapStatus.
+     *
+     * Also mirrors the claim txid onto the monitored swap. The claim callback
+     * persists it against its own pre-claim snapshot, so without the mirror the
+     * next status update would save this stale copy back over the stored record
+     * and drop the txid.
      */
     private rememberChainClaim(
-        swapId: string,
+        swap: BoltzChainSwap,
         claimPromise: Promise<{ txid?: string } | void>,
     ): void {
-        if (claimPromise) {
-            this.chainClaimPromises.set(swapId, claimPromise);
-        }
+        if (!claimPromise) return;
+        this.chainClaimPromises.set(swap.id, claimPromise);
+        claimPromise.then(
+            (result) => {
+                if (result?.txid) swap.claimTxid = result.txid;
+            },
+            // The claim's rejection is surfaced by executeAutonomousAction.
+            () => {},
+        );
     }
 
     /**
@@ -1378,6 +1381,30 @@ export class SwapManager implements SwapManagerClient {
         }
 
         return this.refundArkCallback(swap);
+    }
+
+    /**
+     * Co-sign the server's claim when the swap is in a signable state.
+     *
+     * Called both from the signable-status branch and right after our own
+     * ARK claim, which is where a claim.pending update dropped by the
+     * in-progress lock is recovered. Failure is non-fatal: without our
+     * signature the counterparty falls back to the script path.
+     */
+    private async signServerClaimIfSignable(swap: BoltzChainSwap): Promise<void> {
+        if (swap.request.to !== "ARK" || !isChainSignableStatus(swap.status)) return;
+
+        logger.log(`Auto-signing server's cooperative claim for ARK chain swap ${swap.id}`);
+        try {
+            const signed = await this.executeSignServerClaimAction(swap);
+            if (signed) {
+                this.actionExecutedListeners.forEach((listener) =>
+                    listener(swap, "signServerClaim"),
+                );
+            }
+        } catch (error) {
+            logger.error(`Non-fatal: failed to sign server claim for swap ${swap.id}:`, error);
+        }
     }
 
     /**
