@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { CachingArkProvider } from "../src/providers/cachingArk";
-import { ArkInfo, ArkProvider } from "../src/providers/ark";
+import { ArkInfo, ArkProvider, RestArkProvider } from "../src/providers/ark";
+import { extractArkProviderUrl } from "../src/wallet/wallet";
+
+const SIGNER = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+const ROTATED = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
 
 function fakeInfo(digest: string): ArkInfo {
     return {
@@ -40,6 +44,7 @@ function fakeInner(getInfo: () => Promise<ArkInfo>) {
 
 afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
 });
 
 describe("CachingArkProvider", () => {
@@ -102,5 +107,55 @@ describe("CachingArkProvider", () => {
 
         expect(info.digest).toBe("d2");
         expect(getInfo).toHaveBeenCalledTimes(1);
+    });
+
+    // The TTL refetch is a path no undecorated caller had: it observes a rotation
+    // with no request rejection to trigger DIGEST_MISMATCH, and re-arms `X-Digest`
+    // so no later request will trigger it either. Detection lives in the inner
+    // provider's getInfo; assert it survives the decorator end to end.
+    it("surfaces a rotation first observed by a TTL-expiry refetch", async () => {
+        vi.useFakeTimers();
+        let digest = "d1";
+        let signerPubkey = SIGNER;
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => ({ ok: true, json: async () => ({ signerPubkey, digest }) })),
+        );
+        const provider = new CachingArkProvider(new RestArkProvider("http://ark.test"), 60_000);
+        await provider.getInfo();
+
+        const seen: ArkInfo[] = [];
+        provider.onServerInfoChanged((info) => seen.push(info));
+
+        // The operator rotates while the cache is warm; nothing observes it until
+        // the TTL lapses.
+        digest = "d2";
+        signerPubkey = ROTATED;
+        vi.advanceTimersByTime(60_001);
+        const info = await provider.getInfo();
+
+        expect(seen).toHaveLength(1);
+        expect(seen[0].signerPubkey).toBe(ROTATED);
+        expect(info.signerPubkey).toBe(ROTATED);
+        // The listener fired against the same refreshed info the cache now holds.
+        expect((await provider.getInfo()).digest).toBe("d2");
+    });
+
+    // Wallet setup derives the indexer URL from the arkProvider when `indexerUrl`
+    // is not configured, and throws when it cannot. Decoration must not hide it.
+    it("forwards the inner provider's serverUrl to wallet setup's structural read", () => {
+        const provider = new CachingArkProvider(new RestArkProvider("http://ark.test"));
+
+        expect(provider.serverUrl).toBe("http://ark.test");
+        expect(extractArkProviderUrl(provider)).toBe("http://ark.test");
+    });
+
+    it("reports no serverUrl when the inner provider has none", () => {
+        const provider = new CachingArkProvider(
+            fakeInner(async () => fakeInfo("d1")) as unknown as ArkProvider,
+        );
+
+        expect(provider.serverUrl).toBeUndefined();
+        expect(extractArkProviderUrl(provider)).toBeUndefined();
     });
 });

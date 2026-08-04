@@ -21,6 +21,13 @@ type ServerInfoEventSource = Partial<{
  * cache is refreshed instantly on signer rotation via the inner provider's
  * `onServerInfoChanged`, if it has one — mirrors NArk's
  * `CachingClientTransport` (dotnet-sdk).
+ *
+ * Rotation *detection* is the inner provider's job on both paths, including the
+ * one this decorator introduces: `RestArkProvider.getInfo` emits when a refresh
+ * returns a changed digest, so a rotation first observed by a TTL-expiry
+ * refetch still reaches subscribers. A custom inner provider without
+ * `onServerInfoChanged` caches fine but cannot report rotations — the same
+ * limitation it has undecorated.
  */
 export class CachingArkProvider implements ArkProvider {
     private cached?: ArkInfo;
@@ -35,6 +42,18 @@ export class CachingArkProvider implements ArkProvider {
             this.cached = info;
             this.expiresAt = Date.now() + this.ttlMs;
         });
+    }
+
+    /**
+     * The inner provider's server URL, when it exposes one. `ArkProvider` does
+     * not declare a URL accessor, so consumers read it structurally — wallet
+     * setup does, via `extractArkProviderUrl`, to derive the indexer URL when
+     * `indexerUrl` is not configured. Without this delegation, decorating a
+     * provider would make `Wallet.create` throw for want of an indexer URL.
+     */
+    get serverUrl(): string | undefined {
+        const url = (this.inner as { serverUrl?: unknown }).serverUrl;
+        return typeof url === "string" ? url : undefined;
     }
 
     async getInfo(): Promise<ArkInfo> {
