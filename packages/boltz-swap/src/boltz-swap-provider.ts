@@ -1022,14 +1022,29 @@ export class BoltzSwapProvider {
         return this.network;
     }
 
+    /**
+     * Returns the current submarine swap fees from Boltz.
+     *
+     * Split out of {@link getFees} so callers that only need the submarine
+     * schedule do not also depend on the reverse pairs endpoint: `getFees`
+     * fetches both under a `Promise.all` and rejects if either fails.
+     */
+    async getSubmarineFees(): Promise<FeesResponse["submarine"]> {
+        const submarine = await this.pairsMetadata(
+            "/v2/swap/submarine",
+            isGetSubmarinePairsResponse,
+            "error fetching submarine fees",
+        );
+        return {
+            percentage: submarine.ARK.BTC.fees.percentage,
+            minerFees: submarine.ARK.BTC.fees.minerFees,
+        };
+    }
+
     /** Returns current Lightning swap fees (submarine + reverse) from Boltz. */
     async getFees(): Promise<FeesResponse> {
         const [submarine, reverse] = await Promise.all([
-            this.pairsMetadata(
-                "/v2/swap/submarine",
-                isGetSubmarinePairsResponse,
-                "error fetching submarine fees",
-            ),
+            this.getSubmarineFees(),
             this.pairsMetadata(
                 "/v2/swap/reverse",
                 isGetReversePairsResponse,
@@ -1037,10 +1052,7 @@ export class BoltzSwapProvider {
             ),
         ]);
         return {
-            submarine: {
-                percentage: submarine.ARK.BTC.fees.percentage,
-                minerFees: submarine.ARK.BTC.fees.minerFees,
-            },
+            submarine,
             reverse: {
                 percentage: reverse.BTC.ARK.fees.percentage,
                 minerFees: reverse.BTC.ARK.fees.minerFees,

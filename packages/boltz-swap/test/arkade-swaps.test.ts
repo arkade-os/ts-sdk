@@ -599,7 +599,7 @@ describe("ArkadeSwaps", () => {
      */
     const stubLockupValidation = () => {
         vi.mocked(arkProvider.getInfo).mockResolvedValue(mockArkInfo);
-        vi.spyOn(swaps, "getFees").mockResolvedValue(mockSubmarineFees as any);
+        vi.spyOn(swapProvider, "getSubmarineFees").mockResolvedValue(mockSubmarineFees.submarine);
         return vi.spyOn(swaps as any, "buildSubmarineVHTLCContext").mockResolvedValue({} as any);
     };
 
@@ -819,6 +819,23 @@ describe("ArkadeSwaps", () => {
                 expect(pendingSwap.response.onchainAmount).toBe(mock.invoice.amount);
                 expect(pendingSwap.response.refundPublicKey).toBe(compressedPubkeys.boltz);
                 expect(pendingSwap.status).toEqual("swap.created");
+            });
+
+            // `onchainAmount` is the authority the claim later enforces, so a
+            // response without it is rejected while nothing is committed —
+            // rather than leaving the claim with nothing to compare against.
+            it("rejects a response carrying no claim-side amount", async () => {
+                // arrange
+                const { onchainAmount: _omitted, ...withoutAmount } = createReverseSwapResponse;
+                vi.spyOn(swapProvider, "createReverseSwap").mockImplementationOnce(
+                    reverseSwapResponseFor(withoutAmount as CreateReverseSwapResponse),
+                );
+
+                // act & assert
+                await expect(
+                    swaps.createReverseSwap({ amount: mock.invoice.amount }),
+                ).rejects.toThrow(/carries no claim-side amount/);
+                expect(mockSwapRepository.saveSwap).not.toHaveBeenCalled();
             });
 
             it("should get correct swap status", async () => {
@@ -1226,11 +1243,11 @@ describe("ArkadeSwaps", () => {
                 expect(manager.addSwap).not.toHaveBeenCalled();
             });
 
-            // invoice 3_000_000 sats + 200 miner fee + 0.1% (3000) = 3_003_200
-            const submarineFeeCeiling =
-                mock.invoice.amount +
-                mockSubmarineFees.submarine.minerFees +
-                Math.ceil((mock.invoice.amount * mockSubmarineFees.submarine.percentage) / 100);
+            // invoice 3_000_000 sats + 200 miner fee + 0.1% (3000). Pinned as a
+            // literal rather than recomputed from the implementation's formula,
+            // so a change to that formula moves the assertion instead of the
+            // boundary moving with it.
+            const submarineFeeCeiling = 3_003_200;
 
             it("rejects an expected amount above the invoice plus advertised fees", async () => {
                 // arrange
@@ -1363,10 +1380,8 @@ describe("ArkadeSwaps", () => {
                 // arrange: the real createSubmarineSwap runs, its amount check fails
                 const validationStub = stubLockupValidation();
                 validationStub.mockResolvedValue({} as any);
-                const ceiling =
-                    mock.invoice.amount +
-                    mockSubmarineFees.submarine.minerFees +
-                    Math.ceil((mock.invoice.amount * mockSubmarineFees.submarine.percentage) / 100);
+                // invoice 3_000_000 sats + 200 miner fee + 0.1% (3000)
+                const ceiling = 3_003_200;
                 vi.spyOn(swapProvider, "createSubmarineSwap").mockResolvedValueOnce({
                     ...createSubmarineSwapResponse,
                     expectedAmount: ceiling + 1,
@@ -2728,8 +2743,9 @@ describe("ArkadeSwaps", () => {
             describe("lockup amount and multi-VTXO claim", () => {
                 const chainVtxo = (
                     value: number,
-                    opts: { swept?: boolean; isSpent?: boolean } = {},
+                    opts: { swept?: boolean; isSpent?: boolean; settledBy?: string } = {},
                 ) => ({
+                    ...(opts.settledBy ? { settledBy: opts.settledBy } : {}),
                     txid: hex.encode(randomBytes(32)),
                     vout: 0,
                     value,
@@ -2838,6 +2854,46 @@ describe("ArkadeSwaps", () => {
                     expect(joinBatchSpy).toHaveBeenCalledOnce();
                     expect((joinBatchSpy.mock.calls[0][1] as any).txid).toBe(swept.txid);
                     expect((joinBatchSpy.mock.calls[0][2] as any).amount).toBe(20000n);
+                });
+
+                it("claims a fully swept lockup through batch rounds only", async () => {
+                    const sweptA = chainVtxo(30000, { swept: true });
+                    const sweptB = chainVtxo(20000, { swept: true });
+                    const { pendingSwap, joinBatchSpy } = arrange([sweptA, sweptB]);
+
+                    await expect(swaps.claimArk(pendingSwap)).resolves.toEqual({
+                        txid: mock.txid,
+                    });
+
+                    expect(vi.mocked(claimVHTLCwithOffchainTx)).not.toHaveBeenCalled();
+                    expect(joinBatchSpy).toHaveBeenCalledTimes(2);
+                    expect(joinBatchSpy.mock.calls.map((call) => (call[1] as any).txid)).toEqual([
+                        sweptA.txid,
+                        sweptB.txid,
+                    ]);
+                    expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                        expect.objectContaining({ claimTxid: mock.txid }),
+                    );
+                });
+
+                // A VTXO consumed by a batch round carries `settledBy` and need
+                // not carry `isSpent`. Counting one as spendable would inflate
+                // the total past the agreed amount and re-feed a spent input to
+                // the claim.
+                it("treats a VTXO consumed by a batch round as already claimed", async () => {
+                    const settled = chainVtxo(35000, { settledBy: "b".repeat(64) });
+                    const remainder = chainVtxo(15000);
+                    const { pendingSwap } = arrange([settled, remainder]);
+
+                    await expect(swaps.claimArk(pendingSwap)).resolves.toEqual({
+                        txid: "a".repeat(64),
+                    });
+
+                    const offchainSpy = vi.mocked(claimVHTLCwithOffchainTx);
+                    expect(offchainSpy).toHaveBeenCalledOnce();
+                    const inputs = offchainSpy.mock.calls[0][3] as any[];
+                    expect(inputs.map((i) => i.txid)).toEqual([remainder.txid]);
+                    expect((offchainSpy.mock.calls[0][4] as any).amount).toBe(15000n);
                 });
 
                 it("claims the remainder when part of the lockup is already spent", async () => {

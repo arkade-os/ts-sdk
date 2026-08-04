@@ -24,6 +24,7 @@ import {
     VHTLC,
     ArkInfo,
     isRecoverable,
+    hasTerminalSpend,
     ArkTxInput,
     Identity,
     VirtualCoin,
@@ -542,6 +543,16 @@ export class ArkadeSwaps {
             throw new SwapError({ message: "Preimage hash does not match invoice payment hash" });
         }
 
+        // `onchainAmount` is the agreed amount `claimVHTLC` later enforces
+        // against the lockup, and the wire type marks it optional. Require it
+        // here, before the invoice is handed out: absent, the claim-side check
+        // has no authority to compare against and degrades to a warning.
+        if (typeof swapResponse.onchainAmount !== "number") {
+            throw new SwapError({
+                message: `Swap ${swapResponse.id}: response carries no claim-side amount`,
+            });
+        }
+
         const pendingSwap: BoltzReverseSwap = {
             id: swapResponse.id,
             type: "reverse",
@@ -628,12 +639,12 @@ export class ArkadeSwaps {
                 scripts: [hex.encode(vhtlcScript.pkScript)],
             });
             rawVtxos = result.vtxos;
-            unspentVtxos = result.vtxos.filter((vtxo) => !vtxo.isSpent);
+            unspentVtxos = result.vtxos.filter((vtxo) => !hasTerminalSpend(vtxo));
             const total = unspentVtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
             if (
                 unspentVtxos.length > 0 &&
                 (typeof expected !== "number" ||
-                    rawVtxos.some((vtxo) => vtxo.isSpent) ||
+                    rawVtxos.some(hasTerminalSpend) ||
                     total >= expected)
             ) {
                 break;
@@ -661,7 +672,7 @@ export class ArkadeSwaps {
                 `Swap ${pendingSwap.id}: no agreed claim amount on record — ` +
                     `skipping the lockup amount check`,
             );
-        } else if (!rawVtxos.some((vtxo) => vtxo.isSpent) && total < expected) {
+        } else if (!rawVtxos.some(hasTerminalSpend) && total < expected) {
             throw new LockupAmountMismatchError({
                 swapId: pendingSwap.id,
                 expectedAmount: expected,
@@ -964,8 +975,10 @@ export class ArkadeSwaps {
         arkInfoPromise.catch(() => {});
 
         // Fetch the advertised fee schedule concurrently too: the response's
-        // expected funding amount is reconciled against it below.
-        const feesPromise = this.getFees();
+        // expected funding amount is reconciled against it below. Only the
+        // submarine schedule is read, so it is fetched on its own rather than
+        // through `getFees()`, which also depends on the reverse endpoint.
+        const feesPromise = this.swapProvider.getSubmarineFees();
         feesPromise.catch(() => {});
 
         // make submarine swap request
@@ -1014,12 +1027,12 @@ export class ArkadeSwaps {
     private async assertSubmarineExpectedAmount(
         response: CreateSubmarineSwapResponse,
         invoice: string,
-        feesPromise: Promise<FeesResponse>,
+        feesPromise: Promise<FeesResponse["submarine"]>,
     ): Promise<void> {
         if (typeof response.expectedAmount !== "number") return;
         const invoiceSats = decodeInvoice(invoice).amountSats;
         if (!invoiceSats) return;
-        const { submarine } = await feesPromise;
+        const submarine = await feesPromise;
         const maxAcceptable =
             invoiceSats +
             submarine.minerFees +
@@ -1975,7 +1988,10 @@ export class ArkadeSwaps {
         }
 
         // After a renegotiation the agreed amount supersedes the requested
-        // server lock, so the exact-delivery fee derives from it too.
+        // server lock, so the exact-delivery fee derives from it too. A quote
+        // accepted with slippage can land below `amount`, making the surplus
+        // negative; the `> fee` comparison below then falls back to the
+        // estimated fee, which is the intended behaviour.
         const feeToDeliverExactAmount = BigInt(
             pendingSwap.request.serverLockAmount
                 ? (expected ?? pendingSwap.request.serverLockAmount) - pendingSwap.amount
@@ -2412,15 +2428,18 @@ export class ArkadeSwaps {
 
         // The indexer may lag the lockup tx — and may briefly surface only
         // part of a split lockup — so retry until the spendable set covers
-        // the agreed amount or the attempts run out.
+        // the agreed amount or the attempts run out. `hasTerminalSpend` rather
+        // than `isSpent`: a VTXO consumed by a batch round carries `settledBy`
+        // and need not carry `isSpent`, and counting one of those as spendable
+        // would both inflate the total and hide that a claim already ran.
         let spendable: VirtualCoin[] = [];
         let partiallyClaimed = false;
         for (let attempt = 1; attempt <= CLAIM_VTXO_RETRY_ATTEMPTS; attempt++) {
             const { vtxos } = await this.indexerProvider.getVtxos({
                 scripts: [hex.encode(vhtlcScript.pkScript)],
             });
-            spendable = vtxos.filter((vtxo) => !vtxo.isSpent);
-            partiallyClaimed = vtxos.some((vtxo) => vtxo.isSpent);
+            spendable = vtxos.filter((vtxo) => !hasTerminalSpend(vtxo));
+            partiallyClaimed = vtxos.some(hasTerminalSpend);
             const total = spendable.reduce((sum, vtxo) => sum + vtxo.value, 0);
             if (
                 spendable.length > 0 &&
@@ -3039,6 +3058,10 @@ export class ArkadeSwaps {
      * storage failure must not surface as a rejected renegotiation.
      */
     private async recordAcceptedQuote(swapId: string, amount: number): Promise<void> {
+        // Mirror first: the storage write below is awaited, and a status
+        // update landing in that window would save the monitored copy while
+        // it still lacks the field.
+        this.swapManager?.noteAcceptedQuote(swapId, amount);
         try {
             const stored = (
                 await this.swapRepository.getAllSwaps<BoltzChainSwap>({
@@ -3052,7 +3075,6 @@ export class ArkadeSwaps {
         } catch (error) {
             logger.error(`Failed to record accepted quote for swap ${swapId}:`, error);
         }
-        this.swapManager?.noteAcceptedQuote(swapId, amount);
     }
 
     private async resolveEffectiveFloor(
