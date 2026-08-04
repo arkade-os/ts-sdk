@@ -215,6 +215,27 @@ await wallet.send({ address: 'ark1q...', amount: 1000 })
 
 Identities without `signMultiple` continue to work unchanged — each checkpoint is signed individually via `sign()`.
 
+### Ark Provider Caching
+
+`RestArkProvider.getInfo()` fetches current Arkade server parameters on every call. Wrap it
+with `CachingArkProvider` when you reuse that response for fee, signer, or limit lookups:
+
+```typescript
+import { CachingArkProvider, RestArkProvider, Wallet } from '@arkade-os/sdk'
+
+const arkProvider = new CachingArkProvider(
+  new RestArkProvider('https://arkade.computer'),
+  60_000, // optional TTL in milliseconds; defaults to 60 seconds
+)
+
+const wallet = await Wallet.create({ identity, arkProvider })
+```
+
+Only `getInfo()` is cached; all other Ark provider methods pass through. The cache expires
+after the TTL and updates when the inner provider reports server-info changes, including
+signer rotation. Wrapping `RestArkProvider` preserves its `serverUrl`, so `Wallet.create`
+can still derive the default indexer URL.
+
 ### Onchain Providers
 
 Wallets read onchain state (UTXOs, transactions, fee rates, chain tip) through an `OnchainProvider`. The SDK ships with two implementations and a single transport-agnostic interface so you can swap them without touching wallet code.

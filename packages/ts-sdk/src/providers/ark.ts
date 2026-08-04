@@ -365,9 +365,8 @@ export class RestArkProvider implements ArkProvider {
     }
 
     /**
-     * Last server-info digest seen (from {@link getInfo}). Sent as `X-Digest`
-     * on outgoing requests so arkd can reject a client whose cached info is
-     * stale. Empty until the first {@link getInfo}.
+     * Last server-info digest seen from {@link getInfo}. Sent as `X-Digest`
+     * so arkd can reject stale client configuration.
      */
     private _digest = "";
     private _hasServerInfo = false;
@@ -376,12 +375,9 @@ export class RestArkProvider implements ArkProvider {
     private _serverInfoListeners = new Set<(info: ArkInfo) => void>();
 
     /**
-     * Subscribe to server-info changes, so consumers (the wallet) can re-derive
-     * signer-dependent state mid-session without polling. Returns an unsubscribe
-     * function. Fired on both paths that can observe a rotated operator config:
-     *
-     *  - a request rejected with `DIGEST_MISMATCH`, after fresh info is re-fetched;
-     *  - a routine {@link getInfo} refresh that comes back with a changed digest.
+     * Subscribe to server-info changes. Fired after a stale-info
+     * `DIGEST_MISMATCH` refresh or when {@link getInfo} observes a changed digest.
+     * Returns an unsubscribe function.
      */
     onServerInfoChanged(listener: (info: ArkInfo) => void): () => void {
         this._serverInfoListeners.add(listener);
@@ -553,21 +549,9 @@ export class RestArkProvider implements ArkProvider {
         const hadServerInfo = this._hasServerInfo;
         this._digest = info.digest;
         this._hasServerInfo = true;
-        // Refresh-path rotation detection, mirroring NArk's CachingClientTransport
-        // (`ServerInfoChangedReason.TtlExpiry`). `getInfo` is not digest-gated, so a
-        // routine refresh — a caller's direct call, or a CachingArkProvider TTL
-        // expiry — silently adopts a rotated config and re-arms `X-Digest`. Without
-        // this emit, arkd then accepts the request the mismatch guard would have
-        // rejected, and the wallet is left on stale signer-derived state with its
-        // only rotation trigger disarmed. Assign the digest first so a listener's
-        // own requests already carry the new one.
-        //
-        // First populate is not a change, even when its digest is non-empty.
-        // Conversely, a previously observed empty digest is still a real previous
-        // value: old/no-digest operators can rotate to a digest-bearing config.
-        // The DIGEST_MISMATCH path clears `_digest` before refetching and emits
-        // explicitly, so suppress only that one internal refresh to avoid a double
-        // event while preserving later refresh detection if the refetch fails.
+        // A refresh can observe server-info changes before any digest-gated
+        // request fails. `_hasServerInfo` makes an empty previous digest count
+        // as a real value; `DIGEST_MISMATCH` emits separately after its refetch.
         if (
             hadServerInfo &&
             previousDigest !== info.digest &&

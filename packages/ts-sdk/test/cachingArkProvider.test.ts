@@ -29,7 +29,6 @@ function fakeInfo(digest: string): ArkInfo {
     };
 }
 
-/** Minimal ArkProvider stub exposing only what CachingArkProvider touches. */
 function fakeInner(getInfo: () => Promise<ArkInfo>) {
     const listeners = new Set<(info: ArkInfo) => void>();
     return {
@@ -109,10 +108,6 @@ describe("CachingArkProvider", () => {
         expect(getInfo).toHaveBeenCalledTimes(1);
     });
 
-    // The TTL refetch is a path no undecorated caller had: it observes a rotation
-    // with no request rejection to trigger DIGEST_MISMATCH, and re-arms `X-Digest`
-    // so no later request will trigger it either. Detection lives in the inner
-    // provider's getInfo; assert it survives the decorator end to end.
     it("surfaces a rotation first observed by a TTL-expiry refetch", async () => {
         vi.useFakeTimers();
         let digest = "d1";
@@ -127,8 +122,6 @@ describe("CachingArkProvider", () => {
         const seen: ArkInfo[] = [];
         provider.onServerInfoChanged((info) => seen.push(info));
 
-        // The operator rotates while the cache is warm; nothing observes it until
-        // the TTL lapses.
         digest = "d2";
         signerPubkey = ROTATED;
         vi.advanceTimersByTime(60_001);
@@ -137,12 +130,9 @@ describe("CachingArkProvider", () => {
         expect(seen).toHaveLength(1);
         expect(seen[0].signerPubkey).toBe(ROTATED);
         expect(info.signerPubkey).toBe(ROTATED);
-        // The listener fired against the same refreshed info the cache now holds.
         expect((await provider.getInfo()).digest).toBe("d2");
     });
 
-    // Wallet setup derives the indexer URL from the arkProvider when `indexerUrl`
-    // is not configured, and throws when it cannot. Decoration must not hide it.
     it("forwards the inner provider's serverUrl to wallet setup's structural read", () => {
         const provider = new CachingArkProvider(new RestArkProvider("http://ark.test"));
 
