@@ -726,11 +726,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Context recipient Arkade addresses are validated against: the wallet's
-     * network prefix and the operator signer set (current plus cached
-     * deprecated signers, cutoffs included). `serverPubKey` defaults to the
-     * live key; spend paths that snapshot it against mid-flight rotation pass
-     * their snapshot so the check reads from the same epoch.
+     * `serverPubKey` defaults to the live key; spend paths that snapshot it
+     * against mid-flight rotation pass their snapshot, so the check reads from
+     * one rotation epoch.
      */
     protected recipientAddressContext(
         serverPubKey: Bytes = this._arkServerPublicKey,
@@ -2106,8 +2104,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     private async handleServerInfoChanged(info: {
         signerPubkey: string;
         checkpointTapscript: string;
-        // cutoffs included: recipient-address binding rejects past-cutoff
-        // signers, so a narrower shape here would read EXPIRED as DUE_NOW
+        // without cutoffDate a past-cutoff signer reads as DUE_NOW
         deprecatedSigners?: readonly { pubkey?: string; cutoffDate?: bigint }[];
     }): Promise<void> {
         this.refreshDeprecatedSigners(info);
@@ -3396,8 +3393,8 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         for (const [index, output] of params.outputs.entries()) {
             let script: Bytes | undefined;
 
-            // decode-or-undefined only: a binding failure below must surface
-            // as its own error, not fall through to the onchain branch
+            // decode only: a binding failure must surface as its own error,
+            // not fall through to the onchain branch
             let arkAddress: ArkAddress | undefined;
             try {
                 arkAddress = ArkAddress.decode(output.address);
@@ -3406,13 +3403,11 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             }
 
             if (arkAddress) {
-                // offchain
                 recipientContext ??= this.recipientAddressContext();
                 assertRecipientArkAddress(output.address, arkAddress, recipientContext);
                 script = arkAddress.pkScript;
                 hasOffchainOutputs = true;
             } else {
-                // onchain
                 const addr = Address(this.network).decode(output.address);
                 script = OutScript.encode(addr);
                 onchainOutputIndexes.push(index);

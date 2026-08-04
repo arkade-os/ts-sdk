@@ -212,8 +212,7 @@ type ValidatedRecipient = Required<Omit<Recipient, "extensions">> & {
 };
 
 /**
- * Wallet-side context a recipient Arkade address must match: the wallet's
- * bech32 prefix and the operator signer set. An address failing either check
+ * What a recipient Arkade address must match. An address failing either check
  * belongs to another network or operator, so this wallet's operator cannot
  * create the VTXO where the recipient's wallet expects it.
  */
@@ -223,9 +222,8 @@ export type RecipientAddressContext = {
 };
 
 /**
- * Assert a decoded recipient address is bound to this wallet's network and
- * operator. The embedded server key may be the current signer or a deprecated
- * signer whose rotation cutoff has not passed.
+ * The embedded server key may be the current signer or a deprecated signer
+ * whose rotation cutoff has not passed.
  */
 export function assertRecipientArkAddress(
     encoded: string,

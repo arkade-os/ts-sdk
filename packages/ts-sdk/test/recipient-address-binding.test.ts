@@ -186,7 +186,6 @@ describe("Wallet recipient address binding", () => {
         ).recipientAddressContext();
         expect(context.signerSet.deprecated.get(hex.encode(DEPRECATED_XONLY))).toBe(cutoff);
 
-        // an address minted under that signer stays payable until the cutoff
         const encoded = encodeAddr(DEPRECATED_XONLY, "tark");
         expect(() =>
             assertRecipientArkAddress(encoded, ArkAddress.decode(encoded), context),
