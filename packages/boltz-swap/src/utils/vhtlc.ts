@@ -248,11 +248,11 @@ export const joinBatch = async (
 };
 
 /**
- * Claims a VHTLC using an offchain transaction.
+ * Claims one or more VTXOs at a VHTLC using a single offchain transaction.
  * @param identity
  * @param vhtlcScript
  * @param serverXOnlyPublicKey
- * @param input
+ * @param inputs - VTXOs at the VHTLC script, all spent through the claim leaf.
  * @param output
  * @param arkInfo
  * @param arkProvider
@@ -262,7 +262,7 @@ export const claimVHTLCwithOffchainTx = async (
     identity: Identity,
     vhtlcScript: VHTLC.Script,
     serverXOnlyPublicKey: Uint8Array,
-    input: ArkTxInput,
+    inputs: ArkTxInput[],
     output: TransactionOutput,
     arkInfo: ArkInfo,
     arkProvider: ArkProvider,
@@ -272,7 +272,7 @@ export const claimVHTLCwithOffchainTx = async (
     const serverUnrollScript = CSVMultisigTapscript.decode(rawCheckpointTapscript);
 
     // create the offchain transaction to claim the VHTLC
-    const { arkTx, checkpoints } = buildOffchainTx([input], [output], serverUnrollScript);
+    const { arkTx, checkpoints } = buildOffchainTx(inputs, [output], serverUnrollScript);
 
     // sign and submit the virtual transaction
     const signedArkTx = await identity.sign(arkTx);

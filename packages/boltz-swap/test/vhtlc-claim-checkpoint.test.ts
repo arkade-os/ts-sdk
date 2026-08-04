@@ -96,7 +96,7 @@ function arkProviderStub(
     return {
         submitTx: vi.fn(async (arkTxB64: string, checkpointsB64: string[]) => {
             const submitted = Transaction.fromPSBT(base64.decode(arkTxB64));
-            const signedArk = await serverKey.sign(submitted, [0]);
+            const signedArk = await serverKey.sign(submitted);
             return {
                 arkTxid: overrideArkTxid ?? submitted.id,
                 finalArkTx: base64.encode(signedArk.toPSBT()),
@@ -128,7 +128,7 @@ describe("claimVHTLCwithOffchainTx checkpoint reconciliation", () => {
             ourKey,
             vhtlcScript,
             server,
-            input,
+            [input],
             output,
             arkInfo,
             arkProvider,
@@ -141,6 +141,31 @@ describe("claimVHTLCwithOffchainTx checkpoint reconciliation", () => {
         expect(arkProvider.finalizeTx).toHaveBeenCalledTimes(1);
     });
 
+    it("claims two VTXOs at the script in one offchain tx", async () => {
+        const { vhtlcScript, server, input, output, arkInfo } = await fixture();
+        const input2: ArkTxInput = { ...input, txid: "22".repeat(32), vout: 1 };
+        const arkProvider = arkProviderStub(serverSigned);
+
+        const arkTxid = await claimVHTLCwithOffchainTx(
+            ourKey,
+            vhtlcScript,
+            server,
+            [input, input2],
+            { ...output, amount: BigInt(VALUE * 2) },
+            arkInfo,
+            arkProvider,
+        );
+
+        const [submittedArkB64, submittedCheckpoints] = arkProvider.submitTx.mock.calls[0] as [
+            string,
+            string[],
+        ];
+        expect(submittedCheckpoints).toHaveLength(2);
+        expect(arkTxid).toBe(Transaction.fromPSBT(base64.decode(submittedArkB64)).id);
+        const finalized = arkProvider.finalizeTx.mock.calls[0][1] as string[];
+        expect(finalized).toHaveLength(2);
+    });
+
     it("rejects a response whose arkTxid is not the submitted tx", async () => {
         const { vhtlcScript, server, input, output, arkInfo } = await fixture();
         const arkProvider = arkProviderStub(serverSigned, "cd".repeat(32));
@@ -150,7 +175,7 @@ describe("claimVHTLCwithOffchainTx checkpoint reconciliation", () => {
                 ourKey,
                 vhtlcScript,
                 server,
-                input,
+                [input],
                 output,
                 arkInfo,
                 arkProvider,
@@ -168,7 +193,7 @@ describe("claimVHTLCwithOffchainTx checkpoint reconciliation", () => {
                 ourKey,
                 vhtlcScript,
                 server,
-                input,
+                [input],
                 output,
                 arkInfo,
                 arkProvider,

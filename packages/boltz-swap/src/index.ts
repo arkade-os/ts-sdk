@@ -52,6 +52,8 @@ export {
     QuoteRejectedError,
     VHTLCAddressMismatchError,
     CooperativeSignRefusedError,
+    LockupAmountMismatchError,
+    ExpectedAmountExceededError,
 } from "./errors";
 export type { QuoteRejectionReason } from "./errors";
 export {
