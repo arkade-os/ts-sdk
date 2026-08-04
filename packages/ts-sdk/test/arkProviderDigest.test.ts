@@ -3,7 +3,6 @@ import { RestArkProvider, DigestMismatchError } from "../src/providers/ark";
 
 const SIGNER = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
-/** A 200 /v1/info response advertising the given digest (and optionally signer). */
 function okInfo(digest: string, signerPubkey: string = SIGNER) {
     return { ok: true, json: async () => ({ signerPubkey, digest }) };
 }
@@ -87,11 +86,6 @@ describe("RestArkProvider server-info digest negotiation", () => {
         expect(digestOf(provider)).toBe("dX");
     });
 
-    // `getInfo` is not digest-gated, so a plain refresh (a direct caller, or a
-    // CachingArkProvider TTL expiry) adopts a rotated config and re-arms
-    // `X-Digest` — arkd then accepts what the mismatch guard would have rejected.
-    // Without this emit the wallet keeps deriving against the old signer with its
-    // only rotation trigger already disarmed. Mirrors NArk's TtlExpiry reason.
     it("getInfo emits onServerInfoChanged when a refresh returns a changed digest", async () => {
         const ROTATED = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
         const provider = new RestArkProvider("http://ark.test");
@@ -106,7 +100,6 @@ describe("RestArkProvider server-info digest negotiation", () => {
         const seen: { signerPubkey: string; digest: string }[] = [];
         provider.onServerInfoChanged((info) => seen.push(info));
 
-        // The operator rotated its signer between refreshes.
         digest = "d2";
         signer = ROTATED;
         await provider.getInfo();
@@ -114,8 +107,6 @@ describe("RestArkProvider server-info digest negotiation", () => {
         expect(seen).toHaveLength(1);
         expect(seen[0].signerPubkey).toBe(ROTATED);
         expect(seen[0].digest).toBe("d2");
-        // The new digest is in place before listeners run, so a listener's own
-        // authed requests already carry it.
         expect(digestOf(provider)).toBe("d2");
     });
 

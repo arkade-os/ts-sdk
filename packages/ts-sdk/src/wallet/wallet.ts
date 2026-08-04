@@ -168,11 +168,8 @@ function intentProofJobs(coins: ReadonlyArray<{ tapTree: Bytes }>): InputSigning
     return [{ index: 0, lookupScript: coinJobs[0].lookupScript }, ...coinJobs];
 }
 
-// Built-in ArkProvider implementations (Rest/Expo) expose `serverUrl`,
-// but the interface itself does not declare a URL accessor — so this is a
-// structural read that returns undefined for custom implementations.
-// Structural, not `instanceof`: a decorator such as `CachingArkProvider` is not
-// a `RestArkProvider` but does forward `serverUrl`.
+// Built-in and decorated ArkProvider implementations may expose `serverUrl`.
+// The interface does not require it, so custom providers can return undefined.
 export function extractArkProviderUrl(provider: ArkProvider): string | undefined {
     const serverUrl = (provider as { serverUrl?: unknown }).serverUrl;
     return typeof serverUrl === "string" && serverUrl.length > 0 ? serverUrl : undefined;
