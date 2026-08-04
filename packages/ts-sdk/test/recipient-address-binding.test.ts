@@ -162,6 +162,37 @@ describe("Wallet recipient address binding", () => {
         ).rejects.toThrow(/unknown operator signer key/);
     });
 
+    it("carries cached deprecated signers, cutoffs included, into the recipient context", async () => {
+        const cutoff = BigInt(NOW_SECONDS + 100_000);
+        mockFetch.mockReset();
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    ...mockArkInfo,
+                    deprecatedSigners: [
+                        { pubkey: hex.encode(DEPRECATED_XONLY), cutoffDate: cutoff.toString() },
+                    ],
+                }),
+        });
+
+        const wallet = await Wallet.create({
+            identity: mockIdentity,
+            arkServerUrl: "http://localhost:7070",
+        });
+
+        const context = (
+            wallet as unknown as { recipientAddressContext(): RecipientAddressContext }
+        ).recipientAddressContext();
+        expect(context.signerSet.deprecated.get(hex.encode(DEPRECATED_XONLY))).toBe(cutoff);
+
+        // an address minted under that signer stays payable until the cutoff
+        const encoded = encodeAddr(DEPRECATED_XONLY, "tark");
+        expect(() =>
+            assertRecipientArkAddress(encoded, ArkAddress.decode(encoded), context),
+        ).not.toThrow();
+    });
+
     it("settle rejects a foreign offchain output with the binding error", async () => {
         const wallet = await Wallet.create({
             identity: mockIdentity,

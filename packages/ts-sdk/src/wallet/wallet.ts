@@ -2106,7 +2106,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     private async handleServerInfoChanged(info: {
         signerPubkey: string;
         checkpointTapscript: string;
-        deprecatedSigners?: readonly { pubkey?: string }[];
+        // cutoffs included: recipient-address binding rejects past-cutoff
+        // signers, so a narrower shape here would read EXPIRED as DUE_NOW
+        deprecatedSigners?: readonly { pubkey?: string; cutoffDate?: bigint }[];
     }): Promise<void> {
         this.refreshDeprecatedSigners(info);
         try {
