@@ -31,6 +31,7 @@ import {
     type ArkInfo,
     type ArkTxInput,
     type Identity,
+    type Recipient,
     type VHTLC,
 } from "@arkade-os/sdk";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
@@ -414,8 +415,9 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         output: TransactionOutput,
         arkInfo: ArkInfo,
         isRecoverable?: boolean,
+        recipient?: Recipient,
     ): Promise<string> {
-        return this.inner.joinBatch(identity, input, output, arkInfo, isRecoverable);
+        return this.inner.joinBatch(identity, input, output, arkInfo, isRecoverable, recipient);
     }
 
     createVHTLCScript(params: {
