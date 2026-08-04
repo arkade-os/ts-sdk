@@ -12,6 +12,7 @@ import { contractHandlers } from "../contracts/handlers";
 import { DefaultVtxo } from "../script/default";
 import { DelegateVtxo } from "../script/delegate";
 import type { ReadonlyWallet } from "./wallet";
+import { classifyAgainstSignerSet, type SignerSet } from "./signerRotation";
 import { hex } from "@scure/base";
 import { Bytes } from "@scure/btc-signer/utils.js";
 
@@ -210,9 +211,50 @@ type ValidatedRecipient = Required<Omit<Recipient, "extensions">> & {
     extensions?: Recipient["extensions"];
 };
 
+/**
+ * Wallet-side context a recipient Arkade address must match: the wallet's
+ * bech32 prefix and the operator signer set. An address failing either check
+ * belongs to another network or operator, so this wallet's operator cannot
+ * create the VTXO where the recipient's wallet expects it.
+ */
+export type RecipientAddressContext = {
+    hrp: string;
+    signerSet: SignerSet;
+};
+
+/**
+ * Assert a decoded recipient address is bound to this wallet's network and
+ * operator. The embedded server key may be the current signer or a deprecated
+ * signer whose rotation cutoff has not passed.
+ */
+export function assertRecipientArkAddress(
+    encoded: string,
+    address: ArkAddress,
+    context: RecipientAddressContext,
+): void {
+    if (address.hrp !== context.hrp) {
+        throw new Error(
+            `Invalid Arkade address ${encoded}: expected prefix "${context.hrp}", got "${address.hrp}"`,
+        );
+    }
+    const { status } = classifyAgainstSignerSet(
+        hex.encode(address.serverPubKey),
+        context.signerSet,
+    );
+    if (status === "UNKNOWN_SIGNER") {
+        throw new Error(`Invalid Arkade address ${encoded}: unknown operator signer key`);
+    }
+    if (status === "EXPIRED") {
+        throw new Error(
+            `Invalid Arkade address ${encoded}: operator signer key is past its rotation cutoff`,
+        );
+    }
+}
+
 export function validateRecipients(
     recipients: Recipient[],
     dustAmount: number,
+    context: RecipientAddressContext,
 ): ValidatedRecipient[] {
     const validatedRecipients: ValidatedRecipient[] = [];
 
@@ -223,6 +265,8 @@ export function validateRecipients(
         } catch (e) {
             throw new Error(`Invalid Arkade address: ${recipient.address}`);
         }
+
+        assertRecipientArkAddress(recipient.address, address, context);
 
         const amount = recipient.amount || dustAmount;
         if (amount <= 0) {

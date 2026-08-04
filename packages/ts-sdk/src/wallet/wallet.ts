@@ -102,7 +102,12 @@ import type { IntentRepository, ArkIntent, ArkIntentState } from "../repositorie
 import { isTerminalIntentState } from "../repositories/intentRepository";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
-import { extendCoinWithTapscript, validateRecipients } from "./utils";
+import {
+    assertRecipientArkAddress,
+    extendCoinWithTapscript,
+    validateRecipients,
+    type RecipientAddressContext,
+} from "./utils";
 import {
     captureExitBranch,
     DEFAULT_EXIT_CAPTURE_MODE,
@@ -718,6 +723,25 @@ export class ReadonlyWallet implements IReadonlyWallet {
             toXOnlySignerHex(hex.encode(this.boardingTapscript.options.serverPubKey)),
             ...this._deprecatedSigners.keys(),
         ]);
+    }
+
+    /**
+     * Context recipient Arkade addresses are validated against: the wallet's
+     * network prefix and the operator signer set (current plus cached
+     * deprecated signers, cutoffs included). `serverPubKey` defaults to the
+     * live key; spend paths that snapshot it against mid-flight rotation pass
+     * their snapshot so the check reads from the same epoch.
+     */
+    protected recipientAddressContext(
+        serverPubKey: Bytes = this._arkServerPublicKey,
+    ): RecipientAddressContext {
+        return {
+            hrp: this.network.hrp,
+            signerSet: {
+                active: toXOnlySignerHex(hex.encode(serverPubKey)),
+                deprecated: this._deprecatedSigners,
+            },
+        };
     }
 
     /**
@@ -3159,6 +3183,11 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                 };
 
                 const outputAddress = ArkAddress.decode(params.address);
+                assertRecipientArkAddress(
+                    params.address,
+                    outputAddress,
+                    this.recipientAddressContext(serverPubKey),
+                );
                 const outputScript =
                     BigInt(params.amount) < this.dustAmount
                         ? outputAddress.subdustPkScript
@@ -3361,14 +3390,26 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         const outputs: TransactionOutput[] = [];
         let hasOffchainOutputs = false;
 
+        let recipientContext: RecipientAddressContext | undefined;
         for (const [index, output] of params.outputs.entries()) {
             let script: Bytes | undefined;
+
+            // decode-or-undefined only: a binding failure below must surface
+            // as its own error, not fall through to the onchain branch
+            let arkAddress: ArkAddress | undefined;
             try {
-                // offchain
-                const addr = ArkAddress.decode(output.address);
-                script = addr.pkScript;
-                hasOffchainOutputs = true;
+                arkAddress = ArkAddress.decode(output.address);
             } catch {
+                arkAddress = undefined;
+            }
+
+            if (arkAddress) {
+                // offchain
+                recipientContext ??= this.recipientAddressContext();
+                assertRecipientArkAddress(output.address, arkAddress, recipientContext);
+                script = arkAddress.pkScript;
+                hasOffchainOutputs = true;
+            } else {
                 // onchain
                 const addr = Address(this.network).decode(output.address);
                 script = OutScript.encode(addr);
@@ -4749,7 +4790,11 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         const address = outputAddress.encode();
 
         // validate recipients and populate undefined amount with dust amount
-        const recipients = validateRecipients(args, Number(this.dustAmount));
+        const recipients = validateRecipients(
+            args,
+            Number(this.dustAmount),
+            this.recipientAddressContext(serverPubKey),
+        );
 
         const allVirtualCoins = await this.getVtxos({
             withRecoverable: false,
