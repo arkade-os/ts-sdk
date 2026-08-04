@@ -822,8 +822,7 @@ describe("ArkadeSwaps", () => {
             });
 
             // `onchainAmount` is the authority the claim later enforces, so a
-            // response without it is rejected while nothing is committed —
-            // rather than leaving the claim with nothing to compare against.
+            // response without it is rejected while nothing is committed.
             it("rejects a response carrying no claim-side amount", async () => {
                 // arrange
                 const { onchainAmount: _omitted, ...withoutAmount } = createReverseSwapResponse;
@@ -1243,10 +1242,9 @@ describe("ArkadeSwaps", () => {
                 expect(manager.addSwap).not.toHaveBeenCalled();
             });
 
-            // invoice 3_000_000 sats + 200 miner fee + 0.1% (3000). Pinned as a
-            // literal rather than recomputed from the implementation's formula,
-            // so a change to that formula moves the assertion instead of the
-            // boundary moving with it.
+            // invoice 3_000_000 sats + 200 miner fee + 0.1% (3000). A literal,
+            // so a change to the production formula moves the assertion rather
+            // than the boundary it asserts against.
             const submarineFeeCeiling = 3_003_200;
 
             it("rejects an expected amount above the invoice plus advertised fees", async () => {
@@ -2876,10 +2874,8 @@ describe("ArkadeSwaps", () => {
                     );
                 });
 
-                // A VTXO consumed by a batch round carries `settledBy` and need
-                // not carry `isSpent`. Counting one as spendable would inflate
-                // the total past the agreed amount and re-feed a spent input to
-                // the claim.
+                // Counting a batch-consumed VTXO as spendable would inflate the
+                // total past the agreed amount and re-feed a spent input.
                 it("treats a VTXO consumed by a batch round as already claimed", async () => {
                     const settled = chainVtxo(35000, { settledBy: "b".repeat(64) });
                     const remainder = chainVtxo(15000);

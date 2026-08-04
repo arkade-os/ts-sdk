@@ -221,13 +221,8 @@ export class CooperativeSignRefusedError extends SwapError {
 
 /**
  * Thrown when a chain swap's claim-side lockup holds less than the agreed
- * amount — `acceptedQuoteAmount` when a renegotiated quote was accepted,
- * `response.claimDetails.amount` otherwise. The claim is not performed, so
- * the preimage is never disclosed; the funded side stays recoverable through
- * the regular refund paths.
- *
- * Past the service-worker boundary only `message` survives, so the swap id
- * and both amounts are carried there.
+ * amount. The claim is not performed, so the preimage is never disclosed and
+ * the funded side stays recoverable through the regular refund paths.
  */
 export class LockupAmountMismatchError extends SwapError {
     public readonly swapId: string;
@@ -256,9 +251,6 @@ export class LockupAmountMismatchError extends SwapError {
  * plus the advertised submarine fee schedule. The response of a consistent
  * server always reconciles with its own advertised fees, so the swap is
  * rejected before it is persisted or funded.
- *
- * Past the service-worker boundary only `message` survives, so the swap id
- * and both amounts are carried there.
  */
 export class ExpectedAmountExceededError extends SwapError {
     public readonly swapId: string;

@@ -1023,11 +1023,9 @@ export class BoltzSwapProvider {
     }
 
     /**
-     * Returns the current submarine swap fees from Boltz.
-     *
-     * Split out of {@link getFees} so callers that only need the submarine
-     * schedule do not also depend on the reverse pairs endpoint: `getFees`
-     * fetches both under a `Promise.all` and rejects if either fails.
+     * Returns the current submarine swap fees from Boltz. Split out of
+     * {@link getFees}, which also fetches the reverse pairs and rejects if
+     * either endpoint fails.
      */
     async getSubmarineFees(): Promise<FeesResponse["submarine"]> {
         const submarine = await this.pairsMetadata(

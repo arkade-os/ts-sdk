@@ -543,10 +543,9 @@ export class ArkadeSwaps {
             throw new SwapError({ message: "Preimage hash does not match invoice payment hash" });
         }
 
-        // `onchainAmount` is the agreed amount `claimVHTLC` later enforces
-        // against the lockup, and the wire type marks it optional. Require it
-        // here, before the invoice is handed out: absent, the claim-side check
-        // has no authority to compare against and degrades to a warning.
+        // `onchainAmount` is the agreed amount `claimVHTLC` later enforces, and
+        // the wire type marks it optional. Require it here, before the invoice
+        // is handed out, rather than leaving the claim nothing to compare against.
         if (typeof swapResponse.onchainAmount !== "number") {
             throw new SwapError({
                 message: `Swap ${swapResponse.id}: response carries no claim-side amount`,
@@ -662,10 +661,10 @@ export class ArkadeSwaps {
         }
 
         // Claiming publishes the preimage, which is what lets the counterparty
-        // settle the Lightning side in full, so the locked total must cover
-        // the amount confirmed at creation before the first claim. Once part
-        // of the lockup is already spent an earlier claim has disclosed it,
-        // and the remainder is swept unconditionally.
+        // settle the Lightning side in full, so the locked total must cover the
+        // agreed amount before the first claim. Once part of the lockup is
+        // spent an earlier claim has already disclosed it, and the remainder is
+        // swept unconditionally.
         const total = unspentVtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
         if (typeof expected !== "number") {
             logger.warn(
@@ -974,10 +973,9 @@ export class ArkadeSwaps {
         // rejection.
         arkInfoPromise.catch(() => {});
 
-        // Fetch the advertised fee schedule concurrently too: the response's
-        // expected funding amount is reconciled against it below. Only the
-        // submarine schedule is read, so it is fetched on its own rather than
-        // through `getFees()`, which also depends on the reverse endpoint.
+        // Same treatment for the fee schedule the funding amount is bounded
+        // against. Only the submarine half is read, so `getSubmarineFees` keeps
+        // this off the reverse endpoint `getFees` would also pull in.
         const feesPromise = this.swapProvider.getSubmarineFees();
         feesPromise.catch(() => {});
 
@@ -1001,8 +999,6 @@ export class ArkadeSwaps {
         // reconcile never reaches storage.
         await this.buildSubmarineVHTLCContext(pendingSwap, await arkInfoPromise);
 
-        // The expected funding amount must reconcile with the invoice plus the
-        // advertised fee schedule — also before anything is persisted or funded.
         await this.assertSubmarineExpectedAmount(swapResponse, invoice, feesPromise);
 
         // save pending swap to storage
@@ -1018,11 +1014,9 @@ export class ArkadeSwaps {
 
     /**
      * Bound a submarine swap's `expectedAmount` to the invoice amount plus the
-     * advertised submarine fee schedule: the percentage fee over the invoice,
-     * rounded up, plus miner fees. A consistent server's response always
+     * advertised submarine fee schedule. A consistent server's response always
      * reconciles with its own advertised fees, so anything above the bound is
-     * rejected before the swap is persisted or funded. Amountless invoices
-     * carry no local baseline and are not bounded.
+     * rejected. Amountless invoices carry no local baseline and are not bounded.
      */
     private async assertSubmarineExpectedAmount(
         response: CreateSubmarineSwapResponse,
@@ -1875,9 +1869,8 @@ export class ArkadeSwaps {
                         await updateSwapStatus();
                         await this.quoteSwap(swap.response.id, quoteOptionsForSwap(swap)).then(
                             (accepted) => {
-                                // Mirror onto the local copy: later
-                                // updateSwapStatus() saves would otherwise
-                                // write the pre-quote snapshot back out.
+                                // Mirror it, or a later updateSwapStatus()
+                                // save writes the pre-quote snapshot back out.
                                 swap.acceptedQuoteAmount = accepted;
                             },
                             (err) => {
@@ -1967,10 +1960,9 @@ export class ArkadeSwaps {
         );
         const swapOutput = detectSwapOutput(musig.aggPubkey, lockupTx);
 
-        // The lockup must cover the agreed amount before the claim proceeds —
-        // requesting the cooperative signature discloses the preimage, which
-        // completes the swap on the counterparty's side. Refusing keeps the
-        // ARK lockup recoverable through the regular refund path.
+        // Same guard as `claimVHTLC`, with the disclosure one step earlier: the
+        // preimage goes out in the cooperative-signature request below, not in
+        // a witness. Refusing keeps the ARK lockup on its regular refund track.
         const expected = await this.expectedClaimAmount(pendingSwap);
         if (expected === undefined) {
             logger.warn(
@@ -1989,9 +1981,8 @@ export class ArkadeSwaps {
 
         // After a renegotiation the agreed amount supersedes the requested
         // server lock, so the exact-delivery fee derives from it too. A quote
-        // accepted with slippage can land below `amount`, making the surplus
-        // negative; the `> fee` comparison below then falls back to the
-        // estimated fee, which is the intended behaviour.
+        // accepted with slippage can land below `amount`; the surplus then goes
+        // negative and the `> fee` comparison below falls back to the estimate.
         const feeToDeliverExactAmount = BigInt(
             pendingSwap.request.serverLockAmount
                 ? (expected ?? pendingSwap.request.serverLockAmount) - pendingSwap.amount
@@ -2286,9 +2277,8 @@ export class ArkadeSwaps {
                         await updateSwapStatus();
                         await this.quoteSwap(swap.response.id, quoteOptionsForSwap(swap)).then(
                             (accepted) => {
-                                // Mirror onto the local copy: later
-                                // updateSwapStatus() saves would otherwise
-                                // write the pre-quote snapshot back out.
+                                // Mirror it, or a later updateSwapStatus()
+                                // save writes the pre-quote snapshot back out.
                                 swap.acceptedQuoteAmount = accepted;
                             },
                             (err) => {
@@ -2426,12 +2416,11 @@ export class ArkadeSwaps {
 
         const expected = await this.expectedClaimAmount(pendingSwap);
 
-        // The indexer may lag the lockup tx — and may briefly surface only
-        // part of a split lockup — so retry until the spendable set covers
-        // the agreed amount or the attempts run out. `hasTerminalSpend` rather
-        // than `isSpent`: a VTXO consumed by a batch round carries `settledBy`
-        // and need not carry `isSpent`, and counting one of those as spendable
-        // would both inflate the total and hide that a claim already ran.
+        // The indexer may lag the lockup tx — and may briefly surface only part
+        // of a split lockup — so retry until the spendable set covers the agreed
+        // amount or the attempts run out. `hasTerminalSpend` rather than
+        // `isSpent`: a VTXO consumed by a batch round carries `settledBy` and
+        // need not carry `isSpent`.
         let spendable: VirtualCoin[] = [];
         let partiallyClaimed = false;
         for (let attempt = 1; attempt <= CLAIM_VTXO_RETRY_ATTEMPTS; attempt++) {
@@ -2455,11 +2444,9 @@ export class ArkadeSwaps {
             throw new Error(`Swap ${pendingSwap.id}: no spendable virtual coins found`);
         }
 
-        // Claiming discloses the preimage, so the locked total must cover the
-        // agreed amount before the first claim; refusing keeps the swap on its
-        // regular refund track. Once part of the lockup is already spent an
-        // earlier claim has disclosed it, and the remainder is swept
-        // unconditionally.
+        // Same guard as `claimVHTLC`: the claim witness discloses the preimage,
+        // so the lockup must cover the agreed amount before the first claim,
+        // and a partly spent lockup is swept unconditionally.
         const total = spendable.reduce((sum, vtxo) => sum + vtxo.value, 0);
         if (expected === undefined) {
             logger.warn(
@@ -2485,9 +2472,9 @@ export class ArkadeSwaps {
         });
 
         // Claim the whole spendable set, not just the first VTXO: live VTXOs
-        // together in one offchain tx, swept (recoverable) VTXOs per VTXO via
-        // a batch round. The offchain claim tx is the swap's completion; its
-        // id is the txid callers expect back from waitAndClaimArk.
+        // together in one offchain tx, swept ones per VTXO via a batch round.
+        // The first claim tx is the swap's completion, and its id is the txid
+        // callers expect back from waitAndClaimArk.
         const live = spendable.filter((vtxo) => !isRecoverable(vtxo));
         const recoverable = spendable.filter((vtxo) => isRecoverable(vtxo));
 
@@ -2824,9 +2811,8 @@ export class ArkadeSwaps {
 
         const swapResponse = await this.swapProvider.createChainSwap(swapRequest);
 
-        // The response's claim-side amount is what claims later enforce as the
-        // agreed amount; when the server lock was computed locally it must be
-        // echoed verbatim. Checked before the swap is persisted or funded.
+        // The response's claim-side amount is what claims later enforce, so
+        // when the server lock was computed locally it must be echoed verbatim.
         if (
             serverLockAmount !== undefined &&
             swapResponse.claimDetails.amount !== serverLockAmount
@@ -3050,17 +3036,14 @@ export class ArkadeSwaps {
     }
 
     /**
-     * Persist an accepted renegotiation amount as the swap's agreed amount,
-     * and mirror it onto the SwapManager's monitored copy — the manager saves
-     * that copy on every status update, and a stale snapshot would otherwise
-     * write the field back out (the same hazard `claimTxid` mirroring covers).
-     * Best-effort on the acceptance path: the quote is already posted, so a
-     * storage failure must not surface as a rejected renegotiation.
+     * Persist an accepted renegotiation amount as the swap's agreed amount, and
+     * mirror it onto the SwapManager's monitored copy (see `noteAcceptedQuote`).
+     * Best-effort: the quote is already posted, so a storage failure must not
+     * surface as a rejected renegotiation.
      */
     private async recordAcceptedQuote(swapId: string, amount: number): Promise<void> {
-        // Mirror first: the storage write below is awaited, and a status
-        // update landing in that window would save the monitored copy while
-        // it still lacks the field.
+        // Mirror before the awaited write, or a status update landing in that
+        // window saves the monitored copy while it still lacks the field.
         this.swapManager?.noteAcceptedQuote(swapId, amount);
         try {
             const stored = (
