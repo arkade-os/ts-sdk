@@ -41,6 +41,7 @@
     "dependencies": {
         "@arkade-os/sdk": "workspace:*",
         "@arkade-os/solver-discovery": "0.1.4",
+        "@noble/hashes": "2.0.1",
         "@scure/base": "2.0.0",
         "@scure/btc-signer": "2.0.1"
     },
@@ -50,6 +51,7 @@
     },
     "packageManager": "pnpm@10.25.0",
     "devDependencies": {
+        "@noble/curves": "2.0.1",
         "fake-indexeddb": "6.2.5"
     }
 }
