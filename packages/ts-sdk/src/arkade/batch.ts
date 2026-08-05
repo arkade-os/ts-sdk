@@ -30,7 +30,11 @@ import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { Transaction } from "../utils/transaction";
 import { validateConnectorsTxGraph, validateVtxoTxGraph } from "../tree/validation";
-import { validateBatchRecipients } from "../wallet/validation";
+import {
+    assertFinalCommitmentMatchesValidated,
+    validateBatchRecipients,
+    validateBatchRecipientsWithoutTree,
+} from "../wallet/validation";
 import { buildForfeitTx } from "../forfeit";
 import { Batch } from "../wallet/batch";
 import { Intent } from "../intent";
@@ -74,13 +78,18 @@ export function createArkadeBatchHandler(
     network: Network,
     /**
      * Expected recipients of the settlement, validated against the virtual
-     * output tree before co-signing it (mirrors `Wallet.createBatchHandler`).
-     * Without this the handler signs whatever tree the server proposes.
+     * output tree before co-signing it, and — when tree signing did not run —
+     * against the commitment tx before signing anything at finalization
+     * (mirrors `Wallet.createBatchHandler`). Without this the handler signs
+     * whatever the server proposes, on both paths.
      */
     recipients?: Recipient[],
 ): Batch.Handler {
     let batchId: string;
     let sweepTapTreeRoot: Uint8Array;
+    // Assigned only after the tree it commits to has been validated, so it
+    // always names a commitment tx this handler has checked.
+    let validatedCommitmentTxid: string | undefined;
 
     return {
         onBatchStarted: async (event: BatchStartedEvent): Promise<{ skip: boolean }> => {
@@ -133,6 +142,8 @@ export function createArkadeBatchHandler(
                 throw new Error("Shared output not found");
             }
 
+            validatedCommitmentTxid = commitmentTx.id;
+
             await session.init(vtxoTree, sweepTapTreeRoot, sharedOutput.amount);
 
             const pubkey = hex.encode(await session.getPublicKey());
@@ -169,6 +180,18 @@ export function createArkadeBatchHandler(
             }
 
             let commitmentPsbt = Transaction.fromPSBT(base64.decode(event.commitmentTx));
+            assertFinalCommitmentMatchesValidated(
+                commitmentPsbt,
+                validatedCommitmentTxid,
+                "arkade batch finalization",
+            );
+
+            // No validated txid means tree signing never ran, so the recipients
+            // have not been checked yet and this commitment tx is the only thing
+            // to check them against. Before any signature is handed over.
+            if (!validatedCommitmentTxid && recipients && recipients.length > 0) {
+                validateBatchRecipientsWithoutTree(commitmentPsbt, recipients, network);
+            }
             const signedForfeits: string[] = [];
             let connectorIndex = 0;
             const connectorLeaves = connectorTree?.leaves() || [];

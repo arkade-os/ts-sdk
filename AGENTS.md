@@ -19,16 +19,16 @@ and naming when they conflict with the inherited Go-shaped patterns here.
 
 ## Core Package, Plugins & Code Reuse
 
-`@arkade-os/sdk` is the core package. `@arkade-os/boltz-swap` should be treated as a plugin-style
-extension of that core, and as one example of the many integrations/plugins expected to exist over
-time. Prefer reusing existing SDK utilities, types, primitives, and helper functions from
-`packages/ts-sdk` instead of duplicating equivalent logic in `boltz-swap` or future plugins. When
-shared behavior is generally useful beyond one plugin and belongs to the wallet/protocol core,
-promote it into `ts-sdk` rather than copying it outward.
+`@arkade-os/sdk` is the core package. `@arkade-os/boltz-swap` and `@arkade-os/swap` should be
+treated as plugin-style extensions of that core, and as examples of the many integrations/plugins
+expected to exist over time. Prefer reusing existing SDK utilities, types, primitives, and helper
+functions from `packages/ts-sdk` instead of duplicating equivalent logic in a plugin. When shared
+behavior is generally useful beyond one plugin and belongs to the wallet/protocol core, promote it
+into `ts-sdk` rather than copying it outward.
 
 Keep the dependency and ownership direction clear: plugins may depend on and consume `ts-sdk`, but
-`ts-sdk` must remain independent of plugin packages and must not import from or special-case
-`boltz-swap`. Core capabilities flow from `ts-sdk` outward to plugins.
+`ts-sdk` must remain independent of plugin packages and must not import from or special-case any of
+them. Core capabilities flow from `ts-sdk` outward to plugins.
 
 ## Commands
 

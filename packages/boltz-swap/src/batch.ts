@@ -3,6 +3,8 @@ import {
     BatchFinalizationEvent,
     BatchStartedEvent,
     CSVMultisigTapscript,
+    Network,
+    Recipient,
     SignerSession,
     Transaction,
     TreeNoncesEvent,
@@ -10,6 +12,8 @@ import {
     TxTree,
     validateVtxoTxGraph,
     validateConnectorsTxGraph,
+    validateBatchRecipients,
+    assertFinalCommitmentMatchesValidated,
     Identity,
     VtxoScript,
     buildForfeitTx,
@@ -29,6 +33,8 @@ export function createVHTLCBatchHandler(
     identity: Identity,
     session: SignerSession,
     sweepPublicKey: Uint8Array,
+    network: Network,
+    recipient?: Recipient,
     forfeitOutputScript?: Bytes, // undefined if recoverable
     connectorIndex: number = 0,
 ) {
@@ -37,6 +43,7 @@ export function createVHTLCBatchHandler(
     const intentIdHashStr = hex.encode(intentIdHash);
 
     let sweepTapTreeRoot: Uint8Array | undefined;
+    let validatedCommitmentTxid: string | undefined;
 
     return {
         onBatchStarted: async (event: BatchStartedEvent): Promise<{ skip: boolean }> => {
@@ -93,7 +100,11 @@ export function createVHTLCBatchHandler(
             const commitmentTx = Transaction.fromPSBT(base64.decode(event.unsignedCommitmentTx));
             validateVtxoTxGraph(vtxoTree, commitmentTx, sweepTapTreeRoot);
 
-            // TODO check if our registered outputs are in the vtxo tree
+            if (recipient) {
+                validateBatchRecipients(commitmentTx, vtxoTree.leaves(), [recipient], network);
+            }
+            // record only after validation so a rejected tree never pins a txid
+            validatedCommitmentTxid = commitmentTx.id;
 
             const sharedOutput = commitmentTx.getOutput(0);
             if (!sharedOutput?.amount) {
@@ -134,6 +145,19 @@ export function createVHTLCBatchHandler(
                 // no need to create a forfeit transaction, skip
                 return;
             }
+
+            // this handler always cosigns the tree (no skipVtxoTreeSigning path),
+            // so a finalization without a pinned commitment tx is protocol-invalid
+            if (!validatedCommitmentTxid) {
+                throw new Error(
+                    "BatchFinalizationEvent: commitment tx was not validated at tree signing",
+                );
+            }
+            assertFinalCommitmentMatchesValidated(
+                Transaction.fromPSBT(base64.decode(event.commitmentTx)),
+                validatedCommitmentTxid,
+                "vhtlc batch finalization",
+            );
 
             if (!connectorTree) {
                 throw new Error("BatchFinalizationEvent: expected connector tree to be defined");

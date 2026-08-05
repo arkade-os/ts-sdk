@@ -8,6 +8,7 @@ import { DefaultVtxo } from "../script/default";
 import { DEFAULT_ARKADE_SERVER_URL, getNetwork, Network, NetworkName } from "../networks";
 import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
 import {
+    ArkInfo,
     ArkProvider,
     BatchFinalizationEvent,
     BatchStartedEvent,
@@ -21,7 +22,11 @@ import {
 import { SignerSession } from "../tree/signingSession";
 import { buildForfeitTx } from "../forfeit";
 import { validateConnectorsTxGraph, validateVtxoTxGraph } from "../tree/validation";
-import { validateBatchRecipients } from "./validation";
+import {
+    assertFinalCommitmentMatchesValidated,
+    validateBatchRecipients,
+    validateBatchRecipientsWithoutTree,
+} from "./validation";
 import { Identity, ReadonlyIdentity, isBatchSignable } from "../identity";
 import {
     canRecoverOnchain,
@@ -66,8 +71,9 @@ import {
 import { createAssetPacket, selectCoinsWithAsset, selectedCoinsToAssetInputs } from "./asset";
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
-import { toXOnlySignerHex } from "./signerRotation";
+import { signerSetFromInfo, toXOnlySignerHex } from "./signerRotation";
 import {
+    assertCheckpointsMatchInputs,
     buildOffchainTx,
     hasBoardingTxExpired,
     isValidArkAddress,
@@ -96,7 +102,12 @@ import type { IntentRepository, ArkIntent, ArkIntentState } from "../repositorie
 import { isTerminalIntentState } from "../repositories/intentRepository";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
-import { extendCoinWithTapscript, validateRecipients } from "./utils";
+import {
+    assertRecipientArkAddress,
+    extendCoinWithTapscript,
+    validateRecipients,
+    type RecipientAddressContext,
+} from "./utils";
 import {
     captureExitBranch,
     DEFAULT_EXIT_CAPTURE_MODE,
@@ -712,6 +723,23 @@ export class ReadonlyWallet implements IReadonlyWallet {
             toXOnlySignerHex(hex.encode(this.boardingTapscript.options.serverPubKey)),
             ...this._deprecatedSigners.keys(),
         ]);
+    }
+
+    /**
+     * `serverPubKey` defaults to the live key; spend paths that snapshot it
+     * against mid-flight rotation pass their snapshot, so the check reads from
+     * one rotation epoch.
+     */
+    protected recipientAddressContext(
+        serverPubKey: Bytes = this._arkServerPublicKey,
+    ): RecipientAddressContext {
+        return {
+            hrp: this.network.hrp,
+            signerSet: {
+                active: toXOnlySignerHex(hex.encode(serverPubKey)),
+                deprecated: this._deprecatedSigners,
+            },
+        };
     }
 
     /**
@@ -2076,7 +2104,8 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     private async handleServerInfoChanged(info: {
         signerPubkey: string;
         checkpointTapscript: string;
-        deprecatedSigners?: readonly { pubkey?: string }[];
+        // without cutoffDate a past-cutoff signer reads as DUE_NOW
+        deprecatedSigners?: readonly { pubkey?: string; cutoffDate?: bigint }[];
     }): Promise<void> {
         this.refreshDeprecatedSigners(info);
         try {
@@ -3009,7 +3038,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     cb: (info: {
                         signerPubkey: string;
                         checkpointTapscript: string;
-                        deprecatedSigners?: readonly { pubkey?: string }[];
+                        deprecatedSigners?: readonly { pubkey?: string; cutoffDate?: bigint }[];
                     }) => void,
                 ): () => void;
             }>;
@@ -3153,6 +3182,11 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                 };
 
                 const outputAddress = ArkAddress.decode(params.address);
+                assertRecipientArkAddress(
+                    params.address,
+                    outputAddress,
+                    this.recipientAddressContext(serverPubKey),
+                );
                 const outputScript =
                     BigInt(params.amount) < this.dustAmount
                         ? outputAddress.subdustPkScript
@@ -3355,15 +3389,25 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         const outputs: TransactionOutput[] = [];
         let hasOffchainOutputs = false;
 
+        let recipientContext: RecipientAddressContext | undefined;
         for (const [index, output] of params.outputs.entries()) {
             let script: Bytes | undefined;
+
+            // decode only: a binding failure must surface as its own error,
+            // not fall through to the onchain branch
+            let arkAddress: ArkAddress | undefined;
             try {
-                // offchain
-                const addr = ArkAddress.decode(output.address);
-                script = addr.pkScript;
-                hasOffchainOutputs = true;
+                arkAddress = ArkAddress.decode(output.address);
             } catch {
-                // onchain
+                arkAddress = undefined;
+            }
+
+            if (arkAddress) {
+                recipientContext ??= this.recipientAddressContext();
+                assertRecipientArkAddress(output.address, arkAddress, recipientContext);
+                script = arkAddress.pkScript;
+                hasOffchainOutputs = true;
+            } else {
                 const addr = Address(this.network).decode(output.address);
                 script = OutScript.encode(addr);
                 onchainOutputIndexes.push(index);
@@ -3627,12 +3671,27 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         event: BatchFinalizationEvent,
         inputs: SettleParams["inputs"],
         forfeitOutputScript: Bytes,
+        expectedRecipients: Recipient[],
         connectorsGraph?: TxTree,
+        validatedCommitmentTxid?: string,
     ) {
         // the signed forfeits transactions to submit
         const signedForfeits: string[] = [];
 
         let settlementPsbt = Transaction.fromPSBT(base64.decode(event.commitmentTx));
+        assertFinalCommitmentMatchesValidated(
+            settlementPsbt,
+            validatedCommitmentTxid,
+            "settlement finalization",
+        );
+
+        // No validated txid means tree signing never ran (onchain-only settle),
+        // so the recipients have not been checked yet and this commitment tx is
+        // the only thing to check them against. Before any signature is handed
+        // over, in either direction: boarding inputs below, forfeits after.
+        if (!validatedCommitmentTxid && expectedRecipients.length > 0) {
+            validateBatchRecipientsWithoutTree(settlementPsbt, expectedRecipients, this.network);
+        }
         let hasBoardingUtxos = false;
 
         let connectorIndex = 0;
@@ -3795,6 +3854,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         session?: SignerSession,
     ): Batch.Handler {
         let sweepTapTreeRoot: Uint8Array | undefined;
+        // Assigned only after the tree it commits to has been validated, so it
+        // always names a commitment tx this handler has checked.
+        let validatedCommitmentTxid: string | undefined;
         return {
             onBatchStarted: async (event: BatchStartedEvent): Promise<{ skip: boolean }> => {
                 const utf8IntentId = new TextEncoder().encode(intentId);
@@ -3871,6 +3933,8 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     throw new Error("Shared output not found");
                 }
 
+                validatedCommitmentTxid = commitmentTx.id;
+
                 await session.init(vtxoTree, sweepTapTreeRoot, sharedOutput.amount);
 
                 const pubkey = hex.encode(await session.getPublicKey());
@@ -3913,7 +3977,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     event,
                     inputs,
                     this.forfeitOutputScript,
+                    expectedRecipients,
                     connectorTree,
+                    validatedCommitmentTxid,
                 );
             },
         };
@@ -4140,6 +4206,15 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             batches.push(vtxos.slice(i, i + MAX_INPUTS_PER_INTENT));
         }
 
+        const unrollCandidates = this.checkpointUnrollCandidates(await this.arkProvider.getInfo());
+        // Checked against every VTXO of this run, not the chunk that produced
+        // the proof: a pending tx spends whatever the interrupted send did, and
+        // its inputs can straddle two chunks.
+        const checkpointInputs = vtxos.map((vtxo) => ({
+            ...vtxo,
+            tapLeafScript: vtxo.forfeitTapLeafScript,
+        }));
+
         // Track seen arkTxids so parallel batches don't finalize the same tx twice
         const seen = new Set<string>();
 
@@ -4159,6 +4234,16 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     try {
                         const checkpointTxs = pendingTx.signedCheckpointTxs.map((c) =>
                             Transaction.fromPSBT(base64.decode(c)),
+                        );
+                        // The send that registered this tx ran in an earlier
+                        // process, so its checkpoints are rebuilt here rather
+                        // than recalled. A tx that does not reconcile is left
+                        // pending for the next init to re-check.
+                        assertCheckpointsMatchInputs(
+                            checkpointTxs,
+                            checkpointInputs,
+                            unrollCandidates,
+                            `pending tx ${pendingTx.arkTxid}`,
                         );
                         const checkpointJobs = checkpointTxs.map((tx) =>
                             this.inputSigningJobsFromWitnessUtxos(tx),
@@ -4232,6 +4317,34 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         }
 
         return { finalized, pending };
+    }
+
+    /**
+     * The server unroll scripts a pending checkpoint may legitimately have been
+     * built under: this wallet's configured one, the server's current one, and
+     * one per deprecated signer (same closure, deprecated key). A tx submitted
+     * before a signer rotation was built under the old key, so rebuilding
+     * against the current key alone would leave it pending forever.
+     */
+    private checkpointUnrollCandidates(info: ArkInfo): CSVMultisigTapscript.Type[] {
+        const current = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
+        const candidates = [this._serverUnrollScript, current];
+        for (const deprecated of signerSetFromInfo(info).deprecated.keys()) {
+            candidates.push(
+                CSVMultisigTapscript.encode({
+                    ...current.params,
+                    pubkeys: [hex.decode(deprecated)],
+                }),
+            );
+        }
+
+        const seen = new Set<string>();
+        return candidates.filter((candidate) => {
+            const script = hex.encode(candidate.script);
+            if (seen.has(script)) return false;
+            seen.add(script);
+            return true;
+        });
     }
 
     private async hasPendingTxFlag(): Promise<boolean> {
@@ -4564,7 +4677,10 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             }
         }
 
+        if (pendingTxs.length === 0) return result;
+
         const myPkScriptHex = hex.encode(myPkScript);
+        const unrollCandidates = this.checkpointUnrollCandidates(await this.arkProvider.getInfo());
 
         for (const pendingTx of pendingTxs) {
             try {
@@ -4572,6 +4688,15 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                 // arkadeCash key adds its own share in place.
                 const checkpointTxs = pendingTx.signedCheckpointTxs.map((checkpoint) =>
                     Transaction.fromPSBT(base64.decode(checkpoint)),
+                );
+                assertCheckpointsMatchInputs(
+                    checkpointTxs,
+                    inputs.map((input) => ({
+                        ...input,
+                        tapLeafScript: input.forfeitTapLeafScript,
+                    })),
+                    unrollCandidates,
+                    `pending arkadeCash tx ${pendingTx.arkTxid}`,
                 );
                 const finalCheckpoints = await Promise.all(
                     checkpointTxs.map(async (checkpoint) =>
@@ -4662,7 +4787,11 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         const address = outputAddress.encode();
 
         // validate recipients and populate undefined amount with dust amount
-        const recipients = validateRecipients(args, Number(this.dustAmount));
+        const recipients = validateRecipients(
+            args,
+            Number(this.dustAmount),
+            this.recipientAddressContext(serverPubKey),
+        );
 
         const allVirtualCoins = await this.getVtxos({
             withRecoverable: false,
@@ -5149,29 +5278,35 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                 );
             }
 
-            const safeLength = Math.min(inputs.length, signedCheckpointTxs.length);
+            // Keyed by the outpoint each checkpoint spends, never by position:
+            // `submitTx` may return its checkpoints in any order (they are
+            // matched by txid, not index), so pairing this array with `inputs`
+            // positionally would record every VTXO as spent by another one's
+            // checkpoint.
+            const checkpointIdByOutpoint = new Map<string, string>();
+            for (const encoded of signedCheckpointTxs) {
+                const checkpoint = Transaction.fromPSBT(base64.decode(encoded));
+                for (let i = 0; i < checkpoint.inputsLength; i++) {
+                    const input = checkpoint.getInput(i);
+                    if (!input.txid) continue;
+                    checkpointIdByOutpoint.set(
+                        `${hex.encode(input.txid)}:${input.index}`,
+                        checkpoint.id,
+                    );
+                }
+            }
+
             const cm = await this.getContractManager();
             const annotatedInputs = await cm.annotateVtxos(inputs);
-            for (const [inputIndex, vtxo] of annotatedInputs.entries()) {
+            for (const vtxo of annotatedInputs) {
                 const spentFacts = { ...vtxo, isSpent: true };
-                if (inputIndex < safeLength && signedCheckpointTxs[inputIndex]) {
-                    const checkpoint = Transaction.fromPSBT(
-                        base64.decode(signedCheckpointTxs[inputIndex]),
-                    );
-
-                    spentVtxos.push({
-                        ...spentFacts,
-                        virtualStatus: toVirtualStatus(spentFacts),
-                        spentBy: checkpoint.id,
-                        arkTxId: arkTxid,
-                    });
-                } else {
-                    spentVtxos.push({
-                        ...spentFacts,
-                        virtualStatus: toVirtualStatus(spentFacts),
-                        arkTxId: arkTxid,
-                    });
-                }
+                const spentBy = checkpointIdByOutpoint.get(`${vtxo.txid}:${vtxo.vout}`);
+                spentVtxos.push({
+                    ...spentFacts,
+                    virtualStatus: toVirtualStatus(spentFacts),
+                    ...(spentBy ? { spentBy } : {}),
+                    arkTxId: arkTxid,
+                });
 
                 for (const id of vtxo.commitmentTxIds) {
                     commitmentTxIds.add(id);

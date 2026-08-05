@@ -211,6 +211,8 @@ import {
 import {
     hasBoardingTxExpired,
     buildOffchainTx,
+    assertSubmittedArkTxid,
+    matchServerCheckpoints,
     verifyTapscriptSignatures,
     ArkTxInput,
     OffchainTx,
@@ -297,6 +299,7 @@ import {
     isArkError,
     maybeArkError,
     ProviderUnavailableError,
+    ServerResponseMismatchError,
 } from "./providers/errors";
 import type { ProviderKind } from "./providers/errors";
 import { isRetryableProviderError } from "./providers/availability";
@@ -304,6 +307,10 @@ import type { ServerInfoSource } from "./wallet/arkInfoSnapshot";
 import type { ProviderConnectionState } from "./wallet/wallet";
 import type { ContractSyncState } from "./contracts/contractManager";
 import { validateVtxoTxGraph, validateConnectorsTxGraph } from "./tree/validation";
+import {
+    validateBatchRecipients,
+    assertFinalCommitmentMatchesValidated,
+} from "./wallet/validation";
 import { buildForfeitTx } from "./forfeit";
 import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
 import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
@@ -528,6 +535,8 @@ export {
     PrevoutTxField,
     // Utils
     buildOffchainTx,
+    assertSubmittedArkTxid,
+    matchServerCheckpoints,
     verifyTapscriptSignatures,
     waitForIncomingFunds,
     hasBoardingTxExpired,
@@ -605,6 +614,7 @@ export {
     isArkError,
     maybeArkError,
     ProviderUnavailableError,
+    ServerResponseMismatchError,
     isRetryableProviderError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
@@ -613,6 +623,8 @@ export {
     Batch,
     validateVtxoTxGraph,
     validateConnectorsTxGraph,
+    validateBatchRecipients,
+    assertFinalCommitmentMatchesValidated,
     buildForfeitTx,
     isRecoverable,
     isSpendable,

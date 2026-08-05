@@ -218,8 +218,10 @@ export async function restoreAssetSwaps(
             toAsset,
             fromAmount,
             toAmount: offer.wantAmount.toString(),
-            // ponytail: empty address makes cancel fall back to the current server
-            // key; store the funded address if server-key rotations become real
+            // ponytail(arkade-os/ts-sdk#680): empty address makes cancel fall back
+            // to the current server key; store the funded address if server-key
+            // rotations become real (cancelOffer now at least diagnoses the
+            // mismatch instead of reporting a missing VTXO)
             swapAddress: "",
             swapPkScript,
             offerHex,

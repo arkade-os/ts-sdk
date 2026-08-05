@@ -76,6 +76,8 @@ describe("asset swap store", () => {
             },
             getScannedTxids: async () => new Set(),
             markTxidsScanned: async () => {},
+            getCachedMarkets: async () => undefined,
+            saveCachedMarkets: async () => {},
             clear: async () => {},
             [Symbol.asyncDispose]: async () => {},
         };

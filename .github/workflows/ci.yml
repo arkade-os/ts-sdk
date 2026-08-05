@@ -42,6 +42,9 @@ jobs:
       - name: Type-check boltz-swap
         run: pnpm -C packages/boltz-swap run typecheck
 
+      - name: Type-check swap
+        run: pnpm -C packages/swap run typecheck
+
       - name: Smoke-test ts-sdk dist
         run: pnpm -C packages/ts-sdk run smoke:dist
 
@@ -53,6 +56,12 @@ jobs:
 
       - name: Verify boltz-swap publish shape
         run: cd packages/boltz-swap && npm pack --dry-run --ignore-scripts
+
+      - name: Smoke-test swap dist
+        run: pnpm -C packages/swap run smoke:dist
+
+      - name: Verify swap publish shape
+        run: cd packages/swap && npm pack --dry-run --ignore-scripts
 
       - name: Unit tests
         run: pnpm run test:unit
@@ -98,6 +107,9 @@ jobs:
               test/e2e/deprecatedSignerMigration.test.ts
               test/e2e/digestMismatch.test.ts
           - package: boltz-swap
+            group: all
+            test_files: ""
+          - package: swap
             group: all
             test_files: ""
 

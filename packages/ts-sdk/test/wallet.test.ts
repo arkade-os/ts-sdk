@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import {
+    ArkAddress,
     Wallet,
     SingleKey,
     OnchainWallet,
@@ -2055,6 +2056,13 @@ describe("Wallet._settleImpl", () => {
             const thisArg: any = {
                 network: "mutinynet",
                 dustAmount: 330n,
+                recipientAddressContext: () => ({
+                    hrp: "tark",
+                    signerSet: {
+                        active: hex.encode(ArkAddress.decode(walletAddress).serverPubKey),
+                        deprecated: new Map(),
+                    },
+                }),
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue({ fees: { intentFee } }),
                 },

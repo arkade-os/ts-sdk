@@ -1,6 +1,6 @@
 // Node-only smoke: build an offer payload with deterministic keys and
 // round-trip it through encodeOffer/decodeOffer byte-for-byte. Run after
-// `pnpm build`: `pnpm smoke`.
+// `pnpm build`: `pnpm smoke:dist`.
 import { hex } from "@scure/base";
 import { ArkAddress, asset } from "@arkade-os/sdk";
 import { encodeOffer, decodeOffer, offerVtxoScript } from "../dist/index.js";
