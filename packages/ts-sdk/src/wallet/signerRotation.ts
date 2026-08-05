@@ -59,8 +59,12 @@ export interface SignerSet {
      * Deprecated signers keyed by x-only hex, mapped to their cutoff. The cutoff
      * is always a bigint (arkd advertises it non-nullable); `0n` means "no cutoff
      * advertised" (→ `DUE_NOW`).
+     *
+     * Read-only: the wallet hands out its live `_deprecatedSigners` here rather
+     * than a copy, and that map drives coin selection and the pendingRecovery
+     * balance bucket. A holder must not write through it.
      */
-    deprecated: Map<string, bigint>;
+    deprecated: ReadonlyMap<string, bigint>;
 }
 
 /**
