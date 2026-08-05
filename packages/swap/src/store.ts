@@ -1,6 +1,16 @@
 import type { AssetSwapRepository } from "./repository";
 
-export type AssetSwapStatus = "pending" | "cancelling" | "fulfilled" | "cancelled" | "recoverable";
+export type AssetSwapStatus =
+    | "pending"
+    | "cancelling"
+    | "fulfilled"
+    | "cancelled"
+    | "recoverable"
+    // onchain-corridor phases (see onchainHtlc.ts):
+    | "awaiting_fill"
+    | "claimable"
+    | "claimed"
+    | "refunded_l1";
 
 /** The sentinel asset id for BTC itself, as opposed to a 68-hex asset id.
  * Lives here with the {@link AssetSwap} fields it describes so the market and
@@ -38,6 +48,21 @@ export interface AssetSwap {
     status: AssetSwapStatus;
     createdAt: number;
     completedAt?: number;
+    // ── Onchain-corridor fields (absent on offer swaps). Persist the record —
+    // preimage included — BEFORE funding: the preimage is what makes the swap
+    // claimable across restarts, and nothing on chain can recover it until the
+    // counterparty spends. ──
+    /** RFQ pair string, e.g. `arkade:BTC->onchain:BTC`. */
+    pair?: string;
+    /** `sha256(P)`, hex. */
+    paymentHash?: string;
+    /** P, hex — cleared once the claim is spent if the caller wishes. */
+    preimageHex?: string;
+    /** The L1 HTLC's pkScript, hex — the chain-watch key. */
+    htlcPkScriptHex?: string;
+    htlcLocktime?: number;
+    /** The L1 funding txid, once observed. */
+    l1Txid?: string;
 }
 
 /** The canonical swap order, declared once so every read agrees on it. */
@@ -50,7 +75,14 @@ const byNewest = (a: AssetSwap, b: AssetSwap): number => b.createdAt - a.created
 export const getAssetSwaps = async (repository: AssetSwapRepository): Promise<AssetSwap[]> => {
     try {
         return (await repository.getAllSwaps())
-            .filter((s) => s && typeof s.id === "string" && typeof s.offerHex === "string")
+            .filter(
+                (s) =>
+                    s &&
+                    typeof s.id === "string" &&
+                    // offer swaps carry the TLV; onchain-corridor swaps carry
+                    // the payment hash instead — either marks a valid record
+                    (typeof s.offerHex === "string" || typeof s.paymentHash === "string"),
+            )
             .sort(byNewest);
     } catch {
         return [];

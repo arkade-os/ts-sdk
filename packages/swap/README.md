@@ -27,8 +27,13 @@ platform-provided or polyfilled IndexedDB.
    twice.
 5. **`rfq`** — the maker / intent-submitter side of quoted swaps: RFQ negotiation over HTTP or a
    relay, then non-interactive filling (see below). Covers `arkade:BTC|asset -> lightning:BTC`
-   (implemented against the reference solver) and `arkade:BTC|asset -> arkade:BTC|asset` (quote,
-   then take by funding an offer from layer 1).
+   (implemented against the reference solver), `arkade:BTC|asset -> arkade:BTC|asset` (quote,
+   then take by funding an offer from layer 1), and the onchain corridor below.
+6. **`onchainHtlc`** — the Bitcoin-L1 side of `arkade:BTC <-> onchain:BTC`: a NUMS-keyed taproot
+   HTLC as pure local derivation (golden-pinned), claim/refund spend builders with signing as a
+   callback, the injected `ChainSource` seam (the package holds no L1 backend and no keys),
+   preimage extraction from a spend's witness, and crash-recovery classification.
+   `claimPacket` seals P to covclaimd for the on-board direction.
 
 Everything the package persists — swap records, the restore-scan cursor, and the markets cache —
 goes through a single `AssetSwapRepository`, following the Arkade repository convention
@@ -146,3 +151,56 @@ Transports are symmetric-outbound: `httpTransport` (POST `/v1/swap`, GET `/v1/rf
 NIP-44 content — which swaps only the transport function). Status by `rfq_id` reaches terminal
 states `settled / refused / expired / refunded / stuck`; receipts (the preimage) appear only in
 `settled`, and the chain itself is always the fallback nobody can withhold.
+
+## Onchain corridor: `arkade:BTC -> onchain:BTC` (and back)
+
+The off-board direction is implemented end to end on the maker side. The maker generates `P`
+itself — `sha256(P)` is the wire `payment_hash`, and the script commitment is
+`ripemd160(sha256(P))` in BOTH contracts, so one preimage unlocks the Arkade leaf and the L1 leaf.
+The Arkade lockup is byte-identical to the lightning-send program (`htlcSendProgram` is an alias —
+one artifact, one golden test); the L1 side is a two-leaf taproot HTLC with the BIP-341 NUMS
+internal key (no key-path spend, ever): claim = `HASH160 <h160> EQUALVERIFY <claimKey> CHECKSIG`,
+refund = `<locktime> CLTV DROP <refundKey> CHECKSIG`.
+
+```ts
+import { httpTransport, requestOnchainSend, awaitOnchainFill, claimOnchainFill } from "@arkade-os/swap";
+
+const swap = await requestOnchainSend(wallet, arkServerUrl, emulatorUrl,
+    httpTransport(solverUrl), { amount: 100_000, amountSide: "to", payoutPubkey });
+// PERSIST swap.preimage (with the record) BEFORE funding — it is the only
+// thing that can claim the L1 fill, across restarts included.
+await wallet.send({ address: swap.address, amount: BigInt(swap.fundAmount) });
+
+// Unlike lightning-send the maker must STAY CLAIM-CAPABLE: watch for the fill
+// and claim before the HTLC's refund leaf opens. chain is YOUR ChainSource.
+const utxo = await awaitOnchainFill(chain, swap.htlc, minConfirmations);
+await claimOnchainFill(chain, { htlc: swap.htlc, utxo, preimage: swap.preimage,
+    payoutPkScript, feeRateSatVb, sign });
+```
+
+`requestOnchainSend` derives BOTH contracts locally from the quote's binding fields
+(`solver_pubkey`, `refund_locktime`, `htlc_pubkey`, `htlc_locktime`, `min_confirmations`) and
+refuses on any mismatch — `lockup_address` and `htlc_address` are compare-only. `assertFundable`
+adds three onchain gates, run immediately before funding: `timelock_order` (the L1 locktime plus a
+2 h reorg margin must fall before the Arkade refund, so the maker's escape hatch opens LAST),
+`claim_window_too_short`, and `confirmations_out_of_range`. `claimOnchainFill` refuses to
+broadcast — publishing `P` — with less than 90 minutes before the refund leaf opens: past that
+point the safe move is to let the swap die and take the Arkade covenant refund rather than race
+the solver's refund with `P` exposed. If the solver never fills, there is nothing to do: the
+covenant refund pays the maker's address after `refund_locktime`, pushable by anyone.
+
+Crash recovery is record-driven, not chain-driven: `classifyOnchainHtlc` re-derives the HTLC's
+state (unfunded / awaiting confirmations / claimable / refundable / claimed-with-P / swept) from
+`ChainSource` plus the stored outpoint — without the stored record a spent HTLC is
+indistinguishable from an unfunded one, which is why persisting before funding is mandatory. The
+`AssetSwap` record carries the onchain fields (`paymentHash`, `preimageHex`, `htlcPkScriptHex`,
+`htlcLocktime`, `l1Txid`) and the statuses `awaiting_fill / claimable / claimed / refunded_l1`.
+
+**On-board (`onchain:BTC -> arkade:BTC`) is milestone 2 and partially gated.** The wire request
+(`onchainReceiveRequest`), the L1 HTLC (roles swapped: the solver claims, the maker refunds) and
+`sealClaimPacket` (P sealed to covclaimd so the maker can go offline after funding) are in place.
+The missing piece is verifying the solver-funded Arkade VHTLC locally before funding L1, which
+requires the SDK's non-interactive-claim API — not merged upstream yet (`arkade-os/ts-sdk#613`);
+the one-call on-board flow lands when it is. Until covclaimd's reference vectors are
+cross-checked, the `sealClaimPacket` test vector is pinned from this implementation and marked
+provisional (`TODO(claim-packet-vectors)`).

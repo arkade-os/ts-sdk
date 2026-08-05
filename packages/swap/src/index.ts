@@ -61,3 +61,37 @@ export {
     type RfqStatus,
     type RfqTransport,
 } from "./rfq";
+export {
+    ONCHAIN_DUST_SATS,
+    ONCHAIN_SECONDS_PER_BLOCK,
+    awaitOnchainFill,
+    buildHtlcClaim,
+    buildHtlcRefund,
+    claimOnchainFill,
+    classifyOnchainHtlc,
+    extractPreimage,
+    newPreimage,
+    onchainHtlcScript,
+    paymentHashOf,
+    type ChainSource,
+    type ChainUtxo,
+    type HtlcUtxo,
+    type OnchainHtlc,
+    type OnchainHtlcParams,
+    type OnchainHtlcPhase,
+    type OnchainNetwork,
+} from "./onchainHtlc";
+export {
+    ONCHAIN_BTC,
+    ONCHAIN_RECEIVE_PAIR,
+    ONCHAIN_SEND_PAIR,
+    MAX_MIN_CONFIRMATIONS,
+    ONCHAIN_CLAIM_MARGIN_SECONDS,
+    ONCHAIN_ORDER_MARGIN_SECONDS,
+    deriveOnchainSend,
+    htlcSendProgram,
+    onchainReceiveRequest,
+    onchainSendRequest,
+    requestOnchainSend,
+} from "./rfq";
+export { sealClaimPacket, type SealedClaimPacket } from "./claimPacket";

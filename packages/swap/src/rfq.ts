@@ -45,6 +45,23 @@ import {
 } from "@arkade-os/sdk";
 
 import lightningSendProgramJson from "./swap-lightning-send.program.json";
+import {
+    MAX_MIN_CONFIRMATIONS,
+    ONCHAIN_CLAIM_MARGIN_SECONDS,
+    ONCHAIN_ORDER_MARGIN_SECONDS,
+    ONCHAIN_SECONDS_PER_BLOCK,
+    newPreimage,
+    onchainHtlcScript,
+    paymentHashOf,
+    type OnchainHtlc,
+    type OnchainNetwork,
+} from "./onchainHtlc";
+
+export {
+    MAX_MIN_CONFIRMATIONS,
+    ONCHAIN_CLAIM_MARGIN_SECONDS,
+    ONCHAIN_ORDER_MARGIN_SECONDS,
+} from "./onchainHtlc";
 
 /** Drop the prefix of a 33-byte compressed key; pass an x-only key through —
  * same rule as offer.ts, kept local so this module stays self-contained. */
@@ -75,10 +92,16 @@ export const ARKADE_BTC = "arkade:BTC";
 export const ARKADE_ASSET = "arkade:ASSET";
 export const LIGHTNING_BTC = "lightning:BTC";
 
+export const ONCHAIN_BTC = "onchain:BTC";
+
 export const rfqPair = (from: string, to: string): string => `${from}->${to}`;
 
 /** The implemented pair: pay a BOLT11 invoice out of an Arkade balance. */
 export const LIGHTNING_SEND_PAIR = rfqPair(ARKADE_BTC, LIGHTNING_BTC);
+/** Off-board: Arkade sats out to a Bitcoin-L1 HTLC. */
+export const ONCHAIN_SEND_PAIR = rfqPair(ARKADE_BTC, ONCHAIN_BTC);
+/** On-board: a Bitcoin-L1 HTLC in, Arkade sats out (milestone 2). */
+export const ONCHAIN_RECEIVE_PAIR = rfqPair(ONCHAIN_BTC, ARKADE_BTC);
 
 // ── Errors and closed sets ───────────────────────────────────────────────────
 
@@ -214,18 +237,28 @@ export const verifyLockupAddress = (quote: RfqQuote, derivedAddress: string): st
 };
 
 /** The maker's gates, checked immediately before funding — never at quote
- * time. Throws with a stable `reason` property. */
+ * time. Throws with a stable `reason` property. `invoiceExpiresAt` applies to
+ * BOLT11 profiles only; `onchain` adds the L1-HTLC gates (§ guardrails of the
+ * onchain spec) and is required for the onchain pairs. */
 export const assertFundable = (input: {
     quote: RfqQuote;
-    invoiceExpiresAt: number;
+    invoiceExpiresAt?: number;
     now: number;
+    onchain?: {
+        htlcLocktime: number;
+        minConfirmations: number;
+        /** "send" = arkade->onchain (the L1 timelock-order gate applies). */
+        direction: "send" | "receive";
+    };
 }): void => {
     const fail = (reason: string, message: string): never => {
         const error = new Error(message) as Error & { reason: string };
         error.reason = reason;
         throw error;
     };
-    if (input.now >= input.invoiceExpiresAt) fail("invoice_expired", "invoice expired");
+    if (input.invoiceExpiresAt !== undefined && input.now >= input.invoiceExpiresAt) {
+        fail("invoice_expired", "invoice expired");
+    }
     if (input.now >= input.quote.valid_until)
         fail("quote_expired", "quote expired — request a fresh one");
     if (
@@ -233,6 +266,38 @@ export const assertFundable = (input: {
         input.quote.refund_locktime - input.now < MIN_HEADROOM_SECONDS
     ) {
         fail("insufficient_headroom", "refund deadline headroom below 90 minutes");
+    }
+    if (input.onchain) {
+        const { htlcLocktime, minConfirmations, direction } = input.onchain;
+        if (
+            !Number.isInteger(minConfirmations) ||
+            minConfirmations < 1 ||
+            minConfirmations > MAX_MIN_CONFIRMATIONS
+        ) {
+            fail(
+                "confirmations_out_of_range",
+                `min_confirmations must be 1..${MAX_MIN_CONFIRMATIONS}, got ${minConfirmations}`,
+            );
+        }
+        // Enough room to confirm the fill AND claim well before the refund
+        // leaf opens (MTP lag + confirmation time).
+        const needed = minConfirmations * ONCHAIN_SECONDS_PER_BLOCK + ONCHAIN_CLAIM_MARGIN_SECONDS;
+        if (htlcLocktime - input.now <= needed) {
+            fail("claim_window_too_short", "L1 HTLC locktime leaves no safe claim window");
+        }
+        if (direction === "send") {
+            // The solver claims Arkade with P AFTER the maker's L1 claim; the
+            // maker's Arkade refund must therefore open LAST, with reorg margin.
+            if (
+                input.quote.refund_locktime === undefined ||
+                htlcLocktime + ONCHAIN_ORDER_MARGIN_SECONDS > input.quote.refund_locktime
+            ) {
+                fail(
+                    "timelock_order",
+                    "L1 HTLC locktime + margin must fall before the Arkade refund locktime",
+                );
+            }
+        }
     }
 };
 
@@ -557,3 +622,235 @@ export const offerTermsFromQuote = (
     }
     return { wantAmount: BigInt(quote.to_amount), ...assets };
 };
+
+// ── Onchain corridor: off-board (arkade->onchain) and on-board wire ─────────
+
+/** The Arkade lockup for an onchain send is byte-identical to the
+ * lightning-send program — only the SOURCE of the payment hash differs
+ * (maker-generated P instead of a BOLT11). One artifact, one golden test. */
+export const htlcSendProgram: ReturnType<typeof arkade.parseArtifact> = lightningSendProgram;
+
+const l1NetworkFromArk = (network: string): OnchainNetwork =>
+    network === "bitcoin" ? "bitcoin" : network === "regtest" ? "regtest" : "testnet";
+
+/** The rfq_request for `arkade:BTC->onchain:BTC`. Exact-out means "this much
+ * lands in the L1 HTLC". */
+export const onchainSendRequest = (input: {
+    rfqId: string;
+    /** `sha256(P)`, hex — maker-chosen; see {@link paymentHashOf}. */
+    paymentHash: string;
+    /** Maker's x-only L1 key for the HTLC's claim leaf. */
+    payoutPubkey: Uint8Array;
+    /** Maker's arkade address — where the covenant refund must pay. */
+    refundAddress: string;
+    amount: number;
+    amountSide: "from" | "to";
+}): Record<string, unknown> => ({
+    v: 1,
+    type: "rfq_request",
+    rfq_id: input.rfqId,
+    pair: ONCHAIN_SEND_PAIR,
+    amount_side: input.amountSide,
+    amount: input.amount,
+    profile: {
+        payment_hash: input.paymentHash,
+        payout_pubkey: hex.encode(input.payoutPubkey),
+        refund_address: input.refundAddress,
+    },
+});
+
+/** The rfq_request for `onchain:BTC->arkade:BTC` (milestone 2). The maker
+ * funds the L1 HTLC; P travels sealed to covclaimd (see `sealClaimPacket`) so
+ * the maker can go offline after funding. NOTE: the Arkade-side verification
+ * of the solver-funded VHTLC needs the SDK's non-interactive-claim API, which
+ * is not merged upstream yet — see the README before building on this pair. */
+export const onchainReceiveRequest = (input: {
+    rfqId: string;
+    paymentHash: string;
+    /** Maker's arkade address — where the swapped sats must land. */
+    destinationAddress: string;
+    /** Maker's x-only L1 key for the HTLC's refund leaf. */
+    refundPubkey: Uint8Array;
+    claimPacket: { ciphertext: string; arkade_script: string };
+    amount: number;
+    amountSide: "from" | "to";
+}): Record<string, unknown> => ({
+    v: 1,
+    type: "rfq_request",
+    rfq_id: input.rfqId,
+    pair: ONCHAIN_RECEIVE_PAIR,
+    amount_side: input.amountSide,
+    amount: input.amount,
+    profile: {
+        payment_hash: input.paymentHash,
+        destination_address: input.destinationAddress,
+        refund_pubkey: hex.encode(input.refundPubkey),
+        claim_packet: input.claimPacket,
+    },
+});
+
+/**
+ * The pure core of {@link requestOnchainSend}: derive BOTH contracts locally
+ * from the quote's binding fields plus the maker's own data, and refuse on any
+ * mismatch. Binding: `solver_pubkey`, `refund_locktime`, `htlc_pubkey`,
+ * `htlc_locktime`, `min_confirmations`; `lockup_address` and `htlc_address`
+ * are compare-only.
+ */
+export function deriveOnchainSend(input: {
+    quote: RfqQuote;
+    paymentHash: string;
+    payoutPubkey: Uint8Array;
+    serverPubkey: Uint8Array;
+    emulatorPubkey: Uint8Array;
+    claimDelay: number;
+    hrp: string;
+    l1Network: OnchainNetwork;
+    refundAddress: string;
+}): {
+    address: string;
+    swapPkScript: Uint8Array;
+    htlc: OnchainHtlc;
+    refundLocktime: number;
+    htlcLocktime: number;
+    minConfirmations: number;
+} {
+    const { quote } = input;
+    const profile = quote.profile ?? {};
+    const refundLocktime = quote.refund_locktime ?? (profile.refund_locktime as number | undefined);
+    const htlcPubkey = profile.htlc_pubkey as string | undefined;
+    const htlcLocktime = profile.htlc_locktime as number | undefined;
+    const htlcAddress = profile.htlc_address as string | undefined;
+    const minConfirmations = profile.min_confirmations as number | undefined;
+    if (
+        refundLocktime === undefined ||
+        htlcPubkey === undefined ||
+        htlcLocktime === undefined ||
+        minConfirmations === undefined
+    ) {
+        throw new Error("onchain-send quote is missing a binding field");
+    }
+
+    const script = lightningSendVtxoScript({
+        solverPubkey: xOnly(hex.decode(quote.solver_pubkey), "solver key"),
+        refundLocktime,
+        serverPubkey: input.serverPubkey,
+        paymentHash: input.paymentHash,
+        claimDelay: input.claimDelay,
+        emulatorPubkey: input.emulatorPubkey,
+        refundPkScript: ArkAddress.decode(input.refundAddress).pkScript,
+    });
+    const address = script.address(input.hrp, input.serverPubkey).encode();
+    verifyLockupAddress(quote, address);
+
+    const htlc = onchainHtlcScript(
+        {
+            paymentHash: input.paymentHash,
+            claimKey: input.payoutPubkey,
+            refundKey: xOnly(hex.decode(htlcPubkey), "solver L1 htlc key"),
+            refundLocktime: htlcLocktime,
+        },
+        input.l1Network,
+    );
+    if (htlc.address !== htlcAddress) throw new AddressMismatch(htlc.address, htlcAddress);
+
+    return {
+        address,
+        swapPkScript: script.pkScript,
+        htlc,
+        refundLocktime,
+        htlcLocktime,
+        minConfirmations,
+    };
+}
+
+/**
+ * The `arkade:BTC->onchain:BTC` maker flow, mirroring `requestLightningSend`:
+ * quote → derive BOTH contracts locally → verify → gate. Pure of funding —
+ * the caller funds `address` with its own wallet before `quote.valid_until`.
+ *
+ * Two obligations, both LOUD:
+ * - **Persist `preimage` (with the record) BEFORE funding.** It is the only
+ *   thing that can claim the L1 fill, across restarts included.
+ * - **Stay claim-capable.** Unlike lightning-send the maker cannot go fully
+ *   offline: it must claim the L1 HTLC (`awaitOnchainFill` →
+ *   `claimOnchainFill`) before `htlc.refundLocktime`. Missing that window
+ *   forfeits the fill and falls back to the Arkade covenant refund.
+ */
+export async function requestOnchainSend(
+    wallet: IWallet,
+    arkServerUrl: string,
+    emulatorUrl: string,
+    transport: RfqTransport,
+    params: {
+        amount: number;
+        amountSide: "from" | "to";
+        /** Maker's x-only L1 key that will claim the HTLC. */
+        payoutPubkey: Uint8Array;
+        preimage?: Uint8Array;
+        rfqId?: string;
+    },
+): Promise<{
+    rfqId: string;
+    quote: RfqQuote;
+    /** Caller MUST persist this before funding. */
+    preimage: Uint8Array;
+    /** The maker's OWN arkade lockup derivation — the only address to fund. */
+    address: string;
+    fundAmount: number;
+    swapPkScript: Uint8Array;
+    refundAddress: string;
+    /** The EXPECTED L1 fill, derived locally — watch and claim against this. */
+    htlc: OnchainHtlc;
+}> {
+    const rfqId = params.rfqId ?? newRfqId();
+    const preimage = params.preimage ?? newPreimage();
+    const paymentHash = paymentHashOf(preimage);
+    const [info, emulatorInfo, refundAddress] = await Promise.all([
+        new RestArkProvider(arkServerUrl).getInfo(),
+        new RestEmulatorProvider(emulatorUrl).getInfo(),
+        wallet.getAddress(),
+    ]);
+
+    const quote = await transport.requestQuote(
+        onchainSendRequest({
+            rfqId,
+            paymentHash,
+            payoutPubkey: params.payoutPubkey,
+            refundAddress,
+            amount: params.amount,
+            amountSide: params.amountSide,
+        }),
+    );
+
+    const derived = deriveOnchainSend({
+        quote,
+        paymentHash,
+        payoutPubkey: params.payoutPubkey,
+        serverPubkey: xOnly(hex.decode(info.signerPubkey), "ark signer key"),
+        emulatorPubkey: xOnly(hex.decode(emulatorInfo.signerPubkey), "emulator signer key"),
+        claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
+        hrp: getNetwork(info.network as NetworkName).hrp,
+        l1Network: l1NetworkFromArk(info.network),
+        refundAddress,
+    });
+    assertFundable({
+        quote,
+        now: Math.floor(Date.now() / 1000),
+        onchain: {
+            htlcLocktime: derived.htlcLocktime,
+            minConfirmations: derived.minConfirmations,
+            direction: "send",
+        },
+    });
+
+    return {
+        rfqId,
+        quote,
+        preimage,
+        address: derived.address,
+        fundAmount: quote.from_amount,
+        swapPkScript: derived.swapPkScript,
+        refundAddress,
+        htlc: derived.htlc,
+    };
+}

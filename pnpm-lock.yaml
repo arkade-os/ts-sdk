@@ -95,6 +95,9 @@ importers:
       '@arkade-os/solver-discovery':
         specifier: 0.1.4
         version: 0.1.4
+      '@noble/curves':
+        specifier: 2.0.1
+        version: 2.0.1
       '@noble/hashes':
         specifier: 2.0.1
         version: 2.0.1
@@ -105,9 +108,6 @@ importers:
         specifier: 2.0.1
         version: 2.0.1
     devDependencies:
-      '@noble/curves':
-        specifier: 2.0.1
-        version: 2.0.1
       fake-indexeddb:
         specifier: 6.2.5
         version: 6.2.5
