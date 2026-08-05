@@ -105,8 +105,8 @@ Delete `src/test/lib/swap/` except the pieces that test wallet display code
 ## TODO — ready-to-paste prompt for the next PR
 
 > In `arkade-os/wallet`, migrate the app to `@arkade-os/swap` (see
-> `packages/swap/MIGRATION.md` in arkade-os/ts-sdk, branch
-> `claude/arkade-intents-swap-extraction-nb5420`). Smallest possible PR: add the dependency,
+> `packages/swap/MIGRATION.md` in arkade-os/ts-sdk, added by
+> arkade-os/ts-sdk#679). Smallest possible PR: add the dependency,
 > delete `src/lib/swap/`, swap imports, rename `bancoPrograms` → `swapPrograms`, construct one
 > `IndexedDbAssetSwapRepository` and await the now-async store/scan calls, add the ~15-line
 > one-time localStorage→repository data migration next to the existing Boltz
