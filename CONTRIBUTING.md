@@ -8,14 +8,15 @@ Integration tests live in `test/e2e/` within each package and require the Docker
 `scripts/regtest.sh <pkg> cycle`, using `packages/<pkg>/.env.regtest`.
 
 ```bash
-pnpm run test:integration              # Both packages, end-to-end
+pnpm run test:integration              # Every package, end-to-end
 pnpm run test:integration:ts-sdk       # ts-sdk only
 pnpm run test:integration:boltz-swap   # boltz-swap only
+pnpm run test:integration:swap         # swap only
 ```
 
 ### Per-package stack control
 
-Replace `:ts-sdk` with `:boltz-swap` for the other package.
+Replace `:ts-sdk` with `:boltz-swap` or `:swap` for the other packages.
 
 ```bash
 pnpm run regtest:up:ts-sdk

@@ -109,6 +109,9 @@ jobs:
           - package: boltz-swap
             group: all
             test_files: ""
+          - package: swap
+            group: all
+            test_files: ""
 
     steps:
       - uses: actions/checkout@v6

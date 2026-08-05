@@ -5,7 +5,7 @@
 # .env.regtest overrides (packages/<pkg>/.env.regtest). This script wires the
 # right override file into the regtest Node CLI via --env.
 #
-# Usage: scripts/regtest.sh <ts-sdk|boltz-swap> <up|down|reset|setup|test|cycle> [test file...]
+# Usage: scripts/regtest.sh <ts-sdk|boltz-swap|swap> <up|down|reset|setup|test|cycle> [test file...]
 #   up     – clean + start with the package's .env.regtest
 #   down   – stop the stack (preserves data)
 #   reset  – clean (remove containers, volumes)
@@ -19,7 +19,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REGTEST_DIR="$ROOT_DIR/regtest"
 
 usage() {
-  echo "Usage: $0 <ts-sdk|boltz-swap> <up|down|reset|setup|test|cycle> [test file...]" >&2
+  echo "Usage: $0 <ts-sdk|boltz-swap|swap> <up|down|reset|setup|test|cycle> [test file...]" >&2
   exit 1
 }
 
@@ -36,7 +36,7 @@ fi
 TEST_FILES=("$@")
 
 case "$PKG" in
-  ts-sdk|boltz-swap) ;;
+  ts-sdk|boltz-swap|swap) ;;
   *) usage ;;
 esac
 
@@ -73,6 +73,9 @@ cmd_setup() {
     boltz-swap)
       pnpm -C "$ROOT_DIR/packages/boltz-swap" exec node test/e2e/setup.mjs
       ;;
+    swap)
+      pnpm -C "$ROOT_DIR/packages/swap" exec node test/e2e/setup.mjs
+      ;;
   esac
 }
 
@@ -90,6 +93,13 @@ cmd_test() {
         pnpm -C "$ROOT_DIR/packages/boltz-swap" exec vitest run "${TEST_FILES[@]}"
       else
         pnpm -C "$ROOT_DIR/packages/boltz-swap" run test:integration
+      fi
+      ;;
+    swap)
+      if [ "${#TEST_FILES[@]}" -gt 0 ]; then
+        pnpm -C "$ROOT_DIR/packages/swap" exec vitest run "${TEST_FILES[@]}"
+      else
+        pnpm -C "$ROOT_DIR/packages/swap" run test:integration
       fi
       ;;
   esac

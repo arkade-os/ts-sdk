@@ -26,8 +26,9 @@
         "format": "prettier --write src test",
         "lint": "prettier --check src test",
         "prepack": "pnpm run build",
-        "test": "vitest run",
-        "test:unit": "vitest run",
+        "test": "vitest run --exclude test/e2e",
+        "test:unit": "vitest run --exclude test/e2e",
+        "test:integration": "vitest run test/e2e/**",
         "smoke:dist": "node scripts/smoke-dist.mjs"
     },
     "keywords": [
