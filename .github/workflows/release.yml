@@ -5,6 +5,7 @@ on:
     tags:
       - "@arkade-os/sdk/**"
       - "@arkade-os/boltz-swap/**"
+      - "@arkade-os/swap/**"
 
 permissions:
   contents: write

@@ -1,0 +1,56 @@
+{
+    "name": "@arkade-os/swap",
+    "version": "0.0.1",
+    "type": "module",
+    "description": "Arkade Intents maker-side atomic swaps: discover markets, quote, create/track/cancel offers, restore from chain.",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "import": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.js"
+            },
+            "require": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.cjs"
+            }
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+        "typecheck": "tsc --noEmit",
+        "format": "prettier --write src test",
+        "lint": "prettier --check src test",
+        "prepack": "pnpm run build",
+        "test": "vitest run --exclude test/e2e",
+        "test:unit": "vitest run --exclude test/e2e",
+        "test:integration": "vitest run test/e2e/**",
+        "smoke:dist": "node scripts/smoke-dist.mjs"
+    },
+    "keywords": [
+        "arkade",
+        "swap",
+        "intents",
+        "bitcoin"
+    ],
+    "author": "Arkade-OS",
+    "license": "MIT",
+    "dependencies": {
+        "@arkade-os/sdk": "workspace:*",
+        "@arkade-os/solver-discovery": "0.1.4",
+        "@scure/base": "2.0.0",
+        "@scure/btc-signer": "2.0.1"
+    },
+    "publishConfig": {
+        "access": "public",
+        "registry": "https://registry.npmjs.org/"
+    },
+    "packageManager": "pnpm@10.25.0",
+    "devDependencies": {
+        "fake-indexeddb": "6.2.5"
+    }
+}
