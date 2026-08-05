@@ -71,6 +71,12 @@ export interface Offer {
  * both address derivation and cancel, so the two can never drift apart (any
  * change here changes the derived swap addresses — see the golden test). */
 function swapProgramBinding(offer: Omit<Offer, "swapPkScript">, serverPubkey: Uint8Array) {
+    // a wrong-width script would bind a truncated makerWP into the covenant and
+    // only surface as an unspendable address once the maker funds it — the same
+    // failure the xOnly guard below rejects for keys
+    if (offer.makerPkScript.length !== FIELDS.makerPkScript.width) {
+        throw new Error("makerPkScript is not a 34-byte taproot scriptPubKey");
+    }
     return {
         program: offer.wantAsset ? swapPrograms.wantAsset : swapPrograms.wantBtc,
         args: {
@@ -149,11 +155,30 @@ const xOnly = (key: Uint8Array, label: string): Uint8Array => {
 };
 
 function tlv(type: number, value: Uint8Array): Uint8Array {
+    // the length prefix is u16 — reject rather than emit a truncated length
+    // that would parse as a different record stream
+    if (value.length > 0xffff) throw new Error("TLV value exceeds the u16 length field");
     return concatBytes(Uint8Array.of(type, (value.length >> 8) & 0xff, value.length & 0xff), value);
 }
 
 /** Serialize an offer to TLV bytes (the packet payload). */
 export function encodeOffer(offer: Offer): Uint8Array {
+    // decodeOffer rejects all of these on the way in; reject them on the way
+    // out too, so a malformed offer fails at its source instead of at every
+    // consumer that later reads the payload back
+    if (Boolean(offer.wantAsset) === Boolean(offer.offerAsset)) {
+        throw new Error("offer must carry exactly one of wantAsset or offerAsset");
+    }
+    for (const name of [
+        "swapPkScript",
+        "makerPkScript",
+        "makerPublicKey",
+        "emulatorPubkey",
+    ] as const) {
+        if (offer[name].length !== FIELDS[name].width) {
+            throw new Error(`${name} must be ${FIELDS[name].width} bytes`);
+        }
+    }
     // the wire field is a fixed u64; setBigUint64 would wrap silently past 2^64
     // (reachable at ~18.45 tokens of an 18-decimal asset) while the covenant
     // binds the full amount — reject instead of advertising a wrapped amount
@@ -200,6 +225,11 @@ export function decodeOffer(data: Uint8Array): Offer {
         if (fields[name] !== undefined) throw new Error(`duplicate TLV record: ${name}`);
         fields[name] = data.slice(off, off + length);
         off += length;
+    }
+    // a zero-length asset record is malformed on its own terms; AssetId.fromBytes
+    // below would reject it too, but with its internal wording — name the field
+    for (const name of ["wantAsset", "offerAsset"] as const) {
+        if (fields[name]?.length === 0) throw new Error(`missing/invalid ${name}`);
     }
     const need = (name: FieldName) => {
         const v = fields[name];
@@ -321,9 +351,12 @@ export async function createOffer(
  * spends apart afterwards (see `isCancelSpend`).
  *
  * Identical offers derive the same address, so `fundingTxid` selects the exact
- * deposit; without it the first spendable VTXO at the address is cancelled.
+ * deposit; without it the address must hold exactly one spendable VTXO — with
+ * several, cancel refuses to guess and throws.
  * `swapAddress` (the funded address) pins the server key the covenant was
- * built with, so cancel keeps working across a server signer rotation.
+ * built with, so cancel keeps working across a server signer rotation; without
+ * it a rotated key is detected and reported rather than reading as a missing
+ * VTXO.
  */
 export async function cancelOffer(
     wallet: IWallet,
@@ -344,9 +377,28 @@ export async function cancelOffer(
     // derived script matches the funded swap address exactly.
     const serverKey = swapAddress ? ArkAddress.decode(swapAddress).serverPubKey : client.serverKey;
     const { program, args, keys } = swapProgramBinding(offer, serverKey);
+    // the offer's TLV pins the script the deposit was funded to; if the rebuild
+    // disagrees, this server key is not the one the covenant was built with
+    // (rotated since funding, or a wrong swapAddress) — getUtxos would just
+    // return nothing, so fail with the diagnosis instead
+    const rebuilt = new arkade.ArkadeProgramScript(program, args, keys);
+    if (hex.encode(rebuilt.pkScript) !== hex.encode(offer.swapPkScript)) {
+        throw new Error(
+            "rebuilt covenant does not match the offer's swapPkScript — the server " +
+                "signing key has likely rotated since funding; pass swapAddress (the " +
+                "funded address) to pin the original key",
+        );
+    }
     const contract = new arkade.ArkadeContract(client, program, args, keys);
 
     const [vtxos, makerAddress] = await Promise.all([contract.getUtxos(), wallet.getAddress()]);
+    if (!fundingTxid && vtxos.length > 1) {
+        // identical offers share one address: guessing here would cancel an
+        // arbitrary deposit while the caller believes it was a specific one
+        throw new Error(
+            "multiple spendable deposits at the swap address — pass fundingTxid to select one",
+        );
+    }
     const vtxo = fundingTxid ? vtxos.find((v) => v.txid === fundingTxid) : vtxos[0];
     if (!vtxo) throw new Error("no spendable VTXO at the swap address");
 

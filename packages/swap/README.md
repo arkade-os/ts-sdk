@@ -94,7 +94,9 @@ not that anything went wrong. Re-read the swap's state before treating it as an 
 `restoreAssetSwaps` tells the two spends apart afterwards and marks the record `fulfilled` rather
 than `cancelled`.
 
-Pass `fundingTxid` whenever you have it. Identical offers share an address, so without it cancel
-spends whichever deposit is first at that address — not necessarily the one you meant. Every
+Pass `fundingTxid` whenever you have it. Identical offers share an address; when several deposits
+sit there, `cancelOffer` refuses to guess and throws unless `fundingTxid` selects one. Every
 `AssetSwap` carries the txid, so the call above is the shape to prefer. `swapAddress` pins the
-server key the covenant was built with, keeping cancel working across a server signer rotation.
+server key the covenant was built with, keeping cancel working across a server signer rotation —
+without it, a rotated key is detected and reported explicitly rather than surfacing as a missing
+VTXO.
