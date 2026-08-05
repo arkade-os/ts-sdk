@@ -102,7 +102,12 @@ import type { IntentRepository, ArkIntent, ArkIntentState } from "../repositorie
 import { isTerminalIntentState } from "../repositories/intentRepository";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
-import { extendCoinWithTapscript, validateRecipients } from "./utils";
+import {
+    assertRecipientArkAddress,
+    extendCoinWithTapscript,
+    validateRecipients,
+    type RecipientAddressContext,
+} from "./utils";
 import {
     captureExitBranch,
     DEFAULT_EXIT_CAPTURE_MODE,
@@ -718,6 +723,23 @@ export class ReadonlyWallet implements IReadonlyWallet {
             toXOnlySignerHex(hex.encode(this.boardingTapscript.options.serverPubKey)),
             ...this._deprecatedSigners.keys(),
         ]);
+    }
+
+    /**
+     * `serverPubKey` defaults to the live key; spend paths that snapshot it
+     * against mid-flight rotation pass their snapshot, so the check reads from
+     * one rotation epoch.
+     */
+    protected recipientAddressContext(
+        serverPubKey: Bytes = this._arkServerPublicKey,
+    ): RecipientAddressContext {
+        return {
+            hrp: this.network.hrp,
+            signerSet: {
+                active: toXOnlySignerHex(hex.encode(serverPubKey)),
+                deprecated: this._deprecatedSigners,
+            },
+        };
     }
 
     /**
@@ -2082,7 +2104,8 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     private async handleServerInfoChanged(info: {
         signerPubkey: string;
         checkpointTapscript: string;
-        deprecatedSigners?: readonly { pubkey?: string }[];
+        // without cutoffDate a past-cutoff signer reads as DUE_NOW
+        deprecatedSigners?: readonly { pubkey?: string; cutoffDate?: bigint }[];
     }): Promise<void> {
         this.refreshDeprecatedSigners(info);
         try {
@@ -3015,7 +3038,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     cb: (info: {
                         signerPubkey: string;
                         checkpointTapscript: string;
-                        deprecatedSigners?: readonly { pubkey?: string }[];
+                        deprecatedSigners?: readonly { pubkey?: string; cutoffDate?: bigint }[];
                     }) => void,
                 ): () => void;
             }>;
@@ -3159,6 +3182,11 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                 };
 
                 const outputAddress = ArkAddress.decode(params.address);
+                assertRecipientArkAddress(
+                    params.address,
+                    outputAddress,
+                    this.recipientAddressContext(serverPubKey),
+                );
                 const outputScript =
                     BigInt(params.amount) < this.dustAmount
                         ? outputAddress.subdustPkScript
@@ -3361,15 +3389,25 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         const outputs: TransactionOutput[] = [];
         let hasOffchainOutputs = false;
 
+        let recipientContext: RecipientAddressContext | undefined;
         for (const [index, output] of params.outputs.entries()) {
             let script: Bytes | undefined;
+
+            // decode only: a binding failure must surface as its own error,
+            // not fall through to the onchain branch
+            let arkAddress: ArkAddress | undefined;
             try {
-                // offchain
-                const addr = ArkAddress.decode(output.address);
-                script = addr.pkScript;
-                hasOffchainOutputs = true;
+                arkAddress = ArkAddress.decode(output.address);
             } catch {
-                // onchain
+                arkAddress = undefined;
+            }
+
+            if (arkAddress) {
+                recipientContext ??= this.recipientAddressContext();
+                assertRecipientArkAddress(output.address, arkAddress, recipientContext);
+                script = arkAddress.pkScript;
+                hasOffchainOutputs = true;
+            } else {
                 const addr = Address(this.network).decode(output.address);
                 script = OutScript.encode(addr);
                 onchainOutputIndexes.push(index);
@@ -4749,7 +4787,11 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         const address = outputAddress.encode();
 
         // validate recipients and populate undefined amount with dust amount
-        const recipients = validateRecipients(args, Number(this.dustAmount));
+        const recipients = validateRecipients(
+            args,
+            Number(this.dustAmount),
+            this.recipientAddressContext(serverPubKey),
+        );
 
         const allVirtualCoins = await this.getVtxos({
             withRecoverable: false,
