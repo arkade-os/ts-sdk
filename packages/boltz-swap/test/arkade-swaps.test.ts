@@ -412,6 +412,11 @@ describe("ArkadeSwaps", () => {
         },
     };
 
+    /** Derived, so a fixture change cannot silently flip a locktime assertion. */
+    const chainRefundLocktime = createBtcArkChainSwapResponse.claimDetails.timeouts!.refund;
+    /** Exceeds CLAIM_VTXO_RETRY_ATTEMPTS × CLAIM_VTXO_RETRY_DELAY_MS. */
+    const CLAIM_RETRY_WINDOW_MS = 5_000;
+
     const mockArkBtcChainSwap: BoltzChainSwap = {
         id: mock.id,
         type: "chain",
@@ -1667,6 +1672,53 @@ describe("ArkadeSwaps", () => {
                 );
             });
 
+            // The re-read that keeps a status refresh off the caller's stale
+            // copy also sees a concurrent `removeSwap`; writing anyway would
+            // bring the record back.
+            it("does not resurrect a chain swap dropped while its status was in flight", async () => {
+                const pendingSwap: BoltzChainSwap = {
+                    ...mockArkBtcChainSwap,
+                    status: "swap.created",
+                };
+                // the poll's own listing carries the swap; the per-swap re-read
+                // finds it gone
+                mockSwapRepository.getAllSwaps.mockImplementation(async (filter: any) =>
+                    filter?.type === "chain" && !filter.id ? [pendingSwap] : [],
+                );
+                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                    status: "transaction.claimed",
+                });
+
+                await swaps.refreshSwapsStatus();
+
+                expect(mockSwapRepository.saveSwap).not.toHaveBeenCalled();
+            });
+
+            it("writes the refreshed chain status onto the stored record", async () => {
+                const pendingSwap: BoltzChainSwap = {
+                    ...mockArkBtcChainSwap,
+                    status: "swap.created",
+                };
+                mockSwapRepository.getAllSwaps.mockImplementation(async (filter: any) =>
+                    filter?.type === "chain"
+                        ? [{ ...pendingSwap, acceptedQuoteAmount: 12345 }]
+                        : [],
+                );
+                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                    status: "transaction.claimed",
+                });
+
+                await swaps.refreshSwapsStatus();
+
+                expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        id: pendingSwap.id,
+                        status: "transaction.claimed",
+                        acceptedQuoteAmount: 12345,
+                    }),
+                );
+            });
+
             it("should not fetch the preimage for swaps that have not settled", async () => {
                 // arrange
                 const pendingSwap: BoltzSubmarineSwap = {
@@ -2741,9 +2793,15 @@ describe("ArkadeSwaps", () => {
             describe("lockup amount and multi-VTXO claim", () => {
                 const chainVtxo = (
                     value: number,
-                    opts: { swept?: boolean; isSpent?: boolean; settledBy?: string } = {},
+                    opts: {
+                        swept?: boolean;
+                        isSpent?: boolean;
+                        settledBy?: string;
+                        arkTxId?: string;
+                    } = {},
                 ) => ({
                     ...(opts.settledBy ? { settledBy: opts.settledBy } : {}),
+                    ...(opts.arkTxId ? { arkTxId: opts.arkTxId } : {}),
                     txid: hex.encode(randomBytes(32)),
                     vout: 0,
                     value,
@@ -2756,7 +2814,17 @@ describe("ArkadeSwaps", () => {
                     createdAt: new Date(),
                 });
 
-                const arrange = (vtxos: any[], stored: BoltzChainSwap[] = []) => {
+                /** A VTXO at our address crediting `arkTxId`'s output to us. */
+                const receivedVtxo = (value: number, arkTxId: string) => ({
+                    ...chainVtxo(value),
+                    txid: arkTxId,
+                });
+
+                const arrange = (
+                    vtxos: any[],
+                    stored: BoltzChainSwap[] = [],
+                    opts: { received?: any[]; chainTip?: number } = {},
+                ) => {
                     const pendingSwap: BoltzChainSwap = {
                         ...mockBtcArkChainSwap,
                         preimage: hex.encode(mockPreimage),
@@ -2766,7 +2834,21 @@ describe("ArkadeSwaps", () => {
                     vi.spyOn(swaps, "createVHTLCScript").mockReturnValue(mockBtcArkVHTLC);
                     vi.mocked(wallet.getAddress).mockResolvedValue(mock.address.ark);
                     mockSwapRepository.getAllSwaps.mockResolvedValue(stored);
-                    vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({ vtxos } as any);
+                    // Attributing a spend queries our own scripts, so answer by
+                    // script rather than returning the lockup set to everyone.
+                    const lockupScript = hex.encode(mockBtcArkVHTLC.vhtlcScript.pkScript);
+                    vi.spyOn(indexerProvider, "getVtxos").mockImplementation(
+                        async (request: any) =>
+                            ({
+                                vtxos: request?.scripts?.includes(lockupScript)
+                                    ? vtxos
+                                    : (opts.received ?? []),
+                            }) as any,
+                    );
+                    (swaps as any).onchainProvider =
+                        opts.chainTip === undefined
+                            ? null
+                            : { getChainTip: async () => ({ height: opts.chainTip }) };
                     vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
                         status: "transaction.claimed",
                     } as any);
@@ -2875,11 +2957,15 @@ describe("ArkadeSwaps", () => {
                 });
 
                 // Counting a batch-consumed VTXO as spendable would inflate the
-                // total past the agreed amount and re-feed a spent input.
+                // total past the agreed amount and re-feed a spent input. A
+                // batch settlement names a shared commitment tx and attributes
+                // to nobody, so the still-shut refund window carries it.
                 it("treats a VTXO consumed by a batch round as already claimed", async () => {
                     const settled = chainVtxo(35000, { settledBy: "b".repeat(64) });
                     const remainder = chainVtxo(15000);
-                    const { pendingSwap } = arrange([settled, remainder]);
+                    const { pendingSwap } = arrange([settled, remainder], [], {
+                        chainTip: chainRefundLocktime - 1,
+                    });
 
                     await expect(swaps.claimArk(pendingSwap)).resolves.toEqual({
                         txid: "a".repeat(64),
@@ -2892,11 +2978,13 @@ describe("ArkadeSwaps", () => {
                     expect((offchainSpy.mock.calls[0][4] as any).amount).toBe(15000n);
                 });
 
-                it("claims the remainder when part of the lockup is already spent", async () => {
-                    const { pendingSwap } = arrange([
-                        chainVtxo(35000, { isSpent: true }),
-                        chainVtxo(15000),
-                    ]);
+                it("claims the remainder when our own claim already took part of the lockup", async () => {
+                    const arkTxId = "d".repeat(64);
+                    const { pendingSwap } = arrange(
+                        [chainVtxo(35000, { isSpent: true, arkTxId }), chainVtxo(15000)],
+                        [],
+                        { received: [receivedVtxo(35000, arkTxId)] },
+                    );
 
                     await expect(swaps.claimArk(pendingSwap)).resolves.toEqual({
                         txid: "a".repeat(64),
@@ -2906,6 +2994,81 @@ describe("ArkadeSwaps", () => {
                     expect(offchainSpy).toHaveBeenCalledOnce();
                     expect((offchainSpy.mock.calls[0][3] as any[]).length).toBe(1);
                     expect((offchainSpy.mock.calls[0][4] as any).amount).toBe(15000n);
+                });
+
+                // A CLTV refund empties the lockup without publishing the
+                // preimage, so the guard must stay armed.
+                it("does not claim a remainder left by a counterparty refund", async () => {
+                    vi.useFakeTimers();
+                    try {
+                        const arkTxId = "d".repeat(64);
+                        const { pendingSwap, joinBatchSpy } = arrange(
+                            [chainVtxo(35000, { isSpent: true, arkTxId }), chainVtxo(15000)],
+                            [],
+                            { received: [], chainTip: chainRefundLocktime + 1 },
+                        );
+
+                        const promise = swaps.claimArk(pendingSwap);
+                        promise.catch(() => {});
+                        await vi.advanceTimersByTimeAsync(CLAIM_RETRY_WINDOW_MS);
+
+                        await expect(promise).rejects.toThrow(/below the agreed/);
+                        expect(vi.mocked(claimVHTLCwithOffchainTx)).not.toHaveBeenCalled();
+                        expect(joinBatchSpy).not.toHaveBeenCalled();
+                    } finally {
+                        vi.useRealTimers();
+                    }
+                });
+
+                // Without a chain tip a block-height locktime reads as reached,
+                // which disarms the attribution silently — so it must warn.
+                it("warns when attribution needs a chain tip and no provider is configured", async () => {
+                    vi.useFakeTimers();
+                    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+                    try {
+                        const { pendingSwap } = arrange(
+                            [chainVtxo(35000, { settledBy: "b".repeat(64) }), chainVtxo(15000)],
+                            [],
+                            { chainTip: undefined },
+                        );
+
+                        const promise = swaps.claimArk(pendingSwap);
+                        promise.catch(() => {});
+                        await vi.advanceTimersByTimeAsync(CLAIM_RETRY_WINDOW_MS);
+
+                        await expect(promise).rejects.toThrow(/below the agreed/);
+                        expect(warnSpy).toHaveBeenCalledWith(
+                            expect.stringMatching(/no .*OnchainProvider is configured/s),
+                        );
+                    } finally {
+                        vi.useRealTimers();
+                    }
+                });
+
+                // The other side of `treats a VTXO consumed by a batch round as
+                // already claimed`: past the locktime that settlement is no
+                // longer attributable, so the guard re-arms and the remainder
+                // is stranded. Fail-safe, and pinned here so the trade-off
+                // cannot change silently.
+                it("leaves a batch-settled remainder stranded past the refund locktime", async () => {
+                    vi.useFakeTimers();
+                    try {
+                        const { pendingSwap, joinBatchSpy } = arrange(
+                            [chainVtxo(35000, { settledBy: "b".repeat(64) }), chainVtxo(15000)],
+                            [],
+                            { chainTip: chainRefundLocktime + 1 },
+                        );
+
+                        const promise = swaps.claimArk(pendingSwap);
+                        promise.catch(() => {});
+                        await vi.advanceTimersByTimeAsync(CLAIM_RETRY_WINDOW_MS);
+
+                        await expect(promise).rejects.toThrow(/below the agreed/);
+                        expect(vi.mocked(claimVHTLCwithOffchainTx)).not.toHaveBeenCalled();
+                        expect(joinBatchSpy).not.toHaveBeenCalled();
+                    } finally {
+                        vi.useRealTimers();
+                    }
                 });
 
                 it("claims against the latest accepted renegotiation amount", async () => {
@@ -2925,6 +3088,31 @@ describe("ArkadeSwaps", () => {
                     expect(
                         (vi.mocked(claimVHTLCwithOffchainTx).mock.calls[0][4] as any).amount,
                     ).toBe(BigInt(renegotiated));
+                });
+
+                // The caller's copy predates the renegotiation; saving it back
+                // verbatim would drop the field the guard reads next time.
+                it("saves onto the stored record, not the caller's copy", async () => {
+                    const renegotiated = mock.amount - 10000;
+                    const base: BoltzChainSwap = {
+                        ...mockBtcArkChainSwap,
+                        preimage: hex.encode(mockPreimage),
+                    };
+                    const { pendingSwap } = arrange(
+                        [chainVtxo(renegotiated)],
+                        [{ ...base, acceptedQuoteAmount: renegotiated }],
+                    );
+
+                    await expect(swaps.claimArk(pendingSwap)).resolves.toEqual({
+                        txid: "a".repeat(64),
+                    });
+                    expect(pendingSwap.acceptedQuoteAmount).toBeUndefined();
+                    expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                        expect.objectContaining({
+                            claimTxid: "a".repeat(64),
+                            acceptedQuoteAmount: renegotiated,
+                        }),
+                    );
                 });
             });
         });
@@ -5804,7 +5992,29 @@ describe("ArkadeSwaps", () => {
             },
         };
 
-        const buildPendingSwap = (onchainAmount: number | undefined = 50000): BoltzReverseSwap => ({
+        /**
+         * Attributing a spend queries our own scripts, so answer by script
+         * rather than returning the lockup set to everyone.
+         */
+        const mockLockupVtxos = (vtxos: any[], received: any[] = []) => {
+            const lockupScript = hex.encode(mockVHTLC.vhtlcScript.pkScript);
+            vi.spyOn(indexerProvider, "getVtxos").mockImplementation(
+                async (request: any) =>
+                    ({
+                        vtxos: request?.scripts?.includes(lockupScript) ? vtxos : received,
+                    }) as any,
+            );
+        };
+
+        /**
+         * The fixture's refund locktime is a timestamp already in the past, so
+         * `refundLocktime` overrides it for the cases that need the sender's
+         * refund window still shut.
+         */
+        const buildPendingSwap = (
+            onchainAmount: number | undefined = 50000,
+            refundLocktime = createReverseSwapResponse.timeoutBlockHeights!.refund,
+        ): BoltzReverseSwap => ({
             id: mock.id,
             type: "reverse",
             createdAt: Date.now(),
@@ -5814,6 +6024,10 @@ describe("ArkadeSwaps", () => {
                 ...createReverseSwapResponse,
                 lockupAddress: mockVHTLC.vhtlcAddress,
                 onchainAmount,
+                timeoutBlockHeights: {
+                    ...createReverseSwapResponse.timeoutBlockHeights!,
+                    refund: refundLocktime,
+                },
             },
             status: "swap.created",
         });
@@ -5892,14 +6106,15 @@ describe("ArkadeSwaps", () => {
             expect((offchainSpy.mock.calls[0][3] as any)[0].txid).toBe(txidB);
         });
 
-        it("ignores spent VTXOs but still claims the unspent ones", async () => {
+        // The spend is unattributable, so it does not disarm the guard — the
+        // unspent remainder covering the agreed amount on its own is what
+        // carries this, not the presence of a spend.
+        it("claims the unspent VTXOs when they cover the agreed amount on their own", async () => {
             const vtxos = [
                 { ...recoverableVtxo(txidA, 0), isSpent: true },
                 recoverableVtxo(txidB, 1),
             ];
-            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
-                vtxos: vtxos as any,
-            });
+            mockLockupVtxos(vtxos, []);
             const joinBatchSpy = vi.spyOn(swaps as any, "joinBatch").mockResolvedValue(undefined);
 
             await expect(swaps.claimVHTLC(buildPendingSwap())).resolves.toBeUndefined();
@@ -6024,21 +6239,90 @@ describe("ArkadeSwaps", () => {
             }
         });
 
-        it("claims the remainder when part of the lockup is already spent", async () => {
+        it("claims the remainder when our own claim already took part of the lockup", async () => {
+            const arkTxId = hex.encode(randomBytes(32));
             const vtxos = [
-                { ...recoverableVtxo(txidA, 0), isSpent: true },
+                { ...recoverableVtxo(txidA, 0), isSpent: true, arkTxId },
                 recoverableVtxo(txidB, 1),
             ];
-            vi.spyOn(indexerProvider, "getVtxos").mockResolvedValue({
-                vtxos: vtxos as any,
-            });
+            mockLockupVtxos(vtxos, [{ ...recoverableVtxo(arkTxId, 0), value: 50000 }]);
             const joinBatchSpy = vi.spyOn(swaps as any, "joinBatch").mockResolvedValue(undefined);
 
             // the remaining 50k does not cover the 100k confirmed amount, but
-            // an earlier claim already spent part of the lockup
+            // our own earlier claim already spent part of the lockup
             await expect(swaps.claimVHTLC(buildPendingSwap(100000))).resolves.toBeUndefined();
             expect(joinBatchSpy).toHaveBeenCalledTimes(1);
             expect((joinBatchSpy.mock.calls[0][1] as any).txid).toBe(txidB);
+        });
+
+        // A CLTV refund empties the lockup without publishing the preimage, so
+        // the guard must stay armed.
+        it("does not claim a remainder left by a counterparty refund", async () => {
+            vi.useFakeTimers();
+            try {
+                const arkTxId = hex.encode(randomBytes(32));
+                const vtxos = [
+                    { ...recoverableVtxo(txidA, 0), isSpent: true, arkTxId },
+                    recoverableVtxo(txidB, 1),
+                ];
+                mockLockupVtxos(vtxos, []);
+                const joinBatchSpy = vi
+                    .spyOn(swaps as any, "joinBatch")
+                    .mockResolvedValue(undefined);
+
+                const promise = swaps.claimVHTLC(buildPendingSwap(100000));
+                promise.catch(() => {});
+                await vi.advanceTimersByTimeAsync(CLAIM_RETRY_WINDOW_MS);
+
+                await expect(promise).rejects.toThrow(/below the agreed/);
+                expect(joinBatchSpy).not.toHaveBeenCalled();
+                expect(claimVHTLCwithOffchainTx).not.toHaveBeenCalled();
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        // The locktime arm of the attribution, which only this path's
+        // batch-settled VTXOs (no `arkTxId` to attribute) depend on.
+        it("claims the remainder when a batch settled part of the lockup before the refund window opened", async () => {
+            const vtxos = [
+                { ...recoverableVtxo(txidA, 0), settledBy: hex.encode(randomBytes(32)) },
+                recoverableVtxo(txidB, 1),
+            ];
+            mockLockupVtxos(vtxos, []);
+            const joinBatchSpy = vi.spyOn(swaps as any, "joinBatch").mockResolvedValue(undefined);
+
+            const future = Math.floor(Date.now() / 1000) + 3600;
+            await expect(
+                swaps.claimVHTLC(buildPendingSwap(100000, future)),
+            ).resolves.toBeUndefined();
+            expect(joinBatchSpy).toHaveBeenCalledTimes(1);
+            expect((joinBatchSpy.mock.calls[0][1] as any).txid).toBe(txidB);
+        });
+
+        // Same lockup as above once the window has opened: no longer
+        // attributable, so the guard re-arms and the remainder is stranded.
+        it("leaves a batch-settled remainder stranded past the refund locktime", async () => {
+            vi.useFakeTimers();
+            try {
+                const vtxos = [
+                    { ...recoverableVtxo(txidA, 0), settledBy: hex.encode(randomBytes(32)) },
+                    recoverableVtxo(txidB, 1),
+                ];
+                mockLockupVtxos(vtxos, []);
+                const joinBatchSpy = vi
+                    .spyOn(swaps as any, "joinBatch")
+                    .mockResolvedValue(undefined);
+
+                const promise = swaps.claimVHTLC(buildPendingSwap(100000));
+                promise.catch(() => {});
+                await vi.advanceTimersByTimeAsync(CLAIM_RETRY_WINDOW_MS);
+
+                await expect(promise).rejects.toThrow(/below the agreed/);
+                expect(joinBatchSpy).not.toHaveBeenCalled();
+            } finally {
+                vi.useRealTimers();
+            }
         });
 
         it("warns and still claims when no confirmed amount is on record", async () => {
