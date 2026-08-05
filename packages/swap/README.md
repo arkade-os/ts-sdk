@@ -25,7 +25,7 @@ platform-provided or polyfilled IndexedDB.
    offer packets and binding each funding vtxo to its spend. Incremental: answered txids are
    remembered in the repository (`getScannedTxids`/`markTxidsScanned`) so nothing is fetched
    twice.
-5. **`rfq`** — the taker / intent-submitter side of quoted swaps: RFQ negotiation over HTTP or a
+5. **`rfq`** — the maker / intent-submitter side of quoted swaps: RFQ negotiation over HTTP or a
    relay, then non-interactive filling (see below). Covers `arkade:BTC|asset -> lightning:BTC`
    (implemented against the reference solver) and `arkade:BTC|asset -> arkade:BTC|asset` (quote,
    then take by funding an offer from layer 1).
@@ -115,7 +115,7 @@ message anywhere: **acceptance is funding**.
   offline. The solver observes the funding on-chain, pays the invoice, and claims with the
   preimage — which lands publicly in the claim witness as the receipt. A failed swap refunds by
   covenant to the trader's address, pushable by anyone, no trader keys or state.
-- **Arkade ↔ arkade** (BTC↔asset, asset↔asset): the trader takes a quote by creating and funding
+- **Arkade ↔ arkade** (BTC↔asset, asset↔asset): the trader accepts a quote by creating and funding
   an **offer** (layer 1) bound to the quoted terms before `valid_until`. The offer covenant only
   releases the deposit to a fill that delivers the quoted amount, so the solver fills or nothing
   moves; an unfilled offer is cancelled cooperatively. The quote wire shape ships here; the

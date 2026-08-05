@@ -1,8 +1,10 @@
 /**
- * RFQ v1 — the taker / intent-submitter side of quoted swaps.
+ * RFQ v1 — the maker / intent-submitter side of quoted swaps.
  *
  * RFQ is the negotiation layer only. After the quote, **filling is
- * non-interactive maker-taker** for both corridors this module serves:
+ * non-interactive maker-taker** for both corridors this module serves — the
+ * MAKER is this side (the trader posting and funding the intent), the TAKER
+ * is the solver that fills it:
  *
  * - `arkade:BTC|asset -> lightning:BTC` — the trader funds its own locally
  *   derived covenant contract (the `lightning-send` program below) and may go
@@ -10,7 +12,7 @@
  *   and claims with the preimage — which appears publicly in the claim
  *   witness as the receipt. A failed swap refunds by covenant to the trader's
  *   address, pushable by anyone, no trader keys or state.
- * - `arkade:BTC|asset -> arkade:BTC|asset` — the trader takes the quote by
+ * - `arkade:BTC|asset -> arkade:BTC|asset` — the trader accepts the quote by
  *   creating and funding an Intents **offer** (`createOffer`) bound to the
  *   quoted terms; the offer covenant lets any filler deliver, so the solver
  *   fills without further interaction, or the trader cancels cooperatively.
@@ -211,7 +213,7 @@ export const verifyLockupAddress = (quote: RfqQuote, derivedAddress: string): st
     return derivedAddress;
 };
 
-/** The taker's gates, checked immediately before funding — never at quote
+/** The maker's gates, checked immediately before funding — never at quote
  * time. Throws with a stable `reason` property. */
 export const assertFundable = (input: {
     quote: RfqQuote;
@@ -385,7 +387,7 @@ export const relayTransport = (
     };
 };
 
-// ── Lightning send: derivation + the taker flow ──────────────────────────────
+// ── Lightning send: derivation + the maker flow ──────────────────────────────
 
 /** BIP68 sequence granularity; the delay derivation rounds up to it. */
 const SEQUENCE_GRANULARITY_SECONDS = 512;
@@ -463,11 +465,11 @@ export interface InvoiceFacts {
 }
 
 /**
- * The lightning-send taker flow, mirroring `createOffer`'s shape: quote →
+ * The lightning-send maker flow, mirroring `createOffer`'s shape: quote →
  * derive locally → verify → gate. Pure of funding on purpose — it returns the
  * address and amount, and the caller funds with its own wallet
  * (`wallet.send({ address, amount })`) before `quote.valid_until`, after
- * which the taker may go OFFLINE: filling is non-interactive. Success reveals
+ * which the maker may go OFFLINE: filling is non-interactive. Success reveals
  * the preimage in the solver's claim witness (also served via status as
  * `settled`); failure refunds by covenant to `refundAddress`.
  *

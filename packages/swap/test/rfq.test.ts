@@ -1,5 +1,5 @@
 /**
- * The RFQ taker module. The test that matters most is the golden one: the
+ * The RFQ maker module. The test that matters most is the golden one: the
  * lightning-send program compiled here must be byte-identical — every leaf and
  * the final scriptPubKey — to the reference solver's script, or a trader
  * would derive an address the solver never quoted and refuse every swap.
