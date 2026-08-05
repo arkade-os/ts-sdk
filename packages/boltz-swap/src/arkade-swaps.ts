@@ -393,8 +393,10 @@ export class ArkadeSwaps {
     private async updatePendingChainSwap(
         swap: BoltzChainSwap,
         delta: Partial<BoltzChainSwap>,
+        { skipIfDropped = false }: { skipIfDropped?: boolean } = {},
     ): Promise<void> {
         let stored: BoltzChainSwap | undefined;
+        let read = false;
         try {
             stored = (
                 await this.swapRepository.getAllSwaps<BoltzChainSwap>({
@@ -402,9 +404,14 @@ export class ArkadeSwaps {
                     type: "chain",
                 })
             )?.[0];
+            read = true;
         } catch (error) {
             logger.warn(`Failed to re-read swap ${swap.id} before saving:`, error);
         }
+        // A record absent from a read that succeeded was dropped by a concurrent
+        // `removeSwap`; re-saving it would resurrect it. Only status refreshes
+        // opt in — a claim or refund delta is an outcome that has to land.
+        if (skipIfDropped && read && !stored) return;
         await this.savePendingChainSwap({ ...(stored ?? swap), ...delta });
     }
 
@@ -657,7 +664,7 @@ export class ArkadeSwaps {
         // a split lockup the indexer surfaces piecemeal is not misread. The
         // last raw response is kept so the post-retry branch can distinguish
         // "not found" from "already spent" for diagnostics.
-        const expected = pendingSwap.response.onchainAmount;
+        const expected = await this.expectedReverseClaimAmount(pendingSwap);
         let unspentVtxos: VirtualCoin[] = [];
         let rawVtxos: VirtualCoin[] = [];
         let partiallyClaimed = false;
@@ -667,16 +674,21 @@ export class ArkadeSwaps {
             });
             rawVtxos = result.vtxos;
             unspentVtxos = result.vtxos.filter((vtxo) => !hasTerminalSpend(vtxo));
-            partiallyClaimed = await this.lockupClaimedByUs(
-                rawVtxos.filter(hasTerminalSpend),
-                undefined,
-                vhtlcTimeouts.refund,
-            );
             const total = unspentVtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
-            if (
-                unspentVtxos.length > 0 &&
-                (typeof expected !== "number" || partiallyClaimed || total >= expected)
-            ) {
+            // Attribution costs an indexer round-trip, so only pay for it when
+            // the amount alone does not settle the question.
+            const covered = typeof expected !== "number" || total >= expected;
+            partiallyClaimed = covered
+                ? false
+                : // No `toAddress`: a reverse swap has no stored destination, and
+                  // the claim below pays `wallet.getAddress()`, which
+                  // `spentIntoOurWallet` queries anyway.
+                  await this.lockupClaimedByUs(
+                      rawVtxos.filter(hasTerminalSpend),
+                      undefined,
+                      vhtlcTimeouts.refund,
+                  );
+            if (unspentVtxos.length > 0 && (covered || partiallyClaimed)) {
                 break;
             }
             if (attempt < CLAIM_VTXO_RETRY_ATTEMPTS) {
@@ -2433,6 +2445,28 @@ export class ArkadeSwaps {
     }
 
     /**
+     * The agreed claim amount for a reverse swap. Same reason to prefer the
+     * stored record as {@link ArkadeSwaps.expectedClaimAmount}: the caller's
+     * copy can be a snapshot taken before the record was last written.
+     */
+    private async expectedReverseClaimAmount(
+        pendingSwap: BoltzReverseSwap,
+    ): Promise<number | undefined> {
+        let stored: BoltzReverseSwap | undefined;
+        try {
+            stored = (
+                await this.swapRepository.getAllSwaps<BoltzReverseSwap>({
+                    id: pendingSwap.id,
+                    type: "reverse",
+                })
+            )?.[0];
+        } catch (error) {
+            logger.warn(`Failed to re-read swap ${pendingSwap.id} for its claim amount:`, error);
+        }
+        return stored?.response?.onchainAmount ?? pendingSwap.response.onchainAmount;
+    }
+
+    /**
      * Claim sats on ARK chain by claiming the VHTLC.
      * Refactored to use claimVHTLCIdentity + claimVHTLCwithOffchainTx utilities.
      * @param pendingSwap - The pending chain swap.
@@ -2465,17 +2499,18 @@ export class ArkadeSwaps {
                 scripts: [hex.encode(vhtlcScript.pkScript)],
             });
             spendable = vtxos.filter((vtxo) => !hasTerminalSpend(vtxo));
-            partiallyClaimed = await this.lockupClaimedByUs(
-                vtxos.filter(hasTerminalSpend),
-                pendingSwap.toAddress,
-                pendingSwap.response.claimDetails.timeouts?.refund,
-            );
             const total = spendable.reduce((sum, vtxo) => sum + vtxo.value, 0);
-            if (
-                spendable.length > 0 &&
-                (expected === undefined || partiallyClaimed || total >= expected)
-            )
-                break;
+            // Attribution costs an indexer round-trip, so only pay for it when
+            // the amount alone does not settle the question.
+            const covered = expected === undefined || total >= expected;
+            partiallyClaimed = covered
+                ? false
+                : await this.lockupClaimedByUs(
+                      vtxos.filter(hasTerminalSpend),
+                      pendingSwap.toAddress,
+                      pendingSwap.response.claimDetails.timeouts?.refund,
+                  );
+            if (spendable.length > 0 && (covered || partiallyClaimed)) break;
             if (attempt < CLAIM_VTXO_RETRY_ATTEMPTS) {
                 await new Promise((resolve) => setTimeout(resolve, CLAIM_VTXO_RETRY_DELAY_MS));
             }
@@ -2644,6 +2679,13 @@ export class ArkadeSwaps {
      * carries the batch-settled VTXOs a mid-run claim leaves behind, which
      * `spentIntoOurWallet` cannot attribute — so a claim interrupted before
      * its refund locktime stays re-runnable.
+     *
+     * Known limitation: past that locktime a batch-settled claim of our own is
+     * indistinguishable from a counterparty refund, so this returns false and
+     * the guard stays armed on a remainder we are in fact entitled to sweep.
+     * Fail-safe by design — the other way round disarms the guard for the party
+     * it exists to defend against. Callers get the warning below to tell the
+     * two apart.
      */
     private async lockupClaimedByUs(
         spent: VirtualCoin[],
@@ -2652,7 +2694,13 @@ export class ArkadeSwaps {
     ): Promise<boolean> {
         if (spent.length === 0) return false;
         if (await this.spentIntoOurWallet(toAddress, spent)) return true;
-        return !(await this.refundLocktimeReached(refundLocktime));
+        if (!(await this.refundLocktimeReached(refundLocktime))) return true;
+        logger.warn(
+            `Lockup carries ${spent.length} spend(s) that cannot be attributed past the ` +
+                `refund locktime — either a counterparty refund, or our own batch-settled ` +
+                `claim resumed too late. The lockup amount check stays armed either way.`,
+        );
+        return false;
     }
 
     /**
@@ -2715,7 +2763,10 @@ export class ArkadeSwaps {
     private async refundLocktimeReached(locktime: number | undefined): Promise<boolean> {
         if (locktime === undefined) return true;
         const { height } = await this.chainTipSnapshotFor([locktime]);
-        if (isBlockHeightLocktime(locktime) && height === undefined) return true;
+        if (isBlockHeightLocktime(locktime) && height === undefined) {
+            if (!this.onchainProvider) this.warnMissingOnchainProviderOnce(locktime);
+            return true;
+        }
         return isRefundLocktimeReached(locktime, height);
     }
 
@@ -3705,7 +3756,9 @@ export class ArkadeSwaps {
             if (isChainFinalStatus(swap.status)) continue;
             promises.push(
                 this.getSwapStatus(swap.id)
-                    .then(({ status }) => this.updatePendingChainSwap(swap, { status }))
+                    .then(({ status }) =>
+                        this.updatePendingChainSwap(swap, { status }, { skipIfDropped: true }),
+                    )
                     .catch((error) => {
                         logger.error(`Failed to refresh swap status for ${swap.id}:`, error);
                     }),
