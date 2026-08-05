@@ -8,6 +8,7 @@ TypeScript packages for the Arkade Bitcoin wallet ecosystem — on-chain/off-cha
 |---------|-------------|
 | [`@arkade-os/sdk`](packages/ts-sdk/) | Bitcoin wallet SDK with Taproot and Ark protocol support |
 | [`@arkade-os/boltz-swap`](packages/boltz-swap/) | Lightning and chain swaps using Boltz |
+| [`@arkade-os/swap`](packages/swap/) | Maker-side Arkade Intents atomic swaps: market discovery, offers, restore |
 | [Regtest stack](regtest/) | Shared regtest environment ([arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest) submodule) |
 
 ## Prerequisites
@@ -24,7 +25,7 @@ pnpm install
 ## Commands
 
 ```bash
-pnpm run build            # Build all packages (ts-sdk first, then boltz-swap)
+pnpm run build            # Build all packages (ts-sdk first, then the plugins)
 pnpm test                 # Run all unit and integration tests
 pnpm run test:unit        # Run unit tests across packages
 pnpm run test:integration # Run integration tests across packages against regtest
@@ -89,21 +90,22 @@ After regenerating, sanity-check that source links in the generated HTML point t
 
 ## Releasing
 
-Releases run from the repository root and are package-scoped. Each package is released independently with its own version and its own `<package-name>/<version>` tag (e.g. `@arkade-os/sdk/0.4.28`). Releasing `@arkade-os/sdk` also releases `@arkade-os/boltz-swap` by default because boltz-swap depends on SDK via `workspace:*`, which pnpm rewrites to an exact version at publish time.
+Releases run from the repository root and are package-scoped. Each package is released independently with its own version and its own `<package-name>/<version>` tag (e.g. `@arkade-os/sdk/0.4.28`). Releasing `@arkade-os/sdk` also releases `@arkade-os/boltz-swap` and `@arkade-os/swap` by default, because both depend on SDK via `workspace:*`, which pnpm rewrites to an exact version at publish time — a dependent left unreleased stays pinned to the previous SDK.
 
 ```bash
 pnpm run release -- boltz-swap patch          # Boltz bugfix only
-pnpm run release -- sdk patch                 # SDK + dependent boltz-swap patch
-pnpm run release -- sdk minor --boltz-bump patch
-pnpm run release -- all patch                 # Bump both
-pnpm run release -- sdk prepatch --preid beta # Mirrors prerelease into boltz-swap
+pnpm run release -- swap patch                # Swap bugfix only
+pnpm run release -- sdk patch                 # SDK + dependent boltz-swap/swap patch
+pnpm run release -- sdk minor --boltz-bump patch --swap-bump minor
+pnpm run release -- all patch                 # Bump every package
+pnpm run release -- sdk prepatch --preid beta # Mirrors prerelease into the dependents
 
 pnpm run release:dry-run -- sdk patch
 pnpm run release:cleanup                      # Auto-detect dirty artifacts
 pnpm run release:cleanup -- sdk               # Clean only sdk artifacts
 ```
 
-Targets are `sdk`, `boltz-swap`, or `all`. Bumps accept `patch | minor | major | prepatch | preminor | premajor | prerelease` or a literal semver. Prerelease bumps require `--preid alpha|beta|rc|next`.
+Targets are `sdk`, `boltz-swap`, `swap`, or `all`. Bumps accept `patch | minor | major | prepatch | preminor | premajor | prerelease` or a literal semver. Prerelease bumps require `--preid alpha|beta|rc|next`.
 
 When SDK is released, the dependent boltz-swap bump defaults to `patch`; prerelease SDK bumps mirror the prerelease shape and `--preid` into boltz-swap unless overridden with `--boltz-bump`. Before publishing boltz-swap, the release script packs it to a temp dir and verifies that the packed manifest pins the intended `@arkade-os/sdk` version.
 

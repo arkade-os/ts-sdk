@@ -9,6 +9,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, "..");
 
+// `dependsOnSdk` marks a package that consumes @arkade-os/sdk via workspace:*.
+// pnpm rewrites that to an exact version on pack/publish, so such a package
+// pins whatever SDK version was current when IT was published — which is why
+// releasing the SDK implies a dependent release for each of them, and why each
+// gets a `--<key>-bump` override to size that dependent bump.
 const PACKAGES = [
     {
         key: "sdk",
@@ -25,11 +30,28 @@ const PACKAGES = [
         pkgJson: path.join(ROOT_DIR, "packages/boltz-swap/package.json"),
         tagPrefix: "@arkade-os/boltz-swap/",
         order: 2,
+        dependsOnSdk: true,
+        bumpFlag: "--boltz-bump",
+    },
+    {
+        key: "swap",
+        name: "@arkade-os/swap",
+        dir: path.join(ROOT_DIR, "packages/swap"),
+        pkgJson: path.join(ROOT_DIR, "packages/swap/package.json"),
+        tagPrefix: "@arkade-os/swap/",
+        order: 3,
+        dependsOnSdk: true,
+        bumpFlag: "--swap-bump",
     },
 ];
 
 const PACKAGE_BY_KEY = Object.fromEntries(PACKAGES.map((p) => [p.key, p]));
-const VALID_TARGETS = new Set(["sdk", "boltz-swap", "all"]);
+const ALL_KEYS = PACKAGES.map((p) => p.key);
+const DEPENDENT_PACKAGES = PACKAGES.filter((p) => p.dependsOnSdk);
+const PACKAGE_BY_BUMP_FLAG = Object.fromEntries(
+    DEPENDENT_PACKAGES.map((p) => [p.bumpFlag, p.key]),
+);
+const VALID_TARGETS = new Set([...ALL_KEYS, "all"]);
 const BUMP_TYPES = new Set([
     "patch",
     "minor",
@@ -195,7 +217,7 @@ function showHelp() {
        scripts/release.mjs --cleanup [target]
 
 Targets:
-  sdk | boltz-swap | all
+  ${[...ALL_KEYS, "all"].join(" | ")}
 
 Bump or version:
   patch | minor | major | prepatch | preminor | premajor | prerelease |
@@ -204,19 +226,22 @@ Bump or version:
 Options:
   --dry-run                Print the release plan without changing files
   --preid <id>             Pre-release identifier: alpha, beta, rc, or next
-  --boltz-bump <bump|ver>  Override the dependent boltz-swap bump when SDK is
+${DEPENDENT_PACKAGES.map(
+    (p) =>
+        `  ${`${p.bumpFlag} <bump|ver>`.padEnd(24)} Override the dependent ${p.key} bump when SDK is
                            released. Defaults to 'patch' for stable SDK
                            releases and to a prerelease bump matching the SDK
                            target preid for prerelease SDK releases (including
-                           literal versions like 0.5.0-beta.0).
+                           literal versions like 0.5.0-beta.0).`,
+).join("\n")}
   --cleanup [target]       Restore local manifests and delete local
                            package-scoped tags. With no target, auto-detect
                            from release state or dirty manifests.
   --help                   Show this message
 
-Releasing SDK implies a dependent boltz-swap release because boltz-swap
-depends on SDK via workspace:* (pnpm rewrites this to an exact version on
-pack/publish).
+Releasing SDK implies a dependent release of ${DEPENDENT_PACKAGES.map((p) => p.name).join(" and ")}
+because they depend on SDK via workspace:* (pnpm rewrites this to an exact
+version on pack/publish).
 
 Stable releases (patch/minor/major or a literal non-prerelease version) must
 be run from master. Prerelease releases (prepatch/preminor/premajor/
@@ -231,7 +256,8 @@ function parseArgs(argv) {
         target: null,
         bump: null,
         preid: null,
-        boltzBump: null,
+        /** Per-dependent-package bump overrides, keyed by package key. */
+        dependentBumps: {},
         dryRun: false,
         cleanup: false,
         help: false,
@@ -254,18 +280,21 @@ function parseArgs(argv) {
                 if (i + 1 >= argv.length) die("--preid requires a value");
                 args.preid = argv[++i];
                 break;
-            case "--boltz-bump":
-                if (i + 1 >= argv.length) die("--boltz-bump requires a value");
-                args.boltzBump = argv[++i];
-                break;
             case "--":
                 // pnpm forwards a literal "--" separator before script args; ignore it
                 // rather than treating the remainder as positional (that would swallow
                 // subsequent options like --preid).
                 break;
-            default:
+            default: {
+                const dependentKey = PACKAGE_BY_BUMP_FLAG[arg];
+                if (dependentKey) {
+                    if (i + 1 >= argv.length) die(`${arg} requires a value`);
+                    args.dependentBumps[dependentKey] = argv[++i];
+                    break;
+                }
                 if (arg.startsWith("--")) die(`Unknown option: ${arg}`);
                 positional.push(arg);
+            }
         }
     }
     if (positional.length > 2) {
@@ -278,7 +307,7 @@ function parseArgs(argv) {
 
 function validateTarget(target) {
     if (!VALID_TARGETS.has(target)) {
-        die(`Invalid target: ${target}. Use sdk, boltz-swap, or all.`);
+        die(`Invalid target: ${target}. Use ${[...ALL_KEYS, "all"].join(", ")}.`);
     }
 }
 
@@ -295,13 +324,14 @@ function validatePreid(preid) {
 }
 
 function primarySelection(target) {
-    if (target === "all") return ["sdk", "boltz-swap"];
-    if (target === "sdk") return ["sdk", "boltz-swap"];
-    if (target === "boltz-swap") return ["boltz-swap"];
+    // Releasing the SDK drags every SDK-dependent package along, because each
+    // would otherwise stay published against the previous SDK version.
+    if (target === "all" || target === "sdk") return ALL_KEYS;
+    if (PACKAGE_BY_KEY[target]) return [target];
     die(`Invalid target: ${target}`);
 }
 
-function computeTargetVersions({ target, bump, preid, boltzBump }) {
+function computeTargetVersions({ target, bump, preid, dependentBumps = {} }) {
     validateTarget(target);
     validateBump(bump);
     if (preid !== null) validatePreid(preid);
@@ -320,17 +350,18 @@ function computeTargetVersions({ target, bump, preid, boltzBump }) {
 
         if (isPrimary) {
             next = isLiteralVersion(bump) ? bump : incrementVersion(current, bump, preid);
-        } else if (pkg.key === "boltz-swap" && target === "sdk") {
-            if (boltzBump !== null) {
-                if (isLiteralVersion(boltzBump)) {
-                    next = boltzBump;
-                } else if (isPrereleaseBump(boltzBump)) {
-                    if (!preid) die(`--boltz-bump '${boltzBump}' requires --preid`);
-                    next = incrementVersion(current, boltzBump, preid);
-                } else if (isBumpType(boltzBump)) {
-                    next = incrementVersion(current, boltzBump, null);
+        } else if (pkg.dependsOnSdk && target === "sdk") {
+            const override = dependentBumps[pkg.key] ?? null;
+            if (override !== null) {
+                if (isLiteralVersion(override)) {
+                    next = override;
+                } else if (isPrereleaseBump(override)) {
+                    if (!preid) die(`${pkg.bumpFlag} '${override}' requires --preid`);
+                    next = incrementVersion(current, override, preid);
+                } else if (isBumpType(override)) {
+                    next = incrementVersion(current, override, null);
                 } else {
-                    die(`Invalid --boltz-bump value: ${boltzBump}`);
+                    die(`Invalid ${pkg.bumpFlag} value: ${override}`);
                 }
             } else if (isPrereleaseBump(bump)) {
                 next = incrementVersion(current, bump, preid);
@@ -341,9 +372,9 @@ function computeTargetVersions({ target, bump, preid, boltzBump }) {
                     const sdkPreid = sdkPre.split(".")[0];
                     if (!VALID_PREIDS.has(sdkPreid)) {
                         die(
-                            `Cannot derive dependent boltz-swap bump from SDK literal ${sdkNext} ` +
+                            `Cannot derive dependent ${pkg.key} bump from SDK literal ${sdkNext} ` +
                                 `(unrecognized prerelease id '${sdkPreid}'). ` +
-                                `Pass --boltz-bump explicitly.`,
+                                `Pass ${pkg.bumpFlag} explicitly.`,
                         );
                     }
                     next = incrementVersion(current, "prepatch", sdkPreid);
@@ -370,12 +401,15 @@ function selectedInDependencyOrder(plan) {
         .map((p) => p.key);
 }
 
-function summarizePlan({ target, bump, preid, boltzBump, plan }) {
+function summarizePlan({ target, bump, preid, dependentBumps = {}, plan }) {
     console.log("Release plan:");
     console.log(`  target: ${target}`);
     const opts = [bump];
     if (preid) opts.push(`--preid ${preid}`);
-    if (boltzBump) opts.push(`--boltz-bump ${boltzBump}`);
+    for (const pkg of DEPENDENT_PACKAGES) {
+        const override = dependentBumps[pkg.key];
+        if (override) opts.push(`${pkg.bumpFlag} ${override}`);
+    }
     console.log(`  bump: ${opts.join(" ")}`);
     console.log("  selected packages:");
     for (const key of selectedInDependencyOrder(plan)) {
@@ -389,13 +423,14 @@ function summarizePlan({ target, bump, preid, boltzBump, plan }) {
         .map((k) => PACKAGE_BY_KEY[k].name)
         .join(", ");
     console.log(`  publish order: ${order}`);
-    if (plan.has("boltz-swap")) {
-        const sdkChanges = plan.has("sdk");
-        const sdkVersion = sdkChanges
-            ? plan.get("sdk").next
-            : readPackageVersion(PACKAGE_BY_KEY.sdk.pkgJson);
+    const sdkChanges = plan.has("sdk");
+    const sdkVersion = sdkChanges
+        ? plan.get("sdk").next
+        : readPackageVersion(PACKAGE_BY_KEY.sdk.pkgJson);
+    for (const pkg of DEPENDENT_PACKAGES) {
+        if (!plan.has(pkg.key)) continue;
         console.log(
-            `  boltz-swap pinned @arkade-os/sdk: ${sdkVersion} (changes: ${
+            `  ${pkg.key} pinned @arkade-os/sdk: ${sdkVersion} (changes: ${
                 sdkChanges ? "yes" : "no"
             })`,
         );
@@ -512,17 +547,16 @@ function packAndReadManifest(pkg) {
     }
 }
 
-function validateBoltzPackedDep(expectedSdkVersion) {
-    const boltz = PACKAGE_BY_KEY["boltz-swap"];
-    console.log(`Packing ${boltz.name} to verify pinned @arkade-os/sdk dependency...`);
-    const manifest = packAndReadManifest(boltz);
+function validateDependentPackedDep(pkg, expectedSdkVersion) {
+    console.log(`Packing ${pkg.name} to verify pinned @arkade-os/sdk dependency...`);
+    const manifest = packAndReadManifest(pkg);
     const actual = manifest.dependencies?.["@arkade-os/sdk"];
     if (actual !== expectedSdkVersion) {
         die(
-            `${boltz.name} packed manifest pins @arkade-os/sdk@${actual} but expected ${expectedSdkVersion}`,
+            `${pkg.name} packed manifest pins @arkade-os/sdk@${actual} but expected ${expectedSdkVersion}`,
         );
     }
-    console.log(`Verified ${boltz.name} pins @arkade-os/sdk@${expectedSdkVersion}`);
+    console.log(`Verified ${pkg.name} pins @arkade-os/sdk@${expectedSdkVersion}`);
 }
 
 function detectCleanupCandidates() {
@@ -545,7 +579,7 @@ function cleanup({ target }) {
 
     if (target) {
         validateTarget(target);
-        keys = target === "all" ? ["sdk", "boltz-swap"] : [target];
+        keys = target === "all" ? [...ALL_KEYS] : [target];
         state = readState();
     } else {
         const detected = detectCleanupCandidates();
@@ -667,11 +701,11 @@ function release(args) {
             const pkg = PACKAGE_BY_KEY[key];
             const version = plan.get(key).next;
 
-            if (key === "boltz-swap") {
+            if (pkg.dependsOnSdk) {
                 const expectedSdk = plan.has("sdk")
                     ? plan.get("sdk").next
                     : readPackageVersion(PACKAGE_BY_KEY.sdk.pkgJson);
-                validateBoltzPackedDep(expectedSdk);
+                validateDependentPackedDep(pkg, expectedSdk);
             }
 
             const published = spawnSync("npm", ["view", `${pkg.name}@${version}`, "version"], {
