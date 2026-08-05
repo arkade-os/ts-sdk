@@ -23,8 +23,8 @@
     "scripts": {
         "build": "tsup src/index.ts --format esm,cjs --dts --clean",
         "typecheck": "tsc --noEmit",
-        "format": "prettier --write src test",
-        "lint": "prettier --check src test",
+        "format": "prettier --write src test examples",
+        "lint": "prettier --check src test examples",
         "prepack": "pnpm run build",
         "test": "vitest run",
         "test:unit": "vitest run",
@@ -52,6 +52,8 @@
     },
     "packageManager": "pnpm@10.25.0",
     "devDependencies": {
-        "fake-indexeddb": "6.2.5"
+        "eventsource": "4.1.0",
+        "fake-indexeddb": "6.2.5",
+        "light-bolt11-decoder": "3.2.0"
     }
 }
