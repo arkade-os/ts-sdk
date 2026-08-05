@@ -3038,7 +3038,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     cb: (info: {
                         signerPubkey: string;
                         checkpointTapscript: string;
-                        deprecatedSigners?: readonly { pubkey?: string }[];
+                        deprecatedSigners?: readonly { pubkey?: string; cutoffDate?: bigint }[];
                     }) => void,
                 ): () => void;
             }>;
