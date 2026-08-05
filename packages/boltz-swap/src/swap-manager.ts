@@ -1370,6 +1370,20 @@ export class SwapManager implements SwapManagerClient {
     }
 
     /**
+     * Mirror an accepted renegotiation amount onto the monitored copy of a
+     * chain swap. The manager saves that copy on every status update, so
+     * without the mirror a save from the pre-quote snapshot would drop the
+     * field `quoteSwap`/`acceptSwapQuote` just persisted — the same clobbering
+     * hazard `rememberChainClaim` covers for the claim txid.
+     */
+    noteAcceptedQuote(swapId: string, amount: number): void {
+        const swap = this.monitoredSwaps.get(swapId);
+        if (swap && isPendingChainSwap(swap)) {
+            swap.acceptedQuoteAmount = amount;
+        }
+    }
+
+    /**
      * Execute refund action for chain swap Ark to Btc
      */
     private async executeRefundArkAction(

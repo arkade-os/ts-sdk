@@ -10,6 +10,8 @@ import {
     QuoteRejectedError,
     VHTLCAddressMismatchError,
     CooperativeSignRefusedError,
+    LockupAmountMismatchError,
+    ExpectedAmountExceededError,
 } from "./errors";
 import {
     ArkAddress,
@@ -22,6 +24,7 @@ import {
     VHTLC,
     ArkInfo,
     isRecoverable,
+    hasTerminalSpend,
     ArkTxInput,
     Identity,
     VirtualCoin,
@@ -59,6 +62,7 @@ import {
     BoltzSwapStatus,
     GetSwapStatusResponse,
     CreateSubmarineSwapRequest,
+    CreateSubmarineSwapResponse,
     CreateReverseSwapRequest,
     CreateChainSwapRequest,
     isSubmarineFinalStatus,
@@ -219,7 +223,7 @@ const CLAIM_VTXO_RETRY_DELAY_MS = 500;
 // formats may lack it — in that case, fall through without a floor (the
 // repository lookup will then resolve no_baseline and abort the renegotiation).
 const quoteOptionsForSwap = (swap: BoltzChainSwap): QuoteSwapOptions | undefined => {
-    const amount = swap.response?.claimDetails?.amount;
+    const amount = swap.acceptedQuoteAmount ?? swap.response?.claimDetails?.amount;
     return typeof amount === "number" ? { minAcceptableAmount: amount } : undefined;
 };
 
@@ -539,6 +543,15 @@ export class ArkadeSwaps {
             throw new SwapError({ message: "Preimage hash does not match invoice payment hash" });
         }
 
+        // `onchainAmount` is the agreed amount `claimVHTLC` later enforces, and
+        // the wire type marks it optional. Require it here, before the invoice
+        // is handed out, rather than leaving the claim nothing to compare against.
+        if (typeof swapResponse.onchainAmount !== "number") {
+            throw new SwapError({
+                message: `Swap ${swapResponse.id}: response carries no claim-side amount`,
+            });
+        }
+
         const pendingSwap: BoltzReverseSwap = {
             id: swapResponse.id,
             type: "reverse",
@@ -612,9 +625,12 @@ export class ArkadeSwaps {
 
         // Retry while waiting for an *actionable* (unspent) VTXO to appear at
         // the VHTLC script. A spent VTXO showing up early must not abort the
-        // wait, so we break only once the unspent subset is non-empty. The
+        // wait, so we break only once the unspent subset is non-empty — and,
+        // when an agreed amount is on record, once it covers that amount, so
+        // a split lockup the indexer surfaces piecemeal is not misread. The
         // last raw response is kept so the post-retry branch can distinguish
         // "not found" from "already spent" for diagnostics.
+        const expected = pendingSwap.response.onchainAmount;
         let unspentVtxos: VirtualCoin[] = [];
         let rawVtxos: VirtualCoin[] = [];
         for (let attempt = 1; attempt <= CLAIM_VTXO_RETRY_ATTEMPTS; attempt++) {
@@ -622,8 +638,14 @@ export class ArkadeSwaps {
                 scripts: [hex.encode(vhtlcScript.pkScript)],
             });
             rawVtxos = result.vtxos;
-            unspentVtxos = result.vtxos.filter((vtxo) => !vtxo.isSpent);
-            if (unspentVtxos.length > 0) {
+            unspentVtxos = result.vtxos.filter((vtxo) => !hasTerminalSpend(vtxo));
+            const total = unspentVtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
+            if (
+                unspentVtxos.length > 0 &&
+                (typeof expected !== "number" ||
+                    rawVtxos.some(hasTerminalSpend) ||
+                    total >= expected)
+            ) {
                 break;
             }
             if (attempt < CLAIM_VTXO_RETRY_ATTEMPTS) {
@@ -636,6 +658,26 @@ export class ArkadeSwaps {
                 throw new Error(`Swap ${pendingSwap.id}: no spendable virtual coins found`);
             }
             throw new Error(`Swap ${pendingSwap.id}: VHTLC is already spent`);
+        }
+
+        // Claiming publishes the preimage, which is what lets the counterparty
+        // settle the Lightning side in full, so the locked total must cover the
+        // agreed amount before the first claim. Once part of the lockup is
+        // spent an earlier claim has already disclosed it, and the remainder is
+        // swept unconditionally.
+        const total = unspentVtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
+        if (typeof expected !== "number") {
+            logger.warn(
+                `Swap ${pendingSwap.id}: no agreed claim amount on record — ` +
+                    `skipping the lockup amount check`,
+            );
+        } else if (!rawVtxos.some(hasTerminalSpend) && total < expected) {
+            throw new LockupAmountMismatchError({
+                swapId: pendingSwap.id,
+                expectedAmount: expected,
+                lockedAmount: total,
+                pendingSwap,
+            });
         }
 
         const vhtlcIdentity = claimVHTLCIdentity(signer, preimage);
@@ -674,7 +716,7 @@ export class ArkadeSwaps {
                         vhtlcIdentity,
                         vhtlcScript,
                         serverXOnly,
-                        input,
+                        [input],
                         output,
                         arkInfo,
                         this.arkProvider,
@@ -931,6 +973,12 @@ export class ArkadeSwaps {
         // rejection.
         arkInfoPromise.catch(() => {});
 
+        // Same treatment for the fee schedule the funding amount is bounded
+        // against. Only the submarine half is read, so `getSubmarineFees` keeps
+        // this off the reverse endpoint `getFees` would also pull in.
+        const feesPromise = this.swapProvider.getSubmarineFees();
+        feesPromise.catch(() => {});
+
         // make submarine swap request
         const swapResponse = await this.swapProvider.createSubmarineSwap(swapRequest);
 
@@ -951,6 +999,8 @@ export class ArkadeSwaps {
         // reconcile never reaches storage.
         await this.buildSubmarineVHTLCContext(pendingSwap, await arkInfoPromise);
 
+        await this.assertSubmarineExpectedAmount(swapResponse, invoice, feesPromise);
+
         // save pending swap to storage
         await this.savePendingSubmarineSwap(pendingSwap);
 
@@ -960,6 +1010,34 @@ export class ArkadeSwaps {
         }
 
         return pendingSwap;
+    }
+
+    /**
+     * Bound a submarine swap's `expectedAmount` to the invoice amount plus the
+     * advertised submarine fee schedule. A consistent server's response always
+     * reconciles with its own advertised fees, so anything above the bound is
+     * rejected. Amountless invoices carry no local baseline and are not bounded.
+     */
+    private async assertSubmarineExpectedAmount(
+        response: CreateSubmarineSwapResponse,
+        invoice: string,
+        feesPromise: Promise<FeesResponse["submarine"]>,
+    ): Promise<void> {
+        if (typeof response.expectedAmount !== "number") return;
+        const invoiceSats = decodeInvoice(invoice).amountSats;
+        if (!invoiceSats) return;
+        const submarine = await feesPromise;
+        const maxAcceptable =
+            invoiceSats +
+            submarine.minerFees +
+            Math.ceil((invoiceSats * submarine.percentage) / 100);
+        if (response.expectedAmount > maxAcceptable) {
+            throw new ExpectedAmountExceededError({
+                swapId: response.id,
+                expectedAmount: response.expectedAmount,
+                maxAcceptable,
+            });
+        }
     }
 
     /**
@@ -1789,7 +1867,12 @@ export class ArkadeSwaps {
                     }
                     case "transaction.lockupFailed":
                         await updateSwapStatus();
-                        await this.quoteSwap(swap.response.id, quoteOptionsForSwap(swap)).catch(
+                        await this.quoteSwap(swap.response.id, quoteOptionsForSwap(swap)).then(
+                            (accepted) => {
+                                // Mirror it, or a later updateSwapStatus()
+                                // save writes the pre-quote snapshot back out.
+                                swap.acceptedQuoteAmount = accepted;
+                            },
                             (err) => {
                                 reject(
                                     new SwapError({
@@ -1877,9 +1960,32 @@ export class ArkadeSwaps {
         );
         const swapOutput = detectSwapOutput(musig.aggPubkey, lockupTx);
 
+        // Same guard as `claimVHTLC`, with the disclosure one step earlier: the
+        // preimage goes out in the cooperative-signature request below, not in
+        // a witness. Refusing keeps the ARK lockup on its regular refund track.
+        const expected = await this.expectedClaimAmount(pendingSwap);
+        if (expected === undefined) {
+            logger.warn(
+                `Swap ${pendingSwap.id}: no agreed claim amount on record — ` +
+                    `skipping the lockup amount check`,
+            );
+        } else if (swapOutput.amount! < BigInt(expected)) {
+            throw new LockupAmountMismatchError({
+                swapId: pendingSwap.id,
+                expectedAmount: expected,
+                lockedAmount: Number(swapOutput.amount!),
+                isRefundable: true,
+                pendingSwap,
+            });
+        }
+
+        // After a renegotiation the agreed amount supersedes the requested
+        // server lock, so the exact-delivery fee derives from it too. A quote
+        // accepted with slippage can land below `amount`; the surplus then goes
+        // negative and the `> fee` comparison below falls back to the estimate.
         const feeToDeliverExactAmount = BigInt(
             pendingSwap.request.serverLockAmount
-                ? pendingSwap.request.serverLockAmount - pendingSwap.amount
+                ? (expected ?? pendingSwap.request.serverLockAmount) - pendingSwap.amount
                 : 0,
         );
 
@@ -2169,7 +2275,12 @@ export class ArkadeSwaps {
                         break;
                     case "transaction.lockupFailed":
                         await updateSwapStatus();
-                        await this.quoteSwap(swap.response.id, quoteOptionsForSwap(swap)).catch(
+                        await this.quoteSwap(swap.response.id, quoteOptionsForSwap(swap)).then(
+                            (accepted) => {
+                                // Mirror it, or a later updateSwapStatus()
+                                // save writes the pre-quote snapshot back out.
+                                swap.acceptedQuoteAmount = accepted;
+                            },
                             (err) => {
                                 reject(
                                     new SwapError({
@@ -2263,6 +2374,28 @@ export class ArkadeSwaps {
     }
 
     /**
+     * The agreed claim-side amount for a chain swap: the latest accepted
+     * renegotiation when one exists, else the amount Boltz confirmed at
+     * creation. Prefers the stored record over the caller's copy — status
+     * callbacks carry snapshots taken before a renegotiation may have run.
+     * Undefined only for legacy persisted swaps carrying neither value.
+     */
+    private async expectedClaimAmount(pendingSwap: BoltzChainSwap): Promise<number | undefined> {
+        const stored = (
+            await this.swapRepository.getAllSwaps<BoltzChainSwap>({
+                id: pendingSwap.id,
+                type: "chain",
+            })
+        )?.[0];
+        return (
+            stored?.acceptedQuoteAmount ??
+            pendingSwap.acceptedQuoteAmount ??
+            stored?.response?.claimDetails?.amount ??
+            pendingSwap.response?.claimDetails?.amount
+        );
+    }
+
+    /**
      * Claim sats on ARK chain by claiming the VHTLC.
      * Refactored to use claimVHTLCIdentity + claimVHTLCwithOffchainTx utilities.
      * @param pendingSwap - The pending chain swap.
@@ -2281,62 +2414,104 @@ export class ArkadeSwaps {
             arkInfo,
         );
 
-        let vtxo;
+        const expected = await this.expectedClaimAmount(pendingSwap);
+
+        // The indexer may lag the lockup tx — and may briefly surface only part
+        // of a split lockup — so retry until the spendable set covers the agreed
+        // amount or the attempts run out. `hasTerminalSpend` rather than
+        // `isSpent`: a VTXO consumed by a batch round carries `settledBy` and
+        // need not carry `isSpent`.
+        let spendable: VirtualCoin[] = [];
+        let partiallyClaimed = false;
         for (let attempt = 1; attempt <= CLAIM_VTXO_RETRY_ATTEMPTS; attempt++) {
-            const spendableVtxos = await this.indexerProvider.getVtxos({
+            const { vtxos } = await this.indexerProvider.getVtxos({
                 scripts: [hex.encode(vhtlcScript.pkScript)],
-                spendableOnly: true,
             });
-            if (spendableVtxos.vtxos.length > 0) {
-                vtxo = spendableVtxos.vtxos[0];
+            spendable = vtxos.filter((vtxo) => !hasTerminalSpend(vtxo));
+            partiallyClaimed = vtxos.some(hasTerminalSpend);
+            const total = spendable.reduce((sum, vtxo) => sum + vtxo.value, 0);
+            if (
+                spendable.length > 0 &&
+                (expected === undefined || partiallyClaimed || total >= expected)
+            )
                 break;
-            }
             if (attempt < CLAIM_VTXO_RETRY_ATTEMPTS) {
                 await new Promise((resolve) => setTimeout(resolve, CLAIM_VTXO_RETRY_DELAY_MS));
             }
         }
 
-        if (!vtxo) {
+        if (spendable.length === 0) {
             throw new Error(`Swap ${pendingSwap.id}: no spendable virtual coins found`);
         }
 
-        const input = {
-            ...vtxo,
-            tapLeafScript: vhtlcScript.claim(),
-            tapTree: vhtlcScript.encode(),
-        };
-
-        const output = {
-            amount: BigInt(vtxo.value),
-            script: ArkAddress.decode(address).pkScript,
-        };
+        // Same guard as `claimVHTLC`: the claim witness discloses the preimage,
+        // so the lockup must cover the agreed amount before the first claim,
+        // and a partly spent lockup is swept unconditionally.
+        const total = spendable.reduce((sum, vtxo) => sum + vtxo.value, 0);
+        if (expected === undefined) {
+            logger.warn(
+                `Swap ${pendingSwap.id}: no agreed claim amount on record — ` +
+                    `skipping the lockup amount check`,
+            );
+        } else if (!partiallyClaimed && total < expected) {
+            throw new LockupAmountMismatchError({
+                swapId: pendingSwap.id,
+                expectedAmount: expected,
+                lockedAmount: total,
+                pendingSwap,
+            });
+        }
 
         // Use shared identity utility for preimage witness
         const vhtlcIdentity = claimVHTLCIdentity(await this.swapSigner(pendingSwap), preimage);
+        const outputScript = ArkAddress.decode(address).pkScript;
+        const toInput = (vtxo: VirtualCoin) => ({
+            ...vtxo,
+            tapLeafScript: vhtlcScript.claim(),
+            tapTree: vhtlcScript.encode(),
+        });
 
-        // The claim transaction we broadcast is the swap's on-chain completion;
-        // its id is the txid callers expect back from waitAndClaimArk.
-        const txid = isRecoverable(vtxo)
-            ? await this.joinBatch(vhtlcIdentity, input, output, arkInfo)
-            : await claimVHTLCwithOffchainTx(
-                  vhtlcIdentity,
-                  vhtlcScript,
-                  serverXOnlyPublicKey,
-                  input,
-                  output,
-                  arkInfo,
-                  this.arkProvider,
-              );
+        // Claim the whole spendable set, not just the first VTXO: live VTXOs
+        // together in one offchain tx, swept ones per VTXO via a batch round.
+        // The first claim tx is the swap's completion, and its id is the txid
+        // callers expect back from waitAndClaimArk.
+        const live = spendable.filter((vtxo) => !isRecoverable(vtxo));
+        const recoverable = spendable.filter((vtxo) => isRecoverable(vtxo));
+
+        let txid: string | undefined;
+        if (live.length > 0) {
+            txid = await claimVHTLCwithOffchainTx(
+                vhtlcIdentity,
+                vhtlcScript,
+                serverXOnlyPublicKey,
+                live.map(toInput),
+                {
+                    amount: BigInt(live.reduce((sum, vtxo) => sum + vtxo.value, 0)),
+                    script: outputScript,
+                },
+                arkInfo,
+                this.arkProvider,
+            );
+        }
+        for (const vtxo of recoverable) {
+            const batchTxid = await this.joinBatch(
+                vhtlcIdentity,
+                toInput(vtxo),
+                { amount: BigInt(vtxo.value), script: outputScript },
+                arkInfo,
+            );
+            txid ??= batchTxid;
+        }
 
         // update the pending swap on storage
         const finalStatus = await this.getSwapStatus(pendingSwap.id);
         await this.savePendingChainSwap({
             ...pendingSwap,
             status: finalStatus.status,
-            claimTxid: txid,
+            claimTxid: txid!,
         });
 
-        return { txid };
+        return { txid: txid! };
     }
 
     /**
@@ -2636,6 +2811,19 @@ export class ArkadeSwaps {
 
         const swapResponse = await this.swapProvider.createChainSwap(swapRequest);
 
+        // The response's claim-side amount is what claims later enforce, so
+        // when the server lock was computed locally it must be echoed verbatim.
+        if (
+            serverLockAmount !== undefined &&
+            swapResponse.claimDetails.amount !== serverLockAmount
+        ) {
+            throw new SwapError({
+                message:
+                    `Swap ${swapResponse.id}: claim-side amount ${swapResponse.claimDetails.amount} ` +
+                    `does not match the requested server lock amount ${serverLockAmount}`,
+            });
+        }
+
         const pendingSwap: BoltzChainSwap = {
             amount,
             createdAt: Math.floor(Date.now() / 1000),
@@ -2815,6 +3003,7 @@ export class ArkadeSwaps {
         const amount = await this.getSwapQuote(swapId);
         this.validateQuote(amount, effectiveFloor);
         await this.swapProvider.postChainQuote(swapId, { amount });
+        await this.recordAcceptedQuote(swapId, amount);
         return amount;
     }
 
@@ -2842,7 +3031,33 @@ export class ArkadeSwaps {
         const effectiveFloor = await this.resolveEffectiveFloor(swapId, options);
         this.validateQuote(amount, effectiveFloor);
         await this.swapProvider.postChainQuote(swapId, { amount });
+        await this.recordAcceptedQuote(swapId, amount);
         return amount;
+    }
+
+    /**
+     * Persist an accepted renegotiation amount as the swap's agreed amount, and
+     * mirror it onto the SwapManager's monitored copy (see `noteAcceptedQuote`).
+     * Best-effort: the quote is already posted, so a storage failure must not
+     * surface as a rejected renegotiation.
+     */
+    private async recordAcceptedQuote(swapId: string, amount: number): Promise<void> {
+        // Mirror before the awaited write, or a status update landing in that
+        // window saves the monitored copy while it still lacks the field.
+        this.swapManager?.noteAcceptedQuote(swapId, amount);
+        try {
+            const stored = (
+                await this.swapRepository.getAllSwaps<BoltzChainSwap>({
+                    id: swapId,
+                    type: "chain",
+                })
+            )?.[0];
+            if (stored) {
+                await this.savePendingChainSwap({ ...stored, acceptedQuoteAmount: amount });
+            }
+        } catch (error) {
+            logger.error(`Failed to record accepted quote for swap ${swapId}:`, error);
+        }
     }
 
     private async resolveEffectiveFloor(
@@ -2876,9 +3091,11 @@ export class ArkadeSwaps {
             type: "chain",
         });
         const stored = swaps[0];
-        // Defensive: persisted swaps from older formats may not have a
+        // Prefer the latest accepted renegotiation so repeated renegotiations
+        // floor on the current agreement, not the original amount. Defensive
+        // on claimDetails: persisted swaps from older formats may not have a
         // populated claimDetails.amount even though the type marks it required.
-        const amount = stored?.response?.claimDetails?.amount;
+        const amount = stored?.acceptedQuoteAmount ?? stored?.response?.claimDetails?.amount;
         if (typeof amount !== "number") {
             throw new QuoteRejectedError({ reason: "no_baseline" });
         }

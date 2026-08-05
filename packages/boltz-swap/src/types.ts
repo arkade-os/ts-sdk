@@ -345,6 +345,12 @@ export interface BoltzChainSwap {
      * swaps we have not claimed yet.
      */
     claimTxid?: string;
+    /**
+     * Latest renegotiated claim-side amount accepted via `quoteSwap` /
+     * `acceptSwapQuote`. Supersedes `response.claimDetails.amount` as the
+     * agreed amount once set. Absent when the swap was never renegotiated.
+     */
+    acceptedQuoteAmount?: number;
 }
 
 /** Union type of all pending swap types. */
