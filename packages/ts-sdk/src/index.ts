@@ -307,6 +307,10 @@ import type { ServerInfoSource } from "./wallet/arkInfoSnapshot";
 import type { ProviderConnectionState } from "./wallet/wallet";
 import type { ContractSyncState } from "./contracts/contractManager";
 import { validateVtxoTxGraph, validateConnectorsTxGraph } from "./tree/validation";
+import {
+    validateBatchRecipients,
+    assertFinalCommitmentMatchesValidated,
+} from "./wallet/validation";
 import { buildForfeitTx } from "./forfeit";
 import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
 import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
@@ -619,6 +623,8 @@ export {
     Batch,
     validateVtxoTxGraph,
     validateConnectorsTxGraph,
+    validateBatchRecipients,
+    assertFinalCommitmentMatchesValidated,
     buildForfeitTx,
     isRecoverable,
     isSpendable,

@@ -12,6 +12,7 @@ import {
     getNetwork,
     networks,
     NetworkName,
+    Recipient,
     VHTLC,
     VtxoScript,
     VtxoTaprootTree,
@@ -153,6 +154,7 @@ export const candidateServerPubkeys = (arkInfo: ArkInfo): string[] => {
  * @param input - The input vtxo.
  * @param output - The output script.
  * @param forfeitPublicKey - The forfeit public key.
+ * @param recipient - The expected destination, validated against the vtxo tree leaves.
  * @returns The commitment transaction ID.
  */
 export const joinBatch = async (
@@ -166,6 +168,7 @@ export const joinBatch = async (
         network,
     }: Pick<ArkInfo, "forfeitPubkey" | "forfeitAddress" | "network">,
     isRecoverable = true,
+    recipient?: Recipient,
 ): Promise<string> => {
     const signerSession = identity.signerSession();
     const signerPublicKey = await signerSession.getPublicKey();
@@ -210,9 +213,9 @@ export const joinBatch = async (
         proof: base64.encode(signedRegisterIntent.toPSBT()),
     });
 
-    const decodedAddress = Address(
-        network in networks ? networks[network as keyof typeof networks] : networks.bitcoin,
-    ).decode(forfeitAddress);
+    const btcNetwork =
+        network in networks ? networks[network as keyof typeof networks] : networks.bitcoin;
+    const decodedAddress = Address(btcNetwork).decode(forfeitAddress);
 
     try {
         const handler = createVHTLCBatchHandler(
@@ -222,6 +225,8 @@ export const joinBatch = async (
             identity,
             signerSession,
             normalizeToXOnlyKey(forfeitPubkey, "forfeit"),
+            btcNetwork,
+            recipient,
             isRecoverable ? undefined : OutScript.encode(decodedAddress),
         );
 

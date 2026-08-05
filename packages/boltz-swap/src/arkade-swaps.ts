@@ -32,6 +32,7 @@ import {
     deriveDescriptorLeafCompressedPubKey,
     isHDWalletCapable,
     type NetworkName,
+    type Recipient,
 } from "@arkade-os/sdk";
 import type {
     Chain,
@@ -186,6 +187,8 @@ type RefundWithoutReceiverContext = {
     serverXOnlyPublicKey: Uint8Array;
     refundWithoutReceiverLeaf: ArkTxInput["tapLeafScript"];
     outputScript: Uint8Array;
+    /** Address `outputScript` was derived from, for batch recipient validation. */
+    address: string;
 };
 
 const dedupeVtxos = (vtxos: VirtualCoin[]): VirtualCoin[] => [
@@ -710,7 +713,10 @@ export class ArkadeSwaps {
 
             try {
                 if (isRecoverable(vtxo)) {
-                    await this.joinBatch(vhtlcIdentity, input, output, arkInfo);
+                    await this.joinBatch(vhtlcIdentity, input, output, arkInfo, true, {
+                        address,
+                        amount: vtxo.value,
+                    });
                 } else {
                     await claimVHTLCwithOffchainTx(
                         vhtlcIdentity,
@@ -1315,6 +1321,7 @@ export class ArkadeSwaps {
             serverXOnlyPublicKey,
             refundWithoutReceiverLeaf,
             outputScript,
+            address,
         };
 
         // Refund every unspent VTXO at the contract address.
@@ -2140,6 +2147,7 @@ export class ArkadeSwaps {
             serverXOnlyPublicKey,
             refundWithoutReceiverLeaf,
             outputScript,
+            address,
         };
 
         const outcome = await this.refundVtxos({
@@ -2499,6 +2507,8 @@ export class ArkadeSwaps {
                 toInput(vtxo),
                 { amount: BigInt(vtxo.value), script: outputScript },
                 arkInfo,
+                true,
+                { address, amount: vtxo.value },
             );
             txid ??= batchTxid;
         }
@@ -3169,8 +3179,17 @@ export class ArkadeSwaps {
         output: TransactionOutput,
         arkInfo: ArkInfo,
         isRecoverable = true,
+        recipient?: Recipient,
     ): Promise<string> {
-        return joinBatch(this.arkProvider, identity, input, output, arkInfo, isRecoverable);
+        return joinBatch(
+            this.arkProvider,
+            identity,
+            input,
+            output,
+            arkInfo,
+            isRecoverable,
+            recipient,
+        );
     }
 
     /**
@@ -3192,7 +3211,10 @@ export class ArkadeSwaps {
         };
         const output = { amount: BigInt(vtxo.value), script: ctx.outputScript };
         if (isRecoverable(vtxo)) {
-            await this.joinBatch(ctx.identity, input, output, ctx.arkInfo, true);
+            await this.joinBatch(ctx.identity, input, output, ctx.arkInfo, true, {
+                address: ctx.address,
+                amount: vtxo.value,
+            });
         } else {
             await refundWithoutReceiverVHTLCwithOffchainTx(
                 ctx.identity,
