@@ -1,6 +1,6 @@
 {
     "name": "@arkade-os/swap",
-    "version": "0.1.0",
+    "version": "0.0.1",
     "type": "module",
     "description": "Arkade Intents maker-side atomic swaps: discover markets, quote, create/track/cancel offers, restore from chain.",
     "main": "./dist/index.js",

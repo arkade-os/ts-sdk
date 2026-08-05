@@ -107,7 +107,7 @@ pnpm run release:cleanup -- sdk               # Clean only sdk artifacts
 
 Targets are `sdk`, `boltz-swap`, `swap`, or `all`. Bumps accept `patch | minor | major | prepatch | preminor | premajor | prerelease` or a literal semver. Prerelease bumps require `--preid alpha|beta|rc|next`.
 
-When SDK is released, the dependent boltz-swap bump defaults to `patch`; prerelease SDK bumps mirror the prerelease shape and `--preid` into boltz-swap unless overridden with `--boltz-bump`. Before publishing boltz-swap, the release script packs it to a temp dir and verifies that the packed manifest pins the intended `@arkade-os/sdk` version.
+When SDK is released, each dependent bump (boltz-swap, swap) defaults to `patch`; prerelease SDK bumps mirror the prerelease shape and `--preid` into the dependents unless overridden with `--boltz-bump` / `--swap-bump`. Before publishing a dependent, the release script packs it to a temp dir and verifies that the packed manifest pins the intended `@arkade-os/sdk` version.
 
 The release script runs unit tests, builds all packages, creates a release commit, tags it, publishes to npm (requires local npm credentials), then pushes the commit and tags to `origin`.
 
