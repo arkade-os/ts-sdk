@@ -325,6 +325,25 @@ export const httpTransport = (
     options: { fetchImpl?: typeof fetch } = {},
 ): RfqTransport => {
     const fetchImpl = options.fetchImpl ?? fetch;
+    /**
+     * A refusal is a 4xx carrying an `rfq_refusal` body, so the status code
+     * alone cannot decide whether to read it — rejecting every non-2xx would
+     * throw away the closed-set reason the solver sent. What must not happen
+     * is a non-JSON body (an nginx 502 page, a proxy timeout) surfacing as a
+     * bare `SyntaxError` from the parser, which says nothing about what went
+     * wrong. So: parse defensively, and name the status when the body is not
+     * ours to interpret.
+     */
+    const readJson = async (response: Response, what: string): Promise<unknown> => {
+        const body = await response.text();
+        try {
+            return JSON.parse(body) as unknown;
+        } catch {
+            throw new Error(
+                `${what} returned HTTP ${response.status} with a non-JSON body: ${body.slice(0, 200)}`,
+            );
+        }
+    };
     return {
         async requestQuote(payload) {
             const response = await fetchImpl(`${baseUrl}/v1/swap`, {
@@ -332,12 +351,14 @@ export const httpTransport = (
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify(payload),
             });
-            return expectQuote(await response.json(), String(payload.rfq_id));
+            return expectQuote(await readJson(response, "quote request"), String(payload.rfq_id));
         },
         async status(rfqId) {
             const response = await fetchImpl(`${baseUrl}/v1/rfq/${rfqId}`, { method: "GET" });
             if (response.status === 404) return null;
-            const payload = (await response.json()) as { type?: string } | null;
+            const payload = (await readJson(response, "status request")) as {
+                type?: string;
+            } | null;
             return payload?.type === "rfq_status" ? (payload as RfqStatus) : null;
         },
         async close() {},

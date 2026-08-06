@@ -5,28 +5,35 @@
  * TODO(claim-packet-vectors) in the source).
  */
 import { describe, expect, it } from "vitest";
-import { hex } from "@scure/base";
+import { base64, hex } from "@scure/base";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 
-import { claimPacketHexForTest, openClaimPacketForTest, sealClaimPacket } from "../src/claimPacket";
+import { sealClaimPacket } from "../src/claimPacket";
+import {
+    claimPacketHex,
+    openClaimPacket,
+    sealClaimPacketDeterministic,
+} from "./helpers/claimPacket";
 
 const PREIMAGE = new Uint8Array(32).fill(7);
 const COVCLAIMD_SK = new Uint8Array(32).fill(0x22);
 const COVCLAIMD_PK = secp256k1.getPublicKey(COVCLAIMD_SK, true);
 
 const deterministic = () =>
-    sealClaimPacket({
-        preimage: PREIMAGE,
-        covclaimdPubkey: COVCLAIMD_PK,
-        arkadeScript: new Uint8Array([0xcd, 0x76]),
-        ephemeralKey: new Uint8Array(32).fill(0x11),
-        nonce: new Uint8Array(12).fill(0x0a),
-    });
+    sealClaimPacketDeterministic(
+        {
+            preimage: PREIMAGE,
+            covclaimdPubkey: COVCLAIMD_PK,
+            arkadeScript: new Uint8Array([0xcd, 0x76]),
+        },
+        new Uint8Array(32).fill(0x11),
+        new Uint8Array(12).fill(0x0a),
+    );
 
 describe("sealClaimPacket", () => {
     it("produces the pinned wire bytes for the fixed ephemeral key and nonce", async () => {
         const packet = await deterministic();
-        expect(claimPacketHexForTest(packet.ciphertext)).toBe(
+        expect(claimPacketHex(packet.ciphertext)).toBe(
             "034f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa" + // ephPub(33)
                 "0a0a0a0a0a0a0a0a0a0a0a0a" + // nonce(12)
                 "14ec375e22b0f016fb127e4740e9599f6b07d04bd040751d9fade4c5427b9787" +
@@ -37,16 +44,15 @@ describe("sealClaimPacket", () => {
 
     it("round-trips: covclaimd's key recovers exactly P", async () => {
         const packet = await deterministic();
-        const opened = await openClaimPacketForTest(packet.ciphertext, COVCLAIMD_SK);
+        const opened = await openClaimPacket(packet.ciphertext, COVCLAIMD_SK);
         expect(hex.encode(opened)).toBe(hex.encode(PREIMAGE));
     });
 
     it("authenticates: a tampered ciphertext refuses to open", async () => {
         const packet = await deterministic();
-        const bytes = hex.decode(claimPacketHexForTest(packet.ciphertext));
+        const bytes = hex.decode(claimPacketHex(packet.ciphertext));
         bytes[50] ^= 0x01;
-        const { base64 } = await import("@scure/base");
-        await expect(openClaimPacketForTest(base64.encode(bytes), COVCLAIMD_SK)).rejects.toThrow();
+        await expect(openClaimPacket(base64.encode(bytes), COVCLAIMD_SK)).rejects.toThrow();
     });
 
     it("rejects malformed inputs", async () => {
@@ -64,6 +70,17 @@ describe("sealClaimPacket", () => {
                 arkadeScript: new Uint8Array(1),
             }),
         ).rejects.toThrow(/compressed/);
+        await expect(
+            sealClaimPacketDeterministic(
+                {
+                    preimage: PREIMAGE,
+                    covclaimdPubkey: COVCLAIMD_PK,
+                    arkadeScript: new Uint8Array(1),
+                },
+                new Uint8Array(32).fill(0x11),
+                new Uint8Array(11),
+            ),
+        ).rejects.toThrow(/12 bytes/);
     });
 
     it("fresh randomness per packet: two seals of the same P differ", async () => {

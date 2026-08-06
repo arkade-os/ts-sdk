@@ -94,4 +94,4 @@ export {
     onchainSendRequest,
     requestOnchainSend,
 } from "./rfq";
-export { sealClaimPacket, type SealedClaimPacket } from "./claimPacket";
+export { sealClaimPacket, type ClaimPacketInput, type SealedClaimPacket } from "./claimPacket";
