@@ -568,6 +568,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue(vtxos),
             getSpendableVtxos: vi.fn().mockResolvedValue(vtxos),
+            logUngatedInputs: vi.fn().mockResolvedValue(undefined),
             getDelegateManager: vi.fn().mockResolvedValue({
                 delegate: delegateSpy,
             }),
@@ -586,6 +587,9 @@ describe("WalletMessageHandler handleMessage", () => {
         } as any);
 
         expect(delegateSpy).toHaveBeenCalledWith(vtxos, "dest-addr", undefined);
+        // Delegation hands spending authority away, so the crossing is reported
+        // through the wallet's shared check rather than a local one-reason copy.
+        expect((updater as any).wallet.logUngatedInputs).toHaveBeenCalledWith("delegate", vtxos);
         expect(response).toMatchObject({
             tag: updater.messageTag,
             type: "DELEGATE_SUCCESS",
@@ -612,6 +616,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue(vtxos),
             getSpendableVtxos: vi.fn().mockResolvedValue(vtxos),
+            logUngatedInputs: vi.fn().mockResolvedValue(undefined),
             getDelegateManager: vi.fn().mockResolvedValue({
                 delegate: delegateSpy,
             }),
@@ -643,6 +648,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue(allVtxos),
             getSpendableVtxos: vi.fn().mockResolvedValue(allVtxos),
+            logUngatedInputs: vi.fn().mockResolvedValue(undefined),
             getDelegateManager: vi.fn().mockResolvedValue({ delegate: delegateSpy }),
         };
 
@@ -1427,6 +1433,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             }),
             dustAmount: 546n,
             pendingRecoveryOutpoints: vi.fn().mockResolvedValue(new Set<string>()),
+            pendingRecoveryOutpointsIn: vi.fn().mockReturnValue(new Set<string>()),
             getContractManager: vi.fn().mockResolvedValue({
                 getContracts: vi.fn().mockResolvedValue(contracts),
                 onContractEvent: vi.fn().mockReturnValue(vi.fn()),
@@ -1576,9 +1583,9 @@ describe("WalletMessageHandler repo-backed reads", () => {
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, pendingExpired]);
 
         // The wallet reports the past-cutoff (EXPIRED) VTXO as pending recovery.
-        (updater as any).readonlyWallet.pendingRecoveryOutpoints = vi
+        (updater as any).readonlyWallet.pendingRecoveryOutpointsIn = vi
             .fn()
-            .mockResolvedValue(new Set([`${pendingExpired.txid}:${pendingExpired.vout}`]));
+            .mockReturnValue(new Set([`${pendingExpired.txid}:${pendingExpired.vout}`]));
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -1596,6 +1603,61 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 total: 170000,
             },
         });
+    });
+
+    it("GET_BALANCE derives the VTXOs and the gate from one read of the contract rows", async () => {
+        const gatedContract = {
+            type: "arkade",
+            params: {},
+            script: "5120" + "11".repeat(32),
+            address: "gated-address",
+            state: "active",
+            createdAt: 1,
+        };
+        setupHandler([gatedContract]);
+        await walletRepo.saveVtxos(gatedContract.address, [
+            createMockExtendedVtxo({
+                txid: "dd".repeat(32),
+                value: 30000,
+                script: gatedContract.script,
+                virtualStatus: { state: "settled" },
+            }),
+        ]);
+
+        const manager = await (updater as any).readonlyWallet.getContractManager();
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_BALANCE",
+        } as any);
+
+        // Two reads race the contract manager's writes: a row landing between
+        // them yields VTXOs the gate has never seen, and `gatedContracts` lists
+        // only what it knows is closed — so they would count as available.
+        expect(manager.getContracts).toHaveBeenCalledTimes(1);
+        expect(response).toMatchObject({
+            type: "BALANCE",
+            payload: { settled: 30000, total: 30000, available: 0 },
+        });
+    });
+
+    it("GET_BALANCE derives pending recovery without the syncing accessor", async () => {
+        setupHandler();
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [
+            createMockExtendedVtxo({
+                txid: "aa".repeat(32),
+                value: 100000,
+                virtualStatus: { state: "settled" },
+            }),
+        ]);
+
+        await updater.handleMessage({ ...baseMessage(), type: "GET_BALANCE" } as any);
+
+        // `pendingRecoveryOutpoints()` takes a fresh contractSnapshot(), which
+        // syncs — the one thing this repo-backed read promises not to do.
+        const wallet = (updater as any).readonlyWallet;
+        expect(wallet.pendingRecoveryOutpoints).not.toHaveBeenCalled();
+        expect(wallet.pendingRecoveryOutpointsIn).toHaveBeenCalled();
+        expect(mockIndexer.getVtxos).not.toHaveBeenCalled();
     });
 
     it("GET_TRANSACTION_HISTORY reads from repository, not indexer", async () => {

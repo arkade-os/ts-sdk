@@ -436,3 +436,75 @@ describe("spending sites consume the accessor", () => {
         expect(wallet.getSpendableVtxos).toHaveBeenCalled();
     });
 });
+
+describe("logUngatedInputs", () => {
+    // A real point: the contract manager builds a script from every stored row.
+    const DEPRECATED_KEY = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+    const EXPIRED_SCRIPT = "51200000000000000000000000000000000000000000000000000000000000000004";
+
+    /** Every debug line the call emitted, in order. */
+    const captureDebug = async (run: () => Promise<void>): Promise<string[]> => {
+        const lines: string[] = [];
+        const spy = vi.spyOn(console, "debug").mockImplementation((...args: unknown[]) => {
+            lines.push(args.join(" "));
+        });
+        await run();
+        spy.mockRestore();
+        return lines.filter((l) => l.startsWith("[spendability]"));
+    };
+
+    it("reports all three exclusions, not just the contract gate", async () => {
+        const intents = new InMemoryIntentRepository();
+        const { wallet, contractRepository, defaultScript } = await seededWallet({ intents });
+
+        // A contract on a deprecated signer whose cutoff has passed: the
+        // operator will not co-sign a spend of it.
+        await contractRepository.saveContract({
+            ...contract(EXPIRED_SCRIPT, "default"),
+            params: { ...createDefaultContractParams(), serverPubKey: DEPRECATED_KEY },
+        });
+        wallet.refreshDeprecatedSigners({
+            deprecatedSigners: [{ pubkey: DEPRECATED_KEY, cutoffDate: 1n }],
+        });
+
+        const lockedTxid = "e3".repeat(32);
+        await intents.saveIntent({
+            intentTxId: "i",
+            createdAt: 1,
+            updatedAt: 1,
+            registerProof: "",
+            registerProofMessage: "",
+            deleteProof: "",
+            deleteProofMessage: "",
+            partialForfeits: [],
+            state: "batch_in_progress",
+            intentVtxos: [{ txid: lockedTxid, vout: 0 }],
+        });
+
+        const inputs = [
+            vtxo(ESCROW_SCRIPT, 10_000),
+            vtxo(EXPIRED_SCRIPT, 10_000),
+            { ...vtxo(defaultScript, 10_000), txid: lockedTxid },
+            vtxo(MARKED_SCRIPT, 10_000),
+        ];
+
+        const lines = await captureDebug(() =>
+            wallet.logUngatedInputs("settle({ inputs })", inputs),
+        );
+
+        expect(lines).toHaveLength(3);
+        expect(lines[0]).toContain("is not generically spendable");
+        expect(lines[1]).toContain("rotation cutoff");
+        expect(lines[2]).toContain("in-flight settlement intent");
+        // The one input generic selection would have picked stays silent.
+        expect(lines.join("\n")).not.toContain(MARKED_SCRIPT.slice(-2).repeat(32));
+    });
+
+    it("says nothing about inputs generic selection would have picked", async () => {
+        const { wallet, defaultScript } = await seededWallet();
+        const lines = await captureDebug(() =>
+            wallet.logUngatedInputs("buildAndSubmitOffchainTx", [vtxo(defaultScript, 10_000)]),
+        );
+        expect(lines).toEqual([]);
+    });
+});

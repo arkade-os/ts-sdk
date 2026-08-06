@@ -13,7 +13,14 @@ export { BoardingContractHandler } from "./handlers";
 export type { BoardingContractParams } from "./handlers";
 
 // Generic-spending gate
-export { isContractGenericallySpendable, gatedContracts, logGatedVtxos } from "./spendability";
+export {
+    isContractGenericallySpendable,
+    gatedContracts,
+    gateExclusion,
+    outpointExclusion,
+    logExcludedVtxos,
+} from "./spendability";
+export type { ExcludableVtxo, VtxoExclusion } from "./spendability";
 
 // arkcontract string codec
 export {

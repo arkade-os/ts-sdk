@@ -401,8 +401,11 @@ import { hasCandidates, isDiscoverable } from "./contracts/types";
 import {
     isContractGenericallySpendable,
     gatedContracts,
-    logGatedVtxos,
+    gateExclusion,
+    outpointExclusion,
+    logExcludedVtxos,
 } from "./contracts/spendability";
+import type { ExcludableVtxo, VtxoExclusion } from "./contracts/spendability";
 import type {
     Contract,
     ContractVtxo,
@@ -655,7 +658,9 @@ export {
     ArkadeContractHandler,
     isContractGenericallySpendable,
     gatedContracts,
-    logGatedVtxos,
+    gateExclusion,
+    outpointExclusion,
+    logExcludedVtxos,
     encodeArkContract,
     decodeArkContract,
     contractFromArkContract,
@@ -859,6 +864,8 @@ export type {
     CreateContractParams,
     ContractWatcherConfig,
     ParsedArkContract,
+    ExcludableVtxo,
+    VtxoExclusion,
     DefaultContractParams,
     DelegateContractParams,
     VHTLCContractParams,

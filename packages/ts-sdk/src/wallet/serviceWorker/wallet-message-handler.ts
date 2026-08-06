@@ -47,7 +47,7 @@ import {
     type ProviderConnectionState,
 } from "../wallet";
 import { computeOffchainBalance } from "../balance";
-import { gatedContracts, logGatedVtxos } from "../../contracts/spendability";
+import { gatedContracts } from "../../contracts/spendability";
 import type {
     DeprecatedSignerMigrationReport,
     DeprecatedSignerReport,
@@ -1381,19 +1381,19 @@ export class WalletMessageHandler
      * The worker's own balance. Same bucketing rules as `Wallet.getBalance` —
      * both call {@link computeOffchainBalance} — but deliberately a different
      * freshness: this reads the repository directly, with no indexer sync, so a
-     * polling UI never pays for a network round-trip.
+     * polling UI never pays for a network round-trip. That rules out
+     * `pendingRecoveryOutpoints()`, whose snapshot syncs; the same classification
+     * runs over this method's local snapshot instead.
      */
     private async handleGetBalance(): Promise<WalletBalance> {
-        const [boardingUtxos, allVtxos, pendingOutpoints, contracts] = await Promise.all([
+        const [boardingUtxos, { snapshot, vtxos: allVtxos }] = await Promise.all([
             this.getAllBoardingUtxos(),
-            this.getVtxosFromRepo(),
-            this.readonlyWallet
-                ? this.readonlyWallet.pendingRecoveryOutpoints()
-                : Promise.resolve(new Set<string>()),
-            this.readonlyWallet
-                ? this.readonlyWallet.getContractManager().then((m) => m.getContracts())
-                : Promise.resolve([]),
+            this.repoSnapshot(),
         ]);
+        // Both exclusion sets come off that one snapshot, so they answer about
+        // the same instant — and neither costs an indexer round-trip.
+        const pendingOutpoints =
+            this.readonlyWallet?.pendingRecoveryOutpointsIn(snapshot) ?? new Set<string>();
 
         // boarding
         let confirmed = 0;
@@ -1406,7 +1406,7 @@ export class WalletMessageHandler
             }
         }
 
-        const gated = gatedContracts(contracts);
+        const gated = gatedContracts(snapshot.map((_) => _.contract));
         const unlocked = new Set(
             (
                 await spendableVtxosExcludingLocked(allVtxos, this.readonlyWallet?.intentRepository)
@@ -1694,12 +1694,7 @@ export class WalletMessageHandler
         // authority itself to a third party, which for a gated (e.g. escrowed)
         // contract means giving away its cancel path. Legitimate deliberately,
         // bad by accident: report it. Diagnostics only, never fatal.
-        try {
-            const manager = await wallet.getContractManager();
-            logGatedVtxos("delegate", filtered, gatedContracts(await manager.getContracts()));
-        } catch {
-            // ignored
-        }
+        void wallet.logUngatedInputs("delegate", filtered);
 
         const result = await delegateManager.delegate(
             filtered,
@@ -1788,18 +1783,43 @@ export class WalletMessageHandler
      * addresses and the wallet's primary address, with deduplication.
      */
     private async getVtxosFromRepo(): Promise<NormalizedExtendedVirtualCoin[]> {
-        if (!this.walletRepository || !this.readonlyWallet) return [];
+        return (await this.repoSnapshot()).vtxos;
+    }
+
+    /**
+     * The worker's equivalent of `ReadonlyWallet.contractSnapshot`: contracts
+     * paired with the VTXOs the repository holds for them, plus the flat
+     * deduplicated list. Purely local — unlike the main-thread snapshot it never
+     * syncs against the indexer.
+     *
+     * One read of the contract rows serves both halves. Reading them twice
+     * (once for the VTXO buckets, once for the gate) races the contract
+     * manager's own writes: a contract registered between the two reads yields
+     * VTXOs with no matching row in the gate, and `gatedContracts` lists only
+     * what it knows is closed — so the coins of a just-registered escrowed
+     * contract would count as available until the next poll.
+     */
+    private async repoSnapshot(): Promise<{
+        // Not `ContractWithVtxos`: repository rows carry no `contractScript`,
+        // and the gate and signer classification only read `contract`/`vtxos`.
+        snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[];
+        vtxos: NormalizedExtendedVirtualCoin[];
+    }> {
+        if (!this.walletRepository || !this.readonlyWallet) return { snapshot: [], vtxos: [] };
         const seen = new Set<string>();
         const allVtxos: NormalizedExtendedVirtualCoin[] = [];
 
         const addVtxos = (vtxos: NormalizedExtendedVirtualCoin[]) => {
+            const fresh: NormalizedExtendedVirtualCoin[] = [];
             for (const vtxo of vtxos) {
                 const key = `${vtxo.txid}:${vtxo.vout}`;
                 if (!seen.has(key)) {
                     seen.add(key);
                     allVtxos.push(vtxo);
+                    fresh.push(vtxo);
                 }
             }
+            return fresh;
         };
 
         // Aggregate virtual outputs from all contract addresses. Address
@@ -1808,8 +1828,12 @@ export class WalletMessageHandler
         // wrong-script row never wins the txid:vout race.
         const manager = await this.readonlyWallet.getContractManager();
         const contracts = await manager.getContracts();
+        const snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[] = [];
         for (const contract of contracts) {
-            addVtxos(await getVtxosForContract(this.walletRepository, contract));
+            snapshot.push({
+                contract,
+                vtxos: addVtxos(await getVtxosForContract(this.walletRepository, contract)),
+            });
         }
 
         // Also check the wallet's primary address. Decode it to its script
@@ -1827,7 +1851,9 @@ export class WalletMessageHandler
             );
         }
         // Routed through the same helper as the contract buckets rather than reading the
-        // repository directly, so this bucket normalizes too.
+        // repository directly, so this bucket normalizes too. Anything left here
+        // is outside every contract row, so it carries no contract to judge it
+        // by — the wallet's own receive address, which is never gated.
         addVtxos(
             await getVtxosForContract(this.walletRepository, {
                 script: walletScript,
@@ -1835,7 +1861,7 @@ export class WalletMessageHandler
             }),
         );
 
-        return allVtxos;
+        return { snapshot, vtxos: allVtxos };
     }
 
     /**

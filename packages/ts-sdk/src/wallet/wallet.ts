@@ -71,7 +71,7 @@ import {
 import { createAssetPacket, selectCoinsWithAsset, selectedCoinsToAssetInputs } from "./asset";
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
-import { signerSetFromInfo, toXOnlySignerHex } from "./signerRotation";
+import { classifyAgainstSignerSet, signerSetFromInfo, toXOnlySignerHex } from "./signerRotation";
 import {
     assertCheckpointsMatchInputs,
     buildOffchainTx,
@@ -150,8 +150,14 @@ import { DescriptorIdentity } from "../identity/descriptorIdentity";
 import { HDWalletCapable } from "./hdWalletCapable";
 import { deriveDescriptorLeafPubKey } from "../identity/descriptor";
 import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
-import { CandidateDeps, ContractWithVtxos, DiscoveryDeps } from "../contracts/types";
-import { gatedContracts, logGatedVtxos } from "../contracts/spendability";
+import { CandidateDeps, Contract, ContractWithVtxos, DiscoveryDeps } from "../contracts/types";
+import {
+    gateExclusion,
+    gatedContracts,
+    logExcludedVtxos,
+    outpointExclusion,
+    type VtxoExclusion,
+} from "../contracts/spendability";
 import { computeOffchainBalance, type BalanceCapabilities } from "./balance";
 import { InputSignerRouter, InputSigningJob } from "./inputSignerRouter";
 import {
@@ -364,6 +370,34 @@ export function filterSnapshotVtxos(
             }
             return !!(f.withUnrolled && vtxo.isUnrolled);
         });
+}
+
+/**
+ * Shared by the two places a past-cutoff signer excludes a VTXO: the
+ * outpoint-level `pendingRecovery` set and the script-level check
+ * {@link ReadonlyWallet.logUngatedInputs} can afford.
+ */
+const PENDING_RECOVERY_REASON =
+    "is past its operator signer's rotation cutoff — the operator will not co-sign it until it recovers";
+
+/**
+ * What signer classification needs of a snapshot: contract params and the coins
+ * under them. Structural rather than {@link ContractWithVtxos} so a repository-
+ * built snapshot — the worker's, whose VTXOs carry no `contractScript` — can be
+ * classified without allocating a parallel array to satisfy the nominal type.
+ */
+type PendingRecoverySnapshot = Parameters<typeof selectPendingRecoveryOutpoints>[0];
+
+/** The outpoints in `before` that `after` dropped. */
+function omittedOutpoints(
+    before: readonly { txid: string; vout: number }[],
+    after: readonly { txid: string; vout: number }[],
+): Set<string> {
+    if (before.length === after.length) return new Set();
+    const kept = new Set(after.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`));
+    return new Set(
+        before.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`).filter((outpoint) => !kept.has(outpoint)),
+    );
 }
 
 /**
@@ -1167,31 +1201,100 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const snapshot = await this.contractSnapshot();
         const vtxos = filterSnapshotVtxos(snapshot, filter, this._pendingSpendOutpoints);
         const { gated, pendingRecovery } = this.spendabilityView(snapshot);
-        logGatedVtxos("getSpendableVtxos", vtxos, gated);
         const selectable = vtxos.filter(
             (vtxo) => !gated.has(vtxo.script) && !pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
         );
-        return spendableVtxosExcludingLocked(selectable, this.intentRepository);
+        const unlocked = await spendableVtxosExcludingLocked(selectable, this.intentRepository);
+        logExcludedVtxos("getSpendableVtxos", vtxos, [
+            gateExclusion(gated),
+            outpointExclusion(pendingRecovery, PENDING_RECOVERY_REASON),
+            outpointExclusion(
+                omittedOutpoints(selectable, unlocked),
+                "is locked by an in-flight settlement intent",
+            ),
+        ]);
+        return unlocked;
     }
 
     /**
-     * Debug-log any explicit input the gate would have excluded. Explicit-input
-     * APIs stay ungated on purpose (naming an outpoint *is* the intent the gate
-     * protects, and it is how an escrowed deposit is recovered once generic
-     * selection stops covering it), so this only makes the crossing visible —
-     * notably `settle({ inputs: await wallet.getVtxos() })`, which launders the
-     * raw read into a spend. Never throws into a spend path.
+     * Debug-log any explicit input generic selection would have excluded, for
+     * each of the three reasons it excludes on. Explicit-input APIs stay ungated
+     * on purpose (naming an outpoint *is* the intent the gate protects, and it
+     * is how an escrowed deposit is recovered once generic selection stops
+     * covering it), so this only makes the crossing visible — notably
+     * `settle({ inputs: await wallet.getVtxos() })`, which launders the raw read
+     * into a spend. Never throws into a spend path.
+     *
+     * Public so the worker handler and plugins can report their own
+     * explicit-input crossings through the same three checks.
      */
-    protected async logUngatedInputs(
+    async logUngatedInputs(
         source: string,
         inputs: readonly { txid: string; vout: number; script?: string }[],
     ): Promise<void> {
         try {
-            // Pure repository read: no sync, so this cannot slow or fail a spend.
+            // Pure repository reads: no indexer sync, so this cannot slow or
+            // fail a spend. That rules out reusing `spendabilityView`, whose
+            // snapshot syncs; each exclusion is rebuilt from contract rows and
+            // the intent store instead.
             const manager = await this.getContractManager();
-            logGatedVtxos(source, inputs, gatedContracts(await manager.getContracts()));
+            const contracts = await manager.getContracts();
+            const locked = await this.lockedOutpoints();
+            logExcludedVtxos(source, inputs, [
+                gateExclusion(gatedContracts(contracts)),
+                this.expiredSignerExclusion(contracts),
+                outpointExclusion(locked, "is locked by an in-flight settlement intent"),
+            ]);
         } catch {
             // diagnostics only
+        }
+    }
+
+    /**
+     * Contracts whose operator signer is past its rotation cutoff, as an
+     * exclusion over scripts. The outpoint-level `pendingRecovery` set needs a
+     * synced VTXO snapshot to also drop already-swept coins; this answers the
+     * same question about a caller-supplied input without one, and a swept
+     * outpoint is unspendable regardless.
+     */
+    private expiredSignerExclusion(contracts: readonly Contract[]): VtxoExclusion {
+        if (this._deprecatedSigners.size === 0) return () => undefined;
+        const signerSet = {
+            active: toXOnlySignerHex(hex.encode(this.offchainTapscript.options.serverPubKey)),
+            deprecated: this._deprecatedSigners,
+        };
+        const expired = new Set(
+            contracts
+                .filter((contract) => {
+                    const serverPubKey = contract.params.serverPubKey;
+                    if (typeof serverPubKey !== "string") return false;
+                    try {
+                        return (
+                            classifyAgainstSignerSet(serverPubKey, signerSet).status === "EXPIRED"
+                        );
+                    } catch {
+                        // One malformed row must not suppress every other
+                        // input's diagnostics; `refreshDeprecatedSigners` skips
+                        // malformed keys the same way.
+                        return false;
+                    }
+                })
+                .map((contract) => contract.script),
+        );
+        return (vtxo) =>
+            vtxo.script !== undefined && expired.has(vtxo.script)
+                ? PENDING_RECOVERY_REASON
+                : undefined;
+    }
+
+    /** The intent store's lock set. Fails open, like every other read of it. */
+    private async lockedOutpoints(): Promise<Set<string>> {
+        if (!this.intentRepository) return new Set();
+        try {
+            const locked = await this.intentRepository.getLockedVtxoOutpoints();
+            return new Set(locked.map((o) => `${o.txid}:${o.vout}`));
+        } catch {
+            return new Set();
         }
     }
 
@@ -1248,15 +1351,29 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * {@link _deprecatedSigners}, cutoffs included). Empty fast-path when no
      * signer is deprecated. Consumed by {@link getBalance} (the `pendingRecovery`
      * bucket) and by {@link getSpendableVtxos} so neither counts nor spends them.
+     *
+     * Takes a fresh {@link contractSnapshot}, which syncs against the indexer.
+     * Callers that already hold a snapshot — or that must not sync at all, like
+     * the worker's balance read — pass it to
+     * {@link pendingRecoveryOutpointsIn} instead.
      */
     async pendingRecoveryOutpoints(): Promise<Set<string>> {
         if (this._deprecatedSigners.size === 0) return new Set();
         return this.selectPendingRecovery(await this.contractSnapshot());
     }
 
-    private selectPendingRecovery(snapshot: readonly ContractWithVtxos[]): Set<string> {
+    /**
+     * {@link pendingRecoveryOutpoints} over a snapshot the caller already has:
+     * pure classification against the cached signer set, no repository or
+     * network read of its own.
+     */
+    pendingRecoveryOutpointsIn(snapshot: PendingRecoverySnapshot): Set<string> {
+        return this.selectPendingRecovery(snapshot);
+    }
+
+    private selectPendingRecovery(snapshot: PendingRecoverySnapshot): Set<string> {
         if (this._deprecatedSigners.size === 0) return new Set();
-        return selectPendingRecoveryOutpoints(snapshot as ContractWithVtxos[], {
+        return selectPendingRecoveryOutpoints(snapshot, {
             active: toXOnlySignerHex(hex.encode(this.offchainTapscript.options.serverPubKey)),
             deprecated: this._deprecatedSigners,
         });
