@@ -10,6 +10,8 @@ import {
 } from "./tapscript";
 import { hex } from "@scure/base";
 import { TapLeafScript, VtxoScript } from "./base";
+import { ArkadeScript } from "../arkade/script";
+import { computeArkadeScriptPublicKey } from "../arkade/tweak";
 
 /** Virtual Hash Time Lock Contract (VHTLC) namespace. */
 export namespace VHTLC {
@@ -22,6 +24,29 @@ export namespace VHTLC {
         unilateralClaimDelay: RelativeTimelock;
         unilateralRefundDelay: RelativeTimelock;
         unilateralRefundWithoutReceiverDelay: RelativeTimelock;
+        /**
+         * Optional non-interactive claim leaf: `server` plus a covenant-tweaked
+         * emulator co-signer, pinned to `receiverPkScript`. Lets the receiver's
+         * claim be pushed by the emulator without the receiver being online.
+         */
+        nonInteractiveClaim?: {
+            receiverPkScript: Bytes;
+            emulatorPubkey: Bytes;
+        };
+        /**
+         * Optional non-interactive refund leaf: `server` plus a covenant-tweaked
+         * emulator co-signer, pinned to `senderPkScript`, gated by the same
+         * `refundLocktime` as {@link Script.refundWithoutReceiver}. Every OTHER
+         * refund-side leaf in this contract requires the sender's own signature
+         * — if the sender permanently loses that key, none of them are
+         * reachable. This leaf is the one exception: it needs neither the
+         * sender nor the receiver, only the server and the emulator, so funds
+         * remain recoverable to the sender's pre-committed address even then.
+         */
+        nonInteractiveRefund?: {
+            senderPkScript: Bytes;
+            emulatorPubkey: Bytes;
+        };
     }
 
     /**
@@ -36,6 +61,11 @@ export namespace VHTLC {
      * - **unilateralClaim**: Receiver can claim unilaterally after delay
      * - **unilateralRefund**: Sender and receiver can refund unilaterally after delay
      * - **unilateralRefundWithoutReceiver**: Sender can refund unilaterally after delay
+     * - **nonInteractiveClaim** (optional): server + emulator can push the
+     *   receiver's claim, pinned to a pre-committed destination
+     * - **nonInteractiveRefund** (optional): server + emulator can push the
+     *   sender's refund after `refundLocktime`, pinned to a pre-committed
+     *   destination — recoverable even if the sender's own key is lost
      *
      * @example
      * ```typescript
@@ -58,6 +88,10 @@ export namespace VHTLC {
         readonly unilateralClaimScript: string;
         readonly unilateralRefundScript: string;
         readonly unilateralRefundWithoutReceiverScript: string;
+        readonly nonInteractiveClaimScript?: string;
+        readonly nonInteractiveClaimArkadeScript?: Bytes;
+        readonly nonInteractiveRefundScript?: string;
+        readonly nonInteractiveRefundArkadeScript?: Bytes;
 
         /** Create a VHTLC script from the supplied participant keys, hash, and timelocks. */
         constructor(readonly options: Options) {
@@ -106,14 +140,50 @@ export namespace VHTLC {
                 pubkeys: [sender],
             }).script;
 
-            super([
+            const scripts = [
                 claimScript,
                 refundScript,
                 refundWithoutReceiverScript,
                 unilateralClaimScript,
                 unilateralRefundScript,
                 unilateralRefundWithoutReceiverScript,
-            ]);
+            ];
+
+            let arkadeScriptNic: Bytes | undefined;
+            let nonInteractiveClaimScript: Bytes | undefined;
+            if (options.nonInteractiveClaim) {
+                arkadeScriptNic = enforcePayTo(options.nonInteractiveClaim.receiverPkScript);
+                nonInteractiveClaimScript = ConditionMultisigTapscript.encode({
+                    conditionScript,
+                    pubkeys: [
+                        server,
+                        computeArkadeScriptPublicKey(
+                            options.nonInteractiveClaim.emulatorPubkey,
+                            arkadeScriptNic,
+                        ),
+                    ],
+                }).script;
+                scripts.push(nonInteractiveClaimScript);
+            }
+
+            let arkadeScriptNir: Bytes | undefined;
+            let nonInteractiveRefundScript: Bytes | undefined;
+            if (options.nonInteractiveRefund) {
+                arkadeScriptNir = enforcePayTo(options.nonInteractiveRefund.senderPkScript);
+                nonInteractiveRefundScript = CLTVMultisigTapscript.encode({
+                    absoluteTimelock: refundLocktime,
+                    pubkeys: [
+                        server,
+                        computeArkadeScriptPublicKey(
+                            options.nonInteractiveRefund.emulatorPubkey,
+                            arkadeScriptNir,
+                        ),
+                    ],
+                }).script;
+                scripts.push(nonInteractiveRefundScript);
+            }
+
+            super(scripts);
 
             this.claimScript = hex.encode(claimScript);
             this.refundScript = hex.encode(refundScript);
@@ -123,6 +193,14 @@ export namespace VHTLC {
             this.unilateralRefundWithoutReceiverScript = hex.encode(
                 unilateralRefundWithoutReceiverScript,
             );
+            if (nonInteractiveClaimScript) {
+                this.nonInteractiveClaimScript = hex.encode(nonInteractiveClaimScript);
+                this.nonInteractiveClaimArkadeScript = arkadeScriptNic;
+            }
+            if (nonInteractiveRefundScript) {
+                this.nonInteractiveRefundScript = hex.encode(nonInteractiveRefundScript);
+                this.nonInteractiveRefundArkadeScript = arkadeScriptNir;
+            }
         }
 
         /** Return the collaborative claim tapleaf script. */
@@ -154,6 +232,28 @@ export namespace VHTLC {
         unilateralRefundWithoutReceiver(): TapLeafScript {
             return this.findLeaf(this.unilateralRefundWithoutReceiverScript);
         }
+
+        /** Return the non-interactive claim tapleaf script as well as the ArkadeScript. */
+        nonInteractiveClaim(): [TapLeafScript, Bytes] {
+            if (!this.nonInteractiveClaimScript || !this.nonInteractiveClaimArkadeScript) {
+                throw new Error("VHTLC has no non-interactive claim leaf");
+            }
+            return [
+                this.findLeaf(this.nonInteractiveClaimScript),
+                this.nonInteractiveClaimArkadeScript,
+            ];
+        }
+
+        /** Return the non-interactive refund tapleaf script as well as the ArkadeScript. */
+        nonInteractiveRefund(): [TapLeafScript, Bytes] {
+            if (!this.nonInteractiveRefundScript || !this.nonInteractiveRefundArkadeScript) {
+                throw new Error("VHTLC has no non-interactive refund leaf");
+            }
+            return [
+                this.findLeaf(this.nonInteractiveRefundScript),
+                this.nonInteractiveRefundArkadeScript,
+            ];
+        }
     }
 
     function validateOptions(options: Options): void {
@@ -170,6 +270,24 @@ export namespace VHTLC {
 
         if (!preimageHash || preimageHash.length !== 20) {
             throw new Error("preimage hash must be 20 bytes");
+        }
+        if (options.nonInteractiveClaim) {
+            const { emulatorPubkey, receiverPkScript } = options.nonInteractiveClaim;
+            if (!emulatorPubkey || (emulatorPubkey.length !== 32 && emulatorPubkey.length !== 33)) {
+                throw new Error("Invalid public key length (emulator)");
+            }
+            if (receiverPkScript.length !== 34) {
+                throw new Error("Invalid P2TR script");
+            }
+        }
+        if (options.nonInteractiveRefund) {
+            const { emulatorPubkey, senderPkScript } = options.nonInteractiveRefund;
+            if (!emulatorPubkey || (emulatorPubkey.length !== 32 && emulatorPubkey.length !== 33)) {
+                throw new Error("Invalid public key length (emulator)");
+            }
+            if (senderPkScript.length !== 34) {
+                throw new Error("Invalid P2TR script");
+            }
         }
         if (!receiver || receiver.length !== 32) {
             throw new Error("Invalid public key length (receiver)");
@@ -233,4 +351,29 @@ export namespace VHTLC {
 
 function preimageConditionScript(preimageHash: Bytes): Bytes {
     return Script.encode(["HASH160", preimageHash, "EQUAL"]);
+}
+
+/**
+ * The covenant: "this input's output pays the given P2TR script, value >=
+ * input". Shared by {@link VHTLC.Options.nonInteractiveClaim} and {@link
+ * VHTLC.Options.nonInteractiveRefund} — only the destination and the tier it
+ * gates differ.
+ */
+function enforcePayTo(destinationPkScript: Bytes): Bytes {
+    if (destinationPkScript.length < 34) {
+        throw new Error("invalid P2TR script");
+    }
+    return ArkadeScript.encode([
+        "PUSHCURRENTINPUTINDEX",
+        "DUP",
+        "INSPECTOUTPUTSCRIPTPUBKEY",
+        1,
+        "EQUALVERIFY",
+        destinationPkScript.subarray(2),
+        "EQUALVERIFY",
+        "INSPECTOUTPUTVALUE",
+        "PUSHCURRENTINPUTINDEX",
+        "INSPECTINPUTVALUE",
+        "GREATERTHANOREQUAL",
+    ]);
 }

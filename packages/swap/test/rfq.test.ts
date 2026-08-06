@@ -34,6 +34,7 @@ import { USD_ID } from "./fixtures";
 import { asset } from "@arkade-os/sdk";
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
+const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
 
 const RFQ_ID = "a1".repeat(32);
 
@@ -47,18 +48,29 @@ const quoteFixture = (over: Partial<RfqQuote> = {}): RfqQuote => ({
     solver_pubkey: hex.encode(key(1)),
     valid_until: 1_800_000_900,
     refund_locktime: 1_800_277_200,
-    profile: { payment_hash: "da".repeat(32), lockup_address: "ark1qexample" },
+    profile: {
+        payment_hash: "da".repeat(32),
+        lockup_address: "ark1qexample",
+        receiver_pk_script: hex.encode(p2tr(key(1))),
+    },
     ...over,
 });
 
 describe("lightningSendVtxoScript", () => {
-    // The reference solver's fixture, and its exact output bytes: receiver =
-    // key(1), server = key(3), emulator = key(9), refund destination =
-    // p2tr(key(5)), preimage hash = ripemd160(sha256(0x07 * 32)), locktime
-    // 1_800_000_000, CSV 4096s.
+    // The reference solver's fixture, and its exact output bytes: sender =
+    // key(13) (the trader's own VHTLC-sender key), receiver = key(1)
+    // (solver), server = key(3), emulator = key(9), refund destination =
+    // p2tr(key(5)) (also nonInteractiveRefund's covenant target), receiver
+    // payout = p2tr(key(1)) (nonInteractiveClaim's covenant target, same key
+    // as solverPubkey — the solver's own claim identity), preimage hash =
+    // ripemd160(sha256(0x07 * 32)), locktime 1_800_000_000, CSV 4096s /
+    // 4608s / 5120s (claimDelay, +512 per unilateralRefundDelay, +1024 per
+    // unilateralRefundWithoutReceiverDelay).
     const PREIMAGE = new Uint8Array(32).fill(7);
     const PAYMENT_HASH = hex.encode(sha256(PREIMAGE));
-    const REFUND_PK_SCRIPT = Uint8Array.from([0x51, 0x20, ...key(5)]);
+    const REFUND_PK_SCRIPT = p2tr(key(5));
+    const RECEIVER_PK_SCRIPT = p2tr(key(1));
+    const SENDER_PUBKEY = key(13);
 
     const script = () =>
         lightningSendVtxoScript({
@@ -69,27 +81,68 @@ describe("lightningSendVtxoScript", () => {
             claimDelay: 4096,
             emulatorPubkey: key(9),
             refundPkScript: REFUND_PK_SCRIPT,
+            senderPubkey: SENDER_PUBKEY,
+            receiverPkScript: RECEIVER_PK_SCRIPT,
         });
 
     it("is byte-identical to the reference solver's script — golden scriptPubKey", () => {
         expect(hex.encode(script().pkScript)).toBe(
-            "5120599796afd33a8cf329579236d24b8d2d3952cac697c7253009e3c21653a350cd",
+            "5120274d83873edc45e3ea9e6ac9fe4773de4b699200794eba83b25756c0f5d5c8d5",
         );
     });
 
-    it("compiles the three leaves the solver quotes, leaf for leaf", () => {
+    it("compiles VHTLC's six base leaves plus the two non-interactive ones, leaf for leaf", () => {
         const compiled = script();
-        const leaf = (name: string) => hex.encode(compiled.functionByName(name)!.leafScript);
         const hash160 = hex.encode(ripemd160(sha256(PREIMAGE)));
-        expect(leaf("claim")).toBe(
+
+        // claim: preimage + receiver + server
+        expect(compiled.claimScript).toBe(
             `a914${hash160}876920${hex.encode(key(1))}ad20${hex.encode(key(3))}ac`,
         );
-        expect(leaf("refund")).toBe(
-            "0400d2496bb17520531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337" +
-                "ad2080d629be41e1008917645787434410c211cf53baf9d00affccebae8e927d054eac",
+        // refund: sender + receiver + server, immediate — no condition, no CSV/CLTV
+        expect(compiled.refundScript).toBe(
+            `20${hex.encode(SENDER_PUBKEY)}ad20${hex.encode(key(1))}ad20${hex.encode(key(3))}ac`,
         );
-        expect(leaf("unilateralClaim")).toBe(
+        // refundWithoutReceiver: sender + server, CLTV(refundLocktime)
+        expect(compiled.refundWithoutReceiverScript.includes("b175")).toBe(true);
+        expect(
+            compiled.refundWithoutReceiverScript.endsWith(
+                `20${hex.encode(SENDER_PUBKEY)}ad20${hex.encode(key(3))}ac`,
+            ),
+        ).toBe(true);
+        // unilateralClaim: preimage + receiver alone, CSV(4096s)
+        expect(compiled.unilateralClaimScript).toBe(
             `a914${hash160}876903080040b275${"20"}${hex.encode(key(1))}ac`,
+        );
+        // unilateralRefund: sender + receiver, CSV(4608s), no server
+        expect(compiled.unilateralRefundScript.includes(hex.encode(key(3)))).toBe(false);
+        expect(
+            compiled.unilateralRefundScript.endsWith(
+                `20${hex.encode(SENDER_PUBKEY)}ad20${hex.encode(key(1))}ac`,
+            ),
+        ).toBe(true);
+        // unilateralRefundWithoutReceiver: sender alone, CSV(5120s)
+        expect(compiled.unilateralRefundWithoutReceiverScript.includes(hex.encode(key(1)))).toBe(
+            false,
+        );
+        expect(compiled.unilateralRefundWithoutReceiverScript.includes(hex.encode(key(3)))).toBe(
+            false,
+        );
+        expect(
+            compiled.unilateralRefundWithoutReceiverScript.endsWith(
+                `20${hex.encode(SENDER_PUBKEY)}ac`,
+            ),
+        ).toBe(true);
+        // nonInteractiveClaim: preimage + server + covenant-tweaked emulator, pinned to receiverPkScript
+        expect(compiled.nonInteractiveClaimScript).toBeDefined();
+        expect(compiled.nonInteractiveClaimScript!.startsWith(`a914${hash160}8769`)).toBe(true);
+        expect(compiled.nonInteractiveClaimScript!.includes(hex.encode(key(1)))).toBe(false);
+        // nonInteractiveRefund: server + covenant-tweaked emulator, pinned to refundPkScript
+        // (the trader's OWN pkScript) — no sender/receiver signature needed at all.
+        expect(compiled.nonInteractiveRefundScript).toBeDefined();
+        expect(compiled.nonInteractiveRefundScript!.includes("b175")).toBe(true);
+        expect(compiled.nonInteractiveRefundScript!.includes(hex.encode(SENDER_PUBKEY))).toBe(
+            false,
         );
     });
 
@@ -103,6 +156,38 @@ describe("lightningSendVtxoScript", () => {
             claimDelay: 4096,
             emulatorPubkey: key(9),
             refundPkScript: REFUND_PK_SCRIPT,
+            senderPubkey: SENDER_PUBKEY,
+            receiverPkScript: RECEIVER_PK_SCRIPT,
+        });
+        expect(hex.encode(other.pkScript)).not.toBe(hex.encode(script().pkScript));
+    });
+
+    it("produces a different address when the sender key changes", () => {
+        const other = lightningSendVtxoScript({
+            solverPubkey: key(1),
+            serverPubkey: key(3),
+            paymentHash: PAYMENT_HASH,
+            refundLocktime: 1_800_000_000,
+            claimDelay: 4096,
+            emulatorPubkey: key(9),
+            refundPkScript: REFUND_PK_SCRIPT,
+            senderPubkey: key(14),
+            receiverPkScript: RECEIVER_PK_SCRIPT,
+        });
+        expect(hex.encode(other.pkScript)).not.toBe(hex.encode(script().pkScript));
+    });
+
+    it("produces a different address when the receiver payout script changes", () => {
+        const other = lightningSendVtxoScript({
+            solverPubkey: key(1),
+            serverPubkey: key(3),
+            paymentHash: PAYMENT_HASH,
+            refundLocktime: 1_800_000_000,
+            claimDelay: 4096,
+            emulatorPubkey: key(9),
+            refundPkScript: REFUND_PK_SCRIPT,
+            senderPubkey: SENDER_PUBKEY,
+            receiverPkScript: p2tr(key(15)),
         });
         expect(hex.encode(other.pkScript)).not.toBe(hex.encode(script().pkScript));
     });
@@ -123,14 +208,23 @@ describe("unilateralClaimDelay", () => {
 describe("requests", () => {
     it("builds the lightning-send request exact-out with the invoice in the profile", () => {
         expect(
-            lightningSendRequest({ rfqId: RFQ_ID, invoice: "lnbc...", refundAddress: "ark1q..." }),
+            lightningSendRequest({
+                rfqId: RFQ_ID,
+                invoice: "lnbc...",
+                refundAddress: "ark1q...",
+                senderPubkey: key(13),
+            }),
         ).toEqual({
             v: 1,
             type: "rfq_request",
             rfq_id: RFQ_ID,
             pair: "arkade:BTC->lightning:BTC",
             amount_side: "to",
-            profile: { invoice: "lnbc...", refund_address: "ark1q..." },
+            profile: {
+                invoice: "lnbc...",
+                refund_address: "ark1q...",
+                sender_pubkey: hex.encode(key(13)),
+            },
         });
     });
 
@@ -183,7 +277,12 @@ describe("httpTransport", () => {
             fetchImpl: async () => jsonResponse(201, quoteFixture()),
         });
         const quote = await transport.requestQuote(
-            lightningSendRequest({ rfqId: RFQ_ID, invoice: "ln", refundAddress: "a" }),
+            lightningSendRequest({
+                rfqId: RFQ_ID,
+                invoice: "ln",
+                refundAddress: "a",
+                senderPubkey: key(13),
+            }),
         );
         expect(quote.to_amount).toBe(2100);
     });
@@ -200,7 +299,12 @@ describe("httpTransport", () => {
         });
         await expect(
             transport.requestQuote(
-                lightningSendRequest({ rfqId: RFQ_ID, invoice: "ln", refundAddress: "a" }),
+                lightningSendRequest({
+                    rfqId: RFQ_ID,
+                    invoice: "ln",
+                    refundAddress: "a",
+                    senderPubkey: key(13),
+                }),
             ),
         ).rejects.toMatchObject({ name: "SwapRefusal", reason: "exposure_cap" });
     });
@@ -271,7 +375,12 @@ describe("relayTransport", () => {
             rfq_id: request.rfq_id,
         }));
         const quote = await transport.requestQuote(
-            lightningSendRequest({ rfqId: newRfqId(), invoice: "ln", refundAddress: "a" }),
+            lightningSendRequest({
+                rfqId: newRfqId(),
+                invoice: "ln",
+                refundAddress: "a",
+                senderPubkey: key(13),
+            }),
         );
         expect(quote.type).toBe("rfq_quote");
         await transport.close();
@@ -292,7 +401,12 @@ describe("relayTransport", () => {
         );
         await expect(
             transport.requestQuote(
-                lightningSendRequest({ rfqId: newRfqId(), invoice: "ln", refundAddress: "a" }),
+                lightningSendRequest({
+                    rfqId: newRfqId(),
+                    invoice: "ln",
+                    refundAddress: "a",
+                    senderPubkey: key(13),
+                }),
             ),
         ).rejects.toThrow(SwapRefusal);
         expect((await transport.status(newRfqId()))?.state).toBe("quoted");
