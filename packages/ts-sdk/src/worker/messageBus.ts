@@ -15,7 +15,7 @@ import {
 import { ReadonlyWallet, Wallet } from "../wallet/wallet";
 import type { SettlementConfig } from "../wallet/vtxo-manager";
 import type { ContractWatcherConfig } from "../contracts/contractWatcher";
-import { ContractRepository, WalletRepository } from "../repositories";
+import { ContractRepository, IntentRepository, WalletRepository } from "../repositories";
 import {
     MessageBusInitializingError,
     MessageBusNotInitializedError,
@@ -102,6 +102,16 @@ type Options = {
      * every (re-)init.
      */
     messageTimeoutOverrides?: Record<string, number>;
+    /**
+     * Optional intent-lifecycle repository, handed to the worker's wallet as
+     * `storage.intentRepository`. Same opt-in as a main-thread wallet: without
+     * it the worker persists no settlement intent, reconciles none on restart,
+     * and counts intent-locked VTXOs as available. Pass the same repository the
+     * main thread uses so both sides read one intent state.
+     *
+     * Ignored when `buildServices` is supplied — that override owns `storage`.
+     */
+    intentRepository?: IntentRepository;
     debug?: boolean;
     buildServices?: (config: Initialize["config"]) => Promise<{
         arkProvider: ArkProvider;
@@ -186,6 +196,7 @@ export class MessageBus {
         readonlyWallet: ReadonlyWallet;
     }>;
     private readonly boundOnMessage = this.onMessage.bind(this);
+    private readonly intentRepository?: IntentRepository;
 
     /** Create the service-worker message bus with repositories and handler configuration. */
     constructor(
@@ -196,10 +207,12 @@ export class MessageBus {
             tickIntervalMs = 10_000,
             messageTimeoutMs = 30_000,
             messageTimeoutOverrides = {},
+            intentRepository,
             debug = false,
             buildServices,
         }: Options,
     ) {
+        this.intentRepository = intentRepository;
         this.handlers = new Map(messageHandlers.map((u) => [u.messageTag, u]));
         this.tickIntervalMs = tickIntervalMs;
         this.messageTimeoutMs = messageTimeoutMs;
@@ -393,6 +406,7 @@ export class MessageBus {
         const storage = {
             walletRepository: this.walletRepository,
             contractRepository: this.contractRepository,
+            ...(this.intentRepository && { intentRepository: this.intentRepository }),
         };
         const delegateProvider = config.delegateUrl
             ? new RestDelegateProvider(config.delegateUrl)
