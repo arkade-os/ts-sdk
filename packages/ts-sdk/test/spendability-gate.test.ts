@@ -13,6 +13,7 @@ import {
     Wallet,
     type ArkProvider,
     type Contract,
+    type GetVtxosFilter,
     type IndexerProvider,
     type OnchainProvider,
 } from "../src";
@@ -144,6 +145,7 @@ async function seededWallet(opts?: { intents?: InMemoryIntentRepository; signing
 }
 
 const scriptsOf = (vtxos: { script: string }[]) => vtxos.map((v) => v.script).sort();
+const txidsOf = (vtxos: { txid: string }[]) => vtxos.map((v) => v.txid).sort();
 
 describe("ContractHandler.isGenericallySpendable", () => {
     it("answers true for every built-in wallet-owned type", () => {
@@ -184,25 +186,58 @@ describe("getSpendableVtxos", () => {
     });
 
     it("passes its filter through unchanged", async () => {
-        const { wallet } = await seededWallet();
-        const spy = vi.spyOn(wallet, "getVtxos");
+        const { wallet, walletRepository, defaultScript } = await seededWallet();
+        // Two more of the wallet's own coins, each visible under exactly one
+        // filter flag, so an accessor that ignored the filter would show up.
+        const recoverableTxid = "e1".repeat(32);
+        const unrolledTxid = "e2".repeat(32);
+        await walletRepository.saveVtxos(await wallet.getAddress(), [
+            createMockExtendedVtxo({
+                txid: recoverableTxid,
+                vout: 0,
+                value: 10_000,
+                script: defaultScript,
+                isSwept: true,
+            }),
+            createMockExtendedVtxo({
+                txid: unrolledTxid,
+                vout: 0,
+                value: 10_000,
+                script: defaultScript,
+                isSpent: true,
+                isUnrolled: true,
+            }),
+        ]);
+
+        const ownTxid = defaultScript.slice(-2).repeat(32);
+        const markedTxid = MARKED_SCRIPT.slice(-2).repeat(32);
+        const cases: [GetVtxosFilter | undefined, string[]][] = [
+            // The default filter is { withRecoverable: true, withUnrolled: false }.
+            [undefined, [ownTxid, markedTxid, recoverableTxid]],
+            [{ withRecoverable: false }, [ownTxid, markedTxid]],
+            [{ withRecoverable: true }, [ownTxid, markedTxid, recoverableTxid]],
+            [
+                { withRecoverable: true, withUnrolled: false },
+                [ownTxid, markedTxid, recoverableTxid],
+            ],
+            [
+                { withRecoverable: true, withUnrolled: true },
+                [ownTxid, markedTxid, recoverableTxid, unrolledTxid],
+            ],
+        ];
+
         // Same filter, same result set modulo the gate: the accessor is
         // gate(getVtxos(filter)), so a site's migration cannot change its filter.
-        for (const filter of [
-            undefined,
-            { withRecoverable: false },
-            { withRecoverable: true },
-            { withRecoverable: true, withUnrolled: false },
-        ]) {
+        for (const [filter, expected] of cases) {
             const raw = await wallet.getVtxos(filter);
             const gated = await wallet.getSpendableVtxos(filter);
-            expect(scriptsOf(gated)).toEqual(
-                scriptsOf(
+            expect(txidsOf(gated)).toEqual(expected.sort());
+            expect(txidsOf(gated)).toEqual(
+                txidsOf(
                     raw.filter((v) => v.script !== ESCROW_SCRIPT && v.script !== UNKNOWN_SCRIPT),
                 ),
             );
         }
-        spy.mockRestore();
     });
 
     it("excludes intent-locked outpoints", async () => {

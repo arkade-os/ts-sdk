@@ -1166,9 +1166,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
     async getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
         const snapshot = await this.contractSnapshot();
         const vtxos = filterSnapshotVtxos(snapshot, filter, this._pendingSpendOutpoints);
-        const gated = gatedContracts(snapshot.map((_) => _.contract));
+        const { gated, pendingRecovery } = this.spendabilityView(snapshot);
         logGatedVtxos("getSpendableVtxos", vtxos, gated);
-        const pendingRecovery = this.selectPendingRecovery(snapshot);
         const selectable = vtxos.filter(
             (vtxo) => !gated.has(vtxo.script) && !pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
         );
@@ -1208,13 +1207,26 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return contractManager.getContractsWithVtxos();
     }
 
+    /**
+     * The two exclusion sets the gate is made of, derived from one snapshot so
+     * {@link getSpendableVtxos} and the balance answer about the same instant.
+     */
+    private spendabilityView(snapshot: readonly ContractWithVtxos[]): {
+        gated: ReturnType<typeof gatedContracts>;
+        pendingRecovery: ReadonlySet<string>;
+    } {
+        return {
+            gated: gatedContracts(snapshot.map((_) => _.contract)),
+            pendingRecovery: this.selectPendingRecovery(snapshot),
+        };
+    }
+
     /** The capability probes {@link computeOffchainBalance} needs, over one snapshot. */
     private async balanceCapabilities(
         snapshot: readonly ContractWithVtxos[],
         vtxos: readonly NormalizedExtendedVirtualCoin[],
     ): Promise<BalanceCapabilities> {
-        const pendingRecovery = this.selectPendingRecovery(snapshot);
-        const gated = gatedContracts(snapshot.map((_) => _.contract));
+        const { gated, pendingRecovery } = this.spendabilityView(snapshot);
         // Offline-first and fails open — see {@link spendableVtxosExcludingLocked}.
         const unlocked = new Set(
             (await spendableVtxosExcludingLocked([...vtxos], this.intentRepository)).map(

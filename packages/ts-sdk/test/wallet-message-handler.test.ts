@@ -1498,6 +1498,39 @@ describe("WalletMessageHandler repo-backed reads", () => {
         expect(vtxos[0].txid).toBe("aa".repeat(32));
     });
 
+    it("GET_VTXOS returns unrolled VTXOs only when asked", async () => {
+        setupHandler();
+        const settled = createMockExtendedVtxo({
+            txid: "aa".repeat(32),
+            value: 50000,
+            virtualStatus: { state: "settled" },
+        });
+        // Unrolling spends the virtual output, so nothing but the filter can surface it.
+        const unrolled = createMockExtendedVtxo({
+            txid: "bb".repeat(32),
+            value: 50000,
+            virtualStatus: { state: "settled" },
+            isSpent: true,
+            isUnrolled: true,
+        });
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, unrolled]);
+
+        const get = async (filter: Record<string, boolean>) =>
+            (
+                (await updater.handleMessage({
+                    ...baseMessage(),
+                    type: "GET_VTXOS",
+                    payload: { filter },
+                } as any)) as any
+            ).payload.vtxos.map((v: any) => v.txid);
+
+        expect(await get({ withRecoverable: true })).toEqual(["aa".repeat(32)]);
+        expect(await get({ withRecoverable: true, withUnrolled: true })).toEqual([
+            "aa".repeat(32),
+            "bb".repeat(32),
+        ]);
+    });
+
     it("GET_BALANCE reads from repository, not indexer", async () => {
         setupHandler();
         const settled = createMockExtendedVtxo({

@@ -1442,15 +1442,6 @@ export class WalletMessageHandler
         if (!this.readonlyWallet) return [];
         return this.readonlyWallet.getBoardingUtxos();
     }
-    /**
-     * Unspent vtxos from the repository. Ungated — {@link handleGetVtxos} mirrors
-     * `Wallet.getVtxos`, the raw reporting read.
-     */
-    private async getUnspentVtxosFromRepo() {
-        const vtxos = await this.getVtxosFromRepo();
-        return vtxos.filter((v) => !hasTerminalSpend(v));
-    }
-
     private async onWalletInitialized() {
         if (
             !this.readonlyWallet ||
@@ -1735,11 +1726,15 @@ export class WalletMessageHandler
         };
     }
 
+    /**
+     * Ungated repository read mirroring `Wallet.getVtxos`, the raw reporting read.
+     */
     private async handleGetVtxos(message: RequestGetVtxos) {
         if (!this.readonlyWallet) {
             throw new WalletNotInitializedError();
         }
-        const vtxos = await this.getUnspentVtxosFromRepo();
+        const allVtxos = await this.getVtxosFromRepo();
+        const vtxos = allVtxos.filter((v) => !hasTerminalSpend(v));
         const dustAmount = this.readonlyWallet.dustAmount;
         const includeRecoverable = message.payload.filter?.withRecoverable ?? false;
         const filteredVtxos = includeRecoverable
@@ -1757,7 +1752,13 @@ export class WalletMessageHandler
                   return true;
               });
 
-        return filteredVtxos;
+        // Unrolling terminally spends the virtual output, so unrolled coins never
+        // survive the unspent read above — append them on request, as `Wallet.getVtxos`
+        // does, otherwise `prepareUnrollTransaction` finds nothing behind the worker.
+        if (!message.payload.filter?.withUnrolled) {
+            return filteredVtxos;
+        }
+        return filteredVtxos.concat(allVtxos.filter((v) => hasTerminalSpend(v) && v.isUnrolled));
     }
 
     /** Tear down handler subscriptions, then delegate the full wipe to the wallet. */
