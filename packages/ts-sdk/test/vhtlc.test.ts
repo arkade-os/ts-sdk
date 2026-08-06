@@ -166,18 +166,23 @@ describe("VHTLC address", () => {
             expect(leaf).toBeDefined();
         });
 
-        it("builds nonInteractiveRefund as CLTV(refundLocktime) + server + covenant-tweaked emulator key, pinned to senderPkScript", () => {
+        it("builds nonInteractiveRefund as server + receiver + covenant-tweaked emulator key, no timelock, pinned to senderPkScript", () => {
             const senderPkScript = p2tr(key(6));
             const script = new VHTLC.Script({
                 ...baseOptions(),
                 nonInteractiveRefund: { senderPkScript, emulatorPubkey: key(5) },
             });
             expect(script.nonInteractiveRefundScript).toBeDefined();
-            // <locktime> CLTV DROP <server> CHECKSIGVERIFY <tweaked> CHECKSIG — same
-            // CLTV+DROP shape refundWithoutReceiver already uses (b175), no preimage
-            // condition (a refund leaf, not a claim leaf).
-            expect(script.nonInteractiveRefundScript!.includes("b175")).toBe(true);
+            // <server> CHECKSIGVERIFY <receiver> CHECKSIGVERIFY <tweaked> CHECKSIG —
+            // no CLTV/CSV opcode, no preimage condition (a refund leaf, not a claim
+            // leaf): nothing precedes the signer chain and nothing follows it.
+            expect(script.nonInteractiveRefundScript!.includes("b175")).toBe(false);
             expect(script.nonInteractiveRefundScript!.startsWith("a9")).toBe(false);
+            expect(
+                script.nonInteractiveRefundScript!.startsWith(
+                    `20${hex.encode(baseOptions().server)}ad20${hex.encode(baseOptions().receiver)}ad`,
+                ),
+            ).toBe(true);
             // the sender's OWN identity key never appears — only the covenant-tweaked key does
             expect(script.nonInteractiveRefundScript!.includes(hex.encode(key(1)))).toBe(false);
 

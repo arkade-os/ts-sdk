@@ -12,9 +12,10 @@
  *   and claims with the preimage — which appears publicly in the claim
  *   witness as the receipt. A failed swap refunds to the trader's address —
  *   by the trader's own `sender` key on every interactive path, or, if the
- *   trader's own key is ever lost, by anyone via the `nonInteractiveRefund`
- *   leaf, which the emulator co-signs under a covenant provably paying only
- *   the trader's pre-committed address.
+ *   trader's own key is ever lost, by the server and solver together via the
+ *   `nonInteractiveRefund` leaf (no trader signature, no timelock), which the
+ *   emulator co-signs under a covenant provably paying only the trader's
+ *   pre-committed address.
  * - `arkade:BTC|asset -> arkade:BTC|asset` — the trader accepts the quote by
  *   creating and funding an Intents **offer** (`createOffer`) bound to the
  *   quoted terms; the offer covenant lets any filler deliver, so the solver
@@ -525,13 +526,14 @@ export const unilateralRefundWithoutReceiverDelay = (claimDelay: number): number
  *
  * Every quote gets the full eight-leaf contract: VHTLC's own six
  * (`claim`/`refund`/`refundWithoutReceiver`/`unilateralClaim`/
- * `unilateralRefund`/`unilateralRefundWithoutReceiver`), plus two
- * non-interactive leaves the emulator can push without either party being
- * online — `nonInteractiveClaim` (pays the solver's own `receiverPkScript`)
- * and `nonInteractiveRefund` (pays the trader's own `refundPkScript`, and is
- * the one refund-side leaf that needs neither the trader's nor the solver's
- * signature — see {@link VHTLC.Options.nonInteractiveRefund}'s doc comment
- * for why that matters). */
+ * `unilateralRefund`/`unilateralRefundWithoutReceiver`), plus two more the
+ * emulator co-signs under a covenant pinning the payout to a pre-committed
+ * destination — `nonInteractiveClaim` (server + emulator, pays the solver's
+ * own `receiverPkScript`, no solver signature needed) and
+ * `nonInteractiveRefund` (server + solver + emulator, pays the trader's own
+ * `refundPkScript`, no timelock and no trader signature needed — see {@link
+ * VHTLC.Options.nonInteractiveRefund}'s doc comment for why that matters).
+ */
 export function lightningSendVtxoScript(params: {
     /** Binding field #1: the solver's x-only key, from the quote. */
     solverPubkey: Uint8Array;
@@ -612,10 +614,12 @@ export interface InvoiceFacts {
  *
  * Generates a fresh `sender` key per call and returns it as `senderPubkey`/
  * `senderPrivateKey`. THIS FUNCTION DOES NOT PERSIST IT: a caller that
- * discards the return value has traded away every interactive refund path —
- * `nonInteractiveRefund` still recovers the funds, but only after the
- * emulator observes `refundLocktime`, slower than any path that needs the
- * key.
+ * discards the return value has traded away every interactive refund path.
+ * `nonInteractiveRefund` can still recover the funds without it — but unlike
+ * `refundWithoutReceiver`'s old CLTV-gated guarantee, it needs the SOLVER's
+ * active cooperation (server + solver + emulator), not just infrastructure
+ * uptime. If the solver is also gone or unwilling, losing this key is a
+ * total loss, same as it would be without `nonInteractiveRefund` at all.
  */
 export async function requestLightningSend(
     wallet: IWallet,
@@ -874,7 +878,8 @@ export function deriveOnchainSend(input: {
  *   thing that can claim the L1 fill, across restarts included.
  * - **Persist `senderPubkey`/`senderPrivateKey`** — same obligation as {@link
  *   requestLightningSend}: discard it and every interactive refund path is
- *   gone, leaving only the slower `nonInteractiveRefund`.
+ *   gone, leaving recovery dependent on the solver's cooperation via
+ *   `nonInteractiveRefund` rather than guaranteed outright.
  * - **Stay claim-capable.** Unlike lightning-send the maker cannot go fully
  *   offline: it must claim the L1 HTLC (`awaitOnchainFill` →
  *   `claimOnchainFill`) before `htlc.refundLocktime`. Missing that window

@@ -87,7 +87,7 @@ describe("lightningSendVtxoScript", () => {
 
     it("is byte-identical to the reference solver's script — golden scriptPubKey", () => {
         expect(hex.encode(script().pkScript)).toBe(
-            "5120274d83873edc45e3ea9e6ac9fe4773de4b699200794eba83b25756c0f5d5c8d5",
+            "51206c98a83b6d3eb9524b50d67062e391dc84747625c594a87d930e3c2d9e16e01a",
         );
     });
 
@@ -137,10 +137,16 @@ describe("lightningSendVtxoScript", () => {
         expect(compiled.nonInteractiveClaimScript).toBeDefined();
         expect(compiled.nonInteractiveClaimScript!.startsWith(`a914${hash160}8769`)).toBe(true);
         expect(compiled.nonInteractiveClaimScript!.includes(hex.encode(key(1)))).toBe(false);
-        // nonInteractiveRefund: server + covenant-tweaked emulator, pinned to refundPkScript
-        // (the trader's OWN pkScript) — no sender/receiver signature needed at all.
+        // nonInteractiveRefund: server + receiver + covenant-tweaked emulator, no
+        // timelock, pinned to refundPkScript (the trader's OWN pkScript) — the
+        // sender's OWN identity key is never needed, only server + receiver + emulator.
         expect(compiled.nonInteractiveRefundScript).toBeDefined();
-        expect(compiled.nonInteractiveRefundScript!.includes("b175")).toBe(true);
+        expect(compiled.nonInteractiveRefundScript!.includes("b175")).toBe(false);
+        expect(
+            compiled.nonInteractiveRefundScript!.startsWith(
+                `20${hex.encode(key(3))}ad20${hex.encode(key(1))}ad`,
+            ),
+        ).toBe(true);
         expect(compiled.nonInteractiveRefundScript!.includes(hex.encode(SENDER_PUBKEY))).toBe(
             false,
         );

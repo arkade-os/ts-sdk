@@ -34,14 +34,19 @@ export namespace VHTLC {
             emulatorPubkey: Bytes;
         };
         /**
-         * Optional non-interactive refund leaf: `server` plus a covenant-tweaked
-         * emulator co-signer, pinned to `senderPkScript`, gated by the same
-         * `refundLocktime` as {@link Script.refundWithoutReceiver}. Every OTHER
-         * refund-side leaf in this contract requires the sender's own signature
-         * — if the sender permanently loses that key, none of them are
-         * reachable. This leaf is the one exception: it needs neither the
-         * sender nor the receiver, only the server and the emulator, so funds
-         * remain recoverable to the sender's pre-committed address even then.
+         * Optional non-interactive refund leaf: `server` + `receiver` + a
+         * covenant-tweaked emulator co-signer, pinned to `senderPkScript`, no
+         * timelock. Every OTHER refund-side leaf in this contract requires
+         * the sender's own signature — if the sender permanently loses that
+         * key, none of them are reachable. This leaf is the one exception:
+         * it needs neither the sender's presence nor their key, so funds
+         * remain recoverable to the sender's pre-committed address even
+         * then. It still needs the receiver (unlike `nonInteractiveClaim`,
+         * which needs only server + emulator) — deliberately: this is what
+         * lets server + receiver release the refund immediately, the moment
+         * they agree the swap has failed, rather than making the sender wait
+         * out `refundLocktime` the way {@link Script.refundWithoutReceiver}
+         * does.
          */
         nonInteractiveRefund?: {
             senderPkScript: Bytes;
@@ -63,9 +68,10 @@ export namespace VHTLC {
      * - **unilateralRefundWithoutReceiver**: Sender can refund unilaterally after delay
      * - **nonInteractiveClaim** (optional): server + emulator can push the
      *   receiver's claim, pinned to a pre-committed destination
-     * - **nonInteractiveRefund** (optional): server + emulator can push the
-     *   sender's refund after `refundLocktime`, pinned to a pre-committed
-     *   destination — recoverable even if the sender's own key is lost
+     * - **nonInteractiveRefund** (optional): server + receiver + emulator
+     *   can push the sender's refund immediately, no timelock, pinned to a
+     *   pre-committed destination — recoverable even if the sender's own key
+     *   is lost
      *
      * @example
      * ```typescript
@@ -170,10 +176,14 @@ export namespace VHTLC {
             let nonInteractiveRefundScript: Bytes | undefined;
             if (options.nonInteractiveRefund) {
                 arkadeScriptNir = enforcePayTo(options.nonInteractiveRefund.senderPkScript);
-                nonInteractiveRefundScript = CLTVMultisigTapscript.encode({
-                    absoluteTimelock: refundLocktime,
+                // No timelock: server + receiver together can release this
+                // immediately, same as `refund` above, just without needing
+                // the sender's own signature — the covenant is what still
+                // guarantees the payout can only reach the sender.
+                nonInteractiveRefundScript = MultisigTapscript.encode({
                     pubkeys: [
                         server,
+                        receiver,
                         computeArkadeScriptPublicKey(
                             options.nonInteractiveRefund.emulatorPubkey,
                             arkadeScriptNir,
