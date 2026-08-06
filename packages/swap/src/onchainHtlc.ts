@@ -34,6 +34,38 @@ export const ONCHAIN_ORDER_MARGIN_SECONDS = 2 * 60 * 60;
  * swap die and take the covenant refund — claiming into the counterparty's
  * live refund window risks losing the race AND publishing P. */
 export const ONCHAIN_CLAIM_MARGIN_SECONDS = 90 * 60;
+/**
+ * BIP65: a locktime at or above this is a unix timestamp; BELOW it, consensus
+ * reads it as a BLOCK HEIGHT.
+ *
+ * This corridor is seconds-only, on both sides of the wire. Block heights are
+ * not merely discouraged — a height-range value is silently *misread* rather
+ * than rejected: `classifyOnchainHtlc` compares median-time-past against it,
+ * and MTP (~1.7e9) exceeds any plausible height, so a funded HTLC reads as
+ * `refundable` the instant it confirms and the claim path is skipped. The
+ * refund transaction would then mature at a block height nowhere near the
+ * intended moment. The solver rejects heights too, but nothing on our side
+ * should ever emit one.
+ */
+export const LOCKTIME_THRESHOLD = 500_000_000;
+
+/**
+ * Refuse a locktime that consensus would read as a block height.
+ *
+ * Applied wherever a locktime ENTERS the package — a caller's argument or a
+ * solver's quote field — rather than at the point a script is built, so a
+ * height cannot reach a covenant, a transaction's `lockTime`, or a phase
+ * comparison by any route.
+ */
+export const assertUnixLocktime = (locktime: number, field: string): void => {
+    if (!Number.isInteger(locktime) || locktime < LOCKTIME_THRESHOLD || locktime > 0xffffffff) {
+        throw new Error(
+            `${field} must be a unix timestamp in ${LOCKTIME_THRESHOLD}..4294967295 ` +
+                `(seconds, never a block height), got ${locktime}`,
+        );
+    }
+};
+
 /** Bounds on the confirmation depth a quote may demand. */
 export const MAX_MIN_CONFIRMATIONS = 6;
 /** Conservative block interval for converting depths into wall-clock time. */
@@ -119,11 +151,7 @@ export function onchainHtlcScript(params: OnchainHtlcParams, network: OnchainNet
     if (params.claimKey.length !== 32 || params.refundKey.length !== 32) {
         throw new Error("claimKey and refundKey must be 32-byte x-only keys");
     }
-    if (!Number.isInteger(params.refundLocktime) || params.refundLocktime <= 0) {
-        throw new Error(
-            `refundLocktime must be a positive unix timestamp, got ${params.refundLocktime}`,
-        );
-    }
+    assertUnixLocktime(params.refundLocktime, "refundLocktime");
     const h160 = h160FromPaymentHash(params.paymentHash);
     const claim = btc.Script.encode(["HASH160", h160, "EQUALVERIFY", params.claimKey, "CHECKSIG"]);
     const refund = btc.Script.encode([

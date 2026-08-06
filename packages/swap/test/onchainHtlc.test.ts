@@ -11,6 +11,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import * as btc from "@scure/btc-signer";
 
 import {
+    LOCKTIME_THRESHOLD,
     ONCHAIN_CLAIM_MARGIN_SECONDS,
     awaitOnchainFill,
     buildHtlcClaim,
@@ -101,7 +102,40 @@ describe("onchainHtlcScript — golden", () => {
                 },
                 "bitcoin",
             ),
-        ).toThrow(/positive/);
+        ).toThrow(/unix timestamp/);
+    });
+
+    it("refuses a locktime consensus would read as a block height", () => {
+        // The dangerous case is not 0 — it is a plausible-looking height. BIP65
+        // reads anything below 500000000 as a height, and classifyOnchainHtlc
+        // compares median-time-past against this value, so a height would make
+        // a freshly funded HTLC report `refundable` at once and skip the claim.
+        for (const height of [1, 870_000, 499_999_999]) {
+            expect(() =>
+                onchainHtlcScript(
+                    {
+                        paymentHash: PAYMENT_HASH,
+                        claimKey: key(1),
+                        refundKey: key(3),
+                        refundLocktime: height,
+                    },
+                    "bitcoin",
+                ),
+            ).toThrow(/never a block height/);
+        }
+    });
+
+    it("accepts the smallest valid unix locktime and refuses just below it", () => {
+        const at = (refundLocktime: number) =>
+            onchainHtlcScript(
+                { paymentHash: PAYMENT_HASH, claimKey: key(1), refundKey: key(3), refundLocktime },
+                "bitcoin",
+            );
+        expect(() => at(LOCKTIME_THRESHOLD)).not.toThrow();
+        expect(() => at(LOCKTIME_THRESHOLD - 1)).toThrow(/never a block height/);
+        // above what a 4-byte nLockTime can carry, it would fail deep inside
+        // the transaction builder instead of here
+        expect(() => at(0x1_0000_0000)).toThrow(/never a block height/);
     });
 });
 

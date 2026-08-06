@@ -46,6 +46,7 @@ import {
 
 import lightningSendProgramJson from "./swap-lightning-send.program.json";
 import {
+    assertUnixLocktime,
     MAX_MIN_CONFIRMATIONS,
     ONCHAIN_CLAIM_MARGIN_SECONDS,
     ONCHAIN_ORDER_MARGIN_SECONDS,
@@ -522,6 +523,10 @@ export function lightningSendVtxoScript(params: {
     /** Where a refund must pay: the trader's P2TR pkScript (34 bytes). */
     refundPkScript: Uint8Array;
 }): InstanceType<typeof arkade.ArkadeProgramScript> {
+    // A public export: an external caller reaches this without passing through
+    // assertFundable, whose headroom gate only rejects a height-range value by
+    // accident of subtracting `now` from it.
+    assertUnixLocktime(params.refundLocktime, "refundLocktime");
     return new arkade.ArkadeProgramScript(
         lightningSendProgram,
         {
@@ -750,6 +755,12 @@ export function deriveOnchainSend(input: {
     ) {
         throw new Error("onchain-send quote is missing a binding field");
     }
+    // Both locktimes arrive from the solver and are BINDING — they go straight
+    // into a covenant and an L1 script. Gate them here, at the wire boundary,
+    // rather than trusting the builders further down: a height-range value is
+    // misread rather than rejected, so it must never get past this point.
+    assertUnixLocktime(refundLocktime, "quote refund_locktime");
+    assertUnixLocktime(htlcLocktime, "quote htlc_locktime");
 
     const script = lightningSendVtxoScript({
         solverPubkey: xOnly(hex.decode(quote.solver_pubkey), "solver key"),

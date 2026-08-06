@@ -253,6 +253,33 @@ describe("deriveOnchainSend", () => {
         delete quote.profile.htlc_locktime;
         expect(() => deriveOnchainSend({ quote, ...derivation() })).toThrow(/binding field/);
     });
+
+    // The solver is the source of both binding locktimes, and a height-range
+    // value is MISREAD rather than rejected downstream: classifyOnchainHtlc
+    // compares median-time-past against it, so the HTLC would report
+    // `refundable` the moment it funds and the claim would be skipped. Hence
+    // the refusal belongs here, at the wire boundary.
+    const heights = [1, 870_000, 499_999_999];
+
+    it("refuses a block-height refund_locktime from the solver", () => {
+        for (const height of heights) {
+            const quote = consistentQuote();
+            quote.refund_locktime = height;
+            expect(() => deriveOnchainSend({ quote, ...derivation() })).toThrow(
+                /never a block height/,
+            );
+        }
+    });
+
+    it("refuses a block-height htlc_locktime from the solver", () => {
+        for (const height of heights) {
+            const quote = consistentQuote();
+            quote.profile.htlc_locktime = height;
+            expect(() => deriveOnchainSend({ quote, ...derivation() })).toThrow(
+                /never a block height/,
+            );
+        }
+    });
 });
 
 describe("store — onchain records", () => {
