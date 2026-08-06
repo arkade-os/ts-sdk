@@ -308,6 +308,10 @@ export class ExpoWallet implements IWallet {
         return this.wallet.getVtxos(filter);
     }
 
+    getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
+        return this.wallet.getSpendableVtxos(filter);
+    }
+
     getBoardingUtxos(): Promise<ExtendedCoin[]> {
         return this.wallet.getBoardingUtxos();
     }

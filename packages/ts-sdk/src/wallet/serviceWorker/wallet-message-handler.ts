@@ -36,13 +36,18 @@ import {
 } from "../index";
 import { DelegateInfo } from "../../providers/delegate";
 import {
-    canRecoverOnchain,
-    canSpendOffchain,
     fetchVtxoCreatedAtByTxid,
     hasTerminalSpend,
     type NormalizedExtendedVirtualCoin,
 } from "../vtxo";
-import { ReadonlyWallet, Wallet, type ProviderConnectionState } from "../wallet";
+import {
+    ReadonlyWallet,
+    spendableVtxosExcludingLocked,
+    Wallet,
+    type ProviderConnectionState,
+} from "../wallet";
+import { computeOffchainBalance } from "../balance";
+import { gatedContracts, logGatedVtxos } from "../../contracts/spendability";
 import type {
     DeprecatedSignerMigrationReport,
     DeprecatedSignerReport,
@@ -198,6 +203,15 @@ export type RequestGetVtxos = RequestEnvelope & {
 export type ResponseGetVtxos = ResponseEnvelope & {
     type: "VTXOS";
     payload: { vtxos: Awaited<ReturnType<IWallet["getVtxos"]>> };
+};
+
+export type RequestGetSpendableVtxos = RequestEnvelope & {
+    type: "GET_SPENDABLE_VTXOS";
+    payload: { filter?: GetVtxosFilter };
+};
+export type ResponseGetSpendableVtxos = ResponseEnvelope & {
+    type: "SPENDABLE_VTXOS";
+    payload: { vtxos: Awaited<ReturnType<IWallet["getSpendableVtxos"]>> };
 };
 
 export type RequestGetBoardingUtxos = RequestEnvelope & {
@@ -702,6 +716,7 @@ export type WalletUpdaterRequest =
     | RequestGetBoardingAddress
     | RequestGetBalance
     | RequestGetVtxos
+    | RequestGetSpendableVtxos
     | RequestGetBoardingUtxos
     | RequestGetTransactionHistory
     | RequestGetStatus
@@ -747,6 +762,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseGetBoardingAddress
         | ResponseGetBalance
         | ResponseGetVtxos
+        | ResponseGetSpendableVtxos
         | ResponseGetBoardingUtxos
         | ResponseGetTransactionHistory
         | ResponseGetStatus
@@ -969,6 +985,19 @@ export class WalletMessageHandler
                         type: "VTXOS",
                         payload: { vtxos },
                     };
+                }
+                case "GET_SPENDABLE_VTXOS": {
+                    if (!this.readonlyWallet) {
+                        throw new WalletNotInitializedError();
+                    }
+                    const vtxos = await this.readonlyWallet.getSpendableVtxos(
+                        message.payload.filter,
+                    );
+                    return this.tagged({
+                        id,
+                        type: "SPENDABLE_VTXOS",
+                        payload: { vtxos },
+                    });
                 }
                 case "GET_BOARDING_UTXOS": {
                     const utxos = await this.getAllBoardingUtxos();
@@ -1348,13 +1377,22 @@ export class WalletMessageHandler
         await this.onWalletInitialized();
     }
 
-    private async handleGetBalance() {
-        const [boardingUtxos, allVtxos, pendingOutpoints] = await Promise.all([
+    /**
+     * The worker's own balance. Same bucketing rules as `Wallet.getBalance` —
+     * both call {@link computeOffchainBalance} — but deliberately a different
+     * freshness: this reads the repository directly, with no indexer sync, so a
+     * polling UI never pays for a network round-trip.
+     */
+    private async handleGetBalance(): Promise<WalletBalance> {
+        const [boardingUtxos, allVtxos, pendingOutpoints, contracts] = await Promise.all([
             this.getAllBoardingUtxos(),
             this.getVtxosFromRepo(),
             this.readonlyWallet
                 ? this.readonlyWallet.pendingRecoveryOutpoints()
                 : Promise.resolve(new Set<string>()),
+            this.readonlyWallet
+                ? this.readonlyWallet.getContractManager().then((m) => m.getContracts())
+                : Promise.resolve([]),
         ]);
 
         // boarding
@@ -1368,54 +1406,21 @@ export class WalletMessageHandler
             }
         }
 
-        // offchain — bucketed from a single repo read, with the same capability reads
-        // Wallet.getBalance uses so the two agree. No chain tip: this is an offline-first read.
-        const now = { timestamp: new Date() };
-
-        let settled = 0;
-        let preconfirmed = 0;
-        let recoverable = 0;
-        let pendingRecovery = 0;
-        // Past-cutoff (EXPIRED) deprecated-signer funds not yet swept are NOT
-        // spendable — bucket them under pendingRecovery, out of settled/preconfirmed.
-        //
-        // Pending is tested first, and before expiry: such funds cannot be renewed until they
-        // recover, so once their batch expiry passes `canRecoverOnchain` would otherwise claim
-        // them and report them as renewable-right-now. The branches are exclusive, so
-        // `totalOffchain` below counts each VTXO once.
-        for (const vtxo of allVtxos) {
-            if (hasTerminalSpend(vtxo)) continue;
-            if (pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
-                pendingRecovery += vtxo.value;
-            } else if (canRecoverOnchain(vtxo, now)) {
-                recoverable += vtxo.value;
-            } else if (canSpendOffchain(vtxo, now)) {
-                if (vtxo.isPreconfirmed) {
-                    preconfirmed += vtxo.value;
-                } else {
-                    settled += vtxo.value;
-                }
-            }
-        }
+        const gated = gatedContracts(contracts);
+        const unlocked = new Set(
+            (
+                await spendableVtxosExcludingLocked(allVtxos, this.readonlyWallet?.intentRepository)
+            ).map((vtxo) => `${vtxo.txid}:${vtxo.vout}`),
+        );
 
         const totalBoarding = confirmed + unconfirmed;
-        const totalOffchain = settled + preconfirmed + recoverable + pendingRecovery;
-
-        // aggregate asset balances from spendable virtual outputs
-        const assetBalances = new Map<string, bigint>();
-        for (const vtxo of allVtxos) {
-            if (hasTerminalSpend(vtxo)) continue;
-            if (vtxo.assets) {
-                for (const a of vtxo.assets) {
-                    const current = assetBalances.get(a.assetId) ?? 0n;
-                    assetBalances.set(a.assetId, current + a.amount);
-                }
-            }
-        }
-        const assets = Array.from(assetBalances.entries()).map(([assetId, amount]) => ({
-            assetId,
-            amount,
-        }));
+        // No chain tip: this is an offline-first read.
+        const offchain = computeOffchainBalance(allVtxos, {
+            now: { timestamp: new Date() },
+            isPendingRecovery: (vtxo) => pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
+            isGenericallySpendable: (vtxo) => !gated.has(vtxo.script),
+            isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
+        });
 
         return {
             boarding: {
@@ -1423,13 +1428,14 @@ export class WalletMessageHandler
                 unconfirmed,
                 total: totalBoarding,
             },
-            settled,
-            preconfirmed,
-            available: settled + preconfirmed,
-            recoverable,
-            pendingRecovery,
-            total: totalBoarding + totalOffchain,
-            assets,
+            settled: offchain.settled,
+            preconfirmed: offchain.preconfirmed,
+            available: offchain.available,
+            recoverable: offchain.recoverable,
+            pendingRecovery: offchain.pendingRecovery,
+            total: totalBoarding + offchain.total,
+            assets: offchain.assets,
+            availableAssets: offchain.availableAssets,
         };
     }
     private async getAllBoardingUtxos(): Promise<ExtendedCoin[]> {
@@ -1437,9 +1443,10 @@ export class WalletMessageHandler
         return this.readonlyWallet.getBoardingUtxos();
     }
     /**
-     * Get spendable vtxos from the repository
+     * Unspent vtxos from the repository. Ungated — {@link handleGetVtxos} mirrors
+     * `Wallet.getVtxos`, the raw reporting read.
      */
-    private async getSpendableVtxos() {
+    private async getUnspentVtxosFromRepo() {
         const vtxos = await this.getVtxosFromRepo();
         return vtxos.filter((v) => !hasTerminalSpend(v));
     }
@@ -1692,6 +1699,17 @@ export class WalletMessageHandler
             .filter((v) => outpointSet.has(`${v.txid}:${v.vout}`))
             .map((v) => ({ ...v, contractScript: v.script }));
 
+        // Explicit outpoints, so ungated — but delegation hands the spending
+        // authority itself to a third party, which for a gated (e.g. escrowed)
+        // contract means giving away its cancel path. Legitimate deliberately,
+        // bad by accident: report it. Diagnostics only, never fatal.
+        try {
+            const manager = await wallet.getContractManager();
+            logGatedVtxos("delegate", filtered, gatedContracts(await manager.getContracts()));
+        } catch {
+            // ignored
+        }
+
         const result = await delegateManager.delegate(
             filtered,
             destination,
@@ -1721,7 +1739,7 @@ export class WalletMessageHandler
         if (!this.readonlyWallet) {
             throw new WalletNotInitializedError();
         }
-        const vtxos = await this.getSpendableVtxos();
+        const vtxos = await this.getUnspentVtxosFromRepo();
         const dustAmount = this.readonlyWallet.dustAmount;
         const includeRecoverable = message.payload.filter?.withRecoverable ?? false;
         const filteredVtxos = includeRecoverable

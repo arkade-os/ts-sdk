@@ -150,7 +150,9 @@ import { DescriptorIdentity } from "../identity/descriptorIdentity";
 import { HDWalletCapable } from "./hdWalletCapable";
 import { deriveDescriptorLeafPubKey } from "../identity/descriptor";
 import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
-import { CandidateDeps, DiscoveryDeps } from "../contracts/types";
+import { CandidateDeps, ContractWithVtxos, DiscoveryDeps } from "../contracts/types";
+import { gatedContracts, logGatedVtxos } from "../contracts/spendability";
+import { computeOffchainBalance, type BalanceCapabilities } from "./balance";
 import { InputSignerRouter, InputSigningJob } from "./inputSignerRouter";
 import {
     DescriptorSigningProviderMissingError,
@@ -332,6 +334,37 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
 }
 
 export { DescriptorSigningProviderMissingError, MissingSigningDescriptorError };
+
+/**
+ * Apply {@link GetVtxosFilter} to a contract snapshot. Pure, so `getVtxos` and
+ * {@link IReadonlyWallet.getSpendableVtxos} share one definition of the filter
+ * instead of each re-reading (and possibly disagreeing on) the snapshot.
+ *
+ * No chain tip: the balance and send paths are offline-first reads, so
+ * height-encoded expiry reads as not expired here too.
+ */
+export function filterSnapshotVtxos(
+    snapshot: readonly ContractWithVtxos[],
+    filter: GetVtxosFilter | undefined,
+    pendingSpendOutpoints: ReadonlySet<string>,
+): NormalizedExtendedVirtualCoin[] {
+    const f = filter ?? { withRecoverable: true, withUnrolled: false };
+    const now = { timestamp: new Date() };
+    return snapshot
+        .flatMap((_) => _.vtxos)
+        .filter((vtxo) => {
+            if (pendingSpendOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
+                return false;
+            }
+            if (!hasTerminalSpend(vtxo)) {
+                if (!f.withRecoverable && canRecoverOnchain(vtxo, now)) {
+                    return false;
+                }
+                return true;
+            }
+            return !!(f.withUnrolled && vtxo.isUnrolled);
+        });
+}
 
 /**
  * Drop VTXOs whose outpoint is locked by a non-terminal intent. Returns the
@@ -1066,20 +1099,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Return the wallet's combined onchain and offchain balances.
      */
     async getBalance(): Promise<WalletBalance> {
-        const [boardingUtxos, vtxos, pendingOutpoints] = await Promise.all([
+        const [boardingUtxos, snapshot] = await Promise.all([
             this.getBoardingUtxos(),
-            this.getVtxos(),
-            this.pendingRecoveryOutpoints(),
+            this.contractSnapshot(),
         ]);
-        const isPendingRecovery = (coin: ExtendedVirtualCoin) =>
-            pendingOutpoints.has(`${coin.txid}:${coin.vout}`);
-
-        // `settled`/`preconfirmed`/`total` and the asset rollup count every
-        // spendable VTXO, including those locked by a non-terminal intent (still
-        // the wallet's funds); only `available` subtracts the locked ones. The
-        // lock read is offline-first and fails open — see
-        // {@link spendableVtxosExcludingLocked}.
-        const unlockedVtxos = await spendableVtxosExcludingLocked(vtxos, this.intentRepository);
+        const vtxos = filterSnapshotVtxos(snapshot, undefined, this._pendingSpendOutpoints);
 
         // boarding
         let confirmed = 0;
@@ -1092,62 +1116,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
             }
         }
 
-        // offchain
-        let recoverable = 0;
-        let pendingRecovery = 0;
-        // Buckets read the same capability the send path does, so nothing counted as available can
-        // be refused by `send`. No chain tip: balance is an offline-first read and must not gain a
-        // network dependency, so height-encoded expiry reads as not expired — as it does on the
-        // send path.
-        const now = { timestamp: new Date() };
-        // Funds under a past-cutoff (EXPIRED) deprecated signer that are not yet
-        // swept are NOT spendable — excluded from settled/preconfirmed/available
-        // and surfaced under `pendingRecovery` (they still count toward `total`).
-        const settled = vtxos
-            .filter(
-                (coin) =>
-                    canSpendOffchain(coin, now) && !coin.isPreconfirmed && !isPendingRecovery(coin),
-            )
-            .reduce((sum, coin) => sum + coin.value, 0);
-        const preconfirmed = vtxos
-            .filter(
-                (coin) =>
-                    canSpendOffchain(coin, now) && coin.isPreconfirmed && !isPendingRecovery(coin),
-            )
-            .reduce((sum, coin) => sum + coin.value, 0);
-        // Spendable-right-now subset: the same rule, but over VTXOs not
-        // currently locked by an in-flight intent.
-        const available = unlockedVtxos
-            .filter((coin) => canSpendOffchain(coin, now) && !isPendingRecovery(coin))
-            .reduce((sum, coin) => sum + coin.value, 0);
-        // `!isPendingRecovery` keeps the buckets disjoint, so `totalOffchain` counts each VTXO
-        // once: a pending-recovery VTXO past its batch expiry satisfies `canRecoverOnchain` too,
-        // and it belongs to `pendingRecovery` — it cannot be renewed until it recovers.
-        recoverable = vtxos
-            .filter((coin) => canRecoverOnchain(coin, now) && !isPendingRecovery(coin))
-            .reduce((sum, coin) => sum + coin.value, 0);
-        pendingRecovery = vtxos
-            .filter(isPendingRecovery)
-            .reduce((sum, coin) => sum + coin.value, 0);
-
+        // `settled`/`preconfirmed`/`total` and the `assets` rollup count every VTXO
+        // the wallet owns, including escrowed and intent-locked ones; `available`
+        // and `availableAssets` count only what generic spending would pick, so
+        // nothing reported as available can be refused by `send`.
         const totalBoarding = confirmed + unconfirmed;
-        const totalOffchain = settled + preconfirmed + recoverable + pendingRecovery;
-
-        // aggregate asset balances from spendable virtual outputs
-        const assetBalances = new Map<string, bigint>();
-        for (const vtxo of vtxos) {
-            if (hasTerminalSpend(vtxo)) continue;
-            if (vtxo.assets) {
-                for (const a of vtxo.assets) {
-                    const current = assetBalances.get(a.assetId) ?? 0n;
-                    assetBalances.set(a.assetId, current + a.amount);
-                }
-            }
-        }
-        const assets = Array.from(assetBalances.entries()).map(([assetId, amount]) => ({
-            assetId,
-            amount,
-        }));
+        const offchain = computeOffchainBalance(
+            vtxos,
+            await this.balanceCapabilities(snapshot, vtxos),
+        );
 
         return {
             boarding: {
@@ -1155,42 +1132,101 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 unconfirmed,
                 total: totalBoarding,
             },
-            settled,
-            preconfirmed,
-            available,
-            recoverable,
-            pendingRecovery,
-            total: totalBoarding + totalOffchain,
-            assets,
+            settled: offchain.settled,
+            preconfirmed: offchain.preconfirmed,
+            available: offchain.available,
+            recoverable: offchain.recoverable,
+            pendingRecovery: offchain.pendingRecovery,
+            total: totalBoarding + offchain.total,
+            assets: offchain.assets,
+            availableAssets: offchain.availableAssets,
         };
     }
 
     /**
      * Return virtual outputs tracked by the wallet.
      *
+     * The raw reporting/recovery read: escrowed, locked and awaiting-recovery
+     * funds are all present. Coin selection must use
+     * {@link getSpendableVtxos} instead — feeding this straight into
+     * `settle({ inputs })` or `sendBitcoin({ selectedVtxos })` bypasses the
+     * generic-spending gate.
+     *
      * @param filter - Optional flags controlling whether recoverable or unrolled VTXOs are included
      */
     async getVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
-        const f = filter ?? { withRecoverable: true, withUnrolled: false };
-        const contractManager = await this.getContractManager();
-        const vtxos = await contractManager.getContractsWithVtxos();
+        return filterSnapshotVtxos(
+            await this.contractSnapshot(),
+            filter,
+            this._pendingSpendOutpoints,
+        );
+    }
 
-        // No chain tip, for the same reason as `getBalance`, which this must agree with.
-        const now = { timestamp: new Date() };
-        return vtxos
-            .flatMap((_) => _.vtxos)
-            .filter((vtxo) => {
-                if (this._pendingSpendOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
-                    return false;
-                }
-                if (!hasTerminalSpend(vtxo)) {
-                    if (!f.withRecoverable && canRecoverOnchain(vtxo, now)) {
-                        return false;
-                    }
-                    return true;
-                }
-                return !!(f.withUnrolled && vtxo.isUnrolled);
-            });
+    /** @inheritdoc */
+    async getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
+        const snapshot = await this.contractSnapshot();
+        const vtxos = filterSnapshotVtxos(snapshot, filter, this._pendingSpendOutpoints);
+        const gated = gatedContracts(snapshot.map((_) => _.contract));
+        logGatedVtxos("getSpendableVtxos", vtxos, gated);
+        const pendingRecovery = this.selectPendingRecovery(snapshot);
+        const selectable = vtxos.filter(
+            (vtxo) => !gated.has(vtxo.script) && !pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
+        );
+        return spendableVtxosExcludingLocked(selectable, this.intentRepository);
+    }
+
+    /**
+     * Debug-log any explicit input the gate would have excluded. Explicit-input
+     * APIs stay ungated on purpose (naming an outpoint *is* the intent the gate
+     * protects, and it is how an escrowed deposit is recovered once generic
+     * selection stops covering it), so this only makes the crossing visible —
+     * notably `settle({ inputs: await wallet.getVtxos() })`, which launders the
+     * raw read into a spend. Never throws into a spend path.
+     */
+    protected async logUngatedInputs(
+        source: string,
+        inputs: readonly { txid: string; vout: number; script?: string }[],
+    ): Promise<void> {
+        try {
+            // Pure repository read: no sync, so this cannot slow or fail a spend.
+            const manager = await this.getContractManager();
+            logGatedVtxos(source, inputs, gatedContracts(await manager.getContracts()));
+        } catch {
+            // diagnostics only
+        }
+    }
+
+    /**
+     * One contract+VTXO read. `getContractsWithVtxos` opportunistically syncs
+     * against the indexer, so every caller that needs more than one view of the
+     * wallet's coins takes a single snapshot and derives them all from it —
+     * otherwise the gate and the pending-recovery set answer about two different
+     * points in time, and each read costs another sync.
+     */
+    protected async contractSnapshot(): Promise<ContractWithVtxos[]> {
+        const contractManager = await this.getContractManager();
+        return contractManager.getContractsWithVtxos();
+    }
+
+    /** The capability probes {@link computeOffchainBalance} needs, over one snapshot. */
+    private async balanceCapabilities(
+        snapshot: readonly ContractWithVtxos[],
+        vtxos: readonly NormalizedExtendedVirtualCoin[],
+    ): Promise<BalanceCapabilities> {
+        const pendingRecovery = this.selectPendingRecovery(snapshot);
+        const gated = gatedContracts(snapshot.map((_) => _.contract));
+        // Offline-first and fails open — see {@link spendableVtxosExcludingLocked}.
+        const unlocked = new Set(
+            (await spendableVtxosExcludingLocked([...vtxos], this.intentRepository)).map(
+                (vtxo) => `${vtxo.txid}:${vtxo.vout}`,
+            ),
+        );
+        return {
+            now: { timestamp: new Date() },
+            isPendingRecovery: (vtxo) => pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
+            isGenericallySpendable: (vtxo) => !gated.has(vtxo.script),
+            isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
+        };
     }
 
     /**
@@ -1199,13 +1235,16 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * classifies the repo's contracts against the cached signer set (active +
      * {@link _deprecatedSigners}, cutoffs included). Empty fast-path when no
      * signer is deprecated. Consumed by {@link getBalance} (the `pendingRecovery`
-     * bucket) and the send coin-selection path so neither counts nor spends them.
+     * bucket) and by {@link getSpendableVtxos} so neither counts nor spends them.
      */
     async pendingRecoveryOutpoints(): Promise<Set<string>> {
         if (this._deprecatedSigners.size === 0) return new Set();
-        const contractManager = await this.getContractManager();
-        const contractsWithVtxos = await contractManager.getContractsWithVtxos();
-        return selectPendingRecoveryOutpoints(contractsWithVtxos, {
+        return this.selectPendingRecovery(await this.contractSnapshot());
+    }
+
+    private selectPendingRecovery(snapshot: readonly ContractWithVtxos[]): Set<string> {
+        if (this._deprecatedSigners.size === 0) return new Set();
+        return selectPendingRecoveryOutpoints(snapshot as ContractWithVtxos[], {
             active: toXOnlySignerHex(hex.encode(this.offchainTapscript.options.serverPubKey)),
             deprecated: this._deprecatedSigners,
         });
@@ -3151,6 +3190,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         }
 
         if (params.selectedVtxos && params.selectedVtxos.length > 0) {
+            void this.logUngatedInputs("sendBitcoin({ selectedVtxos })", params.selectedVtxos);
             return this._withTxLock(async () => {
                 // Snapshot the active receive tapscript synchronously
                 // before any `await` so the change output's pkScript and
@@ -3232,6 +3272,13 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     /**
      * Settle boarding inputs and/or virtual outputs into a finalized mainnet transaction.
      *
+     * `params.inputs` is **ungated**: whatever the caller names is settled,
+     * including VTXOs generic selection would skip. That is what makes an
+     * escrowed or otherwise gated deposit recoverable by hand — but it also
+     * means `settle({ inputs: await wallet.getVtxos() })` silently bypasses the
+     * gate. Pass {@link getSpendableVtxos} instead when the intent is "settle
+     * whatever is spendable".
+     *
      * @param params - Optional settlement inputs and outputs. When omitted, the wallet settles all eligible funds.
      * @param eventCallback - Optional callback invoked for settlement stream events.
      * @returns The finalized Arkade transaction id
@@ -3258,6 +3305,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     }
                 }
             }
+            void this.logUngatedInputs("settle({ inputs })", params.inputs as ExtendedCoin[]);
         }
 
         // Resolve the wallet's receive address once and reuse it for every read
@@ -3312,7 +3360,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                 amount += utxo.value - inputFee.satoshis;
             }
 
-            const vtxos = await this.getVtxos({ withRecoverable: true });
+            const vtxos = await this.getSpendableVtxos({ withRecoverable: true });
 
             // Cap the VTXOs per settlement to stay under the server's
             // intent-size limit (MAX_VTXOS_PER_SETTLEMENT inputs) and its
@@ -4793,15 +4841,12 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             this.recipientAddressContext(serverPubKey),
         );
 
-        const allVirtualCoins = await this.getVtxos({
+        // Escrowed contracts, past-cutoff deprecated-signer funds (the operator
+        // will not co-sign them) and intent-locked outpoints are all excluded by
+        // the accessor, from one snapshot.
+        const virtualCoins = await this.getSpendableVtxos({
             withRecoverable: false,
         });
-        // Drop funds under a past-cutoff (EXPIRED) deprecated signer: the operator
-        // will not co-sign a spend of them, so selecting one would fail at submit.
-        const pendingRecovery = await this.pendingRecoveryOutpoints();
-        const virtualCoins = pendingRecovery.size
-            ? allVirtualCoins.filter((c) => !pendingRecovery.has(`${c.txid}:${c.vout}`))
-            : allVirtualCoins;
 
         // keep track of asset changes
         const assetChanges = new Map<string, bigint>();
@@ -5149,6 +5194,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     /**
      * Build an offchain transaction from the given inputs and outputs,
      * sign it, submit to the Arkade provider, and finalize.
+     *
+     * Signs whatever it is handed, ungated — see {@link settle} for the trade.
+     *
      * @returns The Arkade transaction id and server-signed checkpoint PSBTs (for bookkeeping)
      */
     async buildAndSubmitOffchainTx(
@@ -5156,6 +5204,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         outputs: TransactionOutput[],
         serverUnrollScript: CSVMultisigTapscript.Type = this.serverUnrollScript,
     ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
+        void this.logUngatedInputs("buildAndSubmitOffchainTx", inputs);
         const offchainTx = buildOffchainTx(
             inputs.map((input) => {
                 return {

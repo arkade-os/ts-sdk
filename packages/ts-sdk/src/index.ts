@@ -398,6 +398,11 @@ import {
 } from "./contracts/arkcontract";
 import type { ParsedArkContract } from "./contracts/arkcontract";
 import { hasCandidates, isDiscoverable } from "./contracts/types";
+import {
+    isContractGenericallySpendable,
+    gatedContracts,
+    logGatedVtxos,
+} from "./contracts/spendability";
 import type {
     Contract,
     ContractVtxo,
@@ -648,6 +653,9 @@ export {
     VHTLCContractHandler,
     BoardingContractHandler,
     ArkadeContractHandler,
+    isContractGenericallySpendable,
+    gatedContracts,
+    logGatedVtxos,
     encodeArkContract,
     decodeArkContract,
     contractFromArkContract,

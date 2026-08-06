@@ -208,6 +208,45 @@ describe("ServiceWorkerReadonlyWallet", () => {
         await expect(wallet.getBoardingUtxos()).resolves.toEqual(utxos);
     });
 
+    it("asks the worker for the gated set over its own message", async () => {
+        // The gate reads contract-row metadata, which exists only inside the
+        // worker — so this cannot be a main-thread filter over GET_VTXOS.
+        const vtxos = [{ txid: "tx", vout: 0, value: 1, virtualStatus: { state: "settled" } }];
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
+            message.type === "GET_SPENDABLE_VTXOS"
+                ? {
+                      id: message.id,
+                      tag: messageTag,
+                      type: "SPENDABLE_VTXOS",
+                      payload: { vtxos },
+                  }
+                : null,
+        );
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        await expect(wallet.getSpendableVtxos()).resolves.toMatchObject([{ txid: "tx" }]);
+    });
+
+    it("fails closed against a worker that predates the message", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
+            message.type === "GET_SPENDABLE_VTXOS"
+                ? { id: message.id, tag: messageTag, error: new Error("Unknown message") }
+                : null,
+        );
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        await expect(wallet.getSpendableVtxos()).rejects.toThrow("Unknown message");
+        // No GET_VTXOS fallback: degrading to the ungated read would make the
+        // gate advisory for the whole worker-activation window of every deploy.
+        expect(serviceWorker.postMessage).not.toHaveBeenCalledWith(
+            expect.objectContaining({ type: "GET_VTXOS" }),
+        );
+    });
+
     it("rejects when the response contains an error", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
             id: message.id,

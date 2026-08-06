@@ -81,6 +81,9 @@ export const DefaultContractHandler: ContractHandler<DefaultContractParams, Defa
         return forfeitExitSpendablePaths(script, contract, context);
     },
 
+    /** The wallet's own money. */
+    isGenericallySpendable: () => true,
+
     discoverAt: discoverAtViaRange(discoverDefaultRange),
 
     discoverRange: discoverDefaultRange,

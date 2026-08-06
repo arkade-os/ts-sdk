@@ -508,6 +508,7 @@ describe("WalletMessageHandler handleMessage", () => {
         };
         (updater as any).walletRepository = {
             getVtxos: vi.fn().mockResolvedValue([]),
+            getSpendableVtxos: vi.fn().mockResolvedValue([]),
         };
         // wallet is NOT set — readonly only
 
@@ -566,6 +567,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue(vtxos),
+            getSpendableVtxos: vi.fn().mockResolvedValue(vtxos),
             getDelegateManager: vi.fn().mockResolvedValue({
                 delegate: delegateSpy,
             }),
@@ -609,6 +611,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue(vtxos),
+            getSpendableVtxos: vi.fn().mockResolvedValue(vtxos),
             getDelegateManager: vi.fn().mockResolvedValue({
                 delegate: delegateSpy,
             }),
@@ -639,6 +642,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue(allVtxos),
+            getSpendableVtxos: vi.fn().mockResolvedValue(allVtxos),
             getDelegateManager: vi.fn().mockResolvedValue({ delegate: delegateSpy }),
         };
 
@@ -659,6 +663,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue([]),
+            getSpendableVtxos: vi.fn().mockResolvedValue([]),
             getDelegateManager: vi.fn().mockResolvedValue(undefined),
         };
 
@@ -1254,6 +1259,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).indexerProvider = {};
         (updater as any).walletRepository = {
             getVtxos: vi.fn().mockResolvedValue([]),
+            getSpendableVtxos: vi.fn().mockResolvedValue([]),
             saveVtxos: vi.fn().mockResolvedValue(undefined),
             getUtxos: vi.fn().mockResolvedValue([]),
             deleteUtxos: vi.fn().mockResolvedValue(undefined),
@@ -1290,6 +1296,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).indexerProvider = {};
         (updater as any).walletRepository = {
             getVtxos: vi.fn().mockResolvedValue([]),
+            getSpendableVtxos: vi.fn().mockResolvedValue([]),
             saveVtxos: vi.fn().mockResolvedValue(undefined),
             getUtxos: vi.fn().mockResolvedValue([]),
             deleteUtxos: vi.fn().mockResolvedValue(undefined),
@@ -1582,8 +1589,8 @@ describe("WalletMessageHandler repo-backed reads", () => {
 
     it("GET_VTXOS aggregates across contract addresses", async () => {
         const contracts = [
-            { address: "contract-1", script: "s1" },
-            { address: "contract-2", script: "s2" },
+            { address: "contract-1", script: "s1", type: "default" },
+            { address: "contract-2", script: "s2", type: "default" },
         ];
         setupHandler(contracts);
 
@@ -1614,8 +1621,8 @@ describe("WalletMessageHandler repo-backed reads", () => {
 
     it("GET_BALANCE accounts for VTXOs from all contracts", async () => {
         const contracts = [
-            { address: "contract-1", script: "s1" },
-            { address: "contract-2", script: "s2" },
+            { address: "contract-1", script: "s1", type: "default" },
+            { address: "contract-2", script: "s2", type: "default" },
         ];
         setupHandler(contracts);
 
@@ -1648,6 +1655,67 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 available: 30000,
             },
         });
+    });
+
+    it("GET_BALANCE gates escrowed funds out of available but keeps them owned", async () => {
+        const contracts = [
+            { address: "contract-1", script: "s1", type: "default" },
+            // An unmarked arkade row: the escrow case the gate exists for.
+            { address: "contract-2", script: "s2", type: "arkade" },
+        ];
+        setupHandler(contracts);
+
+        await walletRepo.saveVtxos("contract-1", [
+            createMockExtendedVtxo({
+                txid: "aa".repeat(32),
+                value: 10000,
+                virtualStatus: { state: "settled" },
+                script: "s1",
+                assets: [{ assetId: "cc".repeat(32), amount: 3n }],
+            }),
+        ]);
+        await walletRepo.saveVtxos("contract-2", [
+            createMockExtendedVtxo({
+                txid: "bb".repeat(32),
+                value: 20000,
+                virtualStatus: { state: "settled" },
+                script: "s2",
+                assets: [{ assetId: "cc".repeat(32), amount: 4n }],
+            }),
+        ]);
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_BALANCE",
+        } as any);
+
+        expect(response).toMatchObject({
+            type: "BALANCE",
+            payload: {
+                settled: 30000,
+                total: 30000,
+                available: 10000,
+                assets: [{ assetId: "cc".repeat(32), amount: 7n }],
+                availableAssets: [{ assetId: "cc".repeat(32), amount: 3n }],
+            },
+        });
+    });
+
+    it("GET_SPENDABLE_VTXOS delegates to the wallet's gated accessor", async () => {
+        setupHandler();
+        const vtxos = [createMockExtendedVtxo({ txid: "aa".repeat(32) })];
+        (updater as any).readonlyWallet.getSpendableVtxos = vi.fn().mockResolvedValue(vtxos);
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_SPENDABLE_VTXOS",
+            payload: { filter: { withRecoverable: false } },
+        } as any);
+
+        expect((updater as any).readonlyWallet.getSpendableVtxos).toHaveBeenCalledWith({
+            withRecoverable: false,
+        });
+        expect(response).toMatchObject({ type: "SPENDABLE_VTXOS", payload: { vtxos } });
     });
 
     it("GET_VTXOS deduplicates across wallet and contract addresses", async () => {

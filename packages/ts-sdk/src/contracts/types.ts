@@ -240,6 +240,22 @@ export interface ContractHandler<P = Record<string, unknown>, S extends VtxoScri
      * Returns empty array if no paths are available.
      */
     getSpendablePaths(script: S, contract: Contract, context: PathContext): PathSelection[];
+
+    /**
+     * Whether this contract's VTXOs may be picked by *generic* wallet spending —
+     * send, settle, renewal, asset operations, offboard, `available` balance.
+     * Explicit-input APIs (`settle({ inputs })`, `sendBitcoin({ selectedVtxos })`,
+     * …) stay open regardless: naming an outpoint is the intent this gate protects.
+     *
+     * Pure, synchronous and offline — it runs inside the service worker, so no
+     * chain tip, no network, no live plugin object. Absent or `false` ⇒ NOT
+     * spendable: a type core cannot reason about must not leak by omission.
+     *
+     * No `script` parameter: deriving it costs a taproot tree per contract on a
+     * read path (#521) and no shipped handler needs it. A handler that does can
+     * call its own `createScript(contract.params)`.
+     */
+    isGenericallySpendable?(contract: Contract): boolean;
 }
 
 /**

@@ -1855,6 +1855,7 @@ describe("Wallet._settleImpl", () => {
                 proof: "delete-proof",
                 message: { type: "delete", expire_at: 0 },
             }),
+            logUngatedInputs: vi.fn().mockResolvedValue(undefined),
             safeRegisterIntent,
             createBatchHandler,
             updateDbAfterSettle,
@@ -1926,6 +1927,7 @@ describe("Wallet._settleImpl", () => {
                 proof: "delete-proof",
                 message: { type: "delete", expire_at: 0 },
             }),
+            logUngatedInputs: vi.fn().mockResolvedValue(undefined),
             safeRegisterIntent: vi.fn(async () => {
                 callOrder.push("safeRegisterIntent");
                 throw registerError;
@@ -1981,6 +1983,7 @@ describe("Wallet._settleImpl", () => {
                 proof: "delete-proof",
                 message: { type: "delete", expire_at: 0 },
             }),
+            logUngatedInputs: vi.fn().mockResolvedValue(undefined),
             safeRegisterIntent: vi.fn().mockResolvedValue("intent-id"),
             createBatchHandler: vi.fn().mockReturnValue({} as Batch.Handler),
             updateDbAfterSettle: vi.fn().mockRejectedValue(new Error("db write failed")),
@@ -2072,6 +2075,7 @@ describe("Wallet._settleImpl", () => {
                 boardingTapscript: { exitScript: exitScriptHex },
                 getBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
                 getVtxos: vi.fn().mockResolvedValue(vtxos),
+                getSpendableVtxos: vi.fn().mockResolvedValue(vtxos),
                 getAddress: vi.fn().mockResolvedValue(walletAddress),
                 identity: {
                     signerSession: () => ({

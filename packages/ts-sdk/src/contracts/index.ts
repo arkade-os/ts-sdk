@@ -12,6 +12,9 @@ export type { VHTLCContractParams } from "./handlers";
 export { BoardingContractHandler } from "./handlers";
 export type { BoardingContractParams } from "./handlers";
 
+// Generic-spending gate
+export { isContractGenericallySpendable, gatedContracts, logGatedVtxos } from "./spendability";
+
 // arkcontract string codec
 export {
     encodeArkContract,
