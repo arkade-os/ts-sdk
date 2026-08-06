@@ -53,6 +53,7 @@ export {
     requestLightningSend,
     rfqPair,
     unilateralClaimDelay,
+    unilateralRefundWithoutReceiverDelay,
     verifyLockupAddress,
     type InvoiceFacts,
     type RelaySocket,

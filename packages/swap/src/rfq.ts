@@ -33,6 +33,7 @@
  */
 import { hex } from "@scure/base";
 import { ripemd160 } from "@noble/hashes/legacy.js";
+import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     ArkAddress,
     RestArkProvider,
@@ -173,18 +174,27 @@ export interface RfqStatus {
 }
 
 /** The rfq_request for the lightning send profile. A BOLT11 profile is always
- * exact-out: the invoice fixes the amount, so none is restated here. */
+ * exact-out: the invoice fixes the amount, so none is restated here.
+ * `clientRefundPubkey` is the trader's own key for the covenant's
+ * client-unilateral refund leaf (see {@link lightningSendVtxoScript}) —
+ * required, never sent anywhere else, never trusted by the solver as
+ * anything but a pubkey to bind into the script. */
 export const lightningSendRequest = (input: {
     rfqId: string;
     invoice: string;
     refundAddress: string;
+    clientRefundPubkey: Uint8Array;
 }): Record<string, unknown> => ({
     v: 1,
     type: "rfq_request",
     rfq_id: input.rfqId,
     pair: LIGHTNING_SEND_PAIR,
     amount_side: "to",
-    profile: { invoice: input.invoice, refund_address: input.refundAddress },
+    profile: {
+        invoice: input.invoice,
+        refund_address: input.refundAddress,
+        client_refund_pubkey: hex.encode(input.clientRefundPubkey),
+    },
 });
 
 /** The rfq_request for an arkade↔arkade swap. Exactly one side may name an
@@ -502,6 +512,15 @@ export const unilateralClaimDelay = (serverExitDelaySeconds: number): number => 
     );
 };
 
+/** The client-unilateral refund leaf's CSV delay: one 512s tier past the
+ * solver's own unilateral-claim delay, preserving the mandatory
+ * `claim < ... < refundWithoutReceiver` ordering the reference solver's own
+ * three-tier ladder uses (it reserves the middle tier for a server-cooperative,
+ * emulator-free path this SDK does not build). Takes the already-rounded
+ * `claimDelay`, not the raw server exit delay — one rounding, shared. */
+export const unilateralRefundWithoutReceiverDelay = (claimDelay: number): number =>
+    claimDelay + 2 * SEQUENCE_GRANULARITY_SECONDS;
+
 /** Compile the lightning-send contract from the quote's binding fields plus
  * the trader's own data. `paymentHash` is the BOLT11 payment hash
  * (`sha256(P)`, hex); the script's HASH160 commitment is derived from it here,
@@ -521,6 +540,14 @@ export function lightningSendVtxoScript(params: {
     emulatorPubkey: Uint8Array;
     /** Where a refund must pay: the trader's P2TR pkScript (34 bytes). */
     refundPkScript: Uint8Array;
+    /** The trader's own key for the client-unilateral refund leaf — needs
+     * neither the Ark server nor the emulator once its own CSV matures.
+     * Required: every RFQ-family request this module builds now carries
+     * `client_refund_pubkey`, so there is no three-leaf shape to fall back to. */
+    clientRefundPubkey: Uint8Array;
+    /** From {@link unilateralRefundWithoutReceiverDelay} over the SAME
+     * `claimDelay` passed above — one rounding, shared between both leaves. */
+    clientRefundDelay: number;
 }): InstanceType<typeof arkade.ArkadeProgramScript> {
     return new arkade.ArkadeProgramScript(
         lightningSendProgram,
@@ -533,6 +560,8 @@ export function lightningSendVtxoScript(params: {
             // the covenant commits to the x-only key; the 0x5120 prefix is
             // re-added by the introspection opcode reading the output script
             refundKey: params.refundPkScript.subarray(2),
+            client: params.clientRefundPubkey,
+            clientRefundDelay: BigInt(params.clientRefundDelay),
         },
         { serverKey: params.serverPubkey, emulatorKey: params.emulatorPubkey },
     );
@@ -561,6 +590,12 @@ export interface InvoiceFacts {
  *
  * Throws {@link SwapRefusal} (closed reason), {@link AddressMismatch} (never
  * fund), or a gate error with a stable `reason`.
+ *
+ * Generates a fresh client-unilateral refund key per call and returns it as
+ * `clientRefundPubkey`/`clientRefundPrivateKey`. THIS FUNCTION DOES NOT
+ * PERSIST IT: a caller that discards the return value has traded away its
+ * only recourse if the Ark server and the emulator are ever both
+ * unavailable, without knowing it.
  */
 export async function requestLightningSend(
     wallet: IWallet,
@@ -579,8 +614,14 @@ export async function requestLightningSend(
     swapPkScript: Uint8Array;
     /** Where a failed swap provably refunds. */
     refundAddress: string;
+    /** The client-unilateral refund leaf's key — PERSIST BOTH before going
+     * offline, or this swap's only non-cooperative recourse is lost. */
+    clientRefundPubkey: Uint8Array;
+    clientRefundPrivateKey: Uint8Array;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
+    const clientRefundPrivateKey = schnorr.utils.randomSecretKey();
+    const clientRefundPubkey = schnorr.getPublicKey(clientRefundPrivateKey);
     const [info, emulatorInfo, refundAddress] = await Promise.all([
         new RestArkProvider(arkServerUrl).getInfo(),
         new RestEmulatorProvider(emulatorUrl).getInfo(),
@@ -588,21 +629,29 @@ export async function requestLightningSend(
     ]);
 
     const quote = await transport.requestQuote(
-        lightningSendRequest({ rfqId, invoice: params.invoice.raw, refundAddress }),
+        lightningSendRequest({
+            rfqId,
+            invoice: params.invoice.raw,
+            refundAddress,
+            clientRefundPubkey,
+        }),
     );
     if (quote.refund_locktime === undefined) {
         throw new Error("lightning-send quote is missing refund_locktime");
     }
 
     const serverPubkey = xOnly(hex.decode(info.signerPubkey), "ark signer key");
+    const claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
     const script = lightningSendVtxoScript({
         solverPubkey: xOnly(hex.decode(quote.solver_pubkey), "solver key"),
         refundLocktime: quote.refund_locktime,
         serverPubkey,
         paymentHash: params.invoice.paymentHash,
-        claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
+        claimDelay,
         emulatorPubkey: xOnly(hex.decode(emulatorInfo.signerPubkey), "emulator signer key"),
         refundPkScript: ArkAddress.decode(refundAddress).pkScript,
+        clientRefundPubkey,
+        clientRefundDelay: unilateralRefundWithoutReceiverDelay(claimDelay),
     });
     const address = script
         .address(getNetwork(info.network as NetworkName).hrp, serverPubkey)
@@ -621,6 +670,8 @@ export async function requestLightningSend(
         fundAmount: params.invoice.amountSats,
         swapPkScript: script.pkScript,
         refundAddress,
+        clientRefundPubkey,
+        clientRefundPrivateKey,
     };
 }
 
@@ -664,6 +715,9 @@ export const onchainSendRequest = (input: {
     payoutPubkey: Uint8Array;
     /** Maker's arkade address — where the covenant refund must pay. */
     refundAddress: string;
+    /** Maker's own key for the covenant's client-unilateral refund leaf —
+     * same role as in {@link lightningSendRequest}. */
+    clientRefundPubkey: Uint8Array;
     amount: number;
     amountSide: "from" | "to";
 }): Record<string, unknown> => ({
@@ -677,6 +731,7 @@ export const onchainSendRequest = (input: {
         payment_hash: input.paymentHash,
         payout_pubkey: hex.encode(input.payoutPubkey),
         refund_address: input.refundAddress,
+        client_refund_pubkey: hex.encode(input.clientRefundPubkey),
     },
 });
 
@@ -727,6 +782,10 @@ export function deriveOnchainSend(input: {
     hrp: string;
     l1Network: OnchainNetwork;
     refundAddress: string;
+    /** The maker's own key for the covenant's client-unilateral refund leaf —
+     * same role as in {@link requestLightningSend}. */
+    clientRefundPubkey: Uint8Array;
+    clientRefundDelay: number;
 }): {
     address: string;
     swapPkScript: Uint8Array;
@@ -759,6 +818,8 @@ export function deriveOnchainSend(input: {
         claimDelay: input.claimDelay,
         emulatorPubkey: input.emulatorPubkey,
         refundPkScript: ArkAddress.decode(input.refundAddress).pkScript,
+        clientRefundPubkey: input.clientRefundPubkey,
+        clientRefundDelay: input.clientRefundDelay,
     });
     const address = script.address(input.hrp, input.serverPubkey).encode();
     verifyLockupAddress(quote, address);
@@ -796,6 +857,11 @@ export function deriveOnchainSend(input: {
  *   offline: it must claim the L1 HTLC (`awaitOnchainFill` →
  *   `claimOnchainFill`) before `htlc.refundLocktime`. Missing that window
  *   forfeits the fill and falls back to the Arkade covenant refund.
+ *
+ * Generates a fresh client-unilateral refund key per call and returns it —
+ * same obligation as {@link requestLightningSend}: persist both halves
+ * before funding, or this swap's only non-cooperative Arkade-side recourse
+ * is lost.
  */
 export async function requestOnchainSend(
     wallet: IWallet,
@@ -822,10 +888,16 @@ export async function requestOnchainSend(
     refundAddress: string;
     /** The EXPECTED L1 fill, derived locally — watch and claim against this. */
     htlc: OnchainHtlc;
+    /** The Arkade covenant's client-unilateral refund leaf key — PERSIST
+     * BOTH before funding, same obligation as `preimage`. */
+    clientRefundPubkey: Uint8Array;
+    clientRefundPrivateKey: Uint8Array;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
     const preimage = params.preimage ?? newPreimage();
     const paymentHash = paymentHashOf(preimage);
+    const clientRefundPrivateKey = schnorr.utils.randomSecretKey();
+    const clientRefundPubkey = schnorr.getPublicKey(clientRefundPrivateKey);
     const [info, emulatorInfo, refundAddress] = await Promise.all([
         new RestArkProvider(arkServerUrl).getInfo(),
         new RestEmulatorProvider(emulatorUrl).getInfo(),
@@ -838,21 +910,25 @@ export async function requestOnchainSend(
             paymentHash,
             payoutPubkey: params.payoutPubkey,
             refundAddress,
+            clientRefundPubkey,
             amount: params.amount,
             amountSide: params.amountSide,
         }),
     );
 
+    const claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
     const derived = deriveOnchainSend({
         quote,
         paymentHash,
         payoutPubkey: params.payoutPubkey,
         serverPubkey: xOnly(hex.decode(info.signerPubkey), "ark signer key"),
         emulatorPubkey: xOnly(hex.decode(emulatorInfo.signerPubkey), "emulator signer key"),
-        claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
+        claimDelay,
         hrp: getNetwork(info.network as NetworkName).hrp,
         l1Network: l1NetworkFromArk(info.network),
         refundAddress,
+        clientRefundPubkey,
+        clientRefundDelay: unilateralRefundWithoutReceiverDelay(claimDelay),
     });
     assertFundable({
         quote,
@@ -873,5 +949,7 @@ export async function requestOnchainSend(
         swapPkScript: derived.swapPkScript,
         refundAddress,
         htlc: derived.htlc,
+        clientRefundPubkey,
+        clientRefundPrivateKey,
     };
 }

@@ -26,6 +26,7 @@ import {
     offerTermsFromQuote,
     relayTransport,
     unilateralClaimDelay,
+    unilateralRefundWithoutReceiverDelay,
     verifyLockupAddress,
     type RelaySocket,
     type RfqQuote,
@@ -54,11 +55,14 @@ const quoteFixture = (over: Partial<RfqQuote> = {}): RfqQuote => ({
 describe("lightningSendVtxoScript", () => {
     // The reference solver's fixture, and its exact output bytes: receiver =
     // key(1), server = key(3), emulator = key(9), refund destination =
-    // p2tr(key(5)), preimage hash = ripemd160(sha256(0x07 * 32)), locktime
-    // 1_800_000_000, CSV 4096s.
+    // p2tr(key(5)), client-unilateral-refund key = key(13), preimage hash =
+    // ripemd160(sha256(0x07 * 32)), locktime 1_800_000_000, CSV 4096s /
+    // 5120s (claimDelay + 2*512, per unilateralRefundWithoutReceiverDelay).
     const PREIMAGE = new Uint8Array(32).fill(7);
     const PAYMENT_HASH = hex.encode(sha256(PREIMAGE));
     const REFUND_PK_SCRIPT = Uint8Array.from([0x51, 0x20, ...key(5)]);
+    const CLAIM_DELAY = 4096;
+    const CLIENT_REFUND_DELAY = unilateralRefundWithoutReceiverDelay(CLAIM_DELAY);
 
     const script = () =>
         lightningSendVtxoScript({
@@ -66,18 +70,20 @@ describe("lightningSendVtxoScript", () => {
             serverPubkey: key(3),
             paymentHash: PAYMENT_HASH,
             refundLocktime: 1_800_000_000,
-            claimDelay: 4096,
+            claimDelay: CLAIM_DELAY,
             emulatorPubkey: key(9),
             refundPkScript: REFUND_PK_SCRIPT,
+            clientRefundPubkey: key(13),
+            clientRefundDelay: CLIENT_REFUND_DELAY,
         });
 
     it("is byte-identical to the reference solver's script — golden scriptPubKey", () => {
         expect(hex.encode(script().pkScript)).toBe(
-            "5120599796afd33a8cf329579236d24b8d2d3952cac697c7253009e3c21653a350cd",
+            "5120f0efbb911dfde790f956c8414b0ca13150d94851685350f82a43c25b2bdab9d9",
         );
     });
 
-    it("compiles the three leaves the solver quotes, leaf for leaf", () => {
+    it("compiles the four leaves the solver quotes, leaf for leaf", () => {
         const compiled = script();
         const leaf = (name: string) => hex.encode(compiled.functionByName(name)!.leafScript);
         const hash160 = hex.encode(ripemd160(sha256(PREIMAGE)));
@@ -91,6 +97,10 @@ describe("lightningSendVtxoScript", () => {
         expect(leaf("unilateralClaim")).toBe(
             `a914${hash160}876903080040b275${"20"}${hex.encode(key(1))}ac`,
         );
+        // client alone, CSV(5120s), no server/emulator key anywhere in the leaf.
+        expect(leaf("refundUnilateral")).not.toContain(hex.encode(key(3)));
+        expect(leaf("refundUnilateral")).not.toContain(hex.encode(key(9)));
+        expect(leaf("refundUnilateral").endsWith(`20${hex.encode(key(13))}ac`)).toBe(true);
     });
 
     it("derives the HASH160 commitment from the payment hash — the trader never sees P", () => {
@@ -100,9 +110,26 @@ describe("lightningSendVtxoScript", () => {
             serverPubkey: key(3),
             paymentHash: hex.encode(sha256(new Uint8Array(32).fill(8))),
             refundLocktime: 1_800_000_000,
-            claimDelay: 4096,
+            claimDelay: CLAIM_DELAY,
             emulatorPubkey: key(9),
             refundPkScript: REFUND_PK_SCRIPT,
+            clientRefundPubkey: key(13),
+            clientRefundDelay: CLIENT_REFUND_DELAY,
+        });
+        expect(hex.encode(other.pkScript)).not.toBe(hex.encode(script().pkScript));
+    });
+
+    it("produces a different address than a client key alone would change", () => {
+        const other = lightningSendVtxoScript({
+            solverPubkey: key(1),
+            serverPubkey: key(3),
+            paymentHash: PAYMENT_HASH,
+            refundLocktime: 1_800_000_000,
+            claimDelay: CLAIM_DELAY,
+            emulatorPubkey: key(9),
+            refundPkScript: REFUND_PK_SCRIPT,
+            clientRefundPubkey: key(14),
+            clientRefundDelay: CLIENT_REFUND_DELAY,
         });
         expect(hex.encode(other.pkScript)).not.toBe(hex.encode(script().pkScript));
     });
@@ -123,14 +150,23 @@ describe("unilateralClaimDelay", () => {
 describe("requests", () => {
     it("builds the lightning-send request exact-out with the invoice in the profile", () => {
         expect(
-            lightningSendRequest({ rfqId: RFQ_ID, invoice: "lnbc...", refundAddress: "ark1q..." }),
+            lightningSendRequest({
+                rfqId: RFQ_ID,
+                invoice: "lnbc...",
+                refundAddress: "ark1q...",
+                clientRefundPubkey: key(13),
+            }),
         ).toEqual({
             v: 1,
             type: "rfq_request",
             rfq_id: RFQ_ID,
             pair: "arkade:BTC->lightning:BTC",
             amount_side: "to",
-            profile: { invoice: "lnbc...", refund_address: "ark1q..." },
+            profile: {
+                invoice: "lnbc...",
+                refund_address: "ark1q...",
+                client_refund_pubkey: hex.encode(key(13)),
+            },
         });
     });
 
@@ -183,7 +219,12 @@ describe("httpTransport", () => {
             fetchImpl: async () => jsonResponse(201, quoteFixture()),
         });
         const quote = await transport.requestQuote(
-            lightningSendRequest({ rfqId: RFQ_ID, invoice: "ln", refundAddress: "a" }),
+            lightningSendRequest({
+                rfqId: RFQ_ID,
+                invoice: "ln",
+                refundAddress: "a",
+                clientRefundPubkey: key(13),
+            }),
         );
         expect(quote.to_amount).toBe(2100);
     });
@@ -200,7 +241,12 @@ describe("httpTransport", () => {
         });
         await expect(
             transport.requestQuote(
-                lightningSendRequest({ rfqId: RFQ_ID, invoice: "ln", refundAddress: "a" }),
+                lightningSendRequest({
+                    rfqId: RFQ_ID,
+                    invoice: "ln",
+                    refundAddress: "a",
+                    clientRefundPubkey: key(13),
+                }),
             ),
         ).rejects.toMatchObject({ name: "SwapRefusal", reason: "exposure_cap" });
     });
@@ -271,7 +317,12 @@ describe("relayTransport", () => {
             rfq_id: request.rfq_id,
         }));
         const quote = await transport.requestQuote(
-            lightningSendRequest({ rfqId: newRfqId(), invoice: "ln", refundAddress: "a" }),
+            lightningSendRequest({
+                rfqId: newRfqId(),
+                invoice: "ln",
+                refundAddress: "a",
+                clientRefundPubkey: key(13),
+            }),
         );
         expect(quote.type).toBe("rfq_quote");
         await transport.close();
@@ -292,7 +343,12 @@ describe("relayTransport", () => {
         );
         await expect(
             transport.requestQuote(
-                lightningSendRequest({ rfqId: newRfqId(), invoice: "ln", refundAddress: "a" }),
+                lightningSendRequest({
+                    rfqId: newRfqId(),
+                    invoice: "ln",
+                    refundAddress: "a",
+                    clientRefundPubkey: key(13),
+                }),
             ),
         ).rejects.toThrow(SwapRefusal);
         expect((await transport.status(newRfqId()))?.state).toBe("quoted");

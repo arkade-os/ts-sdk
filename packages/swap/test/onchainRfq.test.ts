@@ -24,6 +24,7 @@ import {
     lightningSendVtxoScript,
     onchainReceiveRequest,
     onchainSendRequest,
+    unilateralRefundWithoutReceiverDelay,
     type RfqQuote,
 } from "../src/rfq";
 import { onchainHtlcScript, paymentHashOf } from "../src/onchainHtlc";
@@ -59,6 +60,7 @@ describe("request builders", () => {
                 paymentHash: PAYMENT_HASH,
                 payoutPubkey: key(5),
                 refundAddress: "ark1q...",
+                clientRefundPubkey: key(13),
                 amount: 100_000,
                 amountSide: "to",
             }),
@@ -73,6 +75,7 @@ describe("request builders", () => {
                 payment_hash: PAYMENT_HASH,
                 payout_pubkey: hex.encode(key(5)),
                 refund_address: "ark1q...",
+                client_refund_pubkey: hex.encode(key(13)),
             },
         });
     });
@@ -162,16 +165,21 @@ describe("assertFundable — onchain gates", () => {
 
 describe("deriveOnchainSend", () => {
     // The maker's own view of its stack: server key(3), emulator key(9),
-    // claim delay 4096 — and a real, decodable arkade refund address.
+    // client-unilateral-refund key(13), claim delay 4096 — and a real,
+    // decodable arkade refund address.
     const SERVER = key(3);
+    const CLAIM_DELAY = 4096;
+    const CLIENT_REFUND_DELAY = unilateralRefundWithoutReceiverDelay(CLAIM_DELAY);
     const REFUND_ADDRESS = lightningSendVtxoScript({
         solverPubkey: key(1),
         refundLocktime: REFUND_LOCKTIME,
         serverPubkey: SERVER,
         paymentHash: PAYMENT_HASH,
-        claimDelay: 4096,
+        claimDelay: CLAIM_DELAY,
         emulatorPubkey: key(9),
         refundPkScript: Uint8Array.from([0x51, 0x20, ...key(5)]),
+        clientRefundPubkey: key(13),
+        clientRefundDelay: CLIENT_REFUND_DELAY,
     })
         .address("ark", SERVER)
         .encode();
@@ -181,10 +189,12 @@ describe("deriveOnchainSend", () => {
         payoutPubkey: key(5),
         serverPubkey: SERVER,
         emulatorPubkey: key(9),
-        claimDelay: 4096,
+        claimDelay: CLAIM_DELAY,
         hrp: "ark",
         l1Network: "regtest" as const,
         refundAddress: REFUND_ADDRESS,
+        clientRefundPubkey: key(13),
+        clientRefundDelay: CLIENT_REFUND_DELAY,
     });
 
     /** A quote whose compare-only fields MATCH the maker's own derivations. */
@@ -195,9 +205,11 @@ describe("deriveOnchainSend", () => {
             refundLocktime: REFUND_LOCKTIME,
             serverPubkey: SERVER,
             paymentHash: PAYMENT_HASH,
-            claimDelay: 4096,
+            claimDelay: CLAIM_DELAY,
             emulatorPubkey: key(9),
             refundPkScript: ArkAddress.decode(REFUND_ADDRESS).pkScript,
+            clientRefundPubkey: key(13),
+            clientRefundDelay: CLIENT_REFUND_DELAY,
         });
         const htlc = onchainHtlcScript(
             {
