@@ -401,6 +401,14 @@ export type OnchainHtlcPhase =
     | { phase: "unfunded" }
     | { phase: "awaiting_confirmations"; utxo: ChainUtxo }
     | { phase: "claimable"; utxo: ChainUtxo }
+    /**
+     * The refund leaf has matured, which means the CLAIM WINDOW IS CLOSED —
+     * `claimOnchainFill` throws `claim_window_closed` from here, by design.
+     * A recovery caller reading this phase must not try to claim: the correct
+     * action is to let the counterparty's L1 refund settle and take the
+     * Arkade-side covenant refund. Reaching this phase on a swap you expected
+     * to claim means the claim was missed, not that it is still available.
+     */
     | { phase: "refundable"; utxo: ChainUtxo }
     | { phase: "claimed"; txid: string; preimage: Uint8Array }
     | { phase: "swept"; txid: string };
