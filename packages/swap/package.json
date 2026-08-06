@@ -41,7 +41,9 @@
     "license": "MIT",
     "dependencies": {
         "@arkade-os/sdk": "workspace:*",
-        "@arkade-os/solver-discovery": "0.1.4",
+        "@arkade-os/solver-discovery": "0.2.1",
+        "@noble/curves": "2.0.1",
+        "@noble/hashes": "2.0.1",
         "@scure/base": "2.0.0",
         "@scure/btc-signer": "2.0.1"
     },
