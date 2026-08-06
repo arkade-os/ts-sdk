@@ -70,6 +70,18 @@ const offlineIndexer = () =>
         getSubscription: async function* () {},
     }) as Partial<IndexerProvider> as IndexerProvider;
 
+// Online: answers every script query from a fixed set, so `getContractsWithVtxos`
+// actually syncs and annotates what comes back.
+const onlineIndexer = (vtxos: { script: string }[]) =>
+    ({
+        getVtxos: async (opts?: { scripts?: string[] }) => ({
+            vtxos: vtxos.filter((v) => opts?.scripts?.includes(v.script)),
+        }),
+        subscribeForScripts: async () => "sub-1",
+        unsubscribeForScripts: async () => undefined,
+        getSubscription: async function* () {},
+    }) as Partial<IndexerProvider> as IndexerProvider;
+
 const contract = (script: string, type: string, metadata?: Record<string, unknown>): Contract => ({
     type,
     params: type === "default" ? createDefaultContractParams() : {},
@@ -95,7 +107,11 @@ const vtxo = (script: string, value: number, assets?: { assetId: string; amount:
  * contract (escrow), a marked `arkade` contract, and a contract whose type has
  * no handler at all.
  */
-async function seededWallet(opts?: { intents?: InMemoryIntentRepository; signing?: boolean }) {
+async function seededWallet(opts?: {
+    intents?: InMemoryIntentRepository;
+    signing?: boolean;
+    indexerProvider?: IndexerProvider;
+}) {
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
 
@@ -114,7 +130,7 @@ async function seededWallet(opts?: { intents?: InMemoryIntentRepository; signing
     const config = {
         arkServerUrl: "http://localhost:7070",
         arkProvider: { getInfo: async () => arkInfo() } as Partial<ArkProvider> as ArkProvider,
-        indexerProvider: offlineIndexer(),
+        indexerProvider: opts?.indexerProvider ?? offlineIndexer(),
         onchainProvider: {
             getCoins: async () => [],
             getTransactions: async () => [],
@@ -259,6 +275,27 @@ describe("getSpendableVtxos", () => {
         expect(scriptsOf(await wallet.getSpendableVtxos())).toEqual([MARKED_SCRIPT]);
         // Still reported as owned.
         expect(scriptsOf(await wallet.getVtxos())).toContain(defaultScript);
+    });
+
+    it("survives a stored contract whose handler this runtime never registered", async () => {
+        // A persisted plugin row outliving its handler is the case the gate is
+        // meant to close, so the read that applies the gate must reach it: the
+        // sync annotates whatever the indexer returns, and no handler means no
+        // tapscripts to annotate with.
+        const { wallet, defaultScript } = await seededWallet({
+            indexerProvider: onlineIndexer([vtxo(UNKNOWN_SCRIPT, 10_000)]),
+        });
+
+        expect(scriptsOf(await wallet.getSpendableVtxos())).toEqual(
+            [defaultScript, MARKED_SCRIPT].sort(),
+        );
+        await expect(wallet.getBalance()).resolves.toMatchObject({
+            total: 70_000,
+            available: 50_000,
+        });
+        // Its already-persisted funds stay owned and reported — only the
+        // refresh of them is skipped.
+        expect(scriptsOf(await wallet.getVtxos())).toContain(UNKNOWN_SCRIPT);
     });
 
     it("takes exactly one contract snapshot per call", async () => {

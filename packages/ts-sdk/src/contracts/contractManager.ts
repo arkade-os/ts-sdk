@@ -84,6 +84,31 @@ function toWatchOnlyContract(params: CreateContractParams): Contract {
 }
 
 /**
+ * The subset of `script → contract` whose VTXOs this runtime can annotate.
+ *
+ * A persisted row can outlive its handler — a plugin type in a build that no
+ * longer loads the plugin — and {@link ContractManager.annotateVtxos} throws
+ * for one, having no tapscripts to annotate with. A bulk sync must drop those
+ * VTXOs rather than let a single stale row fail the whole read: balance,
+ * history and coin selection all go through it, and a contract with no handler
+ * is not generically spendable anyway (see `isContractGenericallySpendable`).
+ * Their already-persisted VTXOs stay in the repository, just unrefreshed.
+ */
+function annotatableScripts(scriptToContract: ReadonlyMap<string, Contract>): Set<string> {
+    const annotatable = new Set<string>();
+    for (const [script, contract] of scriptToContract) {
+        if (contractHandlers.get(contract.type)) {
+            annotatable.add(script);
+        } else {
+            console.debug(
+                `[contracts] no handler registered for type '${contract.type}': not syncing ${script}`,
+            );
+        }
+    }
+    return annotatable;
+}
+
+/**
  * Hard upper bound on the HD index range probed by {@link scanContracts}.
  * Safety valve: a buggy or malicious `Discoverable` handler that returns a
  * hit at every index would otherwise keep the gap window open forever and
@@ -1754,7 +1779,8 @@ export class ContractManager implements IContractManager {
 
         // Share the annotation path with external callers so the two entry
         // points can't drift.
-        const owned = vtxos.filter((v) => scriptToContract.has(v.script));
+        const annotatable = annotatableScripts(scriptToContract);
+        const owned = vtxos.filter((v) => annotatable.has(v.script));
         const annotated = await this.annotateVtxos(owned);
 
         const byContract = new Map<string, ExtendedContractVtxo[]>();
@@ -1897,7 +1923,8 @@ export class ContractManager implements IContractManager {
         // populated by the indexer, then share the annotation path with
         // external callers via annotateVtxos so the two entry points can't
         // drift.
-        const owned = vtxos.filter((v) => scriptToContract.has(v.script));
+        const annotatable = annotatableScripts(scriptToContract);
+        const owned = vtxos.filter((v) => annotatable.has(v.script));
         const annotated = await this.annotateVtxos(owned);
         for (const vtxo of annotated) {
             result.get(vtxo.script)!.push({
