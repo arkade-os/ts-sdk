@@ -70,9 +70,16 @@ const wallet = {
     getContractManager: async () => contractManager,
 } as unknown as IWallet;
 
+// Caller-supplied now, not fetched: `createOffer` takes the emulator's x-only
+// key rather than a URL, because a client has no network path to the emulator.
+// Same value the RestEmulatorProvider stub above used to hand back, so this
+// file's expectations are unchanged.
+const emulatorPubkey = hex.decode(
+    "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+);
 const testAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");
 const create = () =>
-    createOffer(wallet, "http://ark", "http://emu", {
+    createOffer(wallet, "http://ark", emulatorPubkey, {
         wantAmount: BigInt(50_000),
         wantAsset: testAsset,
     });

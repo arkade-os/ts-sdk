@@ -26,9 +26,12 @@
  * Trust model, identical to the offer side: from a quote the trader uses only
  * the binding fields — `solver_pubkey`, `refund_locktime`, `valid_until`, the
  * amounts. Every other contract parameter is the trader's own data (its
- * invoice, its Ark server connection, its emulator endpoint, its refund
- * address). Anything address-shaped the solver sends is compare-only:
- * a mismatch means refuse-to-fund, never "use theirs".
+ * invoice, its Ark server connection, its refund address) or obtained
+ * out-of-band from a source it independently trusts — the emulator's x-only
+ * key, from the solver's signed registry/corridor card, since clients have no
+ * network path to the emulator itself; only the solver and covclaimd do.
+ * Anything address-shaped the solver sends is compare-only: a mismatch means
+ * refuse-to-fund, never "use theirs".
  *
  * Transport is symmetric-outbound: the reference framing below speaks the dev
  * broker (`{op:"sub"|"event"}` over WebSocket) or plain HTTP; the production
@@ -41,7 +44,6 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     ArkAddress,
     RestArkProvider,
-    RestEmulatorProvider,
     VHTLC,
     asset,
     getNetwork,
@@ -563,7 +565,10 @@ export function lightningSendVtxoScript(params: {
      * {@link unilateralRefundDelay} and {@link unilateralRefundWithoutReceiverDelay}
      * derive from this same value — one rounding, shared across all three tiers. */
     claimDelay: number;
-    /** Emulator x-only key — the trader's OWN endpoint. */
+    /** Emulator x-only key — the SOLVER's deployment, not the trader's own.
+     * Not fetched here or anywhere in this package; see {@link
+     * requestLightningSend}'s `emulatorPubkey` parameter for where it comes
+     * from and why. */
     emulatorPubkey: Uint8Array;
     /** Where a refund must pay: the trader's P2TR pkScript (34 bytes). Also
      * `nonInteractiveRefund`'s covenant destination. */
@@ -640,7 +645,17 @@ export interface InvoiceFacts {
 export async function requestLightningSend(
     wallet: IWallet,
     arkServerUrl: string,
-    emulatorUrl: string,
+    /** Covenant co-signer (emulator) x-only key — the SOLVER's deployment,
+     * not the trader's. This library does NOT fetch or verify it: clients
+     * have no network path to the emulator, only the solver and covclaimd
+     * do. The caller must obtain this out-of-band, before calling this
+     * function, from the solver's signed registry/corridor card
+     * (`SolverCard.emulator_pubkey`) or an equivalent source it
+     * independently trusts, and is responsible for having checked it against
+     * that trusted value itself — the same never-trust-only-compare rule as
+     * {@link verifyLockupAddress}, just applied by the caller instead of
+     * here, because there is nothing in this module to derive it against. */
+    emulatorPubkey: Uint8Array,
     transport: RfqTransport,
     params: { invoice: InvoiceFacts; rfqId?: string },
 ): Promise<{
@@ -663,9 +678,8 @@ export async function requestLightningSend(
     const rfqId = params.rfqId ?? newRfqId();
     const senderPrivateKey = schnorr.utils.randomSecretKey();
     const senderPubkey = schnorr.getPublicKey(senderPrivateKey);
-    const [info, emulatorInfo, refundAddress] = await Promise.all([
+    const [info, refundAddress] = await Promise.all([
         new RestArkProvider(arkServerUrl).getInfo(),
-        new RestEmulatorProvider(emulatorUrl).getInfo(),
         wallet.getAddress(),
     ]);
 
@@ -687,7 +701,7 @@ export async function requestLightningSend(
         serverPubkey,
         paymentHash: params.invoice.paymentHash,
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
-        emulatorPubkey: xOnly(hex.decode(emulatorInfo.signerPubkey), "emulator signer key"),
+        emulatorPubkey: xOnly(emulatorPubkey, "emulator pubkey"),
         senderPubkey,
         receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
         refundPkScript: ArkAddress.decode(refundAddress).pkScript,
@@ -905,7 +919,9 @@ export function deriveOnchainSend(input: {
 export async function requestOnchainSend(
     wallet: IWallet,
     arkServerUrl: string,
-    emulatorUrl: string,
+    /** Covenant co-signer (emulator) x-only key — same parameter, same
+     * caller obligation, as {@link requestLightningSend}'s. */
+    emulatorPubkey: Uint8Array,
     transport: RfqTransport,
     params: {
         amount: number;
@@ -937,9 +953,8 @@ export async function requestOnchainSend(
     const paymentHash = paymentHashOf(preimage);
     const senderPrivateKey = schnorr.utils.randomSecretKey();
     const senderPubkey = schnorr.getPublicKey(senderPrivateKey);
-    const [info, emulatorInfo, refundAddress] = await Promise.all([
+    const [info, refundAddress] = await Promise.all([
         new RestArkProvider(arkServerUrl).getInfo(),
-        new RestEmulatorProvider(emulatorUrl).getInfo(),
         wallet.getAddress(),
     ]);
 
@@ -960,7 +975,7 @@ export async function requestOnchainSend(
         paymentHash,
         payoutPubkey: params.payoutPubkey,
         serverPubkey: xOnly(hex.decode(info.signerPubkey), "ark signer key"),
-        emulatorPubkey: xOnly(hex.decode(emulatorInfo.signerPubkey), "emulator signer key"),
+        emulatorPubkey: xOnly(emulatorPubkey, "emulator pubkey"),
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
         hrp: getNetwork(info.network as NetworkName).hrp,
         l1Network: l1NetworkFromArk(info.network),

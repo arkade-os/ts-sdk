@@ -17,6 +17,7 @@ import {
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    RestEmulatorProvider,
     RestIndexerProvider,
     SingleKey,
     Wallet,
@@ -32,6 +33,10 @@ const arkdExec = "docker exec -t arkd";
 const FAUCET_SATS = 30_000;
 const DEPOSIT_SATS = 10_000;
 const WANT_AMOUNT = BigInt(1_000);
+
+/** Drop the prefix of a 33-byte compressed key; pass an x-only key through —
+ * same rule as offer.ts/rfq.ts, kept local so this suite stays self-contained. */
+const xOnly = (key: Uint8Array): Uint8Array => (key.length === 32 ? key : key.slice(1));
 
 const execCommand = (command: string): string => {
     const result = execSync(command, { encoding: "utf8" })
@@ -58,6 +63,7 @@ const waitFor = async (
 
 const indexer = new RestIndexerProvider(ARK_URL);
 let wallet: Wallet;
+let emulatorPubkey: Uint8Array;
 
 beforeAll(async () => {
     wallet = await Wallet.create({
@@ -81,6 +87,14 @@ beforeAll(async () => {
     const address = await wallet.getAddress();
     execCommand(`${arkdExec} ark send --to ${address} --amount ${FAUCET_SATS} --password secret`);
     await waitFor(async () => (await wallet.getVtxos()).length > 0);
+
+    // createOffer no longer fetches the emulator's key itself — clients have
+    // no network path to the emulator, only the solver and covclaimd do — so
+    // this stands in for the one-time, out-of-band read of the solver's
+    // registry card (SolverCard.emulator_pubkey) a real integration would do
+    // before ever calling createOffer.
+    const emulatorInfo = await new RestEmulatorProvider(EMULATOR_URL).getInfo();
+    emulatorPubkey = xOnly(hex.decode(emulatorInfo.signerPubkey));
 }, 120_000);
 
 describe("maker-side swap loop (regtest)", () => {
@@ -95,7 +109,7 @@ describe("maker-side swap loop (regtest)", () => {
     const history: Tx[] = [];
 
     it("derives, funds, and restores a pending offer from chain data alone", async () => {
-        offer = await createOffer(wallet, ARK_URL, EMULATOR_URL, {
+        offer = await createOffer(wallet, ARK_URL, emulatorPubkey, {
             wantAmount: WANT_AMOUNT,
             wantAsset,
         });

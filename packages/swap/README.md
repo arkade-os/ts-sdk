@@ -50,11 +50,11 @@ the rest:
 
 ```ts
 // BTC -> asset
-const o = await createOffer(wallet, ARK, EMU, { wantAmount: 1000n, wantAsset });
+const o = await createOffer(wallet, ARK, EMULATOR_PUBKEY, { wantAmount: 1000n, wantAsset });
 await wallet.send({ address: o.address, amount: 1000, extensions: [o.extension] });
 
 // asset -> BTC (the sats are the VTXO carrier for the asset)
-const o = await createOffer(wallet, ARK, EMU, { wantAmount: 1000n, offerAsset });
+const o = await createOffer(wallet, ARK, EMULATOR_PUBKEY, { wantAmount: 1000n, offerAsset });
 await wallet.send({
     address: o.address,
     amount: 500,
@@ -62,6 +62,11 @@ await wallet.send({
     extensions: [o.extension],
 });
 ```
+
+`EMULATOR_PUBKEY` is the covenant co-signer's x-only key — the solver's deployment, not yours.
+`createOffer` does not fetch or verify it: clients have no network path to the emulator, only the
+solver and covclaimd do. Obtain it out of band, before calling `createOffer`, from the solver's
+signed registry/corridor card and check it against whatever value you independently trust.
 
 ### What `createOffer` gives you back
 
@@ -135,7 +140,7 @@ import { httpTransport, requestLightningSend } from "@arkade-os/swap";
 const swap = await requestLightningSend(
     wallet,
     arkServerUrl,
-    emulatorUrl,
+    emulatorPubkey,
     httpTransport(solverUrl),
     {
         invoice: { raw: bolt11, paymentHash, amountSats, expiresAt },
@@ -148,10 +153,13 @@ await wallet.send({ address: swap.address, amount: BigInt(swap.fundAmount) });
 The trust model is the offer side's, applied to quotes: only `solver_pubkey`,
 `refund_locktime`, `valid_until` and the amounts are used from a quote; every other contract
 parameter is the trader's own data, and anything address-shaped from the solver is compare-only
-(`AddressMismatch` means refuse-to-fund). Refusals carry a closed reason set (`SwapRefusal`);
-unknown reasons are a generic decline. The `swap-lightning-send.program.json` bytes are frozen
-the same way the offer programs are — a golden test pins the compiled leaves and scriptPubKey to
-the reference solver's exact script.
+(`AddressMismatch` means refuse-to-fund). `emulatorPubkey` is neither: it is not fetched or
+verified by this library at all — clients have no network path to the emulator, only the solver
+and covclaimd do — so it must arrive already obtained out of band, from the solver's signed
+registry/corridor card, and already checked against whatever value you independently trust.
+Refusals carry a closed reason set (`SwapRefusal`); unknown reasons are a generic decline. The
+`swap-lightning-send.program.json` bytes are frozen the same way the offer programs are — a
+golden test pins the compiled leaves and scriptPubKey to the reference solver's exact script.
 
 Transports are symmetric-outbound: `httpTransport` (POST `/v1/swap`, GET `/v1/rfq/<rfq_id>`) and
 `relayTransport` (the dev broker framing; the production target is Nostr — a directed kind with
@@ -177,11 +185,13 @@ import {
     claimOnchainFill,
 } from "@arkade-os/swap";
 
-const swap = await requestOnchainSend(wallet, arkServerUrl, emulatorUrl, httpTransport(solverUrl), {
-    amount: 100_000,
-    amountSide: "to",
-    payoutPubkey,
-});
+const swap = await requestOnchainSend(
+    wallet,
+    arkServerUrl,
+    emulatorPubkey,
+    httpTransport(solverUrl),
+    { amount: 100_000, amountSide: "to", payoutPubkey },
+);
 // PERSIST swap.preimage (with the record) BEFORE funding — it is the only
 // thing that can claim the L1 fill, across restarts included.
 await wallet.send({ address: swap.address, amount: BigInt(swap.fundAmount) });
