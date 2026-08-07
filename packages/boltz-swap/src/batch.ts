@@ -65,9 +65,13 @@ export function createVHTLCBatchHandler(
 
             // Bound the expiry before confirming, so a rejected round is never
             // confirmed to the operator.
+            const info = await arkProvider.getInfo();
             const timelock = assertValidBatchExpiry(
                 event.batchExpiry,
-                resolveBatchExpiryPolicy(network, batchExpiryPolicy),
+                resolveBatchExpiryPolicy(network, {
+                    advertisedVtxoTreeExpiry: info.vtxoTreeExpiry,
+                    ...batchExpiryPolicy,
+                }),
             );
 
             await arkProvider.confirmRegistration(intentId);
