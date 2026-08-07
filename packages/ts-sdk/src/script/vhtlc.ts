@@ -286,7 +286,7 @@ export namespace VHTLC {
             if (!emulatorPubkey || (emulatorPubkey.length !== 32 && emulatorPubkey.length !== 33)) {
                 throw new Error("Invalid public key length (emulator)");
             }
-            if (receiverPkScript.length !== 34) {
+            if (!receiverPkScript || !isP2trPkScript(receiverPkScript)) {
                 throw new Error("Invalid P2TR script");
             }
         }
@@ -295,7 +295,7 @@ export namespace VHTLC {
             if (!emulatorPubkey || (emulatorPubkey.length !== 32 && emulatorPubkey.length !== 33)) {
                 throw new Error("Invalid public key length (emulator)");
             }
-            if (senderPkScript.length !== 34) {
+            if (!senderPkScript || !isP2trPkScript(senderPkScript)) {
                 throw new Error("Invalid P2TR script");
             }
         }
@@ -364,13 +364,29 @@ function preimageConditionScript(preimageHash: Bytes): Bytes {
 }
 
 /**
+ * A v1 P2TR pkScript is exactly `OP_1 <32-byte-program>` (0x51 0x20 ...) — 34
+ * bytes total. Length alone isn't enough: any other 34-byte value (e.g.
+ * {@link ArkAddress.subdustPkScript}'s `OP_RETURN <32 bytes>`, or a P2WSH
+ * script) has the same length but a different witness version, and
+ * `enforcePayTo` below trusts byte 2 onward as the taproot program
+ * unconditionally.
+ */
+function isP2trPkScript(pkScript: Bytes): boolean {
+    return pkScript.length === 34 && pkScript[0] === 0x51 && pkScript[1] === 0x20;
+}
+
+/**
  * The covenant: "this input's output pays the given P2TR script, value >=
  * input". Shared by {@link VHTLC.Options.nonInteractiveClaim} and {@link
  * VHTLC.Options.nonInteractiveRefund} — only the destination and the tier it
  * gates differ.
  */
 function enforcePayTo(destinationPkScript: Bytes): Bytes {
-    if (destinationPkScript.length < 34) {
+    // validateOptions already checked this for both current call sites — kept
+    // here too, since this covenant is the one place a wrong destination
+    // becomes irreversible (a mis-typed leaf, unlike a rejected constructor
+    // call, only surfaces once someone tries to spend it).
+    if (!isP2trPkScript(destinationPkScript)) {
         throw new Error("invalid P2TR script");
     }
     return ArkadeScript.encode([
