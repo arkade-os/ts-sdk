@@ -1,13 +1,7 @@
 import type { Network } from "../networks";
 import type { RelativeTimelock } from "../script/tapscript";
 import { ServerResponseMismatchError } from "../providers/errors";
-
-/**
- * Nominal seconds per block, used only to compare a block-typed timelock
- * against a wall-clock floor. Coarse by design: under the default policies
- * block-typed values are only accepted on regtest.
- */
-const NOMINAL_BLOCK_SECONDS = 600n;
+import { assertTimelockWithinFloor, isRegtest } from "./timelockPolicy";
 
 /** Wall-clock floor for `batchExpiry` outside regtest. */
 export const DEFAULT_MIN_BATCH_EXPIRY_SECONDS = 86_400n;
@@ -27,8 +21,6 @@ export type BatchExpiryPolicy = {
     /** When advertised by the operator, `batchExpiry` must equal it exactly. */
     advertisedVtxoTreeExpiry?: bigint;
 };
-
-const isRegtest = (network: Network): boolean => network.bech32 === "bcrt";
 
 /**
  * Default policy for a network.
@@ -51,15 +43,6 @@ export function resolveBatchExpiryPolicy(
     return { ...defaultBatchExpiryPolicy(network), ...overrides };
 }
 
-/** BIP-68 reads values >= 512 as seconds, below as blocks. */
-const toTimelock = (value: bigint): RelativeTimelock => ({
-    value,
-    type: value >= 512n ? "seconds" : "blocks",
-});
-
-const toSeconds = (t: RelativeTimelock): bigint =>
-    t.type === "seconds" ? t.value : t.value * NOMINAL_BLOCK_SECONDS;
-
 /**
  * Check a server-supplied batch expiry against `policy` and return the timelock
  * to commit to.
@@ -75,30 +58,15 @@ export function assertValidBatchExpiry(
     batchExpiry: bigint,
     policy: BatchExpiryPolicy,
 ): RelativeTimelock {
-    const timelock = toTimelock(batchExpiry);
-
-    if (policy.advertisedVtxoTreeExpiry !== undefined) {
-        if (batchExpiry !== policy.advertisedVtxoTreeExpiry) {
-            throw new ServerResponseMismatchError(
-                `batch expiry rejected: ${batchExpiry} does not match the advertised ` +
-                    `vtxoTreeExpiry ${policy.advertisedVtxoTreeExpiry}`,
-            );
-        }
-    }
-
-    if (policy.requireSeconds && timelock.type === "blocks") {
+    if (
+        policy.advertisedVtxoTreeExpiry !== undefined &&
+        batchExpiry !== policy.advertisedVtxoTreeExpiry
+    ) {
         throw new ServerResponseMismatchError(
-            `batch expiry rejected: block-typed timelocks are not accepted (got ${batchExpiry})`,
+            `batch expiry rejected: ${batchExpiry} does not match the advertised ` +
+                `vtxoTreeExpiry ${policy.advertisedVtxoTreeExpiry}`,
         );
     }
 
-    const seconds = toSeconds(timelock);
-    if (seconds < policy.minSeconds) {
-        throw new ServerResponseMismatchError(
-            `batch expiry rejected: ${timelock.value} ${timelock.type} is below the ` +
-                `${policy.minSeconds}s floor`,
-        );
-    }
-
-    return timelock;
+    return assertTimelockWithinFloor(batchExpiry, policy, "batch expiry");
 }

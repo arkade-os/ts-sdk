@@ -13,7 +13,7 @@ import type { VirtualTxRepository } from "../src/repositories/virtualTxRepositor
 
 const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const CHECKPOINT_TAPSCRIPT =
-    "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac";
+    "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac";
 
 const info = {
     signerPubkey: SERVER_PUBKEY_HEX,

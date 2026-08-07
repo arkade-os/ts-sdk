@@ -16,7 +16,7 @@ import { hex } from "@scure/base";
 // test/helpers/restoreWallet.ts harness so Wallet.create() parses cleanly.
 const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const CHECKPOINT_TAPSCRIPT =
-    "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac";
+    "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac";
 
 // boardingExitDelay is a seconds-type relative timelock and must be a multiple
 // of 512 (BIP68 seconds granularity; bip68.encode throws otherwise). 604672 =

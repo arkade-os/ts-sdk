@@ -75,6 +75,11 @@ import { signerSetFromInfo, toXOnlySignerHex } from "./signerRotation";
 import { assertValidBatchExpiry, resolveBatchExpiryPolicy } from "./batchExpiry";
 import type { BatchExpiryPolicy } from "./batchExpiry";
 import {
+    assertValidServerUnrollScript,
+    resolveCheckpointExitDelayPolicy,
+} from "./checkpointExitDelay";
+import type { CheckpointExitDelayPolicy } from "./checkpointExitDelay";
+import {
     assertCheckpointsMatchInputs,
     buildOffchainTx,
     hasBoardingTxExpired,
@@ -2409,20 +2414,20 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     async rotateServerSigner(newServerPubKey: Bytes, checkpointTapscript: string): Promise<void> {
         const xonly = toXOnlyPubKey(newServerPubKey);
 
-        // Decode the new epoch's checkpoint script FIRST, before any
-        // persistence. The checkpoint script is server-controlled state the
+        // Decode and validate the new epoch's checkpoint script FIRST, before
+        // any persistence. The checkpoint script is server-controlled state the
         // send path builds its checkpoint outputs from; a missing/empty/
-        // undecodable value (the provider defaults it to "" when the server
-        // omits it) fails the rotation up front — mirroring `Wallet.create` —
-        // so a bad rotation is side-effect-free and the wallet keeps operating
-        // against its previous consistent epoch (old key + tapscripts + unroll
-        // script).
-        let newServerUnrollScript: CSVMultisigTapscript.Type;
-        try {
-            newServerUnrollScript = CSVMultisigTapscript.decode(hex.decode(checkpointTapscript));
-        } catch (e) {
-            throw new Error("Invalid checkpointTapscript from server");
-        }
+        // undecodable/sub-floor/wrong-pubkey value (the provider defaults it to
+        // "" when the server omits it) fails the rotation up front — mirroring
+        // `Wallet.create` — so a bad rotation is side-effect-free and the
+        // wallet keeps operating against its previous consistent epoch (old
+        // key + tapscripts + unroll script). The forfeit pubkey does not
+        // rotate, so it is pinned against `this.forfeitPubkey` here rather
+        // than trusted from the same response the script came from.
+        const newServerUnrollScript = assertValidServerUnrollScript(
+            checkpointTapscript,
+            resolveCheckpointExitDelayPolicy(this.network, this.checkpointExitDelayPolicy),
+        );
 
         // Fast-path idempotency. The authoritative re-check happens inside
         // `_doRotateServerSigner` after the serialization barrier, so two
@@ -2790,6 +2795,8 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         lookAheadWindow?: number,
         /** Overrides for the `batchExpiry` bounds; defaults derive from `network`. */
         protected readonly batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
+        /** Overrides for the checkpoint exit delay bounds; defaults derive from `network`. */
+        protected readonly checkpointExitDelayPolicy?: Partial<CheckpointExitDelayPolicy>,
     ) {
         super(
             identity,
@@ -2973,21 +2980,29 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
 
         const setup = await ReadonlyWallet.setupWalletConfig(config, pubkey);
 
-        // Compute Wallet-specific forfeit and unroll scripts
-        // the serverUnrollScript is the one used to create output scripts of the checkpoint transactions
-        let serverUnrollScript: CSVMultisigTapscript.Type;
-        try {
-            const raw = hex.decode(setup.info.checkpointTapscript);
-            serverUnrollScript = CSVMultisigTapscript.decode(raw);
-        } catch (e) {
-            throw new Error("Invalid checkpointTapscript from server");
-        }
-
         // parse the server forfeit address
         // server is expecting funds to be sent to this address
         const forfeitPubkey = hex.decode(setup.info.forfeitPubkey).slice(1);
         const forfeitAddress = Address(setup.network).decode(setup.info.forfeitAddress);
         const forfeitOutputScript = OutScript.encode(forfeitAddress);
+
+        // Compute Wallet-specific unroll script — the serverUnrollScript is
+        // used to create output scripts of the checkpoint transactions. No
+        // prior pin exists at first contact, so this checks self-consistency
+        // against this same response's forfeitPubkey (catches malformed
+        // responses) and relies on the exit-delay floor as the real defense
+        // against a malicious operator (mirrors the `arkServerPublicKey` TOFU
+        // caveat, and #686's own batch-expiry floor-first defense).
+        const checkpointExitDelayOverrides: Partial<CheckpointExitDelayPolicy> = {
+            advertisedForfeitPubkey: forfeitPubkey,
+            ...(config.minCheckpointExitDelaySeconds !== undefined
+                ? { minSeconds: config.minCheckpointExitDelaySeconds }
+                : {}),
+        };
+        const serverUnrollScript = assertValidServerUnrollScript(
+            setup.info.checkpointTapscript,
+            resolveCheckpointExitDelayPolicy(setup.network, checkpointExitDelayOverrides),
+        );
 
         // HD wiring (boot path) — resolved via the descriptor provider.
         // The rotator (when present) is handed to the constructor as
@@ -3027,6 +3042,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     ? { minSeconds: config.minBatchExpirySeconds }
                     : {}),
             },
+            checkpointExitDelayOverrides,
         );
         wallet._serverInfoSource = setup.serverInfoSource;
         // The response cleared construction validation — network/signer in
@@ -4514,8 +4530,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
 
         if (spendable.length > 0) {
             const info = await this.arkProvider.getInfo();
-            const serverUnrollScript = CSVMultisigTapscript.decode(
-                hex.decode(info.checkpointTapscript),
+            const serverUnrollScript = assertValidServerUnrollScript(
+                info.checkpointTapscript,
+                resolveCheckpointExitDelayPolicy(this.network, this.checkpointExitDelayPolicy),
             );
 
             // One tx per VTXO: a stale or rejected input then dents only its own
