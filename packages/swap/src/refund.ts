@@ -40,14 +40,18 @@
  * That is what this module builds.
  */
 import { base64, hex } from "@scure/base";
+import { sha256 } from "@noble/hashes/sha2.js";
 import {
     CSVMultisigTapscript,
+    ConditionWitness,
     RestArkProvider,
     RestIndexerProvider,
     SingleKey,
+    Transaction,
     VHTLC,
     assertSubmittedArkTxid,
     buildOffchainTx,
+    getArkPsbtFields,
     matchServerCheckpoints,
 } from "@arkade-os/sdk";
 
@@ -154,6 +158,149 @@ export async function findLockupVtxos(
         vout: vtxo.vout,
         value: Number(vtxo.value),
     }));
+}
+
+// ── Reading the lockup's fate off chain ──────────────────────────────────────
+
+/**
+ * The indexer surface the lockup-spend read needs: the vtxo lookup, plus the
+ * raw transactions those vtxos were spent by. Same narrow-seam style as
+ * {@link RefundIndexer} and `restore.ts`'s `RestoreIndexer`, and satisfied by
+ * {@link RestIndexerProvider}.
+ */
+export type LockupSpendIndexer = Pick<RestIndexerProvider, "getVtxos" | "getVirtualTxs">;
+
+/**
+ * What chain data says became of a swap lockup — the whole answer, with no
+ * solver involvement and nothing taken on the solver's word.
+ */
+export type LockupFate =
+    /** At least one output at the lockup is still unspent. Not over. */
+    | { fate: "open" }
+    /** Spent by a witness carrying a preimage that HASHES to the quote's
+     * `payment_hash`. Only the claim leaf can reveal one, and the only
+     * legitimate way the solver obtains it is by completing its side. */
+    | { fate: "claimed"; preimage: Uint8Array }
+    /** Fully spent, and nothing that spent it revealed a matching preimage —
+     * so the money went back to the trader. See {@link readLockupFate}. */
+    | { fate: "returned" }
+    /** Nothing was learned: no outputs visible, a spend the indexer could not
+     * produce, or a blob that would not decode. Never an answer. */
+    | { fate: "unknown" };
+
+/** `sha256(candidate)` against the quote's wire-form payment hash. This — not
+ * a matching witness SHAPE — is the only thing that turns a witness item into
+ * proof, the same discipline `claimOnchainFill` and `extractPreimage` already
+ * apply to every other preimage this package consumes. */
+const hashesTo = (candidate: Uint8Array, paymentHash: string): boolean =>
+    hex.encode(sha256(candidate)) === paymentHash;
+
+/**
+ * Every witness item one input of a spend might be carrying the preimage in.
+ *
+ * Two sources, searched as one set. Ark's proprietary `ConditionWitness` PSBT
+ * field is where a preimage is attached when the condition closure is
+ * finalized (`setArkPsbtField(tx, i, ConditionWitness, [preimage])`), and it
+ * survives a default `Transaction.fromPSBT` round trip — the SDK's decoder
+ * already keeps unknown fields, so no options are needed here (the same thing
+ * `restore.ts` relies on to read an offer packet back). `finalScriptWitness`
+ * is the other place a preimage can sit once the raw witness stack is built.
+ * Reading only one of them would miss a real settlement; reading both costs
+ * nothing, because neither is trusted — see {@link readLockupFate}.
+ */
+const candidateWitnessItems = (tx: Transaction, inputIndex: number): Uint8Array[] => [
+    ...getArkPsbtFields(tx, inputIndex, ConditionWitness).flat(),
+    ...(tx.getInput(inputIndex).finalScriptWitness ?? []),
+];
+
+/**
+ * Decide from chain data alone whether a swap lockup settled, came back, or is
+ * still live.
+ *
+ * **Why this is decidable without asking anyone.** The lockup's claim leaf can
+ * only be spent by revealing `P`, so a spend witness carrying a value that
+ * hashes to the quote's `payment_hash` is proof the claim leaf was used — and
+ * the only legitimate way the counterparty obtains `P` is by completing its
+ * side of the swap. Every OTHER leaf is a refund: `nonInteractiveRefund` is
+ * covenant-pinned to the trader's own address (`enforcePayTo(senderPkScript)`),
+ * and `refund`, `refundWithoutReceiver`, `unilateralRefund` and
+ * `unilateralRefundWithoutReceiver` all require the trader's own signature. So
+ * "spent, but not by a hash-verified claim" means the money went back to the
+ * trader, and nothing here has to trust a counterparty to say so.
+ *
+ * **A matching witness SHAPE is not proof.** Only a candidate that hashes to
+ * `paymentHash` may be read as a claim; a 32-byte item that hashes to anything
+ * else is just bytes, and is treated as a refund. Getting this wrong in the
+ * permissive direction would report "settled" for a swap that actually
+ * refunded, which is precisely the fact a trader is relying on.
+ *
+ * **`unknown` is not `returned`.** An empty vtxo set (indexer lag, or a lockup
+ * not visible yet), a `spentBy` the indexer cannot produce a transaction for,
+ * or a blob that will not decode all come back as `unknown`. `getVirtualTxs`
+ * may legitimately return fewer transactions than were asked for, so the
+ * observed set is counted rather than assumed complete. The caller's correct
+ * response to `unknown` is the same as to `open`: keep watching, and let the
+ * refund timelock — which no outage can move — be what ends the wait.
+ *
+ * Ask-the-indexer, don't-trust-local-state: read fresh on every poll, never
+ * cached, the same posture {@link findLockupVtxos} already establishes.
+ */
+export async function readLockupFate(
+    indexer: LockupSpendIndexer,
+    input: {
+        swapPkScript: Uint8Array;
+        /** `sha256(P)`, hex — the quote's `payment_hash`. */
+        paymentHash: string;
+    },
+): Promise<LockupFate> {
+    const { vtxos } = await indexer.getVtxos({ scripts: [hex.encode(input.swapPkScript)] });
+    const all = vtxos ?? [];
+    if (all.length === 0) return { fate: "unknown" };
+
+    const spentBy = new Set<string>();
+    for (const vtxo of all) {
+        // `spentBy` is the EMPTY STRING, not absent, for an unspent output —
+        // so this is a truthiness test and never a presence one. It names the
+        // CHECKPOINT transaction that spent the output, which is exactly the
+        // one carrying the spend leaf's witness: `buildOffchainTx` builds one
+        // checkpoint per input, and that checkpoint's single input is the one
+        // holding the lockup's `tapLeafScript`. The ark transaction spends the
+        // checkpoint, not the lockup, so it is the wrong place to look.
+        if (!vtxo.spentBy) return { fate: "open" };
+        spentBy.add(vtxo.spentBy);
+    }
+
+    const { txs } = await indexer.getVirtualTxs([...spentBy]);
+    const observed = new Set<string>();
+    for (const raw of txs) {
+        let tx: Transaction;
+        try {
+            tx = Transaction.fromPSBT(base64.decode(raw));
+        } catch {
+            continue; // undecodable blob: nothing learned from it
+        }
+        // Witness data cannot change a taproot-only txid, so binding the
+        // response by the PSBT's own id — rather than by position — is what
+        // says a spend was actually observed. Same binding `restore.ts` makes.
+        if (spentBy.has(tx.id)) observed.add(tx.id);
+        for (let i = 0; i < tx.inputsLength; i++) {
+            const spent = tx.getInput(i);
+            if (!spent.txid) continue;
+            // Matched by outpoint: `hex.encode(input.txid)` is the same txid
+            // convention the indexer hands back, which is how the SDK's own
+            // `assertCheckpointsMatchInputs` compares the two.
+            const txid = hex.encode(spent.txid);
+            if (!all.some((vtxo) => vtxo.txid === txid && vtxo.vout === spent.index)) continue;
+            for (const candidate of candidateWitnessItems(tx, i)) {
+                if (hashesTo(candidate, input.paymentHash)) {
+                    return { fate: "claimed", preimage: candidate };
+                }
+            }
+        }
+    }
+
+    // Only a lockup whose every spend was actually seen can be called returned.
+    return observed.size === spentBy.size ? { fate: "returned" } : { fate: "unknown" };
 }
 
 /**
