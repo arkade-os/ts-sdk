@@ -103,6 +103,24 @@ describe("assertValidBatchExpiry", () => {
             }),
         ).toThrow(/below the 86400s floor/);
     });
+
+    it("still applies the floor when the value equals the advertised vtxoTreeExpiry", () => {
+        expect(() =>
+            assertValidBatchExpiry(512n, {
+                ...defaultBatchExpiryPolicy(networks.bitcoin),
+                advertisedVtxoTreeExpiry: 512n,
+            }),
+        ).toThrow(/below the 86400s floor/);
+    });
+
+    it("still rejects a block-typed value equal to the advertised vtxoTreeExpiry", () => {
+        expect(() =>
+            assertValidBatchExpiry(144n, {
+                ...defaultBatchExpiryPolicy(networks.bitcoin),
+                advertisedVtxoTreeExpiry: 144n,
+            }),
+        ).toThrow(/block-typed timelocks are not accepted/);
+    });
 });
 
 describe("createArkadeBatchHandler batch expiry", () => {
