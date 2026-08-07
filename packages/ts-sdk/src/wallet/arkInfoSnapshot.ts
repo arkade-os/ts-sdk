@@ -37,6 +37,8 @@ export type StoredArkInfoSnapshot = {
         forfeitPubkey: string;
         unilateralExitDelay: string;
         boardingExitDelay: string;
+        /** Absent on snapshots written before the operator advertised it. */
+        vtxoTreeExpiry?: string;
         sessionDuration: string;
         dust: string;
         fees: FeeInfo;
@@ -86,6 +88,7 @@ export function serializeArkInfoSnapshot(info: ArkInfo, savedAt: number): Stored
             forfeitPubkey: info.forfeitPubkey,
             unilateralExitDelay: info.unilateralExitDelay.toString(),
             boardingExitDelay: info.boardingExitDelay.toString(),
+            vtxoTreeExpiry: info.vtxoTreeExpiry?.toString(),
             sessionDuration: info.sessionDuration.toString(),
             dust: info.dust.toString(),
             fees: info.fees,
@@ -145,6 +148,7 @@ export function hydrateArkInfo(snapshot: StoredArkInfoSnapshot): ArkInfo {
         sessionDuration: BigInt(a.sessionDuration),
         signerPubkey: a.signerPubkey,
         unilateralExitDelay: BigInt(a.unilateralExitDelay),
+        vtxoTreeExpiry: a.vtxoTreeExpiry !== undefined ? BigInt(a.vtxoTreeExpiry) : undefined,
         utxoMaxAmount: BigInt(a.utxoMaxAmount),
         utxoMinAmount: BigInt(a.utxoMinAmount),
         version: a.version,
@@ -226,6 +230,9 @@ export function parseStoredArkInfoSnapshot(raw: unknown): StoredArkInfoSnapshot 
         "utxoMaxAmount",
     ]) {
         assertDecimalString(a[field], `arkInfo.${field}`);
+    }
+    if (a.vtxoTreeExpiry !== undefined) {
+        assertDecimalString(a.vtxoTreeExpiry, "arkInfo.vtxoTreeExpiry");
     }
     assertFeeInfo(a.fees, "arkInfo.fees");
 

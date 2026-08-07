@@ -3,6 +3,8 @@ import {
     ArkProvider,
     ArkTxInput,
     assertSubmittedArkTxid,
+    assertValidServerUnrollScript,
+    resolveCheckpointExitDelayPolicy,
     Batch,
     buildOffchainTx,
     getSequence,
@@ -10,13 +12,13 @@ import {
     matchServerCheckpoints,
     Intent,
     getNetwork,
+    Network,
     networks,
     NetworkName,
     Recipient,
     VHTLC,
     VtxoScript,
     VtxoTaprootTree,
-    CSVMultisigTapscript,
     combineTapscriptSigs,
     Transaction,
     scriptFromTapLeafScript,
@@ -148,6 +150,28 @@ export const candidateServerPubkeys = (arkInfo: ArkInfo): string[] => {
     return candidates;
 };
 
+/** Resolve `ArkInfo.network` (e.g. `"bitcoin"`, `"regtest"`) to a {@link Network}. */
+const resolveArkNetwork = (networkName: string): Network =>
+    networkName in networks ? networks[networkName as keyof typeof networks] : networks.bitcoin;
+
+/**
+ * Decode and validate `arkInfo.checkpointTapscript` for building checkpoint
+ * outputs. These free functions have no persistent wallet state to pin a
+ * forfeit pubkey against across calls, so — mirroring how
+ * `createVHTLCBatchHandler` already treats `vtxoTreeExpiry` — this checks
+ * self-consistency against this same response's own `forfeitPubkey`; the
+ * exit-delay floor is the primary defense against a malicious operator.
+ */
+const assertValidVHTLCServerUnrollScript = (
+    arkInfo: Pick<ArkInfo, "checkpointTapscript" | "forfeitPubkey" | "network">,
+) =>
+    assertValidServerUnrollScript(
+        arkInfo.checkpointTapscript,
+        resolveCheckpointExitDelayPolicy(resolveArkNetwork(arkInfo.network), {
+            advertisedForfeitPubkey: normalizeToXOnlyKey(arkInfo.forfeitPubkey, "forfeit"),
+        }),
+    );
+
 /**
  * Joins a batch to spend the vtxo via commitment transaction
  * @param identity - The identity to use for signing the forfeit transaction.
@@ -213,8 +237,7 @@ export const joinBatch = async (
         proof: base64.encode(signedRegisterIntent.toPSBT()),
     });
 
-    const btcNetwork =
-        network in networks ? networks[network as keyof typeof networks] : networks.bitcoin;
+    const btcNetwork = resolveArkNetwork(network);
     const decodedAddress = Address(btcNetwork).decode(forfeitAddress);
 
     try {
@@ -273,8 +296,7 @@ export const claimVHTLCwithOffchainTx = async (
     arkProvider: ArkProvider,
 ): Promise<string> => {
     // create the server unroll script for checkpoint transactions
-    const rawCheckpointTapscript = hex.decode(arkInfo.checkpointTapscript);
-    const serverUnrollScript = CSVMultisigTapscript.decode(rawCheckpointTapscript);
+    const serverUnrollScript = assertValidVHTLCServerUnrollScript(arkInfo);
 
     // create the offchain transaction to claim the VHTLC
     const { arkTx, checkpoints } = buildOffchainTx(inputs, [output], serverUnrollScript);
@@ -353,8 +375,7 @@ export const refundWithoutReceiverVHTLCwithOffchainTx = async (
     arkProvider: ArkProvider,
 ): Promise<string> => {
     // create the server unroll script for checkpoint transactions
-    const rawCheckpointTapscript = hex.decode(arkInfo.checkpointTapscript);
-    const serverUnrollScript = CSVMultisigTapscript.decode(rawCheckpointTapscript);
+    const serverUnrollScript = assertValidVHTLCServerUnrollScript(arkInfo);
 
     // create the offchain transaction to refund the VHTLC
     const { arkTx, checkpoints } = buildOffchainTx([input], [output], serverUnrollScript);
@@ -436,8 +457,7 @@ export const refundVHTLCwithOffchainTx = async (
     }>,
 ): Promise<void> => {
     // create the server unroll script for checkpoint transactions
-    const rawCheckpointTapscript = hex.decode(arkInfo.checkpointTapscript);
-    const serverUnrollScript = CSVMultisigTapscript.decode(rawCheckpointTapscript);
+    const serverUnrollScript = assertValidVHTLCServerUnrollScript(arkInfo);
 
     // create the virtual transaction to claim the VHTLC
     const { arkTx: unsignedRefundTx, checkpoints: checkpointPtxs } = buildOffchainTx(

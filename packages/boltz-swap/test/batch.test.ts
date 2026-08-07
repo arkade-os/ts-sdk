@@ -16,6 +16,7 @@ import {
     SingleKey,
     Transaction,
     networks,
+    ServerResponseMismatchError,
     validateVtxoTxGraph,
     type ArkProvider,
     type ArkTxInput,
@@ -82,9 +83,10 @@ function makeSession(): SignerSession {
     } as unknown as SignerSession;
 }
 
-function makeArkProvider() {
+function makeArkProvider(info: { vtxoTreeExpiry?: bigint } = {}) {
     return {
         confirmRegistration: vi.fn(async () => {}),
+        getInfo: vi.fn(async () => info),
         submitTreeNonces: vi.fn(async () => {}),
         submitTreeSignatures: vi.fn(async () => {}),
         submitSignedForfeitTxs: vi.fn(async () => {}),
@@ -127,8 +129,12 @@ function treeSigningStarted(commitmentTx: string): TreeSigningStartedEvent {
     } as unknown as TreeSigningStartedEvent;
 }
 
-async function makeHandler(opts?: { recipient?: Recipient; recoverable?: boolean }) {
-    const arkProvider = makeArkProvider();
+async function makeHandler(opts?: {
+    recipient?: Recipient;
+    recoverable?: boolean;
+    vtxoTreeExpiry?: bigint;
+}) {
+    const arkProvider = makeArkProvider({ vtxoTreeExpiry: opts?.vtxoTreeExpiry });
     const handler = createVHTLCBatchHandler(
         INTENT_ID,
         await makeVhtlcInput(),
@@ -239,5 +245,32 @@ describe("createVHTLCBatchHandler recipient validation", () => {
             ),
         ).rejects.toThrow(/offchain send output not found/);
         expect(arkProvider.submitTreeNonces).not.toHaveBeenCalled();
+    });
+});
+
+describe("createVHTLCBatchHandler batch expiry", () => {
+    it("rejects an out-of-policy expiry without confirming registration", async () => {
+        const { handler, arkProvider } = await makeHandler();
+
+        await expect(
+            handler.onBatchStarted({ ...batchStarted, batchExpiry: 1n } as BatchStartedEvent),
+        ).rejects.toThrow(ServerResponseMismatchError);
+        expect(arkProvider.confirmRegistration).not.toHaveBeenCalled();
+    });
+
+    it("rejects an expiry that differs from the advertised vtxoTreeExpiry", async () => {
+        const { handler, arkProvider } = await makeHandler({ vtxoTreeExpiry: 180n });
+
+        await expect(handler.onBatchStarted(batchStarted)).rejects.toThrow(
+            /does not match the advertised vtxoTreeExpiry 180/,
+        );
+        expect(arkProvider.confirmRegistration).not.toHaveBeenCalled();
+    });
+
+    it("accepts an expiry equal to the advertised vtxoTreeExpiry", async () => {
+        const { handler, arkProvider } = await makeHandler({ vtxoTreeExpiry: 100n });
+
+        await expect(handler.onBatchStarted(batchStarted)).resolves.toEqual({ skip: false });
+        expect(arkProvider.confirmRegistration).toHaveBeenCalledWith(INTENT_ID);
     });
 });

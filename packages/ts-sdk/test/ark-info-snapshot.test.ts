@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { hex } from "@scure/base";
+import { CSVMultisigTapscript } from "../src/script/tapscript";
 import {
     Wallet,
     ReadonlyWallet,
@@ -34,7 +36,7 @@ function makeArkInfo(overrides: Partial<ArkInfo> = {}): ArkInfo {
     return {
         boardingExitDelay: 144n,
         checkpointTapscript:
-            "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+            "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
         deprecatedSigners: [{ cutoffDate: 1_700_000_000n, pubkey: "02" + "ab".repeat(32) }],
         digest: "digest-abc",
         dust: 1000n,
@@ -88,6 +90,26 @@ describe("serializeArkInfoSnapshot / hydrateArkInfo", () => {
         const hydrated = hydrateArkInfo(serializeArkInfoSnapshot(info, 1));
         expect(hydrated.scheduledSession).toBeUndefined();
         expect(hydrated).toEqual({ ...info, serviceStatus: {} });
+    });
+
+    it("round-trips vtxoTreeExpiry when advertised", () => {
+        const info = makeArkInfo({ vtxoTreeExpiry: 604_672n });
+        const snapshot = serializeArkInfoSnapshot(info, 1);
+        expect(snapshot.arkInfo.vtxoTreeExpiry).toBe("604672");
+        expect(hydrateArkInfo(snapshot).vtxoTreeExpiry).toBe(604_672n);
+    });
+
+    it("keeps vtxoTreeExpiry undefined when not advertised — never 0n", () => {
+        const snapshot = serializeArkInfoSnapshot(makeArkInfo(), 1);
+        expect(snapshot.arkInfo.vtxoTreeExpiry).toBeUndefined();
+        expect(hydrateArkInfo(snapshot).vtxoTreeExpiry).toBeUndefined();
+    });
+
+    it("accepts a v1 snapshot written before vtxoTreeExpiry existed", () => {
+        const raw = JSON.parse(JSON.stringify(serializeArkInfoSnapshot(makeArkInfo(), 1)));
+        delete raw.arkInfo.vtxoTreeExpiry;
+        expect(() => parseStoredArkInfoSnapshot(raw)).not.toThrow();
+        expect(hydrateArkInfo(parseStoredArkInfoSnapshot(raw)).vtxoTreeExpiry).toBeUndefined();
     });
 });
 
@@ -354,6 +376,60 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
                 storage: { walletRepository, contractRepository },
             }),
         ).rejects.toThrow(/checkpointTapscript/);
+        expect(await loadArkInfoSnapshot(walletRepository)).toBeNull();
+    });
+
+    it("full Wallet.create rejects a sub-floor checkpoint exit delay [P720-2] and does not cache", async () => {
+        const walletRepository = new InMemoryWalletRepository();
+        const contractRepository = new InMemoryContractRepository();
+        // Well-formed, decodable, and pinned to the advertised forfeitPubkey —
+        // only the timelock (1 block) is out of policy.
+        const oneBlockCheckpoint = hex.encode(
+            CSVMultisigTapscript.encode({
+                timelock: { type: "blocks", value: 1 },
+                pubkeys: [hex.decode(serverKeyHex).slice(1)],
+            }).script,
+        );
+        await expect(
+            Wallet.create({
+                identity: SingleKey.fromHex(privKeyHex),
+                arkServerUrl: "http://localhost:7070",
+                arkProvider: {
+                    getInfo: async () => makeArkInfo({ checkpointTapscript: oneBlockCheckpoint }),
+                } as Partial<ArkProvider> as ArkProvider,
+                indexerProvider: indexerStub(),
+                onchainProvider: {} as OnchainProvider,
+                storage: { walletRepository, contractRepository },
+            }),
+        ).rejects.toThrow(/checkpoint exit delay rejected/);
+        expect(await loadArkInfoSnapshot(walletRepository)).toBeNull();
+    });
+
+    it("full Wallet.create rejects a checkpoint script pinned to the wrong pubkey [P720-2] and does not cache", async () => {
+        const walletRepository = new InMemoryWalletRepository();
+        const contractRepository = new InMemoryContractRepository();
+        // Well-formed and in-policy timelock, but the embedded pubkey does not
+        // match the response's own forfeitPubkey — a malformed/malicious
+        // response, caught even at first-contact self-consistency.
+        const wrongPubkeyCheckpoint = hex.encode(
+            CSVMultisigTapscript.encode({
+                timelock: { type: "seconds", value: 604_672 },
+                pubkeys: [new Uint8Array(32).fill(0xab)],
+            }).script,
+        );
+        await expect(
+            Wallet.create({
+                identity: SingleKey.fromHex(privKeyHex),
+                arkServerUrl: "http://localhost:7070",
+                arkProvider: {
+                    getInfo: async () =>
+                        makeArkInfo({ checkpointTapscript: wrongPubkeyCheckpoint }),
+                } as Partial<ArkProvider> as ArkProvider,
+                indexerProvider: indexerStub(),
+                onchainProvider: {} as OnchainProvider,
+                storage: { walletRepository, contractRepository },
+            }),
+        ).rejects.toThrow(/does not match the advertised forfeitPubkey/);
         expect(await loadArkInfoSnapshot(walletRepository)).toBeNull();
     });
 });

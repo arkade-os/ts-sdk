@@ -19,6 +19,9 @@ import {
     buildForfeitTx,
     ArkTxInput,
     getSequence,
+    assertValidBatchExpiry,
+    resolveBatchExpiryPolicy,
+    type BatchExpiryPolicy,
 } from "@arkade-os/sdk";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { base64, hex } from "@scure/base";
@@ -37,6 +40,8 @@ export function createVHTLCBatchHandler(
     recipient?: Recipient,
     forfeitOutputScript?: Bytes, // undefined if recoverable
     connectorIndex: number = 0,
+    /** Overrides for the `batchExpiry` bounds; defaults derive from `network`. */
+    batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
 ) {
     const utf8IntentId = new TextEncoder().encode(intentId);
     const intentIdHash = sha256(utf8IntentId);
@@ -47,28 +52,32 @@ export function createVHTLCBatchHandler(
 
     return {
         onBatchStarted: async (event: BatchStartedEvent): Promise<{ skip: boolean }> => {
-            let skip = true;
-
             // check if our intent ID hash matches any in the event
-            for (const idHash of event.intentIdHashes) {
-                if (idHash === intentIdHashStr) {
-                    if (!arkProvider) {
-                        throw new Error("Ark provider not configured");
-                    }
-                    await arkProvider.confirmRegistration(intentId);
-                    skip = false;
-                }
-            }
+            const skip = !event.intentIdHashes.includes(intentIdHashStr);
 
             if (skip) {
                 return { skip };
             }
 
+            if (!arkProvider) {
+                throw new Error("Ark provider not configured");
+            }
+
+            // Bound the expiry before confirming, so a rejected round is never
+            // confirmed to the operator.
+            const info = await arkProvider.getInfo();
+            const timelock = assertValidBatchExpiry(
+                event.batchExpiry,
+                resolveBatchExpiryPolicy(network, {
+                    advertisedVtxoTreeExpiry: info.vtxoTreeExpiry,
+                    ...batchExpiryPolicy,
+                }),
+            );
+
+            await arkProvider.confirmRegistration(intentId);
+
             const sweepTapscript = CSVMultisigTapscript.encode({
-                timelock: {
-                    value: event.batchExpiry,
-                    type: event.batchExpiry >= 512n ? "seconds" : "blocks",
-                },
+                timelock,
                 pubkeys: [sweepPublicKey],
             }).script;
 

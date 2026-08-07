@@ -62,6 +62,8 @@ async function fixture() {
     const output = { script: P2TR, amount: BigInt(VALUE) };
     const arkInfo = {
         checkpointTapscript: hex.encode((await unrollScript(serverKey)).script),
+        forfeitPubkey: hex.encode(server),
+        network: "regtest",
     } as ArkInfo;
 
     return { vhtlcScript, server, input, output, arkInfo };
@@ -200,5 +202,50 @@ describe("claimVHTLCwithOffchainTx checkpoint reconciliation", () => {
             ),
         ).rejects.toThrow(/does not match any submitted checkpoint/);
         expect(arkProvider.finalizeTx).not.toHaveBeenCalled();
+    });
+});
+
+describe("claimVHTLCwithOffchainTx checkpoint exit delay validation [P720-2]", () => {
+    it("rejects a sub-floor checkpointTapscript before submitting anything", async () => {
+        const { vhtlcScript, server, input, output, arkInfo } = await fixture();
+        const arkProvider = arkProviderStub(serverSigned);
+        const oneBlockCheckpoint = hex.encode(
+            CSVMultisigTapscript.encode({
+                timelock: { type: "blocks", value: 1n },
+                pubkeys: [server],
+            }).script,
+        );
+
+        await expect(
+            claimVHTLCwithOffchainTx(
+                ourKey,
+                vhtlcScript,
+                server,
+                [input],
+                output,
+                { ...arkInfo, checkpointTapscript: oneBlockCheckpoint },
+                arkProvider,
+            ),
+        ).rejects.toThrow(/checkpoint exit delay rejected/);
+        expect(arkProvider.submitTx).not.toHaveBeenCalled();
+    });
+
+    it("rejects a checkpointTapscript pinned to a pubkey other than forfeitPubkey", async () => {
+        const { vhtlcScript, server, input, output, arkInfo } = await fixture();
+        const arkProvider = arkProviderStub(serverSigned);
+        const wrongPubkeyCheckpoint = hex.encode((await unrollScript(foreignKey)).script);
+
+        await expect(
+            claimVHTLCwithOffchainTx(
+                ourKey,
+                vhtlcScript,
+                server,
+                [input],
+                output,
+                { ...arkInfo, checkpointTapscript: wrongPubkeyCheckpoint },
+                arkProvider,
+            ),
+        ).rejects.toThrow(/does not match the advertised forfeitPubkey/);
+        expect(arkProvider.submitTx).not.toHaveBeenCalled();
     });
 });
