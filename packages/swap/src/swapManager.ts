@@ -52,7 +52,25 @@
  * them; the actions that move money are {@link RfqSwapManagerCallbacks}, so no
  * key material ever reaches this class — the same split `onchainHtlc.ts` makes
  * with its `sign` callback.
+ *
+ * **Push where it helps, poll because it must.** Given a
+ * {@link RfqSwapManagerDeps.contracts}, each lockup is registered as a contract
+ * and the indexer PUSHES its funding and its spend, which is how a settlement
+ * gets noticed the moment it happens instead of up to a poll interval later.
+ * That stream is a latency optimization and never a source of truth: an event
+ * only causes the ordinary pass to run early, and that pass re-reads the lockup
+ * itself. See {@link RfqSwapManager.subscribe} for why that distinction is the
+ * whole safety argument, and why {@link RfqSwapManager.poll} stays armed as the
+ * failsafe rather than being replaced.
  */
+import { hex } from "@scure/base";
+import {
+    VHTLCV2ContractHandler,
+    type ContractEvent,
+    type IContractManager,
+    type VHTLC,
+} from "@arkade-os/sdk";
+
 import {
     ONCHAIN_CLAIM_MARGIN_SECONDS,
     classifyOnchainHtlc,
@@ -97,6 +115,26 @@ export const RFQ_SWAP_TERMINAL_STATES = ["settled", "refunded", "failed"] as con
 export const isRfqSwapTerminal = (state: RfqSwapState): boolean =>
     (RFQ_SWAP_TERMINAL_STATES as readonly string[]).includes(state);
 
+/**
+ * What the manager needs to register a swap's lockup with the wallet, so the
+ * indexer pushes its funding and its spend instead of being asked every few
+ * seconds.
+ *
+ * Both fields are things the caller already holds. `script` is the very object
+ * `pushRefundWithoutReceiver` takes, so a caller wired for refunds has it in
+ * hand; `address` is `requestLightningSend` / `requestOnchainSend`'s own return
+ * value. The address is taken rather than re-derived on purpose — the row's
+ * address must be the one the trader actually funded, and a local re-derivation
+ * would silently use the SDK's default network, which is the exact bug
+ * `registerOfferContract` guards against.
+ */
+export interface RfqSwapLockup {
+    /** The covenant. Its `pkScript` MUST equal the record's `lockupPkScript`. */
+    script: InstanceType<typeof VHTLC.ScriptV2>;
+    /** The Arkade address that was funded. */
+    address: string;
+}
+
 interface RfqSwapCommon {
     /** The negotiation id — this record's identity. */
     rfqId: string;
@@ -106,6 +144,11 @@ interface RfqSwapCommon {
      * watches to decide the swap: it is the only handle on the covenant whose
      * spend witness says whether the swap settled or came back. */
     lockupPkScript: Uint8Array;
+    /** The covenant behind {@link lockupPkScript}, when the caller wants the
+     * lockup registered with a contract manager. Optional: without it the
+     * manager still watches the swap on its timer, it just cannot subscribe.
+     * See {@link RfqSwapManagerDeps.contracts}. */
+    lockup?: RfqSwapLockup;
     /** `sha256(P)`, hex — the quote's `payment_hash`. The claim leaf can only
      * be spent by revealing a value that hashes to this, which is what makes a
      * settlement provable rather than reported. For an onchain send this is
@@ -275,8 +318,24 @@ export interface RfqSwapManagerConfig {
     events?: RfqSwapManagerEvents;
 }
 
-/** The observation seams. Neither is owned by the manager, and neither holds
- * keys — same philosophy as `onchainHtlc.ts`'s `ChainSource`. There is no
+/** The contract-manager surface this needs, narrowed for injection — the same
+ * seam style as {@link LockupSpendIndexer} and `refund.ts`'s
+ * {@link RefundArkProvider}, and satisfied structurally by a real
+ * `ContractManager` (`await wallet.getContractManager()`). */
+export type SwapContractRegistry = Pick<
+    IContractManager,
+    "createContract" | "onContractEvent" | "setContractState"
+>;
+
+/** The contract type a swap lockup registers under. `@arkade-os/sdk`'s handler
+ * for `VHTLC.ScriptV2` — the covenant script this corridor builds. */
+export const SWAP_LOCKUP_CONTRACT_TYPE = "vhtlc-v2";
+
+export const SWAP_LOCKUP_CONTRACT_LABEL = "Arkade RFQ swap lockup";
+export const SWAP_LOCKUP_CONTRACT_KIND = "rfq-swap-lockup";
+
+/** The observation seams. None is owned by the manager, and none holds keys —
+ * same philosophy as `onchainHtlc.ts`'s `ChainSource`. There is no
  * `RfqTransport` here on purpose: nothing this manager decides depends on the
  * solver answering (see the module doc). */
 export interface RfqSwapManagerDeps {
@@ -286,6 +345,23 @@ export interface RfqSwapManagerDeps {
     /** L1 access. Required to monitor onchain-send swaps; a lightning-only
      * caller can leave it out. */
     chain?: ChainSource;
+    /**
+     * The wallet's contract manager, when there is one. Optional in the same
+     * way {@link chain} is: a caller with no wallet, or one that only wants the
+     * timer, still gets a fully working manager — the subscription is a
+     * LATENCY optimization and nothing depends on it.
+     *
+     * Supplying it buys two things. The lockup gets REGISTERED, which is what
+     * puts it in the wallet's own contract set at all — a prerequisite for
+     * anything that has to act on the lockup before its batch expires, since an
+     * expired lockup is swept and loses every cooperative path. And the indexer
+     * PUSHES its funding and its spend, so a settlement is noticed when it
+     * happens rather than up to `pollIntervalMs` later.
+     *
+     * Prefer `await wallet.getContractManager()` over constructing one, the way
+     * `createOffer` does.
+     */
+    contracts?: SwapContractRegistry;
 }
 
 /** A listener that throws must not derail the state machine mid-swap. */
@@ -307,8 +383,13 @@ const notify = <T extends (...args: never[]) => void>(
 /**
  * Watches a set of funded RFQ swaps and drives each to its end.
  *
- * One pass per swap, in this order, every {@link RfqSwapManagerConfig.pollIntervalMs}:
+ * One pass per swap, in this order, every
+ * {@link RfqSwapManagerConfig.pollIntervalMs} — and additionally the moment a
+ * contract event names that swap's lockup, which changes only WHEN a pass runs,
+ * never what it concludes (see {@link subscribe}):
  *
+ * 0. **Register the lockup**, if a contract manager was supplied and it is not
+ *    registered yet. Best-effort; never blocks the steps below.
  * 1. **Ask the chain what became of the lockup** — {@link readLockupFate}. A
  *    spend whose witness HASHES to the quote's `payment_hash` ends the swap
  *    `settled`; a lockup fully spent by anything else ends it `refunded`,
@@ -333,6 +414,20 @@ export class RfqSwapManager {
     private readonly actionExecutedListeners = new Set<ActionExecutedListener>();
 
     private readonly monitored = new Map<string, RfqSwap>();
+    /** Monitored swaps by lockup script hex, so a contract event — which names
+     * a script and nothing else — can find the swap it belongs to. */
+    private readonly byLockupScript = new Map<string, RfqSwap>();
+    /**
+     * Swaps whose lockup registration has been SETTLED one way or another,
+     * mapped to whether a contract row actually resulted. Membership is what
+     * stops a per-pass retry from becoming a per-pass round trip; the value is
+     * what keeps a swap that could never be registered from later trying to
+     * retire a row that does not exist, which would report a spurious failure
+     * on a swap that in fact succeeded.
+     */
+    private readonly registered = new Map<string, boolean>();
+    /** Live `onContractEvent` subscription, held so `stop()` can drop it. */
+    private unsubscribeContracts: (() => void) | null = null;
     /** Terminal records, kept so a late {@link waitForSwapCompletion} still
      * answers instead of throwing "not found". Cleared by {@link removeSwap}. */
     private readonly finished = new Map<string, RfqSwap>();
@@ -403,10 +498,11 @@ export class RfqSwapManager {
     async start(swaps: readonly RfqSwap[] = []): Promise<void> {
         for (const swap of swaps) {
             if (isRfqSwapTerminal(swap.state)) this.finished.set(swap.rfqId, swap);
-            else this.monitored.set(swap.rfqId, swap);
+            else this.track(swap);
         }
         if (this.running) return;
         this.running = true;
+        this.subscribe();
         await this.poll();
         this.arm();
     }
@@ -416,6 +512,12 @@ export class RfqSwapManager {
      * cancellable and run to completion; outstanding
      * {@link waitForSwapCompletion} promises are left pending, since
      * stop/start is a pause rather than a cancellation.
+     *
+     * The contract subscription is dropped too — an open stream with nothing
+     * reacting to it is a leak, and {@link start} puts it back. What is NOT
+     * undone is the contract registration: those rows are the wallet's, they
+     * outlive this manager's lifecycle, and dropping them would unwatch a
+     * lockup that is still funded.
      */
     async stop(): Promise<void> {
         this.running = false;
@@ -423,6 +525,8 @@ export class RfqSwapManager {
             clearTimeout(this.timer);
             this.timer = null;
         }
+        this.unsubscribeContracts?.();
+        this.unsubscribeContracts = null;
     }
 
     /** Begin monitoring a swap. Polled immediately when the manager is running,
@@ -432,14 +536,20 @@ export class RfqSwapManager {
             this.finished.set(swap.rfqId, swap);
             return;
         }
-        this.monitored.set(swap.rfqId, swap);
+        this.track(swap);
         if (this.running) await this.pollSwap(swap);
     }
 
-    /** Forget a swap entirely, monitored or finished. */
+    /** Forget a swap entirely, monitored or finished.
+     *
+     * Its contract row is left alone: registration is a wallet-level fact about
+     * a script that may still hold money, and this call says only that THIS
+     * manager stops driving the swap. Retiring the row is reserved for a swap
+     * that reached a terminal state, where the lockup is provably done. */
     async removeSwap(rfqId: string): Promise<void> {
-        this.monitored.delete(rfqId);
+        this.untrack(rfqId);
         this.finished.delete(rfqId);
+        this.registered.delete(rfqId);
         // Reject the waiters rather than dropping them: nothing will ever
         // settle this swap once it stops being monitored, so a pending
         // `waitForSwapCompletion` would hang for the life of the process.
@@ -522,6 +632,136 @@ export class RfqSwapManager {
 
     // ── internals ────────────────────────────────────────────────────────────
 
+    private track(swap: RfqSwap): void {
+        this.monitored.set(swap.rfqId, swap);
+        this.byLockupScript.set(hex.encode(swap.lockupPkScript), swap);
+    }
+
+    /** Drops the swap from BOTH indexes. The event index is the one that stops
+     * a late event finding a swap that is gone; `pollSwap`'s own
+     * `monitored` check would also catch it, and deliberately still does —
+     * either alone is sufficient, which is what keeps a future change to one of
+     * them from silently re-driving a cancelled swap. */
+    private untrack(rfqId: string): void {
+        const swap = this.monitored.get(rfqId);
+        if (swap) this.byLockupScript.delete(hex.encode(swap.lockupPkScript));
+        this.monitored.delete(rfqId);
+    }
+
+    /**
+     * Turn the indexer's push into an extra reason to run a pass — and nothing
+     * more.
+     *
+     * **This is deliberately not a source of truth.** An event names a script;
+     * the reaction is to run the ordinary pass for the swap at that script, and
+     * that pass re-reads the lockup through {@link readLockupFate} exactly as
+     * the timer's pass does. So an event that is missed, duplicated, reordered
+     * or outright FORGED can only cost or save latency — it can never change
+     * what this manager believes about a swap, and it can never on its own
+     * cause a claim or a refund. That property is what makes it safe to bolt a
+     * best-effort stream onto a money path, and it must survive any future
+     * change here: the moment an event is BELIEVED rather than merely acted on,
+     * a relay outage becomes a correctness problem instead of a latency one.
+     *
+     * The timer stays armed regardless, and is the failsafe. Every deadline
+     * that moves money — `refundLocktime`, the L1 claim window — is an absolute
+     * timelock that passes whether or not a single event ever arrives.
+     */
+    private subscribe(): void {
+        if (!this.deps.contracts || this.unsubscribeContracts) return;
+        this.unsubscribeContracts = this.deps.contracts.onContractEvent((event: ContractEvent) => {
+            if (event.type === "connection_reset") {
+                // The stream dropped, so events may have been missed while it
+                // was down. One pass over everything costs less than waiting
+                // out the interval on a view that could be stale.
+                void this.poll().catch(() => {});
+                return;
+            }
+            const swap = this.byLockupScript.get(event.contractScript);
+            // Not one of ours — a wallet's other contracts share this stream.
+            if (!swap) return;
+            void this.pollSwap(swap).catch(() => {});
+        });
+    }
+
+    /**
+     * Register this swap's lockup with the wallet's contract manager, once.
+     *
+     * Best-effort by design: a failure here is reported and retried on the next
+     * pass, and never aborts the pass it is part of. Registration buys latency
+     * and puts the lockup in the wallet's contract set; it decides nothing. The
+     * money path below it reads the indexer directly and is gated on timelocks
+     * that a missing contract row has no bearing on, so failing the pass over
+     * this would trade a real deadline for a bookkeeping one.
+     */
+    private async ensureRegistered(swap: RfqSwap): Promise<void> {
+        if (!this.deps.contracts) return;
+        if (this.registered.has(swap.rfqId)) return;
+
+        const lockup = swap.lockup;
+        if (!lockup) {
+            // A caller that wired a contract manager but no covenant asked for
+            // something that cannot be delivered. Said once — marking it
+            // settled — rather than every pass, because no retry can fix a
+            // missing field.
+            this.registered.set(swap.rfqId, false);
+            this.emitFailed(
+                swap,
+                new Error(
+                    `swap ${swap.rfqId} carries no lockup script, so it cannot be registered as a contract — pass \`lockup\` to subscribe instead of polling`,
+                ),
+            );
+            return;
+        }
+
+        const script = hex.encode(lockup.script.pkScript);
+        if (script !== hex.encode(swap.lockupPkScript)) {
+            // Contract rows are keyed by script, so registering anything but
+            // the script that was FUNDED would leave the real lockup unwatched
+            // while reporting success — the same failure `registerOfferContract`
+            // refuses. Not retryable: the record disagrees with itself.
+            this.registered.set(swap.rfqId, false);
+            this.emitFailed(
+                swap,
+                new Error(
+                    `swap ${swap.rfqId} lockup script ${script} does not match its lockupPkScript ${hex.encode(swap.lockupPkScript)}`,
+                ),
+            );
+            return;
+        }
+
+        try {
+            await this.deps.contracts.createContract({
+                type: SWAP_LOCKUP_CONTRACT_TYPE,
+                params: VHTLCV2ContractHandler.serializeParams(lockup.script.options),
+                script,
+                address: lockup.address,
+                label: SWAP_LOCKUP_CONTRACT_LABEL,
+                metadata: { genericallySpendable: false, kind: SWAP_LOCKUP_CONTRACT_KIND },
+            });
+            this.registered.set(swap.rfqId, true);
+        } catch (error) {
+            // Left out of `registered` so the next pass tries again — a
+            // transient repository or indexer failure must not cost the swap
+            // its subscription for good.
+            this.emitFailed(swap, error);
+        }
+    }
+
+    /** Retire a finished swap's contract row. Retired, not deleted: the row is
+     * what keeps the lockup's own VTXOs annotatable and its history readable,
+     * and `inactive` already means "no longer a live destination". Best-effort
+     * — the swap is over either way. */
+    private retireContract(swap: RfqSwap): void {
+        // Only a swap that actually got a row: retiring one that was never
+        // written would throw "not found" and report a failure on a swap that
+        // had in fact just succeeded.
+        if (!this.deps.contracts || !this.registered.get(swap.rfqId)) return;
+        void this.deps.contracts
+            .setContractState(hex.encode(swap.lockupPkScript), "inactive")
+            .catch((error: unknown) => this.emitFailed(swap, error));
+    }
+
     private arm(): void {
         if (!this.running) return;
         if (this.timer) clearTimeout(this.timer);
@@ -566,6 +806,11 @@ export class RfqSwapManager {
     }
 
     private async runPass(swap: RfqSwap): Promise<void> {
+        // 0. Make sure the lockup is registered and pushing events. A no-op
+        //    after the first pass, and never a reason to skip the rest — see
+        //    `ensureRegistered`.
+        await this.ensureRegistered(swap);
+
         // 1. Ask the chain. Only a hash-verified claim is a settlement, and
         //    only a fully observed spend is a refund; everything else is
         //    "nothing learned" and must not end the swap.
@@ -707,6 +952,16 @@ export class RfqSwapManager {
             this.setState(swap, "refunded");
             this.emitAction(swap, "refundArkade");
         } catch (error) {
+            // Reported UNWRAPPED, so a caller can tell the failures apart with
+            // `instanceof`. That matters most for `LockupNeedsRecoveryError`: a
+            // swept lockup cannot be taken back by any offchain spend until it
+            // is recovered into a fresh batch, and the error names exactly
+            // which outpoints. Unlike `refundIfUnresolved` — a one-shot call,
+            // which returns `needs_recovery` rather than retrying — the manager
+            // deliberately DOES keep retrying, because recovery is something
+            // the caller can perform while the window is still open, after
+            // which the next pass simply succeeds. What it must never do is
+            // flatten that failure into an indistinguishable one.
             this.emitFailed(swap, error);
             // Median-time-past trails wall clock by about an hour, so refusals
             // in the first stretch past `refundLocktime` are expected rather
@@ -775,8 +1030,10 @@ export class RfqSwapManager {
      * also fires on failure is a trap worth not inheriting.
      */
     private finalize(swap: RfqSwap): void {
-        if (!this.monitored.delete(swap.rfqId)) return;
+        if (!this.monitored.has(swap.rfqId)) return;
+        this.untrack(swap.rfqId);
         this.finished.set(swap.rfqId, swap);
+        this.retireContract(swap);
         if (swap.state === "failed") {
             notify(this.swapFailedListeners, (listener) =>
                 listener(swap, new Error(swap.failure ?? `swap ${swap.rfqId} failed`)),

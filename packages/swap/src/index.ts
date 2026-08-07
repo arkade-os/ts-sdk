@@ -96,6 +96,7 @@ export {
 } from "./rfq";
 export { sealClaimPacket, type ClaimPacketInput, type SealedClaimPacket } from "./claimPacket";
 export {
+    LockupNeedsRecoveryError,
     REFUND_MTP_LAG_SECONDS,
     RFQ_RESOLVED_STATES,
     awaitRfqResolution,
@@ -114,6 +115,9 @@ export {
 export {
     RFQ_SWAP_TERMINAL_STATES,
     RfqSwapManager,
+    SWAP_LOCKUP_CONTRACT_KIND,
+    SWAP_LOCKUP_CONTRACT_LABEL,
+    SWAP_LOCKUP_CONTRACT_TYPE,
     isRfqSwapTerminal,
     nextOnchainAction,
     type ArkadeRefundResult,
@@ -122,10 +126,12 @@ export {
     type OnchainSendSwap,
     type RfqSwap,
     type RfqSwapActionName,
+    type RfqSwapLockup,
     type RfqSwapManagerCallbacks,
     type RfqSwapManagerConfig,
     type RfqSwapManagerDeps,
     type RfqSwapManagerEvents,
     type RfqSwapOutcome,
     type RfqSwapState,
+    type SwapContractRegistry,
 } from "./swapManager";
