@@ -128,19 +128,39 @@ export type RefundArkProvider = Pick<RestArkProvider, "getInfo" | "submitTx" | "
 /** The indexer surface the lockup lookup needs. */
 export type RefundIndexer = Pick<RestIndexerProvider, "getVtxos">;
 
-/** A spendable virtual output sitting at the swap lockup. */
+/** A still-refundable virtual output sitting at the swap lockup. */
 export interface LockupVtxo {
     txid: string;
     vout: number;
     value: number;
+    /**
+     * The batch this output lived in expired and the operator swept it, so it
+     * is no longer ordinarily spendable — only recoverable.
+     *
+     * It is still the trader's money and `refundWithoutReceiver` still takes
+     * it back (that leaf needs the trader's own key plus the server, neither
+     * of which a sweep removes). What a sweep does cost is every path that
+     * needs a live counterparty signature.
+     */
+    recoverable: boolean;
 }
 
 /**
- * Every spendable output at the lockup script.
+ * Every output at the lockup script that can still be refunded — spendable
+ * AND swept-but-recoverable.
  *
  * All of them, not the first: a trader may fund a lockup in more than one
  * send, and refunding only `vtxos[0]` returns part of the money and strands
  * the rest at a script whose other refund paths are all longer.
+ *
+ * BOTH queries, because they are disjoint sets and `spendableOnly` alone goes
+ * blind at exactly the wrong moment. A lockup whose batch expiry passed is
+ * swept into the recoverable set, and this function exists to serve swaps that
+ * sat unresolved — which are precisely the ones most likely to have got there.
+ * Reading only the spendable set would report `nothing_to_refund` over money
+ * that is still sitting at the script, which is worse than an error: it looks
+ * like a resolved swap. `packages/boltz-swap` merges the same two queries for
+ * the same reason (`arkade-swaps.ts`'s `refundableVtxos`).
  *
  * This read — not the RFQ's reported state — is the authority on whether
  * there is anything left to refund.
@@ -149,15 +169,33 @@ export async function findLockupVtxos(
     indexer: RefundIndexer,
     swapPkScript: Uint8Array,
 ): Promise<LockupVtxo[]> {
-    const { vtxos } = await indexer.getVtxos({
-        scripts: [hex.encode(swapPkScript)],
-        spendableOnly: true,
-    });
-    return (vtxos ?? []).map((vtxo) => ({
-        txid: vtxo.txid,
-        vout: vtxo.vout,
-        value: Number(vtxo.value),
-    }));
+    const scripts = [hex.encode(swapPkScript)];
+    const [spendable, recoverable] = await Promise.all([
+        indexer.getVtxos({ scripts, spendableOnly: true }),
+        indexer.getVtxos({ scripts, recoverableOnly: true }),
+    ]);
+    const seen = new Set<string>();
+    const out: LockupVtxo[] = [];
+    for (const [vtxos, isRecoverable] of [
+        [spendable.vtxos ?? [], false],
+        [recoverable.vtxos ?? [], true],
+    ] as const) {
+        for (const vtxo of vtxos) {
+            // Deduped by outpoint: the two filters are disjoint today, but an
+            // output counted twice would be added twice to the refund's
+            // aggregate output and make a transaction that cannot be built.
+            const key = `${vtxo.txid}:${vtxo.vout}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push({
+                txid: vtxo.txid,
+                vout: vtxo.vout,
+                value: Number(vtxo.value),
+                recoverable: isRecoverable,
+            });
+        }
+    }
+    return out;
 }
 
 // ── Reading the lockup's fate off chain ──────────────────────────────────────

@@ -269,6 +269,49 @@ describe("findLockupVtxos", () => {
         expect(await findLockupVtxos(indexer, script.pkScript)).toHaveLength(2);
         expect(indexer.scripts[0]).toEqual([hex.encode(script.pkScript)]);
     });
+
+    /** Filter-aware, unlike `fakeIndexer`: the two sets are disjoint here, which
+     * is what makes a swept output visible or not. */
+    const byFilterIndexer = (spendable: LockupVtxo[], recoverable: LockupVtxo[]): RefundIndexer =>
+        ({
+            getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => ({
+                vtxos: opts?.recoverableOnly ? recoverable : opts?.spendableOnly ? spendable : [],
+            }),
+        }) as unknown as RefundIndexer;
+
+    it("finds a swept lockup, which a spendable-only read would report as nothing to refund", async () => {
+        // A batch expiry sweeps the output out of the spendable set. It is
+        // still the trader's money and `refundWithoutReceiver` still takes it
+        // back — so missing it would claim a swap resolved while the funds sit
+        // at the script, and this path exists precisely for swaps that sat
+        // long enough to get here.
+        const script = swapScript();
+        const swept = { txid: "cc".repeat(32), vout: 1, value: 4_000, recoverable: false };
+        const found = await findLockupVtxos(byFilterIndexer([], [swept]), script.pkScript);
+        expect(found).toEqual([{ ...swept, recoverable: true }]);
+    });
+
+    it("merges both sets and marks which outputs were swept", async () => {
+        const script = swapScript();
+        const live = { txid: "aa".repeat(32), vout: 0, value: 1_000, recoverable: false };
+        const swept = { txid: "bb".repeat(32), vout: 2, value: 2_000, recoverable: false };
+        const found = await findLockupVtxos(byFilterIndexer([live], [swept]), script.pkScript);
+        expect(found).toEqual([
+            { ...live, recoverable: false },
+            { ...swept, recoverable: true },
+        ]);
+    });
+
+    it("counts an output appearing in both sets exactly once", async () => {
+        // Disjoint today, but double-counting would add the same outpoint to
+        // the refund's aggregate output twice and build a transaction that
+        // cannot be signed.
+        const script = swapScript();
+        const both = { txid: "dd".repeat(32), vout: 0, value: 7_000, recoverable: false };
+        const found = await findLockupVtxos(byFilterIndexer([both], [both]), script.pkScript);
+        expect(found).toHaveLength(1);
+        expect(found[0]!.recoverable).toBe(false);
+    });
 });
 
 describe("awaitRfqResolution", () => {
