@@ -649,8 +649,9 @@ export async function requestLightningSend(
      * not the trader's. This library does NOT fetch or verify it: clients
      * have no network path to the emulator, only the solver and covclaimd
      * do. The caller must obtain this out-of-band, before calling this
-     * function, from the solver's signed registry/corridor card
-     * (`SolverCard.emulator_pubkey`) or an equivalent source it
+     * function, from the solver's signed registry/corridor card (its
+     * `emulator_pubkey`, added in arkade-os/solver-registry#18) or an
+     * equivalent source it
      * independently trusts, and is responsible for having checked it against
      * that trusted value itself — the same never-trust-only-compare rule as
      * {@link verifyLockupAddress}, just applied by the caller instead of

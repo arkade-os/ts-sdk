@@ -261,6 +261,22 @@ describe("requestOnchainSend never touches the emulator", () => {
         expect(result.address.startsWith("tark1")).toBe(true);
         expect(result.htlc.address).toBeTruthy();
     });
+
+    it("refuses to fund when the caller's emulatorPubkey does not match what the covenant was quoted with", async () => {
+        // The onchain path derives its Arkade lockup through the same
+        // `verifyLockupAddress` check the lightning one does, so the parameter
+        // has to be load-bearing here too — without this, a dead
+        // `emulatorPubkey` on this entrypoint would pass the success case above
+        // and only be caught by whoever funded a lockup they cannot spend.
+        await expect(
+            requestOnchainSend(wallet, "http://ark", EMULATOR_PUBKEY, onchainTransport(key(29)), {
+                amount: 100_000,
+                amountSide: "to",
+                payoutPubkey: PAYOUT_PUBKEY,
+                preimage: PREIMAGE,
+            }),
+        ).rejects.toThrow(AddressMismatch);
+    });
 });
 
 describe("createOffer never touches the emulator", () => {

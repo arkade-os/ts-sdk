@@ -35,8 +35,19 @@ const DEPOSIT_SATS = 10_000;
 const WANT_AMOUNT = BigInt(1_000);
 
 /** Drop the prefix of a 33-byte compressed key; pass an x-only key through —
- * same rule as offer.ts/rfq.ts, kept local so this suite stays self-contained. */
-const xOnly = (key: Uint8Array): Uint8Array => (key.length === 32 ? key : key.slice(1));
+ * same rule as offer.ts/rfq.ts, kept local so this suite stays self-contained.
+ *
+ * Validates rather than blindly slicing, matching those two: a laxer helper
+ * here would silently accept a wrong-width key — an uncompressed 65-byte one,
+ * say — from the emulator's own `getInfo()` in the setup path below, and this
+ * suite would then run against a key production would have rejected outright. */
+const xOnly = (key: Uint8Array): Uint8Array => {
+    if (key.length === 32) return key;
+    if (key.length !== 33 || (key[0] !== 0x02 && key[0] !== 0x03)) {
+        throw new Error("not a compressed or x-only public key");
+    }
+    return key.slice(1);
+};
 
 const execCommand = (command: string): string => {
     const result = execSync(command, { encoding: "utf8" })
@@ -91,8 +102,9 @@ beforeAll(async () => {
     // createOffer no longer fetches the emulator's key itself — clients have
     // no network path to the emulator, only the solver and covclaimd do — so
     // this stands in for the one-time, out-of-band read of the solver's
-    // registry card (SolverCard.emulator_pubkey) a real integration would do
-    // before ever calling createOffer.
+    // registry card (its `emulator_pubkey` field, added in
+    // arkade-os/solver-registry#18) a real integration would do before ever
+    // calling createOffer.
     const emulatorInfo = await new RestEmulatorProvider(EMULATOR_URL).getInfo();
     emulatorPubkey = xOnly(hex.decode(emulatorInfo.signerPubkey));
 }, 120_000);
