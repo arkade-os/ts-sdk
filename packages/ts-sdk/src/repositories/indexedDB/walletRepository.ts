@@ -1,4 +1,4 @@
-import { ExtendedCoin, ExtendedVirtualCoin, ArkTransaction } from "../../wallet";
+import { ExtendedCoin, ExtendedVirtualCoin, ArkTransaction, Outpoint } from "../../wallet";
 import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
 import {
     STORE_VTXOS,
@@ -242,6 +242,41 @@ export class IndexedDBWalletRepository implements WalletRepository {
             });
         } catch (error) {
             console.error(`Failed to clear VTXOs for script ${script}:`, error);
+            throw error;
+        }
+    }
+
+    async deleteVtxosByOutpoint(outpoints: Outpoint[]): Promise<void> {
+        if (outpoints.length === 0) return;
+        try {
+            const db = await this.getDB();
+            const targets = new Set(outpoints.map((o) => `${o.txid}:${o.vout}`));
+            const txids = [...new Set(outpoints.map((o) => o.txid))];
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([STORE_VTXOS], "readwrite");
+                const store = transaction.objectStore(STORE_VTXOS);
+                const index = store.index("txid");
+
+                transaction.oncomplete = () => resolve();
+                transaction.onerror = () => reject(transaction.error);
+                transaction.onabort = () =>
+                    reject(transaction.error ?? new Error("transaction aborted"));
+
+                for (const txid of txids) {
+                    const request = index.openCursor(IDBKeyRange.only(txid));
+                    request.onsuccess = () => {
+                        const cursor = request.result;
+                        if (!cursor) return;
+                        const row = cursor.value as SerializedVtxo & { address: string };
+                        if (targets.has(`${row.txid}:${row.vout}`)) {
+                            cursor.delete();
+                        }
+                        cursor.continue();
+                    };
+                }
+            });
+        } catch (error) {
+            console.error("Failed to delete VTXOs by outpoint:", error);
             throw error;
         }
     }

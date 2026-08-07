@@ -1,4 +1,4 @@
-import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
+import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin, Outpoint } from "../../wallet";
 import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
 
@@ -58,6 +58,19 @@ export class InMemoryWalletRepository implements WalletRepository {
     async deleteVtxosForScript(script: string): Promise<void> {
         for (const [address, bucket] of this.vtxosByAddress.entries()) {
             const next = bucket.filter((v) => !isVtxoForScript(v, script));
+            if (next.length === 0) {
+                this.vtxosByAddress.delete(address);
+            } else {
+                this.vtxosByAddress.set(address, next);
+            }
+        }
+    }
+
+    async deleteVtxosByOutpoint(outpoints: Outpoint[]): Promise<void> {
+        if (outpoints.length === 0) return;
+        const gone = new Set(outpoints.map((o) => `${o.txid}:${o.vout}`));
+        for (const [address, bucket] of this.vtxosByAddress.entries()) {
+            const next = bucket.filter((v) => !gone.has(`${v.txid}:${v.vout}`));
             if (next.length === 0) {
                 this.vtxosByAddress.delete(address);
             } else {

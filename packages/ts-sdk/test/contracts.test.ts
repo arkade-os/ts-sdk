@@ -13,11 +13,16 @@ import type { IndexerProvider } from "../src/providers/indexer";
 import { ContractRepository, InMemoryWalletRepository } from "../src/repositories";
 import {
     createDefaultContractParams,
+    createMockExtendedVtxo,
     createMockIndexerProvider,
+    TEST_DEFAULT_ARK_ADDRESS,
     TEST_DEFAULT_SCRIPT,
     TEST_SERVER_PUB_KEY,
 } from "./contracts/helpers";
 import { DEFAULT_NETWORK } from "../src/networks";
+import { RECONCILE_ABSENCE_THRESHOLD } from "../src/contracts/contractManager";
+import { getVtxosForContract, saveVtxosForContract } from "../src/contracts/vtxoOwnership";
+import type { ContractEvent } from "../src/contracts/types";
 
 describe("Contracts", () => {
     describe("ArkContract encoding/decoding", () => {
@@ -181,6 +186,54 @@ describe("Contracts", () => {
             // After unsubscribe, callback should not be called
             // (we can't easily trigger events in unit tests, but verify unsubscribe works)
             expect(unsubscribe).toBeInstanceOf(Function);
+        });
+    });
+
+    describe("reconcile vanished vtxos", () => {
+        it("emits vtxo_vanished and prunes when a stored coin leaves the indexer", async () => {
+            const walletRepository = new InMemoryWalletRepository();
+            const mockIndexer = createMockIndexerProvider();
+            // Indexer no longer knows the coin: every probe comes back empty.
+            mockIndexer.getVtxos = vi.fn().mockResolvedValue({ vtxos: [] });
+
+            const onVtxosVanished = vi.fn().mockResolvedValue(undefined);
+            const manager = await ContractManager.create({
+                indexerProvider: mockIndexer,
+                contractRepository: new InMemoryContractRepository(),
+                walletRepository,
+                onVtxosVanished,
+            });
+
+            const contract = await manager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: TEST_DEFAULT_ARK_ADDRESS,
+            });
+
+            const coin = createMockExtendedVtxo();
+            await saveVtxosForContract(walletRepository, contract, [coin]);
+
+            const events: Extract<ContractEvent, { type: "vtxo_vanished" }>[] = [];
+            manager.onContractEvent((e) => {
+                if (e.type === "vtxo_vanished") events.push(e);
+            });
+
+            // Delete fires only after the coin stays absent across the threshold.
+            const internals = manager as unknown as {
+                reconcileVanishedVtxos: (contracts: Contract[]) => Promise<void>;
+                lastReconcileByContract: Map<string, number>;
+            };
+            for (let i = 0; i < RECONCILE_ABSENCE_THRESHOLD; i++) {
+                internals.lastReconcileByContract.clear();
+                await internals.reconcileVanishedVtxos([contract]);
+            }
+
+            expect(await getVtxosForContract(walletRepository, contract)).toEqual([]);
+            expect(events).toHaveLength(1);
+            expect(events[0].vtxos).toHaveLength(1);
+            expect(onVtxosVanished).toHaveBeenCalledTimes(1);
+            expect(onVtxosVanished).toHaveBeenCalledWith([{ txid: coin.txid, vout: coin.vout }]);
         });
     });
 });
