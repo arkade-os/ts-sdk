@@ -245,7 +245,7 @@ describe("claimVHTLCwithOffchainTx checkpoint exit delay validation [P720-2]", (
                 { ...arkInfo, checkpointTapscript: wrongPubkeyCheckpoint },
                 arkProvider,
             ),
-        ).rejects.toThrow(/do not match the advertised forfeitPubkey/);
+        ).rejects.toThrow(/does not match the advertised forfeitPubkey/);
         expect(arkProvider.submitTx).not.toHaveBeenCalled();
     });
 });

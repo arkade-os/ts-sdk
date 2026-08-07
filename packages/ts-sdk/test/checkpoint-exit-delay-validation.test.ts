@@ -112,7 +112,7 @@ describe("assertValidServerUnrollScript", () => {
                     advertisedForfeitPubkey: hex.decode(FORFEIT_XONLY),
                 }),
             ),
-        ).toThrow(/do not match the advertised forfeitPubkey/);
+        ).toThrow(/does not match the advertised forfeitPubkey/);
     });
 
     it("accepts a pubkey equal to the advertised forfeitPubkey", () => {
@@ -134,6 +134,56 @@ describe("assertValidServerUnrollScript", () => {
                 defaultCheckpointExitDelayPolicy(networks.bitcoin),
             ),
         ).not.toThrow();
+    });
+
+    it("reports a multi-pubkey script distinctly from a wrong single pubkey", () => {
+        const checkpointTapscript = hex.encode(
+            CSVMultisigTapscript.encode({
+                timelock: { value: 604_672n, type: "seconds" },
+                pubkeys: [hex.decode(FORFEIT_XONLY), hex.decode(OTHER_XONLY)],
+            }).script,
+        );
+        expect(() =>
+            assertValidServerUnrollScript(
+                checkpointTapscript,
+                resolveCheckpointExitDelayPolicy(networks.bitcoin, {
+                    advertisedForfeitPubkey: hex.decode(FORFEIT_XONLY),
+                }),
+            ),
+        ).toThrow(/must commit to exactly one pubkey, got 2/);
+    });
+
+    // A block-typed timelock above 511 is legal BIP-68 (the type comes from the
+    // disable flag, not the magnitude). Re-deriving the type from the value
+    // would read it as seconds, letting it slip past `requireSeconds` and
+    // mis-scale it against the floor.
+    describe("block-typed timelocks above the 512 seconds boundary", () => {
+        const blocks = (value: number) =>
+            hex.encode(
+                CSVMultisigTapscript.encode({
+                    timelock: { value, type: "blocks" },
+                    pubkeys: [hex.decode(FORFEIT_XONLY)],
+                }).script,
+            );
+
+        it("rejects them as block-typed on mainnet, even below the floor in nominal seconds", () => {
+            expect(() =>
+                assertValidServerUnrollScript(
+                    blocks(1_000),
+                    resolveCheckpointExitDelayPolicy(networks.bitcoin, { minSeconds: 600n }),
+                ),
+            ).toThrow(/block-typed timelocks are not accepted \(got 1000\)/);
+        });
+
+        it("scales them by nominal block time on regtest instead of reading them as seconds", () => {
+            // 600 blocks is ~100h of nominal wall clock, far above the regtest
+            // floor — but only 600 if misread as seconds.
+            const result = assertValidServerUnrollScript(
+                blocks(600),
+                defaultCheckpointExitDelayPolicy(networks.regtest),
+            );
+            expect(result.params.timelock).toEqual({ value: 600n, type: "blocks" });
+        });
     });
 
     it("still applies the floor when no pubkey is advertised", () => {

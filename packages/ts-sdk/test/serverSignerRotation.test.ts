@@ -144,6 +144,64 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
         }
     });
 
+    it("rejects a checkpointTapscript pinned to a foreign pubkey without any side effect", async () => {
+        const { wallet, contractRepository } = await makeStaticWalletForTest();
+        try {
+            const beforeKey = hex.encode(wallet.arkServerPublicKey);
+            const beforeUnroll = hex.encode(wallet.serverUnrollScript.script);
+            const beforeRows = (await contractRepository.getContracts({})).length;
+
+            // Well-formed and in-policy on the timelock, but the embedded key
+            // is the rotating signer rather than the wallet's pinned
+            // forfeitPubkey — arkd never rotates the two independently, so a
+            // server that does is claiming a sweep path the wallet never
+            // agreed to.
+            const foreignCheckpoint = hex.encode(
+                CSVMultisigTapscript.encode({
+                    timelock: { type: "seconds", value: 512 * 200 },
+                    pubkeys: [hex.decode(NEW_SERVER)],
+                }).script,
+            );
+
+            await expect(
+                wallet.rotateServerSigner(hex.decode(NEW_SERVER), foreignCheckpoint),
+            ).rejects.toThrow(/does not match the advertised forfeitPubkey/);
+
+            expect(hex.encode(wallet.arkServerPublicKey)).toBe(beforeKey);
+            expect(hex.encode(wallet.serverUnrollScript.script)).toBe(beforeUnroll);
+            expect((await contractRepository.getContracts({})).length).toBe(beforeRows);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("rejects a sub-floor checkpoint exit delay without any side effect", async () => {
+        const { wallet, contractRepository } = await makeStaticWalletForTest();
+        try {
+            const beforeKey = hex.encode(wallet.arkServerPublicKey);
+            const beforeUnroll = hex.encode(wallet.serverUnrollScript.script);
+            const beforeRows = (await contractRepository.getContracts({})).length;
+
+            // The [P720-2] attack shape: a 1-block sweep path for the new epoch.
+            const sweepableCheckpoint = hex.encode(
+                CSVMultisigTapscript.encode({
+                    timelock: { type: "blocks", value: 1 },
+                    pubkeys: [wallet.forfeitPubkey],
+                }).script,
+            );
+
+            await expect(
+                wallet.rotateServerSigner(hex.decode(NEW_SERVER), sweepableCheckpoint),
+            ).rejects.toThrow(/checkpoint exit delay rejected/);
+
+            expect(hex.encode(wallet.arkServerPublicKey)).toBe(beforeKey);
+            expect(hex.encode(wallet.serverUnrollScript.script)).toBe(beforeUnroll);
+            expect((await contractRepository.getContracts({})).length).toBe(beforeRows);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
     it("dispose() drains an in-flight onServerInfoChanged handler before teardown", async () => {
         const { wallet } = await makeStaticWalletForTest();
 

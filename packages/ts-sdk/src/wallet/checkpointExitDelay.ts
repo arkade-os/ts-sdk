@@ -3,7 +3,7 @@ import { Bytes, equalBytes } from "@scure/btc-signer/utils.js";
 import type { Network } from "../networks";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { ServerResponseMismatchError } from "../providers/errors";
-import { assertTimelockWithinFloor, isRegtest } from "./timelockPolicy";
+import { assertTimelockInPolicy, isRegtest } from "./timelockPolicy";
 
 /** Wall-clock floor for the checkpoint exit delay outside regtest. Matches arkd's own default. */
 export const DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS = 86_400n;
@@ -89,18 +89,29 @@ export function assertValidServerUnrollScript(
 
     if (policy.advertisedForfeitPubkey !== undefined) {
         const { pubkeys } = script.params;
-        const matches =
-            pubkeys.length === 1 && equalBytes(pubkeys[0], policy.advertisedForfeitPubkey);
-        if (!matches) {
+        // arkd encodes exactly one key here, so anything else is a mismatch —
+        // reported separately from a wrong single key so the two are
+        // distinguishable when debugging a rejected server.
+        if (pubkeys.length !== 1) {
             throw new ServerResponseMismatchError(
-                `checkpoint exit delay rejected: checkpointTapscript pubkeys ` +
-                    `[${pubkeys.map(hex.encode).join(", ")}] do not match the advertised ` +
-                    `forfeitPubkey ${hex.encode(policy.advertisedForfeitPubkey)}`,
+                `checkpoint exit delay rejected: checkpointTapscript must commit to exactly ` +
+                    `one pubkey, got ${pubkeys.length} ` +
+                    `[${pubkeys.map(hex.encode).join(", ")}]`,
+            );
+        }
+        if (!equalBytes(pubkeys[0], policy.advertisedForfeitPubkey)) {
+            throw new ServerResponseMismatchError(
+                `checkpoint exit delay rejected: checkpointTapscript pubkey ` +
+                    `${hex.encode(pubkeys[0])} does not match the advertised forfeitPubkey ` +
+                    `${hex.encode(policy.advertisedForfeitPubkey)}`,
             );
         }
     }
 
-    assertTimelockWithinFloor(script.params.timelock.value, policy, "checkpoint exit delay");
+    // Use the type the script itself encodes (BIP-68 disable flag) rather than
+    // re-deriving it from the magnitude: a block-typed checkpoint delay above
+    // 511 blocks is legal and would otherwise be misread as seconds.
+    assertTimelockInPolicy(script.params.timelock, policy, "checkpoint exit delay");
 
     return script;
 }

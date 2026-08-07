@@ -429,7 +429,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
                 onchainProvider: {} as OnchainProvider,
                 storage: { walletRepository, contractRepository },
             }),
-        ).rejects.toThrow(/do not match the advertised forfeitPubkey/);
+        ).rejects.toThrow(/does not match the advertised forfeitPubkey/);
         expect(await loadArkInfoSnapshot(walletRepository)).toBeNull();
     });
 });

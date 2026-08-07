@@ -22,7 +22,16 @@ export type TimelockFloorPolicy = {
     requireSeconds: boolean;
 };
 
-/** BIP-68 reads values >= 512 as seconds, below as blocks. */
+/**
+ * Type a bare wire value the way the protocol does: >= 512 is seconds, below is
+ * blocks.
+ *
+ * Only for values that arrive without a type of their own (e.g. a
+ * `BatchStartedEvent.batchExpiry` integer). A timelock decoded from a script
+ * carries its own BIP-68 disable-flag-derived type — pass that straight to
+ * {@link assertTimelockInPolicy} instead, since a block-typed value there can
+ * legitimately exceed 512 and re-deriving would misread it as seconds.
+ */
 export const toTimelock = (value: bigint): RelativeTimelock => ({
     value,
     type: value >= 512n ? "seconds" : "blocks",
@@ -32,24 +41,22 @@ export const toSeconds = (t: RelativeTimelock): bigint =>
     t.type === "seconds" ? t.value : t.value * NOMINAL_BLOCK_SECONDS;
 
 /**
- * Check a server-supplied relative-timelock value against `policy`.
+ * Check an already-typed server-supplied relative timelock against `policy`.
  *
  * `label` names the value in thrown messages (e.g. `"batch expiry"`,
  * `"checkpoint exit delay"`) so callers share this one implementation without
  * losing message specificity.
  *
- * @throws {ServerResponseMismatchError} if the value is out of policy.
+ * @throws {ServerResponseMismatchError} if the timelock is out of policy.
  */
-export function assertTimelockWithinFloor(
-    value: bigint,
+export function assertTimelockInPolicy(
+    timelock: RelativeTimelock,
     policy: TimelockFloorPolicy,
     label: string,
 ): RelativeTimelock {
-    const timelock = toTimelock(value);
-
     if (policy.requireSeconds && timelock.type === "blocks") {
         throw new ServerResponseMismatchError(
-            `${label} rejected: block-typed timelocks are not accepted (got ${value})`,
+            `${label} rejected: block-typed timelocks are not accepted (got ${timelock.value})`,
         );
     }
 
@@ -62,4 +69,18 @@ export function assertTimelockWithinFloor(
     }
 
     return timelock;
+}
+
+/**
+ * Type a bare server-supplied timelock value with {@link toTimelock}, then
+ * check it against `policy`.
+ *
+ * @throws {ServerResponseMismatchError} if the value is out of policy.
+ */
+export function assertTimelockWithinFloor(
+    value: bigint,
+    policy: TimelockFloorPolicy,
+    label: string,
+): RelativeTimelock {
+    return assertTimelockInPolicy(toTimelock(value), policy, label);
 }
