@@ -168,6 +168,29 @@ export interface LockupVtxo {
  * retry — instead of reading a server rejection and guessing. `reason` follows
  * the same convention as `awaitOnchainFill`'s `fill_timeout` and
  * `claimOnchainFill`'s `claim_window_closed`.
+ *
+ * **The remedy already exists; this package does not reimplement it.** The SDK
+ * recovers swept outputs by re-registering them into a fresh batch, through
+ * `IVtxoManager.recoverVtxos()` — the same batch round `packages/boltz-swap`
+ * reaches via its own `joinBatch`. It reads the wallet's registered-contract
+ * snapshot (`recoverVtxos` → `wallet.getVtxos({ withRecoverable: true })` →
+ * `contractSnapshot()` → `contractManager.getContractsWithVtxos()`), so it
+ * covers a swap lockup as soon as that lockup is registered as a contract —
+ * which is what {@link RfqSwapManagerDeps.contracts} does. Registration is
+ * therefore not only a latency optimization; it is what turns a swept lockup
+ * from a dead end into something the ordinary wallet path can recover.
+ *
+ * Two caveats a caller must hold, neither enforceable from here:
+ *
+ * - **The wallet must hold the lockup's `sender` key**, because recovery
+ *   settles through `refundWithoutReceiver` — the leaf `vhtlc-v2` annotates
+ *   these VTXOs with.
+ * - **`refundLocktime` must have matured.** That leaf carries a CLTV, so a
+ *   recovery round including this VTXO earlier is rejected. `recoverVtxos`
+ *   sweeps every recoverable output in ONE settlement and has no CLTV
+ *   awareness, so recovering early can fail the whole batch rather than just
+ *   this output. `packages/boltz-swap` encodes the same rule as "pre-CLTV
+ *   recoverable → skipped".
  */
 export class LockupNeedsRecoveryError extends Error {
     readonly name = "LockupNeedsRecoveryError";
@@ -177,7 +200,10 @@ export class LockupNeedsRecoveryError extends Error {
 
     constructor(outpoints: string[]) {
         super(
-            `refund refused: ${outpoints.length} lockup output(s) have been swept and must be recovered into a fresh batch before any offchain spend (${outpoints.join(", ")})`,
+            `refund refused: ${outpoints.length} lockup output(s) have been swept and can no longer be spent offchain ` +
+                `(${outpoints.join(", ")}). Recover them into a fresh batch first — ` +
+                `IVtxoManager.recoverVtxos() does this for a wallet whose contract manager has the ` +
+                `lockup registered, once refundLocktime has matured — then retry the refund.`,
         );
         this.outpoints = outpoints;
     }
