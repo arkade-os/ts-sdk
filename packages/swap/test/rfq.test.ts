@@ -26,6 +26,8 @@ import {
     offerTermsFromQuote,
     relayTransport,
     unilateralClaimDelay,
+    unilateralRefundDelay,
+    unilateralRefundWithoutReceiverDelay,
     verifyLockupAddress,
     type RelaySocket,
     type RfqQuote,
@@ -57,6 +59,10 @@ const quoteFixture = (over: Partial<RfqQuote> = {}): RfqQuote => ({
 });
 
 describe("lightningSendVtxoScript", () => {
+    // Any change to these pinned bytes changes every lockup address and needs
+    // coordinated trader/solver deployment — see "Breaking changes" in the
+    // README. A version mismatch refuses quotes (verifyLockupAddress), it does
+    // not lose funds.
     // The reference solver's fixture, and its exact output bytes: sender =
     // key(13) (the trader's own VHTLC-sender key), receiver = key(1)
     // (solver), server = key(3), emulator = key(9), refund destination =
@@ -210,6 +216,37 @@ describe("unilateralClaimDelay", () => {
 
     it("rejects a value that is a block count, not seconds", () => {
         expect(() => unilateralClaimDelay(144)).toThrow(/512/);
+    });
+
+    it("keeps all three tiers BIP68-encodable at the maximum server delay", () => {
+        // the cap sits two 512s steps below BIP68's 0xffff * 512 ceiling so
+        // the refund tiers stacked above claimDelay stay encodable too
+        const max = (0xffff - 2) * 512;
+        const claim = unilateralClaimDelay(max);
+        expect(claim).toBe(max);
+        expect(unilateralRefundDelay(claim)).toBe((0xffff - 1) * 512);
+        expect(unilateralRefundWithoutReceiverDelay(claim)).toBe(0xffff * 512);
+        // the proof that matters: the full contract compiles, so every CSV
+        // leaf's sequence encoded — this threw from inside the tapscript
+        // encoder before the cap accounted for the stacked tiers
+        expect(() =>
+            lightningSendVtxoScript({
+                solverPubkey: key(1),
+                serverPubkey: key(3),
+                paymentHash: "da".repeat(32),
+                refundLocktime: 1_800_000_000,
+                claimDelay: claim,
+                emulatorPubkey: key(9),
+                senderPubkey: key(13),
+                receiverPkScript: p2tr(key(1)),
+                refundPkScript: p2tr(key(5)),
+            }),
+        ).not.toThrow();
+    });
+
+    it("rejects a server delay whose refund tiers would overflow BIP68", () => {
+        expect(() => unilateralClaimDelay((0xffff - 2) * 512 + 1)).toThrow(/BIP68/);
+        expect(() => unilateralClaimDelay(0xffff * 512)).toThrow(/BIP68/);
     });
 });
 

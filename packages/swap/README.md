@@ -68,12 +68,12 @@ await wallet.send({
 `createOffer` is pure derivation — it broadcasts nothing. The offer only becomes real when the
 deposit lands at `address`.
 
-| Field          | What it is                                                                                                                                    |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Field          | What it is                                                                                                                                                  |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `address`      | The swap address to fund with your deposit. Identical offers derive an identical address, so the **funding txid**, not the address, identifies one deposit. |
-| `extension`    | Pass straight to `wallet.send`'s `extensions`. It carries the offer inside the funding tx so the solver can discover the offer from the txid alone. |
-| `offerHex`     | The encoded offer. **Persist this** — it is the only input `cancelOffer` needs to rebuild the covenant.                                        |
-| `swapPkScript` | The covenant's scriptPubKey: the key an indexer watches to spot the deposit and its later spend.                                               |
+| `extension`    | Pass straight to `wallet.send`'s `extensions`. It carries the offer inside the funding tx so the solver can discover the offer from the txid alone.         |
+| `offerHex`     | The encoded offer. **Persist this** — it is the only input `cancelOffer` needs to rebuild the covenant.                                                     |
+| `swapPkScript` | The covenant's scriptPubKey: the key an indexer watches to spot the deposit and its later spend.                                                            |
 
 The minimum a maker must keep to stay in control of a swap is `offerHex` plus the funding txid.
 Everything else — status, amounts, timestamps — `restoreAssetSwaps` rebuilds from chain, and the
@@ -97,7 +97,7 @@ The two ways out of the covenant are deliberately asymmetric:
 - **`cancel`** is a **2-of-2 of the maker and the server**. Cancelling is cooperative, not a
   unilateral withdrawal.
 
-So cancel *races* a fill rather than pre-empting it. If the solver fills in the same moment,
+So cancel _races_ a fill rather than pre-empting it. If the solver fills in the same moment,
 `cancelOffer` throws `no spendable VTXO at the swap address` — that means the swap **completed**,
 not that anything went wrong. Re-read the swap's state before treating it as an error;
 `restoreAssetSwaps` tells the two spends apart afterwards and marks the record `fulfilled` rather
@@ -132,10 +132,15 @@ message anywhere: **acceptance is funding**.
 import { httpTransport, requestLightningSend } from "@arkade-os/swap";
 
 // invoice facts from YOUR OWN decoder — the module takes facts, not a decoder
-const swap = await requestLightningSend(wallet, arkServerUrl, emulatorUrl,
-    httpTransport(solverUrl), {
+const swap = await requestLightningSend(
+    wallet,
+    arkServerUrl,
+    emulatorUrl,
+    httpTransport(solverUrl),
+    {
         invoice: { raw: bolt11, paymentHash, amountSats, expiresAt },
-    });
+    },
+);
 // quote verified against the LOCAL derivation and gated; now fund and go offline:
 await wallet.send({ address: swap.address, amount: BigInt(swap.fundAmount) });
 ```
@@ -165,10 +170,18 @@ internal key (no key-path spend, ever): claim = `HASH160 <h160> EQUALVERIFY <cla
 refund = `<locktime> CLTV DROP <refundKey> CHECKSIG`.
 
 ```ts
-import { httpTransport, requestOnchainSend, awaitOnchainFill, claimOnchainFill } from "@arkade-os/swap";
+import {
+    httpTransport,
+    requestOnchainSend,
+    awaitOnchainFill,
+    claimOnchainFill,
+} from "@arkade-os/swap";
 
-const swap = await requestOnchainSend(wallet, arkServerUrl, emulatorUrl,
-    httpTransport(solverUrl), { amount: 100_000, amountSide: "to", payoutPubkey });
+const swap = await requestOnchainSend(wallet, arkServerUrl, emulatorUrl, httpTransport(solverUrl), {
+    amount: 100_000,
+    amountSide: "to",
+    payoutPubkey,
+});
 // PERSIST swap.preimage (with the record) BEFORE funding — it is the only
 // thing that can claim the L1 fill, across restarts included.
 await wallet.send({ address: swap.address, amount: BigInt(swap.fundAmount) });
@@ -176,8 +189,14 @@ await wallet.send({ address: swap.address, amount: BigInt(swap.fundAmount) });
 // Unlike lightning-send the maker must STAY CLAIM-CAPABLE: watch for the fill
 // and claim before the HTLC's refund leaf opens. chain is YOUR ChainSource.
 const utxo = await awaitOnchainFill(chain, swap.htlc, minConfirmations);
-await claimOnchainFill(chain, { htlc: swap.htlc, utxo, preimage: swap.preimage,
-    payoutPkScript, feeRateSatVb, sign });
+await claimOnchainFill(chain, {
+    htlc: swap.htlc,
+    utxo,
+    preimage: swap.preimage,
+    payoutPkScript,
+    feeRateSatVb,
+    sign,
+});
 ```
 
 `requestOnchainSend` derives BOTH contracts locally from the quote's binding fields
@@ -206,3 +225,21 @@ requires the SDK's non-interactive-claim API — not merged upstream yet (`arkad
 the one-call on-board flow lands when it is. Until covclaimd's reference vectors are
 cross-checked, the `sealClaimPacket` test vector is pinned from this implementation and marked
 provisional (`TODO(claim-packet-vectors)`).
+
+## Breaking changes on this branch (pre-release migration notes)
+
+The package is pre-release; these notes replace a changelog for consumers tracking the branch.
+
+- **Every derived address changed, in both corridors.** The lightning-send lockup moved from the
+  3-leaf program-artifact VHTLC to the 8-leaf `VHTLC.ScriptV2` (non-interactive claim and refund
+  leaves), and the L1 HTLC's claim leaf gained a `SIZE 32 EQUALVERIFY` preimage-length guard. Both
+  are pinned by golden tests (`test/rfq.test.ts`, `test/onchainHtlc.test.ts`). **Deployment must be
+  coordinated:** trader and solver derive the lockup independently and compare (`lockup_address` /
+  `htlc_address` are compare-only), so a version mismatch does not lose funds — it refuses every
+  quote at `verifyLockupAddress`. Upgrade both sides before expecting fills.
+- **`lightningSendProgram` and `htlcSendProgram` are gone** along with the program-artifact layer
+  they compiled. Derive scripts through `lightningSendVtxoScript` / `onchainHtlcScript`.
+- **`lightningSendVtxoScript` takes two new required fields**: `senderPubkey` (the trader's VHTLC
+  sender key — generate, persist, see `requestLightningSend`) and `receiverPkScript` (the solver's
+  claim destination, from `profile.receiver_pk_script`). Callers that built the lockup directly
+  must supply both; callers going through `requestLightningSend` are unaffected.

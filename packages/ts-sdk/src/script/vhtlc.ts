@@ -434,6 +434,18 @@ function isP2trPkScript(pkScript: Bytes): boolean {
  * input". Shared by {@link VHTLC.Options.nonInteractiveClaim} and {@link
  * VHTLC.Options.nonInteractiveRefund} — only the destination and the tier it
  * gates differ.
+ *
+ * `PUSHCURRENTINPUTINDEX` as the output index is not an assumption about how
+ * the Ark round pairs inputs with outputs — the covenant imposes the pairing
+ * on the spender. Whatever index a spending tx places this input at, the
+ * output at that same index must pay the destination at least the input's
+ * value, or the ArkadeScript fails and the server never co-signs. A tx with no
+ * output at that index fails the same way: the leaf is unsatisfiable, not
+ * fooled. Index alignment is therefore a *liveness* obligation on whoever
+ * assembles the spend (the solver, for both leaves — this SDK never builds
+ * them; its own aggregate refund uses the interactive leaf precisely because
+ * it lacks this per-index constraint, see `refund.ts`), never a safety
+ * assumption.
  */
 function enforcePayTo(destinationPkScript: Bytes): Bytes {
     // validateOptions already checked this for both current call sites — kept
