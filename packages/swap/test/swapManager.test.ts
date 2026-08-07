@@ -145,13 +145,26 @@ const CLAIM_SPEND = spendOfLockup({ conditionWitness: [PREIMAGE] });
 interface FakeVtxo {
     txid: string;
     vout: number;
-    /** `""` — NOT absent — is what the indexer reports for an unspent output. */
+    /** `""` — NOT absent — is what the indexer reports when there is nothing
+     * to name. On its own it does NOT mean unspent: the wire contract permits
+     * `isSpent: true` alongside it. */
     spentBy: string;
+    isSpent?: boolean;
+    settledBy?: string;
 }
 
 /** An unspent lockup output, exactly as the indexer shapes one. */
 const unspent = (): FakeVtxo[] => [{ ...LOCKUP_OUTPOINT, spentBy: "" }];
 const spentBy = (txid: string): FakeVtxo[] => [{ ...LOCKUP_OUTPOINT, spentBy: txid }];
+/** Spent, but by nothing the indexer names — the shape `hasTerminalSpend`
+ * exists to catch. There is no witness to go and verify. */
+const spentUnnamed = (over: Partial<FakeVtxo> = {}): FakeVtxo => ({
+    ...LOCKUP_OUTPOINT,
+    vout: 1,
+    spentBy: "",
+    isSpent: true,
+    ...over,
+});
 
 /** A scripted indexer. Typed against the production seam so a change to
  * LockupSpendIndexer breaks this at compile time. Records the lookups made, so
@@ -413,6 +426,31 @@ describe("RfqSwapManager — resolution is read off chain, and only proof counts
     it("treats an indexer that cannot answer as nothing learned, never as resolved", async () => {
         const { swap } = await resolve(fakeIndexer({ fail: true }));
         expect(swap.state).toBe("pending");
+    });
+
+    it("does not read an output spent by nothing it can name as still funded", async () => {
+        // The wire contract permits `isSpent: true` with an EMPTY `spentBy`, so
+        // testing `spentBy` alone would call a lockup that is gone "still
+        // there" — the exact misclassification the SDK's own `hasTerminalSpend`
+        // unions three facts to avoid. There is no witness to verify here, so
+        // the honest answer is `unknown`, never `returned`.
+        const indexer = fakeIndexer({ vtxos: [spentUnnamed()] });
+        const { swap } = await resolve(indexer);
+        expect(swap.state).toBe("pending");
+        // nothing named, so there was nothing to go and fetch
+        expect(indexer.txLookups).toEqual([[]]);
+    });
+
+    it("still finds the claim when a sibling output was spent by nothing it can name", async () => {
+        // Two funded outputs: one claimed, one spent with no `spentBy` to
+        // follow. Reading the unnamed one as "still funded" would abandon the
+        // search and miss a settlement that is sitting right there, proven.
+        const indexer = fakeIndexer({
+            vtxos: [...spentBy(CLAIM_SPEND.txid), spentUnnamed()],
+            txs: [CLAIM_SPEND],
+        });
+        const { swap } = await resolve(indexer);
+        expect(swap.state).toBe("settled");
     });
 
     it("does not read a lockup that is not visible yet as one that came back", async () => {

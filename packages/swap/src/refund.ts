@@ -184,8 +184,9 @@ export type LockupFate =
     /** Fully spent, and nothing that spent it revealed a matching preimage —
      * so the money went back to the trader. See {@link readLockupFate}. */
     | { fate: "returned" }
-    /** Nothing was learned: no outputs visible, a spend the indexer could not
-     * produce, or a blob that would not decode. Never an answer. */
+    /** Nothing was learned: no outputs visible, an output spent by nothing the
+     * indexer names, a spend it could not produce, or a blob that would not
+     * decode. Never an answer. */
     | { fate: "unknown" };
 
 /** `sha256(candidate)` against the quote's wire-form payment hash. This — not
@@ -258,16 +259,25 @@ export async function readLockupFate(
     if (all.length === 0) return { fate: "unknown" };
 
     const spentBy = new Set<string>();
+    let everySpendNamed = true;
     for (const vtxo of all) {
-        // `spentBy` is the EMPTY STRING, not absent, for an unspent output —
-        // so this is a truthiness test and never a presence one. It names the
-        // CHECKPOINT transaction that spent the output, which is exactly the
-        // one carrying the spend leaf's witness: `buildOffchainTx` builds one
+        // Unions all three spend facts rather than trusting `spentBy` alone:
+        // the wire contract permits `isSpent: true` with an EMPTY `spentBy`,
+        // so a `spentBy`-only test would read an output that is gone as one
+        // still sitting there. Same union — and the same reason — as the SDK's
+        // own `hasTerminalSpend`.
+        if (!vtxo.isSpent && !vtxo.spentBy && !vtxo.settledBy) return { fate: "open" };
+        // `spentBy` is the EMPTY STRING, not absent, when there is nothing to
+        // name, so this is a truthiness test and never a presence one. When it
+        // IS set it names the CHECKPOINT transaction, which is exactly the one
+        // carrying the spend leaf's witness: `buildOffchainTx` builds one
         // checkpoint per input, and that checkpoint's single input is the one
         // holding the lockup's `tapLeafScript`. The ark transaction spends the
         // checkpoint, not the lockup, so it is the wrong place to look.
-        if (!vtxo.spentBy) return { fate: "open" };
-        spentBy.add(vtxo.spentBy);
+        if (vtxo.spentBy) spentBy.add(vtxo.spentBy);
+        // Spent, but by nothing this can go and read. No witness to verify, so
+        // this output can never contribute proof either way.
+        else everySpendNamed = false;
     }
 
     const { txs } = await indexer.getVirtualTxs([...spentBy]);
@@ -300,7 +310,9 @@ export async function readLockupFate(
     }
 
     // Only a lockup whose every spend was actually seen can be called returned.
-    return observed.size === spentBy.size ? { fate: "returned" } : { fate: "unknown" };
+    return everySpendNamed && observed.size === spentBy.size
+        ? { fate: "returned" }
+        : { fate: "unknown" };
 }
 
 /**
