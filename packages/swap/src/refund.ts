@@ -135,19 +135,57 @@ export interface LockupVtxo {
     value: number;
     /**
      * The batch this output lived in expired and the operator swept it, so it
-     * is no longer ordinarily spendable — only recoverable.
+     * is no longer a live leaf — it can be RECOVERED, but not spent offchain.
      *
-     * It is still the trader's money and `refundWithoutReceiver` still takes
-     * it back (that leaf needs the trader's own key plus the server, neither
-     * of which a sweep removes). What a sweep does cost is every path that
-     * needs a live counterparty signature.
+     * It is still the trader's money and it is still visible, which is why
+     * {@link findLockupVtxos} returns it. What it is not is refundable by
+     * {@link pushRefundWithoutReceiver}: that builds an offchain Ark
+     * transaction, and the SDK's own predicates make the two states mutually
+     * exclusive — `canSpendOffchain` is false exactly when `canRecoverOnchain`
+     * is true (`wallet/vtxo.ts`), and the latter is documented as "must be
+     * recovered into a fresh batch rather than spent offchain". Holding the
+     * trader's `sender` key does not change that; a sweep removes the leaf from
+     * the live tree, not the signature from the trader.
+     *
+     * `packages/boltz-swap` splits on exactly this fact rather than working
+     * around it: `settleRefundWithoutReceiver` sends a live VTXO through an
+     * offchain tx and a recoverable one through `joinBatch` — "a swept
+     * (recoverable) VTXO is no longer a live leaf, so it can only be reclaimed
+     * by re-registering it into a batch".
+     *
+     * So the remedy is recovery (renewing the output into a fresh batch),
+     * after which the ordinary CLTV refund works again. This package does not
+     * build that round — see {@link pushRefundWithoutReceiver}, which refuses
+     * rather than submitting a spend that cannot succeed.
      */
     recoverable: boolean;
 }
 
 /**
- * Every output at the lockup script that can still be refunded — spendable
- * AND swept-but-recoverable.
+ * Thrown when a refund was asked for over outputs that have been swept.
+ *
+ * Carries the outpoints so a caller can act — recover exactly those, then
+ * retry — instead of reading a server rejection and guessing. `reason` follows
+ * the same convention as `awaitOnchainFill`'s `fill_timeout` and
+ * `claimOnchainFill`'s `claim_window_closed`.
+ */
+export class LockupNeedsRecoveryError extends Error {
+    readonly name = "LockupNeedsRecoveryError";
+    readonly reason = "needs_recovery";
+    /** `txid:vout` for each output that must be recovered first. */
+    readonly outpoints: string[];
+
+    constructor(outpoints: string[]) {
+        super(
+            `refund refused: ${outpoints.length} lockup output(s) have been swept and must be recovered into a fresh batch before any offchain spend (${outpoints.join(", ")})`,
+        );
+        this.outpoints = outpoints;
+    }
+}
+
+/**
+ * Every output still sitting at the lockup script — spendable AND
+ * swept-but-recoverable, each tagged with which it is.
  *
  * All of them, not the first: a trader may fund a lockup in more than one
  * send, and refunding only `vtxos[0]` returns part of the money and strands
@@ -162,8 +200,25 @@ export interface LockupVtxo {
  * like a resolved swap. `packages/boltz-swap` merges the same two queries for
  * the same reason (`arkade-swaps.ts`'s `refundableVtxos`).
  *
+ * **Visible is not the same as refundable.** A `recoverable` output cannot be
+ * spent offchain at all — see {@link LockupVtxo.recoverable} — so this set is
+ * "what is there", not "what {@link pushRefundWithoutReceiver} can take back".
+ * That function refuses the recoverable ones by name rather than submitting a
+ * spend the server must reject.
+ *
  * This read — not the RFQ's reported state — is the authority on whether
- * there is anything left to refund.
+ * there is anything left at the lockup.
+ *
+ * **Not replaced by the contract manager's VTXO state, deliberately.** Once a
+ * lockup is registered (see `RfqSwapManagerDeps.contracts`) the wallet tracks
+ * these same outputs, and `getContractsWithVtxos` plus `canSpendOffchain` /
+ * `canRecoverOnchain` would classify them. That is a WEAKER answer here on two
+ * counts: it serves the wallet REPOSITORY, which a degraded sync will happily
+ * hand back stale (`getSyncState()` reports `degraded` and returns cached rows
+ * rather than failing), and its height-based expiry test needs a chain tip this
+ * module does not have. The two queries below ask the indexer itself and need
+ * neither. Ask-the-indexer, don't-trust-local-state — the same posture
+ * {@link readLockupFate} takes, and for the same reason: this decides money.
  */
 export async function findLockupVtxos(
     indexer: RefundIndexer,
@@ -381,6 +436,16 @@ export async function readLockupFate(
  * an hour, so a push issued the moment `refundLocktime` passes can be rejected
  * until enough blocks land. That is expected, not a failure — see
  * {@link refundIfUnresolved}, which retries.
+ *
+ * **Swept outputs are refused, not attempted.** This is an OFFCHAIN spend, and
+ * a swept output is no longer a live leaf: `canSpendOffchain` and
+ * `canRecoverOnchain` are mutually exclusive by construction, so a recoverable
+ * input cannot be spent this way whatever key signs it (see
+ * {@link LockupVtxo.recoverable}). Because every input lands in ONE aggregate
+ * transaction, a single swept output would take the live ones down with it —
+ * so the whole push is refused with {@link LockupNeedsRecoveryError} naming the
+ * outpoints, rather than submitted and rejected. Filtering them out silently
+ * would be worse still: it would report success over money that never moved.
  */
 export async function pushRefundWithoutReceiver(
     ark: RefundArkProvider,
@@ -394,6 +459,11 @@ export async function pushRefundWithoutReceiver(
     },
 ): Promise<{ arkTxid: string; amount: number }> {
     if (input.vtxos.length === 0) throw new Error("nothing to refund: no funded outputs");
+
+    const swept = input.vtxos.filter((vtxo) => vtxo.recoverable);
+    if (swept.length > 0) {
+        throw new LockupNeedsRecoveryError(swept.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`));
+    }
 
     const refundPkScript =
         input.refundPkScript ?? input.script.options.nonInteractiveRefund?.senderPkScript;
@@ -474,7 +544,20 @@ export type RefundOutcome =
     /** The trader took it back via `refundWithoutReceiver`. */
     | { outcome: "refunded"; arkTxid: string; amount: number; status: RfqStatus | null }
     /** The refund window opened but the lockup holds nothing to return. */
-    | { outcome: "nothing_to_refund"; status: RfqStatus | null };
+    | { outcome: "nothing_to_refund"; status: RfqStatus | null }
+    /**
+     * The money is still at the lockup, but its batch was swept, so no offchain
+     * spend can take it back until it is recovered into a fresh batch. Returned
+     * rather than retried: unlike a median-time-past refusal, no amount of
+     * waiting fixes this — see {@link LockupNeedsRecoveryError}. Recover the
+     * named outpoints, then call this again.
+     */
+    | {
+          outcome: "needs_recovery";
+          outpoints: string[];
+          vtxos: LockupVtxo[];
+          status: RfqStatus | null;
+      };
 
 /**
  * Ask first, then fall back: watch the swap for the solver to resolve it, and
@@ -499,6 +582,10 @@ export type RefundOutcome =
  *   for a while after `refundLocktime` passes in real time. Failures are
  *   retried at the poll interval until `attemptDeadline`, after which the last
  *   error is rethrown rather than swallowed.
+ * - **A swept lockup ends the wait instead of consuming it.** Once the batch
+ *   is gone the CLTV refund is not "not yet" but "not this way", so it returns
+ *   `needs_recovery` naming the outpoints rather than retrying until the
+ *   deadline. Recover them and call again.
  *
  * Safe to call late, and safe to call again: a caller recovering from a crash
  * well past the deadline skips straight to the push, and a lockup that is
@@ -544,6 +631,18 @@ export async function refundIfUnresolved(
                 });
                 return { outcome: "refunded", status, ...pushed };
             } catch (error) {
+                // A swept lockup is not a "not yet" — it is a "not this way".
+                // Retrying it until `attemptDeadline` would burn the whole
+                // window on a spend that cannot succeed and then rethrow, when
+                // the caller could have recovered the outputs and finished.
+                if (error instanceof LockupNeedsRecoveryError) {
+                    return {
+                        outcome: "needs_recovery",
+                        outpoints: error.outpoints,
+                        vtxos,
+                        status,
+                    };
+                }
                 // Expected while median-time-past has not caught up; give up
                 // only once the window closes, and surface the real reason.
                 if (now() >= attemptDeadline) throw error;
