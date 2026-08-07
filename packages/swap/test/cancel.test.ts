@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
     // returns the ArrayBufferLike flavor and must be assignable here
     serverKey: new Uint8Array(0) as Uint8Array,
     utxos: [] as { txid: string; vout: number; value: number }[],
+    connectOptions: undefined as { contractManager?: unknown } | undefined,
 }));
 
 vi.mock("@arkade-os/sdk", async (importOriginal) => {
@@ -19,7 +20,12 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
         ...mod,
         arkade: {
             ...mod.arkade,
-            Arkade: { connect: async () => ({ serverKey: state.serverKey }) },
+            Arkade: {
+                connect: async (opts: { contractManager?: unknown }) => {
+                    state.connectOptions = opts;
+                    return { serverKey: state.serverKey };
+                },
+            },
             ArkadeContract: class {
                 getUtxos = async () => state.utxos;
             },
@@ -46,9 +52,11 @@ const script = offerVtxoScript(binding, fundedServerKey);
 const offerHex = hex.encode(encodeOffer({ ...binding, swapPkScript: script.pkScript }));
 const fundedAddress = new ArkAddress(fundedServerKey, script.tweakedPublicKey, "tark").encode();
 
+const contractManager = { marker: "the wallet's manager" };
 const wallet = {
     identity: {},
     getAddress: async () => "unused-before-a-vtxo-is-selected",
+    getContractManager: async () => contractManager,
 } as unknown as IWallet;
 
 describe("cancelOffer guards", () => {
@@ -78,5 +86,17 @@ describe("cancelOffer guards", () => {
         await expect(cancelOffer(wallet, "http://ark", offerHex)).rejects.toThrow(
             "pass fundingTxid",
         );
+    });
+
+    // without this the contract takes the direct-indexer fallback and a
+    // registered offer's repository-backed VTXOs are never consulted
+    it("hands the wallet's contract manager to the arkade client", async () => {
+        state.serverKey = fundedServerKey;
+        state.utxos = [];
+        state.connectOptions = undefined;
+        await expect(cancelOffer(wallet, "http://ark", offerHex)).rejects.toThrow(
+            "no spendable VTXO",
+        );
+        expect(state.connectOptions?.contractManager).toBe(contractManager);
     });
 });
