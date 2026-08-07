@@ -94,10 +94,17 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
         try {
             const before = hex.encode(wallet.serverUnrollScript.script);
             // A distinct, valid checkpoint script for the new server epoch.
+            // The pubkey stays pinned to the wallet's forfeitPubkey — arkd
+            // never rotates the checkpoint script's pubkey independently of
+            // it, and `assertValidServerUnrollScript` pins against it — only
+            // the timelock varies, which is still a real re-source (the
+            // operator can legitimately change the checkpoint exit delay).
             const newCheckpoint = hex.encode(
                 CSVMultisigTapscript.encode({
-                    timelock: { type: "blocks", value: 200 },
-                    pubkeys: [hex.decode(NEW_SERVER)],
+                    // BIP-68 seconds granularity is 512s; 512*200 = 102400 (~28.4h,
+                    // above the 24h floor and distinct from mockArkInfo's 604672).
+                    timelock: { type: "seconds", value: 512 * 200 },
+                    pubkeys: [wallet.forfeitPubkey],
                 }).script,
             );
             expect(newCheckpoint).not.toBe(before);
@@ -122,7 +129,7 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
             const beforeRows = (await contractRepository.getContracts({})).length;
 
             await expect(wallet.rotateServerSigner(hex.decode(NEW_SERVER), "")).rejects.toThrow(
-                "Invalid checkpointTapscript from server",
+                "invalid checkpointTapscript from server",
             );
 
             // The wallet stays on its previous consistent epoch: key, both

@@ -148,7 +148,7 @@ describe("Wallet", () => {
                             network: "mutinynet",
                             forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
                             checkpointTapscript:
-                                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+                                "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
                         }),
                 })
                 .mockResolvedValueOnce({
@@ -510,7 +510,7 @@ describe("Wallet", () => {
             dust: BigInt(1000),
             forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
             checkpointTapscript:
-                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+                "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
             fees: {
                 intentFee: {
                     onchainInput: "200.0",
@@ -569,7 +569,7 @@ describe("Wallet", () => {
             dust: BigInt(1000),
             forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
             checkpointTapscript:
-                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+                "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
         };
 
         beforeEach(() => {
@@ -712,7 +712,7 @@ describe("Wallet", () => {
             dust: BigInt(1000),
             forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
             checkpointTapscript:
-                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+                "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
         };
         const mockBatchExpiry = 1767225600000;
 
@@ -941,7 +941,7 @@ describe("Wallet", () => {
             dust: BigInt(1000),
             forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
             checkpointTapscript:
-                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+                "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
         };
 
         function createMockVtxo(script: string): VirtualCoin {
@@ -1030,7 +1030,7 @@ describe("Wallet", () => {
             dust: BigInt(1000),
             forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
             checkpointTapscript:
-                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+                "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
         };
 
         it("opens exactly one getSubscription stream after notifyIncomingFunds", async () => {
@@ -1105,7 +1105,7 @@ describe("Wallet", () => {
             dust: BigInt(1000),
             forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
             checkpointTapscript:
-                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+                "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
         };
 
         function createMockVtxo(script: string, txid: string): VirtualCoin {
@@ -1262,7 +1262,7 @@ describe("Wallet", () => {
                     ? "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
                     : "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
             checkpointTapscript:
-                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+                "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
         });
 
         function sequence(value: bigint, type: "blocks" | "seconds") {
@@ -1552,7 +1552,7 @@ describe("ReadonlyWallet", () => {
         dust: BigInt(1000),
         forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
         checkpointTapscript:
-            "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+            "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
     };
 
     beforeEach(() => {
