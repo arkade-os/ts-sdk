@@ -53,29 +53,33 @@ const signWith =
 describe("onchainHtlcScript — golden", () => {
     it("derives the pinned address and scriptPubKey", () => {
         const h = htlc();
-        expect(h.address).toBe("bc1pngzf5u8j8p4zj603cngsjyr3wsly5unz84r3heh0kneaycjqdz7strsh7q");
+        expect(h.address).toBe("bc1pha7jrk3203ypttdk866vhdjlznzpd92esp0vdlfgw2plmjsxpwwq7wecyt");
         expect(hex.encode(h.pkScript)).toBe(
-            "51209a049a70f2386a2969f1c4d1091071743e4a72623d471be6efb4f3d2624068bd",
+            "5120bf7d21da2a7c4815adb63eb4cbb65f14c4169559805ec6fd287283fdca060b9c",
         );
     });
 
     it("compiles the two leaves and control blocks, byte for byte", () => {
         const h = htlc();
-        // HASH160 <ripemd160(sha256(P))> EQUALVERIFY <claimKey> CHECKSIG — the
-        // SAME h160 the Arkade leaf commits to: one P unlocks both sides.
+        // SIZE 32 EQUALVERIFY HASH160 <ripemd160(sha256(P))> EQUALVERIFY
+        // <claimKey> CHECKSIG — the length gate pins the witness preimage to
+        // exactly 32 bytes before it's hashed; the hash itself is the SAME
+        // h160 the Arkade leaf commits to — one P unlocks both sides.
         expect(hex.encode(h.leaves.claim)).toBe(
-            "a914b566a3eecce809896361988823cd2f423fe800e788" + `20${hex.encode(key(1))}ac`,
+            "82012088a914b566a3eecce809896361988823cd2f423fe800e788" + `20${hex.encode(key(1))}ac`,
         );
-        // <locktime> CLTV DROP <refundKey> CHECKSIG
+        // <locktime> CLTV DROP <refundKey> CHECKSIG — untouched by the claim-side change.
         expect(hex.encode(h.leaves.refund)).toBe(`0400d2496bb17520${hex.encode(key(3))}ac`);
-        // NUMS internal key — no key-path spend exists.
+        // NUMS internal key — no key-path spend exists. Both control blocks
+        // changed even though only the claim leaf's script did: each control
+        // block's merkle path includes the OTHER leaf's hash as a sibling.
         expect(hex.encode(h.controlBlocks.claim)).toBe(
             "c150929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0" +
                 "439b655bf27409423fc603101d15f5eeed93bb09bc080a21d1ddeee7bc207202",
         );
         expect(hex.encode(h.controlBlocks.refund)).toBe(
             "c150929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0" +
-                "f0da4fe5b7479c35faa63471aaba11bfb91ed94b00201d75cdff8c38db09118b",
+                "4c0d6c2942558916bf08e1671b9a1392d49d076475da1a7962b194706804d19c",
         );
     });
 

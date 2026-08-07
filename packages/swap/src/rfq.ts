@@ -7,11 +7,15 @@
  * is the solver that fills it:
  *
  * - `arkade:BTC|asset -> lightning:BTC` — the trader funds its own locally
- *   derived covenant contract (the `lightning-send` program below) and may go
+ *   derived VHTLC contract ({@link lightningSendVtxoScript}) and may go
  *   offline; the solver observes the funding on-chain, pays the invoice,
  *   and claims with the preimage — which appears publicly in the claim
- *   witness as the receipt. A failed swap refunds by covenant to the trader's
- *   address, pushable by anyone, no trader keys or state.
+ *   witness as the receipt. A failed swap refunds to the trader's address —
+ *   by the trader's own `sender` key on every interactive path, or, if the
+ *   trader's own key is ever lost, by the server and solver together via the
+ *   `nonInteractiveRefund` leaf (no trader signature, no timelock), which the
+ *   emulator co-signs under a covenant provably paying only the trader's
+ *   pre-committed address.
  * - `arkade:BTC|asset -> arkade:BTC|asset` — the trader accepts the quote by
  *   creating and funding an Intents **offer** (`createOffer`) bound to the
  *   quoted terms; the offer covenant lets any filler deliver, so the solver
@@ -33,18 +37,18 @@
  */
 import { hex } from "@scure/base";
 import { ripemd160 } from "@noble/hashes/legacy.js";
+import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     ArkAddress,
     RestArkProvider,
     RestEmulatorProvider,
-    arkade,
+    VHTLC,
     asset,
     getNetwork,
     type IWallet,
     type NetworkName,
 } from "@arkade-os/sdk";
 
-import lightningSendProgramJson from "./swap-lightning-send.program.json";
 import {
     MAX_MIN_CONFIRMATIONS,
     ONCHAIN_CLAIM_MARGIN_SECONDS,
@@ -72,16 +76,6 @@ const xOnly = (key: Uint8Array, label: string): Uint8Array => {
     }
     return key.slice(1);
 };
-
-type Artifact = Parameters<typeof arkade.parseArtifact>[0];
-
-/** The lightning-send contract — pure data, byte-identical to the reference
- * solver's script (pinned by the golden test): claim = preimage + solver +
- * server; refund = CLTV + server + covenant-tweaked emulator key pinning the
- * payout to the trader's address; unilateralClaim = solver alone after a CSV. */
-export const lightningSendProgram: ReturnType<typeof arkade.parseArtifact> = arkade.parseArtifact(
-    lightningSendProgramJson as Artifact,
-);
 
 // ── Pairs ────────────────────────────────────────────────────────────────────
 
@@ -173,18 +167,29 @@ export interface RfqStatus {
 }
 
 /** The rfq_request for the lightning send profile. A BOLT11 profile is always
- * exact-out: the invoice fixes the amount, so none is restated here. */
+ * exact-out: the invoice fixes the amount, so none is restated here.
+ * `senderPubkey` is the trader's own key for the VHTLC's sender-side leaves
+ * (see {@link lightningSendVtxoScript}) — required, never sent anywhere else,
+ * never trusted by the solver as anything but a pubkey to bind into the
+ * script. On the wire it's `client_refund_pubkey` (docs/rfq-protocol.md —
+ * the solver's schema is `.strict()`, so both the wrong name AND the missing
+ * required field would refuse every request). */
 export const lightningSendRequest = (input: {
     rfqId: string;
     invoice: string;
     refundAddress: string;
+    senderPubkey: Uint8Array;
 }): Record<string, unknown> => ({
     v: 1,
     type: "rfq_request",
     rfq_id: input.rfqId,
     pair: LIGHTNING_SEND_PAIR,
     amount_side: "to",
-    profile: { invoice: input.invoice, refund_address: input.refundAddress },
+    profile: {
+        invoice: input.invoice,
+        refund_address: input.refundAddress,
+        client_refund_pubkey: hex.encode(input.senderPubkey),
+    },
 });
 
 /** The rfq_request for an arkade↔arkade swap. Exactly one side may name an
@@ -502,10 +507,35 @@ export const unilateralClaimDelay = (serverExitDelaySeconds: number): number => 
     );
 };
 
-/** Compile the lightning-send contract from the quote's binding fields plus
- * the trader's own data. `paymentHash` is the BOLT11 payment hash
- * (`sha256(P)`, hex); the script's HASH160 commitment is derived from it here,
- * which is why the trader never needs to see `P`. */
+/** VHTLC's `unilateralRefund` tier: sender + solver, no server, one 512s step
+ * past `claimDelay` — the middle rung between the fully-collaborative paths
+ * and the sender's last-resort `unilateralRefundWithoutReceiver`. Same
+ * already-rounded `claimDelay` input as {@link unilateralClaimDelay}
+ * produces — one rounding, shared across all three tiers. */
+export const unilateralRefundDelay = (claimDelay: number): number =>
+    claimDelay + SEQUENCE_GRANULARITY_SECONDS;
+
+/** VHTLC's `unilateralRefundWithoutReceiver` tier: sender alone, needs
+ * nobody — two 512s steps past `claimDelay`, past {@link
+ * unilateralRefundDelay}. */
+export const unilateralRefundWithoutReceiverDelay = (claimDelay: number): number =>
+    claimDelay + 2 * SEQUENCE_GRANULARITY_SECONDS;
+
+/** Compile the lightning-send VHTLC from the quote's binding fields plus the
+ * trader's own data. `paymentHash` is the BOLT11 payment hash (`sha256(P)`,
+ * hex); the script's HASH160 commitment is derived from it here, which is why
+ * the trader never needs to see `P`.
+ *
+ * Every quote gets the full eight-leaf contract: VHTLC's own six
+ * (`claim`/`refund`/`refundWithoutReceiver`/`unilateralClaim`/
+ * `unilateralRefund`/`unilateralRefundWithoutReceiver`), plus two more the
+ * emulator co-signs under a covenant pinning the payout to a pre-committed
+ * destination — `nonInteractiveClaim` (server + emulator, pays the solver's
+ * own `receiverPkScript`, no solver signature needed) and
+ * `nonInteractiveRefund` (server + solver + emulator, pays the trader's own
+ * `refundPkScript`, no timelock and no trader signature needed — see {@link
+ * VHTLC.Options.nonInteractiveRefund}'s doc comment for why that matters).
+ */
 export function lightningSendVtxoScript(params: {
     /** Binding field #1: the solver's x-only key, from the quote. */
     solverPubkey: Uint8Array;
@@ -515,27 +545,49 @@ export function lightningSendVtxoScript(params: {
     serverPubkey: Uint8Array;
     /** BOLT11 payment hash, hex — from the trader's OWN invoice decode. */
     paymentHash: string;
-    /** From {@link unilateralClaimDelay} over the trader's OWN server info. */
+    /** From {@link unilateralClaimDelay} over the trader's OWN server info.
+     * {@link unilateralRefundDelay} and {@link unilateralRefundWithoutReceiverDelay}
+     * derive from this same value — one rounding, shared across all three tiers. */
     claimDelay: number;
     /** Emulator x-only key — the trader's OWN endpoint. */
     emulatorPubkey: Uint8Array;
-    /** Where a refund must pay: the trader's P2TR pkScript (34 bytes). */
+    /** Where a refund must pay: the trader's P2TR pkScript (34 bytes). Also
+     * `nonInteractiveRefund`'s covenant destination. */
     refundPkScript: Uint8Array;
-}): InstanceType<typeof arkade.ArkadeProgramScript> {
-    return new arkade.ArkadeProgramScript(
-        lightningSendProgram,
-        {
-            receiver: params.solverPubkey,
-            server: params.serverPubkey,
-            preimageHash: ripemd160(hex.decode(params.paymentHash)),
-            refundLocktime: BigInt(params.refundLocktime),
-            claimDelay: BigInt(params.claimDelay),
-            // the covenant commits to the x-only key; the 0x5120 prefix is
-            // re-added by the introspection opcode reading the output script
-            refundKey: params.refundPkScript.subarray(2),
+    /** The trader's own key — VHTLC's `sender` role. Required on every
+     * interactive refund-side leaf; the trader generates and persists it
+     * (see {@link requestLightningSend}'s own obligations). */
+    senderPubkey: Uint8Array;
+    /** The solver's own claim destination, from the quote
+     * (`profile.receiver_pk_script`) — needed only so `nonInteractiveClaim`'s
+     * covenant key can be derived; the trader does not otherwise use or trust
+     * this value. P2TR pkScript, 34 bytes. */
+    receiverPkScript: Uint8Array;
+}): InstanceType<typeof VHTLC.ScriptV2> {
+    const seconds = (value: number): { type: "seconds"; value: bigint } => ({
+        type: "seconds",
+        value: BigInt(value),
+    });
+    return new VHTLC.ScriptV2({
+        sender: params.senderPubkey,
+        receiver: params.solverPubkey,
+        server: params.serverPubkey,
+        preimageHash: ripemd160(hex.decode(params.paymentHash)),
+        refundLocktime: BigInt(params.refundLocktime),
+        unilateralClaimDelay: seconds(params.claimDelay),
+        unilateralRefundDelay: seconds(unilateralRefundDelay(params.claimDelay)),
+        unilateralRefundWithoutReceiverDelay: seconds(
+            unilateralRefundWithoutReceiverDelay(params.claimDelay),
+        ),
+        nonInteractiveClaim: {
+            receiverPkScript: params.receiverPkScript,
+            emulatorPubkey: params.emulatorPubkey,
         },
-        { serverKey: params.serverPubkey, emulatorKey: params.emulatorPubkey },
-    );
+        nonInteractiveRefund: {
+            senderPkScript: params.refundPkScript,
+            emulatorPubkey: params.emulatorPubkey,
+        },
+    });
 }
 
 /** The BOLT11 facts the trader read from its OWN decode — this module takes
@@ -557,10 +609,19 @@ export interface InvoiceFacts {
  * (`wallet.send({ address, amount })`) before `quote.valid_until`, after
  * which the maker may go OFFLINE: filling is non-interactive. Success reveals
  * the preimage in the solver's claim witness (also served via status as
- * `settled`); failure refunds by covenant to `refundAddress`.
+ * `settled`); failure refunds to `refundAddress`.
  *
  * Throws {@link SwapRefusal} (closed reason), {@link AddressMismatch} (never
  * fund), or a gate error with a stable `reason`.
+ *
+ * Generates a fresh `sender` key per call and returns it as `senderPubkey`/
+ * `senderPrivateKey`. THIS FUNCTION DOES NOT PERSIST IT: a caller that
+ * discards the return value has traded away every interactive refund path.
+ * `nonInteractiveRefund` can still recover the funds without it — but unlike
+ * `refundWithoutReceiver`'s old CLTV-gated guarantee, it needs the SOLVER's
+ * active cooperation (server + solver + emulator), not just infrastructure
+ * uptime. If the solver is also gone or unwilling, losing this key is a
+ * total loss, same as it would be without `nonInteractiveRefund` at all.
  */
 export async function requestLightningSend(
     wallet: IWallet,
@@ -577,10 +638,17 @@ export async function requestLightningSend(
     fundAmount: number;
     /** The covenant's scriptPubKey, for watching the lockup and its spend. */
     swapPkScript: Uint8Array;
-    /** Where a failed swap provably refunds. */
+    /** Where a failed swap refunds. */
     refundAddress: string;
+    /** The VHTLC `sender` key — PERSIST BOTH before going offline, or every
+     * interactive refund path (everything except `nonInteractiveRefund`) is
+     * lost. */
+    senderPubkey: Uint8Array;
+    senderPrivateKey: Uint8Array;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
+    const senderPrivateKey = schnorr.utils.randomSecretKey();
+    const senderPubkey = schnorr.getPublicKey(senderPrivateKey);
     const [info, emulatorInfo, refundAddress] = await Promise.all([
         new RestArkProvider(arkServerUrl).getInfo(),
         new RestEmulatorProvider(emulatorUrl).getInfo(),
@@ -588,10 +656,14 @@ export async function requestLightningSend(
     ]);
 
     const quote = await transport.requestQuote(
-        lightningSendRequest({ rfqId, invoice: params.invoice.raw, refundAddress }),
+        lightningSendRequest({ rfqId, invoice: params.invoice.raw, refundAddress, senderPubkey }),
     );
     if (quote.refund_locktime === undefined) {
         throw new Error("lightning-send quote is missing refund_locktime");
+    }
+    const receiverPkScriptHex = quote.profile?.receiver_pk_script as string | undefined;
+    if (receiverPkScriptHex === undefined) {
+        throw new Error("lightning-send quote is missing profile.receiver_pk_script");
     }
 
     const serverPubkey = xOnly(hex.decode(info.signerPubkey), "ark signer key");
@@ -602,6 +674,8 @@ export async function requestLightningSend(
         paymentHash: params.invoice.paymentHash,
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
         emulatorPubkey: xOnly(hex.decode(emulatorInfo.signerPubkey), "emulator signer key"),
+        senderPubkey,
+        receiverPkScript: hex.decode(receiverPkScriptHex),
         refundPkScript: ArkAddress.decode(refundAddress).pkScript,
     });
     const address = script
@@ -621,6 +695,8 @@ export async function requestLightningSend(
         fundAmount: params.invoice.amountSats,
         swapPkScript: script.pkScript,
         refundAddress,
+        senderPubkey,
+        senderPrivateKey,
     };
 }
 
@@ -646,16 +722,18 @@ export const offerTermsFromQuote = (
 
 // ── Onchain corridor: off-board (arkade->onchain) and on-board wire ─────────
 
-/** The Arkade lockup for an onchain send is byte-identical to the
- * lightning-send program — only the SOURCE of the payment hash differs
- * (maker-generated P instead of a BOLT11). One artifact, one golden test. */
-export const htlcSendProgram: ReturnType<typeof arkade.parseArtifact> = lightningSendProgram;
+/** The Arkade lockup for an onchain send uses the SAME {@link
+ * lightningSendVtxoScript} the Lightning leg does — only the SOURCE of the
+ * payment hash differs (maker-generated P instead of a BOLT11). One function,
+ * one golden test. */
 
 const l1NetworkFromArk = (network: string): OnchainNetwork =>
     network === "bitcoin" ? "bitcoin" : network === "regtest" ? "regtest" : "testnet";
 
 /** The rfq_request for `arkade:BTC->onchain:BTC`. Exact-out means "this much
- * lands in the L1 HTLC". */
+ * lands in the L1 HTLC". `senderPubkey` is the maker's own key for the
+ * VHTLC's sender-side leaves — same role as in {@link lightningSendRequest}.
+ * On the wire it's `client_refund_pubkey`, same as there. */
 export const onchainSendRequest = (input: {
     rfqId: string;
     /** `sha256(P)`, hex — maker-chosen; see {@link paymentHashOf}. */
@@ -664,6 +742,7 @@ export const onchainSendRequest = (input: {
     payoutPubkey: Uint8Array;
     /** Maker's arkade address — where the covenant refund must pay. */
     refundAddress: string;
+    senderPubkey: Uint8Array;
     amount: number;
     amountSide: "from" | "to";
 }): Record<string, unknown> => ({
@@ -677,6 +756,7 @@ export const onchainSendRequest = (input: {
         payment_hash: input.paymentHash,
         payout_pubkey: hex.encode(input.payoutPubkey),
         refund_address: input.refundAddress,
+        client_refund_pubkey: hex.encode(input.senderPubkey),
     },
 });
 
@@ -727,6 +807,9 @@ export function deriveOnchainSend(input: {
     hrp: string;
     l1Network: OnchainNetwork;
     refundAddress: string;
+    /** The maker's own key for the VHTLC's sender-side leaves — same role as
+     * in {@link requestLightningSend}. */
+    senderPubkey: Uint8Array;
 }): {
     address: string;
     swapPkScript: Uint8Array;
@@ -742,11 +825,13 @@ export function deriveOnchainSend(input: {
     const htlcLocktime = profile.htlc_locktime as number | undefined;
     const htlcAddress = profile.htlc_address as string | undefined;
     const minConfirmations = profile.min_confirmations as number | undefined;
+    const receiverPkScriptHex = profile.receiver_pk_script as string | undefined;
     if (
         refundLocktime === undefined ||
         htlcPubkey === undefined ||
         htlcLocktime === undefined ||
-        minConfirmations === undefined
+        minConfirmations === undefined ||
+        receiverPkScriptHex === undefined
     ) {
         throw new Error("onchain-send quote is missing a binding field");
     }
@@ -758,6 +843,8 @@ export function deriveOnchainSend(input: {
         paymentHash: input.paymentHash,
         claimDelay: input.claimDelay,
         emulatorPubkey: input.emulatorPubkey,
+        senderPubkey: input.senderPubkey,
+        receiverPkScript: hex.decode(receiverPkScriptHex),
         refundPkScript: ArkAddress.decode(input.refundAddress).pkScript,
     });
     const address = script.address(input.hrp, input.serverPubkey).encode();
@@ -789,9 +876,13 @@ export function deriveOnchainSend(input: {
  * quote → derive BOTH contracts locally → verify → gate. Pure of funding —
  * the caller funds `address` with its own wallet before `quote.valid_until`.
  *
- * Two obligations, both LOUD:
+ * Three obligations, all LOUD:
  * - **Persist `preimage` (with the record) BEFORE funding.** It is the only
  *   thing that can claim the L1 fill, across restarts included.
+ * - **Persist `senderPubkey`/`senderPrivateKey`** — same obligation as {@link
+ *   requestLightningSend}: discard it and every interactive refund path is
+ *   gone, leaving recovery dependent on the solver's cooperation via
+ *   `nonInteractiveRefund` rather than guaranteed outright.
  * - **Stay claim-capable.** Unlike lightning-send the maker cannot go fully
  *   offline: it must claim the L1 HTLC (`awaitOnchainFill` →
  *   `claimOnchainFill`) before `htlc.refundLocktime`. Missing that window
@@ -822,10 +913,16 @@ export async function requestOnchainSend(
     refundAddress: string;
     /** The EXPECTED L1 fill, derived locally — watch and claim against this. */
     htlc: OnchainHtlc;
+    /** The VHTLC `sender` key — PERSIST BOTH before funding, same obligation
+     * as `preimage`. */
+    senderPubkey: Uint8Array;
+    senderPrivateKey: Uint8Array;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
     const preimage = params.preimage ?? newPreimage();
     const paymentHash = paymentHashOf(preimage);
+    const senderPrivateKey = schnorr.utils.randomSecretKey();
+    const senderPubkey = schnorr.getPublicKey(senderPrivateKey);
     const [info, emulatorInfo, refundAddress] = await Promise.all([
         new RestArkProvider(arkServerUrl).getInfo(),
         new RestEmulatorProvider(emulatorUrl).getInfo(),
@@ -838,6 +935,7 @@ export async function requestOnchainSend(
             paymentHash,
             payoutPubkey: params.payoutPubkey,
             refundAddress,
+            senderPubkey,
             amount: params.amount,
             amountSide: params.amountSide,
         }),
@@ -853,6 +951,7 @@ export async function requestOnchainSend(
         hrp: getNetwork(info.network as NetworkName).hrp,
         l1Network: l1NetworkFromArk(info.network),
         refundAddress,
+        senderPubkey,
     });
     assertFundable({
         quote,
@@ -873,5 +972,7 @@ export async function requestOnchainSend(
         swapPkScript: derived.swapPkScript,
         refundAddress,
         htlc: derived.htlc,
+        senderPubkey,
+        senderPrivateKey,
     };
 }

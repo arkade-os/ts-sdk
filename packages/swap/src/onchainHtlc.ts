@@ -109,8 +109,13 @@ export interface OnchainHtlc {
  * Derive the two-leaf taproot HTLC. Internal key is the BIP-341 NUMS point, so
  * there is no key-path spend, ever:
  *
- *   claim:  `OP_HASH160 <h160> OP_EQUALVERIFY <claimKey> OP_CHECKSIG`
+ *   claim:  `OP_SIZE 32 OP_EQUALVERIFY OP_HASH160 <h160> OP_EQUALVERIFY <claimKey> OP_CHECKSIG`
  *   refund: `<locktime> OP_CHECKLOCKTIMEVERIFY OP_DROP <refundKey> OP_CHECKSIG`
+ *
+ * The claim leaf's `OP_SIZE 32 OP_EQUALVERIFY` prefix pins the witness
+ * preimage to exactly 32 bytes before it's hashed — the same shape real HTLC
+ * scripts (e.g. BOLT3's) carry, and this contract's preimage is always
+ * exactly 32 bytes by construction.
  *
  * Pure derivation — pinned byte-for-byte by the golden test; any drift here
  * changes addresses on BOTH sides of a swap.
@@ -125,7 +130,16 @@ export function onchainHtlcScript(params: OnchainHtlcParams, network: OnchainNet
         );
     }
     const h160 = h160FromPaymentHash(params.paymentHash);
-    const claim = btc.Script.encode(["HASH160", h160, "EQUALVERIFY", params.claimKey, "CHECKSIG"]);
+    const claim = btc.Script.encode([
+        "SIZE",
+        32,
+        "EQUALVERIFY",
+        "HASH160",
+        h160,
+        "EQUALVERIFY",
+        params.claimKey,
+        "CHECKSIG",
+    ]);
     const refund = btc.Script.encode([
         btc.ScriptNum().encode(BigInt(params.refundLocktime)),
         "CHECKLOCKTIMEVERIFY",

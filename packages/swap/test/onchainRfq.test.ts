@@ -19,8 +19,6 @@ import {
     ONCHAIN_SEND_PAIR,
     assertFundable,
     deriveOnchainSend,
-    htlcSendProgram,
-    lightningSendProgram,
     lightningSendVtxoScript,
     onchainReceiveRequest,
     onchainSendRequest,
@@ -31,6 +29,7 @@ import { InMemoryAssetSwapRepository } from "../src/repository";
 import { addAssetSwap, getAssetSwaps, type AssetSwap } from "../src/store";
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
+const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
 
 const RFQ_ID = "a1".repeat(32);
 const PREIMAGE = new Uint8Array(32).fill(7);
@@ -39,15 +38,15 @@ const NOW = 1_800_000_000;
 const REFUND_LOCKTIME = NOW + 200 * 3600;
 const HTLC_LOCKTIME = NOW + 24 * 3600;
 
-describe("pairs and the shared program", () => {
+// The onchain leg's Arkade lockup shares `lightningSendVtxoScript` with the
+// Lightning leg directly (see `deriveOnchainSend` below) — one function, one
+// golden test (`rfq.test.ts`). There is no separate onchain program object
+// left to compare it against, so there is nothing to pin here any more.
+describe("pairs", () => {
     it("names the onchain legs", () => {
         expect(ONCHAIN_BTC).toBe("onchain:BTC");
         expect(ONCHAIN_SEND_PAIR).toBe(`${ARKADE_BTC}->${ONCHAIN_BTC}`);
         expect(ONCHAIN_RECEIVE_PAIR).toBe(`${ONCHAIN_BTC}->${ARKADE_BTC}`);
-    });
-
-    it("aliases the Arkade lockup to the lightning-send artifact — one program, one golden test", () => {
-        expect(htlcSendProgram).toBe(lightningSendProgram);
     });
 });
 
@@ -59,6 +58,7 @@ describe("request builders", () => {
                 paymentHash: PAYMENT_HASH,
                 payoutPubkey: key(5),
                 refundAddress: "ark1q...",
+                senderPubkey: key(13),
                 amount: 100_000,
                 amountSide: "to",
             }),
@@ -73,6 +73,7 @@ describe("request builders", () => {
                 payment_hash: PAYMENT_HASH,
                 payout_pubkey: hex.encode(key(5)),
                 refund_address: "ark1q...",
+                client_refund_pubkey: hex.encode(key(13)),
             },
         });
     });
@@ -162,8 +163,11 @@ describe("assertFundable — onchain gates", () => {
 
 describe("deriveOnchainSend", () => {
     // The maker's own view of its stack: server key(3), emulator key(9),
-    // claim delay 4096 — and a real, decodable arkade refund address.
+    // claim delay 4096, sender key(13) — and a real, decodable arkade refund
+    // address.
     const SERVER = key(3);
+    const SENDER_PUBKEY = key(13);
+    const RECEIVER_PK_SCRIPT = p2tr(key(1));
     const REFUND_ADDRESS = lightningSendVtxoScript({
         solverPubkey: key(1),
         refundLocktime: REFUND_LOCKTIME,
@@ -171,7 +175,9 @@ describe("deriveOnchainSend", () => {
         paymentHash: PAYMENT_HASH,
         claimDelay: 4096,
         emulatorPubkey: key(9),
-        refundPkScript: Uint8Array.from([0x51, 0x20, ...key(5)]),
+        refundPkScript: p2tr(key(5)),
+        senderPubkey: SENDER_PUBKEY,
+        receiverPkScript: RECEIVER_PK_SCRIPT,
     })
         .address("ark", SERVER)
         .encode();
@@ -185,6 +191,7 @@ describe("deriveOnchainSend", () => {
         hrp: "ark",
         l1Network: "regtest" as const,
         refundAddress: REFUND_ADDRESS,
+        senderPubkey: SENDER_PUBKEY,
     });
 
     /** A quote whose compare-only fields MATCH the maker's own derivations. */
@@ -198,6 +205,8 @@ describe("deriveOnchainSend", () => {
             claimDelay: 4096,
             emulatorPubkey: key(9),
             refundPkScript: ArkAddress.decode(REFUND_ADDRESS).pkScript,
+            senderPubkey: SENDER_PUBKEY,
+            receiverPkScript: RECEIVER_PK_SCRIPT,
         });
         const htlc = onchainHtlcScript(
             {
@@ -224,6 +233,7 @@ describe("deriveOnchainSend", () => {
                 htlc_locktime: HTLC_LOCKTIME,
                 htlc_address: htlc.address,
                 min_confirmations: 2,
+                receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
             },
         };
     };
