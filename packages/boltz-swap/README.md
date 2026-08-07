@@ -242,6 +242,23 @@ if (info.status === 'recoverable') {
 > [!NOTE]
 > This only scans swaps stored in your local repository. It does not discover swaps that exist on Boltz but are missing locally.
 
+### Recovery from Seed
+
+`restoreSwaps()` asks Boltz for the swaps held under the wallet's keys and rebuilds
+them locally — including swaps this device never stored, e.g. after a wipe.
+
+On an HD wallet (`walletMode: 'hd'`) each swap is created under its own signing
+descriptor, and the preimage of reverse and chain swaps is derived from that
+descriptor's key. A restored swap therefore comes back with a usable `preimage` and
+can be claimed from the seed alone. The scheme is shared with the .NET SDK, so a swap
+created by either is recoverable by the other.
+
+Two cases still return `preimage: ""` and need the original secret via
+`enrichReverseSwapPreimage()`: swaps created before this scheme, and swaps created by
+a wallet with no HD state (a static wallet, or a custom identity that cannot sign
+deterministically) — those keep a random preimage, and swap creation logs a warning
+saying so.
+
 ### Cleanup
 
 ```typescript

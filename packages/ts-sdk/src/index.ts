@@ -27,6 +27,7 @@ import type {
     HDDeterministicSignCapable,
 } from "./identity";
 import { isHDWalletCapable } from "./wallet/hdWalletCapable";
+import { signingDescriptorIndex } from "./wallet/walletReceiveRotator";
 import type { HDWalletCapable } from "./wallet/hdWalletCapable";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
@@ -466,6 +467,7 @@ export {
     DescriptorIdentity,
     isHDDeterministicSignCapable,
     isHDWalletCapable,
+    signingDescriptorIndex,
     deriveDescriptorLeafCompressedPubKey,
     OnchainWallet,
     Ramps,

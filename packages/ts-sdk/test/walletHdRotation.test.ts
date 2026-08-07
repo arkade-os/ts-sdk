@@ -920,6 +920,89 @@ describe("Wallet HD rotation", () => {
      *   - `INVALID_INTENT_PROOF (23): input 0 has no tapscript signatures`
      *     (auto-renewal)
      */
+    // Surface consumers that derive a secret from the descriptor key (Boltz
+    // swap preimages) need: allocate an index of their own, look past the
+    // watermark on restore, and push the watermark past what they found.
+    describe("allocator surface", () => {
+        const indexOf = (descriptor: string) => Number(descriptor.match(/\/(\d+)\)$/)![1]);
+
+        it("allocates a fresh descriptor per call and moves the watermark", async () => {
+            const repo = new InMemoryWalletRepository();
+            const wallet = await makeHdWallet(repo);
+
+            const first = await wallet.getNextSigningDescriptor();
+            const second = await wallet.getNextSigningDescriptor();
+
+            expect(first).toBeDefined();
+            expect(second).not.toBe(first);
+            expect(indexOf(second!)).toBe(indexOf(first!) + 1);
+            expect((await repo.getWalletState())?.settings?.hd.lastIndexUsed).toBe(
+                indexOf(second!),
+            );
+            await wallet.dispose();
+        });
+
+        it("extends the used-descriptor band by the requested look-ahead", async () => {
+            const wallet = await makeHdWallet();
+
+            const used = await wallet.getUsedSigningDescriptors();
+            const withLookAhead = await wallet.getUsedSigningDescriptors({ lookAhead: 20 });
+
+            expect(indexOf(withLookAhead[withLookAhead.length - 1])).toBe(
+                indexOf(used[used.length - 1]) + 20,
+            );
+            await wallet.dispose();
+        });
+
+        it("advances the watermark past a descriptor, never rewinding it", async () => {
+            const repo = new InMemoryWalletRepository();
+            const wallet = await makeHdWallet(repo);
+            const band = await wallet.getUsedSigningDescriptors({ lookAhead: 20 });
+
+            await wallet.advanceSigningDescriptorWatermark(band[15]);
+            expect((await repo.getWalletState())?.settings?.hd.lastIndexUsed).toBe(15);
+
+            await wallet.advanceSigningDescriptorWatermark(band[3]);
+            expect((await repo.getWalletState())?.settings?.hd.lastIndexUsed).toBe(15);
+
+            expect(indexOf((await wallet.getNextSigningDescriptor())!)).toBe(16);
+            await wallet.dispose();
+        });
+
+        it("rejects a descriptor with no HD child index rather than treating it as index 0", async () => {
+            const repo = new InMemoryWalletRepository();
+            const wallet = await makeHdWallet(repo);
+            const before = (await repo.getWalletState())?.settings?.hd.lastIndexUsed;
+
+            await expect(
+                wallet.advanceSigningDescriptorWatermark(`tr(${SERVER_PUBKEY_HEX})`),
+            ).rejects.toThrow(/no HD child index/);
+
+            expect((await repo.getWalletState())?.settings?.hd.lastIndexUsed).toBe(before);
+            await wallet.dispose();
+        });
+
+        it("is inert on a static wallet", async () => {
+            const repo = new InMemoryWalletRepository();
+            const wallet = await Wallet.create({
+                identity: MnemonicIdentity.fromMnemonic(MNEMONIC, { isMainnet: false }),
+                walletMode: "static",
+                arkServerUrl: "http://localhost:7070",
+                storage: {
+                    walletRepository: repo,
+                    contractRepository: new InMemoryContractRepository(),
+                },
+            });
+
+            expect(await wallet.getNextSigningDescriptor()).toBeUndefined();
+            await expect(
+                wallet.advanceSigningDescriptorWatermark("tr(xpub/0/9)"),
+            ).resolves.toBeUndefined();
+            expect(await wallet.getUsedSigningDescriptors({ lookAhead: 20 })).toEqual([]);
+            await wallet.dispose();
+        });
+    });
+
     describe("signing after rotation", () => {
         // mockArkInfo.signerPubkey is the compressed form (0x02 prefix).
         // Strip the byte to match how `Wallet.create` materializes

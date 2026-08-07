@@ -150,7 +150,11 @@ import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 import { validateVtxosForScript, saveVtxosForContract } from "../contracts/vtxoOwnership";
-import { WalletReceiveRotator, signingDescriptorIndex } from "./walletReceiveRotator";
+import {
+    WalletReceiveRotator,
+    requireSigningDescriptorIndex,
+    signingDescriptorIndex,
+} from "./walletReceiveRotator";
 import { HDDescriptorProvider } from "./hdDescriptorProvider";
 import { DescriptorProvider } from "../identity/descriptorProvider";
 import { DescriptorIdentity } from "../identity/descriptorIdentity";
@@ -2345,6 +2349,15 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     }
 
     /**
+     * @see HDWalletCapable.getNextSigningDescriptor
+     */
+    async getNextSigningDescriptor(): Promise<string | undefined> {
+        const provider = this._descriptorProvider;
+        if (!(provider instanceof HDDescriptorProvider)) return undefined;
+        return provider.getNextSigningDescriptor();
+    }
+
+    /**
      * @see HDWalletCapable.getUsedSigningDescriptors
      *
      * Union of the watermark band and the descriptors persisted on contracts:
@@ -2352,12 +2365,13 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
      * alone would miss indices allocated for something the wallet never
      * persisted (a swap, an externally issued invoice).
      */
-    async getUsedSigningDescriptors(): Promise<string[]> {
+    async getUsedSigningDescriptors(opts?: { lookAhead?: number }): Promise<string[]> {
         const provider = this._descriptorProvider;
         const descriptors = new Set<string>();
         if (provider instanceof HDDescriptorProvider) {
             const lastIndexUsed = await provider.getLastIndexUsed();
-            for (let i = 0; i <= (lastIndexUsed ?? -1); i++) {
+            const lookAhead = Math.max(0, Math.trunc(opts?.lookAhead ?? 0));
+            for (let i = 0; i <= (lastIndexUsed ?? -1) + lookAhead; i++) {
                 descriptors.add(provider.materializeDescriptorAt(i));
             }
         }
@@ -2370,6 +2384,17 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         return [...descriptors].sort(
             (a, b) => signingDescriptorIndex(a) - signingDescriptorIndex(b),
         );
+    }
+
+    /**
+     * @see HDWalletCapable.advanceSigningDescriptorWatermark
+     */
+    async advanceSigningDescriptorWatermark(descriptor: string): Promise<void> {
+        const provider = this._descriptorProvider;
+        if (!(provider instanceof HDDescriptorProvider)) return;
+        const index = requireSigningDescriptorIndex(descriptor);
+        if (!provider.isOurs(descriptor)) return;
+        await provider.advanceLastIndexUsed(index);
     }
 
     /**
