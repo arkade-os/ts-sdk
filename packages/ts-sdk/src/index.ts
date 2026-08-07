@@ -404,6 +404,7 @@ import {
     gateExclusion,
     outpointExclusion,
     logExcludedVtxos,
+    UnannotatableInputError,
 } from "./contracts/spendability";
 import type { ExcludableVtxo, VtxoExclusion } from "./contracts/spendability";
 import type {
@@ -661,6 +662,7 @@ export {
     gateExclusion,
     outpointExclusion,
     logExcludedVtxos,
+    UnannotatableInputError,
     encodeArkContract,
     decodeArkContract,
     contractFromArkContract,

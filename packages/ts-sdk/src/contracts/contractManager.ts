@@ -30,7 +30,12 @@ import {
     normalizeVtxo,
     type NormalizedExtendedVirtualCoin,
 } from "../wallet/vtxo";
-import { extendVirtualCoinForContract, type ContractTapscriptCache } from "../wallet/utils";
+import {
+    deriveContractTapscripts,
+    extendVirtualCoinForContract,
+    type ContractTapscriptCache,
+} from "../wallet/utils";
+import { UnannotatableInputError } from "./spendability";
 import { ContractFilter, ContractRepository, IntentRepository } from "../repositories";
 import { reconcileIntents } from "../wallet/intentReconciliation";
 import {
@@ -84,28 +89,42 @@ function toWatchOnlyContract(params: CreateContractParams): Contract {
 }
 
 /**
- * The subset of `script → contract` whose VTXOs this runtime can annotate.
+ * Which of `vtxos`' contracts this runtime can annotate, with the tapscripts
+ * built along the way and a reason for each that it cannot.
  *
- * A persisted row can outlive its handler — a plugin type in a build that no
- * longer loads the plugin — and {@link ContractManager.annotateVtxos} throws
- * for one, having no tapscripts to annotate with. A bulk sync must drop those
- * VTXOs rather than let a single stale row fail the whole read: balance,
- * history and coin selection all go through it, and a contract with no handler
- * is not generically spendable anyway (see `isContractGenericallySpendable`).
- * Their already-persisted VTXOs stay in the repository, just unrefreshed.
+ * Two ways a persisted row stops being annotatable, both surviving restarts:
+ * its handler is not registered here (a plugin type in a build that no longer
+ * loads the plugin), or its handler rejects the stored params (a schema that
+ * gained a required field after the row was written). Either way
+ * {@link ContractManager.annotateVtxos} throws for it, and a bulk sync must
+ * drop just that contract's VTXOs rather than let one row fail the whole read —
+ * balance, history, coin selection and `initialize` all go through it.
+ *
+ * Only contracts present in this batch are examined, so nothing is built that
+ * annotation would not have built anyway, and the cache carries the work
+ * forward so it is built exactly once.
  */
-function annotatableScripts(scriptToContract: ReadonlyMap<string, Contract>): Set<string> {
-    const annotatable = new Set<string>();
-    for (const [script, contract] of scriptToContract) {
-        if (contractHandlers.get(contract.type)) {
-            annotatable.add(script);
-        } else {
-            console.debug(
-                `[contracts] no handler registered for type '${contract.type}': not syncing ${script}`,
+function annotatableIn(
+    scriptToContract: ReadonlyMap<string, Contract>,
+    vtxos: readonly { script: string }[],
+): { scripts: Set<string>; cache: ContractTapscriptCache; failures: Map<string, string> } {
+    const scripts = new Set<string>();
+    const cache: ContractTapscriptCache = new Map();
+    const failures = new Map<string, string>();
+    for (const script of new Set(vtxos.map((vtxo) => vtxo.script))) {
+        const contract = scriptToContract.get(script);
+        if (!contract) continue; // not ours; dropped by the caller's filter
+        try {
+            cache.set(script, deriveContractTapscripts(contract));
+            scripts.add(script);
+        } catch (err) {
+            failures.set(
+                script,
+                `'${contract.type}' at ${script}: ${err instanceof Error ? err.message : String(err)}`,
             );
         }
     }
-    return annotatable;
+    return { scripts, cache, failures };
 }
 
 /**
@@ -299,7 +318,25 @@ export interface IContractManager extends Disposable {
      * in wallet/handler code, and keeps the wallet from silently stamping the
      * default tapscript onto a non-default vtxo.
      */
-    annotateVtxos(vtxos: VirtualCoin[]): Promise<NormalizedExtendedVirtualCoin[]>;
+    annotateVtxos(
+        vtxos: VirtualCoin[],
+        tapscripts?: ContractTapscriptCache,
+    ): Promise<NormalizedExtendedVirtualCoin[]>;
+
+    /**
+     * Throw unless every one of `vtxos` still has an annotatable contract.
+     *
+     * Spending does not re-derive tapscripts — it uses the ones stored on the
+     * coin — so a contract that stopped being annotatable (handler no longer
+     * registered, or params its handler now rejects) still builds and submits a
+     * transaction fine, and only fails afterwards, in the bookkeeping that
+     * re-annotates the inputs. Calling this before submitting turns that into a
+     * refusal to spend, naming the contract, rather than a broadcast whose local
+     * state could not be recorded.
+     */
+    assertAnnotatable(
+        vtxos: readonly { txid: string; vout: number; script: string }[],
+    ): Promise<void>;
 
     /**
      * Update mutable contract fields.
@@ -641,8 +678,39 @@ export class ContractManager implements IContractManager {
     }
 
     private markSyncOnline(): void {
-        this.syncDegradedReason = undefined;
         this.lastSyncedAt = Date.now();
+        // An unannotatable contract outlives an otherwise-successful sync: the
+        // operator is reachable and every other contract is current, but this
+        // wallet still cannot read that one, and its VTXOs stopped being
+        // refreshed. Reporting it here is what keeps the skip from being
+        // silent — `getSyncState()` is the channel apps already watch.
+        this.syncDegradedReason = this.annotationDegradedReason();
+    }
+
+    /** Contracts a sync could not annotate, as `script → reason`. */
+    private annotationFailures = new Map<string, string>();
+
+    private annotationDegradedReason(): string | undefined {
+        if (this.annotationFailures.size === 0) return undefined;
+        return `cannot annotate ${this.annotationFailures.size} contract(s), their vtxos are not being synced — ${[...this.annotationFailures.values()].join("; ")}`;
+    }
+
+    /**
+     * Fold one batch's verdict in: what it annotated clears, what it could not
+     * sets. Merged rather than replaced because a batch can cover a subset of
+     * the wallet's contracts (a single-contract fetch, the pending-only
+     * reconcile), and those must not erase what a wider sync found. A row
+     * repaired by an upgrade clears itself on the next batch that includes it.
+     */
+    private recordAnnotationFailures(
+        annotated: ReadonlySet<string>,
+        failures: ReadonlyMap<string, string>,
+    ): void {
+        for (const script of annotated) this.annotationFailures.delete(script);
+        for (const [script, reason] of failures) {
+            this.annotationFailures.set(script, reason);
+            console.warn(`[contracts] cannot annotate contract ${reason}; skipping its vtxos`);
+        }
     }
 
     private markSyncDegraded(err: unknown): void {
@@ -1361,7 +1429,10 @@ export class ContractManager implements IContractManager {
         }));
     }
 
-    async annotateVtxos(vtxos: VirtualCoin[]): Promise<NormalizedExtendedVirtualCoin[]> {
+    async annotateVtxos(
+        vtxos: VirtualCoin[],
+        tapscripts?: ContractTapscriptCache,
+    ): Promise<NormalizedExtendedVirtualCoin[]> {
         if (vtxos.length === 0) return [];
 
         const scripts = Array.from(new Set(vtxos.map((v) => v.script)));
@@ -1378,11 +1449,43 @@ export class ContractManager implements IContractManager {
         // identical for every VTXO locked to the same contract. Memoize it per
         // contract to avoid rebuilding the taproot tree once per VTXO — the
         // dominant cost when annotating long spent/swept histories (see #521).
-        const tapscriptCache: ContractTapscriptCache = new Map();
+        // A caller that already built these (the sync, deciding what it could
+        // annotate at all) passes its cache so nothing is built twice.
+        const tapscriptCache: ContractTapscriptCache = tapscripts ?? new Map();
         // `vtxos` is caller-supplied, so normalize before annotating: the annotated coins flow on
         // into forfeit construction and repository writes.
         return vtxos.map((vtxo) =>
             extendVirtualCoinForContract(normalizeVtxo(vtxo), byScript, tapscriptCache),
+        );
+    }
+
+    /** @inheritdoc */
+    async assertAnnotatable(
+        vtxos: readonly { txid: string; vout: number; script: string }[],
+    ): Promise<void> {
+        if (vtxos.length === 0) return;
+        const contracts = await this.config.contractRepository.getContracts({
+            script: Array.from(new Set(vtxos.map((vtxo) => vtxo.script))),
+        });
+        const { scripts, failures } = annotatableIn(
+            new Map(contracts.map((contract) => [contract.script, contract])),
+            vtxos,
+        );
+        // A script with no contract row at all fails the same way, and with the
+        // same consequence, so it belongs in the same refusal.
+        const orphans = vtxos.filter(
+            (vtxo) => !scripts.has(vtxo.script) && !failures.has(vtxo.script),
+        );
+        for (const vtxo of orphans) {
+            failures.set(vtxo.script, `no contract registered for ${vtxo.script}`);
+        }
+        if (failures.size === 0) return;
+        const outpoints = vtxos
+            .filter((vtxo) => failures.has(vtxo.script))
+            .map((vtxo) => `${vtxo.txid}:${vtxo.vout}`);
+        throw new UnannotatableInputError(
+            `refusing to spend ${outpoints.length} vtxo(s) whose contract cannot be annotated ` +
+                `(${outpoints.join(", ")}): ${[...failures.values()].join("; ")}`,
         );
     }
 
@@ -1779,9 +1882,10 @@ export class ContractManager implements IContractManager {
 
         // Share the annotation path with external callers so the two entry
         // points can't drift.
-        const annotatable = annotatableScripts(scriptToContract);
+        const { scripts: annotatable, cache, failures } = annotatableIn(scriptToContract, vtxos);
+        this.recordAnnotationFailures(annotatable, failures);
         const owned = vtxos.filter((v) => annotatable.has(v.script));
-        const annotated = await this.annotateVtxos(owned);
+        const annotated = await this.annotateVtxos(owned, cache);
 
         const byContract = new Map<string, ExtendedContractVtxo[]>();
         // Resolved here rather than re-found in `contracts` below, so a
@@ -1923,9 +2027,10 @@ export class ContractManager implements IContractManager {
         // populated by the indexer, then share the annotation path with
         // external callers via annotateVtxos so the two entry points can't
         // drift.
-        const annotatable = annotatableScripts(scriptToContract);
+        const { scripts: annotatable, cache, failures } = annotatableIn(scriptToContract, vtxos);
+        this.recordAnnotationFailures(annotatable, failures);
         const owned = vtxos.filter((v) => annotatable.has(v.script));
-        const annotated = await this.annotateVtxos(owned);
+        const annotated = await this.annotateVtxos(owned, cache);
         for (const vtxo of annotated) {
             result.get(vtxo.script)!.push({
                 ...vtxo,

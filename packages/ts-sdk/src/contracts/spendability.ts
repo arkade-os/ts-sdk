@@ -73,3 +73,17 @@ export function logExcludedVtxos(
         }
     }
 }
+
+/**
+ * Thrown when a spend names VTXOs whose contract can no longer be annotated —
+ * its handler is not registered here, its handler rejects the stored params, or
+ * it has no contract row at all.
+ *
+ * Raised before submission on purpose. Spending reads the tapscripts stored on
+ * each coin rather than re-deriving them, so such a spend would otherwise build
+ * and broadcast normally and only fail in the bookkeeping afterwards, leaving
+ * the transaction on the network and the local state behind it.
+ */
+export class UnannotatableInputError extends Error {
+    readonly name = "UnannotatableInputError";
+}

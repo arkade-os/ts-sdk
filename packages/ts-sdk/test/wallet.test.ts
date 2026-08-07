@@ -1856,6 +1856,9 @@ describe("Wallet._settleImpl", () => {
                 message: { type: "delete", expire_at: 0 },
             }),
             logUngatedInputs: vi.fn().mockResolvedValue(undefined),
+            getContractManager: vi.fn().mockResolvedValue({
+                assertAnnotatable: vi.fn().mockResolvedValue(undefined),
+            }),
             safeRegisterIntent,
             createBatchHandler,
             updateDbAfterSettle,
@@ -1928,6 +1931,9 @@ describe("Wallet._settleImpl", () => {
                 message: { type: "delete", expire_at: 0 },
             }),
             logUngatedInputs: vi.fn().mockResolvedValue(undefined),
+            getContractManager: vi.fn().mockResolvedValue({
+                assertAnnotatable: vi.fn().mockResolvedValue(undefined),
+            }),
             safeRegisterIntent: vi.fn(async () => {
                 callOrder.push("safeRegisterIntent");
                 throw registerError;
@@ -1984,6 +1990,9 @@ describe("Wallet._settleImpl", () => {
                 message: { type: "delete", expire_at: 0 },
             }),
             logUngatedInputs: vi.fn().mockResolvedValue(undefined),
+            getContractManager: vi.fn().mockResolvedValue({
+                assertAnnotatable: vi.fn().mockResolvedValue(undefined),
+            }),
             safeRegisterIntent: vi.fn().mockResolvedValue("intent-id"),
             createBatchHandler: vi.fn().mockReturnValue({} as Batch.Handler),
             updateDbAfterSettle: vi.fn().mockRejectedValue(new Error("db write failed")),

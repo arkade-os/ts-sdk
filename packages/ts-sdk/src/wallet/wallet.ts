@@ -3693,6 +3693,17 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // the hook's terminal repo write failed, which repo state can't tell us.
         let committedTxid: string | undefined;
 
+        // Last check before anything leaves the wallet, for the same reason as
+        // in `buildAndSubmitOffchainTx`: `updateDbAfterSettle` re-annotates
+        // these inputs, and by then the batch has already finalized. Placed
+        // after the cheap local validation above — an unspendable recipient or
+        // a bad arknote should still report itself first — and before the
+        // intent. Arknotes and boarding inputs carry no vtxo script, so they
+        // are not the ones this can speak about.
+        await (
+            await this.getContractManager()
+        ).assertAnnotatable(params.inputs.filter(isVirtualCoin));
+
         // Optimistically hide these inputs from concurrent getVtxos() callers
         // while the settlement is in flight. Set before safeRegisterIntent so
         // there's no window between intent registration and coin-visibility.
@@ -5334,6 +5345,10 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         serverUnrollScript: CSVMultisigTapscript.Type = this.serverUnrollScript,
     ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
         void this.logUngatedInputs("buildAndSubmitOffchainTx", inputs);
+        // Before anything is signed or submitted: the tx would build fine from
+        // the tapscripts stored on each coin, and only `updateDbAfterOffchainTx`
+        // would fail — after the broadcast. @see IContractManager.assertAnnotatable
+        await (await this.getContractManager()).assertAnnotatable(inputs);
         const offchainTx = buildOffchainTx(
             inputs.map((input) => {
                 return {

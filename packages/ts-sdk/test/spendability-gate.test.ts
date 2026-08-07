@@ -7,6 +7,7 @@ import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
     isContractGenericallySpendable,
+    UnannotatableInputError,
     ProviderUnavailableError,
     ReadonlyWallet,
     VHTLCContractHandler,
@@ -382,6 +383,11 @@ describe("gated reads stay ungated (D1b/D1d)", () => {
                 message: { type: "delete", expire_at: 0 },
             }),
             logUngatedInputs: vi.fn().mockResolvedValue(undefined),
+            // Gated, but still annotatable — the pre-submission check must let
+            // the deliberate recovery spend through.
+            getContractManager: vi.fn().mockResolvedValue({
+                assertAnnotatable: vi.fn().mockResolvedValue(undefined),
+            }),
             safeRegisterIntent: vi.fn().mockRejectedValue(new Error("stop-after-selection")),
             persistIntentSnapshot: vi.fn(),
         };
@@ -506,5 +512,70 @@ describe("logUngatedInputs", () => {
             wallet.logUngatedInputs("buildAndSubmitOffchainTx", [vtxo(defaultScript, 10_000)]),
         );
         expect(lines).toEqual([]);
+    });
+});
+
+describe("a contract whose handler rejects its stored params", () => {
+    // The upgrade shape: `arkade` params written before `program` became
+    // required. The handler is registered and `createScript` throws.
+    const BROKEN_SCRIPT = "51200000000000000000000000000000000000000000000000000000000000000005";
+
+    const withBrokenContract = async () => {
+        const seeded = await seededWallet({
+            indexerProvider: onlineIndexer([vtxo(BROKEN_SCRIPT, 10_000)]),
+        });
+        await seeded.contractRepository.saveContract(contract(BROKEN_SCRIPT, "arkade"));
+        return seeded;
+    };
+
+    it("does not fail the reads of every other contract", async () => {
+        const { wallet, defaultScript } = await withBrokenContract();
+
+        await expect(wallet.getBalance()).resolves.toMatchObject({ available: 50_000 });
+        expect(scriptsOf(await wallet.getSpendableVtxos())).toEqual(
+            [defaultScript, MARKED_SCRIPT].sort(),
+        );
+    });
+
+    it("reports itself through the sync state instead of going quiet", async () => {
+        const { wallet } = await withBrokenContract();
+        await wallet.getBalance();
+
+        const state = wallet.getContractSyncState();
+        expect(state.mode).toBe("degraded");
+        expect(state.mode === "degraded" && state.reason).toContain(BROKEN_SCRIPT);
+        expect(state.mode === "degraded" && state.reason).toContain("not being synced");
+    });
+
+    it("refuses the spend before it is submitted, naming the contract", async () => {
+        const { wallet } = await withBrokenContract();
+        const manager = await wallet.getContractManager();
+
+        // Stored coins keep working tapscripts, so the spend would otherwise
+        // build and broadcast and only fail in the bookkeeping afterwards.
+        await expect(
+            manager.assertAnnotatable([{ txid: "ff".repeat(32), vout: 0, script: BROKEN_SCRIPT }]),
+        ).rejects.toThrow(UnannotatableInputError);
+        await expect(
+            manager.assertAnnotatable([{ txid: "ff".repeat(32), vout: 0, script: BROKEN_SCRIPT }]),
+        ).rejects.toThrow(/missing 'program'/);
+    });
+
+    it("lets a spendable contract through", async () => {
+        const { wallet, defaultScript } = await withBrokenContract();
+        const manager = await wallet.getContractManager();
+        await expect(
+            manager.assertAnnotatable([{ txid: "aa".repeat(32), vout: 0, script: defaultScript }]),
+        ).resolves.toBeUndefined();
+    });
+
+    it("refuses a vtxo with no contract row at all, for the same reason", async () => {
+        const { wallet } = await withBrokenContract();
+        const manager = await wallet.getContractManager();
+        await expect(
+            manager.assertAnnotatable([
+                { txid: "ab".repeat(32), vout: 0, script: "5120" + "cd".repeat(32) },
+            ]),
+        ).rejects.toThrow(/no contract registered/);
     });
 });

@@ -1272,6 +1272,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 return syncState;
             },
 
+            /**
+             * The worker owns the spend paths this guards, so it runs the check
+             * on its own manager before submitting. Proxying it would only add a
+             * round-trip whose answer the worker already has.
+             */
+            async assertAnnotatable(): Promise<void> {},
+
             async annotateVtxos(vtxos: VirtualCoin[]): Promise<NormalizedExtendedVirtualCoin[]> {
                 if (vtxos.length === 0) return [];
                 const message: RequestAnnotateVtxos = {

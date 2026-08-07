@@ -19,6 +19,7 @@ export {
     gateExclusion,
     outpointExclusion,
     logExcludedVtxos,
+    UnannotatableInputError,
 } from "./spendability";
 export type { ExcludableVtxo, VtxoExclusion } from "./spendability";
 
