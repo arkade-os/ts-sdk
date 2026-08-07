@@ -42,12 +42,16 @@ const PACKAGES = [
         order: 3,
         dependsOnSdk: true,
         bumpFlag: "--swap-bump",
+        // TEMP: not ready for release yet. Excluded from every release path (direct,
+        // "all", and as an SDK dependent) until this is removed. Remove to re-enable.
+        excludedFromRelease: true,
     },
 ];
 
 const PACKAGE_BY_KEY = Object.fromEntries(PACKAGES.map((p) => [p.key, p]));
-const ALL_KEYS = PACKAGES.map((p) => p.key);
-const DEPENDENT_PACKAGES = PACKAGES.filter((p) => p.dependsOnSdk);
+const ACTIVE_PACKAGES = PACKAGES.filter((p) => !p.excludedFromRelease);
+const ALL_KEYS = ACTIVE_PACKAGES.map((p) => p.key);
+const DEPENDENT_PACKAGES = ACTIVE_PACKAGES.filter((p) => p.dependsOnSdk);
 const PACKAGE_BY_BUMP_FLAG = Object.fromEntries(
     DEPENDENT_PACKAGES.map((p) => [p.bumpFlag, p.key]),
 );
@@ -307,6 +311,10 @@ function parseArgs(argv) {
 
 function validateTarget(target) {
     if (!VALID_TARGETS.has(target)) {
+        const excluded = PACKAGES.find((p) => p.key === target && p.excludedFromRelease);
+        if (excluded) {
+            die(`${excluded.name} is excluded from the release cycle until further notice.`);
+        }
         die(`Invalid target: ${target}. Use ${[...ALL_KEYS, "all"].join(", ")}.`);
     }
 }
