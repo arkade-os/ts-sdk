@@ -140,9 +140,64 @@ describe("maker-side swap loop (regtest)", () => {
         expect(() => decodeOffer(hex.decode(restoredOfferHex))).not.toThrow();
     }, 120_000);
 
+    // The Phase 2 merge gate: everything below runs through the real
+    // createOffer -> register -> ContractManager path above, never a hand-built
+    // contract row, because a hand-marked fixture cannot catch a writer that
+    // omits or misspells the marker.
+    it("escrows the deposit: owned and watched, but not generically spendable", async () => {
+        const script = hex.encode(offer.swapPkScript);
+        const manager = await wallet.getContractManager();
+        const [row] = await manager.getContracts({ script });
+
+        expect(row).toBeDefined();
+        expect(row?.type).toBe("arkade");
+        expect(row?.metadata?.genericallySpendable).toBe(false);
+
+        // the funding tx also pays the maker's own change, so match the
+        // covenant script too — by txid alone this picks up the change output,
+        // which is ordinary wallet money and rightly stays spendable
+        const isDeposit = (v: { txid: string; script: string }) =>
+            v.txid === fundingTxid && v.script === script;
+        // the raw read keeps it — this is the maker's money, and filtering it
+        // here would make it unrecoverable and erase it from history
+        await waitFor(async () => (await wallet.getVtxos()).some(isDeposit));
+        // ...while the spendable read, the one every coin selection goes
+        // through, does not
+        expect((await wallet.getSpendableVtxos()).some(isDeposit)).toBe(false);
+
+        const balance = await wallet.getBalance();
+        expect(balance.settled + balance.preconfirmed).toBeGreaterThanOrEqual(DEPOSIT_SATS);
+        expect(balance.available).toBeLessThanOrEqual(FAUCET_SATS - DEPOSIT_SATS);
+    }, 120_000);
+
+    it("refuses to fund an unrelated payment out of the escrowed deposit", async () => {
+        // the §3 hazard as a behaviour test: without the marker, coin selection
+        // picks the offer deposit like any other UTXO, the server co-signs the
+        // covenant's untimelocked cancel leaf, and the offer silently ceases to
+        // exist. This send only succeeds if that happens.
+        // an amount the wallet can only reach by dipping into the deposit:
+        // under the totals (which count it, per D1c) but above what is left
+        // once it is excluded
+        const balance = await wallet.getBalance();
+        const needsTheDeposit =
+            balance.settled + balance.preconfirmed - Math.floor(DEPOSIT_SATS / 2);
+
+        await expect(
+            wallet.send({ address: await wallet.getAddress(), amount: needsTheDeposit }),
+        ).rejects.toThrow();
+
+        // and the deposit is still there to be cancelled below
+        const { vtxos } = await indexer.getVtxos({ scripts: [hex.encode(offer.swapPkScript)] });
+        expect(vtxos.find((v) => v.txid === fundingTxid)?.virtualStatus.state).not.toBe("spent");
+    }, 120_000);
+
     it("cancels the deposit cooperatively and restores it as cancelled", async () => {
         // cancel from the chain-recovered bytes, not the createOffer result:
-        // this is the restored-wallet path, plus the swapAddress pin
+        // this is the restored-wallet path, plus the swapAddress pin.
+        // It doubles as the escape-hatch assertion: cancel names its input
+        // outpoint, so the escrow marker must not close the one spend route the
+        // maker actually owns. A future tightening that gates explicit inputs
+        // would strand every offer deposit, and would fail here.
         const cancelTxid = await cancelOffer(
             wallet,
             ARK_URL,
