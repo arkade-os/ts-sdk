@@ -77,6 +77,17 @@ const xOnly = (key: Uint8Array, label: string): Uint8Array => {
     return key.slice(1);
 };
 
+/** Decode a solver-supplied hex field, turning a malformed value (odd length,
+ * non-hex chars) into a solver-blaming diagnostic instead of a bare
+ * `@scure/base` internal error. */
+const solverHex = (value: string, field: string): Uint8Array => {
+    try {
+        return hex.decode(value);
+    } catch {
+        throw new Error(`solver sent malformed hex for ${field}`);
+    }
+};
+
 // ── Pairs ────────────────────────────────────────────────────────────────────
 
 /** Legs are `<corridor>:<asset>`; a pair is directional, `from->to`. Arkade
@@ -496,9 +507,12 @@ export const unilateralClaimDelay = (serverExitDelaySeconds: number): number => 
             `server exit delay must be at least ${SEQUENCE_GRANULARITY_SECONDS}s of seconds, got ${serverExitDelaySeconds}`,
         );
     }
-    if (serverExitDelaySeconds > 0xffff * SEQUENCE_GRANULARITY_SECONDS) {
+    // two granularity steps below BIP68's ceiling, not at it: the refund tiers
+    // add one and two steps on top of this value, and every tier must encode
+    if (serverExitDelaySeconds > (0xffff - 2) * SEQUENCE_GRANULARITY_SECONDS) {
         throw new Error(
-            `server exit delay ${serverExitDelaySeconds}s exceeds what BIP68 can encode`,
+            `server exit delay ${serverExitDelaySeconds}s exceeds what BIP68 can encode ` +
+                `once the two refund tiers are stacked above it`,
         );
     }
     return (
@@ -675,7 +689,7 @@ export async function requestLightningSend(
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
         emulatorPubkey: xOnly(hex.decode(emulatorInfo.signerPubkey), "emulator signer key"),
         senderPubkey,
-        receiverPkScript: hex.decode(receiverPkScriptHex),
+        receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
         refundPkScript: ArkAddress.decode(refundAddress).pkScript,
     });
     const address = script
@@ -844,7 +858,7 @@ export function deriveOnchainSend(input: {
         claimDelay: input.claimDelay,
         emulatorPubkey: input.emulatorPubkey,
         senderPubkey: input.senderPubkey,
-        receiverPkScript: hex.decode(receiverPkScriptHex),
+        receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
         refundPkScript: ArkAddress.decode(input.refundAddress).pkScript,
     });
     const address = script.address(input.hrp, input.serverPubkey).encode();

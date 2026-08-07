@@ -1,7 +1,10 @@
 /**
  * The L1 side of the onchain corridor. The golden test pins the taproot HTLC
  * byte-for-byte — like the program-artifact goldens, any drift here changes
- * addresses on BOTH sides of a swap. The builder tests verify real BIP-341
+ * addresses on BOTH sides of a swap and needs coordinated trader/solver
+ * deployment (see "Breaking changes" in the README; a mismatch refuses quotes
+ * at the compare-only address check, it does not lose funds).
+ * The builder tests verify real BIP-341
  * script-path spends end to end: recomputed sighash, valid schnorr signature,
  * preimage recoverable from the witness.
  */
