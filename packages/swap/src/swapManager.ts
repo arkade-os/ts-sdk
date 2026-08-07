@@ -15,14 +15,22 @@
  * persist through an injected `saveSwap`, expose events plus a promise-based
  * escape hatch. Three things are different, each for a reason:
  *
- * - **No WebSocket.** `RfqTransport` already abstracts "how do I get status":
- *   `httpTransport` polls, `relayTransport` round-trips over a socket it owns.
- *   There is no unsolicited push to hook into even if this manager wanted one
- *   — `relayTransport`'s message handler correlates strictly by `rfq_id`
- *   against its `pending` map and drops any frame with no pending entry. So
- *   this manager calls `transport.status()` on an interval and lets the
- *   transport be whatever the caller configured. There is nothing to
- *   reconnect, hence no connection events and no reconnect backoff.
+ * - **The solver is never asked.** This manager holds no `RfqTransport` at
+ *   all: every fact it acts on is read from chain. What became of the
+ *   Arkade lockup comes from {@link readLockupFate}, and the L1 half from
+ *   {@link classifyOnchainHtlc}. That is strictly better than polling
+ *   `status()` on two counts. It removes a liveness dependency — a solver that
+ *   stops answering must not be able to degrade the trader's view of its own
+ *   swap, and the deadlines that matter here are consensus timelocks the
+ *   solver's uptime has no bearing on. And it removes a trust inversion: the
+ *   solver's `settled`/`refunded` is self-reported, while the chain fact
+ *   underneath it cannot be forged. The lockup's claim leaf can only be spent
+ *   by revealing `P`, so a spend witness that HASHES to the quote's
+ *   `payment_hash` is proof of settlement, and every other spend is a refund
+ *   the trader's own address or own signature is on. `refund.ts` already made
+ *   half of this argument — see `RFQ_RESOLVED_STATES`, which lets "the
+ *   on-chain VTXO lookup be the authority on whether anything is actually
+ *   there"; this finishes the thought for the outcome as well as the balance.
  *
  * - **The onchain corridor's claim is on a consensus deadline, not on the
  *   solver's word.** See {@link nextOnchainAction}: a naive "poll status,
@@ -39,10 +47,11 @@
  *   on top would only fight the first.
  *
  * **The manager owns WHEN, the caller owns HOW.** It holds the observation
- * seams (`RfqTransport`, and `ChainSource` for L1) and reads them itself,
- * because it cannot decide correctly without them; the actions that move money
- * are {@link RfqSwapManagerCallbacks}, so no key material ever reaches this
- * class — the same split `onchainHtlc.ts` makes with its `sign` callback.
+ * seams (a {@link LockupSpendIndexer} for the Arkade side, and `ChainSource`
+ * for L1) and reads them itself, because it cannot decide correctly without
+ * them; the actions that move money are {@link RfqSwapManagerCallbacks}, so no
+ * key material ever reaches this class — the same split `onchainHtlc.ts` makes
+ * with its `sign` callback.
  */
 import {
     ONCHAIN_CLAIM_MARGIN_SECONDS,
@@ -52,8 +61,12 @@ import {
     type OnchainHtlc,
     type OnchainHtlcPhase,
 } from "./onchainHtlc";
-import { REFUND_MTP_LAG_SECONDS, RFQ_RESOLVED_STATES } from "./refund";
-import type { RfqStatus, RfqTransport } from "./rfq";
+import {
+    REFUND_MTP_LAG_SECONDS,
+    readLockupFate,
+    type LockupFate,
+    type LockupSpendIndexer,
+} from "./refund";
 
 // ── Records ──────────────────────────────────────────────────────────────────
 
@@ -70,7 +83,8 @@ export type RfqSwapState =
     | "claimable"
     /** onchain-send: our L1 claim is broadcast — the trader has the coins. */
     | "claimed"
-    /** Terminal: the solver reported `settled`. */
+    /** Terminal: the lockup was spent by a hash-verified claim — the
+     * counterparty completed its side. Read off chain, never reported. */
     | "settled"
     /** Terminal: the lockup came back, by the solver's hand or the trader's. */
     | "refunded"
@@ -84,17 +98,23 @@ export const isRfqSwapTerminal = (state: RfqSwapState): boolean =>
     (RFQ_SWAP_TERMINAL_STATES as readonly string[]).includes(state);
 
 interface RfqSwapCommon {
-    /** The negotiation id — this record's identity, and what `status()` takes. */
+    /** The negotiation id — this record's identity. */
     rfqId: string;
     state: RfqSwapState;
+    /** The Arkade lockup's scriptPubKey — `swapPkScript` from
+     * `requestLightningSend` / `requestOnchainSend`. This is what the manager
+     * watches to decide the swap: it is the only handle on the covenant whose
+     * spend witness says whether the swap settled or came back. */
+    lockupPkScript: Uint8Array;
+    /** `sha256(P)`, hex — the quote's `payment_hash`. The claim leaf can only
+     * be spent by revealing a value that hashes to this, which is what makes a
+     * settlement provable rather than reported. For an onchain send this is
+     * the SAME hash the L1 `htlc` carries: one `P` unlocks both legs. */
+    paymentHash: string;
     /** `refund_locktime` from the quote, unix seconds. Gates the Arkade refund. */
     refundLocktime: number;
     createdAt: number;
     updatedAt: number;
-    /** The last state the solver reported. Diagnostics only — the manager acts
-     * on `state`, and deliberately does not treat `refused`/`expired`/`stuck`
-     * as an ending (see {@link RFQ_RESOLVED_STATES}). */
-    rfqState?: string;
     /** Set once the trader's own `refundWithoutReceiver` push landed. */
     refundArkTxid?: string;
     /** Why `state` is `failed`. */
@@ -102,7 +122,8 @@ interface RfqSwapCommon {
 }
 
 /** `arkade:BTC->lightning:BTC`. Nothing for the trader to claim: the solver
- * claims the lockup with the preimage it learns by paying the invoice. */
+ * claims the lockup with the preimage it learns by paying the invoice — which
+ * is exactly why that spend's witness is proof the payment landed. */
 export interface LightningSendSwap extends RfqSwapCommon {
     kind: "lightning_send";
 }
@@ -125,11 +146,12 @@ export interface OnchainSendSwap extends RfqSwapCommon {
 /**
  * A monitored swap.
  *
- * This is a live record, not a serialization format: `htlc` holds derived
- * `Uint8Array`s, and {@link RfqSwapManagerCallbacks.saveSwap} is where a
- * caller projects it into whatever it stores. Rebuild it on restart the way it
- * was made — `onchainHtlcScript` over the quote's binding fields — and hand
- * the result to {@link RfqSwapManager.start}.
+ * This is a live record, not a serialization format: `lockupPkScript` and
+ * `htlc` hold derived `Uint8Array`s, and
+ * {@link RfqSwapManagerCallbacks.saveSwap} is where a caller projects it into
+ * whatever it stores. Rebuild it on restart the way it was made —
+ * `lightningSendVtxoScript` / `onchainHtlcScript` over the quote's binding
+ * fields — and hand the result to {@link RfqSwapManager.start}.
  */
 export type RfqSwap = LightningSendSwap | OnchainSendSwap;
 
@@ -254,16 +276,17 @@ export interface RfqSwapManagerConfig {
 }
 
 /** The observation seams. Neither is owned by the manager, and neither holds
- * keys — same philosophy as `onchainHtlc.ts`'s `ChainSource`. */
+ * keys — same philosophy as `onchainHtlc.ts`'s `ChainSource`. There is no
+ * `RfqTransport` here on purpose: nothing this manager decides depends on the
+ * solver answering (see the module doc). */
 export interface RfqSwapManagerDeps {
-    transport: RfqTransport;
+    /** Arkade access. Required: this is how a swap's resolution is determined,
+     * for both legs. */
+    indexer: LockupSpendIndexer;
     /** L1 access. Required to monitor onchain-send swaps; a lightning-only
      * caller can leave it out. */
     chain?: ChainSource;
 }
-
-const isResolved = (state: string): boolean =>
-    (RFQ_RESOLVED_STATES as readonly string[]).includes(state);
 
 /** A listener that throws must not derail the state machine mid-swap. */
 const notify = <T extends (...args: never[]) => void>(
@@ -286,13 +309,13 @@ const notify = <T extends (...args: never[]) => void>(
  *
  * One pass per swap, in this order, every {@link RfqSwapManagerConfig.pollIntervalMs}:
  *
- * 1. **Ask the solver.** `settled` and `refunded` are the only two states that
- *    end a swap — `refused`, `expired` and `stuck` are terminal for the
- *    NEGOTIATION but say nothing about whether the trader's sats are still at
- *    the lockup, and a trader that funded just as the quote expired is exactly
- *    the one who needs the refund most (see {@link RFQ_RESOLVED_STATES}).
- *    A status read that FAILS is not an answer either: the pass carries on to
- *    step 2, whose deadline the solver's uptime has no bearing on.
+ * 1. **Ask the chain what became of the lockup** — {@link readLockupFate}. A
+ *    spend whose witness HASHES to the quote's `payment_hash` ends the swap
+ *    `settled`; a lockup fully spent by anything else ends it `refunded`,
+ *    because every other leaf pays the trader's own committed address or needs
+ *    the trader's own signature. Anything the indexer could not answer is
+ *    `unknown`, which is NOT an answer: the pass carries on to steps 2 and 3,
+ *    whose deadlines an indexer outage has no bearing on.
  * 2. **Drive the L1 half**, onchain-send only — see {@link nextOnchainAction}.
  * 3. **Take the lockup back**, once `refundLocktime` has passed and step 1 has
  *    not ended the swap. This runs for onchain-send too, including after a
@@ -516,21 +539,23 @@ export class RfqSwapManager {
     }
 
     private async runPass(swap: RfqSwap): Promise<void> {
-        // 1. Ask the solver. A failed read is not an answer — carry on.
-        let status: RfqStatus | null = null;
+        // 1. Ask the chain. Only a hash-verified claim is a settlement, and
+        //    only a fully observed spend is a refund; everything else is
+        //    "nothing learned" and must not end the swap.
+        let fate: LockupFate;
         try {
-            status = await this.deps.transport.status(swap.rfqId);
+            fate = await readLockupFate(this.deps.indexer, {
+                swapPkScript: swap.lockupPkScript,
+                paymentHash: swap.paymentHash,
+            });
         } catch {
             // Transient by assumption: nothing is lost by asking again next
             // pass, and both remaining steps are gated on absolute timelocks
-            // that do not care whether the solver's status route is up.
+            // that do not care whether the indexer is up.
+            fate = { fate: "unknown" };
         }
-        if (status && status.state !== swap.rfqState) {
-            swap.rfqState = status.state;
-            this.touch(swap);
-        }
-        if (status && isResolved(status.state)) {
-            this.setState(swap, status.state === "settled" ? "settled" : "refunded");
+        if (fate.fate === "claimed" || fate.fate === "returned") {
+            this.setState(swap, fate.fate === "claimed" ? "settled" : "refunded");
             return;
         }
 
@@ -641,12 +666,17 @@ export class RfqSwapManager {
                 swap.refundArkTxid = pushed.arkTxid;
                 this.touch(swap);
             }
-            // An empty lockup lands here too. Step 1 ends the swap on `settled`
-            // before this gate is ever reached, so a lockup already spent by
-            // the time we look was spent by something that is not a settlement
-            // — the solver's own `nonInteractiveRefund` racing us is the
-            // ordinary cause. Either way there is nothing left to recover and
-            // nothing further to do, which is what `refunded` means here.
+            // An empty lockup lands here too, and this is the ONE place the
+            // manager settles for less than proof. Step 1 already ended the
+            // swap `settled` on a hash-verified claim and `refunded` on a spend
+            // it could fully see, so a lockup that reads empty this far down is
+            // one step 1 came back `unknown` for — the indexer produced no
+            // outputs, or no transaction for the spend. There is nothing left
+            // to recover and no further move available, so the swap ends
+            // `refunded`. A settlement that only becomes observable after this
+            // point will therefore have been recorded as a refund; that is the
+            // cost of ending the wait at all, and it takes an indexer that
+            // cannot answer for the whole span past `refundLocktime`.
             this.setState(swap, "refunded");
             this.emitAction(swap, "refundArkade");
         } catch (error) {
