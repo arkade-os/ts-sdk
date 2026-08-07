@@ -303,7 +303,7 @@ async function registerOfferContract(
     // funded would leave the real deposit unwatched and unmarked, which is the
     // failure this whole registration exists to prevent
     if (hex.encode(contract.pkScript) !== hex.encode(expectedPkScript)) {
-        throw new Error("registered covenant does not match the offer's swapPkScript");
+        throw new Error("derived covenant does not match the offer's swapPkScript");
     }
     await contract.register({
         label: OFFER_CONTRACT_LABEL,
@@ -455,6 +455,9 @@ export async function cancelOffer(
         // instead of a direct indexer query; the indexer above stays as the
         // fallback for offers created before registration existed
         contractManager: await wallet.getContractManager(),
+        // no `network`, unlike registerOfferContract: the row lookup is by
+        // script and the payout script comes from wallet.getAddress(), so the
+        // client's network (which only shapes address derivation) is unused here
     });
 
     // Rebuild the contract with the offer's own keys (not the client's) so the
