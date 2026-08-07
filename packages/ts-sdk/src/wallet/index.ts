@@ -108,6 +108,12 @@ export interface BaseWalletConfig {
     /** Relative timelock applied to unilateral exit paths. */
     exitTimelock?: RelativeTimelock;
     /**
+     * Minimum accepted `BatchStartedEvent.batchExpiry`, as wall-clock seconds.
+     * Defaults per network — see `defaultBatchExpiryPolicy`. Lowering it below
+     * the default relaxes a fund-safety bound; intended for local testing.
+     */
+    minBatchExpirySeconds?: bigint;
+    /**
      * Repository-backed storage configuration overrides.
      * Defaults to IndexedDB if unset.
      */

@@ -527,7 +527,7 @@ describe("Wallet", () => {
                 json: () =>
                     Promise.resolve({
                         ...mockArkInfo,
-                        vtxoTreeExpiry: mockArkInfo.batchExpiry, // Server response uses vtxoTreeExpiry
+                        vtxoTreeExpiry: mockArkInfo.batchExpiry,
                     }),
             });
 
