@@ -21,7 +21,6 @@ import {
     ArkAddress,
     RestArkProvider,
     RestIndexerProvider,
-    RestEmulatorProvider,
     arkade,
     asset,
     getNetwork,
@@ -318,11 +317,11 @@ async function registerOfferContract(
  * you deposit, embedding the returned extension, and the solver does the rest:
  *
  *   // BTC -> asset
- *   const o = await createOffer(wallet, ARK, EMU, { wantAmount: 1000n, wantAsset })
+ *   const o = await createOffer(wallet, ARK, EMULATOR_PUBKEY, { wantAmount: 1000n, wantAsset })
  *   await wallet.send({ address: o.address, amount: 1000, extensions: [o.extension] })
  *
  *   // asset -> BTC (the sats are the VTXO carrier for the asset)
- *   const o = await createOffer(wallet, ARK, EMU, { wantAmount: 1000n, offerAsset })
+ *   const o = await createOffer(wallet, ARK, EMULATOR_PUBKEY, { wantAmount: 1000n, offerAsset })
  *   await wallet.send({ address: o.address, amount: 500,
  *                       assets: [{ assetId, amount: 1000n }],
  *                       extensions: [o.extension] })
@@ -338,7 +337,16 @@ async function registerOfferContract(
 export async function createOffer(
     wallet: IWallet,
     arkServerUrl: string,
-    emulatorUrl: string,
+    /** Covenant co-signer (emulator) x-only key — the SOLVER's deployment,
+     * not the maker's. This library does NOT fetch or verify it: clients
+     * have no network path to the emulator, only the solver and covclaimd
+     * do. The caller must obtain this out-of-band, before calling this
+     * function, from the solver's signed registry/corridor card (its
+     * `emulator_pubkey`, added in arkade-os/solver-registry#18) or an
+     * equivalent source it
+     * independently trusts, and is responsible for having checked it
+     * against that trusted value itself. */
+    emulatorPubkey: Uint8Array,
     params: { wantAmount: bigint; wantAsset?: asset.AssetId; offerAsset?: asset.AssetId },
 ): Promise<{
     /** The encoded offer, hex. **Persist this** — it is the only input
@@ -359,16 +367,18 @@ export async function createOffer(
     if (Boolean(params.wantAsset) === Boolean(params.offerAsset)) {
         throw new Error("set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC)");
     }
-    const [info, emulatorInfo, makerAddress, makerPublicKey] = await Promise.all([
+    const [info, makerAddress, makerPublicKey] = await Promise.all([
         new RestArkProvider(arkServerUrl).getInfo(),
-        new RestEmulatorProvider(emulatorUrl).getInfo(),
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
-    // both keys arrive compressed (33B) today; drop the prefix by length so an
-    // already-x-only key is passed through rather than shortened to 31 bytes
+    // the ark signer key arrives compressed (33B) today; drop the prefix by
+    // length so an already-x-only key is passed through rather than
+    // shortened to 31 bytes — same normalization applied to the
+    // caller-supplied emulator key below, in case its source hands back
+    // either width
     const serverPubKey = xOnly(hex.decode(info.signerPubkey), "ark signer key");
-    const emuKey = xOnly(hex.decode(emulatorInfo.signerPubkey), "emulator signer key");
+    const emuKey = xOnly(emulatorPubkey, "emulator pubkey");
 
     // the script derives from every field but the script itself, so build the
     // binding first and complete the offer with it — an Offer value never
