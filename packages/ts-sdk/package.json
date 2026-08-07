@@ -134,7 +134,7 @@
         "registry": "https://registry.npmjs.org/"
     },
     "engines": {
-        "node": ">=22.12.0 <25"
+        "node": ">=22.12.0 <27"
     },
     "scripts": {
         "build": "tsup",
