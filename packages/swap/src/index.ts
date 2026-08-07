@@ -8,6 +8,7 @@ export {
     OFFER_PACKET_TYPE,
     type Offer,
 } from "./offer";
+export { SWAP_META_PACKET_TYPE, encodeSwapMeta, decodeSwapMeta, type SwapMeta } from "./swapMeta";
 export {
     discoverMarkets,
     findMarket,
