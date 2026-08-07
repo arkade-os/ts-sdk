@@ -171,7 +171,9 @@ export interface RfqStatus {
  * `senderPubkey` is the trader's own key for the VHTLC's sender-side leaves
  * (see {@link lightningSendVtxoScript}) — required, never sent anywhere else,
  * never trusted by the solver as anything but a pubkey to bind into the
- * script. */
+ * script. On the wire it's `client_refund_pubkey` (docs/rfq-protocol.md —
+ * the solver's schema is `.strict()`, so both the wrong name AND the missing
+ * required field would refuse every request). */
 export const lightningSendRequest = (input: {
     rfqId: string;
     invoice: string;
@@ -186,7 +188,7 @@ export const lightningSendRequest = (input: {
     profile: {
         invoice: input.invoice,
         refund_address: input.refundAddress,
-        sender_pubkey: hex.encode(input.senderPubkey),
+        client_refund_pubkey: hex.encode(input.senderPubkey),
     },
 });
 
@@ -730,7 +732,8 @@ const l1NetworkFromArk = (network: string): OnchainNetwork =>
 
 /** The rfq_request for `arkade:BTC->onchain:BTC`. Exact-out means "this much
  * lands in the L1 HTLC". `senderPubkey` is the maker's own key for the
- * VHTLC's sender-side leaves — same role as in {@link lightningSendRequest}. */
+ * VHTLC's sender-side leaves — same role as in {@link lightningSendRequest}.
+ * On the wire it's `client_refund_pubkey`, same as there. */
 export const onchainSendRequest = (input: {
     rfqId: string;
     /** `sha256(P)`, hex — maker-chosen; see {@link paymentHashOf}. */
@@ -753,7 +756,7 @@ export const onchainSendRequest = (input: {
         payment_hash: input.paymentHash,
         payout_pubkey: hex.encode(input.payoutPubkey),
         refund_address: input.refundAddress,
-        sender_pubkey: hex.encode(input.senderPubkey),
+        client_refund_pubkey: hex.encode(input.senderPubkey),
     },
 });
 

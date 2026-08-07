@@ -229,7 +229,7 @@ describe("requests", () => {
             profile: {
                 invoice: "lnbc...",
                 refund_address: "ark1q...",
-                sender_pubkey: hex.encode(key(13)),
+                client_refund_pubkey: hex.encode(key(13)),
             },
         });
     });

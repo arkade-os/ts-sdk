@@ -73,7 +73,7 @@ describe("request builders", () => {
                 payment_hash: PAYMENT_HASH,
                 payout_pubkey: hex.encode(key(5)),
                 refund_address: "ark1q...",
-                sender_pubkey: hex.encode(key(13)),
+                client_refund_pubkey: hex.encode(key(13)),
             },
         });
     });
