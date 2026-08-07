@@ -294,19 +294,19 @@ export class RestArkProvider implements ArkProvider {
     constructor(public serverUrl: string = DEFAULT_ARKADE_SERVER_URL) {}
 
     /**
-     * Last server-info digest seen (from {@link getInfo}). Sent as `X-Digest`
-     * on outgoing requests so arkd can reject a client whose cached info is
-     * stale. Empty until the first {@link getInfo}.
+     * Last server-info digest seen from {@link getInfo}. Sent as `X-Digest`
+     * so arkd can reject stale client configuration.
      */
     private _digest = "";
+    private _hasServerInfo = false;
+    private _suppressNextGetInfoChangeEmit = false;
 
     private _serverInfoListeners = new Set<(info: ArkInfo) => void>();
 
     /**
-     * Subscribe to server-info changes. Fired when a request is rejected with
-     * `DIGEST_MISMATCH` and fresh info is re-fetched, so consumers (the wallet)
-     * can re-derive signer-dependent state mid-session without polling. Returns
-     * an unsubscribe function.
+     * Subscribe to server-info changes. Fired after a stale-info
+     * `DIGEST_MISMATCH` refresh or when {@link getInfo} observes a changed digest.
+     * Returns an unsubscribe function.
      */
     onServerInfoChanged(listener: (info: ArkInfo) => void): () => void {
         this._serverInfoListeners.add(listener);
@@ -394,7 +394,13 @@ export class RestArkProvider implements ArkProvider {
         // NOT silently retry — the in-flight request was built against the old config,
         // so the caller must rebuild and retry it under the refreshed server info.
         this._digest = "";
-        const info = await this.getInfo();
+        this._suppressNextGetInfoChangeEmit = true;
+        let info: ArkInfo;
+        try {
+            info = await this.getInfo();
+        } finally {
+            this._suppressNextGetInfoChangeEmit = false;
+        }
         this.emitServerInfoChanged(info);
         throw new DigestMismatchError(
             "Arkade server reported a configuration digest mismatch; server info was " +
@@ -466,7 +472,20 @@ export class RestArkProvider implements ArkProvider {
             vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
             vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
         };
+        const previousDigest = this._digest;
+        const hadServerInfo = this._hasServerInfo;
         this._digest = info.digest;
+        this._hasServerInfo = true;
+        // A refresh can observe server-info changes before any digest-gated
+        // request fails. `_hasServerInfo` makes an empty previous digest count
+        // as a real value; `DIGEST_MISMATCH` emits separately after its refetch.
+        if (
+            hadServerInfo &&
+            previousDigest !== info.digest &&
+            !this._suppressNextGetInfoChangeEmit
+        ) {
+            this.emitServerInfoChanged(info);
+        }
         return info;
     }
 
