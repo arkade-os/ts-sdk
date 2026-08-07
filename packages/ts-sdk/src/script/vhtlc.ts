@@ -55,39 +55,16 @@ export namespace VHTLC {
     }
 
     /**
-     * Virtual Hash Time Lock Contract (VHTLC) script implementation.
-     *
-     * VHTLC enables atomic swaps and conditional payments in the Arkade protocol.
-     * It provides multiple spending paths:
-     *
-     * - **claim**: Receiver can claim funds by revealing the preimage
-     * - **refund**: Sender and receiver can collaboratively refund
-     * - **refundWithoutReceiver**: Sender can refund after locktime expires
-     * - **unilateralClaim**: Receiver can claim unilaterally after delay
-     * - **unilateralRefund**: Sender and receiver can refund unilaterally after delay
-     * - **unilateralRefundWithoutReceiver**: Sender can refund unilaterally after delay
-     * - **nonInteractiveClaim** (optional): server + emulator can push the
-     *   receiver's claim, pinned to a pre-committed destination
-     * - **nonInteractiveRefund** (optional): server + receiver + emulator
-     *   can push the sender's refund immediately, no timelock, pinned to a
-     *   pre-committed destination — recoverable even if the sender's own key
-     *   is lost
-     *
-     * @example
-     * ```typescript
-     * const vhtlc = new VHTLC.Script({
-     *   sender: alicePubKey,
-     *   receiver: bobPubKey,
-     *   server: serverPubKey,
-     *   preimageHash: hash160(secret),
-     *   refundLocktime: BigInt(chainTip + 10),
-     *   unilateralClaimDelay: { type: 'blocks', value: 100n },
-     *   unilateralRefundDelay: { type: 'blocks', value: 102n },
-     *   unilateralRefundWithoutReceiverDelay: { type: 'blocks', value: 103n }
-     * });
-     * ```
+     * Shared construction and accessors for every VHTLC script version. The
+     * only thing that varies between versions is which preimage-condition
+     * fragment `claim`/`unilateralClaim`/`nonInteractiveClaim` are built
+     * from — everything else (the multisig/timelock leaves, the
+     * non-interactive covenant leaves, the accessor methods) is identical,
+     * so versions are expressed as thin subclasses over one builder rather
+     * than as separate, independently-maintained copies of this class.
      */
-    export class Script extends VtxoScript {
+    abstract class BaseScript extends VtxoScript {
+        readonly options: Options;
         readonly claimScript: string;
         readonly refundScript: string;
         readonly refundWithoutReceiverScript: string;
@@ -99,8 +76,7 @@ export namespace VHTLC {
         readonly nonInteractiveRefundScript?: string;
         readonly nonInteractiveRefundArkadeScript?: Bytes;
 
-        /** Create a VHTLC script from the supplied participant keys, hash, and timelocks. */
-        constructor(readonly options: Options) {
+        protected constructor(options: Options, preimageCondition: (hash: Bytes) => Bytes) {
             validateOptions(options);
 
             const {
@@ -114,7 +90,11 @@ export namespace VHTLC {
                 unilateralRefundWithoutReceiverDelay,
             } = options;
 
-            const conditionScript = preimageConditionScript(preimageHash);
+            // The one leaf-condition fragment `claim`, `unilateralClaim`, and
+            // (when present) `nonInteractiveClaim` all reuse below — computed
+            // once so all three can never drift from one another within the
+            // same script version.
+            const conditionScript = preimageCondition(preimageHash);
 
             const claimScript = ConditionMultisigTapscript.encode({
                 conditionScript,
@@ -195,6 +175,7 @@ export namespace VHTLC {
 
             super(scripts);
 
+            this.options = options;
             this.claimScript = hex.encode(claimScript);
             this.refundScript = hex.encode(refundScript);
             this.refundWithoutReceiverScript = hex.encode(refundWithoutReceiverScript);
@@ -263,6 +244,66 @@ export namespace VHTLC {
                 this.findLeaf(this.nonInteractiveRefundScript),
                 this.nonInteractiveRefundArkadeScript,
             ];
+        }
+    }
+
+    /**
+     * Virtual Hash Time Lock Contract (VHTLC) script implementation.
+     *
+     * VHTLC enables atomic swaps and conditional payments in the Arkade protocol.
+     * It provides multiple spending paths:
+     *
+     * - **claim**: Receiver can claim funds by revealing the preimage
+     * - **refund**: Sender and receiver can collaboratively refund
+     * - **refundWithoutReceiver**: Sender can refund after locktime expires
+     * - **unilateralClaim**: Receiver can claim unilaterally after delay
+     * - **unilateralRefund**: Sender and receiver can refund unilaterally after delay
+     * - **unilateralRefundWithoutReceiver**: Sender can refund unilaterally after delay
+     * - **nonInteractiveClaim** (optional): server + emulator can push the
+     *   receiver's claim, pinned to a pre-committed destination
+     * - **nonInteractiveRefund** (optional): server + receiver + emulator
+     *   can push the sender's refund immediately, no timelock, pinned to a
+     *   pre-committed destination — recoverable even if the sender's own key
+     *   is lost
+     *
+     * See {@link ScriptV2} for the current recommended construction — same
+     * leaf ladder, same options shape, an added length check on the claim
+     * preimage. This class is unchanged and stays available as-is.
+     *
+     * @example
+     * ```typescript
+     * const vhtlc = new VHTLC.Script({
+     *   sender: alicePubKey,
+     *   receiver: bobPubKey,
+     *   server: serverPubKey,
+     *   preimageHash: hash160(secret),
+     *   refundLocktime: BigInt(chainTip + 10),
+     *   unilateralClaimDelay: { type: 'blocks', value: 100n },
+     *   unilateralRefundDelay: { type: 'blocks', value: 102n },
+     *   unilateralRefundWithoutReceiverDelay: { type: 'blocks', value: 103n }
+     * });
+     * ```
+     */
+    export class Script extends BaseScript {
+        constructor(options: Options) {
+            super(options, preimageConditionScript);
+        }
+    }
+
+    /**
+     * Same leaf ladder as {@link Script}, built with {@link
+     * preimageConditionScriptV2} instead of {@link preimageConditionScript}
+     * for every leaf that gates on the preimage (`claim`, `unilateralClaim`,
+     * and, when present, `nonInteractiveClaim`) — see that function's doc
+     * comment for what differs and why. A distinct class rather than a flag
+     * on {@link Script}: the two produce different script bytes (and so
+     * different addresses) for the same participant keys, and keeping them
+     * as separate types makes that a compile-time-visible choice at every
+     * call site instead of a runtime option that's easy to get wrong.
+     */
+    export class ScriptV2 extends BaseScript {
+        constructor(options: Options) {
+            super(options, preimageConditionScriptV2);
         }
     }
 
@@ -361,6 +402,19 @@ export namespace VHTLC {
 
 function preimageConditionScript(preimageHash: Bytes): Bytes {
     return Script.encode(["HASH160", preimageHash, "EQUAL"]);
+}
+
+/**
+ * Same as {@link preimageConditionScript}, plus an explicit length check on
+ * the witness item before it's hashed: `OP_SIZE 32 OP_EQUALVERIFY` ahead of
+ * the `OP_HASH160` check, the same prefix real-world HTLC scripts (e.g.
+ * BOLT3's) carry for the same reason — the claim leaf otherwise accepts any
+ * witness value whose HASH160 matches, regardless of length, and this
+ * contract's preimage is always exactly 32 bytes by construction. Used by
+ * {@link VHTLC.ScriptV2} for every leaf gated on the preimage.
+ */
+function preimageConditionScriptV2(preimageHash: Bytes): Bytes {
+    return Script.encode(["SIZE", 32, "EQUALVERIFY", "HASH160", preimageHash, "EQUAL"]);
 }
 
 /**

@@ -563,12 +563,12 @@ export function lightningSendVtxoScript(params: {
      * covenant key can be derived; the trader does not otherwise use or trust
      * this value. P2TR pkScript, 34 bytes. */
     receiverPkScript: Uint8Array;
-}): InstanceType<typeof VHTLC.Script> {
+}): InstanceType<typeof VHTLC.ScriptV2> {
     const seconds = (value: number): { type: "seconds"; value: bigint } => ({
         type: "seconds",
         value: BigInt(value),
     });
-    return new VHTLC.Script({
+    return new VHTLC.ScriptV2({
         sender: params.senderPubkey,
         receiver: params.solverPubkey,
         server: params.serverPubkey,

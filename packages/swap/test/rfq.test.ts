@@ -87,7 +87,7 @@ describe("lightningSendVtxoScript", () => {
 
     it("is byte-identical to the reference solver's script — golden scriptPubKey", () => {
         expect(hex.encode(script().pkScript)).toBe(
-            "51206c98a83b6d3eb9524b50d67062e391dc84747625c594a87d930e3c2d9e16e01a",
+            "51200370b2a6bf43aad67d7908c402beb7b6f079688a5e1d5380f3ed8ab9031ac982",
         );
     });
 
@@ -95,9 +95,9 @@ describe("lightningSendVtxoScript", () => {
         const compiled = script();
         const hash160 = hex.encode(ripemd160(sha256(PREIMAGE)));
 
-        // claim: preimage + receiver + server
+        // claim: preimage (length-checked) + receiver + server
         expect(compiled.claimScript).toBe(
-            `a914${hash160}876920${hex.encode(key(1))}ad20${hex.encode(key(3))}ac`,
+            `82012088a914${hash160}876920${hex.encode(key(1))}ad20${hex.encode(key(3))}ac`,
         );
         // refund: sender + receiver + server, immediate — no condition, no CSV/CLTV
         expect(compiled.refundScript).toBe(
@@ -110,9 +110,9 @@ describe("lightningSendVtxoScript", () => {
                 `20${hex.encode(SENDER_PUBKEY)}ad20${hex.encode(key(3))}ac`,
             ),
         ).toBe(true);
-        // unilateralClaim: preimage + receiver alone, CSV(4096s)
+        // unilateralClaim: preimage (length-checked) + receiver alone, CSV(4096s)
         expect(compiled.unilateralClaimScript).toBe(
-            `a914${hash160}876903080040b275${"20"}${hex.encode(key(1))}ac`,
+            `82012088a914${hash160}876903080040b275${"20"}${hex.encode(key(1))}ac`,
         );
         // unilateralRefund: sender + receiver, CSV(4608s), no server
         expect(compiled.unilateralRefundScript.includes(hex.encode(key(3)))).toBe(false);
@@ -133,9 +133,11 @@ describe("lightningSendVtxoScript", () => {
                 `20${hex.encode(SENDER_PUBKEY)}ac`,
             ),
         ).toBe(true);
-        // nonInteractiveClaim: preimage + server + covenant-tweaked emulator, pinned to receiverPkScript
+        // nonInteractiveClaim: preimage (length-checked) + server + covenant-tweaked emulator, pinned to receiverPkScript
         expect(compiled.nonInteractiveClaimScript).toBeDefined();
-        expect(compiled.nonInteractiveClaimScript!.startsWith(`a914${hash160}8769`)).toBe(true);
+        expect(compiled.nonInteractiveClaimScript!.startsWith(`82012088a914${hash160}8769`)).toBe(
+            true,
+        );
         expect(compiled.nonInteractiveClaimScript!.includes(hex.encode(key(1)))).toBe(false);
         // nonInteractiveRefund: server + receiver + covenant-tweaked emulator, no
         // timelock, pinned to refundPkScript (the trader's OWN pkScript) — the

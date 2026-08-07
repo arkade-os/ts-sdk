@@ -325,4 +325,103 @@ describe("VHTLC address", () => {
             ).toThrow(/P2TR/);
         });
     });
+
+    describe("ScriptV2", () => {
+        const key = (fill: number): Uint8Array =>
+            schnorr.getPublicKey(new Uint8Array(32).fill(fill));
+        const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
+
+        const baseOptions = () => ({
+            preimageHash: new Uint8Array(20).fill(9),
+            sender: key(1),
+            receiver: key(2),
+            server: key(3),
+            refundLocktime: 1_800_000_000n,
+            unilateralClaimDelay: { type: "seconds" as const, value: 512n },
+            unilateralRefundDelay: { type: "seconds" as const, value: 1024n },
+            unilateralRefundWithoutReceiverDelay: { type: "seconds" as const, value: 1536n },
+        });
+
+        // `OP_SIZE 32 OP_EQUALVERIFY` ahead of `OP_HASH160 <hash20> OP_EQUAL` —
+        // `82` `0120` `88` `a914`, then the hash. The exact prefix every leaf
+        // gated on the preimage must carry in V2 and must NOT carry in V1.
+        const SIZE_CHECK_PREFIX = "82012088a914";
+
+        it("carries the SIZE-32 preimage-length check on claim and unilateralClaim, which V1 does not", () => {
+            const v1 = new VHTLC.Script(baseOptions());
+            const v2 = new VHTLC.ScriptV2(baseOptions());
+
+            expect(v2.claimScript.startsWith(SIZE_CHECK_PREFIX)).toBe(true);
+            expect(v2.unilateralClaimScript.includes(SIZE_CHECK_PREFIX)).toBe(true);
+
+            expect(v1.claimScript.startsWith(SIZE_CHECK_PREFIX)).toBe(false);
+            expect(v1.unilateralClaimScript.includes(SIZE_CHECK_PREFIX)).toBe(false);
+
+            // Confirms the two scripts actually differ (not a no-op change) and
+            // that the derived address differs as a result.
+            expect(v2.claimScript).not.toBe(v1.claimScript);
+            expect(v2.unilateralClaimScript).not.toBe(v1.unilateralClaimScript);
+            expect(hex.encode(v2.pkScript)).not.toBe(hex.encode(v1.pkScript));
+        });
+
+        it("carries the SIZE-32 check on nonInteractiveClaim too — it shares the same preimage condition as claim/unilateralClaim", () => {
+            const receiverPkScript = p2tr(key(4));
+            const emulatorPubkey = key(5);
+            const v1 = new VHTLC.Script({
+                ...baseOptions(),
+                nonInteractiveClaim: { receiverPkScript, emulatorPubkey },
+            });
+            const v2 = new VHTLC.ScriptV2({
+                ...baseOptions(),
+                nonInteractiveClaim: { receiverPkScript, emulatorPubkey },
+            });
+
+            expect(v2.nonInteractiveClaimScript).toBeDefined();
+            expect(v2.nonInteractiveClaimScript!.startsWith(SIZE_CHECK_PREFIX)).toBe(true);
+            expect(v1.nonInteractiveClaimScript!.startsWith(SIZE_CHECK_PREFIX)).toBe(false);
+            expect(v2.nonInteractiveClaimScript).not.toBe(v1.nonInteractiveClaimScript);
+
+            // The covenant tweak itself (the part after the preimage condition
+            // and the server key) is untouched by the version change — only the
+            // preimage condition differs.
+            const v1Tail = v1.nonInteractiveClaimScript!.slice(
+                v1.nonInteractiveClaimScript!.indexOf("6920"),
+            );
+            const v2Tail = v2.nonInteractiveClaimScript!.slice(
+                v2.nonInteractiveClaimScript!.indexOf("6920"),
+            );
+            expect(v2Tail).toBe(v1Tail);
+        });
+
+        it("leaves refund-side leaves — refund, refundWithoutReceiver, unilateralRefund*, nonInteractiveRefund — byte-identical to V1", () => {
+            // None of these gate on the preimage at all, so the version split
+            // must not touch them.
+            const senderPkScript = p2tr(key(6));
+            const emulatorPubkey = key(5);
+            const opts = {
+                ...baseOptions(),
+                nonInteractiveRefund: { senderPkScript, emulatorPubkey },
+            };
+            const v1 = new VHTLC.Script(opts);
+            const v2 = new VHTLC.ScriptV2(opts);
+
+            expect(v2.refundScript).toBe(v1.refundScript);
+            expect(v2.refundWithoutReceiverScript).toBe(v1.refundWithoutReceiverScript);
+            expect(v2.unilateralRefundScript).toBe(v1.unilateralRefundScript);
+            expect(v2.unilateralRefundWithoutReceiverScript).toBe(
+                v1.unilateralRefundWithoutReceiverScript,
+            );
+            expect(v2.nonInteractiveRefundScript).toBe(v1.nonInteractiveRefundScript);
+        });
+
+        it("still rejects a non-P2TR nonInteractiveClaim/nonInteractiveRefund destination, same as V1", () => {
+            expect(
+                () =>
+                    new VHTLC.ScriptV2({
+                        ...baseOptions(),
+                        nonInteractiveClaim: { receiverPkScript: key(4), emulatorPubkey: key(5) },
+                    }),
+            ).toThrow(/P2TR/);
+        });
+    });
 });
