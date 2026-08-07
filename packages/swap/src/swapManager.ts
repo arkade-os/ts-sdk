@@ -440,6 +440,16 @@ export class RfqSwapManager {
     async removeSwap(rfqId: string): Promise<void> {
         this.monitored.delete(rfqId);
         this.finished.delete(rfqId);
+        // Reject the waiters rather than dropping them: nothing will ever
+        // settle this swap once it stops being monitored, so a pending
+        // `waitForSwapCompletion` would hang for the life of the process.
+        // Deliberately NOT the `stop()` behaviour, which leaves waiters
+        // pending because stop/start is a pause — this is a cancellation.
+        const waiting = this.waiters.get(rfqId);
+        if (waiting) {
+            const error = new Error(`swap ${rfqId} was removed from monitoring`);
+            for (const waiter of waiting) waiter.reject(error);
+        }
         this.waiters.delete(rfqId);
         this.dirty.delete(rfqId);
     }
@@ -528,13 +538,30 @@ export class RfqSwapManager {
         try {
             await this.runPass(swap);
         } finally {
-            this.inProgress.delete(swap.rfqId);
-            if (this.dirty.delete(swap.rfqId)) await this.save(swap);
             // Waiters settle AFTER the write, not from `setState`: a caller
             // that awaits completion and then reads its own storage must not
             // find the record still saying `pending`.
-            this.settleWaiters(swap);
-            if (isRfqSwapTerminal(swap.state)) this.finalize(swap);
+            //
+            // And nothing observable happens unless that write SUCCEEDED. A
+            // rejected `saveSwap` used to settle waiters and finalize anyway,
+            // so a caller saw a swap complete that its own storage had never
+            // recorded — and on restart the manager re-drove the stale record,
+            // replaying action callbacks for a swap the caller already treated
+            // as done. Leaving it dirty and monitored makes the next pass
+            // retry the write instead.
+            const persisted = this.dirty.has(swap.rfqId) ? await this.save(swap) : true;
+            if (persisted) {
+                this.dirty.delete(swap.rfqId);
+                this.settleWaiters(swap);
+                if (isRfqSwapTerminal(swap.state)) this.finalize(swap);
+            }
+            // Released LAST, after every await above. Dropped before the
+            // `save` yield, it let a direct `poll()` — the timer path is
+            // serialised by `arm()`, explicit calls are not — clear the
+            // in-progress guard and re-enter `runPass` for this same swap,
+            // firing `claimOnchain`/`refundArkade` a second time before
+            // `finalize` had taken it out of `monitored`.
+            this.inProgress.delete(swap.rfqId);
         }
     }
 
@@ -721,15 +748,21 @@ export class RfqSwapManager {
         notify(this.actionExecutedListeners, (listener) => listener(swap, action));
     }
 
-    private async save(swap: RfqSwap): Promise<void> {
-        if (!this.callbacks) return;
+    /** Whether the record is now persisted — false only when `saveSwap` threw. */
+    private async save(swap: RfqSwap): Promise<boolean> {
+        if (!this.callbacks) return true;
         try {
             await this.callbacks.saveSwap(swap);
+            return true;
         } catch (error) {
             // By the time a record is saved the funding is long broadcast and
             // every deadline that matters is on chain, so a failed write must
-            // not abort the pass that was about to act on it.
+            // not abort the pass that was about to act on it — it is reported
+            // and the pass continues. What it must NOT do is let the failure
+            // pass for success: the caller learns via `onSwapFailed`, and
+            // `pollSwap` keeps the record dirty so the next pass retries.
             this.emitFailed(swap, error);
+            return false;
         }
     }
 

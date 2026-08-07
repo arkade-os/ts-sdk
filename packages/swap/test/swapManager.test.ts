@@ -958,6 +958,71 @@ describe("RfqSwapManager — bookkeeping", () => {
         expect(order).toEqual(["saved:settled", "resolved"]);
     });
 
+    it("does not settle a waiter or finalize when the record failed to persist", async () => {
+        // The failure mirror of the test above. Reporting completion off a
+        // write that threw tells the caller a swap is done that its own
+        // storage never recorded — and on restart the manager re-drives the
+        // stale record and replays action callbacks against it.
+        const s = spies();
+        s.callbacks.saveSwap = async () => {
+            throw new Error("repository unavailable");
+        };
+        const swap = lightningSwap();
+        const m = manager({ indexer: settledIndexer(), now: SAFE_NOW, spies: s });
+        m["monitored"].set(swap.rfqId, swap);
+
+        let settled = false;
+        void m.waitForSwapCompletion(RFQ_ID).then(
+            () => (settled = true),
+            () => (settled = true),
+        );
+        await m.poll();
+        await Promise.resolve();
+
+        expect(settled).toBe(false);
+        // Still monitored and still dirty, so the next pass retries the write
+        // rather than the record being silently lost.
+        expect(await m.hasSwap(RFQ_ID)).toBe(true);
+        expect(m["dirty"].has(RFQ_ID)).toBe(true);
+    });
+
+    it("holds the per-swap lock across the save, so a direct poll cannot re-enter", async () => {
+        // `arm()` serialises the timer path, but an explicit `poll()` — an
+        // app-resume handler, say — is not. Releasing the lock before `save`
+        // yields let a second pass through the in-progress guard and fire the
+        // action callbacks again for the same swap.
+        const s = spies();
+        let releaseSave: (() => void) | undefined;
+        let saveCalls = 0;
+        s.callbacks.saveSwap = async () => {
+            saveCalls += 1;
+            await new Promise<void>((resolve) => {
+                releaseSave = resolve;
+            });
+        };
+        const swap = lightningSwap();
+        const m = manager({ indexer: settledIndexer(), now: SAFE_NOW, spies: s });
+        m["monitored"].set(swap.rfqId, swap);
+
+        const first = m.poll();
+        await vi.waitFor(() => expect(saveCalls).toBe(1));
+        expect(await m.isProcessing(RFQ_ID)).toBe(true);
+        await m.poll(); // re-entry attempt: must be a no-op while the save is in flight
+        expect(saveCalls).toBe(1);
+
+        releaseSave?.();
+        await first;
+    });
+
+    it("rejects pending waiters when a swap is removed, rather than hanging them", async () => {
+        const swap = lightningSwap();
+        const m = manager({ now: SAFE_NOW, spies: spies() });
+        m["monitored"].set(swap.rfqId, swap);
+        const waiting = m.waitForSwapCompletion(RFQ_ID);
+        await m.removeSwap(RFQ_ID);
+        await expect(waiting).rejects.toThrow(/removed from monitoring/);
+    });
+
     it("resolves a refund rather than rejecting it", async () => {
         const s = spies();
         const swap = lightningSwap();
