@@ -311,6 +311,14 @@ import {
     validateBatchRecipients,
     assertFinalCommitmentMatchesValidated,
 } from "./wallet/validation";
+import {
+    assertValidBatchExpiry,
+    defaultBatchExpiryPolicy,
+    resolveBatchExpiryPolicy,
+    DEFAULT_MIN_BATCH_EXPIRY_SECONDS,
+    REGTEST_MIN_BATCH_EXPIRY_SECONDS,
+} from "./wallet/batchExpiry";
+import type { BatchExpiryPolicy } from "./wallet/batchExpiry";
 import { buildForfeitTx } from "./forfeit";
 import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
 import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
@@ -625,6 +633,12 @@ export {
     validateConnectorsTxGraph,
     validateBatchRecipients,
     assertFinalCommitmentMatchesValidated,
+    assertValidBatchExpiry,
+    defaultBatchExpiryPolicy,
+    resolveBatchExpiryPolicy,
+    DEFAULT_MIN_BATCH_EXPIRY_SECONDS,
+    REGTEST_MIN_BATCH_EXPIRY_SECONDS,
+    type BatchExpiryPolicy,
     buildForfeitTx,
     isRecoverable,
     isSpendable,

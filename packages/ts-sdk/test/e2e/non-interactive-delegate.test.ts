@@ -5,8 +5,10 @@ import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { sha256 } from "@scure/btc-signer/utils.js";
 import {
     arkade,
+    assertValidBatchExpiry,
     Batch,
     CSVMultisigTapscript,
+    resolveBatchExpiryPolicy,
     Intent,
     networks,
     PrevArkTxField,
@@ -259,15 +261,20 @@ function buildDelegateHandler(opts: {
             if (!event.intentIdHashes.includes(intentIdHash)) {
                 return { skip: true };
             }
+            const info = await arkProvider.getInfo();
+            const timelock = assertValidBatchExpiry(
+                event.batchExpiry,
+                resolveBatchExpiryPolicy(networks.regtest, {
+                    advertisedVtxoTreeExpiry: info.vtxoTreeExpiry,
+                }),
+            );
+
             await arkProvider.confirmRegistration(opts.intentId);
             batchId = event.id;
 
             const sweepTapscript = CSVMultisigTapscript.encode({
-                timelock: {
-                    value: event.batchExpiry,
-                    type: event.batchExpiry >= 512n ? "seconds" : "blocks",
-                },
-                pubkeys: [hex.decode((await arkProvider.getInfo()).forfeitPubkey).subarray(1)],
+                timelock,
+                pubkeys: [hex.decode(info.forfeitPubkey).subarray(1)],
             }).script;
             sweepTapLeaf = tapLeafHash(sweepTapscript);
 

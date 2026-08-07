@@ -28,6 +28,8 @@ import type {
 
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript } from "../script/tapscript";
+import { assertValidBatchExpiry, resolveBatchExpiryPolicy } from "../wallet/batchExpiry";
+import type { BatchExpiryPolicy } from "../wallet/batchExpiry";
 import { Transaction } from "../utils/transaction";
 import { validateConnectorsTxGraph, validateVtxoTxGraph } from "../tree/validation";
 import {
@@ -84,6 +86,8 @@ export function createArkadeBatchHandler(
      * whatever the server proposes, on both paths.
      */
     recipients?: Recipient[],
+    /** Overrides for the `batchExpiry` bounds; defaults derive from `network`. */
+    batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
 ): Batch.Handler {
     let batchId: string;
     let sweepTapTreeRoot: Uint8Array;
@@ -98,17 +102,25 @@ export function createArkadeBatchHandler(
             const intentIdHashStr = hex.encode(intentIdHash);
 
             if (!event.intentIdHashes.includes(intentIdHashStr)) return { skip: true };
+
+            const info = await arkProvider.getInfo();
+            // Bound the expiry before confirming, so a rejected round is never
+            // confirmed to the operator.
+            const timelock = assertValidBatchExpiry(
+                event.batchExpiry,
+                resolveBatchExpiryPolicy(network, {
+                    advertisedVtxoTreeExpiry: info.vtxoTreeExpiry,
+                    ...batchExpiryPolicy,
+                }),
+            );
+
             await arkProvider.confirmRegistration(intentId);
 
             batchId = event.id;
 
             const sweepTapscript = CSVMultisigTapscript.encode({
-                timelock: {
-                    value: event.batchExpiry,
-                    // BIP-65: values >= 512 are interpreted as seconds, below as blocks
-                    type: event.batchExpiry >= 512n ? "seconds" : "blocks",
-                },
-                pubkeys: [hex.decode((await arkProvider.getInfo()).forfeitPubkey).subarray(1)],
+                timelock,
+                pubkeys: [hex.decode(info.forfeitPubkey).subarray(1)],
             }).script;
 
             sweepTapTreeRoot = tapLeafHash(sweepTapscript);

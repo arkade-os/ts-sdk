@@ -89,6 +89,26 @@ describe("serializeArkInfoSnapshot / hydrateArkInfo", () => {
         expect(hydrated.scheduledSession).toBeUndefined();
         expect(hydrated).toEqual({ ...info, serviceStatus: {} });
     });
+
+    it("round-trips vtxoTreeExpiry when advertised", () => {
+        const info = makeArkInfo({ vtxoTreeExpiry: 604_672n });
+        const snapshot = serializeArkInfoSnapshot(info, 1);
+        expect(snapshot.arkInfo.vtxoTreeExpiry).toBe("604672");
+        expect(hydrateArkInfo(snapshot).vtxoTreeExpiry).toBe(604_672n);
+    });
+
+    it("keeps vtxoTreeExpiry undefined when not advertised — never 0n", () => {
+        const snapshot = serializeArkInfoSnapshot(makeArkInfo(), 1);
+        expect(snapshot.arkInfo.vtxoTreeExpiry).toBeUndefined();
+        expect(hydrateArkInfo(snapshot).vtxoTreeExpiry).toBeUndefined();
+    });
+
+    it("accepts a v1 snapshot written before vtxoTreeExpiry existed", () => {
+        const raw = JSON.parse(JSON.stringify(serializeArkInfoSnapshot(makeArkInfo(), 1)));
+        delete raw.arkInfo.vtxoTreeExpiry;
+        expect(() => parseStoredArkInfoSnapshot(raw)).not.toThrow();
+        expect(hydrateArkInfo(parseStoredArkInfoSnapshot(raw)).vtxoTreeExpiry).toBeUndefined();
+    });
 });
 
 describe("parseStoredArkInfoSnapshot", () => {

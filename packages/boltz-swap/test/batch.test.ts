@@ -16,6 +16,7 @@ import {
     SingleKey,
     Transaction,
     networks,
+    ServerResponseMismatchError,
     validateVtxoTxGraph,
     type ArkProvider,
     type ArkTxInput,
@@ -239,5 +240,16 @@ describe("createVHTLCBatchHandler recipient validation", () => {
             ),
         ).rejects.toThrow(/offchain send output not found/);
         expect(arkProvider.submitTreeNonces).not.toHaveBeenCalled();
+    });
+});
+
+describe("createVHTLCBatchHandler batch expiry", () => {
+    it("rejects an out-of-policy expiry without confirming registration", async () => {
+        const { handler, arkProvider } = await makeHandler();
+
+        await expect(
+            handler.onBatchStarted({ ...batchStarted, batchExpiry: 1n } as BatchStartedEvent),
+        ).rejects.toThrow(ServerResponseMismatchError);
+        expect(arkProvider.confirmRegistration).not.toHaveBeenCalled();
     });
 });

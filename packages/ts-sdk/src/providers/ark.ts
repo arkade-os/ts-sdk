@@ -177,6 +177,12 @@ export interface ArkInfo {
     signerPubkey: string;
     unilateralExitDelay: bigint;
     /**
+     * Sweep delay the operator advertises for the shared batch output.
+     * `undefined` when not advertised — never coerce to `0n`, which would
+     * satisfy any floor comparison.
+     */
+    vtxoTreeExpiry?: bigint;
+    /**
      * Maximum boarding input amount.
      *
      * @remarks
@@ -452,6 +458,8 @@ export class RestArkProvider implements ArkProvider {
             sessionDuration: BigInt(fromServer.sessionDuration ?? 0),
             signerPubkey: fromServer.signerPubkey ?? "",
             unilateralExitDelay: BigInt(fromServer.unilateralExitDelay ?? 0),
+            vtxoTreeExpiry:
+                fromServer.vtxoTreeExpiry != null ? BigInt(fromServer.vtxoTreeExpiry) : undefined,
             utxoMaxAmount: BigInt(fromServer.utxoMaxAmount ?? -1),
             utxoMinAmount: BigInt(fromServer.utxoMinAmount ?? 0),
             version: fromServer.version ?? "",

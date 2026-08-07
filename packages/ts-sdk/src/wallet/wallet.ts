@@ -72,6 +72,8 @@ import { createAssetPacket, selectCoinsWithAsset, selectedCoinsToAssetInputs } f
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { signerSetFromInfo, toXOnlySignerHex } from "./signerRotation";
+import { assertValidBatchExpiry, resolveBatchExpiryPolicy } from "./batchExpiry";
+import type { BatchExpiryPolicy } from "./batchExpiry";
 import {
     assertCheckpointsMatchInputs,
     buildOffchainTx,
@@ -2786,6 +2788,8 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         receiveRotator?: WalletReceiveRotator,
         descriptorProvider?: DescriptorProvider,
         lookAheadWindow?: number,
+        /** Overrides for the `batchExpiry` bounds; defaults derive from `network`. */
+        protected readonly batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
     ) {
         super(
             identity,
@@ -3016,6 +3020,13 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             boot?.rotator,
             boot?.provider,
             config.lookAheadWindow,
+            // Pinned at setup rather than refetched per round.
+            {
+                advertisedVtxoTreeExpiry: setup.info.vtxoTreeExpiry,
+                ...(config.minBatchExpirySeconds !== undefined
+                    ? { minSeconds: config.minBatchExpirySeconds }
+                    : {}),
+            },
         );
         wallet._serverInfoSource = setup.serverInfoSource;
         // The response cleared construction validation — network/signer in
@@ -3863,28 +3874,28 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                 const intentIdHash = sha256(utf8IntentId);
                 const intentIdHashStr = hex.encode(intentIdHash);
 
-                let skip = true;
-
                 // check if our intent ID hash matches any in the event
-                for (const idHash of event.intentIdHashes) {
-                    if (idHash === intentIdHashStr) {
-                        if (!this.arkProvider) {
-                            throw new Error("Arkade provider not configured");
-                        }
-                        await this.arkProvider.confirmRegistration(intentId);
-                        skip = false;
-                    }
-                }
+                const skip = !event.intentIdHashes.includes(intentIdHashStr);
 
                 if (skip) {
                     return { skip };
                 }
 
+                if (!this.arkProvider) {
+                    throw new Error("Arkade provider not configured");
+                }
+
+                // Bound the expiry before confirming, so a rejected round is
+                // never confirmed to the operator.
+                const timelock = assertValidBatchExpiry(
+                    event.batchExpiry,
+                    resolveBatchExpiryPolicy(this.network, this.batchExpiryPolicy),
+                );
+
+                await this.arkProvider.confirmRegistration(intentId);
+
                 const sweepTapscript = CSVMultisigTapscript.encode({
-                    timelock: {
-                        value: event.batchExpiry,
-                        type: event.batchExpiry >= 512n ? "seconds" : "blocks",
-                    },
+                    timelock,
                     pubkeys: [this.forfeitPubkey],
                 }).script;
 
