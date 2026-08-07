@@ -360,7 +360,15 @@ export class EsploraProvider implements OnchainProvider {
         // spec — electrs happens to serve it as an alias for `/blocks`, but a
         // strict backend like mempool returns an empty array, which surfaced here
         // as "No chain tip found". `/blocks` works across every Esplora backend.
-        const tipBlocks = await baseFetch(`${this.baseUrl}/blocks`);
+        let tipBlocks = await baseFetch(`${this.baseUrl}/blocks`);
+        if (tipBlocks.status === 404) {
+            // Instances backed only by the mempool backend (no electrs REST
+            // passthrough) — e.g. the default mutinynet deployment at
+            // mempool.mutinynet.arkade.sh — don't serve `/blocks` at all. They
+            // expose the same newest-first array at `/v1/blocks`, which
+            // mempool.space serves too.
+            tipBlocks = await baseFetch(`${this.baseUrl}/v1/blocks`);
+        }
         if (!tipBlocks.ok) {
             throw new Error(`Failed to get chain tip: ${tipBlocks.statusText}`);
         }
