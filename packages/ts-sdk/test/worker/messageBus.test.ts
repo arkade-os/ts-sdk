@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { InMemoryWalletRepository, InMemoryContractRepository } from "../../src";
+import {
+    InMemoryWalletRepository,
+    InMemoryContractRepository,
+    InMemoryIntentRepository,
+    Wallet,
+    type IntentRepository,
+} from "../../src";
 import {
     MessageBus,
     MessageHandler,
@@ -1173,5 +1179,39 @@ describe("MessageBus init serialization (Iteration 1)", () => {
         expect(new MessageBusNotInitializedError().message.includes(MESSAGE_BUS_INITIALIZING)).toBe(
             false,
         );
+    });
+});
+
+describe("MessageBus default buildServices", () => {
+    const config = {
+        wallet: { privateKey: "15".repeat(32) },
+        arkServer: { url: "https://ark.example.test" },
+    } as never;
+
+    const buildServices = async (intentRepository?: IntentRepository) => {
+        const bus = new MessageBus(
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            { messageHandlers: [], ...(intentRepository ? { intentRepository } : {}) },
+        );
+        const create = vi
+            .spyOn(Wallet, "create")
+            .mockResolvedValue({ dispose: vi.fn() } as unknown as Wallet);
+        await (bus as any).buildServices(config);
+        const storage = create.mock.calls[0][0].storage;
+        create.mockRestore();
+        return storage;
+    };
+
+    it("hands the configured intentRepository to the worker's wallet", async () => {
+        // Without this the worker builds an intent-repo-less wallet: no
+        // persisted intents, no reconciliation on restart, and intent-locked
+        // VTXOs counted as available — silently unlike a main-thread wallet.
+        const intentRepository = new InMemoryIntentRepository();
+        expect(await buildServices(intentRepository)).toMatchObject({ intentRepository });
+    });
+
+    it("leaves it unset when none is configured", async () => {
+        expect(await buildServices()).not.toHaveProperty("intentRepository");
     });
 });

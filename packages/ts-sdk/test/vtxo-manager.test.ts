@@ -52,6 +52,7 @@ const createMockWallet = (
 
     return {
         getVtxos: vi.fn().mockResolvedValue(vtxos),
+        getSpendableVtxos: vi.fn().mockResolvedValue(vtxos),
         getAddress: vi.fn().mockResolvedValue(arkAddress),
         getDelegateManager: vi.fn().mockResolvedValue(options.delegateManager),
         getContractManager: vi.fn().mockResolvedValue(contractManager),
@@ -1714,6 +1715,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
 
         return {
             getVtxos: vi.fn().mockResolvedValue([]),
+            getSpendableVtxos: vi.fn().mockResolvedValue([]),
             getAddress: vi
                 .fn()
                 .mockResolvedValue(
@@ -1897,6 +1899,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             // A minimal IWallet that lacks boardingTapscript/onchainProvider/network
             const minimalWallet = {
                 getVtxos: vi.fn().mockResolvedValue([]),
+                getSpendableVtxos: vi.fn().mockResolvedValue([]),
                 getAddress: vi
                     .fn()
                     .mockResolvedValue(
@@ -1945,6 +1948,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
 
             return {
                 getVtxos: vi.fn().mockResolvedValue([]),
+                getSpendableVtxos: vi.fn().mockResolvedValue([]),
                 getAddress: vi
                     .fn()
                     .mockResolvedValue(
@@ -2260,6 +2264,7 @@ describe("VtxoManager - Periodic settle cooldown", () => {
         };
         return {
             getVtxos: vi.fn().mockResolvedValue([]),
+            getSpendableVtxos: vi.fn().mockResolvedValue([]),
             getAddress: vi
                 .fn()
                 .mockResolvedValue(
@@ -2542,6 +2547,7 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
         };
         return {
             getVtxos: vi.fn().mockResolvedValue(vtxos),
+            getSpendableVtxos: vi.fn().mockResolvedValue(vtxos),
             getAddress: vi
                 .fn()
                 .mockResolvedValue(
@@ -2968,6 +2974,7 @@ describe("VtxoManager - Cross-instance poll guard", () => {
         };
         return {
             getVtxos: vi.fn().mockResolvedValue([]),
+            getSpendableVtxos: vi.fn().mockResolvedValue([]),
             getAddress: vi
                 .fn()
                 .mockResolvedValue(
@@ -3106,6 +3113,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
         return {
             wallet: {
                 getVtxos: vi.fn().mockResolvedValue(vtxos),
+                getSpendableVtxos: vi.fn().mockResolvedValue(vtxos),
                 getAddress: vi
                     .fn()
                     .mockResolvedValue(

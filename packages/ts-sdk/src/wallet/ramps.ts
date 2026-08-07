@@ -194,7 +194,7 @@ export class Ramps {
      * @param eventCallback - Optional callback that receives settlement events
      * @returns The Arkade transaction id created by settlement
      * @throws Error if no virtual outputs remain after fee deduction or the destination address cannot be decoded
-     * @see IWallet.getVtxos
+     * @see IWallet.getSpendableVtxos
      * @see IWallet.settle
      * @example
      * ```typescript
@@ -209,7 +209,7 @@ export class Ramps {
         amount?: bigint,
         eventCallback?: (event: SettlementEvent) => void,
     ): ReturnType<IWallet["settle"]> {
-        const vtxos = await this.wallet.getVtxos({
+        const vtxos = await this.wallet.getSpendableVtxos({
             withRecoverable: true,
             withUnrolled: false,
         });

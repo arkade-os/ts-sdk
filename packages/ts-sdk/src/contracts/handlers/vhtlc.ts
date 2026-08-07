@@ -240,4 +240,12 @@ export const VHTLCContractHandler: ContractHandler<VHTLCContractParams, VHTLC.Sc
 
         return paths;
     },
+
+    /**
+     * Today's behaviour verbatim: a VHTLC row is spendable unconditionally.
+     * Narrowing it to the claim/refund economics (as NArk's
+     * `VHTLCContractTransformer.CanTransform` does) would stop in-flight swaps
+     * from being selected — a real behaviour change, deliberately deferred.
+     */
+    isGenericallySpendable: () => true,
 };

@@ -48,6 +48,7 @@ import {
     RequestGetSpendablePaths,
     RequestGetTransactionHistory,
     RequestGetVtxos,
+    RequestGetSpendableVtxos,
     RequestInitWallet,
     RequestIsContractManagerWatching,
     RequestRefreshVtxos,
@@ -70,6 +71,7 @@ import {
     ResponseGetSpendablePaths,
     ResponseGetTransactionHistory,
     ResponseGetVtxos,
+    ResponseGetSpendableVtxos,
     ResponseIsContractManagerWatching,
     ResponseReloadWallet,
     ResponseSendBitcoin,
@@ -185,6 +187,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
 
     // Medium reads — may involve indexer queries
     GET_VTXOS: 20_000,
+    GET_SPENDABLE_VTXOS: 20_000,
     GET_BOARDING_UTXOS: 20_000,
     GET_TRANSACTION_HISTORY: 20_000,
     GET_CONTRACTS: 20_000,
@@ -245,6 +248,7 @@ const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "GET_EXPIRED_BOARDING_UTXOS",
     "GET_DEPRECATED_SIGNER_STATUS",
     "GET_VTXOS",
+    "GET_SPENDABLE_VTXOS",
     "GET_CONTRACTS",
     "GET_CONTRACTS_WITH_VTXOS",
     "ANNOTATE_VTXOS",
@@ -1111,6 +1115,33 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
+     * The gate has to run *inside* the worker (no plugin object or contract row
+     * metadata exists on this side), so this is its own message rather than a
+     * post-filter over `GET_VTXOS`.
+     *
+     * A worker predating this message answers "Unknown message" and the call
+     * throws. That is deliberate: service workers activate asynchronously, so
+     * new page code runs against a stale worker for a window on every deploy,
+     * and falling back to `GET_VTXOS` there would silently spend ungated coins.
+     * Fail closed — loud and recoverable — rather than make the gate advisory.
+     */
+    async getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
+        const message: RequestGetSpendableVtxos = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_SPENDABLE_VTXOS",
+            payload: { filter },
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetSpendableVtxos).payload.vtxos.map(normalizeVtxo);
+        } catch (error) {
+            throw new Error(`Failed to get spendable vtxos: ${error}`);
+        }
+    }
+
+    /**
      * Trigger a wallet reload inside the service worker.
      *
      * @returns `true` when the wallet was reloaded
@@ -1240,6 +1271,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 // worker manager between online and degraded.
                 return syncState;
             },
+
+            /**
+             * The worker owns the spend paths this guards, so it runs the check
+             * on its own manager before submitting. Proxying it would only add a
+             * round-trip whose answer the worker already has.
+             */
+            async assertAnnotatable(): Promise<void> {},
 
             async annotateVtxos(vtxos: VirtualCoin[]): Promise<NormalizedExtendedVirtualCoin[]> {
                 if (vtxos.length === 0) return [];

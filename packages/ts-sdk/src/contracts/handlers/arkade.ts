@@ -199,6 +199,19 @@ export const ArkadeContractHandler: ContractHandler<ArkadeContractParams, Arkade
     },
 
     /**
+     * Opt-in, never opt-out. A program artifact cannot say whether its funds are
+     * escrowed — an escrow's collaborative cancel leaf is indistinguishable from
+     * an ordinary spend — so the answer is read from the row the registering code
+     * wrote. Anything but an explicit `true` (absent, malformed, or a row written
+     * before this gate existed) is not generically spendable: `createContract` is
+     * first-writer-wins, so a fail-open marker would let one unmarked
+     * registration permanently open the gate for every contract sharing the script.
+     */
+    isGenericallySpendable(contract: Contract): boolean {
+        return contract.metadata?.genericallySpendable === true;
+    },
+
+    /**
      * Annotation tapscripts for VTXOs locked to this contract: prefer the
      * collaborative tapscript path (the multisig the Arkade Service co-signs,
      * mirroring `forfeit()` on the built-in script shapes); covenant-only

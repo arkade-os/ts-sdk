@@ -914,6 +914,7 @@ import {
   WalletMessageHandler,
   IndexedDBWalletRepository,
   IndexedDBContractRepository,
+  IndexedDBIntentRepository,
 } from '@arkade-os/sdk'
 
 const walletRepo = new IndexedDBWalletRepository()
@@ -922,6 +923,10 @@ const contractRepo = new IndexedDBContractRepository()
 const bus = new MessageBus(walletRepo, contractRepo, {
   messageHandlers: [new WalletMessageHandler()],
   tickIntervalMs: 10_000, // default 10s
+  // Optional, same opt-in as `storage.intentRepository` on a main-thread
+  // wallet. Omit it and the worker persists no settlement intent, reconciles
+  // none on restart, and counts intent-locked VTXOs as available.
+  intentRepository: new IndexedDBIntentRepository(),
 })
 
 bus.start()
