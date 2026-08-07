@@ -11,7 +11,7 @@
  * leaf needing the counterparty's signature, which this protocol has no way to
  * ask for.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { hex } from "@scure/base";
 
 import {
@@ -26,6 +26,7 @@ import {
 import { contractHandlers } from "../../src/contracts/handlers";
 import { VHTLCContractHandler } from "../../src/contracts/handlers/vhtlc";
 import { VHTLCV2ContractHandler } from "../../src/contracts/handlers/vhtlcV2";
+import { deriveContractTapscripts } from "../../src/wallet/utils";
 import { createMockIndexerProvider, createMockVtxo } from "./helpers";
 
 const SENDER = "0192e796452d6df9697c280542e1560557bcf79a347d925895043136225c7cb4";
@@ -174,6 +175,23 @@ describe("VHTLCV2ContractHandler", () => {
         const v1 = hex.encode(VHTLCContractHandler.createScript(shared).pkScript);
         const v2 = hex.encode(VHTLCV2ContractHandler.createScript(shared).pkScript);
         expect(v2).not.toBe(v1);
+    });
+
+    it("derives annotation tapscripts rather than falling back to a forfeit() it lacks", () => {
+        const params = fullParams();
+        const contract = contractOf(params);
+        const script = VHTLCV2ContractHandler.createScript(params);
+
+        // The pipeline entry point, not just the handler method: this is the
+        // call `annotateVtxos` makes, and the one that used to throw.
+        const derived = deriveContractTapscripts(contract);
+        expect(leafHex({ leaf: derived.intentTapLeafScript })).toBe(
+            script.refundWithoutReceiverScript,
+        );
+        expect(leafHex({ leaf: derived.forfeitTapLeafScript })).toBe(
+            script.refundWithoutReceiverScript,
+        );
+        expect(hex.encode(derived.tapTree)).toBe(hex.encode(script.encode()));
     });
 
     it("is never generically spendable — a live lockup is escrow", () => {
@@ -399,6 +417,50 @@ describe("VHTLCV2ContractHandler", () => {
             });
             expect(contract.script).toBe(script);
             expect(await manager.getContracts({ type: "vhtlc-v2" })).toHaveLength(1);
+            manager.dispose();
+        });
+
+        /**
+         * Registration is worth nothing if the VTXOs are then dropped.
+         *
+         * `deriveContractTapscripts` falls back to `script.forfeit()` for any
+         * handler that is not `TapscriptDeriving`, and no VHTLC script version
+         * has one — so without `deriveTapscripts` this threw, `annotatableIn`
+         * swallowed it into an annotation failure, and the lockup's VTXOs were
+         * filtered out before ever being persisted. The row stayed watched
+         * while its balance was permanently invisible, and the manager reported
+         * `degraded` forever. This is the end-to-end proof they now survive.
+         */
+        it("syncs a registered lockup's vtxos instead of silently dropping them", async () => {
+            const params = fullParams();
+            const script = hex.encode(VHTLCV2ContractHandler.createScript(params).pkScript);
+            const indexer = createMockIndexerProvider();
+            (indexer.getVtxos as ReturnType<typeof vi.fn>).mockResolvedValue({
+                vtxos: [createMockVtxo({ script, value: 5000 })],
+                page: undefined,
+            });
+
+            const manager = await ContractManager.create({
+                indexerProvider: indexer,
+                contractRepository: new InMemoryContractRepository(),
+                walletRepository: new InMemoryWalletRepository(),
+            });
+            await manager.createContract({
+                type: "vhtlc-v2",
+                params,
+                script,
+                address: "ark1lockup",
+            });
+
+            const [entry] = await manager.getContractsWithVtxos({ script });
+            expect(entry.vtxos).toHaveLength(1);
+            expect(entry.vtxos[0].value).toBe(5000);
+            // Annotated with the leaf the sender can actually spend.
+            expect(leafHex({ leaf: entry.vtxos[0].intentTapLeafScript })).toBe(
+                VHTLCV2ContractHandler.createScript(params).refundWithoutReceiverScript,
+            );
+            // And the manager does not consider itself degraded.
+            expect(manager.getSyncState().mode).toBe("online");
             manager.dispose();
         });
 

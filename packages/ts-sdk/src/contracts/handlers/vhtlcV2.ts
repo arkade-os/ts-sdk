@@ -1,7 +1,14 @@
 import { hex } from "@scure/base";
 import { VHTLC } from "../../script/vhtlc";
 import { RelativeTimelock } from "../../script/tapscript";
-import { Contract, ContractHandler, PathContext, PathSelection } from "../types";
+import {
+    Contract,
+    ContractHandler,
+    DerivedContractTapscripts,
+    PathContext,
+    PathSelection,
+    TapscriptDeriving,
+} from "../types";
 import { isCltvSatisfied, isCsvSpendable, resolveRole } from "./helpers";
 import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
 
@@ -113,7 +120,8 @@ function decodeCovenantLeaf<K extends string>(
  * and `test/contracts/vhtlcV2-handler.test.ts` pins the two against each other
  * rung-for-rung across every role and timelock context so they cannot drift.
  */
-export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTLC.ScriptV2> = {
+export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTLC.ScriptV2> &
+    TapscriptDeriving<VHTLC.ScriptV2> = {
     type: "vhtlc-v2",
 
     createScript(params: Record<string, string>): VHTLC.ScriptV2 {
@@ -378,4 +386,43 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
      * refund itself from `findLockupVtxos`' outpoints.
      */
     isGenericallySpendable: () => false,
+
+    /**
+     * The annotation leaf stamped onto every VTXO locked to this contract.
+     *
+     * **Without this the contract is unusable, not merely unoptimized.**
+     * `deriveContractTapscripts` falls back to `script.forfeit()` for any
+     * handler that does not implement {@link TapscriptDeriving}, and no VHTLC
+     * script version has a `forfeit()` — `VtxoScript` does not define one and
+     * `VHTLC.BaseScript` does not add one. The fallback therefore throws
+     * `legacy.forfeit is not a function`, `annotatableIn` catches it, and
+     * `fetchContractVtxosBulk` drops this contract's VTXOs before they are
+     * persisted. The row would exist and be watched while its balance stayed
+     * permanently invisible, and `getSyncState()` would report `degraded`
+     * forever. (The `vhtlc` handler has the same gap; nothing registers V1 rows
+     * through `ContractManager` today, so it has never been hit.)
+     *
+     * `refundWithoutReceiver` is the leaf, for both roles the annotation
+     * serves, because it is the only collaborative path this wallet can
+     * actually satisfy as the sender — the same conclusion `selectPath`
+     * reaches, kept in step with it deliberately. The claim leaves belong to
+     * the receiver and need a preimage the sender does not have; `refund` and
+     * `unilateralRefund` need the counterparty; the covenant leaves are the
+     * emulator's.
+     *
+     * **It carries a CLTV, and callers must respect it.** A settlement built on
+     * this leaf is only valid once `refundLocktime` has matured, so a recovery
+     * round that sweeps this VTXO early is rejected by the server. That is the
+     * same constraint `packages/boltz-swap` encodes as "pre-CLTV recoverable →
+     * skipped"; nothing in this handler can enforce it, because the annotation
+     * is derived per contract and knows no clock.
+     */
+    deriveTapscripts(script: VHTLC.ScriptV2): DerivedContractTapscripts {
+        const leaf = script.refundWithoutReceiver();
+        return {
+            forfeitTapLeafScript: leaf,
+            intentTapLeafScript: leaf,
+            tapTree: script.encode(),
+        };
+    },
 };
