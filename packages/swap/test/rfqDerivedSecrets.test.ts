@@ -74,6 +74,9 @@ const hdWallet = async (): Promise<IWallet> => {
     return {
         identity,
         getAddress: async () => REFUND_ADDRESS,
+        // Both entrypoints register the lockup before returning an address to
+        // fund; what they write is `rfqRegister.test.ts`'s subject.
+        getContractManager: async () => ({ createContract: async () => ({}) }),
         getCurrentSigningDescriptor: () => provider.getCurrentSigningDescriptor(),
         getNextSigningDescriptor: () => provider.getNextSigningDescriptor(),
         getUsedSigningDescriptors: async () => [],
@@ -89,6 +92,9 @@ const staticWallet = (): IWallet =>
             "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
         ),
         getAddress: async () => REFUND_ADDRESS,
+        // Both entrypoints register the lockup before returning an address to
+        // fund; what they write is `rfqRegister.test.ts`'s subject.
+        getContractManager: async () => ({ createContract: async () => ({}) }),
     }) as unknown as IWallet;
 
 /** Quotes back whatever the maker derived, so the flow reaches its gates. */

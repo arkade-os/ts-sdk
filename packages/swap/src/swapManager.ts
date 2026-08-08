@@ -64,12 +64,7 @@
  * failsafe rather than being replaced.
  */
 import { hex } from "@scure/base";
-import {
-    VHTLCV2ContractHandler,
-    type ContractEvent,
-    type IContractManager,
-    type VHTLC,
-} from "@arkade-os/sdk";
+import { type ContractEvent, type IContractManager, type VHTLC } from "@arkade-os/sdk";
 
 import {
     ONCHAIN_CLAIM_MARGIN_SECONDS,
@@ -85,6 +80,7 @@ import {
     type LockupFate,
     type LockupSpendIndexer,
 } from "./refund";
+import { registerLockupContract } from "./lockupContract";
 
 // ── Records ──────────────────────────────────────────────────────────────────
 
@@ -327,12 +323,11 @@ export type SwapContractRegistry = Pick<
     "createContract" | "onContractEvent" | "setContractWatchState"
 >;
 
-/** The contract type a swap lockup registers under. `@arkade-os/sdk`'s handler
- * for `VHTLC.ScriptV2` — the covenant script this corridor builds. */
-export const SWAP_LOCKUP_CONTRACT_TYPE = "vhtlc-v2";
-
-export const SWAP_LOCKUP_CONTRACT_LABEL = "Arkade RFQ swap lockup";
-export const SWAP_LOCKUP_CONTRACT_KIND = "rfq-swap-lockup";
+export {
+    SWAP_LOCKUP_CONTRACT_KIND,
+    SWAP_LOCKUP_CONTRACT_LABEL,
+    SWAP_LOCKUP_CONTRACT_TYPE,
+} from "./lockupContract";
 
 /** The observation seams. None is owned by the manager, and none holds keys —
  * same philosophy as `onchainHtlc.ts`'s `ChainSource`. There is no
@@ -687,6 +682,11 @@ export class RfqSwapManager {
     /**
      * Register this swap's lockup with the wallet's contract manager, once.
      *
+     * The backstop, not the primary site: `requestLightningSend` /
+     * `requestOnchainSend` register before the caller can fund, so this covers
+     * swaps whose records predate that — and costs nothing when it does not,
+     * since `createContract` is first-writer-wins.
+     *
      * Best-effort by design: a failure here is reported and retried on the next
      * pass, and never aborts the pass it is part of. Registration buys latency
      * and puts the lockup in the wallet's contract set; it decides nothing. The
@@ -731,14 +731,7 @@ export class RfqSwapManager {
         }
 
         try {
-            await this.deps.contracts.createContract({
-                type: SWAP_LOCKUP_CONTRACT_TYPE,
-                params: VHTLCV2ContractHandler.serializeParams(lockup.script.options),
-                script,
-                address: lockup.address,
-                label: SWAP_LOCKUP_CONTRACT_LABEL,
-                metadata: { genericallySpendable: false, kind: SWAP_LOCKUP_CONTRACT_KIND },
-            });
+            await registerLockupContract(this.deps.contracts, lockup.script, lockup.address);
             this.registered.set(swap.rfqId, true);
         } catch (error) {
             // Left out of `registered` so the next pass tries again — a
