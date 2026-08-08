@@ -4,6 +4,12 @@ import { hex } from "@scure/base";
 import { Vtxo } from "./indexer";
 import { eventSourceIterator, isEventSourceError } from "./utils";
 import {
+    isEventSourceUnavailableError,
+    resolveEventSource,
+    type EventSourceCapable,
+    type EventSourceFactory,
+} from "./eventSource";
+import {
     ArkErrorName,
     isArkError,
     maybeArkError,
@@ -291,7 +297,15 @@ export interface ArkProvider {
  * ```
  */
 export class RestArkProvider implements ArkProvider {
-    constructor(public serverUrl: string = DEFAULT_ARKADE_SERVER_URL) {}
+    /** Overrides {@link configureEventSource} for this provider's streams. */
+    protected readonly eventSource?: EventSourceFactory;
+
+    constructor(
+        public serverUrl: string = DEFAULT_ARKADE_SERVER_URL,
+        options: EventSourceCapable = {},
+    ) {
+        this.eventSource = options.eventSource;
+    }
 
     /**
      * Last server-info digest seen (from {@link getInfo}). Sent as `X-Digest`
@@ -674,7 +688,9 @@ export class RestArkProvider implements ArkProvider {
 
             try {
                 while (!signal?.aborted) {
-                    const currentIterator = eventSourceIterator(new EventSource(url + queryParams));
+                    const currentIterator = eventSourceIterator(
+                        resolveEventSource(self.eventSource)(url + queryParams),
+                    );
                     iterator = currentIterator;
 
                     try {
@@ -709,6 +725,12 @@ export class RestArkProvider implements ArkProvider {
                         if (isEventSourceError(error)) {
                             throw error;
                         }
+
+                        // A missing EventSource is an environment fact, not a
+                        // stream failure: the caller reports it once (see
+                        // ContractWatcher), where this loop would log it on
+                        // every reconnect attempt.
+                        if (isEventSourceUnavailableError(error)) throw error;
 
                         console.error("Event stream error:", error);
                         throw error;
@@ -749,7 +771,9 @@ export class RestArkProvider implements ArkProvider {
             try {
                 while (!signal?.aborted) {
                     try {
-                        const currentIterator = eventSourceIterator(new EventSource(url));
+                        const currentIterator = eventSourceIterator(
+                            resolveEventSource(self.eventSource)(url),
+                        );
                         iterator = currentIterator;
 
                         for await (const event of currentIterator) {
@@ -783,6 +807,12 @@ export class RestArkProvider implements ArkProvider {
                         if (isEventSourceError(error)) {
                             throw error;
                         }
+
+                        // A missing EventSource is an environment fact, not a
+                        // stream failure: the caller reports it once (see
+                        // ContractWatcher), where this loop would log it on
+                        // every reconnect attempt.
+                        if (isEventSourceUnavailableError(error)) throw error;
 
                         console.error("Transaction stream error:", error);
                         throw error;

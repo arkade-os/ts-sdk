@@ -1146,7 +1146,7 @@ const wallet = await Wallet.create({
 
 ### Using with Node.js
 
-Node.js does not provide a global `EventSource` implementation. The SDK relies on `EventSource` for Server-Sent Events during settlement (onboarding/offboarding) and contract watching. You must polyfill it before using the SDK:
+Node.js does not provide a global `EventSource` implementation (24.x has one behind `--experimental-eventsource`). The SDK relies on `EventSource` for Server-Sent Events during settlement (onboarding/offboarding) and contract watching, so tell it which one to use:
 
 ```bash
 npm install eventsource
@@ -1154,11 +1154,14 @@ npm install eventsource
 
 ```typescript
 import { EventSource } from "eventsource";
-(globalThis as any).EventSource = EventSource;
+import { configureEventSource, Wallet } from "@arkade-os/sdk";
 
-// Use dynamic import so the polyfill is set before the SDK evaluates
-const { Wallet } = await import("@arkade-os/sdk");
+configureEventSource((url) => new EventSource(url) as unknown as globalThis.EventSource);
 ```
+
+Order does not matter: the factory is resolved when a stream opens, not when the SDK is imported, so no dynamic-import dance is needed. A single provider can override it — `new RestIndexerProvider(url, { eventSource })` — for a process that needs different transports per connection.
+
+Assigning `globalThis.EventSource` still works and is still the last resort in the resolution order (per-provider option → `configureEventSource` → global).
 
 If you also need IndexedDB persistence (e.g. for `WalletRepository`), set up the shim before any SDK import:
 
@@ -1173,8 +1176,10 @@ setGlobalVars(null, { checkOrigin: false });
 ```
 
 > **Note:** `eventsource` and `indexeddbshim` are optional peer dependencies.
-> Without the `EventSource` polyfill, settlement operations will fail with
-> `ReferenceError: EventSource is not defined`.
+> With no `EventSource` available, settlement fails with a typed
+> `EventSourceUnavailableError` naming the remedy, and contract watching warns
+> once and falls back to its failsafe polling — it does not retry a missing
+> global, and it does not go quiet either.
 
 See [`examples/node/multiple-wallets.ts`](examples/node/multiple-wallets.ts) for a complete working example.
 
