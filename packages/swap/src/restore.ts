@@ -116,6 +116,15 @@ export type SpendKind = "cancelled" | "fulfilled" | "indeterminate";
  * each input's `tapLeafScript`, so the spend *states* which one it used — this
  * reads an answer rather than inferring one.
  *
+ * **Hand it the transaction that actually spends the deposit outpoint, which is
+ * the checkpoint, not the ark tx.** A spend is two linked transactions: the
+ * checkpoint (`vtxo.spentBy`) takes the deposit outpoint and carries the
+ * covenant leaf, and the ark tx (`vtxo.arkTxId`) spends the checkpoint's output
+ * — carrying the same leaf, but over an outpoint that is not the deposit's. A
+ * caller that offers only the ark tx gets `indeterminate` for every real spend,
+ * which is exactly what the first version of this function did.
+ * {@link classifyDepositSpend} takes both and picks whichever answers.
+ *
  * What it replaces, and why: the previous test asked what the transaction
  * moved. That works only while the deposit is invisible to the wallet. Once the
  * covenant is a registered contract the deposit joins the wallet's own coins,
@@ -158,8 +167,37 @@ export function classifySpend(
             if (leaves.fulfill && spent === hex.encode(leaves.fulfill)) return "fulfilled";
         }
     }
-    // the deposit left the covenant by neither leaf (a batch forfeit, say), or
-    // the spend carries no tapleaf at all
+    // the deposit left the covenant by neither leaf (a batch forfeit, say), the
+    // spend carries no tapleaf, or this is the wrong half of the spend
+    return "indeterminate";
+}
+
+/**
+ * The txids that may hold a deposit's spend, in the order worth trying: the
+ * checkpoint first, since it is the one carrying the deposit outpoint.
+ */
+export const spendTxidsOf = (vtxo: { spentBy?: string; arkTxId?: string }): string[] =>
+    [vtxo.spentBy, vtxo.arkTxId].filter((id): id is string => Boolean(id));
+
+/**
+ * Classify a deposit's spend across both halves of it.
+ *
+ * A caller holds two txids for one spend — `spentBy` (the checkpoint, which
+ * takes the deposit outpoint) and `arkTxId` (the ark tx built on it) — and
+ * cannot tell from the outside which shape a given deployment produced: for a
+ * settlement they may be the same id. Try each and take the first definite
+ * answer, so the classification does not depend on that distinction.
+ */
+export function classifyDepositSpend(
+    offer: Offer,
+    serverPubkey: Uint8Array,
+    spendTxs: Iterable<Transaction>,
+    deposit: { txid: string; vout: number },
+): SpendKind {
+    for (const tx of spendTxs) {
+        const kind = classifySpend(offer, serverPubkey, tx, deposit);
+        if (kind !== "indeterminate") return kind;
+    }
     return "indeterminate";
 }
 
@@ -249,15 +287,15 @@ export async function restoreAssetSwaps(
     }
 
     // every deposit that has been spent, so its spender can be fetched once for
-    // the whole batch rather than per swap
+    // the whole batch rather than per swap. Both halves: the checkpoint carries
+    // the deposit outpoint, the ark tx is what the record and history name
     const spendTxids = new Set<string>();
     for (const { fundingTx, offer } of found) {
         const vtxo = vtxoByScriptAndTxid.get(
             `${hex.encode(offer.swapPkScript)}:${fundingTx.redeemTxid}`,
         );
         if (vtxo?.virtualStatus.state !== "spent") continue;
-        const spentTxid = vtxo.arkTxId || vtxo.spentBy;
-        if (spentTxid) spendTxids.add(spentTxid);
+        for (const txid of spendTxidsOf(vtxo)) spendTxids.add(txid);
     }
     const spendTxByTxid = await fetchParsedTxs(indexer, [...spendTxids]);
 
@@ -302,13 +340,13 @@ export async function restoreAssetSwaps(
         let status: AssetSwapStatus = "pending";
         if (state === "swept") status = "recoverable";
         else if (state === "spent") {
-            const spendTx = spentTxid ? spendTxByTxid.get(spentTxid) : undefined;
-            const kind = spendTx
-                ? classifySpend(offer, serverPubkey, spendTx, {
-                      txid: vtxo.txid,
-                      vout: vtxo.vout,
-                  })
-                : "indeterminate";
+            const spendTxs = spendTxidsOf(vtxo)
+                .map((id) => spendTxByTxid.get(id))
+                .filter((tx): tx is Transaction => tx !== undefined);
+            const kind = classifyDepositSpend(offer, serverPubkey, spendTxs, {
+                txid: vtxo.txid,
+                vout: vtxo.vout,
+            });
             if (kind === "indeterminate") {
                 // the spender is not fetchable yet, or took neither covenant
                 // leaf: retry rather than persist a label that later scans skip

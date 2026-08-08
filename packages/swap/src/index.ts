@@ -34,6 +34,8 @@ export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";
 export {
     restoreAssetSwaps,
     classifySpend,
+    classifyDepositSpend,
+    spendTxidsOf,
     type RestoreIndexer,
     type SpendKind,
     type Tx,

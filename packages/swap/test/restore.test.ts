@@ -3,7 +3,14 @@ import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { asset, Extension, Transaction, UnknownPacket } from "@arkade-os/sdk";
 import { encodeOffer, offerVtxoScript, Offer, OFFER_PACKET_TYPE } from "../src/offer";
-import { classifySpend, restoreAssetSwaps, type RestoreIndexer, type Tx } from "../src/restore";
+import {
+    classifyDepositSpend,
+    classifySpend,
+    restoreAssetSwaps,
+    spendTxidsOf,
+    type RestoreIndexer,
+    type Tx,
+} from "../src/restore";
 
 const ASSET_ID = "f1".repeat(34);
 const OTHER_ASSET_ID = "a2".repeat(34);
@@ -142,6 +149,42 @@ describe("classifySpend", () => {
 
         expect(classifySpend(cancelled, SERVER_KEY, parsed, a)).toBe("cancelled");
         expect(classifySpend(filled, SERVER_KEY, parsed, b)).toBe("fulfilled");
+    });
+
+    it("classifies across both halves of a real spend, where only the checkpoint holds the outpoint", async () => {
+        // the shape regtest produces: `spentBy` is the checkpoint, which takes
+        // the deposit outpoint and carries the covenant leaf, and `arkTxId`
+        // spends the checkpoint's output — same leaf, different outpoint. A
+        // classifier handed only the ark tx answers `indeterminate` for every
+        // real spend, which is precisely the bug the e2e caught.
+        const offer = makeOffer("want-btc", BigInt(21_000));
+        const deposit = { txid: "ab".repeat(32), vout: 0 };
+        const checkpoint = spendPsbt([{ offer, deposit, via: "cancel" }]);
+        // the ark tx spends the checkpoint, not the deposit
+        const arkTx = spendPsbt([
+            { offer, deposit: { txid: checkpoint.txid, vout: 0 }, via: "cancel" },
+        ]);
+        const parse = (psbt: string) => Transaction.fromPSBT(base64.decode(psbt));
+
+        expect(classifySpend(offer, SERVER_KEY, parse(arkTx.psbt), deposit)).toBe("indeterminate");
+        expect(classifyDepositSpend(offer, SERVER_KEY, [parse(arkTx.psbt)], deposit)).toBe(
+            "indeterminate",
+        );
+        // given both, the checkpoint answers
+        expect(
+            classifyDepositSpend(
+                offer,
+                SERVER_KEY,
+                [parse(checkpoint.psbt), parse(arkTx.psbt)],
+                deposit,
+            ),
+        ).toBe("cancelled");
+    });
+
+    it("orders the candidate txids checkpoint-first", () => {
+        expect(spendTxidsOf({ spentBy: "ck", arkTxId: "ark" })).toEqual(["ck", "ark"]);
+        expect(spendTxidsOf({ arkTxId: "ark" })).toEqual(["ark"]);
+        expect(spendTxidsOf({})).toEqual([]);
     });
 
     it("is indeterminate for a wrong server key or a spend by neither leaf", async () => {

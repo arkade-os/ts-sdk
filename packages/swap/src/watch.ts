@@ -39,7 +39,7 @@ import {
 } from "@arkade-os/sdk";
 import { decodeOffer, OFFER_CONTRACT_KIND } from "./offer";
 import type { AssetSwapRepository } from "./repository";
-import { classifySpend, type RestoreIndexer, type SpendKind } from "./restore";
+import { classifyDepositSpend, spendTxidsOf, type RestoreIndexer, type SpendKind } from "./restore";
 import { getAssetSwaps, updateAssetSwap, type AssetSwap, type AssetSwapStatus } from "./store";
 
 /** Statuses a spend cannot move: the swap is already resolved. */
@@ -120,13 +120,17 @@ export async function watchOfferSwaps({
         // the txid it submitted
         if (swap.spentTxid === spentTxid && swap.status === "cancelling") return "cancelled";
         try {
-            const { txs } = await indexer.getVirtualTxs([spentTxid]);
-            if (txs.length === 0) return "indeterminate";
-            const spendTx = Transaction.fromPSBT(base64.decode(txs[0]));
-            return classifySpend(decodeOffer(hex.decode(swap.offerHex)), serverPubkey, spendTx, {
-                txid: vtxo.txid,
-                vout: vtxo.vout,
-            });
+            // both halves of the spend: the checkpoint carries the deposit
+            // outpoint, the ark tx is the id the record and history name
+            const candidates = spendTxidsOf(vtxo);
+            if (candidates.length === 0) return "indeterminate";
+            const { txs } = await indexer.getVirtualTxs(candidates);
+            return classifyDepositSpend(
+                decodeOffer(hex.decode(swap.offerHex)),
+                serverPubkey,
+                txs.map((psbt) => Transaction.fromPSBT(base64.decode(psbt))),
+                { txid: vtxo.txid, vout: vtxo.vout },
+            );
         } catch {
             return "indeterminate" as const;
         }
