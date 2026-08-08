@@ -56,7 +56,6 @@ import {
     ONCHAIN_CLAIM_MARGIN_SECONDS,
     ONCHAIN_ORDER_MARGIN_SECONDS,
     ONCHAIN_SECONDS_PER_BLOCK,
-    newPreimage,
     onchainHtlcScript,
     paymentHashOf,
     type OnchainHtlc,
@@ -68,6 +67,14 @@ export {
     ONCHAIN_CLAIM_MARGIN_SECONDS,
     ONCHAIN_ORDER_MARGIN_SECONDS,
 } from "./onchainHtlc";
+
+import {
+    deriveSwapSecrets,
+    preimageForRfqSecrets,
+    randomSwapSecrets,
+    senderPubkeyForRfqSecrets,
+    type SwapSecrets,
+} from "./secrets";
 
 /** Drop the prefix of a 33-byte compressed key; pass an x-only key through —
  * same rule as offer.ts, kept local so this module stays self-contained. */
@@ -633,14 +640,13 @@ export interface InvoiceFacts {
  * Throws {@link SwapRefusal} (closed reason), {@link AddressMismatch} (never
  * fund), or a gate error with a stable `reason`.
  *
- * Generates a fresh `sender` key per call and returns it as `senderPubkey`/
- * `senderPrivateKey`. THIS FUNCTION DOES NOT PERSIST IT: a caller that
- * discards the return value has traded away every interactive refund path.
- * `nonInteractiveRefund` can still recover the funds without it — but unlike
- * `refundWithoutReceiver`'s old CLTV-gated guarantee, it needs the SOLVER's
- * active cooperation (server + solver + emulator), not just infrastructure
- * uptime. If the solver is also gone or unwilling, losing this key is a
- * total loss, same as it would be without `nonInteractiveRefund` at all.
+ * Allocates a fresh `sender` key per call and returns it as `senderPubkey`
+ * plus `secrets`. On an HD wallet `secrets` holds only a public descriptor and
+ * nothing needs protecting; otherwise it holds the raw key and the caller MUST
+ * persist it, or every interactive refund path is gone. `nonInteractiveRefund`
+ * still recovers the funds without it — but it needs the SOLVER's active
+ * cooperation, not just infrastructure uptime, so losing the key with an
+ * unwilling solver is a total loss.
  */
 export async function requestLightningSend(
     wallet: IWallet,
@@ -670,15 +676,20 @@ export async function requestLightningSend(
     swapPkScript: Uint8Array;
     /** Where a failed swap refunds. */
     refundAddress: string;
-    /** The VHTLC `sender` key — PERSIST BOTH before going offline, or every
-     * interactive refund path (everything except `nonInteractiveRefund`) is
-     * lost. */
+    /** The VHTLC `sender` x-only key, bound into the covenant. Public. */
     senderPubkey: Uint8Array;
-    senderPrivateKey: Uint8Array;
+    /** How the `sender` key is recovered later. Persist it with the record —
+     * on the derivable arm it holds nothing secret. */
+    secrets: SwapSecrets;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
-    const senderPrivateKey = schnorr.utils.randomSecretKey();
-    const senderPubkey = schnorr.getPublicKey(senderPrivateKey);
+    const secrets = (await deriveSwapSecrets(wallet)) ?? randomSwapSecrets();
+    if (!secrets.derivable) {
+        console.warn(
+            "[swap] wallet cannot allocate an HD descriptor: the sender key is random and MUST be persisted before funding",
+        );
+    }
+    const senderPubkey = await senderPubkeyForRfqSecrets(wallet, secrets);
     const [info, refundAddress] = await Promise.all([
         new RestArkProvider(arkServerUrl).getInfo(),
         wallet.getAddress(),
@@ -725,7 +736,7 @@ export async function requestLightningSend(
         swapPkScript: script.pkScript,
         refundAddress,
         senderPubkey,
-        senderPrivateKey,
+        secrets,
     };
 }
 
@@ -905,13 +916,12 @@ export function deriveOnchainSend(input: {
  * quote → derive BOTH contracts locally → verify → gate. Pure of funding —
  * the caller funds `address` with its own wallet before `quote.valid_until`.
  *
- * Three obligations, all LOUD:
- * - **Persist `preimage` (with the record) BEFORE funding.** It is the only
- *   thing that can claim the L1 fill, across restarts included.
- * - **Persist `senderPubkey`/`senderPrivateKey`** — same obligation as {@link
- *   requestLightningSend}: discard it and every interactive refund path is
- *   gone, leaving recovery dependent on the solver's cooperation via
- *   `nonInteractiveRefund` rather than guaranteed outright.
+ * Two obligations, both LOUD:
+ * - **Persist `secrets` (with the record) BEFORE funding.** On an HD wallet it
+ *   is a public descriptor and both the preimage and the `sender` key
+ *   re-derive from the seed; otherwise it carries the raw secrets, and losing
+ *   them forfeits the L1 claim and every interactive refund path — leaving
+ *   recovery dependent on the solver via `nonInteractiveRefund`.
  * - **Stay claim-capable.** Unlike lightning-send the maker cannot go fully
  *   offline: it must claim the L1 HTLC (`awaitOnchainFill` →
  *   `claimOnchainFill`) before `htlc.refundLocktime`. Missing that window
@@ -935,8 +945,6 @@ export async function requestOnchainSend(
 ): Promise<{
     rfqId: string;
     quote: RfqQuote;
-    /** Caller MUST persist this before funding. */
-    preimage: Uint8Array;
     /** The maker's OWN arkade lockup derivation — the only address to fund. */
     address: string;
     fundAmount: number;
@@ -944,16 +952,30 @@ export async function requestOnchainSend(
     refundAddress: string;
     /** The EXPECTED L1 fill, derived locally — watch and claim against this. */
     htlc: OnchainHtlc;
-    /** The VHTLC `sender` key — PERSIST BOTH before funding, same obligation
-     * as `preimage`. */
+    /** The VHTLC `sender` x-only key, bound into the covenant. Public. */
     senderPubkey: Uint8Array;
-    senderPrivateKey: Uint8Array;
+    /** How the preimage and the `sender` key are recovered later. Persist it
+     * with the record BEFORE funding. */
+    secrets: SwapSecrets;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
-    const preimage = params.preimage ?? newPreimage();
+    // A caller-supplied preimage is its own to keep, so it forces the stored
+    // arm even on a wallet that could derive one.
+    const secrets = params.preimage
+        ? {
+              derivable: false as const,
+              senderPrivateKey: schnorr.utils.randomSecretKey(),
+              preimage: params.preimage,
+          }
+        : ((await deriveSwapSecrets(wallet)) ?? randomSwapSecrets({ preimage: true }));
+    if (!secrets.derivable) {
+        console.warn(
+            "[swap] this swap's preimage and sender key are random and MUST be persisted before funding",
+        );
+    }
+    const preimage = await preimageForRfqSecrets(wallet, secrets);
     const paymentHash = paymentHashOf(preimage);
-    const senderPrivateKey = schnorr.utils.randomSecretKey();
-    const senderPubkey = schnorr.getPublicKey(senderPrivateKey);
+    const senderPubkey = await senderPubkeyForRfqSecrets(wallet, secrets);
     const [info, refundAddress] = await Promise.all([
         new RestArkProvider(arkServerUrl).getInfo(),
         wallet.getAddress(),
@@ -996,13 +1018,12 @@ export async function requestOnchainSend(
     return {
         rfqId,
         quote,
-        preimage,
         address: derived.address,
         fundAmount: quote.from_amount,
         swapPkScript: derived.swapPkScript,
         refundAddress,
         htlc: derived.htlc,
         senderPubkey,
-        senderPrivateKey,
+        secrets,
     };
 }

@@ -96,6 +96,23 @@ export {
 } from "./rfq";
 export { sealClaimPacket, type ClaimPacketInput, type SealedClaimPacket } from "./claimPacket";
 export {
+    RFQ_PREIMAGE_TAG,
+    adoptSwapDescriptor,
+    buildPreimageMessage,
+    derivePreimage,
+    deriveSwapSecrets,
+    isDeterministicSigner,
+    preimageForRfqSecrets,
+    randomSwapSecrets,
+    rfqSecretsOfRecord,
+    senderIdentityForRfqSecrets,
+    senderPubkeyForRfqSecrets,
+    type DerivedSwapSecrets,
+    type DeterministicSigner,
+    type StoredSwapSecrets,
+    type SwapSecrets,
+} from "./secrets";
+export {
     LockupNeedsRecoveryError,
     REFUND_MTP_LAG_SECONDS,
     RFQ_RESOLVED_STATES,

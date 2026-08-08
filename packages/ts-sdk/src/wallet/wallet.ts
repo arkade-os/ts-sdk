@@ -2513,6 +2513,36 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     }
 
     /**
+     * @see HDWalletCapable.getNextSigningDescriptor
+     */
+    async getNextSigningDescriptor(): Promise<string | undefined> {
+        const provider = this._descriptorProvider;
+        if (!(provider instanceof HDDescriptorProvider)) return undefined;
+        return provider.getNextSigningDescriptor();
+    }
+
+    /**
+     * @see HDWalletCapable.advanceSigningDescriptorWatermark
+     */
+    async advanceSigningDescriptorWatermark(descriptor: string): Promise<void> {
+        const provider = this._descriptorProvider;
+        if (!(provider instanceof HDDescriptorProvider)) return;
+        if (!provider.isOurs(descriptor)) {
+            throw new Error(`descriptor is not derivable from this wallet: ${descriptor}`);
+        }
+        // Strict on purpose: `signingDescriptorIndex` answers 0 for anything
+        // it cannot parse, and 0 is a legitimate index, so a bare or
+        // malformed descriptor would move the watermark nowhere while
+        // reporting success.
+        const match = descriptor.match(/\/(\d+)\)\s*$/);
+        const index = match ? Number(match[1]) : NaN;
+        if (!Number.isInteger(index) || index < 0) {
+            throw new Error(`descriptor has no trailing child index: ${descriptor}`);
+        }
+        await provider.advanceLastIndexUsed(index);
+    }
+
+    /**
      * @see HDWalletCapable.getUsedSigningDescriptors
      *
      * Union of the watermark band and the descriptors persisted on contracts:
@@ -2520,12 +2550,15 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
      * alone would miss indices allocated for something the wallet never
      * persisted (a swap, an externally issued invoice).
      */
-    async getUsedSigningDescriptors(): Promise<string[]> {
+    async getUsedSigningDescriptors(opts?: { lookAhead?: number }): Promise<string[]> {
         const provider = this._descriptorProvider;
         const descriptors = new Set<string>();
         if (provider instanceof HDDescriptorProvider) {
             const lastIndexUsed = await provider.getLastIndexUsed();
-            for (let i = 0; i <= (lastIndexUsed ?? -1); i++) {
+            const lookAhead = Math.max(0, Math.trunc(opts?.lookAhead ?? 0));
+            // Probing past the watermark must not move it: an index nothing
+            // has claimed yet stays available to the next allocation.
+            for (let i = 0; i <= (lastIndexUsed ?? -1) + lookAhead; i++) {
                 descriptors.add(provider.materializeDescriptorAt(i));
             }
         }

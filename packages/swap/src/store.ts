@@ -48,15 +48,24 @@ export interface AssetSwap {
     status: AssetSwapStatus;
     createdAt: number;
     completedAt?: number;
-    // ── Onchain-corridor fields (absent on offer swaps). Persist the record —
-    // preimage included — BEFORE funding: the preimage is what makes the swap
-    // claimable across restarts, and nothing on chain can recover it until the
-    // counterparty spends. ──
+    // ── Onchain-corridor fields (absent on offer swaps). Persist the record
+    // BEFORE funding: what claims the swap across restarts lives here, and
+    // nothing on chain recovers it until the counterparty spends. ──
     /** RFQ pair string, e.g. `arkade:BTC->onchain:BTC`. */
     pair?: string;
-    /** `sha256(P)`, hex. */
+    /** `sha256(P)`, hex. Public, and how a restore confirms a candidate
+     * derivation is the right one. */
     paymentHash?: string;
-    /** P, hex — cleared once the claim is spent if the caller wishes. */
+    /**
+     * The HD descriptor this swap's secrets derive from. Public — it is what
+     * lets the record carry no secrets at all. Present iff the swap was
+     * created on a wallet that can allocate.
+     */
+    signingDescriptor?: string;
+    /**
+     * P, hex. **Fallback only**, for wallets that cannot derive: an HD swap
+     * carries `signingDescriptor` instead and must not write this.
+     */
     preimageHex?: string;
     /** The L1 HTLC's pkScript, hex — the chain-watch key. */
     htlcPkScriptHex?: string;
