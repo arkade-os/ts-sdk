@@ -75,6 +75,7 @@ import {
     senderPubkeyForRfqSecrets,
     type SwapSecrets,
 } from "./secrets";
+import { registerLockupContract } from "./lockupContract";
 
 /** Drop the prefix of a 33-byte compressed key; pass an x-only key through —
  * same rule as offer.ts, kept local so this module stays self-contained. */
@@ -640,6 +641,13 @@ export interface InvoiceFacts {
  * Throws {@link SwapRefusal} (closed reason), {@link AddressMismatch} (never
  * fund), or a gate error with a stable `reason`.
  *
+ * Broadcasts nothing, but does write locally: the lockup is registered with the
+ * wallet's contract manager before the address is returned, exactly as
+ * `createOffer` registers its covenant — so the lockup is watched from the
+ * moment it lands and out of generic coin selection, and a persistence failure
+ * throws while nothing is funded. `RfqSwapManager` re-registers as a backstop
+ * for older records; a repeat write is a no-op.
+ *
  * Allocates a fresh `sender` key per call and returns it as `senderPubkey`
  * plus `secrets`. On an HD wallet `secrets` holds only a public descriptor and
  * nothing needs protecting; otherwise it holds the raw key and the caller MUST
@@ -727,6 +735,11 @@ export async function requestLightningSend(
         invoiceExpiresAt: params.invoice.expiresAt,
         now: Math.floor(Date.now() / 1000),
     });
+
+    // Last, so a refused quote leaves no row behind, but still before the
+    // caller holds an address to fund: registration throws here, where nothing
+    // is at stake, rather than stranding a funded lockup unwatched.
+    await registerLockupContract(await wallet.getContractManager(), script, address);
 
     return {
         rfqId,
@@ -853,6 +866,9 @@ export function deriveOnchainSend(input: {
 }): {
     address: string;
     swapPkScript: Uint8Array;
+    /** The lockup covenant itself — what the contract row is registered from,
+     * so the row can never key on a script other than the derived one. */
+    script: InstanceType<typeof VHTLC.ScriptV2>;
     htlc: OnchainHtlc;
     refundLocktime: number;
     htlcLocktime: number;
@@ -904,6 +920,7 @@ export function deriveOnchainSend(input: {
     return {
         address,
         swapPkScript: script.pkScript,
+        script,
         htlc,
         refundLocktime,
         htlcLocktime,
@@ -915,6 +932,10 @@ export function deriveOnchainSend(input: {
  * The `arkade:BTC->onchain:BTC` maker flow, mirroring `requestLightningSend`:
  * quote → derive BOTH contracts locally → verify → gate. Pure of funding —
  * the caller funds `address` with its own wallet before `quote.valid_until`.
+ *
+ * Registers the arkade lockup before returning the address, on the same terms
+ * as {@link requestLightningSend}. The L1 HTLC is not a contract row: it lives
+ * on bitcoin, not on Ark, and the wallet's contract manager knows nothing of it.
  *
  * Two obligations, both LOUD:
  * - **Persist `secrets` (with the record) BEFORE funding.** On an HD wallet it
@@ -1014,6 +1035,14 @@ export async function requestOnchainSend(
             direction: "send",
         },
     });
+
+    // Before the caller can fund, and loud on failure — see the same call in
+    // `requestLightningSend`.
+    await registerLockupContract(
+        await wallet.getContractManager(),
+        derived.script,
+        derived.address,
+    );
 
     return {
         rfqId,

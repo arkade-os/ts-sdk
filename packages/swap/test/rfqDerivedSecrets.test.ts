@@ -73,6 +73,9 @@ const hdWallet = async (): Promise<IWallet> => {
     return {
         identity,
         getAddress: async () => REFUND_ADDRESS,
+        // Both entrypoints register the lockup before returning an address to
+        // fund; what they write is `rfqRegister.test.ts`'s subject.
+        getContractManager: async () => ({ createContract: async () => ({}) }),
         getCurrentSigningDescriptor: () => provider.getCurrentSigningDescriptor(),
         getNextSigningDescriptor: () => provider.getNextSigningDescriptor(),
         getUsedSigningDescriptors: async () => [],
