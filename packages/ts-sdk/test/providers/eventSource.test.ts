@@ -26,7 +26,7 @@ const fakeFactory = (): EventSourceFactory & { urls: string[] } => {
             addEventListener: () => {},
             removeEventListener: () => {},
             close: () => {},
-        } as unknown as EventSource;
+        };
     }) as EventSourceFactory & { urls: string[] };
     factory.urls = urls;
     return factory;
@@ -66,11 +66,28 @@ describe("resolveEventSource", () => {
         expect(configured.urls).toEqual(["http://b"]);
     });
 
-    it("falls back to the global, read at call time not import time", () => {
+    it("falls back to the global, read at call time not import time", async () => {
         // The SDK is imported long before a polyfill assigns the global, so a
-        // factory captured at module load would never see one.
-        const source = resolveEventSource();
-        expect(typeof source).toBe("function");
+        // factory captured at module load would never see one. Resolving with
+        // the global gone and then installing a different one — both after this
+        // module was imported — is what tells the two apart.
+        await withoutGlobal(() => {
+            expect(() => resolveEventSource()).toThrow(EventSourceUnavailableError);
+
+            const opened: string[] = [];
+            class LateGlobal {
+                constructor(url: string) {
+                    opened.push(url);
+                }
+                addEventListener() {}
+                removeEventListener() {}
+                close() {}
+            }
+            globalThis.EventSource = LateGlobal as unknown as typeof EventSource;
+
+            resolveEventSource()("http://late");
+            expect(opened).toEqual(["http://late"]);
+        });
     });
 
     it("throws a typed, actionable error when nothing answers", async () => {

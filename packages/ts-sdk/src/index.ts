@@ -270,6 +270,7 @@ export {
     resolveEventSource,
     type EventSourceCapable,
     type EventSourceFactory,
+    type EventSourceLike,
 } from "./providers/eventSource";
 import type {
     ArkadeBatchInput,

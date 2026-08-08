@@ -18,8 +18,23 @@
  * first is not worth reconnecting for and the second is.
  */
 
+/**
+ * The slice of `EventSource` this SDK actually uses.
+ *
+ * Structural rather than the DOM type on purpose: Node's `eventsource` package
+ * and the React Native polyfills are not DOM `EventSource`s, and demanding one
+ * made every consumer launder a perfectly capable object through
+ * `as unknown as EventSource` — a cast that hides real mismatches as readily as
+ * it waves through this one.
+ */
+export interface EventSourceLike {
+    addEventListener(type: "message" | "error", listener: (event: MessageEvent) => void): void;
+    removeEventListener(type: "message" | "error", listener: (event: MessageEvent) => void): void;
+    close(): void;
+}
+
 /** Opens an SSE connection to `url`. `new EventSource(url)`, as a value. */
-export type EventSourceFactory = (url: string) => EventSource;
+export type EventSourceFactory = (url: string) => EventSourceLike;
 
 /** Options shared by every provider that opens an SSE stream. */
 export interface EventSourceCapable {
@@ -76,7 +91,7 @@ let configured: EventSourceFactory | undefined;
  * @example
  * ```typescript
  * import { EventSource } from "eventsource";
- * configureEventSource((url) => new EventSource(url) as unknown as EventSource);
+ * configureEventSource((url) => new EventSource(url));
  * ```
  */
 export function configureEventSource(factory?: EventSourceFactory): void {

@@ -424,11 +424,11 @@ export class ContractWatcher {
                     console.error(e);
                 }
                 this.connectionState = "disconnected";
+                if (this.reportEventSourceUnavailable(e)) return;
                 this.eventCallback?.({
                     type: "connection_reset",
                     timestamp: Date.now(),
                 });
-                if (this.reportEventSourceUnavailable(e)) return;
                 this.scheduleReconnect();
             });
         } catch (error) {
@@ -436,11 +436,11 @@ export class ContractWatcher {
                 console.error("ContractWatcher connection failed:", error);
             }
             this.connectionState = "disconnected";
+            if (this.reportEventSourceUnavailable(error)) return;
             this.eventCallback?.({
                 type: "connection_reset",
                 timestamp: Date.now(),
             });
-            if (this.reportEventSourceUnavailable(error)) return;
             this.scheduleReconnect();
         }
     }
@@ -452,7 +452,9 @@ export class ContractWatcher {
      * Reconnecting is pointless here — a missing global is not a dropped
      * connection, and the default backoff (unlimited attempts, capped at 5s)
      * would otherwise retry it forever, logging each failure and firing a
-     * `connection_reset` every few seconds for the life of the wallet.
+     * `connection_reset` every few seconds for the life of the wallet. Not even
+     * one goes out: subscribers read that event as "the stream dropped, resync
+     * and expect it back", and here it never opened and never will.
      * Failsafe polling keeps running, so the watcher stays correct and merely
      * slower; what it loses is push latency.
      */

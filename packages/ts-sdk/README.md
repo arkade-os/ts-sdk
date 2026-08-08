@@ -1156,7 +1156,7 @@ npm install eventsource
 import { EventSource } from "eventsource";
 import { configureEventSource, Wallet } from "@arkade-os/sdk";
 
-configureEventSource((url) => new EventSource(url) as unknown as globalThis.EventSource);
+configureEventSource((url) => new EventSource(url));
 ```
 
 Order does not matter: the factory is resolved when a stream opens, not when the SDK is imported, so no dynamic-import dance is needed. A single provider can override it — `new RestIndexerProvider(url, { eventSource })` — for a process that needs different transports per connection.

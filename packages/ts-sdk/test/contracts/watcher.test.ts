@@ -445,6 +445,9 @@ describe("ContractWatcher", () => {
                             call[0].includes("contract events are OFF"),
                     ),
                 ).toHaveLength(1);
+                // A reset invites subscribers to resync and wait for the stream
+                // back; there is no stream to come back.
+                expect(events.map((e) => e.type)).not.toContain("connection_reset");
 
                 // ...while the failsafe poll still delivers: a VTXO that lands
                 // after the stream gave up is still reported, just later.
