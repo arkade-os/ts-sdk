@@ -3769,6 +3769,64 @@ describe("VtxoManager - intent fee pricing", () => {
         });
 
         /**
+         * The preview and the sweep are reachable from the same worker call, so a
+         * UI that previews with one and executes with the other must not show two
+         * different numbers. `getRecoverableBalance` prices exactly as
+         * `recoverVtxos` does.
+         */
+        it("previews the recoverable amount net of intent fees", async () => {
+            const fee: IntentFeeConfig = { offchainInput: "amount * 0.01" };
+            const previewWallet = createMockWallet([swept(5000), swept(3000)], ADDRESS, {
+                intentFee: fee,
+            });
+            const sweepWallet = createMockWallet([swept(5000), swept(3000)], ADDRESS, {
+                intentFee: fee,
+            });
+
+            const preview = await new VtxoManager(previewWallet).getRecoverableBalance();
+            await new VtxoManager(sweepWallet).recoverVtxos();
+
+            expect(preview.recoverable).toBe(7920n);
+            expect(preview.recoverable).toBe(settled(sweepWallet).outputs[0].amount);
+        });
+
+        it("leaves the preview gross when the operator charges nothing", async () => {
+            const wallet = createMockWallet([swept(5000), swept(3000)], ADDRESS);
+            const balance = await new VtxoManager(wallet).getRecoverableBalance();
+
+            expect(balance.recoverable).toBe(8000n);
+            expect(balance.vtxoCount).toBe(2);
+        });
+
+        it("omits from the preview a VTXO that cannot pay its own fee", async () => {
+            const wallet = createMockWallet([swept(5000), swept(100)], ADDRESS, {
+                intentFee: { offchainInput: "250.0" },
+            });
+            const balance = await new VtxoManager(wallet).getRecoverableBalance();
+
+            // The 100 costs 250 to move, so recovery drops it and so does this.
+            expect(balance.recoverable).toBe(4750n);
+            expect(balance.vtxoCount).toBe(1);
+        });
+
+        /**
+         * The capping block fires whenever the batch narrows, which fee filtering
+         * can now do on its own. An operator debugging a stuck wallet needs the
+         * cause: a size cap defers the rest to the next cycle, whereas fee
+         * filtering means no later cycle helps by itself.
+         */
+        it("names intent fees, not the size caps, when fees alone empty the batch", async () => {
+            const wallet = createMockWallet([swept(1500), swept(1200)], ADDRESS, {
+                intentFee: { offchainInput: "amount * 1.0" },
+            });
+
+            await expect(new VtxoManager(wallet).recoverVtxos()).rejects.toThrow(
+                "All 2 recoverable VTXOs that can pay their own intent fee total less than " +
+                    "the dust threshold 1000",
+            );
+        });
+
+        /**
          * `getRecoverableWithSubdust` judges subdust inclusion on gross value, so
          * a batch can clear dust gross and land under it once the fees are off.
          * Recovery is an untimelocked all-or-nothing sweep, so this has to be a
