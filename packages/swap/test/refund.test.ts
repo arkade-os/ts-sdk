@@ -14,6 +14,7 @@ import { CSVMultisigTapscript, Transaction } from "@arkade-os/sdk";
 
 import { lightningSendVtxoScript, type RfqStatus, type RfqTransport } from "../src/rfq";
 import {
+    LockupNeedsRecoveryError,
     RFQ_RESOLVED_STATES,
     awaitRfqResolution,
     findLockupVtxos,
@@ -56,8 +57,8 @@ const CHECKPOINT_TAPSCRIPT = hex.encode(
 );
 
 const VTXOS: LockupVtxo[] = [
-    { txid: "11".repeat(32), vout: 0, value: 60_000 },
-    { txid: "22".repeat(32), vout: 1, value: 40_000 },
+    { txid: "11".repeat(32), vout: 0, value: 60_000, recoverable: false },
+    { txid: "22".repeat(32), vout: 1, value: 40_000, recoverable: false },
 ];
 
 /** A scripted arkd: echoes back the checkpoints it was handed (as a real one
@@ -227,6 +228,86 @@ describe("pushRefundWithoutReceiver", () => {
         ).rejects.toThrow(/nothing to refund/);
     });
 
+    describe("swept outputs", () => {
+        /**
+         * A swept output is no longer a live leaf, so no OFFCHAIN spend can
+         * take it back — `canSpendOffchain` and `canRecoverOnchain` are
+         * mutually exclusive in the SDK, and the latter means "must be
+         * recovered into a fresh batch rather than spent offchain". Holding the
+         * sender key does not change that. `packages/boltz-swap` routes exactly
+         * this case through `joinBatch` instead of an offchain tx.
+         */
+        it("refuses rather than submitting a spend the server must reject", async () => {
+            const ark = fakeArk();
+            const swept: LockupVtxo[] = [
+                { txid: "33".repeat(32), vout: 0, value: 5_000, recoverable: true },
+            ];
+            await expect(
+                pushRefundWithoutReceiver(ark, {
+                    script: swapScript(),
+                    senderPrivateKey: SENDER_PRIVATE_KEY,
+                    vtxos: swept,
+                }),
+            ).rejects.toThrow(LockupNeedsRecoveryError);
+            // Nothing was sent: the point is to refuse before the round trip.
+            expect(ark.submitted).toEqual([]);
+        });
+
+        it("names the outpoints that need recovering", async () => {
+            const swept: LockupVtxo[] = [
+                { txid: "33".repeat(32), vout: 2, value: 5_000, recoverable: true },
+            ];
+            const error: unknown = await pushRefundWithoutReceiver(fakeArk(), {
+                script: swapScript(),
+                senderPrivateKey: SENDER_PRIVATE_KEY,
+                vtxos: swept,
+            }).then(
+                () => undefined,
+                (e: unknown) => e,
+            );
+            expect(error).toBeInstanceOf(LockupNeedsRecoveryError);
+            const needsRecovery = error as LockupNeedsRecoveryError;
+            expect(needsRecovery.reason).toBe("needs_recovery");
+            expect(needsRecovery.outpoints).toEqual([`${"33".repeat(32)}:2`]);
+            // The caller needs the CLTV floor as a VALUE: recoverVtxos() sweeps
+            // every recoverable output into one settlement with no CLTV
+            // awareness, so recovering before this can fail the whole batch.
+            // Parsing it back out of the message is not an interface.
+            expect(needsRecovery.recoverableAfter).toBe(swapScript().options.refundLocktime);
+        });
+
+        it("refuses the WHOLE push when one output among live ones is swept", async () => {
+            // Every input lands in one aggregate transaction, so a swept output
+            // would take the live ones down with it. Refusing names the fix;
+            // silently dropping it would report success over money that never
+            // moved.
+            const ark = fakeArk();
+            const mixed: LockupVtxo[] = [
+                { ...VTXOS[0], recoverable: false },
+                { txid: "44".repeat(32), vout: 1, value: 9_000, recoverable: true },
+            ];
+            await expect(
+                pushRefundWithoutReceiver(ark, {
+                    script: swapScript(),
+                    senderPrivateKey: SENDER_PRIVATE_KEY,
+                    vtxos: mixed,
+                }),
+            ).rejects.toThrow(LockupNeedsRecoveryError);
+            expect(ark.submitted).toEqual([]);
+        });
+
+        it("still pushes when every output is live", async () => {
+            const ark = fakeArk();
+            const live: LockupVtxo[] = VTXOS.map((v) => ({ ...v, recoverable: false }));
+            await pushRefundWithoutReceiver(ark, {
+                script: swapScript(),
+                senderPrivateKey: SENDER_PRIVATE_KEY,
+                vtxos: live,
+            });
+            expect(ark.submitted).toHaveLength(1);
+        });
+    });
+
     it("refuses to sign a checkpoint the server substituted", async () => {
         // The substitute is a REAL checkpoint for a different deposit at the
         // same script — so the sender key can sign it perfectly well, and only
@@ -236,7 +317,7 @@ describe("pushRefundWithoutReceiver", () => {
         await pushRefundWithoutReceiver(capture, {
             script: swapScript(),
             senderPrivateKey: SENDER_PRIVATE_KEY,
-            vtxos: [{ txid: "33".repeat(32), vout: 0, value: 7_000 }],
+            vtxos: [{ txid: "33".repeat(32), vout: 0, value: 7_000, recoverable: false }],
         });
         const foreignCheckpoint = capture.submitted[0].checkpoints[0];
 
@@ -268,6 +349,51 @@ describe("findLockupVtxos", () => {
         const indexer = fakeIndexer(VTXOS);
         expect(await findLockupVtxos(indexer, script.pkScript)).toHaveLength(2);
         expect(indexer.scripts[0]).toEqual([hex.encode(script.pkScript)]);
+    });
+
+    /** Filter-aware, unlike `fakeIndexer`: the two sets are disjoint here, which
+     * is what makes a swept output visible or not. */
+    const byFilterIndexer = (spendable: LockupVtxo[], recoverable: LockupVtxo[]): RefundIndexer =>
+        ({
+            getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => ({
+                vtxos: opts?.recoverableOnly ? recoverable : opts?.spendableOnly ? spendable : [],
+            }),
+        }) as unknown as RefundIndexer;
+
+    it("finds a swept lockup, which a spendable-only read would report as nothing to refund", async () => {
+        // A batch expiry sweeps the output out of the spendable set. It is
+        // still the trader's money and still visible — so missing it would
+        // claim a swap resolved while the funds sit at the script, and this
+        // path exists precisely for swaps that sat long enough to get here.
+        // Visible is NOT the same as refundable: a swept output must be
+        // recovered before any offchain spend, which
+        // `pushRefundWithoutReceiver` enforces rather than discovers.
+        const script = swapScript();
+        const swept = { txid: "cc".repeat(32), vout: 1, value: 4_000, recoverable: false };
+        const found = await findLockupVtxos(byFilterIndexer([], [swept]), script.pkScript);
+        expect(found).toEqual([{ ...swept, recoverable: true }]);
+    });
+
+    it("merges both sets and marks which outputs were swept", async () => {
+        const script = swapScript();
+        const live = { txid: "aa".repeat(32), vout: 0, value: 1_000, recoverable: false };
+        const swept = { txid: "bb".repeat(32), vout: 2, value: 2_000, recoverable: false };
+        const found = await findLockupVtxos(byFilterIndexer([live], [swept]), script.pkScript);
+        expect(found).toEqual([
+            { ...live, recoverable: false },
+            { ...swept, recoverable: true },
+        ]);
+    });
+
+    it("counts an output appearing in both sets exactly once", async () => {
+        // Disjoint today, but double-counting would add the same outpoint to
+        // the refund's aggregate output twice and build a transaction that
+        // cannot be signed.
+        const script = swapScript();
+        const both = { txid: "dd".repeat(32), vout: 0, value: 7_000, recoverable: false };
+        const found = await findLockupVtxos(byFilterIndexer([both], [both]), script.pkScript);
+        expect(found).toHaveLength(1);
+        expect(found[0]!.recoverable).toBe(false);
     });
 });
 
@@ -332,6 +458,33 @@ describe("refundIfUnresolved", () => {
             expect(result.outcome).toBe("refunded");
             expect(ark.submitted).toHaveLength(1);
         }
+    });
+
+    it("reports a swept lockup instead of retrying a push that cannot succeed", async () => {
+        // Unlike a median-time-past refusal, waiting fixes nothing here: the
+        // batch is gone, so the CLTV refund is not "not yet" but "not this
+        // way". Burning the whole `attemptDeadline` window on it and then
+        // rethrowing would waste the time the caller needed to RECOVER the
+        // outputs and finish the refund properly.
+        const ark = fakeArk();
+        const swept = { txid: "55".repeat(32), vout: 3, value: 8_000 };
+        const indexer = {
+            getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => ({
+                vtxos: opts?.recoverableOnly ? [swept] : [],
+            }),
+        } as unknown as RefundIndexer;
+
+        const result = await refundIfUnresolved(fakeTransport(["quoted"]), ark, indexer, {
+            ...baseInput(),
+            now: () => REFUND_LOCKTIME + 1,
+        });
+
+        expect(result.outcome).toBe("needs_recovery");
+        if (result.outcome === "needs_recovery") {
+            expect(result.outpoints).toEqual([`${"55".repeat(32)}:3`]);
+            expect(result.vtxos).toEqual([{ ...swept, recoverable: true }]);
+        }
+        expect(ark.submitted).toEqual([]);
     });
 
     it("waits while the refund window is shut, then pushes once it opens", async () => {

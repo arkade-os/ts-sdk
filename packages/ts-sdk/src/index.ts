@@ -400,6 +400,8 @@ import { DelegateContractHandler } from "./contracts/handlers/delegate";
 import type { DelegateContractParams } from "./contracts/handlers/delegate";
 import { VHTLCContractHandler } from "./contracts/handlers/vhtlc";
 import type { VHTLCContractParams } from "./contracts/handlers/vhtlc";
+import { VHTLCV2ContractHandler } from "./contracts/handlers/vhtlcV2";
+import type { VHTLCV2ContractParams } from "./contracts/handlers/vhtlcV2";
 import { isCsvSpendable, isCltvSatisfied } from "./contracts/handlers/helpers";
 import { BoardingContractHandler } from "./contracts/handlers/boarding";
 import type { BoardingContractParams } from "./contracts/handlers/boarding";
@@ -683,6 +685,7 @@ export {
     DefaultContractHandler,
     DelegateContractHandler,
     VHTLCContractHandler,
+    VHTLCV2ContractHandler,
     BoardingContractHandler,
     ArkadeContractHandler,
     isContractGenericallySpendable,
@@ -899,6 +902,7 @@ export type {
     DefaultContractParams,
     DelegateContractParams,
     VHTLCContractParams,
+    VHTLCV2ContractParams,
     BoardingContractParams,
     ArkadeContractParams,
     Discoverable,
