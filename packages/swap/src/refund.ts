@@ -197,15 +197,30 @@ export class LockupNeedsRecoveryError extends Error {
     readonly reason = "needs_recovery";
     /** `txid:vout` for each output that must be recovered first. */
     readonly outpoints: string[];
+    /**
+     * The contract's `refundLocktime`. Recovering before this matures is the
+     * hazard described above: `recoverVtxos()` sweeps EVERY recoverable output
+     * into one settlement with no CLTV awareness, so an early attempt can fail
+     * the whole batch — including unrelated outputs that were otherwise fine.
+     *
+     * Exposed as a value, not only inside the message, so a caller can encode
+     * `packages/boltz-swap`'s "pre-CLTV recoverable → skipped" rule without
+     * parsing prose. Seconds-based locktimes mature against the chain tip's
+     * timestamp rather than wall clock, so treat this as a floor to wait past,
+     * not an exact alarm.
+     */
+    readonly recoverableAfter: bigint;
 
-    constructor(outpoints: string[]) {
+    constructor(outpoints: string[], recoverableAfter: bigint) {
         super(
             `refund refused: ${outpoints.length} lockup output(s) have been swept and can no longer be spent offchain ` +
                 `(${outpoints.join(", ")}). Recover them into a fresh batch first — ` +
                 `IVtxoManager.recoverVtxos() does this for a wallet whose contract manager has the ` +
-                `lockup registered, once refundLocktime has matured — then retry the refund.`,
+                `lockup registered, once refundLocktime (${recoverableAfter}) has matured — then retry the refund. ` +
+                `Recovering before then can fail the entire settlement, not just these outputs.`,
         );
         this.outpoints = outpoints;
+        this.recoverableAfter = recoverableAfter;
     }
 }
 
@@ -488,7 +503,10 @@ export async function pushRefundWithoutReceiver(
 
     const swept = input.vtxos.filter((vtxo) => vtxo.recoverable);
     if (swept.length > 0) {
-        throw new LockupNeedsRecoveryError(swept.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`));
+        throw new LockupNeedsRecoveryError(
+            swept.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`),
+            input.script.options.refundLocktime,
+        );
     }
 
     const refundPkScript =

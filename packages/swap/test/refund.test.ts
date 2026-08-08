@@ -269,6 +269,11 @@ describe("pushRefundWithoutReceiver", () => {
             const needsRecovery = error as LockupNeedsRecoveryError;
             expect(needsRecovery.reason).toBe("needs_recovery");
             expect(needsRecovery.outpoints).toEqual([`${"33".repeat(32)}:2`]);
+            // The caller needs the CLTV floor as a VALUE: recoverVtxos() sweeps
+            // every recoverable output into one settlement with no CLTV
+            // awareness, so recovering before this can fail the whole batch.
+            // Parsing it back out of the message is not an interface.
+            expect(needsRecovery.recoverableAfter).toBe(swapScript().options.refundLocktime);
         });
 
         it("refuses the WHOLE push when one output among live ones is swept", async () => {
