@@ -99,10 +99,10 @@ const HTLC_LOCKTIME = NOW + 30 * 24 * 3600;
 const wallet = {
     identity: { xOnlyPublicKey: async () => key(20) },
     getAddress: async () => REFUND_ADDRESS,
-    // `createOffer` registers the funded covenant with the contract manager
-    // before handing back an address (see `registerOfferContract`), so the
-    // fake has to serve one. Only the offer test reaches this; the two
-    // request* paths never call it.
+    // Every maker entrypoint here registers its covenant with the contract
+    // manager before handing back an address — `createOffer` via
+    // `registerOfferContract`, the two request* paths via
+    // `registerLockupContract` — so the fake has to serve one.
     getContractManager: async () => ({
         createContract: async (params: Record<string, unknown>) => ({
             ...params,
