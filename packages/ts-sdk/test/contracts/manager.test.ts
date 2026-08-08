@@ -644,6 +644,127 @@ describe("ContractManager", () => {
         });
     });
 
+    describe("watch state", () => {
+        const newManager = (walletRepository = new InMemoryWalletRepository()) =>
+            ContractManager.create({
+                indexerProvider: mockIndexer,
+                contractRepository: new InMemoryContractRepository(),
+                walletRepository,
+                watcherConfig: { failsafePollIntervalMs: 1000, reconnectDelayMs: 500 },
+            });
+
+        it("drops a retained contract from the subscription and the sweep, keeping the row", async () => {
+            const mgr = await newManager();
+            try {
+                await mgr.createContract({
+                    type: "default",
+                    params: createDefaultContractParams(),
+                    script: TEST_DEFAULT_SCRIPT,
+                    address: "lockup-address",
+                });
+                (mockIndexer.subscribeForScripts as any).mockClear();
+
+                await mgr.setContractWatchState(TEST_DEFAULT_SCRIPT, "retained");
+
+                const subscribed = (mockIndexer.subscribeForScripts as any).mock.calls.flatMap(
+                    (c: any) => c[0],
+                );
+                expect(subscribed).not.toContain(TEST_DEFAULT_SCRIPT);
+
+                // The sweep is the other background channel, and it reads
+                // the same watched set.
+                (mockIndexer.getVtxos as any).mockClear();
+                (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+                await mgr.refreshVtxos();
+                expect(collectRequestedScripts(mockIndexer).has(TEST_DEFAULT_SCRIPT)).toBe(false);
+
+                // Retained, not deleted: history, annotation and restore all
+                // read the row through here.
+                const [row] = await mgr.getContracts({ script: TEST_DEFAULT_SCRIPT });
+                expect(row?.watch).toBe("retained");
+                expect(await mgr.getContractsWithVtxos()).toHaveLength(1);
+            } finally {
+                await mgr.dispose();
+            }
+        });
+
+        it("watches an awaiting-funds contract until a vtxo lands, then demotes it", async () => {
+            const walletRepo = new InMemoryWalletRepository();
+            const mgr = await newManager(walletRepo);
+            try {
+                (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+                await mgr.createContract({
+                    type: "default",
+                    params: createDefaultContractParams(),
+                    script: TEST_DEFAULT_SCRIPT,
+                    address: "awaiting-address",
+                    watch: "awaiting-funds",
+                });
+
+                // Unfunded: still watched, on both channels.
+                (mockIndexer.getVtxos as any).mockClear();
+                await mgr.refreshVtxos();
+                expect(collectRequestedScripts(mockIndexer).has(TEST_DEFAULT_SCRIPT)).toBe(true);
+                expect((await mgr.getContracts({ script: TEST_DEFAULT_SCRIPT }))[0]?.watch).toBe(
+                    "awaiting-funds",
+                );
+
+                // Funded — the sync that persists the vtxo is the one that
+                // demotes the contract.
+                const incoming = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
+                    txid: "cd".repeat(32),
+                });
+                (mockIndexer.getVtxos as any).mockClear();
+                (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [incoming] });
+                await mgr.refreshVtxos();
+
+                expect(
+                    (await walletRepo.getVtxos("awaiting-address")).map((v) => v.txid),
+                ).toContain(incoming.txid);
+                expect((await mgr.getContracts({ script: TEST_DEFAULT_SCRIPT }))[0]?.watch).toBe(
+                    "retained",
+                );
+
+                (mockIndexer.getVtxos as any).mockClear();
+                (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+                await mgr.refreshVtxos();
+                expect(collectRequestedScripts(mockIndexer).has(TEST_DEFAULT_SCRIPT)).toBe(false);
+            } finally {
+                await mgr.dispose();
+            }
+        });
+
+        it("re-registers a retained script without waking it up", async () => {
+            // `createContract` is idempotent and first-writer-wins, so a
+            // caller that registers the same lockup again must not silently
+            // put a finished contract back on the wire.
+            const mgr = await newManager();
+            try {
+                const params = {
+                    type: "default",
+                    params: createDefaultContractParams(),
+                    script: TEST_DEFAULT_SCRIPT,
+                    address: "lockup-address",
+                } as const;
+                await mgr.createContract(params);
+                await mgr.setContractWatchState(TEST_DEFAULT_SCRIPT, "retained");
+
+                (mockIndexer.subscribeForScripts as any).mockClear();
+                await mgr.createContract(params);
+
+                const subscribed = (mockIndexer.subscribeForScripts as any).mock.calls.flatMap(
+                    (c: any) => c[0],
+                );
+                expect(subscribed).not.toContain(TEST_DEFAULT_SCRIPT);
+                expect((await mgr.getContracts({ script: TEST_DEFAULT_SCRIPT }))[0]?.watch).toBe(
+                    "retained",
+                );
+            } finally {
+                await mgr.dispose();
+            }
+        });
+    });
+
     describe("annotateVtxos", () => {
         it("returns empty array for empty input", async () => {
             const extended = await manager.annotateVtxos([]);

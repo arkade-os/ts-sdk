@@ -71,6 +71,13 @@ function createMockRealm() {
     }
 
     function evaluateCondition(obj: any, condition: string, args: any[]): boolean {
+        // `field == null` — how a nullable column (e.g. `watch` on rows
+        // written before it existed) is matched.
+        const nullMatch = condition.match(/(\w+)\s*==\s*null/);
+        if (nullMatch) {
+            const value = obj[nullMatch[1]];
+            return value === null || value === undefined;
+        }
         const match = condition.match(/(\w+)\s*==\s*\$(\d+)/);
         if (!match) return true; // skip unknown conditions
         const field = match[1];
@@ -168,8 +175,8 @@ describe("RealmContractRepository", () => {
 
     // ── version ────────────────────────────────────────────────────────
 
-    it("should have version 1", () => {
-        expect(repository.version).toBe(1);
+    it("should have version 2", () => {
+        expect(repository.version).toBe(2);
     });
 
     // ── Save and retrieve ──────────────────────────────────────────────
@@ -311,6 +318,36 @@ describe("RealmContractRepository", () => {
             });
             expect(filtered).toHaveLength(2);
             expect(filtered.map((c) => c.type).sort()).toEqual(["default", "vhtlc"]);
+        });
+    });
+
+    // ── Watch state ────────────────────────────────────────────────────
+
+    describe("watch state", () => {
+        it("round-trips the watch state", async () => {
+            await repository.saveContract(createMockContract({ script: "s1", watch: "retained" }));
+            await repository.saveContract(
+                createMockContract({ script: "s2", watch: "awaiting-funds" }),
+            );
+
+            expect((await repository.getContracts({ script: "s1" }))[0].watch).toBe("retained");
+            expect((await repository.getContracts({ script: "s2" }))[0].watch).toBe(
+                "awaiting-funds",
+            );
+        });
+
+        it("filters by watch state, counting rows without one as watched", async () => {
+            // A contract saved before the property existed — the shape
+            // every deployed row has.
+            await repository.saveContract(createMockContract({ script: "legacy" }));
+            await repository.saveContract(createMockContract({ script: "s1", watch: "watched" }));
+            await repository.saveContract(createMockContract({ script: "s2", watch: "retained" }));
+
+            const watched = await repository.getContracts({ watch: "watched" });
+            expect(watched.map((c) => c.script).sort()).toEqual(["legacy", "s1"]);
+
+            const retained = await repository.getContracts({ watch: "retained" });
+            expect(retained.map((c) => c.script)).toEqual(["s2"]);
         });
     });
 

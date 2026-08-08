@@ -1356,6 +1356,24 @@ Contract freshness behavior:
 - **Failsafe polling** every 20 seconds by default to catch missed events, configurable via `watcherConfig.failsafePollIntervalMs`
 - **Manual refresh** through `manager.refreshVtxos()`; pass `{ includeInactive: true }` to sweep every repository contract
 
+Which contracts get that coverage is `contract.watch`, and it is independent of
+`contract.state` (which only governs receive-address selection — a retired
+receive address stays watched, because it can still be paid):
+
+```typescript
+// Watch a one-shot destination only until it is funded; the manager
+// demotes it to `retained` itself once a VTXO lands.
+await manager.createContract({ ...params, watch: 'awaiting-funds' })
+
+// A finished contract — a settled swap lockup, say. The row stays for
+// history, annotation and restore; it just leaves the subscription and
+// the poll. Unlike `deleteContract`, nothing is lost.
+await manager.setContractWatchState(script, 'retained')
+```
+
+A row with no `watch` value is `watched`, so contracts written by earlier SDK
+versions keep the coverage they have today.
+
 ### Repository Pattern
 
 Most users don't need to touch repositories directly — `Wallet` reads through them and `ContractManager` owns VTXO/contract synchronization into them. They are documented here for advanced integrations (custom storage backends, offline-first apps, repository inspection).

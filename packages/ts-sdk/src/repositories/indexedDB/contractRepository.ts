@@ -1,5 +1,5 @@
 import { DB_VERSION, STORE_CONTRACTS } from "./db";
-import { Contract } from "../../contracts";
+import { Contract, watchStateOf } from "../../contracts";
 import { ContractFilter, ContractRepository } from "../contractRepository";
 import { closeDatabase, openDatabase } from "./manager";
 import { initDatabase } from "./schema";
@@ -11,7 +11,7 @@ import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
  * Data is stored as JSON strings in key/value stores.
  */
 export class IndexedDBContractRepository implements ContractRepository {
-    readonly version = 1 as const;
+    readonly version = 2 as const;
     private db: IDBDatabase | null = null;
 
     constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
@@ -180,6 +180,10 @@ export class IndexedDBContractRepository implements ContractRepository {
                 return false;
             if (filter.has("state") && !filter.get("state")?.includes(contract.state)) return false;
             if (filter.has("type") && !filter.get("type")?.includes(contract.type)) return false;
+            // Whole objects are stored, so a row written before the field
+            // existed simply has none — `watchStateOf` supplies the default.
+            if (filter.has("watch") && !filter.get("watch")?.includes(watchStateOf(contract)))
+                return false;
             return true;
         }) as Contract[];
     }
@@ -197,7 +201,9 @@ export class IndexedDBContractRepository implements ContractRepository {
     }
 }
 
-const FILTER_FIELDS = ["script", "state", "type"] as (keyof ContractFilter)[];
+// `watch` has no index — it is filtered in memory by `applyContractFilter`,
+// after whichever indexed field narrowed the read.
+const FILTER_FIELDS = ["script", "state", "type", "watch"] as (keyof ContractFilter)[];
 
 // Transform all filter fields into an array of values
 function normalizeFilter(filter: ContractFilter) {

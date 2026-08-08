@@ -9,7 +9,9 @@ export const getCollectionStorageKey = (type: string) => `collection:${type}`;
  * @deprecated This is only to be used in migration from storage V1
  */
 export class ContractRepositoryImpl implements ContractRepository {
-    readonly version = 1 as const;
+    // Nominal: every contract-row method below throws. Legacy V1 storage
+    // predates the watch state entirely, so there is nothing to migrate.
+    readonly version = 2 as const;
     private storage: StorageAdapter;
 
     constructor(storage: StorageAdapter) {
