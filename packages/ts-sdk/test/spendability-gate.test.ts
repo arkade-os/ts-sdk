@@ -409,6 +409,9 @@ describe("spending sites consume the accessor", () => {
     const mockWallet = (raw: unknown[], spendable: unknown[]) => ({
         getVtxos: vi.fn().mockResolvedValue(raw),
         getSpendableVtxos: vi.fn().mockResolvedValue(spendable),
+        // Present so a site that wrongly selects a gated VTXO reaches settle and
+        // is caught there, rather than dying on a missing mock method.
+        settle: vi.fn().mockResolvedValue("mock-txid"),
         getAddress: vi.fn().mockResolvedValue("ark1address"),
         getDelegateManager: vi.fn().mockResolvedValue(undefined),
         getContractManager: vi.fn().mockResolvedValue({
@@ -440,6 +443,46 @@ describe("spending sites consume the accessor", () => {
             }),
         ).rejects.toThrow();
         expect(wallet.getSpendableVtxos).toHaveBeenCalled();
+    });
+
+    /** Swept, so `canRecoverOnchain` matches it and recovery would select it. */
+    const sweptEscrow = () =>
+        createMockExtendedVtxo({
+            txid: "ee".repeat(32),
+            vout: 0,
+            value: 10_000,
+            script: ESCROW_SCRIPT,
+            virtualStatus: { state: "swept" },
+            isSwept: true,
+        });
+
+    /**
+     * Recovery is generic spending too, and it was the last selection site still
+     * on the raw accessor. A swept escrow output is exactly what
+     * `canRecoverOnchain` matches, so it would have been swept into a batch
+     * settlement that re-mints it as a plain output and destroys the contract.
+     */
+    it("recovery does not see gated VTXOs", async () => {
+        const wallet = mockWallet([sweptEscrow()], []);
+        const manager = new VtxoManager(wallet as never);
+
+        await expect(manager.recoverVtxos()).rejects.toThrow("No recoverable VTXOs found");
+        expect(wallet.getSpendableVtxos).toHaveBeenCalled();
+        expect(wallet.getVtxos).not.toHaveBeenCalled();
+        // The one that matters: no settlement was ever built over the escrow.
+        expect(wallet.settle).not.toHaveBeenCalled();
+    });
+
+    it("the recoverable-balance preview does not count gated VTXOs", async () => {
+        const wallet = mockWallet([sweptEscrow()], []);
+        const manager = new VtxoManager(wallet as never);
+
+        await expect(manager.getRecoverableBalance()).resolves.toMatchObject({
+            recoverable: 0n,
+            vtxoCount: 0,
+        });
+        expect(wallet.getSpendableVtxos).toHaveBeenCalled();
+        expect(wallet.getVtxos).not.toHaveBeenCalled();
     });
 });
 

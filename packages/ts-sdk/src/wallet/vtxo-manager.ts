@@ -1095,8 +1095,14 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * ```
      */
     async recoverVtxos(eventCallback?: (event: SettlementEvent) => void): Promise<string> {
-        // Get all virtual outputs including recoverable ones
-        const allVtxos = await this.wallet.getVtxos({
+        // Recoverable virtual outputs, through the gated read. Recovery is
+        // generic spending: it re-mints everything it selects into one batch
+        // output, so a gated contract's VTXO would lose its script paths the
+        // same way it would in a renewal — and `canRecoverOnchain` covers
+        // `isSwept || isPastExpiry`, which is exactly where an unresolved
+        // escrow ends up. An owner who does mean to recover one names it
+        // through `settle({ inputs })`, which stays ungated on purpose.
+        const allVtxos = await this.wallet.getSpendableVtxos({
             withRecoverable: true,
             withUnrolled: false,
         });
@@ -1197,7 +1203,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         includesSubdust: boolean;
         vtxoCount: number;
     }> {
-        const allVtxos = await this.wallet.getVtxos({
+        // Gated to match `recoverVtxos`: this previews what recovery would
+        // sweep, so counting funds recovery will not touch would overstate it.
+        // Gated contracts still show through `getBalance`.
+        const allVtxos = await this.wallet.getSpendableVtxos({
             withRecoverable: true,
             withUnrolled: false,
         });
