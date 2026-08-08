@@ -8,6 +8,7 @@ import {
     ContractEvent,
     ContractEventCallback,
     ContractState,
+    ContractWatchState,
     ContractHandler,
     ContractWithVtxos,
     Discoverable,
@@ -19,6 +20,7 @@ import {
     ExtendedContractVtxo,
     hasCandidates,
     isDiscoverable,
+    watchStateOf,
 } from "./types";
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
@@ -350,14 +352,31 @@ export interface IContractManager extends Disposable {
 
     /**
      * Convenience helper to update only the contract state. Note
-     * `inactive` does not stop watching; see {@link ContractState} and
-     * {@link deleteContract}.
+     * `inactive` governs receive-address selection and does not stop
+     * watching; see {@link ContractState} and
+     * {@link setContractWatchState}.
      */
     setContractState(script: string, state: ContractState): Promise<void>;
 
     /**
-     * Delete a contract by script and stop watching it. This — not
-     * retiring via {@link setContractState} — is the stop-watching path.
+     * Convenience helper to update only the contract's watch state.
+     *
+     * `retained` is how an owner says "this script is done": it leaves
+     * the subscription and the sweep, while the row — and so history,
+     * annotation and restore — is untouched. `awaiting-funds` asks for
+     * coverage only until the script is funded, after which the manager
+     * demotes it to `retained` itself.
+     *
+     * @see ContractWatchState
+     */
+    setContractWatchState(script: string, watch: ContractWatchState): Promise<void>;
+
+    /**
+     * Delete a contract by script, dropping both the row and the watch.
+     * Destructive: the row is what keeps the contract's VTXOs
+     * annotatable and its transactions readable in history, so to stop
+     * watching a finished contract use
+     * {@link setContractWatchState}(`"retained"`) instead.
      */
     deleteContract(script: string): Promise<void>;
 
@@ -1489,11 +1508,15 @@ export class ContractManager implements IContractManager {
         );
     }
 
+    // Field-by-field, so every filter a caller can express reaches the
+    // repository. A field missing here is not a narrower query — it is an
+    // unfiltered one.
     private buildContractsDbFilter(filter: GetContractsFilter): ContractFilter {
         return {
             script: filter.script,
             state: filter.state,
             type: filter.type,
+            watch: filter.watch,
         };
     }
 
@@ -1557,17 +1580,22 @@ export class ContractManager implements IContractManager {
 
     /**
      * Set a contract's state. Retiring (`inactive`) keeps it watched;
-     * see {@link ContractState}. To stop watching, use
-     * {@link deleteContract}.
+     * see {@link ContractState}. To stop watching while keeping the row,
+     * use {@link setContractWatchState}.
      */
     async setContractState(script: string, state: ContractState): Promise<void> {
         await this.updateContract(script, { state });
     }
 
+    /** @see IContractManager.setContractWatchState */
+    async setContractWatchState(script: string, watch: ContractWatchState): Promise<void> {
+        await this.updateContract(script, { watch });
+    }
+
     /**
-     * Delete a contract. Also removes it from the watcher — the only way
-     * to stop watching a contract (retiring it via
-     * {@link setContractState} does not).
+     * Delete a contract, dropping the row along with the watch. To stop
+     * watching a finished contract without losing its history, use
+     * {@link setContractWatchState}(`"retained"`).
      *
      * @param script - Contract script
      */
@@ -1856,7 +1884,40 @@ export class ContractManager implements IContractManager {
             await advanceSyncCursor(this.config.walletRepository, cutoff);
         }
 
+        await this.demoteFundedAwaitingContracts(contracts);
+
         return result;
+    }
+
+    /**
+     * Demote every `awaiting-funds` contract in `contracts` that has been
+     * funded — the automatic half of {@link ContractWatchState}.
+     *
+     * Runs after the sync has persisted, so the funding VTXO is saved
+     * while the contract is still watched, and reads the repository
+     * rather than this sync's delta: funds that landed while the app was
+     * closed are outside every later window, and a contract asked to
+     * watch until it is funded must still stop once it is.
+     *
+     * Best-effort. A demotion that fails costs coverage that is merely
+     * no longer needed, and must not fail the sync that carried it.
+     */
+    private async demoteFundedAwaitingContracts(contracts: Contract[]): Promise<void> {
+        const awaiting = contracts.filter((c) => watchStateOf(c) === "awaiting-funds");
+        if (awaiting.length === 0) return;
+
+        for (const contract of awaiting) {
+            try {
+                const vtxos = await getVtxosForContract(this.config.walletRepository, contract);
+                if (vtxos.length === 0) continue;
+                await this.setContractWatchState(contract.script, "retained");
+            } catch (err) {
+                console.warn(
+                    `[contracts] could not demote funded contract ${contract.script}`,
+                    err,
+                );
+            }
+        }
     }
 
     /**

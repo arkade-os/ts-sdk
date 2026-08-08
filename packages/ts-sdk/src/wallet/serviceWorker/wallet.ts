@@ -138,7 +138,7 @@ import type {
     RefreshVtxosOptions,
     ScanResult,
 } from "../../contracts/contractManager";
-import type { ContractState } from "../../contracts/types";
+import type { ContractState, ContractWatchState } from "../../contracts/types";
 import type { IDelegateManager } from "../delegate";
 import type {
     IVtxoManager,
@@ -1325,6 +1325,21 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     return;
                 } catch (e) {
                     throw new Error("Failed to update contract state");
+                }
+            },
+
+            async setContractWatchState(script: string, watch: ContractWatchState): Promise<void> {
+                const message: RequestUpdateContract = {
+                    type: "UPDATE_CONTRACT",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { script, updates: { watch } },
+                };
+                try {
+                    await sendContractMessage(message);
+                    return;
+                } catch (e) {
+                    throw new Error("Failed to update contract watch state");
                 }
             },
 

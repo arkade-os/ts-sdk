@@ -309,7 +309,13 @@ const spies = (
  * lifecycle is as much of the contract as the events themselves. */
 type FakeContracts = SwapContractRegistry & {
     created: CreateContractParams[];
-    retired: { script: string; state: string }[];
+    retired: { script: string; watch: string }[];
+    /**
+     * The scripts a real manager would still subscribe and poll — every
+     * written row minus the `retained` ones. Retirement is only worth
+     * anything if it moves this set.
+     */
+    watched: () => string[];
     /** Push an event to every live listener, the way the watcher would. */
     emit: (event: ContractEvent) => void;
     listenerCount: () => number;
@@ -318,10 +324,15 @@ type FakeContracts = SwapContractRegistry & {
 const fakeContracts = (over: { failCreate?: () => boolean } = {}): FakeContracts => {
     const listeners = new Set<(event: ContractEvent) => void>();
     const created: CreateContractParams[] = [];
-    const retired: { script: string; state: string }[] = [];
+    const retired: { script: string; watch: string }[] = [];
+    const rows = new Map<string, string>();
     return {
         created,
         retired,
+        watched: () =>
+            [...rows.entries()]
+                .filter(([, watch]) => watch !== "retained")
+                .map(([script]) => script),
         emit(event: ContractEvent) {
             for (const listener of [...listeners]) listener(event);
         },
@@ -329,20 +340,22 @@ const fakeContracts = (over: { failCreate?: () => boolean } = {}): FakeContracts
         async createContract(params: CreateContractParams) {
             if (over.failCreate?.()) throw new Error("contract repository unavailable");
             created.push(params);
+            rows.set(params.script, params.watch ?? "watched");
             return { ...params, state: "active", createdAt: 1 } as Contract;
         },
         onContractEvent(callback: (event: ContractEvent) => void) {
             listeners.add(callback);
             return () => listeners.delete(callback);
         },
-        async setContractState(script: string, state: string) {
+        async setContractWatchState(script: string, watch: string) {
             // A real ContractManager resolves the row first and throws
             // `Contract ${script} not found` when there is none — modelled
             // here, so a test cannot pass by retiring something never written.
-            if (!created.some((row) => row.script === script)) {
+            if (!rows.has(script)) {
                 throw new Error(`Contract ${script} not found`);
             }
-            retired.push({ script, state });
+            rows.set(script, watch);
+            retired.push({ script, watch });
         },
     } as unknown as FakeContracts;
 };
@@ -1390,7 +1403,7 @@ describe("RfqSwapManager — the lockup as a contract", () => {
         });
     });
 
-    it("retires the contract once the swap is over, and never deletes it", async () => {
+    it("stops watching the contract once the swap is over, and never deletes it", async () => {
         const s = spies();
         const contracts = fakeContracts();
         const m = manager({
@@ -1405,7 +1418,11 @@ describe("RfqSwapManager — the lockup as a contract", () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(swap.state).toBe("settled");
-        expect(contracts.retired).toEqual([{ script: LOCKUP_SCRIPT_HEX, state: "inactive" }]);
+        expect(contracts.retired).toEqual([{ script: LOCKUP_SCRIPT_HEX, watch: "retained" }]);
+        // The row survives — it is what keeps the lockup's VTXOs annotatable —
+        // but it is out of every background channel.
+        expect(contracts.created.map((row) => row.script)).toEqual([LOCKUP_SCRIPT_HEX]);
+        expect(contracts.watched()).toEqual([]);
     });
 
     it("does not try to retire a row it never managed to write", async () => {
@@ -1449,6 +1466,7 @@ describe("RfqSwapManager — the lockup as a contract", () => {
 
         expect(contracts.created).toHaveLength(1);
         expect(contracts.retired).toEqual([]);
+        expect(contracts.watched()).toEqual([LOCKUP_SCRIPT_HEX]);
     });
 
     it("hands a needs-recovery refusal to the caller intact, and keeps retrying", async () => {

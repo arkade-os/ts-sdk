@@ -68,6 +68,45 @@ describe("ContractWatcher", () => {
         expect(mockIndexer.subscribeForScripts).toHaveBeenCalledWith([contract.script], undefined);
     });
 
+    it("should not subscribe retained contracts, but should keep them readable", async () => {
+        await watcher.startWatching(() => {});
+        (mockIndexer.subscribeForScripts as any).mockClear();
+
+        const contract: Contract = {
+            type: "default",
+            params: createDefaultContractParams(),
+            script: TEST_DEFAULT_SCRIPT,
+            address: "address",
+            state: "active",
+            watch: "retained",
+            createdAt: Date.now(),
+        };
+
+        await watcher.addContract(contract);
+
+        expect(mockIndexer.subscribeForScripts).not.toHaveBeenCalled();
+        expect(watcher.getWatchedContracts()).toEqual([]);
+        // The row is still held: reads, annotation and history go through it.
+        expect(watcher.getAllContracts().map((c) => c.script)).toEqual([TEST_DEFAULT_SCRIPT]);
+    });
+
+    it("should subscribe awaiting-funds contracts", async () => {
+        await watcher.startWatching(() => {});
+
+        const contract: Contract = {
+            type: "default",
+            params: createDefaultContractParams(),
+            script: TEST_DEFAULT_SCRIPT,
+            address: "address",
+            state: "active",
+            watch: "awaiting-funds",
+            createdAt: Date.now(),
+        };
+
+        await watcher.addContract(contract);
+        expect(mockIndexer.subscribeForScripts).toHaveBeenCalledWith([contract.script], undefined);
+    });
+
     it("should unsubscribe from scripts when stopped", async () => {
         await watcher.startWatching(() => {});
 

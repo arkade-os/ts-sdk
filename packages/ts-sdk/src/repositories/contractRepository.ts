@@ -1,4 +1,4 @@
-import { Contract, ContractState } from "../contracts/types";
+import { Contract, ContractState, ContractWatchState } from "../contracts/types";
 
 /**
  * Filter options for querying contracts.
@@ -10,10 +10,20 @@ export interface ContractFilter {
     state?: ContractState | ContractState[];
     /** Filter by contract type(s) */
     type?: string | string[];
+    /**
+     * Filter by watch state(s). Rows written before the field existed
+     * have no stored value and match `"watched"`.
+     * @see ContractWatchState
+     */
+    watch?: ContractWatchState | ContractWatchState[];
 }
 
 export interface ContractRepository extends AsyncDisposable {
-    readonly version: 1;
+    /**
+     * 2 — {@link Contract.watch}. An implementation must persist and
+     * round-trip it, and treat a row without one as `"watched"`.
+     */
+    readonly version: 2;
 
     /**
      * Clear all data from storage.
