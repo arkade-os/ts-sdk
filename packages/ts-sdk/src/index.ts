@@ -106,6 +106,7 @@ import { Batch } from "./wallet/batch";
 import {
     Wallet,
     ReadonlyWallet,
+    MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD,
     waitForIncomingFunds,
     IncomingFunds,
     selectVirtualCoins,
@@ -468,6 +469,7 @@ export {
     // Wallets
     Wallet,
     ReadonlyWallet,
+    MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD,
     SingleKey,
     ReadonlySingleKey,
     SeedIdentity,

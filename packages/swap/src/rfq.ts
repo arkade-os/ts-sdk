@@ -40,7 +40,6 @@
  */
 import { hex } from "@scure/base";
 import { ripemd160 } from "@noble/hashes/legacy.js";
-import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     ArkAddress,
     RestArkProvider,
@@ -939,6 +938,7 @@ export async function requestOnchainSend(
         amountSide: "from" | "to";
         /** Maker's x-only L1 key that will claim the HTLC. */
         payoutPubkey: Uint8Array;
+        /** Optional caller-owned P. Persist it with the returned secrets before funding. */
         preimage?: Uint8Array;
         rfqId?: string;
     },
@@ -959,18 +959,21 @@ export async function requestOnchainSend(
     secrets: SwapSecrets;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
-    // A caller-supplied preimage is its own to keep, so it forces the stored
-    // arm even on a wallet that could derive one.
-    const secrets = params.preimage
-        ? {
-              derivable: false as const,
-              senderPrivateKey: schnorr.utils.randomSecretKey(),
-              preimage: params.preimage,
-          }
-        : ((await deriveSwapSecrets(wallet)) ?? randomSwapSecrets({ preimage: true }));
+    const derivedSecrets = await deriveSwapSecrets(wallet);
+    const secrets = derivedSecrets
+        ? params.preimage
+            ? { ...derivedSecrets, preimage: params.preimage }
+            : derivedSecrets
+        : randomSwapSecrets({ preimage: params.preimage ?? true });
     if (!secrets.derivable) {
         console.warn(
-            "[swap] this swap's preimage and sender key are random and MUST be persisted before funding",
+            params.preimage
+                ? "[swap] this swap's sender key is random; the supplied preimage and sender key MUST be persisted before funding"
+                : "[swap] this swap's preimage and sender key are random and MUST be persisted before funding",
+        );
+    } else if (params.preimage) {
+        console.warn(
+            "[swap] this swap's preimage was supplied by the caller and MUST be persisted with the signing descriptor before funding",
         );
     }
     const preimage = await preimageForRfqSecrets(wallet, secrets);

@@ -18,9 +18,8 @@ platform-provided or polyfilled IndexedDB.
    registry fetch with stale-cache fallback), `findMarket`, `validatePlan` (balance, both-side
    limits, BTC-leg dust), `QUOTE_OPTIONS`, and `makeCachedFeedFetch` for rate-limited price feeds.
 3. **`store`** — the persisted `AssetSwap` records (`getAssetSwaps`/`addAssetSwap`/
-   `updateAssetSwap`), thin helpers over an `AssetSwapRepository`. Persistence failures never
-   throw: by the time a swap is stored its funding tx is broadcast, and everything stays
-   recoverable from chain.
+   `updateAssetSwap`), thin helpers over an `AssetSwapRepository`. Read failures degrade to an
+   empty list; write failures throw so pre-funding records can be retried before money is sent.
 4. **`restore`** — `restoreAssetSwaps` rebuilds lost records by scanning sent virtual txs for
    offer packets and binding each funding vtxo to its spend. Incremental: answered txids are
    remembered in the repository (`getScannedTxids`/`markTxidsScanned`) so nothing is fetched
@@ -178,12 +177,15 @@ internal key (no key-path spend, ever): claim = `HASH160 <h160> EQUALVERIFY <cla
 refund = `<locktime> CLTV DROP <refundKey> CHECKSIG`.
 
 ```ts
+import { hex } from "@scure/base";
 import {
     httpTransport,
     requestOnchainSend,
     awaitOnchainFill,
     claimOnchainFill,
+    addAssetSwap,
     preimageForRfqSecrets,
+    rfqSecretsToRecord,
 } from "@arkade-os/swap";
 
 const swap = await requestOnchainSend(
@@ -193,10 +195,19 @@ const swap = await requestOnchainSend(
     httpTransport(solverUrl),
     { amount: 100_000, amountSide: "to", payoutPubkey },
 );
-// PERSIST swap.secrets (with the record) BEFORE funding. On an HD wallet it
-// is just a public descriptor: the preimage and the sender key re-derive from
-// the seed. Otherwise it carries the raw secrets and losing them forfeits the
-// claim.
+// Persist the record, including secrets, BEFORE funding. This must succeed:
+// if addAssetSwap throws, do not call wallet.send.
+await addAssetSwap(repository, {
+    ...record,
+    id: swap.rfqId,
+    pair: "arkade:BTC->onchain:BTC",
+    paymentHash: swap.htlc.paymentHash,
+    swapAddress: swap.address,
+    swapPkScript: hex.encode(swap.swapPkScript),
+    htlcPkScriptHex: hex.encode(swap.htlc.pkScript),
+    htlcLocktime: swap.htlc.refundLocktime,
+    ...rfqSecretsToRecord(swap.secrets),
+});
 await wallet.send({ address: swap.address, amount: BigInt(swap.fundAmount) });
 
 // Unlike lightning-send the maker must STAY CLAIM-CAPABLE: watch for the fill
@@ -228,8 +239,10 @@ state (unfunded / awaiting confirmations / claimable / refundable / claimed-with
 `ChainSource` plus the stored outpoint — without the stored record a spent HTLC is
 indistinguishable from an unfunded one, which is why persisting before funding is mandatory. The
 `AssetSwap` record carries the onchain fields (`paymentHash`, `signingDescriptor`,
-`htlcPkScriptHex`, `htlcLocktime`, `l1Txid`) and the statuses `awaiting_fill / claimable / claimed
-/ refunded_l1`. `preimageHex` is fallback-only — see below.
+`preimageHex` for caller-supplied P, `fallbackSecrets`, `htlcPkScriptHex`, `htlcLocktime`,
+`l1Txid`) and the statuses `awaiting_fill / claimable / claimed / refunded_l1`.
+`fallbackSecrets` is versioned and discriminated: `{ version: 1, type: "stored",
+senderPrivateKeyHex, preimageHex? }`.
 
 **On-board (`onchain:BTC -> arkade:BTC`) is milestone 2 and partially gated.** The wire request
 (`onchainReceiveRequest`), the L1 HTLC (roles swapped: the solver claims, the maker refunds) and
@@ -249,7 +262,7 @@ which is public, so a copied browser profile or a device backup yields nothing s
 ```ts
 const swap = await requestOnchainSend(/* … */);
 swap.secrets; // { derivable: true, signingDescriptor } — persist it, it holds no secret
-await saveSwap({ ...record, signingDescriptor: swap.secrets.signingDescriptor });
+await saveSwap({ ...record, ...rfqSecretsToRecord(swap.secrets) });
 
 // Later, from the seed plus that descriptor:
 const preimage = await preimageForRfqSecrets(wallet, rfqSecretsOfRecord(record)!);
@@ -257,10 +270,11 @@ const sender = await senderIdentityForRfqSecrets(wallet, rfqSecretsOfRecord(reco
 ```
 
 `derivable: false` is the fallback for wallets that cannot allocate (static / `auto` / custom
-signers). It carries the raw `senderPrivateKey` and `preimage`, warns at generation, and the caller
-must persist them — `AssetSwap.preimageHex` exists for exactly that case and must stay empty on the
-derivable path. The discriminant is a type-level fact, so a consumer written against the derivable
-arm alone will not compile against the fallback.
+signers). It carries the raw `senderPrivateKey` and, for onchain sends, `preimage`;
+`rfqSecretsToRecord` stores them under `AssetSwap.fallbackSecrets` as a complete versioned
+record. The discriminant is a type-level fact, so a consumer written against the derivable arm
+alone will not compile against the fallback. A caller-supplied preimage on an HD wallet keeps
+`signingDescriptor` for the sender key and stores only `preimageHex` as secret material.
 
 Each swap **allocates** its own descriptor rather than peeking at the current one: two swaps sharing
 a descriptor derive the *identical* preimage, so one solver learning its own preimage would learn the
@@ -280,13 +294,14 @@ too little public quote data to rediscover, so the record remains required.
 
 The package is pre-release; these notes replace a changelog for consumers tracking the branch.
 
-- **`requestLightningSend` / `requestOnchainSend` return `secrets`, not raw key material.**
-  `senderPrivateKey` and `preimage` are gone from both return types; `secrets` replaces them and is
-  what the record persists. `pushRefundWithoutReceiver` / `refundIfUnresolved` take `sender: Identity`
-  instead of `senderPrivateKey: Uint8Array` — build it with `senderIdentityForRfqSecrets`.
-  `AssetSwap` gains `signingDescriptor?` and demotes `preimageHex?` to fallback-only. Landed while
-  the package is unpublished and consumer-free, which is the whole window for doing it: after a
-  consumer ships, the same change becomes a secret migration across every deployed wallet.
+- **`requestLightningSend` / `requestOnchainSend` return `secrets`, not top-level raw key material.**
+  `senderPrivateKey` is gone from both return types; caller-owned onchain preimages live inside
+  `secrets` and must be persisted with the record. `pushRefundWithoutReceiver` /
+  `refundIfUnresolved` take `sender: Identity` instead of `senderPrivateKey: Uint8Array` — build
+  it with `senderIdentityForRfqSecrets`. `AssetSwap` gains `signingDescriptor?`,
+  `preimageHex?`, and complete stored-arm `fallbackSecrets?`. Landed while the package is
+  unpublished and consumer-free, which is the whole window for doing it: after a consumer ships,
+  the same change becomes a secret migration across every deployed wallet.
 - **Every derived address changed, in both corridors.** The lightning-send lockup moved from the
   3-leaf program-artifact VHTLC to the 8-leaf `VHTLC.ScriptV2` (non-interactive claim and refund
   leaves), and the L1 HTLC's claim leaf gained a `SIZE 32 EQUALVERIFY` preimage-length guard. Both

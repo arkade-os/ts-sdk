@@ -21,12 +21,15 @@ import {
     buildPreimageMessage,
     derivePreimage,
     deriveSwapSecrets,
+    isDeterministicSigner,
     preimageForRfqSecrets,
     randomSwapSecrets,
     rfqSecretsOfRecord,
+    rfqSecretsToRecord,
     senderIdentityForRfqSecrets,
     senderPubkeyForRfqSecrets,
 } from "../src/secrets";
+import { paymentHashOf } from "../src/onchainHtlc";
 
 const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -145,7 +148,9 @@ describe("derivation", () => {
 
         // Passing a different key in is the silent-failure mode: the result is
         // a valid-looking preimage that nothing on chain will ever match.
-        expect(hex.encode(await derivePreimage(signer as never))).toBe(
+        expect(isDeterministicSigner(signer)).toBe(true);
+        if (!isDeterministicSigner(signer)) throw new Error("expected deterministic signer");
+        expect(hex.encode(await derivePreimage(signer))).toBe(
             hex.encode(await preimageForRfqSecrets(wallet, secrets)),
         );
     });
@@ -176,7 +181,9 @@ describe("cross-SDK vectors", () => {
         const signer = await wallet.signerForDescriptor!(descriptorAt(index));
 
         expect(hex.encode(await signer.xOnlyPublicKey())).toBe(xonly);
-        expect(hex.encode(await derivePreimage(signer as never))).toBe(preimage);
+        expect(isDeterministicSigner(signer)).toBe(true);
+        if (!isDeterministicSigner(signer)) throw new Error("expected deterministic signer");
+        expect(hex.encode(await derivePreimage(signer))).toBe(preimage);
         // The message these hash from, spelled out for a reimplementation.
         expect(hex.encode(buildPreimageMessage(hex.decode(xonly), 0))).toBe(
             hex.encode(new TextEncoder().encode(RFQ_PREIMAGE_TAG)) + xonly + "00000000",
@@ -211,6 +218,32 @@ describe("the fallback arm", () => {
     it("refuses to invent a preimage it was never given", async () => {
         await expect(preimageForRfqSecrets(staticWallet(), randomSwapSecrets())).rejects.toThrow(
             /no stored preimage/,
+        );
+    });
+
+    it("serializes enough fallback data to restore the sender identity", async () => {
+        const wallet = staticWallet();
+        const secrets = randomSwapSecrets({ preimage: true });
+        const record = rfqSecretsToRecord(secrets);
+
+        expect(record).toEqual({
+            fallbackSecrets: {
+                version: 1,
+                type: "stored",
+                senderPrivateKeyHex: hex.encode(secrets.senderPrivateKey),
+                preimageHex: hex.encode(secrets.preimage!),
+            },
+        });
+
+        const restored = rfqSecretsOfRecord(record)!;
+        expect(restored.derivable).toBe(false);
+        if (restored.derivable) throw new Error("expected stored secrets");
+        expect(hex.encode(restored.senderPrivateKey)).toBe(hex.encode(secrets.senderPrivateKey));
+        expect(hex.encode(await preimageForRfqSecrets(wallet, restored))).toBe(
+            hex.encode(secrets.preimage!),
+        );
+        expect(hex.encode(await senderPubkeyForRfqSecrets(wallet, restored))).toBe(
+            hex.encode(await senderPubkeyForRfqSecrets(wallet, secrets)),
         );
     });
 });
@@ -264,15 +297,21 @@ describe("nothing secret reaches the record", () => {
         const secrets = (await deriveSwapSecrets(wallet))!;
 
         // What a consumer would persist for an HD swap.
+        const preimage = await preimageForRfqSecrets(wallet, secrets);
         const record = {
-            paymentHash: hex.encode(await preimageForRfqSecrets(wallet, secrets)).slice(0, 64),
+            paymentHash: paymentHashOf(preimage),
             signingDescriptor: secrets.signingDescriptor,
         };
 
         expect(Object.keys(secrets)).toEqual(["derivable", "signingDescriptor"]);
+        expect(record.paymentHash).toMatch(/^[0-9a-f]{64}$/i);
+        expect(record.paymentHash).not.toBe(hex.encode(preimage));
+        expect(record.signingDescriptor).toBe(secrets.signingDescriptor);
         for (const [field, value] of Object.entries(record)) {
-            if (field === "paymentHash") continue; // public by construction
-            expect(value).not.toMatch(/^[0-9a-f]{64}$/i);
+            expect({ field, isHex64: /^[0-9a-f]{64}$/i.test(value) }).toEqual({
+                field,
+                isHex64: field === "paymentHash",
+            });
         }
     });
 });

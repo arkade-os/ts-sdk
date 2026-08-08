@@ -203,6 +203,13 @@ function extractArkProviderUrl(provider: ArkProvider): string | undefined {
  */
 export const DEFAULT_LOOK_AHEAD_WINDOW = 20;
 
+/**
+ * Maximum caller-requested HD descriptors materialized past the watermark by
+ * getUsedSigningDescriptors(). Bounds plugin/restore probes without changing
+ * the wallet's actual allocation watermark.
+ */
+export const MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD = 1_000;
+
 // Historical unilateral exit delay for mainnet (~7 days in seconds).
 // Kept so existing wallets can still discover and spend VTXOs sent to the
 // legacy address after arkd starts advertising a different delay.
@@ -2331,9 +2338,10 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         return {
             size: this._lookAheadWindow,
             currentWatermark: async () => (await provider.getLastIndexUsed()) ?? -1,
+            allocate: () => provider.getNextSigningDescriptor(),
+            advanceWatermark: (index) => provider.advanceLastIndexUsed(index),
             materialize: (index) => provider.materializeDescriptorAt(index),
             candidateDeps: () => this.receiveCandidateDeps(),
-            onPromoted: (index) => provider.advanceLastIndexUsed(index),
         };
     }
 
@@ -2461,7 +2469,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             return this.getBoardingAddress();
         }
 
-        const descriptor = await provider.getNextSigningDescriptor();
+        const manager = await this.getContractManager();
+        const descriptor = await manager.getNextSigningDescriptor();
+        if (!descriptor) return this.getBoardingAddress();
         const pubKey = deriveDescriptorLeafPubKey(descriptor);
         const newBoarding = new DefaultVtxo.Script({
             ...this._boardingTapscript.options,
@@ -2469,7 +2479,6 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         });
         const csvTimelock = newBoarding.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
 
-        const manager = await this.getContractManager();
         // Persist BEFORE swapping the visible tapscript: if registration
         // throws, the wallet keeps displaying the previous (registered)
         // boarding address — never an unwatched one (mirrors `rotate()`).
@@ -2518,7 +2527,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     async getNextSigningDescriptor(): Promise<string | undefined> {
         const provider = this._descriptorProvider;
         if (!(provider instanceof HDDescriptorProvider)) return undefined;
-        return provider.getNextSigningDescriptor();
+        return (await this.getContractManager()).getNextSigningDescriptor();
     }
 
     /**
@@ -2539,7 +2548,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         if (!Number.isInteger(index) || index < 0) {
             throw new Error(`descriptor has no trailing child index: ${descriptor}`);
         }
-        await provider.advanceLastIndexUsed(index);
+        await (await this.getContractManager()).advanceSigningDescriptorWatermark(index);
     }
 
     /**
@@ -2555,7 +2564,16 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         const descriptors = new Set<string>();
         if (provider instanceof HDDescriptorProvider) {
             const lastIndexUsed = await provider.getLastIndexUsed();
-            const lookAhead = Math.max(0, Math.trunc(opts?.lookAhead ?? 0));
+            const requestedLookAhead = opts?.lookAhead ?? 0;
+            if (!Number.isFinite(requestedLookAhead)) {
+                throw new Error(
+                    `lookAhead must be a finite number (got ${String(requestedLookAhead)})`,
+                );
+            }
+            const lookAhead = Math.min(
+                MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD,
+                Math.max(0, Math.trunc(requestedLookAhead)),
+            );
             // Probing past the watermark must not move it: an index nothing
             // has claimed yet stays available to the next allocation.
             for (let i = 0; i <= (lastIndexUsed ?? -1) + lookAhead; i++) {
@@ -2921,7 +2939,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // below would otherwise be handed an already-funded index as a fresh
         // receive address. See `ScanResult.highestConfirmedUsedIndex`.
         if (hd && result.highestConfirmedUsedIndex >= 0) {
-            await provider.advanceLastIndexUsed(result.highestConfirmedUsedIndex);
+            await manager.advanceSigningDescriptorWatermark(result.highestConfirmedUsedIndex);
         }
 
         // Leave the wallet watching ahead of the watermark the scan just moved.

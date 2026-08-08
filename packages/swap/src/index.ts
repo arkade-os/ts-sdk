@@ -23,6 +23,7 @@ export {
     addAssetSwap,
     updateAssetSwap,
     type AssetSwap,
+    type AssetSwapFallbackSecrets,
     type AssetSwapStatus,
 } from "./store";
 export {
@@ -105,6 +106,7 @@ export {
     preimageForRfqSecrets,
     randomSwapSecrets,
     rfqSecretsOfRecord,
+    rfqSecretsToRecord,
     senderIdentityForRfqSecrets,
     senderPubkeyForRfqSecrets,
     type DerivedSwapSecrets,

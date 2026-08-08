@@ -417,6 +417,19 @@ export interface IContractManager extends Disposable {
     refillLookAhead(): Promise<void>;
 
     /**
+     * Allocate the next signing descriptor through the manager-owned HD
+     * watermark path. Returns `undefined` when look-ahead/allocation is not
+     * configured.
+     */
+    getNextSigningDescriptor(): Promise<string | undefined>;
+
+    /**
+     * Advance the HD signing descriptor watermark to `index` and refill the
+     * watched look-ahead band. No-op when look-ahead/allocation is not configured.
+     */
+    advanceSigningDescriptorWatermark(index: number): Promise<void>;
+
+    /**
      * Explicit, gap-limit contract discovery used by `wallet.restore()`.
      *
      * Walks HD indices from 0, asking every registered `Discoverable`
@@ -536,6 +549,10 @@ export interface LookAheadConfig {
     size: number;
     /** Current allocation watermark (`lastIndexUsed ?? -1`). */
     currentWatermark(): Promise<number>;
+    /** Allocate the next signing descriptor, advancing the watermark. */
+    allocate?(): Promise<string | undefined>;
+    /** Advance the allocation watermark to a confirmed/restored index. */
+    advanceWatermark?(index: number): Promise<void>;
     /** Signing descriptor at an HD index. Pure derivation. */
     materialize(index: number): string;
     /**
@@ -544,7 +561,10 @@ export interface LookAheadConfig {
      * `rotateServerSigner` fans the new signer set.
      */
     candidateDeps(): CandidateDeps;
-    /** Fired after a speculative entry at `index` is promoted to a real row. */
+    /**
+     * Fired after a speculative entry at `index` is promoted to a real row.
+     * @deprecated Use `advanceWatermark`; kept for external LookAheadConfig users.
+     */
     onPromoted?(index: number): Promise<void>;
 }
 
@@ -804,6 +824,19 @@ export class ContractManager implements IContractManager {
         return this.scheduleLookAheadDrain();
     }
 
+    /** @see IContractManager.getNextSigningDescriptor */
+    async getNextSigningDescriptor(): Promise<string | undefined> {
+        const descriptor = await this.config.lookAhead?.allocate?.();
+        if (descriptor !== undefined) await this.scheduleLookAheadDrain();
+        return descriptor;
+    }
+
+    /** @see IContractManager.advanceSigningDescriptorWatermark */
+    async advanceSigningDescriptorWatermark(index: number): Promise<void> {
+        await this.advanceLookAheadWatermark(index);
+        await this.scheduleLookAheadDrain();
+    }
+
     /**
      * Serialized drain of the look-ahead band: concurrent callers join the
      * active drain and mark it dirty, an idle call starts a new one. Promotion
@@ -967,6 +1000,13 @@ export class ContractManager implements IContractManager {
         }
     }
 
+    private async advanceLookAheadWatermark(index: number): Promise<void> {
+        const lookAhead = this.config.lookAhead;
+        if (!lookAhead) return;
+        const advance = lookAhead.advanceWatermark ?? lookAhead.onPromoted;
+        await advance?.(index);
+    }
+
     /**
      * Promote every look-ahead entry funded by `vtxos` into a real repository
      * row, returning the persisted rows keyed by script.
@@ -994,7 +1034,7 @@ export class ContractManager implements IContractManager {
         for (const [script, entry] of hits) {
             // `upsertContract` declassifies the entry (D10).
             promoted.set(script, await this.persistAndWatchContract(entry.params));
-            await this.config.lookAhead?.onPromoted?.(entry.index);
+            await this.advanceLookAheadWatermark(entry.index);
         }
         // The watermark moved (or a gap closed): slide the band, but not from
         // inside the sync this promotion belongs to.

@@ -6,6 +6,7 @@ import {
     SingleKey,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD,
     isHDWalletCapable,
     isHDAllocationCapable,
 } from "../src";
@@ -198,6 +199,31 @@ describe("HDWalletCapable", () => {
 
         expect(probed).toEqual([0, 1, 2].map((i) => provider.materializeDescriptorAt(i)));
         // An index nothing has claimed stays available to the next allocation.
+        expect(await provider.getLastIndexUsed()).toBe(0);
+        await wallet.dispose();
+    });
+
+    it("rejects non-finite look-ahead values", async () => {
+        const wallet = await makeWallet({ hd: true });
+
+        await expect(wallet.getUsedSigningDescriptors({ lookAhead: Infinity })).rejects.toThrow(
+            /finite number/,
+        );
+        await wallet.dispose();
+    });
+
+    it("caps excessive finite look-ahead before materializing descriptors", async () => {
+        const wallet = await makeWallet({ hd: true });
+        const provider: HDDescriptorProvider = (wallet as any)._descriptorProvider;
+
+        const probed = await wallet.getUsedSigningDescriptors({
+            lookAhead: MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD + 500,
+        });
+
+        expect(probed).toHaveLength(MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD + 1);
+        expect(probed.at(-1)).toBe(
+            provider.materializeDescriptorAt(MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD),
+        );
         expect(await provider.getLastIndexUsed()).toBe(0);
         await wallet.dispose();
     });

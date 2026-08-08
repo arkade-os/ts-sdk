@@ -13,7 +13,9 @@
  * preimage must be able to come back empty rather than be handed a fresh
  * random one that will never match the chain.
  */
+import { hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha2.js";
+import { randomBytes } from "@noble/hashes/utils.js";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     Identity,
@@ -23,6 +25,7 @@ import {
     isHDAllocationCapable,
     isHDWalletCapable,
 } from "@arkade-os/sdk";
+import type { AssetSwapFallbackSecrets } from "./store";
 
 /**
  * Domain separator for the preimage derivation.
@@ -69,6 +72,8 @@ export interface DerivedSwapSecrets {
     derivable: true;
     /** Public. Persist it on the swap record; it is what restore keys off. */
     signingDescriptor: string;
+    /** Onchain-send only, when the caller supplied P instead of deriving it. */
+    preimage?: Uint8Array;
 }
 
 /** The wallet could not allocate. These are real secrets — persist them. */
@@ -105,29 +110,83 @@ export async function deriveSwapSecrets(wallet: IWallet): Promise<DerivedSwapSec
  * The fallback arm. Separate from {@link deriveSwapSecrets} so nothing can
  * fabricate a preimage while probing for a derived one.
  */
-export function randomSwapSecrets(opts: { preimage?: boolean } = {}): StoredSwapSecrets {
+export function randomSwapSecrets(
+    opts: { preimage?: boolean | Uint8Array } = {},
+): StoredSwapSecrets {
+    const preimage =
+        opts.preimage instanceof Uint8Array
+            ? opts.preimage
+            : opts.preimage
+              ? randomBytes(32)
+              : undefined;
     return {
         derivable: false,
         senderPrivateKey: schnorr.utils.randomSecretKey(),
-        ...(opts.preimage ? { preimage: schnorr.utils.randomSecretKey() } : {}),
+        ...(preimage ? { preimage } : {}),
     };
 }
 
 /**
- * The secrets arm a persisted record describes, or `undefined` when the record
- * predates derivation (or was written by a wallet that could not derive).
- *
- * Only the derivable arm is reconstructible from a record: `AssetSwap`
- * deliberately has no field for a sender private key, so a stored-arm swap's
- * key lives in whatever encrypted store the consumer provides and must be
- * supplied from there.
+ * Serialize or restore the secrets arm a persisted record describes. Normal
+ * HD swaps store only `signingDescriptor`; caller-supplied preimages add
+ * `preimageHex`; fallback swaps use `fallbackSecrets` so both P and the
+ * sender identity survive a restart.
  */
+export function rfqSecretsToRecord(secrets: SwapSecrets): {
+    signingDescriptor?: string;
+    preimageHex?: string;
+    fallbackSecrets?: AssetSwapFallbackSecrets;
+} {
+    if (secrets.derivable) {
+        return {
+            signingDescriptor: secrets.signingDescriptor,
+            ...(secrets.preimage ? { preimageHex: hex.encode(secrets.preimage) } : {}),
+        };
+    }
+    return {
+        fallbackSecrets: {
+            version: 1,
+            type: "stored",
+            senderPrivateKeyHex: hex.encode(secrets.senderPrivateKey),
+            ...(secrets.preimage ? { preimageHex: hex.encode(secrets.preimage) } : {}),
+        },
+    };
+}
+
 export function rfqSecretsOfRecord(record: {
     signingDescriptor?: string;
     preimageHex?: string;
-}): DerivedSwapSecrets | undefined {
-    if (!record.signingDescriptor) return undefined;
-    return { derivable: true, signingDescriptor: record.signingDescriptor };
+    fallbackSecrets?: AssetSwapFallbackSecrets;
+}): SwapSecrets | undefined {
+    if (record.signingDescriptor) {
+        return {
+            derivable: true,
+            signingDescriptor: record.signingDescriptor,
+            ...(record.preimageHex
+                ? { preimage: decodeHex32(record.preimageHex, "preimageHex") }
+                : {}),
+        };
+    }
+    const fallback = record.fallbackSecrets;
+    if (!fallback) return undefined;
+    if (fallback.version !== 1 || fallback.type !== "stored") {
+        throw new Error("unsupported RFQ fallback secrets record");
+    }
+    return {
+        derivable: false,
+        senderPrivateKey: decodeHex32(fallback.senderPrivateKeyHex, "senderPrivateKeyHex"),
+        ...(fallback.preimageHex
+            ? { preimage: decodeHex32(fallback.preimageHex, "preimageHex") }
+            : {}),
+    };
+}
+
+function decodeHex32(value: string, label: string): Uint8Array {
+    const bytes = hex.decode(value);
+    if (bytes.length !== 32) {
+        throw new Error(label + " must be 32 bytes, got " + bytes.length);
+    }
+    return bytes;
 }
 
 /**
@@ -201,6 +260,7 @@ export async function preimageForRfqSecrets(
         if (!secrets.preimage) throw new Error("this swap carries no stored preimage");
         return secrets.preimage;
     }
+    if (secrets.preimage) return secrets.preimage;
     const signer = await senderIdentityForRfqSecrets(wallet, secrets);
     if (!isDeterministicSigner(signer)) {
         // Loud: a preimage from a random-aux signature is unrecoverable, and

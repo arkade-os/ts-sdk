@@ -32,6 +32,7 @@ import {
     HDDescriptorProvider,
     InMemoryWalletRepository,
     MnemonicIdentity,
+    SingleKey,
     type IWallet,
 } from "@arkade-os/sdk";
 import {
@@ -81,6 +82,14 @@ const hdWallet = async (): Promise<IWallet> => {
             new DescriptorIdentity({ descriptor, signer: provider, base: identity }),
     } as unknown as IWallet;
 };
+
+const staticWallet = (): IWallet =>
+    ({
+        identity: SingleKey.fromHex(
+            "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
+        ),
+        getAddress: async () => REFUND_ADDRESS,
+    }) as unknown as IWallet;
 
 /** Quotes back whatever the maker derived, so the flow reaches its gates. */
 const lightningTransport = (): RfqTransport => ({
@@ -257,20 +266,54 @@ describe("requestOnchainSend on an HD wallet", () => {
         expect(second.paymentHash).not.toBe(first.paymentHash);
     });
 
-    it("falls back to the stored arm when the caller brings its own preimage", async () => {
+    it("keeps the HD sender key when the caller brings its own preimage", async () => {
         const wallet = await hdWallet();
         const preimage = new Uint8Array(32).fill(7);
-        const result = await requestOnchainSend(
-            wallet,
-            "http://ark",
-            EMULATOR_PUBKEY,
-            onchainTransport({}),
-            { amount: 100_000, amountSide: "to", payoutPubkey: PAYOUT_PUBKEY, preimage },
-        );
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+            const result = await requestOnchainSend(
+                wallet,
+                "http://ark",
+                EMULATOR_PUBKEY,
+                onchainTransport({}),
+                { amount: 100_000, amountSide: "to", payoutPubkey: PAYOUT_PUBKEY, preimage },
+            );
 
-        // A preimage the caller owns cannot be re-derived, so the record has
-        // to keep it — saying `derivable` here would lose it silently.
-        expect(result.secrets.derivable).toBe(false);
-        expect(await preimageForRfqSecrets(wallet, result.secrets)).toEqual(preimage);
+            expect(result.secrets.derivable).toBe(true);
+            if (!result.secrets.derivable) throw new Error("expected derived secrets");
+            expect(result.secrets.preimage).toEqual(preimage);
+            expect(await preimageForRfqSecrets(wallet, result.secrets)).toEqual(preimage);
+
+            const signer = await wallet.signerForDescriptor!(result.secrets.signingDescriptor);
+            expect(hex.encode(result.senderPubkey)).toBe(hex.encode(await signer.xOnlyPublicKey()));
+            expect(warn).toHaveBeenCalledWith(expect.stringContaining("supplied by the caller"));
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    it("warns and returns raw fallback secrets when allocation is unavailable", async () => {
+        const wallet = staticWallet();
+        const preimage = new Uint8Array(32).fill(8);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+            const result = await requestOnchainSend(
+                wallet,
+                "http://ark",
+                EMULATOR_PUBKEY,
+                onchainTransport({}),
+                { amount: 100_000, amountSide: "to", payoutPubkey: PAYOUT_PUBKEY, preimage },
+            );
+
+            expect(result.secrets.derivable).toBe(false);
+            if (result.secrets.derivable) throw new Error("expected stored secrets");
+            expect(result.secrets.senderPrivateKey).toBeInstanceOf(Uint8Array);
+            expect(result.secrets.preimage).toEqual(preimage);
+            expect(await preimageForRfqSecrets(wallet, result.secrets)).toEqual(preimage);
+            expect(warn).toHaveBeenCalledWith(expect.stringContaining("sender key is random"));
+            expect(warn.mock.calls.join("\n")).not.toContain("preimage and sender key are random");
+        } finally {
+            warn.mockRestore();
+        }
     });
 });
