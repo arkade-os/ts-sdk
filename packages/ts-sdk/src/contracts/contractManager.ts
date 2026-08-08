@@ -1508,11 +1508,15 @@ export class ContractManager implements IContractManager {
         );
     }
 
+    // Field-by-field, so every filter a caller can express reaches the
+    // repository. A field missing here is not a narrower query — it is an
+    // unfiltered one.
     private buildContractsDbFilter(filter: GetContractsFilter): ContractFilter {
         return {
             script: filter.script,
             state: filter.state,
             type: filter.type,
+            watch: filter.watch,
         };
     }
 

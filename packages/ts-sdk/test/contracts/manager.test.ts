@@ -653,6 +653,39 @@ describe("ContractManager", () => {
                 watcherConfig: { failsafePollIntervalMs: 1000, reconnectDelayMs: 500 },
             });
 
+        it("filters by watch state through the manager, not just the repository", async () => {
+            // `getContracts` rebuilds the repository filter field by field, so
+            // a field it forgets is not a narrower query — it is an unfiltered
+            // one, and every caller silently gets every row.
+            const mgr = await newManager();
+            try {
+                await mgr.createContract({
+                    type: "default",
+                    params: createDefaultContractParams(),
+                    script: TEST_DEFAULT_SCRIPT,
+                    address: "address-1",
+                });
+                await mgr.createContract({
+                    type: "default",
+                    params: SECOND_DEFAULT_PARAMS,
+                    script: SECOND_DEFAULT_SCRIPT,
+                    address: "address-2",
+                    watch: "awaiting-funds",
+                });
+                await mgr.setContractWatchState(TEST_DEFAULT_SCRIPT, "retained");
+
+                expect(
+                    (await mgr.getContracts({ watch: "retained" })).map((c) => c.script),
+                ).toEqual([TEST_DEFAULT_SCRIPT]);
+                expect(
+                    (await mgr.getContracts({ watch: "awaiting-funds" })).map((c) => c.script),
+                ).toEqual([SECOND_DEFAULT_SCRIPT]);
+                expect(await mgr.getContracts({ watch: "watched" })).toHaveLength(0);
+            } finally {
+                await mgr.dispose();
+            }
+        });
+
         it("drops a retained contract from the subscription and the sweep, keeping the row", async () => {
             const mgr = await newManager();
             try {
