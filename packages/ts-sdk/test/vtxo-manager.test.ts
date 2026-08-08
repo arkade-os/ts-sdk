@@ -3806,6 +3806,39 @@ describe("VtxoManager - intent fee pricing", () => {
             expect(balance.vtxoCount).toBe(2);
         });
 
+        /**
+         * `subdust` reports part of what `recoverable` reports, so pricing one
+         * and not the other leaves them on different bases. A wallet whose whole
+         * recoverable set is subdust makes that visible: the two have to agree,
+         * and a gross `subdust` would exceed the net `recoverable`.
+         */
+        it("reports subdust net of fees, so it cannot exceed the recoverable total", async () => {
+            // Both are subdust against the 1000 threshold but total 1100, so
+            // getRecoverableWithSubdust folds them in.
+            const wallet = createMockWallet([swept(600), swept(500)], ADDRESS, {
+                intentFee: { offchainInput: "amount * 0.01" },
+            });
+            const balance = await new VtxoManager(wallet).getRecoverableBalance();
+
+            // 600 less 6, and 500 less 5. Gross would report 1100.
+            expect(balance.subdust).toBe(1089n);
+            expect(balance.includesSubdust).toBe(true);
+            expect(balance.recoverable).toBe(1089n);
+            expect(balance.subdust).toBe(balance.recoverable);
+        });
+
+        it("prices only the subdust coins into subdust when the set is mixed", async () => {
+            const wallet = createMockWallet([swept(5000), swept(600), swept(500)], ADDRESS, {
+                intentFee: { offchainInput: "amount * 0.01" },
+            });
+            const balance = await new VtxoManager(wallet).getRecoverableBalance();
+
+            // The two subdust coins net 594 and 495; the 5000 nets 4950 on top.
+            expect(balance.subdust).toBe(1089n);
+            expect(balance.recoverable).toBe(6039n);
+            expect(balance.subdust).toBeLessThan(balance.recoverable);
+        });
+
         it("omits from the preview a VTXO that cannot pay its own fee", async () => {
             const wallet = createMockWallet([swept(5000), swept(100)], ADDRESS, {
                 intentFee: { offchainInput: "250.0" },

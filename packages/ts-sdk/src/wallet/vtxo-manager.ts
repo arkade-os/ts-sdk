@@ -1229,6 +1229,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const estimator = new Estimator(info?.fees.intentFee ?? {});
         const { payable, net } = priceSettlementInputs(vtxosToRecover, estimator);
         const capped = capSettlementBatch(byValueDescending(payable), vtxoMaxAmount);
+        // Compared against the pre-pricing count deliberately: this fires when
+        // EITHER filter narrowed the batch, fee pricing or a size cap, since both
+        // mean the subdust decision above was made over a set we are no longer
+        // settling and has to be re-run. Not just the cap, despite the name.
         if (capped.length < vtxosToRecover.length) {
             const recoverableCount = vtxosToRecover.length;
             // Two different things can narrow the batch, and an operator
@@ -1372,10 +1376,18 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // than settling it, so report nothing recoverable instead of a negative.
         const recoverable = priced > 0n ? priced : 0n;
 
-        // Calculate subdust amount separately for reporting
-        const subdustAmount = payable
-            .filter((v) => BigInt(v.value) < dustAmount)
-            .reduce((sum, v) => sum + BigInt(v.value), 0n);
+        // Subdust is CLASSIFIED on gross value — that is what makes a coin
+        // subdust, and what `getRecoverableWithSubdust` judged inclusion on — but
+        // REPORTED net, so it stays a component of `recoverable` above rather
+        // than a figure on a different basis. Summing it gross lets `subdust`
+        // exceed `recoverable` whenever the recoverable set is entirely subdust,
+        // which is exactly the wallet this field exists to describe. Totalled
+        // through `subtotalOf` so an unpriced input throws instead of silently
+        // contributing zero.
+        const subdustAmount = subtotalOf(
+            payable.filter((v) => BigInt(v.value) < dustAmount),
+            net,
+        );
 
         return {
             recoverable,
