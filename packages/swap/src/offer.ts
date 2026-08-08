@@ -30,6 +30,8 @@ import {
 
 import wantAssetProgram from "./swap-want-asset.program.json";
 import wantBtcProgram from "./swap-want-btc.program.json";
+import type { AssetSwapRepository } from "./repository";
+import { updateAssetSwap } from "./store";
 
 // json imports widen "type": "pubkey" to string; parseArtifact validates at runtime
 type Artifact = Parameters<typeof arkade.parseArtifact>[0];
@@ -433,7 +435,7 @@ export async function createOffer(
  * is filling in the same moment may be spent by `fulfill` first, in which case
  * this throws "no spendable VTXO at the swap address" — which means the swap
  * completed, not that anything failed. `restoreAssetSwaps` classifies the two
- * spends apart afterwards (see `isCancelSpend`).
+ * spends apart afterwards by the leaf each took (see `classifySpend`).
  *
  * Marking the deposit as escrow (see {@link registerOfferContract}) does not
  * close this path: the gate's subject is *implicit* coin selection, and cancel
@@ -447,14 +449,30 @@ export async function createOffer(
  * built with, so cancel keeps working across a server signer rotation; without
  * it a rotated key is detected and reported rather than reading as a missing
  * VTXO.
+ *
+ * **This records its own outcome, and that is what makes the live watcher
+ * cheap.** `cancel` is a 2-of-2 of maker and server, so a cancel can only be
+ * the maker's own act: on a successful submit this *is* the authoritative
+ * answer, and writing it here means `watchOfferSwaps` has nothing left to
+ * decide for our own cancels — it sees a terminal record and leaves it alone.
+ * The status moves to `cancelling` first so a crash between submit and record
+ * leaves a marker rather than a swap that still looks pending.
+ *
+ * The txid is only knowable after `send()` returns, so a spend event that
+ * arrives in that window finds a `cancelling` record and classifies the spend
+ * by its covenant leaf instead — the same answer, one indexer read more.
  */
 export async function cancelOffer(
     wallet: IWallet,
     arkServerUrl: string,
     offerHex: string,
-    fundingTxid?: string,
-    swapAddress?: string,
+    opts: {
+        repository: AssetSwapRepository;
+        fundingTxid?: string;
+        swapAddress?: string;
+    },
 ): Promise<string> {
+    const { repository, fundingTxid, swapAddress } = opts;
     const offer = decodeOffer(hex.decode(offerHex));
 
     const client = await arkade.Arkade.connect({
@@ -512,6 +530,13 @@ export async function cancelOffer(
             outputs: [{ vout: 0, amount: BigInt(a.amount) }],
         });
     }
+    // the in-flight marker: written before submit so a crash in between leaves
+    // a swap that reads as cancelling rather than as untouched
+    await updateAssetSwap(repository, fundingTxid ?? vtxo.txid, { status: "cancelling" });
     const { txid } = await cancel.send();
+    await updateAssetSwap(repository, fundingTxid ?? vtxo.txid, {
+        status: "cancelled",
+        spentTxid: txid,
+    });
     return txid;
 }

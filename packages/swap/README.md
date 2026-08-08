@@ -7,7 +7,7 @@ a wallet restore. Framework-free TypeScript over `@arkade-os/sdk`: the core API 
 browser, and React Native alike. `IndexedDbAssetSwapRepository` is the one exception — it needs a
 platform-provided or polyfilled IndexedDB.
 
-## The five layers
+## The seven layers
 
 1. **`offer`** — the swap covenant itself. Two program JSONs (want-BTC / want-asset), the
    `Offer` type, the TLV wire codec (`encodeOffer`/`decodeOffer`, `OFFER_PACKET_TYPE`), address
@@ -25,11 +25,14 @@ platform-provided or polyfilled IndexedDB.
    offer packets and binding each funding vtxo to its spend. Incremental: answered txids are
    remembered in the repository (`getScannedTxids`/`markTxidsScanned`) so nothing is fetched
    twice.
-5. **`rfq`** — the maker / intent-submitter side of quoted swaps: RFQ negotiation over HTTP or a
+5. **`watch`** — `watchOfferSwaps` drives swap status from the wallet's own contract events, so a
+   fill shows up without re-running a scan. Registration is what makes it possible: only a
+   registered covenant is watched. See "Live status" below.
+6. **`rfq`** — the maker / intent-submitter side of quoted swaps: RFQ negotiation over HTTP or a
    relay, then non-interactive filling (see below). Covers `arkade:BTC|asset -> lightning:BTC`
    (implemented against the reference solver), `arkade:BTC|asset -> arkade:BTC|asset` (quote,
    then take by funding an offer from layer 1), and the onchain corridor below.
-6. **`onchainHtlc`** — the Bitcoin-L1 side of `arkade:BTC <-> onchain:BTC`: a NUMS-keyed taproot
+7. **`onchainHtlc`** — the Bitcoin-L1 side of `arkade:BTC <-> onchain:BTC`: a NUMS-keyed taproot
    HTLC as pure local derivation (golden-pinned), claim/refund spend builders with signing as a
    callback, the injected `ChainSource` seam (the package holds no L1 backend and no keys),
    preimage extraction from a spend's witness, and crash-recovery classification.
@@ -84,11 +87,41 @@ The minimum a maker must keep to stay in control of a swap is `offerHex` plus th
 Everything else — status, amounts, timestamps — `restoreAssetSwaps` rebuilds from chain, and the
 offer bytes themselves are recoverable from the funding tx if the record is lost.
 
+## Live status
+
+```ts
+const watcher = await watchOfferSwaps({ wallet, arkServerUrl: ARK, repository, onUpdate: render });
+// later
+watcher.stop();
+```
+
+Because `createOffer` registers the covenant, the wallet already watches that script and emits a
+spend event when the deposit moves — so a **fill** reaches the maker without re-running a scan,
+which is what `restoreAssetSwaps` alone could never do.
+
+How a spend is classified, cheapest answer first: a cancel this device made is already recorded by
+`cancelOffer`, so nothing needs deciding; anything else is read off the spending transaction's
+covenant leaf (`cancel` vs `fulfill`), which is exact and stays exact when one transaction fills
+several offers at once. A spend that cannot be classified — the indexer has not caught up, say —
+**leaves the record untouched** for the restore scan to decide later. Nothing is written on a
+guess: a stored swap is skipped by every later scan, so a guess here would be permanent.
+
+`onUpdate` is a notification for UI reactivity, not a second store; every write goes through the
+repository.
+
 ## Cancelling an offer no taker filled
 
 ```ts
-const txid = await cancelOffer(wallet, ARK, swap.offerHex, swap.fundingTxid, swap.swapAddress);
+const txid = await cancelOffer(wallet, ARK, swap.offerHex, {
+    repository,
+    fundingTxid: swap.fundingTxid,
+    swapAddress: swap.swapAddress,
+});
 ```
+
+The call records its own outcome — `cancelling` before submitting, `cancelled` plus the spend txid
+after — so a cancel needs no follow-up write from the caller, and the live watcher below finds a
+record already resolved rather than re-deriving it.
 
 **An unfilled offer never expires.** Neither program carries a timelock, so a deposit no taker
 picked up sits at the swap address indefinitely — nothing reclaims it for the maker, and there is
@@ -247,6 +280,17 @@ The package is pre-release; these notes replace a changelog for consumers tracki
   coordinated:** trader and solver derive the lockup independently and compare (`lockup_address` /
   `htlc_address` are compare-only), so a version mismatch does not lose funds — it refuses every
   quote at `verifyLockupAddress`. Upgrade both sides before expecting fills.
+- **`cancelOffer` and `restoreAssetSwaps` take an options object.** `cancelOffer(wallet, url,
+offerHex, { repository, fundingTxid?, swapAddress? })` — the repository is required because the
+  call now records its own outcome. `restoreAssetSwaps(indexer, txs, existingIds, { serverPubkey,
+scanned? })` — the server key is required because a spend is classified by rebuilding the
+  covenant and matching the leaf it took.
+- **`isCancelSpend` is gone**, replaced by `classifySpend`, and `Tx.assets` with it. The old test
+  read what a transaction moved, which a wallet reports as a _net_ delta: once the deposit is a
+  registered contract, an asset offer's cancel moves the asset out and back, nets to zero, and is
+  indistinguishable from a fill. Leaves have no such failure mode.
+- **A spend that cannot be classified is no longer restored as `fulfilled`.** It leaves the funding
+  txid unanswered so a later scan decides it. Records are never written on a guess.
 - **`lightningSendProgram` and `htlcSendProgram` are gone** along with the program-artifact layer
   they compiled. Derive scripts through `lightningSendVtxoScript` / `onchainHtlcScript`.
 - **`lightningSendVtxoScript` takes two new required fields**: `senderPubkey` (the trader's VHTLC

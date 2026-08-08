@@ -13,6 +13,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { execSync } from "child_process";
 import { hex } from "@scure/base";
 import {
+    ArkAddress,
     asset,
     EsploraProvider,
     InMemoryContractRepository,
@@ -22,7 +23,14 @@ import {
     SingleKey,
     Wallet,
 } from "@arkade-os/sdk";
-import { cancelOffer, createOffer, decodeOffer, restoreAssetSwaps, type Tx } from "../../src";
+import {
+    cancelOffer,
+    createOffer,
+    decodeOffer,
+    InMemoryAssetSwapRepository,
+    restoreAssetSwaps,
+    type Tx,
+} from "../../src";
 
 const ARK_URL = "http://localhost:7070";
 const EMULATOR_URL = "http://localhost:7073";
@@ -73,8 +81,12 @@ const waitFor = async (
 };
 
 const indexer = new RestIndexerProvider(ARK_URL);
+const repository = new InMemoryAssetSwapRepository();
 let wallet: Wallet;
 let emulatorPubkey: Uint8Array;
+// the key the covenants are funded against — restore classifies each spend by
+// the covenant leaf it took, so it has to rebuild the same script
+let serverPubkey: Uint8Array;
 
 beforeAll(async () => {
     wallet = await Wallet.create({
@@ -107,6 +119,8 @@ beforeAll(async () => {
     // calling createOffer.
     const emulatorInfo = await new RestEmulatorProvider(EMULATOR_URL).getInfo();
     emulatorPubkey = xOnly(hex.decode(emulatorInfo.signerPubkey));
+
+    serverPubkey = ArkAddress.decode(await wallet.getAddress()).serverPubKey;
 }, 120_000);
 
 describe("maker-side swap loop (regtest)", () => {
@@ -143,7 +157,9 @@ describe("maker-side swap loop (regtest)", () => {
             redeemTxid: fundingTxid,
             createdAt: Math.floor(Date.now() / 1000),
         });
-        const { restored, scannedTxids } = await restoreAssetSwaps(indexer, history, new Set());
+        const { restored, scannedTxids } = await restoreAssetSwaps(indexer, history, new Set(), {
+            serverPubkey,
+        });
 
         expect(scannedTxids).toEqual([fundingTxid]);
         expect(restored).toHaveLength(1);
@@ -224,13 +240,11 @@ describe("maker-side swap loop (regtest)", () => {
         // outpoint, so the escrow marker must not close the one spend route the
         // maker actually owns. A future tightening that gates explicit inputs
         // would strand every offer deposit, and would fail here.
-        const cancelTxid = await cancelOffer(
-            wallet,
-            ARK_URL,
-            restoredOfferHex,
+        const cancelTxid = await cancelOffer(wallet, ARK_URL, restoredOfferHex, {
+            repository,
             fundingTxid,
-            offer.address,
-        );
+            swapAddress: offer.address,
+        });
         expect(cancelTxid).toBeTruthy();
 
         const script = hex.encode(offer.swapPkScript);
@@ -248,7 +262,7 @@ describe("maker-side swap loop (regtest)", () => {
             redeemTxid: cancelTxid,
             createdAt: Math.floor(Date.now() / 1000),
         });
-        const { restored } = await restoreAssetSwaps(indexer, history, new Set());
+        const { restored } = await restoreAssetSwaps(indexer, history, new Set(), { serverPubkey });
         expect(restored).toHaveLength(1);
         expect(restored[0]).toMatchObject({
             status: "cancelled",

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { ArkAddress, asset, type IWallet } from "@arkade-os/sdk";
 import { cancelOffer, encodeOffer, offerVtxoScript, type Offer } from "../src/offer";
+import { InMemoryAssetSwapRepository } from "../src/repository";
 
 // cancelOffer's guards fire before any signing: mock only the network seam
 // (Arkade.connect for the current server key, ArkadeContract for the vtxo
@@ -62,9 +63,11 @@ const wallet = {
 describe("cancelOffer guards", () => {
     it("diagnoses a rotated server key instead of reporting a missing VTXO", async () => {
         state.serverKey = rotatedServerKey;
-        await expect(cancelOffer(wallet, "http://ark", offerHex)).rejects.toThrow(
-            "signing key has likely rotated",
-        );
+        await expect(
+            cancelOffer(wallet, "http://ark", offerHex, {
+                repository: new InMemoryAssetSwapRepository(),
+            }),
+        ).rejects.toThrow("signing key has likely rotated");
     });
 
     it("proceeds past a rotation when swapAddress pins the funded server key", async () => {
@@ -73,7 +76,10 @@ describe("cancelOffer guards", () => {
         state.serverKey = rotatedServerKey;
         state.utxos = [];
         await expect(
-            cancelOffer(wallet, "http://ark", offerHex, undefined, fundedAddress),
+            cancelOffer(wallet, "http://ark", offerHex, {
+                repository: new InMemoryAssetSwapRepository(),
+                swapAddress: fundedAddress,
+            }),
         ).rejects.toThrow("no spendable VTXO");
     });
 
@@ -83,9 +89,11 @@ describe("cancelOffer guards", () => {
             { txid: "a".repeat(64), vout: 0, value: 10_000 },
             { txid: "b".repeat(64), vout: 0, value: 10_000 },
         ];
-        await expect(cancelOffer(wallet, "http://ark", offerHex)).rejects.toThrow(
-            "pass fundingTxid",
-        );
+        await expect(
+            cancelOffer(wallet, "http://ark", offerHex, {
+                repository: new InMemoryAssetSwapRepository(),
+            }),
+        ).rejects.toThrow("pass fundingTxid");
     });
 
     // without this the contract takes the direct-indexer fallback and a
@@ -94,9 +102,11 @@ describe("cancelOffer guards", () => {
         state.serverKey = fundedServerKey;
         state.utxos = [];
         state.connectOptions = undefined;
-        await expect(cancelOffer(wallet, "http://ark", offerHex)).rejects.toThrow(
-            "no spendable VTXO",
-        );
+        await expect(
+            cancelOffer(wallet, "http://ark", offerHex, {
+                repository: new InMemoryAssetSwapRepository(),
+            }),
+        ).rejects.toThrow("no spendable VTXO");
         expect(state.connectOptions?.contractManager).toBe(contractManager);
     });
 });
