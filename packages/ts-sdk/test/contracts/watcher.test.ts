@@ -9,12 +9,15 @@ import {
     type IndexerProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    EventSourceUnavailableError,
 } from "../../src";
+import { saveVtxosForContract } from "../../src/contracts/vtxoOwnership";
 import type { SubscriptionResponse } from "../../src/providers/indexer";
 import { hex } from "@scure/base";
 import {
     createDefaultContractParams,
     createDelegateContractParams,
+    createMockExtendedVtxo,
     createMockIndexerProvider,
     createMockVtxo,
     TEST_DEFAULT_SCRIPT,
@@ -379,6 +382,82 @@ describe("ContractWatcher", () => {
             } finally {
                 warnSpy.mockRestore();
                 await watcher.stopWatching();
+            }
+        });
+    });
+    describe("when the environment has no EventSource", () => {
+        const noEventSource = () =>
+            Object.assign(createMockIndexerProvider(), {
+                getSubscription: vi.fn(() => ({
+                    [Symbol.asyncIterator]: () => ({
+                        next: () => Promise.reject(new EventSourceUnavailableError()),
+                    }),
+                })),
+            }) as IndexerProvider;
+
+        it("says so once, stops reconnecting, and keeps polling", async () => {
+            vi.useFakeTimers();
+            const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+            const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+            const indexer = noEventSource();
+            const walletRepository = new InMemoryWalletRepository();
+            const watcher = new ContractWatcher({
+                indexerProvider: indexer,
+                walletRepository,
+                failsafePollIntervalMs: 1_000,
+            });
+            const contract: Contract = {
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+                state: "active",
+                createdAt: Date.now(),
+            };
+            const events: ContractEvent[] = [];
+
+            try {
+                await watcher.addContract(contract);
+                await watcher.startWatching((event) => events.push(event));
+                await vi.advanceTimersByTimeAsync(0);
+
+                const attemptsAfterConnect = (indexer.getSubscription as any).mock.calls.length;
+                const warning = warnSpy.mock.calls.find(
+                    (call) =>
+                        typeof call[0] === "string" && call[0].includes("contract events are OFF"),
+                );
+                expect(warning).toBeDefined();
+                // The remedy has to travel with the warning, not just the type.
+                expect(String(warning?.[0])).toContain("configureEventSource");
+                // A ReferenceError used to land here every few seconds.
+                expect(errorSpy).not.toHaveBeenCalled();
+
+                // Past several reconnect windows (backoff caps at 5s): no retry
+                // and no second warning...
+                await vi.advanceTimersByTimeAsync(30_000);
+                expect((indexer.getSubscription as any).mock.calls.length).toBe(
+                    attemptsAfterConnect,
+                );
+                expect(
+                    warnSpy.mock.calls.filter(
+                        (call) =>
+                            typeof call[0] === "string" &&
+                            call[0].includes("contract events are OFF"),
+                    ),
+                ).toHaveLength(1);
+
+                // ...while the failsafe poll still delivers: a VTXO that lands
+                // after the stream gave up is still reported, just later.
+                await saveVtxosForContract(walletRepository, contract, [
+                    createMockExtendedVtxo({ script: contract.script, txid: "ab".repeat(32) }),
+                ]);
+                await vi.advanceTimersByTimeAsync(2_000);
+                expect(events.map((e) => e.type)).toContain("vtxo_received");
+            } finally {
+                await watcher.stopWatching();
+                warnSpy.mockRestore();
+                errorSpy.mockRestore();
+                vi.useRealTimers();
             }
         });
     });

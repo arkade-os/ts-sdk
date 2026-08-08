@@ -5,6 +5,7 @@ import { extendVirtualCoinForContract } from "../wallet/utils";
 import { WalletRepository } from "../repositories/walletRepository";
 import { Contract, ContractVtxo, ContractEventCallback, ContractEvent } from "./types";
 import { isEventSourceError } from "../providers/utils";
+import { isEventSourceUnavailableError } from "../providers/eventSource";
 import { getVtxosForContract } from "./vtxoOwnership";
 
 /**
@@ -143,6 +144,8 @@ export class ContractWatcher {
     /** See {@link withCoalescedSubscription}. */
     private subscriptionBatchDepth = 0;
     private subscriptionUpdateDeferred = false;
+    /** See {@link reportEventSourceUnavailable} — said once, not per attempt. */
+    private eventSourceReported = false;
 
     /**
      * Create a contract watcher with the given providers and polling settings.
@@ -417,7 +420,7 @@ export class ContractWatcher {
                 // is restored and events are fired.
                 if (isEventSourceError(e)) {
                     console.debug("ContractWatcher subscription disconnected; reconnecting");
-                } else {
+                } else if (!isEventSourceUnavailableError(e)) {
                     console.error(e);
                 }
                 this.connectionState = "disconnected";
@@ -425,17 +428,45 @@ export class ContractWatcher {
                     type: "connection_reset",
                     timestamp: Date.now(),
                 });
+                if (this.reportEventSourceUnavailable(e)) return;
                 this.scheduleReconnect();
             });
         } catch (error) {
-            console.error("ContractWatcher connection failed:", error);
+            if (!isEventSourceUnavailableError(error)) {
+                console.error("ContractWatcher connection failed:", error);
+            }
             this.connectionState = "disconnected";
             this.eventCallback?.({
                 type: "connection_reset",
                 timestamp: Date.now(),
             });
+            if (this.reportEventSourceUnavailable(error)) return;
             this.scheduleReconnect();
         }
+    }
+
+    /**
+     * Handle "this environment has no `EventSource`": say so once, loudly and
+     * actionably, and answer whether the caller should skip reconnecting.
+     *
+     * Reconnecting is pointless here — a missing global is not a dropped
+     * connection, and the default backoff (unlimited attempts, capped at 5s)
+     * would otherwise retry it forever, logging each failure and firing a
+     * `connection_reset` every few seconds for the life of the wallet.
+     * Failsafe polling keeps running, so the watcher stays correct and merely
+     * slower; what it loses is push latency.
+     */
+    private reportEventSourceUnavailable(error: unknown): boolean {
+        if (!isEventSourceUnavailableError(error)) return false;
+        if (!this.eventSourceReported) {
+            this.eventSourceReported = true;
+            console.warn(
+                `ContractWatcher: contract events are OFF and will not be retried — ` +
+                    `falling back to polling every ${this.config.failsafePollIntervalMs}ms. ` +
+                    error.message,
+            );
+        }
+        return true;
     }
 
     /**
