@@ -1320,6 +1320,17 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      *
      * Useful for displaying to users before they decide to recover funds.
      *
+     * Both amounts are net of the operator's intent fees, so `recoverable` is
+     * what {@link recoverVtxos} would actually hand back rather than the gross
+     * sum of the inputs. `subdust` is net of the per-input fees only — the
+     * output fee is charged on the batch as a whole and is not attributed per
+     * coin — so it reports what the subdust coins are worth once each has paid
+     * its own way, and is not strictly a slice of `recoverable`. It can exceed
+     * `recoverable` where a flat output fee meets a wholly subdust wallet.
+     *
+     * The batch size caps are not applied here: they defer the overflow to the
+     * next cycle rather than reducing what is recoverable.
+     *
      * @returns Object containing recoverable amounts and subdust information
      *
      * @example
@@ -1378,12 +1389,20 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         // Subdust is CLASSIFIED on gross value — that is what makes a coin
         // subdust, and what `getRecoverableWithSubdust` judged inclusion on — but
-        // REPORTED net, so it stays a component of `recoverable` above rather
-        // than a figure on a different basis. Summing it gross lets `subdust`
-        // exceed `recoverable` whenever the recoverable set is entirely subdust,
-        // which is exactly the wallet this field exists to describe. Totalled
-        // through `subtotalOf` so an unpriced input throws instead of silently
-        // contributing zero.
+        // REPORTED net of the per-input fees, so it is on the same footing as
+        // `recoverable` rather than a figure on a different basis. Summing it
+        // gross overstated it under every non-zero input-fee policy.
+        //
+        // Net of the INPUT fees only, though: the output fee comes off the whole
+        // batch at once and does not decompose per coin, so it is not attributed
+        // here. `subdust <= recoverable` therefore holds whenever no output fee
+        // is configured or the non-subdust coins cover it, but NOT in general —
+        // a flat output fee against an all-subdust wallet still leaves `subdust`
+        // the larger of the two. Read this as "what the subdust coins are worth
+        // once each has paid its own way", not as a slice of `recoverable`.
+        //
+        // Totalled through `subtotalOf` so an unpriced input throws instead of
+        // silently contributing zero.
         const subdustAmount = subtotalOf(
             payable.filter((v) => BigInt(v.value) < dustAmount),
             net,

@@ -3831,6 +3831,27 @@ describe("VtxoManager - intent fee pricing", () => {
             expect(balance.subdust).toBeLessThan(balance.recoverable);
         });
 
+        /**
+         * `subdust` nets off the per-input fees but not the output fee, which is
+         * charged on the batch as a whole and does not decompose per coin. So it
+         * is not strictly a slice of `recoverable`, and a flat output fee against
+         * a wholly subdust wallet leaves it the larger of the two. Pinned rather
+         * than clamped: clamping would invent a number that answers to nothing,
+         * and the honest reading is "what the subdust coins are worth once each
+         * has paid its own way".
+         */
+        it("does not attribute the batch-level output fee to subdust", async () => {
+            const wallet = createMockWallet([swept(600), swept(500)], ADDRESS, {
+                intentFee: { offchainInput: "amount * 0.01", offchainOutput: "200.0" },
+            });
+            const balance = await new VtxoManager(wallet).getRecoverableBalance();
+
+            // Inputs net 594 + 495 = 1089; the flat 200 comes off the batch.
+            expect(balance.subdust).toBe(1089n);
+            expect(balance.recoverable).toBe(889n);
+            expect(balance.subdust).toBeGreaterThan(balance.recoverable);
+        });
+
         it("omits from the preview a VTXO that cannot pay its own fee", async () => {
             const wallet = createMockWallet([swept(5000), swept(100)], ADDRESS, {
                 intentFee: { offchainInput: "250.0" },
