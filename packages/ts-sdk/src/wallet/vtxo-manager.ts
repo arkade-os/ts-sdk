@@ -306,6 +306,73 @@ export function capSettlementBatch<T extends { value: number }>(
     return batch;
 }
 
+/**
+ * Price a settlement's VTXO inputs against the operator's intent-fee policy,
+ * dropping any input that cannot pay for itself.
+ *
+ * An intent's fee IS `sum(inputs) - sum(outputs)`, so a single-output settlement
+ * asking for the gross input sum offers exactly zero and the server rejects the
+ * whole intent with `INTENT_INSUFFICIENT_FEE` wherever the operator prices
+ * offchain inputs at all. `subtotal` is what the inputs are worth once each has
+ * paid its own way; the caller still owes {@link deductOffchainOutputFee} on top.
+ *
+ * An input whose fee meets or exceeds its value is skipped rather than settled —
+ * it would take more out of the output than it puts in. Callers filter with this
+ * BEFORE {@link capSettlementBatch} so an uneconomic input cannot occupy a slot
+ * that a viable one behind it could have used.
+ */
+function priceSettlementInputs<T extends NormalizedExtendedVirtualCoin>(
+    vtxos: T[],
+    estimator: Estimator,
+): { payable: T[]; subtotal: bigint } {
+    const payable: T[] = [];
+    let subtotal = 0n;
+    for (const vtxo of vtxos) {
+        const inputFee = estimator.evalOffchainInput(toOffchainInputFeeParams(vtxo));
+        if (inputFee.satoshis >= vtxo.value) {
+            continue;
+        }
+        payable.push(vtxo);
+        subtotal += BigInt(vtxo.value - inputFee.satoshis);
+    }
+    return { payable, subtotal };
+}
+
+/**
+ * Take the operator's offchain output fee off a settlement's single output.
+ *
+ * The fee is evaluated on `subtotal` — the amount before this deduction — rather
+ * than on the amount finally committed, matching what
+ * {@link VtxoManager.runPeriodicSettle} and the no-argument `Wallet.settle()`
+ * branch already do. Under a percentage rate `r` that implies a fee of
+ * `r * subtotal` where the server asks only `r * subtotal * (1 - r)`, i.e. an
+ * over-payment of `r^2 * subtotal`. Deliberate: paying over is always accepted,
+ * whereas solving the fixed point exactly to recover those satoshis risks
+ * landing one under the minimum — which is the rejection this pricing exists to
+ * avoid.
+ *
+ * Can return a value below dust, or below zero, when a flat output fee outweighs
+ * the inputs; every caller checks the result against the dust threshold.
+ */
+function deductOffchainOutputFee(
+    subtotal: bigint,
+    estimator: Estimator,
+    arkAddress: string,
+): bigint {
+    // Mirror the estimator's own early return rather than reaching it through
+    // `ArkAddress.decode`: with no output program the script is never read, and
+    // an operator that doesn't price outputs shouldn't make a decodable address
+    // a precondition for renewing or recovering.
+    if (!estimator.config.offchainOutput) {
+        return subtotal;
+    }
+    const outputFee = estimator.evalOffchainOutput({
+        amount: subtotal,
+        script: hex.encode(ArkAddress.decode(arkAddress).pkScript),
+    });
+    return subtotal - BigInt(outputFee.satoshis);
+}
+
 /** Default renewal threshold in seconds (3 days). */
 export const DEFAULT_THRESHOLD_SECONDS = 259_200;
 
@@ -1106,7 +1173,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         // Filter recoverable virtual outputs and handle subdust logic
         const now = await fetchTimeHeight(this.wallet);
-        let { vtxosToRecover, totalAmount } = getRecoverableWithSubdust(allVtxos, dustAmount, now);
+        let { vtxosToRecover } = getRecoverableWithSubdust(allVtxos, dustAmount, now);
 
         if (vtxosToRecover.length === 0) {
             throw new Error("No recoverable VTXOs found");
@@ -1124,21 +1191,32 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // overflow is recovered next cycle.
         const info = await this.getInfoProvider()?.getInfo();
         const vtxoMaxAmount = info?.vtxoMaxAmount ?? -1n;
-        const capped = capSettlementBatch(byValueDescending(vtxosToRecover), vtxoMaxAmount);
+
+        // Price the batch before capping so a VTXO that cannot pay its own intent
+        // fee is dropped here rather than occupying a slot in the capped batch
+        // ahead of one that can. Subdust inputs survive this whenever they are
+        // still worth more than their own fee, which is what keeps consolidating
+        // them possible. `info` is undefined only when no ark provider is wired,
+        // which prices as zero and leaves the gross behaviour untouched.
+        const estimator = new Estimator(info?.fees.intentFee ?? {});
+        const payable = priceSettlementInputs(vtxosToRecover, estimator).payable;
+        const capped = capSettlementBatch(byValueDescending(payable), vtxoMaxAmount);
         if (capped.length < vtxosToRecover.length) {
             const recoverableCount = vtxosToRecover.length;
-            ({ vtxosToRecover, totalAmount } = getRecoverableWithSubdust(capped, dustAmount, now));
+            ({ vtxosToRecover } = getRecoverableWithSubdust(capped, dustAmount, now));
             if (vtxosToRecover.length === 0) {
                 // Recoverable VTXOs exist, but the highest-value subset that
-                // fits in one settlement stays below dust, so submitting it
-                // would be rejected and the next cycle would pick the same
-                // prefix. Distinct from the "none recoverable" case above so
-                // operators can tell a stuck-but-funded wallet from an empty
-                // one. Recovery resumes once the prefix accumulates dust.
+                // fits in one settlement — and can pay its own intent fee —
+                // stays below dust, so submitting it would be rejected and the
+                // next cycle would pick the same prefix. Distinct from the "none
+                // recoverable" case above so operators can tell a stuck-but-funded
+                // wallet from an empty one. Recovery resumes once the prefix
+                // accumulates dust.
                 throw new Error(
                     `Capped recovery batch (highest-value subset of ${recoverableCount} ` +
                         `recoverable VTXOs within the ${MAX_VTXOS_PER_SETTLEMENT}-input and ` +
-                        `${vtxoMaxAmount}-sat limits) is below the dust threshold ${dustAmount}`,
+                        `${vtxoMaxAmount}-sat limits, net of intent fees) is below the ` +
+                        `dust threshold ${dustAmount}`,
                 );
             }
         }
@@ -1154,7 +1232,28 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             await this.rotateForRecoverableInputs(vtxosToRecover, info);
         }
 
+        // Read AFTER any rotation above, so the output fee is priced against the
+        // script the recovered VTXO actually lands on.
         const arkAddress = await this.wallet.getAddress();
+
+        // The fee an intent offers IS `sum(inputs) - sum(outputs)`, so the output
+        // has to come back short by what the operator's programs price. Asking
+        // for the gross recoverable sum offers zero and the server rejects with
+        // INTENT_INSUFFICIENT_FEE — see `priceSettlementInputs`.
+        const { subtotal } = priceSettlementInputs(vtxosToRecover, estimator);
+        const totalAmount = deductOffchainOutputFee(subtotal, estimator, arkAddress);
+
+        // getRecoverableWithSubdust judges subdust inclusion on gross value, but
+        // the fees come off after that decision, so a batch that cleared dust
+        // gross can still land under it here. The server would reject such an
+        // output; say so instead, and let the next cycle retry once the
+        // recoverable set is worth more.
+        if (totalAmount < dustAmount) {
+            throw new Error(
+                `Recoverable amount ${totalAmount} net of intent fees is below ` +
+                    `dust threshold ${dustAmount}`,
+            );
+        }
 
         // Settle all recoverable virtual outputs back to the wallet
         return this.wallet.settle(
@@ -1394,6 +1493,23 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // renewed on the next cycle.
             const info = await this.getInfoProvider()?.getInfo();
             const vtxoMaxAmount = info?.vtxoMaxAmount ?? -1n;
+
+            // Price the candidates before capping so a VTXO that cannot pay its
+            // own intent fee is dropped here rather than occupying a slot in the
+            // capped batch ahead of one that can. `info` is undefined only when no
+            // ark provider is wired, which prices as zero and leaves the gross
+            // behaviour untouched.
+            const estimator = new Estimator(info?.fees.intentFee ?? {});
+            vtxos = priceSettlementInputs(vtxos, estimator).payable;
+            if (vtxos.length === 0) {
+                // Worded to match the benign cases the vtxo_received subscription
+                // already swallows: nothing is wrong, there is just nothing worth
+                // renewing at this fee policy.
+                throw new Error(
+                    "No VTXOs available to renew: every expiring VTXO is worth less than its own intent fee",
+                );
+            }
+
             const capped = capSettlementBatch(byExpiryAscending(vtxos, now), vtxoMaxAmount);
             if (vtxoMaxAmount >= 0n) {
                 // A VTXO whose value alone exceeds the per-output ceiling can
@@ -1424,17 +1540,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 }
             }
 
-            const totalAmount = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
-
             // Get dust amount from wallet
             const dustAmount = getDustAmount(this.wallet);
-
-            // Check if total amount is above dust threshold
-            if (BigInt(totalAmount) < dustAmount) {
-                throw new Error(
-                    `Total amount ${totalAmount} is below dust threshold ${dustAmount}`,
-                );
-            }
 
             // Renewal includes recoverable VTXOs (getExpiringVtxos pulls them
             // in). If any carries a now-deprecated signer and the wallet's own
@@ -1448,7 +1555,25 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 await this.rotateForRecoverableInputs(vtxos, info);
             }
 
+            // Read AFTER any rotation above, so the output fee is priced against
+            // the script the renewed VTXO actually lands on.
             const arkAddress = await this.wallet.getAddress();
+
+            // The fee an intent offers IS `sum(inputs) - sum(outputs)`, so the
+            // output has to come back short by what the operator's programs
+            // price. Asking for the gross sum offers zero and the server rejects
+            // with INTENT_INSUFFICIENT_FEE — see `priceSettlementInputs`.
+            const { subtotal } = priceSettlementInputs(vtxos, estimator);
+            const totalAmount = deductOffchainOutputFee(subtotal, estimator, arkAddress);
+
+            // Dust is judged on the NET output, not the gross input sum: the fees
+            // come off after selection, so a batch that clears dust gross can
+            // land under it here.
+            if (totalAmount < dustAmount) {
+                throw new Error(
+                    `Total amount ${totalAmount} is below dust threshold ${dustAmount}`,
+                );
+            }
 
             const txid = await this.wallet.settle(
                 {
@@ -1456,7 +1581,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                     outputs: [
                         {
                             address: arkAddress,
-                            amount: BigInt(totalAmount),
+                            amount: totalAmount,
                         },
                     ],
                 },
