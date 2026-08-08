@@ -92,6 +92,10 @@ export interface WatchOfferSwapsParams {
  * Registration ({@link createOffer}) is what makes this possible: only a
  * registered covenant is watched, so only registered offers produce events.
  * Offers funded before registration existed stay on the restore scan.
+ *
+ * This depends on the wallet's contract event transport. In Node, callers must
+ * provide an `EventSource` implementation or use a runtime where it is enabled;
+ * otherwise live updates do not arrive and restore remains the fallback.
  */
 export async function watchOfferSwaps({
     wallet,
@@ -100,8 +104,9 @@ export async function watchOfferSwaps({
     onUpdate,
 }: WatchOfferSwapsParams): Promise<OfferSwapWatcher> {
     const manager = await wallet.getContractManager();
-    // the covenant was compiled against this key; classifySpend rebuilds the
-    // script with it to recognise the leaf a spend took
+    // Current server key at watcher start. TODO: persist the funding-time key
+    // with swap records; a signer rotation during a long session makes leaf
+    // classification return indeterminate rather than guessing.
     const serverPubkey = ArkAddress.decode(await wallet.getAddress()).serverPubKey;
     const indexer: RestoreIndexer = new RestIndexerProvider(arkServerUrl);
 
@@ -142,8 +147,10 @@ export async function watchOfferSwaps({
         for (const vtxo of event.vtxos) {
             const spentTxid = vtxo.arkTxId || vtxo.spentBy;
             if (!spentTxid) continue;
-            // identical offers share one script and are told apart by the
-            // deposit that funded them
+            // Identical offers share one script and are told apart by the
+            // deposit that funded them. Repository v1 has no indexed lookup, so
+            // this is O(history) per spend event; add a query API if offer
+            // event volume makes this hot.
             const swap = (await getAssetSwaps(repository)).find(
                 (s) => s.fundingTxid === vtxo.txid && s.swapPkScript === event.contractScript,
             );

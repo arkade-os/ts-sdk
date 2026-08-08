@@ -161,6 +161,8 @@ describe("maker-side swap loop (regtest)", () => {
             redeemTxid: fundingTxid,
             createdAt: Math.floor(Date.now() / 1000),
         });
+        // Pending deposits have no spend to classify; serverPubkey is required
+        // by the restore API but does not affect this assertion.
         const { restored, scannedTxids } = await restoreAssetSwaps(indexer, history, new Set(), {
             serverPubkey,
         });

@@ -31,7 +31,7 @@ import {
 import wantAssetProgram from "./swap-want-asset.program.json";
 import wantBtcProgram from "./swap-want-btc.program.json";
 import type { AssetSwapRepository } from "./repository";
-import { updateAssetSwap } from "./store";
+import { getAssetSwaps, updateAssetSwap } from "./store";
 
 // json imports widen "type": "pubkey" to string; parseArtifact validates at runtime
 type Artifact = Parameters<typeof arkade.parseArtifact>[0];
@@ -450,17 +450,23 @@ export async function createOffer(
  * it a rotated key is detected and reported rather than reading as a missing
  * VTXO.
  *
- * **This records its own outcome, and that is what makes the live watcher
- * cheap.** `cancel` is a 2-of-2 of maker and server, so a cancel can only be
- * the maker's own act: on a successful submit this *is* the authoritative
- * answer, and writing it here means `watchOfferSwaps` has nothing left to
- * decide for our own cancels — it sees a terminal record and leaves it alone.
- * The status moves to `cancelling` first so a crash between submit and record
- * leaves a marker rather than a swap that still looks pending.
+ * **When the matching swap record is present, this records its own outcome,
+ * and that is what makes the live watcher cheap.** `cancel` is a 2-of-2 of
+ * maker and server, so a cancel can only be the maker's own act: on a
+ * successful submit this *is* the authoritative answer, and writing it here
+ * means `watchOfferSwaps` has nothing left to decide for our own cancels — it
+ * sees a terminal record and leaves it alone. The status moves to `cancelling`
+ * first so a crash between submit and record leaves a marker rather than a
+ * swap that still looks pending.
  *
- * The txid is only knowable after `send()` returns, so a spend event that
- * arrives in that window finds a `cancelling` record and classifies the spend
- * by its covenant leaf instead — the same answer, one indexer read more.
+ * Passing a repository that does not contain the swap record is allowed: the
+ * cancel still submits and returns its txid, but no local status is written,
+ * so the watcher or restore scan must classify the spend later.
+ *
+ * When a local record exists, the txid is only knowable after `send()`
+ * returns, so a spend event that arrives in that window finds a `cancelling`
+ * record and classifies the spend by its covenant leaf instead — the same
+ * answer, one indexer read more.
  */
 export async function cancelOffer(
     wallet: IWallet,
@@ -530,13 +536,18 @@ export async function cancelOffer(
             outputs: [{ vout: 0, amount: BigInt(a.amount) }],
         });
     }
-    // the in-flight marker: written before submit so a crash in between leaves
-    // a swap that reads as cancelling rather than as untouched
-    await updateAssetSwap(repository, fundingTxid ?? vtxo.txid, { status: "cancelling" });
+    const swapId = fundingTxid ?? vtxo.txid;
+    const hasLocalRecord = (await getAssetSwaps(repository)).some((s) => s.id === swapId);
+    // The in-flight marker is useful only when there is a local record to
+    // update; a different or empty repository intentionally leaves the cancel
+    // for event/restore classification.
+    if (hasLocalRecord) await updateAssetSwap(repository, swapId, { status: "cancelling" });
     const { txid } = await cancel.send();
-    await updateAssetSwap(repository, fundingTxid ?? vtxo.txid, {
-        status: "cancelled",
-        spentTxid: txid,
-    });
+    if (hasLocalRecord) {
+        await updateAssetSwap(repository, swapId, {
+            status: "cancelled",
+            spentTxid: txid,
+        });
+    }
     return txid;
 }

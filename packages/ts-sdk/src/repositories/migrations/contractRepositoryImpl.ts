@@ -9,13 +9,16 @@ export const getCollectionStorageKey = (type: string) => `collection:${type}`;
  * @deprecated This is only to be used in migration from storage V1
  */
 export class ContractRepositoryImpl implements ContractRepository {
-    // Nominal: every contract-row method below throws. Legacy V1 storage
-    // predates the watch state entirely, so there is nothing to migrate.
-    readonly version = 2 as const;
     private storage: StorageAdapter;
 
     constructor(storage: StorageAdapter) {
         this.storage = storage;
+    }
+
+    get version(): 2 {
+        throw new TypeError(
+            "ContractRepositoryImpl is a migration shim and does not implement contract rows.",
+        );
     }
 
     async getContractData<T>(contractId: string, key: string): Promise<T | null> {

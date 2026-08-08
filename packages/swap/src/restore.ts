@@ -160,6 +160,8 @@ export function classifySpend(
     for (let i = 0; i < spendTx.inputsLength; i++) {
         const input = spendTx.getInput(i);
         if (!input.txid || input.index !== deposit.vout) continue;
+        // @scure exposes input txids in display/BE order (`txid`, not the raw
+        // LE transaction hash), matching the indexer convention for vtxo txids.
         if (hex.encode(input.txid) !== deposit.txid) continue;
         for (const leaf of input.tapLeafScript ?? []) {
             const spent = hex.encode(scriptFromTapLeafScript(leaf));
