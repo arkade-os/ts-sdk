@@ -21,8 +21,12 @@ export interface HDWalletCapable {
      * Every descriptor the wallet may hold keys under, ascending by index:
      * the allocation watermark's band plus any descriptor persisted on a
      * contract. Empty for static wallets.
+     *
+     * `lookAhead` appends that many descriptors past the watermark without
+     * advancing it, for a restore that must probe indices no local state
+     * mentions yet.
      */
-    getUsedSigningDescriptors(): Promise<string[]>;
+    getUsedSigningDescriptors(opts?: { lookAhead?: number }): Promise<string[]>;
 
     /**
      * An {@link Identity} whose keys and signatures are those of `descriptor`.
@@ -40,5 +44,48 @@ export function isHDWalletCapable(value: unknown): value is HDWalletCapable {
         typeof v.getCurrentSigningDescriptor === "function" &&
         typeof v.getUsedSigningDescriptors === "function" &&
         typeof v.signerForDescriptor === "function"
+    );
+}
+
+/**
+ * Allocating a *fresh* index, which is strictly more than
+ * {@link HDWalletCapable}'s descriptor awareness.
+ *
+ * Deliberately a separate probe rather than three more methods on
+ * `HDWalletCapable`: widening that guard would silently demote every wallet
+ * implementing only its original surface — including one built by an older
+ * SDK — from HD-capable to static, which is exactly the breakage it documents
+ * itself as avoiding. Consumers that only read descriptors keep the narrow
+ * probe; anything deriving per-artifact secrets asks for this one.
+ */
+export interface HDAllocationCapable {
+    /**
+     * Allocate the next descriptor, advancing the watermark. `undefined` for
+     * static / `auto` wallets, which cannot allocate.
+     *
+     * Distinct from {@link HDWalletCapable.getCurrentSigningDescriptor}, which
+     * peeks: two artifacts bound to a peek share a key.
+     */
+    getNextSigningDescriptor(): Promise<string | undefined>;
+
+    /**
+     * Move the allocation watermark to `descriptor`'s index so later
+     * allocations cannot reissue it. Monotonic — a lower index is a no-op.
+     *
+     * Throws on a descriptor this wallet cannot derive, or one with no
+     * parseable trailing child index: silently mapping those to index 0 would
+     * move the watermark nowhere and let a restored artifact's index be handed
+     * out again.
+     */
+    advanceSigningDescriptorWatermark(descriptor: string): Promise<void>;
+}
+
+/** Structural type guard for {@link HDAllocationCapable}. */
+export function isHDAllocationCapable(value: unknown): value is HDAllocationCapable {
+    if (typeof value !== "object" || value === null) return false;
+    const v = value as Record<string, unknown>;
+    return (
+        typeof v.getNextSigningDescriptor === "function" &&
+        typeof v.advanceSigningDescriptorWatermark === "function"
     );
 }

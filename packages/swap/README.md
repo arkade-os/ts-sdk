@@ -183,6 +183,7 @@ import {
     requestOnchainSend,
     awaitOnchainFill,
     claimOnchainFill,
+    preimageForRfqSecrets,
 } from "@arkade-os/swap";
 
 const swap = await requestOnchainSend(
@@ -192,8 +193,10 @@ const swap = await requestOnchainSend(
     httpTransport(solverUrl),
     { amount: 100_000, amountSide: "to", payoutPubkey },
 );
-// PERSIST swap.preimage (with the record) BEFORE funding — it is the only
-// thing that can claim the L1 fill, across restarts included.
+// PERSIST swap.secrets (with the record) BEFORE funding. On an HD wallet it
+// is just a public descriptor: the preimage and the sender key re-derive from
+// the seed. Otherwise it carries the raw secrets and losing them forfeits the
+// claim.
 await wallet.send({ address: swap.address, amount: BigInt(swap.fundAmount) });
 
 // Unlike lightning-send the maker must STAY CLAIM-CAPABLE: watch for the fill
@@ -202,7 +205,7 @@ const utxo = await awaitOnchainFill(chain, swap.htlc, minConfirmations);
 await claimOnchainFill(chain, {
     htlc: swap.htlc,
     utxo,
-    preimage: swap.preimage,
+    preimage: await preimageForRfqSecrets(wallet, swap.secrets),
     payoutPkScript,
     feeRateSatVb,
     sign,
@@ -224,8 +227,9 @@ Crash recovery is record-driven, not chain-driven: `classifyOnchainHtlc` re-deri
 state (unfunded / awaiting confirmations / claimable / refundable / claimed-with-P / swept) from
 `ChainSource` plus the stored outpoint — without the stored record a spent HTLC is
 indistinguishable from an unfunded one, which is why persisting before funding is mandatory. The
-`AssetSwap` record carries the onchain fields (`paymentHash`, `preimageHex`, `htlcPkScriptHex`,
-`htlcLocktime`, `l1Txid`) and the statuses `awaiting_fill / claimable / claimed / refunded_l1`.
+`AssetSwap` record carries the onchain fields (`paymentHash`, `signingDescriptor`,
+`htlcPkScriptHex`, `htlcLocktime`, `l1Txid`) and the statuses `awaiting_fill / claimable / claimed
+/ refunded_l1`. `preimageHex` is fallback-only — see below.
 
 **On-board (`onchain:BTC -> arkade:BTC`) is milestone 2 and partially gated.** The wire request
 (`onchainReceiveRequest`), the L1 HTLC (roles swapped: the solver claims, the maker refunds) and
@@ -236,10 +240,53 @@ the one-call on-board flow lands when it is. Until covclaimd's reference vectors
 cross-checked, the `sealClaimPacket` test vector is pinned from this implementation and marked
 provisional (`TODO(claim-packet-vectors)`).
 
+## RFQ secrets are derived, not stored
+
+The two secrets an RFQ swap needs — the VHTLC `sender` key and, for an onchain send, the preimage —
+are functions of the wallet seed plus one HD-allocated descriptor. The record keeps the descriptor,
+which is public, so a copied browser profile or a device backup yields nothing spendable.
+
+```ts
+const swap = await requestOnchainSend(/* … */);
+swap.secrets; // { derivable: true, signingDescriptor } — persist it, it holds no secret
+await saveSwap({ ...record, signingDescriptor: swap.secrets.signingDescriptor });
+
+// Later, from the seed plus that descriptor:
+const preimage = await preimageForRfqSecrets(wallet, rfqSecretsOfRecord(record)!);
+const sender = await senderIdentityForRfqSecrets(wallet, rfqSecretsOfRecord(record)!);
+```
+
+`derivable: false` is the fallback for wallets that cannot allocate (static / `auto` / custom
+signers). It carries the raw `senderPrivateKey` and `preimage`, warns at generation, and the caller
+must persist them — `AssetSwap.preimageHex` exists for exactly that case and must stay empty on the
+derivable path. The discriminant is a type-level fact, so a consumer written against the derivable
+arm alone will not compile against the fallback.
+
+Each swap **allocates** its own descriptor rather than peeking at the current one: two swaps sharing
+a descriptor derive the *identical* preimage, so one solver learning its own preimage would learn the
+other swap's. On restore, `adoptSwapDescriptor` moves the wallet's watermark past a restored record's
+index so it cannot be handed out twice.
+
+The derivation is `sha256(signSchnorrDeterministic(sha256("Arkade-RFQ-Preimage-v1" ‖ xonly(32) ‖
+u32le(0))))`, mirroring NArk's Boltz scheme (`SwapsManagementService.cs:128-160`) with an
+RFQ-scoped tag. NArk has no RFQ corridor yet, so this tag defines the scheme rather than matching
+one; it is deliberately distinct from the Boltz tag so one wallet key cannot derive the same
+preimage for both corridors.
+
+**Not covered:** seed-only discovery after the swap repository is wiped. An unspent L1 HTLC reveals
+too little public quote data to rediscover, so the record remains required.
+
 ## Breaking changes on this branch (pre-release migration notes)
 
 The package is pre-release; these notes replace a changelog for consumers tracking the branch.
 
+- **`requestLightningSend` / `requestOnchainSend` return `secrets`, not raw key material.**
+  `senderPrivateKey` and `preimage` are gone from both return types; `secrets` replaces them and is
+  what the record persists. `pushRefundWithoutReceiver` / `refundIfUnresolved` take `sender: Identity`
+  instead of `senderPrivateKey: Uint8Array` — build it with `senderIdentityForRfqSecrets`.
+  `AssetSwap` gains `signingDescriptor?` and demotes `preimageHex?` to fallback-only. Landed while
+  the package is unpublished and consumer-free, which is the whole window for doing it: after a
+  consumer ships, the same change becomes a secret migration across every deployed wallet.
 - **Every derived address changed, in both corridors.** The lightning-send lockup moved from the
   3-leaf program-artifact VHTLC to the 8-leaf `VHTLC.ScriptV2` (non-interactive claim and refund
   leaves), and the L1 HTLC's claim leaf gained a `SIZE 32 EQUALVERIFY` preimage-length guard. Both
