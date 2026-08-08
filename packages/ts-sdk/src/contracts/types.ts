@@ -9,14 +9,63 @@ import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 
 /**
- * Contract lifecycle state. Both states stay monitored — the watcher
- * subscribes and sweeps every registered contract regardless
- * (see {@link ContractWatcher.getWatchedContracts}), because a retired
- * receive address can still be paid. `inactive` only demotes a contract
- * out of receive-address selection; it does **not** unsubscribe it.
- * Use {@link IContractManager.deleteContract} to stop watching.
+ * Contract lifecycle state. Neither state affects coverage: the watcher
+ * subscribes and sweeps a contract according to {@link Contract.watch}
+ * alone, because a retired receive address can still be paid. `inactive`
+ * only demotes a contract out of receive-address selection; it does
+ * **not** unsubscribe it. To stop watching but keep the row, set
+ * {@link ContractWatchState} to `retained`; to drop both, use
+ * {@link IContractManager.deleteContract}.
  */
 export type ContractState = "active" | "inactive";
+
+/**
+ * Whether a contract is covered by background monitoring — the
+ * subscription and the failsafe/indexer sweep
+ * ({@link ContractWatcher.getWatchedContracts}).
+ *
+ * Orthogonal to {@link ContractState}, which governs receive-address
+ * selection only. A contract can be the wallet's display address and
+ * watched, or terminal and retained; the two questions never answer each
+ * other.
+ *
+ * NArk calls this `ContractActivityState` (`Active` / `Inactive` /
+ * `AwaitingFundsBeforeDeactivate`). The concept is the same; the names
+ * differ because TS already spends `active`/`inactive` on
+ * {@link ContractState}, and a row reading `state: "active",
+ * activityState: "inactive"` would be unreadable.
+ */
+export type ContractWatchState =
+    /** Subscribed and polled. */
+    | "watched"
+    /**
+     * Watched until the first VTXO lands at the script, then
+     * automatically demoted to `retained` by the contract manager.
+     * For one-shot destinations — a refund address, a swap lockup —
+     * that only need coverage until they are funded.
+     */
+    | "awaiting-funds"
+    /**
+     * Kept for history, restore and classification, but absent from
+     * every background channel. The row still resolves in
+     * `getContracts`, still annotates its VTXOs, and still feeds
+     * transaction history; nothing subscribes or polls it.
+     */
+    | "retained";
+
+/**
+ * A contract's watch state, defaulting rows written before the field
+ * existed — including retired (`inactive`) receive addresses — to
+ * `watched`, which is the coverage they have today.
+ */
+export function watchStateOf(contract: Pick<Contract, "watch">): ContractWatchState {
+    return contract.watch ?? "watched";
+}
+
+/** Whether a contract belongs in the subscription and sweep scope. */
+export function isWatchedContract(contract: Pick<Contract, "watch">): boolean {
+    return watchStateOf(contract) !== "retained";
+}
 
 /**
  * Represents a contract that can receive and manage virtual outputs.
@@ -73,6 +122,12 @@ export interface Contract {
 
     /** Current state of the contract. */
     state: ContractState;
+
+    /**
+     * Background-monitoring scope. Absent means `watched`.
+     * @see ContractWatchState
+     */
+    watch?: ContractWatchState;
 
     /** Unix timestamp in milliseconds when this contract was created. */
     createdAt: number;

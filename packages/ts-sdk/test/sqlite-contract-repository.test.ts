@@ -10,13 +10,25 @@ import type { Contract, ContractState } from "../src/contracts/types";
 
 interface TableDef {
     primaryKey: string[];
+    columns: string[];
     rows: Map<string, Record<string, unknown>>;
+}
+
+/**
+ * `in_or_null` is the nullable-column form the repository emits for
+ * `watch`: a row written before the column existed stores NULL and must
+ * still match `"watched"`.
+ */
+interface Condition {
+    column: string;
+    op: "eq" | "in" | "in_or_null";
+    paramCount: number;
 }
 
 function createMockSQLExecutor(): SQLExecutor {
     const tables = new Map<string, TableDef>();
 
-    function parseCreateTable(sql: string): { name: string; pk: string[] } {
+    function parseCreateTable(sql: string): { name: string; pk: string[]; columns: string[] } {
         const nameMatch = sql.match(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+(\w+)/i);
         if (!nameMatch) throw new Error(`Cannot parse CREATE TABLE: ${sql}`);
         const name = nameMatch[1];
@@ -28,7 +40,12 @@ function createMockSQLExecutor(): SQLExecutor {
             const colPkMatch = sql.match(/(\w+)\s+TEXT\s+PRIMARY\s+KEY/i);
             if (colPkMatch) pk = [colPkMatch[1]];
         }
-        return { name, pk };
+        const body = sql.slice(sql.indexOf("(") + 1, sql.lastIndexOf(")"));
+        const columns = body
+            .split(",")
+            .map((def) => def.trim().split(/\s+/)[0])
+            .filter((col) => /^\w+$/.test(col) && !/^PRIMARY$/i.test(col));
+        return { name, pk, columns };
     }
 
     function parseInsertOrReplace(sql: string): {
@@ -48,21 +65,13 @@ function createMockSQLExecutor(): SQLExecutor {
      */
     function parseSelect(sql: string): {
         table: string;
-        conditions: Array<{
-            column: string;
-            op: "eq" | "in";
-            paramCount: number;
-        }>;
+        conditions: Condition[];
     } {
         const tableMatch = sql.match(/SELECT\s+\*\s+FROM\s+(\w+)/i);
         if (!tableMatch) throw new Error(`Cannot parse SELECT: ${sql}`);
         const table = tableMatch[1];
 
-        const conditions: Array<{
-            column: string;
-            op: "eq" | "in";
-            paramCount: number;
-        }> = [];
+        const conditions: Condition[] = [];
 
         const whereMatch = sql.match(/WHERE\s+(.+)$/i);
         if (whereMatch) {
@@ -75,7 +84,9 @@ function createMockSQLExecutor(): SQLExecutor {
                     const placeholders = inMatch[2].split(",").map((s) => s.trim());
                     conditions.push({
                         column,
-                        op: "in",
+                        op: new RegExp(`${column}\\s+IS\\s+NULL`, "i").test(part)
+                            ? "in_or_null"
+                            : "in",
                         paramCount: placeholders.length,
                     });
                     continue;
@@ -96,21 +107,13 @@ function createMockSQLExecutor(): SQLExecutor {
 
     function parseDelete(sql: string): {
         table: string;
-        conditions: Array<{
-            column: string;
-            op: "eq" | "in";
-            paramCount: number;
-        }>;
+        conditions: Condition[];
     } {
         const match = sql.match(/DELETE\s+FROM\s+(\w+)/i);
         if (!match) throw new Error(`Cannot parse DELETE: ${sql}`);
         const table = match[1];
 
-        const conditions: Array<{
-            column: string;
-            op: "eq" | "in";
-            paramCount: number;
-        }> = [];
+        const conditions: Condition[] = [];
 
         const whereMatch = sql.match(/WHERE\s+(.+)$/i);
         if (whereMatch) {
@@ -139,11 +142,7 @@ function createMockSQLExecutor(): SQLExecutor {
 
     function matchesConditions(
         row: Record<string, unknown>,
-        conditions: Array<{
-            column: string;
-            op: "eq" | "in";
-            paramCount: number;
-        }>,
+        conditions: Condition[],
         params: unknown[],
     ): boolean {
         let paramIdx = 0;
@@ -152,9 +151,11 @@ function createMockSQLExecutor(): SQLExecutor {
                 if (row[cond.column] !== params[paramIdx]) return false;
                 paramIdx += 1;
             } else {
-                // in
                 const values = params.slice(paramIdx, paramIdx + cond.paramCount);
-                if (!values.includes(row[cond.column])) return false;
+                const value = row[cond.column];
+                const nullMatches =
+                    cond.op === "in_or_null" && (value === null || value === undefined);
+                if (!values.includes(value) && !nullMatches) return false;
                 paramIdx += cond.paramCount;
             }
         }
@@ -166,10 +167,18 @@ function createMockSQLExecutor(): SQLExecutor {
             const trimmed = sql.trim();
 
             if (/^CREATE\s+TABLE/i.test(trimmed)) {
-                const { name, pk } = parseCreateTable(trimmed);
+                const { name, pk, columns } = parseCreateTable(trimmed);
                 if (!tables.has(name)) {
-                    tables.set(name, { primaryKey: pk, rows: new Map() });
+                    tables.set(name, { primaryKey: pk, columns, rows: new Map() });
                 }
+                return;
+            }
+
+            if (/^ALTER\s+TABLE/i.test(trimmed)) {
+                const match = trimmed.match(/ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)/i);
+                if (!match) throw new Error(`Cannot parse ALTER TABLE: ${trimmed}`);
+                const t = getTable(match[1]);
+                if (!t.columns.includes(match[2])) t.columns.push(match[2]);
                 return;
             }
 
@@ -231,6 +240,13 @@ function createMockSQLExecutor(): SQLExecutor {
 
         async all<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
             const trimmed = sql.trim();
+
+            const pragma = trimmed.match(/^PRAGMA\s+table_info\((\w+)\)/i);
+            if (pragma) {
+                const t = tables.get(pragma[1]);
+                return (t?.columns ?? []).map((name) => ({ name })) as T[];
+            }
+
             const { table, conditions } = parseSelect(trimmed);
             const t = getTable(table);
 
@@ -285,8 +301,8 @@ describe("SQLiteContractRepository", () => {
 
     // ── version ────────────────────────────────────────────────────────
 
-    it("should have version 1", () => {
-        expect(repository.version).toBe(1);
+    it("should have version 2", () => {
+        expect(repository.version).toBe(2);
     });
 
     // ── Save and retrieve ──────────────────────────────────────────────
@@ -428,6 +444,72 @@ describe("SQLiteContractRepository", () => {
             });
             expect(filtered).toHaveLength(2);
             expect(filtered.map((c) => c.type).sort()).toEqual(["default", "vhtlc"]);
+        });
+    });
+
+    // ── Watch state ────────────────────────────────────────────────────
+
+    describe("watch state", () => {
+        it("round-trips the watch state", async () => {
+            await repository.saveContract(createMockContract({ script: "s1", watch: "retained" }));
+            await repository.saveContract(
+                createMockContract({ script: "s2", watch: "awaiting-funds" }),
+            );
+
+            const [retained] = await repository.getContracts({ script: "s1" });
+            expect(retained.watch).toBe("retained");
+            const [awaiting] = await repository.getContracts({ script: "s2" });
+            expect(awaiting.watch).toBe("awaiting-funds");
+        });
+
+        it("filters by watch state, counting rows without one as watched", async () => {
+            // A contract saved before the field existed — the shape every
+            // deployed row has.
+            await repository.saveContract(createMockContract({ script: "legacy" }));
+            await repository.saveContract(createMockContract({ script: "s1", watch: "watched" }));
+            await repository.saveContract(createMockContract({ script: "s2", watch: "retained" }));
+
+            const watched = await repository.getContracts({ watch: "watched" });
+            expect(watched.map((c) => c.script).sort()).toEqual(["legacy", "s1"]);
+
+            const retained = await repository.getContracts({ watch: "retained" });
+            expect(retained.map((c) => c.script)).toEqual(["s2"]);
+
+            const live = await repository.getContracts({ watch: ["watched", "awaiting-funds"] });
+            expect(live.map((c) => c.script).sort()).toEqual(["legacy", "s1"]);
+        });
+
+        it("adds the column to a table created before it existed", async () => {
+            const legacyDb = createMockSQLExecutor();
+            await legacyDb.run(`
+                CREATE TABLE IF NOT EXISTS ark_contracts (
+                    script TEXT PRIMARY KEY,
+                    address TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    params_json TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    expires_at INTEGER,
+                    label TEXT,
+                    metadata_json TEXT
+                )
+            `);
+            await legacyDb.run(
+                `INSERT OR REPLACE INTO ark_contracts
+                    (script, address, type, state, params_json, created_at, label, metadata_json)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                ["legacy", "addr", "default", "active", "{}", 1, null, null],
+            );
+
+            const migrated = new SQLiteContractRepository(legacyDb);
+            const [row] = await migrated.getContracts({ script: "legacy" });
+            expect(row.watch).toBeUndefined();
+
+            // The pre-existing row keeps the coverage it has today...
+            expect(await migrated.getContracts({ watch: "watched" })).toHaveLength(1);
+            // ...and the column is now writable.
+            await migrated.saveContract(createMockContract({ script: "s1", watch: "retained" }));
+            expect((await migrated.getContracts({ script: "s1" }))[0].watch).toBe("retained");
         });
     });
 

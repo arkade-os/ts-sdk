@@ -3,7 +3,13 @@ import { VirtualCoin } from "../wallet";
 import { normalizeVtxo } from "../wallet/vtxo";
 import { extendVirtualCoinForContract } from "../wallet/utils";
 import { WalletRepository } from "../repositories/walletRepository";
-import { Contract, ContractVtxo, ContractEventCallback, ContractEvent } from "./types";
+import {
+    Contract,
+    ContractVtxo,
+    ContractEventCallback,
+    ContractEvent,
+    isWatchedContract,
+} from "./types";
 import { isEventSourceError } from "../providers/utils";
 import { getVtxosForContract } from "./vtxoOwnership";
 
@@ -161,7 +167,8 @@ export class ContractWatcher {
      * Add a contract to be watched.
      *
      * Once watching, every contract is subscribed and polled whatever
-     * its state.
+     * its {@link ContractState} — a `retained` one is held for reads
+     * only, and never enters a background channel.
      *
      * @see getWatchedContracts
      */
@@ -182,7 +189,7 @@ export class ContractWatcher {
 
         // If we're already watching, poll to seed virtual outputs and fold
         // this script into the subscription.
-        if (this.isWatching) {
+        if (this.isWatching && isWatchedContract(contract)) {
             await this.pollContracts([contract.script]);
             await this.tryUpdateSubscription();
         }
@@ -256,18 +263,25 @@ export class ContractWatcher {
     }
 
     /**
-     * Every registered contract, retired (`inactive`) ones included.
+     * Every registered contract except the `retained` ones, retired
+     * (`inactive`) receive addresses included.
      *
      * Feeds both the subscription and the indexer sweep scope, so
      * narrowing it drops a contract from every background channel at
-     * once. Nothing may be narrowed out: an Ark receive address can be
+     * once. `state` may never narrow it: an Ark receive address can be
      * paid again after the wallet has rotated past it, and a payment
      * that lands outside every background channel is invisible until
      * some foreground read happens to sweep it. Retirement therefore
      * governs receive-address selection, not coverage.
+     *
+     * {@link ContractWatchState} is the one thing that does narrow it,
+     * and only when an owner has explicitly said the script is done —
+     * a settled swap lockup, a funded one-shot destination. The row
+     * stays in {@link getAllContracts} so reads, annotation and history
+     * are unaffected.
      */
     getWatchedContracts(): Contract[] {
-        return this.getAllContracts();
+        return this.getAllContracts().filter(isWatchedContract);
     }
 
     /**

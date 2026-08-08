@@ -324,7 +324,7 @@ export interface RfqSwapManagerConfig {
  * `ContractManager` (`await wallet.getContractManager()`). */
 export type SwapContractRegistry = Pick<
     IContractManager,
-    "createContract" | "onContractEvent" | "setContractState"
+    "createContract" | "onContractEvent" | "setContractWatchState"
 >;
 
 /** The contract type a swap lockup registers under. `@arkade-os/sdk`'s handler
@@ -748,17 +748,18 @@ export class RfqSwapManager {
         }
     }
 
-    /** Retire a finished swap's contract row. Retired, not deleted: the row is
-     * what keeps the lockup's own VTXOs annotatable and its history readable,
-     * and `inactive` already means "no longer a live destination". Best-effort
-     * — the swap is over either way. */
+    /** Stop watching a finished swap's lockup. Retained, not deleted: the row
+     * is what keeps the lockup's own VTXOs annotatable and its history
+     * readable, while `retained` is what drops it from the subscription and
+     * the poll — a settled swap that stayed watched would cost the wallet a
+     * script for its whole life. Best-effort — the swap is over either way. */
     private retireContract(swap: RfqSwap): void {
         // Only a swap that actually got a row: retiring one that was never
         // written would throw "not found" and report a failure on a swap that
         // had in fact just succeeded.
         if (!this.deps.contracts || !this.registered.get(swap.rfqId)) return;
         void this.deps.contracts
-            .setContractState(hex.encode(swap.lockupPkScript), "inactive")
+            .setContractWatchState(hex.encode(swap.lockupPkScript), "retained")
             .catch((error: unknown) => this.emitFailed(swap, error));
     }
 

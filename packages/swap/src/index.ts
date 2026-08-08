@@ -31,7 +31,21 @@ export {
     InMemoryAssetSwapRepository,
 } from "./repository";
 export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";
-export { restoreAssetSwaps, isCancelSpend, type RestoreIndexer, type Tx } from "./restore";
+export {
+    restoreAssetSwaps,
+    classifySpend,
+    classifyDepositSpend,
+    spendTxidsOf,
+    type RestoreIndexer,
+    type SpendKind,
+    type Tx,
+} from "./restore";
+export {
+    watchOfferSwaps,
+    spendUpdate,
+    type OfferSwapWatcher,
+    type WatchOfferSwapsParams,
+} from "./watch";
 export {
     ARKADE_ASSET,
     ARKADE_BTC,

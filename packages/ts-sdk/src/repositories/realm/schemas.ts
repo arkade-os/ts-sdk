@@ -102,6 +102,7 @@ export const ArkContractSchema = {
         expiresAt: "int?",
         label: "string?",
         metadataJson: "string?",
+        watch: { type: "string", optional: true, indexed: true },
     },
 } as const;
 
@@ -205,15 +206,17 @@ export const ArkExperimentalRealmSchemas = [
  *   - v1: initial ArkVtxo/ArkUtxo/... schemas, `script` nullable.
  *   - v2: ArkVtxo.script becomes required; NULL values are backfilled from
  *     the owning Ark address during migration.
+ *   - v3: ArkContract.watch added (nullable). No data migration: a row
+ *     without one reads as `watched`, which is the coverage every
+ *     existing contract has today.
  *
  * The intent/virtualtx schemas ({@link ArkExperimentalRealmSchemas}) are NOT
- * counted here: they are experimental and inert, so the advertised version
- * stays at v2 and upgrading the SDK never triggers a Realm migration for a
- * consumer using the default {@link ArkRealmSchemas} set. `runArkRealmMigrations`
- * still carries the intent-schema migration steps (guarded per-schema) for
- * consumers who opt in and bump their own version.
+ * counted here: they are experimental and inert, so they never move the
+ * advertised version on their own. `runArkRealmMigrations` still carries the
+ * intent-schema migration steps (guarded per-schema) for consumers who opt in
+ * and bump their own version.
  */
-export const ARK_REALM_SCHEMA_VERSION = 2;
+export const ARK_REALM_SCHEMA_VERSION = 3;
 
 /**
  * Run every Arkade schema migration applicable to the open Realm.
