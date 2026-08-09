@@ -363,6 +363,30 @@ export interface IContractManager extends Disposable {
     ): Promise<void>;
 
     /**
+     * Throw when one of `vtxos` belongs to a contract that provably cannot be
+     * spent right now, asking each owning handler's
+     * {@link ContractHandler.assertSpendableNow}.
+     *
+     * The complement of {@link isContractGenericallySpendable}, which keeps
+     * escrow out of generic selection and leaves explicit-input APIs open on
+     * purpose. This does not close that door — it makes walking through it too
+     * early report itself locally, naming the timelock, instead of coming back
+     * as a protocol-level rejection after the round trip.
+     *
+     * Handlers answer only where they are certain, so contracts with no opinion
+     * (which is all of them but VHTLC today) pass through untouched and cost
+     * nothing — not even a chain-tip read.
+     *
+     * Optional so that adding it is not a breaking change for an embedder with
+     * its own `IContractManager`. An implementation that omits it simply offers
+     * no opinion, which is the same answer every non-VHTLC contract gives.
+     */
+    assertSpendableNow?(
+        vtxos: readonly { txid: string; vout: number; script: string }[],
+        walletPubKey?: () => Promise<string | undefined>,
+    ): Promise<void>;
+
+    /**
      * Update mutable contract fields.
      *
      * `script` and `createdAt` are immutable.
@@ -1592,6 +1616,40 @@ export class ContractManager implements IContractManager {
             `refusing to spend ${outpoints.length} vtxo(s) whose contract cannot be annotated ` +
                 `(${outpoints.join(", ")}): ${[...failures.values()].join("; ")}`,
         );
+    }
+
+    /** @inheritdoc */
+    async assertSpendableNow(
+        vtxos: readonly { txid: string; vout: number; script: string }[],
+        walletPubKey?: () => Promise<string | undefined>,
+    ): Promise<void> {
+        if (vtxos.length === 0) return;
+        const scripts = Array.from(new Set(vtxos.map((vtxo) => vtxo.script)));
+        const contracts = await this.config.contractRepository.getContracts({
+            script: scripts,
+        });
+        // Only if some handler actually asks. Contracts with no opinion — which
+        // is every type but VHTLC today — must cost nothing: no chain-tip read,
+        // and no identity access either. `walletPubKey` is a thunk for exactly
+        // that reason; resolving it eagerly made an ordinary settle depend on a
+        // key it never consults.
+        const asking = contracts.filter(
+            (contract) => contractHandlers.get(contract.type)?.assertSpendableNow !== undefined,
+        );
+        if (asking.length === 0) return;
+
+        const context: PathContext = {
+            collaborative: true,
+            currentTime: Date.now(),
+            blockHeight: await this.currentBlockHeight(),
+            walletPubKey: await walletPubKey?.(),
+        };
+        for (const contract of asking) {
+            const handler = contractHandlers.get(contract.type);
+            // Checked above; narrowing for the type system.
+            if (!handler?.assertSpendableNow) continue;
+            handler.assertSpendableNow(handler.createScript(contract.params), contract, context);
+        }
     }
 
     // Field-by-field, so every filter a caller can express reaches the

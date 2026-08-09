@@ -1279,6 +1279,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
              */
             async assertAnnotatable(): Promise<void> {},
 
+            /** Same reasoning as {@link assertAnnotatable}: the worker checks it. */
+            async assertSpendableNow(): Promise<void> {},
+
             async annotateVtxos(vtxos: VirtualCoin[]): Promise<NormalizedExtendedVirtualCoin[]> {
                 if (vtxos.length === 0) return [];
                 const message: RequestAnnotateVtxos = {

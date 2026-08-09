@@ -9,7 +9,7 @@ import {
     PathSelection,
     TapscriptDeriving,
 } from "../types";
-import { isCltvSatisfied, isCsvSpendable, resolveRole } from "./helpers";
+import { assertVhtlcSpendableNow, isCltvSatisfied, isCsvSpendable, resolveRole } from "./helpers";
 import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
 
 /**
@@ -369,6 +369,14 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
         }
 
         return paths;
+    },
+
+    /**
+     * Refuse an explicit spend of a lockup whose refund path has not opened.
+     * @see assertVhtlcSpendableNow for why this is the one certain case.
+     */
+    assertSpendableNow(_script: VHTLC.ScriptV2, contract: Contract, context: PathContext): void {
+        assertVhtlcSpendableNow(contract, context);
     },
 
     /**
