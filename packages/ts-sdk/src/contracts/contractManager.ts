@@ -697,6 +697,8 @@ export class ContractManager implements IContractManager {
     private lastSyncedAt?: number;
     /** Last chain tip read, with the epoch-ms it was read at. @see currentBlockHeight */
     private chainTipCache?: { height: number; at: number };
+    /** In-flight chain tip read, so concurrent cache misses share one. */
+    private chainTipInflight?: Promise<number | undefined>;
     /** Speculative look-ahead scripts, keyed by script. @see LookAheadEntry */
     private lookAheadEntries: Map<string, LookAheadEntry> = new Map();
     /** In-flight look-ahead drain, if any. @see scheduleLookAheadDrain */
@@ -1688,20 +1690,37 @@ export class ContractManager implements IContractManager {
     private async currentBlockHeight(): Promise<number | undefined> {
         const source = this.config.chainTip;
         if (!source) return undefined;
-        const now = Date.now();
-        if (this.chainTipCache && now - this.chainTipCache.at < CHAIN_TIP_TTL_MS) {
+        if (this.chainTipCache && Date.now() - this.chainTipCache.at < CHAIN_TIP_TTL_MS) {
             return this.chainTipCache.height;
         }
-        try {
-            const height = await source();
-            if (height === undefined) return undefined;
-            this.chainTipCache = { height, at: now };
-            return height;
-        } catch {
-            // Unknown, i.e. exactly the pre-existing behaviour. A tip that
-            // cannot be read must not turn a path query into a rejection.
-            return undefined;
-        }
+        // Collapse concurrent misses onto one read. Without this, a pass that
+        // resolves paths for many contracts fires a provider request per
+        // contract on the tick the TTL lapses — every one of them racing to
+        // write the same height. Assignment happens before the first await
+        // inside, so a caller arriving later in the same tick joins this
+        // promise rather than starting its own.
+        this.chainTipInflight ??= (async () => {
+            try {
+                const height = await source();
+                // Stamped after the await, not before, so the TTL measures
+                // from when the height was actually true.
+                if (height !== undefined) {
+                    this.chainTipCache = { height, at: Date.now() };
+                }
+                // A source that answers `undefined` is saying "no height
+                // available", which is not a value worth remembering — leaving
+                // the cache alone lets the next call past the TTL ask again
+                // rather than serving an absence for 30 seconds.
+                return height;
+            } catch {
+                // Unknown, i.e. exactly the pre-existing behaviour. A tip that
+                // cannot be read must not turn a path query into a rejection.
+                return undefined;
+            } finally {
+                this.chainTipInflight = undefined;
+            }
+        })();
+        return this.chainTipInflight;
     }
 
     /**

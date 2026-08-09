@@ -248,6 +248,33 @@ describe("VHTLCV2ContractHandler", () => {
             expect(await refundLeafOffered(async () => 800_000)).toBe(true);
         });
 
+        it("collapses concurrent cache misses onto a single tip read", async () => {
+            let reads = 0;
+            const manager = await managerFor(async () => {
+                reads += 1;
+                // Resolve on a later turn, so all three callers are waiting on
+                // the same in-flight read rather than being served in sequence.
+                await Promise.resolve();
+                return 800_000;
+            });
+            const contract = contractOf(fullParams());
+            await manager.createContract(contract);
+
+            const query = () =>
+                manager.getSpendablePaths({
+                    contractScript: contract.script,
+                    collaborative: true,
+                    walletPubKey: SENDER,
+                });
+            const results = await Promise.all([query(), query(), query()]);
+
+            expect(reads).toBe(1);
+            const script = VHTLCV2ContractHandler.createScript(contract.params);
+            for (const paths of results) {
+                expect(paths.map(leafHex)).toContain(script.refundWithoutReceiverScript);
+            }
+        });
+
         it("treats an unreadable tip as unknown rather than failing the query", async () => {
             const paths = await (async () => {
                 const manager = await managerFor(async () => {
