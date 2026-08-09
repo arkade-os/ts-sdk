@@ -2034,8 +2034,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
             lookAhead: this.lookAheadConfig(),
             // Without this a PathContext carries no blockHeight, and every
             // height-typed CLTV reads as unsatisfied however mature it is.
+            // The tip's `time` matters just as much: it is what seconds-typed
+            // timelocks are judged against, in place of this host's clock.
             // @see ContractManagerConfig.chainTip
-            chainTip: async () => (await this.onchainProvider.getChainTip()).height,
+            chainTip: async () => {
+                const { height, time } = await this.onchainProvider.getChainTip();
+                return { height, time };
+            },
         });
 
         // Register the wallet's baseline always-active contracts: every

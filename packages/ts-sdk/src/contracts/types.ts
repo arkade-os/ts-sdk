@@ -217,6 +217,18 @@ export interface PathContext {
      */
     role?: string;
 
+    /**
+     * Chain tip timestamp in SECONDS, when known.
+     *
+     * Timelocks mature against chain time, not the machine's clock, so any
+     * seconds-typed comparison should prefer this and fall back to
+     * {@link currentTime} only when it is absent. The two differ by more than
+     * pedantry: the server matures absolute locktimes against median-time-past,
+     * which trails wall clock, and a host whose clock drifts turns a local
+     * decision into a wrong one in whichever direction it drifted.
+     */
+    chainTime?: number;
+
     /** The specific virtual output being evaluated. */
     vtxo?: VirtualCoin;
 }

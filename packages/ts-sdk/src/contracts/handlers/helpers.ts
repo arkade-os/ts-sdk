@@ -159,8 +159,17 @@ export function cltvMaturity(context: PathContext, locktime: bigint): CltvMaturi
         if (context.blockHeight === undefined) return "unknown";
         return BigInt(context.blockHeight) >= locktime ? "satisfied" : "pending";
     }
-    const currentTimeSec = BigInt(Math.floor(context.currentTime / 1000));
-    return currentTimeSec >= locktime ? "satisfied" : "pending";
+    // Chain time where we have it. The wall-clock fallback is a decent estimate
+    // and a poor authority: the server matures this against median-time-past,
+    // which trails wall clock, so a drifting host reads the boundary wrong in
+    // whichever direction it drifted — including "not yet" for something the
+    // chain already accepts.
+    return nowSeconds(context) >= locktime ? "satisfied" : "pending";
+}
+
+/** Chain time if the context carries it, else the local clock. Seconds. */
+function nowSeconds(context: PathContext): bigint {
+    return BigInt(Math.floor(context.chainTime ?? context.currentTime / 1000));
 }
 
 /** Whether `locktime` is height-typed (BIP65), for phrasing a maturity. */
@@ -240,9 +249,12 @@ export function isCsvSpendable(context: PathContext, sequence?: number): boolean
     }
 
     if (timelock.type === "seconds") {
+        // The input's own confirmation time is the CSV's origin — a relative
+        // timelock is measured from when THIS coin confirmed, not from now.
+        // Absent, the age is unknowable and the answer is no.
         const blockTime = context.vtxo.status.block_time;
         if (blockTime === undefined) return false;
-        return context.currentTime / 1000 - blockTime >= Number(timelock.value);
+        return Number(nowSeconds(context)) - blockTime >= Number(timelock.value);
     }
 
     return false;

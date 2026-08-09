@@ -334,6 +334,34 @@ describe("VHTLCV2ContractHandler", () => {
             ).not.toThrow();
         });
 
+        /**
+         * A seconds-typed locktime must be judged against the chain, not the
+         * host. The server matures these against median-time-past, which trails
+         * wall clock, so a machine whose clock runs slow would otherwise refuse
+         * a spend the chain already accepts — the same false refusal the
+         * `unknown` state exists to prevent, arriving by a different door.
+         */
+        it("prefers chain time over the host clock for a seconds-typed locktime", () => {
+            const locktime = Math.floor(Date.now() / 1000) + 3600;
+            // Host clock says an hour short; the chain says matured.
+            expect(() =>
+                check(
+                    fullParams({ refundLocktime: String(locktime) }),
+                    contextAt({ chainTime: locktime + 1 }),
+                ),
+            ).not.toThrow();
+            // And the reverse: chain behind, host ahead — still refused.
+            expect(() =>
+                check(
+                    fullParams({ refundLocktime: String(locktime) }),
+                    contextAt({
+                        currentTime: (locktime + 3600) * 1000,
+                        chainTime: locktime - 1,
+                    }),
+                ),
+            ).toThrow(/cannot be spent yet/);
+        });
+
         it("says nothing about a unilateral spend, which answers to its CSV", () => {
             expect(() =>
                 check(fullParams(), contextAt({ collaborative: false, blockHeight: 799_999 })),
@@ -370,7 +398,16 @@ describe("VHTLCV2ContractHandler", () => {
     });
 
     describe("blockHeight reaches the handler through ContractManager", () => {
-        const managerFor = async (chainTip?: () => Promise<number | undefined>) =>
+        type Tip = { height: number; time: number } | undefined;
+        /** A tip at `height`; its time only matters to the seconds-typed cases. */
+        const at =
+            (height: number, time = 1_700_000_000): (() => Promise<Tip>) =>
+            async () => ({
+                height,
+                time,
+            });
+
+        const managerFor = async (chainTip?: () => Promise<Tip>) =>
             ContractManager.create({
                 indexerProvider: createMockIndexerProvider(),
                 contractRepository: new InMemoryContractRepository(),
@@ -378,9 +415,7 @@ describe("VHTLCV2ContractHandler", () => {
                 chainTip,
             });
 
-        const refundLeafOffered = async (
-            chainTip?: () => Promise<number | undefined>,
-        ): Promise<boolean> => {
+        const refundLeafOffered = async (chainTip?: () => Promise<Tip>): Promise<boolean> => {
             const manager = await managerFor(chainTip);
             const contract = contractOf(fullParams());
             await manager.createContract(contract);
@@ -398,11 +433,11 @@ describe("VHTLCV2ContractHandler", () => {
         });
 
         it("withholds it when the tip is below the locktime", async () => {
-            expect(await refundLeafOffered(async () => 799_999)).toBe(false);
+            expect(await refundLeafOffered(at(799_999))).toBe(false);
         });
 
         it("offers it once the tip reaches the locktime", async () => {
-            expect(await refundLeafOffered(async () => 800_000)).toBe(true);
+            expect(await refundLeafOffered(at(800_000))).toBe(true);
         });
 
         it("collapses concurrent cache misses onto a single tip read", async () => {
@@ -412,7 +447,7 @@ describe("VHTLCV2ContractHandler", () => {
                 // Resolve on a later turn, so all three callers are waiting on
                 // the same in-flight read rather than being served in sequence.
                 await Promise.resolve();
-                return 800_000;
+                return { height: 800_000, time: 1_700_000_000 };
             });
             const contract = contractOf(fullParams());
             await manager.createContract(contract);
@@ -440,7 +475,7 @@ describe("VHTLCV2ContractHandler", () => {
          * mode worth a test of its own.
          */
         const assertThrough = async (tip: number | undefined) => {
-            const manager = await managerFor(tip === undefined ? undefined : async () => tip);
+            const manager = await managerFor(tip === undefined ? undefined : at(tip));
             const contract = contractOf(fullParams());
             await manager.createContract(contract);
             const vtxo = { txid: "a".repeat(64), vout: 0, script: contract.script };
@@ -463,7 +498,7 @@ describe("VHTLCV2ContractHandler", () => {
             let reads = 0;
             const manager = await managerFor(async () => {
                 reads += 1;
-                return 800_000;
+                return { height: 800_000, time: 1_700_000_000 };
             });
             // A `default` row: its handler implements no assertSpendableNow, so
             // the whole check must short-circuit before touching the provider.
@@ -518,7 +553,7 @@ describe("VHTLCV2ContractHandler", () => {
             let reads = 0;
             const manager = await managerFor(() => {
                 reads += 1;
-                return new Promise<number>(() => {});
+                return new Promise<Tip>(() => {});
             });
             const contract = contractOf(fullParams());
             await manager.createContract(contract);
@@ -554,7 +589,7 @@ describe("VHTLCV2ContractHandler", () => {
             const manager = await managerFor(() => {
                 reads += 1;
                 if (reads === 1) throw new Error("provider not ready");
-                return Promise.resolve(800_000);
+                return at(800_000)();
             });
             const contract = contractOf(fullParams());
             await manager.createContract(contract);
@@ -576,7 +611,7 @@ describe("VHTLCV2ContractHandler", () => {
             let reads = 0;
             const manager = await managerFor(async () => {
                 reads += 1;
-                return 800_000;
+                return at(800_000)();
             });
             const contract = contractOf(fullParams());
             await manager.createContract(contract);
