@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { CSVMultisigTapscript, Transaction } from "@arkade-os/sdk";
+import { CSVMultisigTapscript, SingleKey, Transaction } from "@arkade-os/sdk";
 
 import { lightningSendVtxoScript, type RfqStatus, type RfqTransport } from "../src/rfq";
 import {
@@ -33,6 +33,8 @@ const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, .
 const RFQ_ID = "a1".repeat(32);
 const REFUND_LOCKTIME = 1_800_000_000;
 const SENDER_PRIVATE_KEY = priv(13);
+/** The sender key as the signer the refund path now takes. */
+const SENDER = SingleKey.fromPrivateKey(SENDER_PRIVATE_KEY);
 const REFUND_PK_SCRIPT = p2tr(key(5));
 
 /** The same golden participant set rfq.test.ts pins the script bytes against. */
@@ -153,7 +155,7 @@ describe("pushRefundWithoutReceiver", () => {
         const ark = fakeArk();
         await pushRefundWithoutReceiver(ark, {
             script,
-            senderPrivateKey: SENDER_PRIVATE_KEY,
+            sender: SENDER,
             vtxos: VTXOS,
         });
 
@@ -174,7 +176,7 @@ describe("pushRefundWithoutReceiver", () => {
         const ark = fakeArk();
         await pushRefundWithoutReceiver(ark, {
             script: swapScript(),
-            senderPrivateKey: SENDER_PRIVATE_KEY,
+            sender: SENDER,
             vtxos: VTXOS,
         });
 
@@ -190,7 +192,7 @@ describe("pushRefundWithoutReceiver", () => {
         const ark = fakeArk();
         const result = await pushRefundWithoutReceiver(ark, {
             script: swapScript(),
-            senderPrivateKey: SENDER_PRIVATE_KEY,
+            sender: SENDER,
             vtxos: VTXOS,
         });
 
@@ -210,7 +212,7 @@ describe("pushRefundWithoutReceiver", () => {
         const elsewhere = p2tr(key(21));
         await pushRefundWithoutReceiver(ark, {
             script: swapScript(),
-            senderPrivateKey: SENDER_PRIVATE_KEY,
+            sender: SENDER,
             vtxos: VTXOS,
             refundPkScript: elsewhere,
         });
@@ -222,7 +224,7 @@ describe("pushRefundWithoutReceiver", () => {
         await expect(
             pushRefundWithoutReceiver(fakeArk(), {
                 script: swapScript(),
-                senderPrivateKey: SENDER_PRIVATE_KEY,
+                sender: SENDER,
                 vtxos: [],
             }),
         ).rejects.toThrow(/nothing to refund/);
@@ -245,7 +247,7 @@ describe("pushRefundWithoutReceiver", () => {
             await expect(
                 pushRefundWithoutReceiver(ark, {
                     script: swapScript(),
-                    senderPrivateKey: SENDER_PRIVATE_KEY,
+                    sender: SENDER,
                     vtxos: swept,
                 }),
             ).rejects.toThrow(LockupNeedsRecoveryError);
@@ -259,7 +261,7 @@ describe("pushRefundWithoutReceiver", () => {
             ];
             const error: unknown = await pushRefundWithoutReceiver(fakeArk(), {
                 script: swapScript(),
-                senderPrivateKey: SENDER_PRIVATE_KEY,
+                sender: SENDER,
                 vtxos: swept,
             }).then(
                 () => undefined,
@@ -289,7 +291,7 @@ describe("pushRefundWithoutReceiver", () => {
             await expect(
                 pushRefundWithoutReceiver(ark, {
                     script: swapScript(),
-                    senderPrivateKey: SENDER_PRIVATE_KEY,
+                    sender: SENDER,
                     vtxos: mixed,
                 }),
             ).rejects.toThrow(LockupNeedsRecoveryError);
@@ -301,7 +303,7 @@ describe("pushRefundWithoutReceiver", () => {
             const live: LockupVtxo[] = VTXOS.map((v) => ({ ...v, recoverable: false }));
             await pushRefundWithoutReceiver(ark, {
                 script: swapScript(),
-                senderPrivateKey: SENDER_PRIVATE_KEY,
+                sender: SENDER,
                 vtxos: live,
             });
             expect(ark.submitted).toHaveLength(1);
@@ -316,7 +318,7 @@ describe("pushRefundWithoutReceiver", () => {
         const capture = fakeArk();
         await pushRefundWithoutReceiver(capture, {
             script: swapScript(),
-            senderPrivateKey: SENDER_PRIVATE_KEY,
+            sender: SENDER,
             vtxos: [{ txid: "33".repeat(32), vout: 0, value: 7_000, recoverable: false }],
         });
         const foreignCheckpoint = capture.submitted[0].checkpoints[0];
@@ -325,7 +327,7 @@ describe("pushRefundWithoutReceiver", () => {
         await expect(
             pushRefundWithoutReceiver(ark, {
                 script: swapScript(),
-                senderPrivateKey: SENDER_PRIVATE_KEY,
+                sender: SENDER,
                 vtxos: [VTXOS[0]],
             }),
         ).rejects.toThrow(/does not match any submitted checkpoint/);
@@ -336,7 +338,7 @@ describe("pushRefundWithoutReceiver", () => {
         await expect(
             pushRefundWithoutReceiver(fakeArk({ checkpointTapscript: "00" }), {
                 script: swapScript(),
-                senderPrivateKey: SENDER_PRIVATE_KEY,
+                sender: SENDER,
                 vtxos: VTXOS,
             }),
         ).rejects.toThrow(/checkpointTapscript/);
@@ -423,7 +425,7 @@ describe("refundIfUnresolved", () => {
     const baseInput = () => ({
         rfqId: RFQ_ID,
         script: swapScript(),
-        senderPrivateKey: SENDER_PRIVATE_KEY,
+        sender: SENDER,
         refundLocktime: REFUND_LOCKTIME,
         pollMs: 1,
     });

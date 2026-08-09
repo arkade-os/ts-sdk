@@ -6,7 +6,9 @@ import {
     SingleKey,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD,
     isHDWalletCapable,
+    isHDAllocationCapable,
 } from "../src";
 import { deriveDescriptorLeafCompressedPubKey } from "../src/identity/descriptor";
 import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
@@ -98,6 +100,131 @@ describe("HDWalletCapable", () => {
         expect(await wallet.getUsedSigningDescriptors()).toEqual([
             provider.materializeDescriptorAt(0),
         ]);
+        await wallet.dispose();
+    });
+
+    it("keeps allocation a separate probe from descriptor awareness", async () => {
+        // Widening `isHDWalletCapable` instead would demote every wallet
+        // implementing only its original surface — an older SDK build, a
+        // hand-rolled double — from HD-capable to static, silently.
+        const readOnly = {
+            getCurrentSigningDescriptor: async () => undefined,
+            getUsedSigningDescriptors: async () => [],
+            signerForDescriptor: async () => undefined,
+        };
+        expect(isHDWalletCapable(readOnly)).toBe(true);
+        expect(isHDAllocationCapable(readOnly)).toBe(false);
+
+        const wallet = await makeWallet({ hd: true });
+        expect(isHDAllocationCapable(wallet)).toBe(true);
+        await wallet.dispose();
+    });
+
+    it("allocates a fresh descriptor per call, never repeating one", async () => {
+        // A peek would hand two artifacts the same key; anything deriving
+        // per-artifact secrets from it would derive them identically.
+        const wallet = await makeWallet({ hd: true });
+        const allocated = [
+            await wallet.getNextSigningDescriptor(),
+            await wallet.getNextSigningDescriptor(),
+            await wallet.getNextSigningDescriptor(),
+        ];
+        expect(new Set(allocated).size).toBe(3);
+        expect(await wallet.getCurrentSigningDescriptor()).toBe(allocated[2]);
+        await wallet.dispose();
+    });
+
+    it("cannot allocate on a static wallet", async () => {
+        const wallet = await makeWallet({ hd: false });
+        expect(await wallet.getNextSigningDescriptor()).toBeUndefined();
+        await wallet.dispose();
+    });
+
+    describe("advanceSigningDescriptorWatermark", () => {
+        it("skips a restored index so it cannot be allocated twice", async () => {
+            const wallet = await makeWallet({ hd: true });
+            const provider: HDDescriptorProvider = (wallet as any)._descriptorProvider;
+
+            await wallet.advanceSigningDescriptorWatermark(provider.materializeDescriptorAt(7));
+
+            expect(await wallet.getNextSigningDescriptor()).toBe(
+                provider.materializeDescriptorAt(8),
+            );
+            await wallet.dispose();
+        });
+
+        it("never rewinds", async () => {
+            const wallet = await makeWallet({ hd: true });
+            const provider: HDDescriptorProvider = (wallet as any)._descriptorProvider;
+            await provider.advanceLastIndexUsed(5);
+
+            await wallet.advanceSigningDescriptorWatermark(provider.materializeDescriptorAt(2));
+
+            expect(await wallet.getNextSigningDescriptor()).toBe(
+                provider.materializeDescriptorAt(6),
+            );
+            await wallet.dispose();
+        });
+
+        it("refuses a rangeable descriptor, which names no index at all", async () => {
+            // `.../0/*)` is ours but concrete-index-free. The lenient parse
+            // answers 0 for it, and 0 is a real index — so the watermark would
+            // stay put while the call reported success.
+            const wallet = await makeWallet({ hd: true });
+            const provider: HDDescriptorProvider = (wallet as any)._descriptorProvider;
+            const ranged = provider.materializeDescriptorAt(0).replace(/\/\d+\)$/, "/*)");
+            await provider.advanceLastIndexUsed(4);
+
+            await expect(wallet.advanceSigningDescriptorWatermark(ranged)).rejects.toThrow(
+                /no trailing child index/,
+            );
+            expect(await provider.getLastIndexUsed()).toBe(4);
+            await wallet.dispose();
+        });
+
+        it("refuses a descriptor from another seed", async () => {
+            const wallet = await makeWallet({ hd: true });
+            await expect(wallet.advanceSigningDescriptorWatermark("tr(deadbeef)")).rejects.toThrow(
+                /not derivable/,
+            );
+            await wallet.dispose();
+        });
+    });
+
+    it("appends look-ahead descriptors without moving the watermark", async () => {
+        const wallet = await makeWallet({ hd: true });
+        const provider: HDDescriptorProvider = (wallet as any)._descriptorProvider;
+
+        const probed = await wallet.getUsedSigningDescriptors({ lookAhead: 2 });
+
+        expect(probed).toEqual([0, 1, 2].map((i) => provider.materializeDescriptorAt(i)));
+        // An index nothing has claimed stays available to the next allocation.
+        expect(await provider.getLastIndexUsed()).toBe(0);
+        await wallet.dispose();
+    });
+
+    it("rejects non-finite look-ahead values", async () => {
+        const wallet = await makeWallet({ hd: true });
+
+        await expect(wallet.getUsedSigningDescriptors({ lookAhead: Infinity })).rejects.toThrow(
+            /finite number/,
+        );
+        await wallet.dispose();
+    });
+
+    it("caps excessive finite look-ahead before materializing descriptors", async () => {
+        const wallet = await makeWallet({ hd: true });
+        const provider: HDDescriptorProvider = (wallet as any)._descriptorProvider;
+
+        const probed = await wallet.getUsedSigningDescriptors({
+            lookAhead: MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD + 500,
+        });
+
+        expect(probed).toHaveLength(MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD + 1);
+        expect(probed.at(-1)).toBe(
+            provider.materializeDescriptorAt(MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD),
+        );
+        expect(await provider.getLastIndexUsed()).toBe(0);
         await wallet.dispose();
     });
 

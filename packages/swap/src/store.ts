@@ -17,12 +17,22 @@ export type AssetSwapStatus =
  * restore layers share one spelling instead of re-typing the literal. */
 export const BTC_ASSET_ID = "btc";
 
+export interface AssetSwapFallbackSecretsV1 {
+    version: 1;
+    type: "stored";
+    senderPrivateKeyHex: string;
+    /** Onchain-send only. A lightning send's preimage belongs to the payee. */
+    preimageHex?: string;
+}
+
+export type AssetSwapFallbackSecrets = AssetSwapFallbackSecretsV1;
+
 // ponytail: records carry only chain-recoverable facts — no quote-time display
 // snapshot (tickers, fee bps, fiat value); add an optional snapshot field back
 // if a consumer must persist display metadata the restore scan cannot rebuild
 
 // ponytail: store policy (newest-first order, insert-if-absent, id-is-the-key,
-// write-failure tolerance) lives in these repository-first functions, so a
+// write-failure reporting) lives in these repository-first functions, so a
 // consumer calling repository.saveSwap directly bypasses all of it — saveSwap
 // is an upsert, so it will not even preserve insert-if-absent. Promote to an
 // AssetSwapStore class holding the repository privately if a second consumer
@@ -48,16 +58,28 @@ export interface AssetSwap {
     status: AssetSwapStatus;
     createdAt: number;
     completedAt?: number;
-    // ── Onchain-corridor fields (absent on offer swaps). Persist the record —
-    // preimage included — BEFORE funding: the preimage is what makes the swap
-    // claimable across restarts, and nothing on chain can recover it until the
-    // counterparty spends. ──
+    // ── Onchain-corridor fields (absent on offer swaps). Persist the record
+    // BEFORE funding: what claims the swap across restarts lives here, and
+    // nothing on chain recovers it until the counterparty spends. ──
     /** RFQ pair string, e.g. `arkade:BTC->onchain:BTC`. */
     pair?: string;
-    /** `sha256(P)`, hex. */
+    /** `sha256(P)`, hex. Public, and how a restore confirms a candidate
+     * derivation is the right one. */
     paymentHash?: string;
-    /** P, hex — cleared once the claim is spent if the caller wishes. */
+    /**
+     * The HD descriptor this swap's secrets derive from. Public — it is what
+     * lets the record carry no secrets at all. Present iff the swap was
+     * created on a wallet that can allocate.
+     */
+    signingDescriptor?: string;
+    /** P, hex, when the maker supplied a preimage that is not seed-derived. */
     preimageHex?: string;
+    /**
+     * Complete stored-arm secrets for wallets that cannot derive. Versioned
+     * and discriminated so restore can rebuild both the sender identity and,
+     * for onchain sends, P.
+     */
+    fallbackSecrets?: AssetSwapFallbackSecrets;
     /** The L1 HTLC's pkScript, hex — the chain-watch key. */
     htlcPkScriptHex?: string;
     htlcLocktime?: number;
@@ -89,13 +111,14 @@ export const getAssetSwaps = async (repository: AssetSwapRepository): Promise<As
     }
 };
 
-// persistence must never fail the caller: by the time a swap is stored the
-// funding tx is already broadcast, and the offer stays recoverable from it
+// Surface persistence failures: onchain sends must prove the pre-funding
+// record write landed before the caller broadcasts the lockup.
 const saveSwapSafely = async (repository: AssetSwapRepository, swap: AssetSwap): Promise<void> => {
     try {
         await repository.saveSwap(swap);
-    } catch {
-        // best effort: the record stays recoverable from chain (see restore.ts)
+    } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`failed to save swap ${swap.id}: ${reason}`);
     }
 };
 

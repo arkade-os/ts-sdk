@@ -1463,6 +1463,18 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 return Promise.resolve();
             },
 
+            getNextSigningDescriptor(): Promise<string | undefined> {
+                // Descriptor allocation is owned by the worker-side Wallet; the
+                // callback cannot cross the postMessage boundary.
+                return Promise.resolve(undefined);
+            },
+
+            advanceSigningDescriptorWatermark(): Promise<void> {
+                // See getNextSigningDescriptor(): page-side manager proxies do
+                // not mutate the worker-owned HD watermark.
+                return Promise.resolve();
+            },
+
             async isWatching(): Promise<boolean> {
                 const message: RequestIsContractManagerWatching = {
                     type: "IS_CONTRACT_MANAGER_WATCHING",

@@ -26,8 +26,8 @@ import type {
     DescriptorSigner,
     HDDeterministicSignCapable,
 } from "./identity";
-import { isHDWalletCapable } from "./wallet/hdWalletCapable";
-import type { HDWalletCapable } from "./wallet/hdWalletCapable";
+import { isHDWalletCapable, isHDAllocationCapable } from "./wallet/hdWalletCapable";
+import type { HDAllocationCapable, HDWalletCapable } from "./wallet/hdWalletCapable";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
@@ -106,6 +106,7 @@ import { Batch } from "./wallet/batch";
 import {
     Wallet,
     ReadonlyWallet,
+    MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD,
     waitForIncomingFunds,
     IncomingFunds,
     selectVirtualCoins,
@@ -468,6 +469,7 @@ export {
     // Wallets
     Wallet,
     ReadonlyWallet,
+    MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD,
     SingleKey,
     ReadonlySingleKey,
     SeedIdentity,
@@ -477,6 +479,7 @@ export {
     DescriptorIdentity,
     isHDDeterministicSignCapable,
     isHDWalletCapable,
+    isHDAllocationCapable,
     deriveDescriptorLeafCompressedPubKey,
     OnchainWallet,
     Ramps,
@@ -751,6 +754,7 @@ export type {
     DescriptorSigner,
     HDDeterministicSignCapable,
     HDWalletCapable,
+    HDAllocationCapable,
     // Indexer types
     IndexerProvider,
     PageResponse,

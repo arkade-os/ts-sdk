@@ -44,9 +44,9 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import {
     CSVMultisigTapscript,
     ConditionWitness,
+    type Identity,
     RestArkProvider,
     RestIndexerProvider,
-    SingleKey,
     Transaction,
     VHTLC,
     assertSubmittedArkTxid,
@@ -492,8 +492,10 @@ export async function pushRefundWithoutReceiver(
     ark: RefundArkProvider,
     input: {
         script: InstanceType<typeof VHTLC.ScriptV2>;
-        /** The `sender` private key from `requestLightningSend`/`requestOnchainSend`. */
-        senderPrivateKey: Uint8Array;
+        /** The `sender` signer. Build it from the swap's `secrets` with
+         * `senderIdentityForRfqSecrets` — on an HD wallet that resolves from
+         * the seed, with no stored key bytes anywhere. */
+        sender: Identity;
         vtxos: readonly LockupVtxo[];
         /** Defaults to the contract's own committed refund destination. */
         refundPkScript?: Uint8Array;
@@ -544,9 +546,8 @@ export async function pushRefundWithoutReceiver(
         serverUnrollScript,
     );
 
-    const signer = SingleKey.fromPrivateKey(input.senderPrivateKey);
     // No index list: every input spends the same leaf, so all are signed.
-    const signedArkTx = await signer.sign(arkTx);
+    const signedArkTx = await input.sender.sign(arkTx);
     const submitted = await ark.submitTx(
         base64.encode(signedArkTx.toPSBT()),
         checkpoints.map((c) => base64.encode(c.toPSBT())),
@@ -562,7 +563,9 @@ export async function pushRefundWithoutReceiver(
         "refundWithoutReceiver",
     );
     const finalCheckpoints = await Promise.all(
-        matched.map(async ({ server }) => base64.encode((await signer.sign(server, [0])).toPSBT())),
+        matched.map(async ({ server }) =>
+            base64.encode((await input.sender.sign(server, [0])).toPSBT()),
+        ),
     );
 
     await ark.finalizeTx(submitted.arkTxid, finalCheckpoints);
@@ -642,7 +645,8 @@ export async function refundIfUnresolved(
     input: {
         rfqId: string;
         script: InstanceType<typeof VHTLC.ScriptV2>;
-        senderPrivateKey: Uint8Array;
+        /** @see pushRefundWithoutReceiver */
+        sender: Identity;
         /** `refund_locktime` from the quote, unix seconds. */
         refundLocktime: number;
         /** Defaults to the contract's own committed refund destination. */
@@ -669,7 +673,7 @@ export async function refundIfUnresolved(
             try {
                 const pushed = await pushRefundWithoutReceiver(ark, {
                     script: input.script,
-                    senderPrivateKey: input.senderPrivateKey,
+                    sender: input.sender,
                     vtxos,
                     refundPkScript: input.refundPkScript,
                 });
