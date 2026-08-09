@@ -177,6 +177,64 @@ describe("VHTLCV2ContractHandler", () => {
         expect(v2).not.toBe(v1);
     });
 
+    /**
+     * The two handlers must answer the contract-manager-facing questions the
+     * same way, because the reasons are the same for both: a VHTLC of either
+     * version is escrow, and neither script version has a `forfeit()` for
+     * `deriveContractTapscripts` to fall back to.
+     *
+     * Pinned as a pair because they are easy to change one at a time, and one
+     * at a time is exactly what is unsafe. V1 shipped for a while answering
+     * `true` to the gate while deriving no annotation leaf at all — a
+     * combination that was only safe because the missing derivation kept its
+     * VTXOs out of the snapshot, so the open gate was never reached.
+     */
+    it("agrees with the vhtlc handler on annotation and on the spending gate", () => {
+        const shared = {
+            sender: SENDER,
+            receiver: RECEIVER,
+            server: SERVER,
+            hash: HASH,
+            refundLocktime: "800000",
+            claimDelay: "10",
+            refundDelay: "12",
+            refundNoReceiverDelay: "14",
+        };
+        const v1Script = VHTLCContractHandler.createScript(shared);
+        const v2Script = VHTLCV2ContractHandler.createScript(shared);
+        const v1Contract: Contract = {
+            type: "vhtlc",
+            params: shared,
+            script: hex.encode(v1Script.pkScript),
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+        const v2Contract = contractOf(shared);
+
+        // Both closed to generic selection, and closed rather than merely equal.
+        expect(VHTLCContractHandler.isGenericallySpendable?.(v1Contract)).toBe(
+            VHTLCV2ContractHandler.isGenericallySpendable?.(v2Contract),
+        );
+        expect(isContractGenericallySpendable(v1Contract)).toBe(false);
+        expect(isContractGenericallySpendable(v2Contract)).toBe(false);
+
+        // Both annotate off their own refundWithoutReceiver leaf, through the
+        // shared entry point rather than the handler method.
+        for (const [contract, script] of [
+            [v1Contract, v1Script],
+            [v2Contract, v2Script],
+        ] as const) {
+            const derived = deriveContractTapscripts(contract);
+            expect(leafHex({ leaf: derived.intentTapLeafScript })).toBe(
+                script.refundWithoutReceiverScript,
+            );
+            expect(leafHex({ leaf: derived.forfeitTapLeafScript })).toBe(
+                script.refundWithoutReceiverScript,
+            );
+        }
+    });
+
     it("derives annotation tapscripts rather than falling back to a forfeit() it lacks", () => {
         const params = fullParams();
         const contract = contractOf(params);
