@@ -1648,7 +1648,15 @@ export class ContractManager implements IContractManager {
             const handler = contractHandlers.get(contract.type);
             // Checked above; narrowing for the type system.
             if (!handler?.assertSpendableNow) continue;
-            handler.assertSpendableNow(handler.createScript(contract.params), contract, context);
+            // Awaited even though every shipped handler answers synchronously:
+            // the signature permits a promise, and an un-awaited one would drop
+            // its rejection on the floor — a refusal that never reaches the
+            // caller is worse than no guard, because it reads as approval.
+            await handler.assertSpendableNow(
+                handler.createScript(contract.params),
+                contract,
+                context,
+            );
         }
     }
 

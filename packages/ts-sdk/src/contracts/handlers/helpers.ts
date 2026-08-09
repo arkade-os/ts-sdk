@@ -212,10 +212,15 @@ export function assertVhtlcSpendableNow(contract: Contract, context: PathContext
               `${new Date(Number(refundLocktime) * 1000).toISOString()}`,
               new Date(context.currentTime).toISOString(),
           ];
+    // Addressed to the sender — the only role that reaches here. Do not offer
+    // them the preimage claim: that is the receiver's leaf and the receiver's
+    // secret, and suggesting it sends the reader looking for a key they will
+    // never hold.
     throw new Error(
         `vhtlc ${contract.script} cannot be spent yet: its refund path opens at ${matures}, ` +
             `now ${now}. Until then the lockup is the receiver's to claim, and the server ` +
-            `rejects a spend of it. Retry after ${matures}, or claim it with the preimage.`,
+            `rejects a spend of it. Retry after ${matures}, or wait for the receiver to ` +
+            `claim it with the preimage.`,
     );
 }
 

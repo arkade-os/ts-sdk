@@ -333,9 +333,14 @@ export interface ContractHandler<P = Record<string, unknown>, S extends VtxoScri
      * unreadable timelock (height-typed with no chain tip) is unknown, not
      * immature. @see cltvMaturity, which keeps those apart.
      *
+     * Returning a promise is allowed so a handler needing I/O is not forced to
+     * throw synchronously — callers await the result. Prefer synchronous where
+     * possible: this runs on the path between a caller's decision to spend and
+     * the spend itself.
+     *
      * @throws Error when the contract provably cannot be spent at `context`
      */
-    assertSpendableNow?(script: S, contract: Contract, context: PathContext): void;
+    assertSpendableNow?(script: S, contract: Contract, context: PathContext): void | Promise<void>;
 }
 
 /**

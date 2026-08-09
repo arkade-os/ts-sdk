@@ -3783,14 +3783,14 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // intent. Arknotes and boarding inputs carry no vtxo script, so they
         // are not the ones this can speak about.
         const settleInputVtxos = params.inputs.filter(isVirtualCoin);
-        await (await this.getContractManager()).assertAnnotatable(settleInputVtxos);
+        const contractManager = await this.getContractManager();
+        await contractManager.assertAnnotatable(settleInputVtxos);
         // And the timelock, for the same reason one line up: a lockup named
         // before its refund path opens builds and registers fine here, and is
         // refused by the server — after the round trip, in terms that do not
         // say which timelock was not yet mature. Only handlers that are certain
         // answer, so this is a no-op for ordinary coins.
-        const manager = await this.getContractManager();
-        await manager.assertSpendableNow?.(settleInputVtxos, async () =>
+        await contractManager.assertSpendableNow?.(settleInputVtxos, async () =>
             hex.encode(await this.identity.xOnlyPublicKey()),
         );
 
