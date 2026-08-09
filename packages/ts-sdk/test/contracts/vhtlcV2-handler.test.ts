@@ -200,6 +200,73 @@ describe("VHTLCV2ContractHandler", () => {
         expect(isContractGenericallySpendable(contract)).toBe(false);
     });
 
+    /**
+     * The handler's own CLTV check has always been right, and the tests below
+     * prove it by handing the context a `blockHeight` directly. What nothing
+     * proved is that anything ever PUTS one there.
+     *
+     * `refundLocktime` here is 800000 — under `CLTV_HEIGHT_THRESHOLD`, so
+     * height-typed — and `isCltvSatisfied` answers `false` outright when
+     * `blockHeight` is missing. No construction site populated it, so through
+     * the manager the sender's collaborative refund was unreachable at every
+     * height, matured or not. This pins the wiring, not the arithmetic: same
+     * contract, same maturity, the only variable is whether a tip is supplied.
+     */
+    describe("blockHeight reaches the handler through ContractManager", () => {
+        const managerFor = async (chainTip?: () => Promise<number | undefined>) =>
+            ContractManager.create({
+                indexerProvider: createMockIndexerProvider(),
+                contractRepository: new InMemoryContractRepository(),
+                walletRepository: new InMemoryWalletRepository(),
+                chainTip,
+            });
+
+        const refundLeafOffered = async (
+            chainTip?: () => Promise<number | undefined>,
+        ): Promise<boolean> => {
+            const manager = await managerFor(chainTip);
+            const contract = contractOf(fullParams());
+            await manager.createContract(contract);
+            const script = VHTLCV2ContractHandler.createScript(contract.params);
+            const paths = await manager.getSpendablePaths({
+                contractScript: contract.script,
+                collaborative: true,
+                walletPubKey: SENDER,
+            });
+            return paths.map(leafHex).includes(script.refundWithoutReceiverScript!);
+        };
+
+        it("withholds the matured refund leaf when no tip source is configured", async () => {
+            expect(await refundLeafOffered(undefined)).toBe(false);
+        });
+
+        it("withholds it when the tip is below the locktime", async () => {
+            expect(await refundLeafOffered(async () => 799_999)).toBe(false);
+        });
+
+        it("offers it once the tip reaches the locktime", async () => {
+            expect(await refundLeafOffered(async () => 800_000)).toBe(true);
+        });
+
+        it("treats an unreadable tip as unknown rather than failing the query", async () => {
+            const paths = await (async () => {
+                const manager = await managerFor(async () => {
+                    throw new Error("provider down");
+                });
+                const contract = contractOf(fullParams());
+                await manager.createContract(contract);
+                return manager.getSpendablePaths({
+                    contractScript: contract.script,
+                    collaborative: true,
+                    walletPubKey: SENDER,
+                });
+            })();
+            // Resolved, not rejected — and the height-gated leaf stays out.
+            const script = VHTLCV2ContractHandler.createScript(fullParams());
+            expect(paths.map(leafHex)).not.toContain(script.refundWithoutReceiverScript);
+        });
+    });
+
     describe("path selection", () => {
         it("gives the sender refundWithoutReceiver only once the CLTV is satisfied", () => {
             const contract = contractOf(fullParams());

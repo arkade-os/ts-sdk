@@ -150,6 +150,17 @@ const SCAN_MAX_INDEX = 10_000;
  */
 const DEFAULT_SCAN_BATCH = 10;
 
+/**
+ * How long a chain tip read stays usable for {@link PathContext.blockHeight}.
+ *
+ * Sized well under a block interval so the cached height is at most one block
+ * behind, and short enough that a caller resolving paths across many contracts
+ * pays a single provider round trip. Staleness is one-directional here: a
+ * height below the true tip can only withhold a height-gated path that has
+ * just matured, never offer one that has not.
+ */
+const CHAIN_TIP_TTL_MS = 30_000;
+
 export type RefreshVtxosOptions = {
     /**
      * Narrow the refresh to these scripts. A subset query, so the
@@ -556,6 +567,23 @@ export interface ContractManagerConfig {
      * {@link ContractManager.refillLookAhead}.
      */
     lookAhead?: LookAheadConfig;
+
+    /**
+     * Current chain tip height, for the `blockHeight` a {@link PathContext}
+     * carries. Absent, or resolving `undefined`, leaves `blockHeight` unset.
+     *
+     * Height-typed timelocks cannot be evaluated without it: `isCltvSatisfied`
+     * and `isCsvSpendable` both answer `false` outright when `blockHeight` is
+     * missing, so every height-gated path is reported unspendable no matter how
+     * mature it is. Nothing populated this before, which made that the only
+     * behaviour available. Seconds-typed timelocks read `currentTime` and are
+     * unaffected either way.
+     *
+     * Resolve `undefined` rather than rejecting when the tip cannot be read:
+     * the callers treat it as "unknown", which is the pre-existing behaviour,
+     * and a path query is not worth failing over a provider hiccup.
+     */
+    chainTip?: () => Promise<number | undefined>;
 }
 
 /**
@@ -667,6 +695,8 @@ export class ContractManager implements IContractManager {
     private syncDegradedReason?: string;
     /** Epoch-ms of the last successful provider sync, if any. */
     private lastSyncedAt?: number;
+    /** Last chain tip read, with the epoch-ms it was read at. @see currentBlockHeight */
+    private chainTipCache?: { height: number; at: number };
     /** Speculative look-ahead scripts, keyed by script. @see LookAheadEntry */
     private lookAheadEntries: Map<string, LookAheadEntry> = new Map();
     /** In-flight look-ahead drain, if any. @see scheduleLookAheadDrain */
@@ -1645,6 +1675,36 @@ export class ContractManager implements IContractManager {
     }
 
     /**
+     * Chain tip height for a {@link PathContext}, or `undefined` when there is
+     * no source configured or it cannot be read.
+     *
+     * Cached for {@link CHAIN_TIP_TTL_MS} so a caller resolving paths for many
+     * contracts does not pay a provider round trip each time. Blocks arrive
+     * ~10 minutes apart, so a cache this short can only ever be one block
+     * stale, and a stale-low height is the conservative direction: a path is
+     * reported unspendable slightly longer than it truly is, never spendable
+     * before it is.
+     */
+    private async currentBlockHeight(): Promise<number | undefined> {
+        const source = this.config.chainTip;
+        if (!source) return undefined;
+        const now = Date.now();
+        if (this.chainTipCache && now - this.chainTipCache.at < CHAIN_TIP_TTL_MS) {
+            return this.chainTipCache.height;
+        }
+        try {
+            const height = await source();
+            if (height === undefined) return undefined;
+            this.chainTipCache = { height, at: now };
+            return height;
+        } catch {
+            // Unknown, i.e. exactly the pre-existing behaviour. A tip that
+            // cannot be read must not turn a path query into a rejection.
+            return undefined;
+        }
+    }
+
+    /**
      * Get currently spendable paths for a contract.
      *
      * @param options - Options for getting spendable paths
@@ -1662,6 +1722,7 @@ export class ContractManager implements IContractManager {
         const context: PathContext = {
             collaborative,
             currentTime: Date.now(),
+            blockHeight: await this.currentBlockHeight(),
             walletPubKey,
             vtxo,
         };
@@ -1687,6 +1748,7 @@ export class ContractManager implements IContractManager {
         const context: PathContext = {
             collaborative,
             currentTime: Date.now(),
+            blockHeight: await this.currentBlockHeight(),
             walletPubKey,
         };
 
