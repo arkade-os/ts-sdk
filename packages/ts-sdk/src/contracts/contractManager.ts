@@ -1678,7 +1678,14 @@ export class ContractManager implements IContractManager {
                 blockHeight: tip?.height,
                 chainTime: tip?.time,
                 walletPubKey: walletKey,
-                vtxo: isVirtualCoin(vtxo) ? vtxo : undefined,
+                // `isVirtualCoin` alone is too weak here: it only asks for a
+                // string `script`, which every AssertSpendableInput has, so a
+                // bare outpoint would be published as a coin with no `status`.
+                // `isCsvSpendable` reads `vtxo.status.block_time` unguarded, so
+                // the next handler to answer a CSV question would meet a
+                // TypeError instead of a `false`. Carry the coin only when it
+                // really is one.
+                vtxo: isVirtualCoin(vtxo) && "status" in vtxo ? vtxo : undefined,
             };
             // Awaited even though every shipped handler answers synchronously:
             // the signature permits a promise, and an un-awaited one would drop

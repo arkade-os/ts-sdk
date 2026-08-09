@@ -129,12 +129,10 @@ const CLTV_HEIGHT_THRESHOLD = 500_000_000n;
  * Returns false if the relevant context field is missing.
  */
 export function isCltvSatisfied(context: PathContext, locktime: bigint): boolean {
-    if (locktime < CLTV_HEIGHT_THRESHOLD) {
-        if (context.blockHeight === undefined) return false;
-        return BigInt(context.blockHeight) >= locktime;
-    }
-    const currentTimeSec = BigInt(Math.floor(context.currentTime / 1000));
-    return currentTimeSec >= locktime;
+    // Deliberately the same clock `cltvMaturity` reads. Offering a path and
+    // refusing one are two answers to one question, and sourcing them from
+    // different clocks lets a wallet offer a leaf its own guard would reject.
+    return cltvMaturity(context, locktime) === "satisfied";
 }
 
 /**

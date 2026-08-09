@@ -494,6 +494,42 @@ describe("VHTLCV2ContractHandler", () => {
             await expect(assertThrough(undefined)).resolves.toBeUndefined();
         });
 
+        /**
+         * A bare outpoint must not be published to handlers as a coin. It has
+         * no `status`, and `isCsvSpendable` reads `vtxo.status.block_time`
+         * unguarded — so a handler answering a CSV question would meet a
+         * TypeError rather than a `false`. Asserted through the real dispatch
+         * with a temporary handler, because the type system cannot say this:
+         * every AssertSpendableInput structurally satisfies `isVirtualCoin`.
+         */
+        it("does not hand a handler a coin that has no status", async () => {
+            const manager = await managerFor(at(799_999));
+            const contract = contractOf(fullParams());
+            await manager.createContract(contract);
+
+            const real = contractHandlers.get("vhtlc-v2")!;
+            let seen: PathContext | undefined;
+            contractHandlers.unregister("vhtlc-v2");
+            contractHandlers.register({
+                ...real,
+                assertSpendableNow: (_s: unknown, _c: unknown, ctx: PathContext) => {
+                    seen = ctx;
+                },
+            } as never);
+            try {
+                await manager.assertSpendableNow!(
+                    [{ txid: "c".repeat(64), vout: 0, script: contract.script }],
+                    async () => SENDER,
+                );
+            } finally {
+                contractHandlers.unregister("vhtlc-v2");
+                contractHandlers.register(real as never);
+            }
+
+            expect(seen).toBeDefined();
+            expect(seen!.vtxo).toBeUndefined();
+        });
+
         it("never reads a tip when no contract has an opinion", async () => {
             let reads = 0;
             const manager = await managerFor(async () => {
