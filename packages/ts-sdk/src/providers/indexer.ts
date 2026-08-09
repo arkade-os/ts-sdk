@@ -3,6 +3,12 @@ import { AssetDetails, AssetMetadata, Outpoint, VirtualCoin } from "../wallet";
 import { convertVtxo } from "../wallet/vtxo";
 import { isFetchTimeoutError } from "./ark";
 import { eventSourceIterator, isEventSourceError } from "./utils";
+import {
+    isEventSourceUnavailableError,
+    resolveEventSource,
+    type EventSourceCapable,
+    type EventSourceFactory,
+} from "./eventSource";
 import { MetadataList } from "../extension/asset";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 import { baseFetch } from "../utils/fetch";
@@ -386,7 +392,15 @@ export interface IndexerProvider {
  * ```
  */
 export class RestIndexerProvider implements IndexerProvider {
-    constructor(public serverUrl: string = DEFAULT_ARKADE_SERVER_URL) {}
+    /** Overrides {@link configureEventSource} for this provider's subscription. */
+    protected readonly eventSource?: EventSourceFactory;
+
+    constructor(
+        public serverUrl: string = DEFAULT_ARKADE_SERVER_URL,
+        options: EventSourceCapable = {},
+    ) {
+        this.eventSource = options.eventSource;
+    }
 
     async getVtxoTree(
         batchOutpoint: Outpoint,
@@ -532,6 +546,10 @@ export class RestIndexerProvider implements IndexerProvider {
         abortSignal: AbortSignal,
     ): AsyncIterableIterator<SubscriptionResponse> {
         const url = `${this.serverUrl}/v1/indexer/script/subscription/${subscriptionId}`;
+        // Captured, not resolved, here: resolution has to happen per connection
+        // attempt inside the generator, so a caller that abandons the iterator
+        // never triggers it and a late `configureEventSource` is still seen.
+        const override = this.eventSource;
         let iterator: ReturnType<typeof eventSourceIterator> | null = null;
         const closeIterator = () => iterator?.close();
 
@@ -542,7 +560,9 @@ export class RestIndexerProvider implements IndexerProvider {
             try {
                 while (!abortSignal?.aborted) {
                     try {
-                        const currentIterator = eventSourceIterator(new EventSource(url));
+                        const currentIterator = eventSourceIterator(
+                            resolveEventSource(override)(url),
+                        );
                         iterator = currentIterator;
 
                         for await (const event of currentIterator) {
@@ -583,6 +603,12 @@ export class RestIndexerProvider implements IndexerProvider {
                         if (isEventSourceError(error)) {
                             throw error;
                         }
+
+                        // A missing EventSource is an environment fact, not a
+                        // stream failure: the caller reports it once (see
+                        // ContractWatcher), where this loop would log it on
+                        // every reconnect attempt.
+                        if (isEventSourceUnavailableError(error)) throw error;
 
                         console.error("Subscription error:", error);
                         throw error;

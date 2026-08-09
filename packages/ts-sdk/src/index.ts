@@ -263,6 +263,16 @@ import {
     type EmulatorInfo,
     type ConnectorTreeNode,
 } from "./providers/emulator";
+export {
+    EventSourceUnavailableError,
+    configureEventSource,
+    getConfiguredEventSource,
+    isEventSourceUnavailableError,
+    resolveEventSource,
+    type EventSourceCapable,
+    type EventSourceFactory,
+    type EventSourceLike,
+} from "./providers/eventSource";
 import type {
     ArkadeBatchInput,
     ArkadeExtendedCoin,
