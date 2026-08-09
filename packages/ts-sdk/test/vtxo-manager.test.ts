@@ -12,6 +12,7 @@ import {
     SettlementConfig,
 } from "../src/wallet/vtxo-manager";
 import { IWallet, ExtendedCoin, ExtendedVirtualCoin } from "../src/wallet";
+import type { IntentFeeConfig } from "../src/arkfee";
 import { Wallet } from "../src/wallet/wallet";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
 import { hex } from "@scure/base";
@@ -29,6 +30,12 @@ type MockWalletOptions = {
      * to `-1n` ("no limit") so existing recovery/renewal tests are unaffected.
      */
     vtxoMaxAmount?: bigint;
+    /**
+     * Operator intent-fee policy surfaced via `arkProvider.getInfo()`. CEL
+     * programs, exactly as arkd serves them. Defaults to `{}` — no program on
+     * any side, i.e. free — so existing recovery/renewal tests are unaffected.
+     */
+    intentFee?: IntentFeeConfig;
 };
 
 // Mock wallet implementation
@@ -62,7 +69,7 @@ const createMockWallet = (
         // non-sweep-capable and the boarding-poll paths are untouched.
         arkProvider: {
             getInfo: vi.fn().mockResolvedValue({
-                fees: { intentFee: {} },
+                fees: { intentFee: options.intentFee ?? {} },
                 vtxoMaxAmount: options.vtxoMaxAmount ?? -1n,
             }),
         },
@@ -3490,5 +3497,405 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
         } finally {
             await manager.dispose();
         }
+    });
+});
+
+/**
+ * Intent-fee pricing for the two `VtxoManager` entry points that build their own
+ * single-output settlement.
+ *
+ * An intent's fee IS `sum(inputs) - sum(outputs)`, so a settlement whose output
+ * equals the gross input sum offers exactly zero. Against an operator with any
+ * non-zero `intentFee` policy arkd rejects the intent outright —
+ * `INTENT_INSUFFICIENT_FEE (31): got 0 min expected N`, where the `got 0` is that
+ * zero literally — so renewal and recovery could never succeed. See
+ * arkade-os/ts-sdk#696.
+ *
+ * The CEL programs below are the shapes arkd actually serves: arkade-regtest ships
+ * `offchainInput: "amount * 0.01"` by default, alongside flat `"250.0"` programs
+ * on the onchain side of the same policy.
+ */
+describe("VtxoManager - intent fee pricing", () => {
+    /**
+     * A decodable ark address: the offchain output fee is priced against its
+     * pkScript, so a placeholder would fail inside `ArkAddress.decode` rather
+     * than inside the code under test.
+     */
+    const ADDRESS =
+        "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g";
+
+    /** Near enough to batch expiry that `renewVtxos` selects it. */
+    const expiring = (value: number, txid = `expiring-${value}`): ExtendedVirtualCoin => {
+        const now = Date.now();
+        return {
+            txid,
+            vout: 0,
+            value,
+            createdAt: new Date(now - 100_000),
+            virtualStatus: { state: "settled", batchExpiry: now + 5000 },
+            status: { confirmed: true },
+            isUnrolled: false,
+            isSpent: false,
+        } as any;
+    };
+
+    /** Swept by the server, so `recoverVtxos` sweeps it back. */
+    const swept = (value: number, txid = `swept-${value}`): ExtendedVirtualCoin =>
+        ({
+            txid,
+            vout: 0,
+            value,
+            virtualStatus: { state: "swept" },
+            isSwept: true,
+            isSpent: false,
+            status: { confirmed: true },
+            createdAt: new Date(),
+            isUnrolled: false,
+            forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
+            intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+            tapTree: new Uint8Array(),
+        }) as any;
+
+    const settled = (wallet: IWallet) => (wallet.settle as any).mock.calls[0][0];
+
+    describe("renewVtxos", () => {
+        it("leaves the output at the gross sum when the operator charges nothing", async () => {
+            const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS);
+            const manager = new VtxoManager(wallet, undefined, {});
+
+            await manager.renewVtxos();
+
+            expect(settled(wallet).outputs[0].amount).toBe(8000n);
+        });
+
+        it("pays a flat per-input fee out of the renewed output", async () => {
+            const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS, {
+                intentFee: { offchainInput: "250.0" },
+            });
+            const manager = new VtxoManager(wallet, undefined, {});
+
+            await manager.renewVtxos();
+
+            // 8000 gross, less 250 for each of the two inputs.
+            expect(settled(wallet).outputs[0].amount).toBe(7500n);
+        });
+
+        it("pays a percentage per-input fee — the policy arkade-regtest ships", async () => {
+            const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS, {
+                intentFee: { offchainInput: "amount * 0.01" },
+            });
+            const manager = new VtxoManager(wallet, undefined, {});
+
+            await manager.renewVtxos();
+
+            // 1% of each input: 5000 - 50 and 3000 - 30.
+            const amount = settled(wallet).outputs[0].amount;
+            expect(amount).toBe(7920n);
+            // What arkd measures as the offered fee, and what used to be zero.
+            expect(8000n - amount).toBe(80n);
+        });
+
+        it("prices the output fee too, not just the inputs", async () => {
+            const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS, {
+                intentFee: { offchainOutput: "250.0" },
+            });
+            const manager = new VtxoManager(wallet, undefined, {});
+
+            await manager.renewVtxos();
+
+            expect(settled(wallet).outputs[0].amount).toBe(7750n);
+        });
+
+        /**
+         * A percentage on BOTH sides is the shape where our arithmetic and the
+         * server's genuinely disagree, so the direction of the disagreement is
+         * pinned deliberately rather than discovered in production.
+         *
+         * The output fee is a function of the output, but the output is what we
+         * are solving for, so `deductOffchainOutputFee` charges `r` of the
+         * pre-deduction subtotal while the server charges `r` of the amount it
+         * actually receives. The gap is `r^2 * subtotal`, and it falls on the
+         * safe side: the intent implies MORE fee than the minimum, so it is
+         * never rejected for underpaying.
+         */
+        it("over-pays rather than under-pays when both sides are a percentage", async () => {
+            const wallet = createMockWallet([expiring(1_000_000)], ADDRESS, {
+                intentFee: { offchainInput: "amount * 0.01", offchainOutput: "amount * 0.01" },
+            });
+            const manager = new VtxoManager(wallet, undefined, {});
+
+            await manager.renewVtxos();
+
+            // 1_000_000 less 1% in = 990_000 subtotal, less 1% of that subtotal.
+            const amount = settled(wallet).outputs[0].amount;
+            expect(amount).toBe(980_100n);
+
+            // What the server checks: `inputs - outputs` against its own programs
+            // evaluated on the amount finally committed.
+            const impliedFee = 1_000_000n - amount;
+            const serverMinimum = 10_000n + 9_801n;
+            expect(impliedFee).toBe(19_900n);
+            expect(impliedFee).toBeGreaterThan(serverMinimum);
+            // Exactly r^2 * subtotal = 0.0001 * 990_000.
+            expect(impliedFee - serverMinimum).toBe(99n);
+        });
+
+        it("drops a VTXO whose own fee meets its value instead of settling it", async () => {
+            const wallet = createMockWallet([expiring(5000), expiring(1500)], ADDRESS, {
+                intentFee: { offchainInput: "2000.0" },
+            });
+            const manager = new VtxoManager(wallet, undefined, {});
+
+            await manager.renewVtxos();
+
+            // Renewing the 1500 would cost 2000, destroying value outright.
+            const args = settled(wallet);
+            expect(args.inputs.map((v: ExtendedVirtualCoin) => v.txid)).toEqual(["expiring-5000"]);
+            expect(args.outputs[0].amount).toBe(3000n);
+        });
+
+        /**
+         * Worded so the `vtxo_received` subscription still classifies it as
+         * benign rather than logging it as a failure — nothing is wrong, there
+         * is just nothing worth renewing at this fee policy.
+         */
+        it("refuses when every expiring VTXO is below its own fee", async () => {
+            const wallet = createMockWallet([expiring(1500)], ADDRESS, {
+                intentFee: { offchainInput: "2000.0" },
+            });
+            const manager = new VtxoManager(wallet, undefined, {});
+
+            await expect(manager.renewVtxos()).rejects.toThrow("No VTXOs available to renew");
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
+
+        /**
+         * The gross sum clears dust and the net does not. Settling that would
+         * just be rejected by the server, so the fees have to come off before
+         * the check rather than after it.
+         */
+        it("checks dust against the net output, not the gross input sum", async () => {
+            const wallet = createMockWallet([expiring(1200)], ADDRESS, {
+                intentFee: { offchainInput: "amount * 0.5" },
+            });
+            const manager = new VtxoManager(wallet, undefined, {});
+
+            await expect(manager.renewVtxos()).rejects.toThrow(
+                "Total amount 600 is below dust threshold 1000",
+            );
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("recoverVtxos", () => {
+        it("leaves the output at the gross sum when the operator charges nothing", async () => {
+            const wallet = createMockWallet([swept(5000), swept(3000)], ADDRESS);
+            const manager = new VtxoManager(wallet);
+
+            await manager.recoverVtxos();
+
+            expect(settled(wallet).outputs[0].amount).toBe(8000n);
+        });
+
+        it("pays the operator's intent fee on recovery too", async () => {
+            const wallet = createMockWallet([swept(5000), swept(3000)], ADDRESS, {
+                intentFee: { offchainInput: "amount * 0.01" },
+            });
+            const manager = new VtxoManager(wallet);
+
+            await manager.recoverVtxos();
+
+            expect(settled(wallet).outputs[0].amount).toBe(7920n);
+        });
+
+        it("prices the recovery output fee as well as the inputs", async () => {
+            const wallet = createMockWallet([swept(5000), swept(3000)], ADDRESS, {
+                intentFee: { offchainInput: "amount * 0.01", offchainOutput: "amount * 0.01" },
+            });
+            const manager = new VtxoManager(wallet);
+
+            await manager.recoverVtxos();
+
+            // 7920 subtotal, less 1% of it (79.2, rounded up to 80).
+            expect(settled(wallet).outputs[0].amount).toBe(7840n);
+        });
+
+        /**
+         * Consolidating subdust is the whole reason recovery pulls it in, so a
+         * percentage fee — which every subdust coin here can still afford — must
+         * not quietly drop it.
+         */
+        it("still consolidates subdust that can pay its own fee", async () => {
+            const vtxos = [
+                swept(5000, "regular-a"),
+                swept(3000, "regular-b"),
+                swept(100, "subdust-a"),
+                swept(100, "subdust-b"),
+                swept(100, "subdust-c"),
+            ];
+            const wallet = createMockWallet(vtxos, ADDRESS, {
+                intentFee: { offchainInput: "amount * 0.01" },
+            });
+            const manager = new VtxoManager(wallet);
+
+            await manager.recoverVtxos();
+
+            const args = settled(wallet);
+            expect(args.inputs).toHaveLength(5);
+            // 4950 + 2970 + three subdust coins netting 99 each.
+            expect(args.outputs[0].amount).toBe(8217n);
+        });
+
+        it("drops subdust a flat fee has made uneconomic, and recovers the rest", async () => {
+            const vtxos = [
+                swept(5000, "regular-a"),
+                swept(3000, "regular-b"),
+                swept(100, "subdust-a"),
+                swept(100, "subdust-b"),
+            ];
+            const wallet = createMockWallet(vtxos, ADDRESS, {
+                intentFee: { offchainInput: "250.0" },
+            });
+            const manager = new VtxoManager(wallet);
+
+            await manager.recoverVtxos();
+
+            const args = settled(wallet);
+            expect(args.inputs.map((v: ExtendedVirtualCoin) => v.txid)).toEqual([
+                "regular-a",
+                "regular-b",
+            ]);
+            expect(args.outputs[0].amount).toBe(7500n);
+        });
+
+        /**
+         * The preview and the sweep are reachable from the same worker call, so a
+         * UI that previews with one and executes with the other must not show two
+         * different numbers. `getRecoverableBalance` prices exactly as
+         * `recoverVtxos` does.
+         */
+        it("previews the recoverable amount net of intent fees", async () => {
+            const fee: IntentFeeConfig = { offchainInput: "amount * 0.01" };
+            const previewWallet = createMockWallet([swept(5000), swept(3000)], ADDRESS, {
+                intentFee: fee,
+            });
+            const sweepWallet = createMockWallet([swept(5000), swept(3000)], ADDRESS, {
+                intentFee: fee,
+            });
+
+            const preview = await new VtxoManager(previewWallet).getRecoverableBalance();
+            await new VtxoManager(sweepWallet).recoverVtxos();
+
+            expect(preview.recoverable).toBe(7920n);
+            expect(preview.recoverable).toBe(settled(sweepWallet).outputs[0].amount);
+        });
+
+        it("leaves the preview gross when the operator charges nothing", async () => {
+            const wallet = createMockWallet([swept(5000), swept(3000)], ADDRESS);
+            const balance = await new VtxoManager(wallet).getRecoverableBalance();
+
+            expect(balance.recoverable).toBe(8000n);
+            expect(balance.vtxoCount).toBe(2);
+        });
+
+        /**
+         * `subdust` reports part of what `recoverable` reports, so pricing one
+         * and not the other leaves them on different bases. A wallet whose whole
+         * recoverable set is subdust makes that visible: the two have to agree,
+         * and a gross `subdust` would exceed the net `recoverable`.
+         */
+        it("reports subdust net of fees, so it cannot exceed the recoverable total", async () => {
+            // Both are subdust against the 1000 threshold but total 1100, so
+            // getRecoverableWithSubdust folds them in.
+            const wallet = createMockWallet([swept(600), swept(500)], ADDRESS, {
+                intentFee: { offchainInput: "amount * 0.01" },
+            });
+            const balance = await new VtxoManager(wallet).getRecoverableBalance();
+
+            // 600 less 6, and 500 less 5. Gross would report 1100.
+            expect(balance.subdust).toBe(1089n);
+            expect(balance.includesSubdust).toBe(true);
+            expect(balance.recoverable).toBe(1089n);
+            expect(balance.subdust).toBe(balance.recoverable);
+        });
+
+        it("prices only the subdust coins into subdust when the set is mixed", async () => {
+            const wallet = createMockWallet([swept(5000), swept(600), swept(500)], ADDRESS, {
+                intentFee: { offchainInput: "amount * 0.01" },
+            });
+            const balance = await new VtxoManager(wallet).getRecoverableBalance();
+
+            // The two subdust coins net 594 and 495; the 5000 nets 4950 on top.
+            expect(balance.subdust).toBe(1089n);
+            expect(balance.recoverable).toBe(6039n);
+            expect(balance.subdust).toBeLessThan(balance.recoverable);
+        });
+
+        /**
+         * `subdust` nets off the per-input fees but not the output fee, which is
+         * charged on the batch as a whole and does not decompose per coin. So it
+         * is not strictly a slice of `recoverable`, and a flat output fee against
+         * a wholly subdust wallet leaves it the larger of the two. Pinned rather
+         * than clamped: clamping would invent a number that answers to nothing,
+         * and the honest reading is "what the subdust coins are worth once each
+         * has paid its own way".
+         */
+        it("does not attribute the batch-level output fee to subdust", async () => {
+            const wallet = createMockWallet([swept(600), swept(500)], ADDRESS, {
+                intentFee: { offchainInput: "amount * 0.01", offchainOutput: "200.0" },
+            });
+            const balance = await new VtxoManager(wallet).getRecoverableBalance();
+
+            // Inputs net 594 + 495 = 1089; the flat 200 comes off the batch.
+            expect(balance.subdust).toBe(1089n);
+            expect(balance.recoverable).toBe(889n);
+            expect(balance.subdust).toBeGreaterThan(balance.recoverable);
+        });
+
+        it("omits from the preview a VTXO that cannot pay its own fee", async () => {
+            const wallet = createMockWallet([swept(5000), swept(100)], ADDRESS, {
+                intentFee: { offchainInput: "250.0" },
+            });
+            const balance = await new VtxoManager(wallet).getRecoverableBalance();
+
+            // The 100 costs 250 to move, so recovery drops it and so does this.
+            expect(balance.recoverable).toBe(4750n);
+            expect(balance.vtxoCount).toBe(1);
+        });
+
+        /**
+         * The capping block fires whenever the batch narrows, which fee filtering
+         * can now do on its own. An operator debugging a stuck wallet needs the
+         * cause: a size cap defers the rest to the next cycle, whereas fee
+         * filtering means no later cycle helps by itself.
+         */
+        it("names intent fees, not the size caps, when fees alone empty the batch", async () => {
+            const wallet = createMockWallet([swept(1500), swept(1200)], ADDRESS, {
+                intentFee: { offchainInput: "amount * 1.0" },
+            });
+
+            await expect(new VtxoManager(wallet).recoverVtxos()).rejects.toThrow(
+                "All 2 recoverable VTXOs that can pay their own intent fee total less than " +
+                    "the dust threshold 1000",
+            );
+        });
+
+        /**
+         * `getRecoverableWithSubdust` judges subdust inclusion on gross value, so
+         * a batch can clear dust gross and land under it once the fees are off.
+         * Recovery is an untimelocked all-or-nothing sweep, so this has to be a
+         * loud refusal rather than an output the server silently rejects.
+         */
+        it("refuses a recovery the fee has driven under dust", async () => {
+            const wallet = createMockWallet([swept(1200)], ADDRESS, {
+                intentFee: { offchainInput: "amount * 0.5" },
+            });
+            const manager = new VtxoManager(wallet);
+
+            await expect(manager.recoverVtxos()).rejects.toThrow(
+                "Recoverable amount 600 net of intent fees is below dust threshold 1000",
+            );
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
     });
 });
