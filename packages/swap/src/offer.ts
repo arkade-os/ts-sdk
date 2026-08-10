@@ -31,7 +31,7 @@ import {
 import wantAssetProgram from "./swap-want-asset.program.json";
 import wantBtcProgram from "./swap-want-btc.program.json";
 import type { AssetSwapRepository } from "./repository";
-import { getAssetSwaps, updateAssetSwap } from "./store";
+import { getAssetSwapsOrThrow, updateAssetSwap, updateAssetSwapBestEffort } from "./store";
 
 // json imports widen "type": "pubkey" to string; parseArtifact validates at runtime
 type Artifact = Parameters<typeof arkade.parseArtifact>[0];
@@ -537,14 +537,21 @@ export async function cancelOffer(
         });
     }
     const swapId = fundingTxid ?? vtxo.txid;
-    const hasLocalRecord = (await getAssetSwaps(repository)).some((s) => s.id === swapId);
+    // Strict read: a failed one must not read as "no local record here" and
+    // send us past the marker into the broadcast.
+    const hasLocalRecord = (await getAssetSwapsOrThrow(repository)).some((s) => s.id === swapId);
     // The in-flight marker is useful only when there is a local record to
     // update; a different or empty repository intentionally leaves the cancel
-    // for event/restore classification.
+    // for event/restore classification. It gates the broadcast, so it throws:
+    // the marker is what keeps a crash here from leaving a swap that still
+    // looks pending.
     if (hasLocalRecord) await updateAssetSwap(repository, swapId, { status: "cancelling" });
     const { txid } = await cancel.send();
     if (hasLocalRecord) {
-        await updateAssetSwap(repository, swapId, {
+        // Past the point of no return: the cancel is broadcast, so a lost write
+        // must not fail the caller. The watcher classifies by covenant leaf and
+        // the restore scan re-derives the outcome.
+        await updateAssetSwapBestEffort(repository, swapId, {
             status: "cancelled",
             spentTxid: txid,
         });

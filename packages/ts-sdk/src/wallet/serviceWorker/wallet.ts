@@ -1495,11 +1495,20 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
             advanceSigningDescriptorWatermark(): Promise<void> {
                 // The manager interface takes a raw index, which the wallet
-                // message protocol does not carry. Use the wallet-level
-                // `ServiceWorkerWallet.advanceSigningDescriptorWatermark`
-                // (descriptor-based) instead; page-side manager proxies do
-                // not mutate the worker-owned HD watermark.
-                return Promise.resolve();
+                // message protocol does not carry — so this cannot move the
+                // worker-owned watermark. It must not resolve: its sibling
+                // `getNextSigningDescriptor` really does allocate, and a caller
+                // that pairs the two would reserve nothing while believing an
+                // index was claimed, letting the next allocation reissue it.
+                return Promise.reject(
+                    new Error(
+                        "advanceSigningDescriptorWatermark is not available on the " +
+                            "service-worker contract-manager proxy: the manager API is " +
+                            "index-based and the worker message protocol carries " +
+                            "descriptors. Use ServiceWorkerWallet." +
+                            "advanceSigningDescriptorWatermark(descriptor) instead.",
+                    ),
+                );
             },
 
             async isWatching(): Promise<boolean> {

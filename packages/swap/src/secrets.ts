@@ -177,20 +177,10 @@ export function rfqSecretsOfRecord(record: {
                 : {}),
         };
     }
+    // Total on purpose: consumers call this while iterating swap history, where
+    // a throw on one record would abort the whole loop.
     const fallback = record.fallbackSecrets;
-    if (!fallback) {
-        if (record.preimageHex) {
-            // Pre-derived-secrets record shape: P stored bare, sender key not
-            // persisted at all. Refuse loudly rather than return `undefined` —
-            // silence here reads as "no secrets" and loses a live preimage.
-            throw new Error(
-                "legacy swap record: preimageHex is set but neither signingDescriptor " +
-                    "nor fallbackSecrets is; read the preimage directly off the record " +
-                    "(its sender key was never persisted)",
-            );
-        }
-        return undefined;
-    }
+    if (!fallback) return undefined;
     if (fallback.version !== 1 || fallback.type !== "stored") {
         throw new Error("unsupported RFQ fallback secrets record");
     }
@@ -224,16 +214,30 @@ export async function adoptSwapDescriptor(
     await wallet.advanceSigningDescriptorWatermark(signingDescriptor);
 }
 
-/** The VHTLC `sender` identity — the signer for every interactive refund. */
+/**
+ * The VHTLC `sender` identity — the signer for every interactive refund.
+ *
+ * The capability probe is not the check that matters: `signerForDescriptor`
+ * falls back to the plain wallet identity for a descriptor it cannot derive —
+ * a different seed, a static wallet — and that identity signs happily with the
+ * wrong key, which surfaces only as a solver rejection or a dead claim script.
+ * So the check is on what comes back: only a descriptor-bound signer carries
+ * `signSchnorrDeterministic`.
+ */
 export async function senderIdentityForRfqSecrets(
     wallet: IWallet,
     secrets: SwapSecrets,
 ): Promise<Identity> {
     if (!secrets.derivable) return SingleKey.fromPrivateKey(secrets.senderPrivateKey);
-    if (!isHDWalletCapable(wallet)) {
-        throw new Error("swap was created on an HD wallet; this wallet cannot derive its key");
+    const signer = isHDWalletCapable(wallet)
+        ? await wallet.signerForDescriptor(secrets.signingDescriptor)
+        : undefined;
+    if (!signer || !isDeterministicSigner(signer)) {
+        throw new Error(
+            `this wallet cannot derive ${secrets.signingDescriptor}; the swap was created on another wallet`,
+        );
     }
-    return wallet.signerForDescriptor(secrets.signingDescriptor);
+    return signer;
 }
 
 /** The `sender` x-only pubkey, the only half the request flow needs. */

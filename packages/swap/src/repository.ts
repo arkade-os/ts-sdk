@@ -30,13 +30,11 @@ export const marketsCacheKey = (network: string, registry: string) =>
  * subset queries.
  */
 export interface AssetSwapRepository extends AsyncDisposable {
-    /** v2: `AssetSwap` gained `signingDescriptor` and `fallbackSecrets`
-     * (secret-bearing — a field-mapped backend that drops them loses the
-     * stored arm's claim and refund keys), and `preimageHex` narrowed from
-     * "the claim preimage P" to "caller-supplied P only". */
-    readonly version: 2;
+    readonly version: 1;
 
-    /** Insert or replace a swap by id. */
+    /** Insert or replace a swap by id. Store the record whole: `fallbackSecrets`
+     * is secret-bearing, and a field-mapped backend that drops it loses the
+     * stored arm's claim and refund keys. */
     saveSwap(swap: AssetSwap): Promise<void>;
     /** All stored swaps, in no particular order — `getAssetSwaps` is the
      * canonical newest-first read. */
@@ -54,7 +52,7 @@ export interface AssetSwapRepository extends AsyncDisposable {
 }
 
 export class InMemoryAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 2 as const;
+    readonly version = 1 as const;
     private readonly swaps = new Map<string, AssetSwap>();
     private readonly scanned = new Set<string>();
     private readonly markets = new Map<string, MarketsCacheEntry>();

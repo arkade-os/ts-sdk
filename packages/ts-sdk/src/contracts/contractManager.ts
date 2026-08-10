@@ -673,6 +673,9 @@ export class ContractManager implements IContractManager {
     private lookAheadDrain?: Promise<void>;
     /** A refill was requested while a drain was running. */
     private lookAheadDirty = false;
+    /** A fire-and-forget drain failed, so the band is behind the watermark and
+     * owes a retry. @see requestLookAheadDrain */
+    private lookAheadRefillOwed = false;
 
     private constructor(config: ContractManagerConfig) {
         this.config = config;
@@ -880,6 +883,7 @@ export class ContractManager implements IContractManager {
                 this.lookAheadDirty = false;
                 await this.ensureLookAhead();
             } while (this.lookAheadDirty);
+            this.lookAheadRefillOwed = false;
         })().finally(() => {
             this.lookAheadDrain = undefined;
         });
@@ -889,7 +893,13 @@ export class ContractManager implements IContractManager {
 
     /**
      * Request a drain without awaiting it. Used from inside a sync (promotion),
-     * where awaiting the drain that the sync itself is part of would deadlock.
+     * and after an allocation the drain must not be able to fail — the
+     * watermark already moved, and a retry would burn another index.
+     *
+     * A failure here is not terminal: it leaves the watch band behind the
+     * watermark, so funded indices inside it would go unregistered and the
+     * balance would under-report for the rest of the session. Record the debt
+     * so the next contract event retries it. @see handleContractEvent
      */
     private requestLookAheadDrain(): void {
         if (!this.config.lookAhead) return;
@@ -898,6 +908,7 @@ export class ContractManager implements IContractManager {
             return;
         }
         void this.scheduleLookAheadDrain().catch((err) => {
+            this.lookAheadRefillOwed = true;
             console.error("ContractManager: look-ahead refill failed", err);
         });
     }
@@ -1824,6 +1835,10 @@ export class ContractManager implements IContractManager {
         // the startWatching callback's `.catch`, or diagnostics would keep
         // reporting online after a real degradation. Terminal failures still
         // propagate. The event is forwarded to subscribers either way.
+        // A drain that failed after an allocation left the band short; any
+        // event proves the transport is back, so pay the debt here rather than
+        // waiting for the next allocation or a restart.
+        if (this.lookAheadRefillOwed) this.requestLookAheadDrain();
         try {
             switch (event.type) {
                 // Delta-sync only the changed virtual outputs for this contract.

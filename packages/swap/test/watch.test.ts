@@ -266,6 +266,39 @@ describe("watchOfferSwaps", () => {
         );
     });
 
+    it("does not notify a change the store refused", async () => {
+        // `onUpdate` is documented as following a persisted change. Firing it
+        // on a lost write puts a consumer that caches from it ahead of the
+        // store, and marks a swap terminal that reads `pending` after reload.
+        const offer = makeOffer();
+        const fill = spendPsbt(offer, "fulfill");
+        const repository = new InMemoryAssetSwapRepository();
+        await addAssetSwap(repository, swapFor(offer));
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        vi.spyOn(repository, "saveSwap").mockRejectedValue(new Error("quota exceeded"));
+
+        await withIndexer(
+            async () => ({ txs: [fill.psbt] }),
+            async ({ wallet, emit }) => {
+                const updates: AssetSwap[] = [];
+                const watcher = await watchOfferSwaps({
+                    wallet,
+                    arkServerUrl: "http://ark",
+                    repository,
+                    onUpdate: (swap) => updates.push(swap),
+                });
+
+                emit(spentEvent(offer, fill.txid));
+                await watcher.idle();
+                watcher.stop();
+
+                expect(updates).toEqual([]);
+                expect(warn).toHaveBeenCalled();
+            },
+        );
+        vi.restoreAllMocks();
+    });
+
     it("stops delivering after stop()", async () => {
         const offer = makeOffer();
         const fill = spendPsbt(offer, "fulfill");

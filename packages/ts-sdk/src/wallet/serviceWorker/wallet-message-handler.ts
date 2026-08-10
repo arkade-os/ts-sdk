@@ -1209,11 +1209,20 @@ export class WalletMessageHandler
                         type: "REFRESH_OUTPOINTS_SUCCESS",
                     });
                 }
-                // The HD probes below answer like a static wallet (undefined /
-                // empty) rather than erroring when the worker wallet is
+                // The HD *probes* below answer like a static wallet (undefined
+                // / empty) rather than erroring when the worker wallet is
                 // readonly or non-HD: the page-side structural guards
                 // (isHDWalletCapable / isHDAllocationCapable) cannot see
                 // across the message bus, so "no HD state" must be a value.
+                //
+                // The two *allocating* cases split that condition. A wallet
+                // that is present but cannot allocate is a fact about the
+                // wallet, and still answers as a static one. No signing wallet
+                // at all — a readonly-initialized worker, or one past clear() /
+                // stop() — is an initialization error like every other mutating
+                // case here: answering "allocated" or "advanced" there would
+                // let the same index be issued twice, and two swaps sharing a
+                // descriptor derive the same preimage.
                 case "GET_CURRENT_SIGNING_DESCRIPTOR": {
                     const wallet = this.wallet;
                     const descriptor = isHDWalletCapable(wallet)
@@ -1227,6 +1236,7 @@ export class WalletMessageHandler
                 }
                 case "GET_NEXT_SIGNING_DESCRIPTOR": {
                     const wallet = this.wallet;
+                    if (!wallet) throw new WalletNotInitializedError();
                     const descriptor = isHDAllocationCapable(wallet)
                         ? await wallet.getNextSigningDescriptor()
                         : undefined;
@@ -1251,6 +1261,7 @@ export class WalletMessageHandler
                 }
                 case "ADVANCE_SIGNING_DESCRIPTOR_WATERMARK": {
                     const wallet = this.wallet;
+                    if (!wallet) throw new WalletNotInitializedError();
                     if (isHDAllocationCapable(wallet)) {
                         // Throws on a foreign or index-less descriptor — that
                         // propagates to the page as an error response.

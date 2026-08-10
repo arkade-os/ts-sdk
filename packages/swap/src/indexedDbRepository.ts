@@ -34,10 +34,20 @@ const request = <T>(req: IDBRequest<T>): Promise<T> =>
         req.onerror = () => reject(req.error);
     });
 
+/** A write is durable at *commit*, not at request success — quota pressure and
+ * storage eviction abort a transaction whose every request already succeeded.
+ * Reads may resolve on the request; writes must await this. */
+const txDone = (tx: IDBTransaction): Promise<void> =>
+    new Promise((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+    });
+
 /** Browser backend over the SDK's shared IndexedDB manager — the same
  * infrastructure the wallet already uses for its Boltz swap repository. */
 export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 2 as const;
+    readonly version = 1 as const;
     // the promise, not the resolved database: openDatabase bumps a refcount on
     // every call including cache hits, while dispose closes once, so two
     // concurrent first calls would strand the refcount above zero and leak the
@@ -56,33 +66,46 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         ));
     }
 
-    private async store(name: string, mode: IDBTransactionMode): Promise<IDBObjectStore> {
-        return (await this.ensureDb()).transaction([name], mode).objectStore(name);
+    private async readStore(name: string): Promise<IDBObjectStore> {
+        return (await this.ensureDb()).transaction([name], "readonly").objectStore(name);
+    }
+
+    /** Every write in one place, so none of them can forget to await the
+     * commit. Requests need no individual await: a failed one aborts the
+     * transaction, which `txDone` reports. */
+    private async write(name: string, apply: (store: IDBObjectStore) => void): Promise<void> {
+        const tx = (await this.ensureDb()).transaction([name], "readwrite");
+        const done = txDone(tx);
+        apply(tx.objectStore(name));
+        await done;
     }
 
     async saveSwap(swap: AssetSwap): Promise<void> {
-        await request((await this.store(STORE_SWAPS, "readwrite")).put(swap));
+        await this.write(STORE_SWAPS, (store) => {
+            store.put(swap);
+        });
     }
 
     async getAllSwaps(): Promise<AssetSwap[]> {
-        return request((await this.store(STORE_SWAPS, "readonly")).getAll());
+        return request((await this.readStore(STORE_SWAPS)).getAll());
     }
 
     async getScannedTxids(): Promise<Set<string>> {
-        const keys = await request((await this.store(STORE_SCANNED, "readonly")).getAllKeys());
+        const keys = await request((await this.readStore(STORE_SCANNED)).getAllKeys());
         return new Set(keys as string[]);
     }
 
     async markTxidsScanned(txids: Iterable<string>): Promise<void> {
-        const store = await this.store(STORE_SCANNED, "readwrite");
-        await Promise.all([...txids].map((txid) => request(store.put(txid, txid))));
+        await this.write(STORE_SCANNED, (store) => {
+            for (const txid of txids) store.put(txid, txid);
+        });
     }
 
     async getCachedMarkets(
         network: string,
         registry: string,
     ): Promise<MarketsCacheEntry | undefined> {
-        const store = await this.store(STORE_MARKETS, "readonly");
+        const store = await this.readStore(STORE_MARKETS);
         return request(store.get(marketsCacheKey(network, registry)));
     }
 
@@ -91,8 +114,9 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         registry: string,
         entry: MarketsCacheEntry,
     ): Promise<void> {
-        const store = await this.store(STORE_MARKETS, "readwrite");
-        await request(store.put(entry, marketsCacheKey(network, registry)));
+        await this.write(STORE_MARKETS, (store) => {
+            store.put(entry, marketsCacheKey(network, registry));
+        });
     }
 
     /** All stores in one transaction: clearing swaps but keeping scanned txids
@@ -101,11 +125,7 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     async clear(): Promise<void> {
         const stores = STORES.map(([name]) => name);
         const tx = (await this.ensureDb()).transaction(stores, "readwrite");
-        const done = new Promise<void>((resolve, reject) => {
-            tx.oncomplete = () => resolve();
-            tx.onerror = () => reject(tx.error);
-            tx.onabort = () => reject(tx.error);
-        });
+        const done = txDone(tx);
         for (const name of stores) tx.objectStore(name).clear();
         await done;
     }

@@ -366,17 +366,19 @@ scanned? })` — the server key is required because a spend is classified by reb
   indistinguishable from a fill. Leaves have no such failure mode.
 - **A spend that cannot be classified is no longer restored as `fulfilled`.** It leaves the funding
   txid unanswered so a later scan decides it. Records are never written on a guess.
-- **`AssetSwapRepository.version` is now `2`.** The `AssetSwap` schema gained the secret-bearing
-  `signingDescriptor?` / `fallbackSecrets?` fields, and `preimageHex` narrowed from "the claim
-  preimage P" to "caller-supplied P only". A field-mapped backend written against v1 must add the
-  new columns — silently dropping `fallbackSecrets` on write loses the stored arm's claim and
-  refund keys. Records written by the previous shape (bare `preimageHex`, no descriptor, no
-  fallback) make `rfqSecretsOfRecord` throw a descriptive error rather than return `undefined`:
-  their preimage is live but their sender key was never persisted, so migrate the preimage by
-  reading it directly off the record.
-- **`addAssetSwap` throws on a failed write; `updateAssetSwap` stays best-effort.** The add path
-  gates funding (nothing irreversible may happen until the record is durable), while updates
-  record transitions that follow an irreversible action and must not fail the caller after it.
+- **`AssetSwap` gained the secret-bearing `signingDescriptor?` / `fallbackSecrets?` fields**, and
+  `preimageHex` narrowed from "the claim preimage P" to "caller-supplied P only". The repository
+  version stays `1` — the package is unreleased, so there is no stored record to migrate — but a
+  field-mapped backend must persist the record whole: silently dropping `fallbackSecrets` on write
+  loses the stored arm's claim and refund keys.
+- **A write that gates something irreversible throws; one that follows it does not.**
+  `addAssetSwap` and `updateAssetSwap` throw on a failed read or write — nothing irreversible may
+  happen until the record is durable, which is why `cancelOffer` writes its `cancelling` marker
+  before broadcasting. `updateAssetSwapBestEffort` is the other half: it records transitions that
+  follow an irreversible action (a broadcast claim, a spent lockup), so it cannot fail the caller,
+  and returns `{ swaps, persisted }` instead. `watchOfferSwaps` uses it and fires `onUpdate` only
+  when `persisted` is true — the callback is documented as following a persisted change, and a
+  consumer caching from it must not run ahead of the store.
 - **`lightningSendProgram` and `htlcSendProgram` are gone** along with the program-artifact layer
   they compiled. Derive scripts through `lightningSendVtxoScript` / `onchainHtlcScript`.
 - **`lightningSendVtxoScript` takes two new required fields**: `senderPubkey` (the trader's VHTLC

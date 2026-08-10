@@ -155,6 +155,34 @@ describe("derivation", () => {
             hex.encode(await preimageForRfqSecrets(wallet, secrets)),
         );
     });
+
+    it("refuses a wallet that answers with its own identity for a foreign descriptor", async () => {
+        // Both `Wallet.signerForDescriptor` and the service-worker one fall
+        // back to the wallet identity for a descriptor they cannot derive — a
+        // different seed, a wiped HD state. That identity signs happily with
+        // the wrong key, so the refusal has to come from checking what came
+        // back, not from asking the wallet whether it is HD-capable.
+        const { wallet } = await hdWallet();
+        const secrets = (await deriveSwapSecrets(wallet))!;
+        const foreign = {
+            ...wallet,
+            signerForDescriptor: async () => wallet.identity,
+        } as unknown as IWallet;
+
+        await expect(senderIdentityForRfqSecrets(foreign, secrets)).rejects.toThrow(
+            /cannot derive .*; the swap was created on another wallet/,
+        );
+        await expect(preimageForRfqSecrets(foreign, secrets)).rejects.toThrow(/cannot derive/);
+    });
+
+    it("refuses a wallet with no HD surface at all for a derivable record", async () => {
+        const { wallet } = await hdWallet();
+        const secrets = (await deriveSwapSecrets(wallet))!;
+
+        await expect(senderIdentityForRfqSecrets(staticWallet(), secrets)).rejects.toThrow(
+            /cannot derive/,
+        );
+    });
 });
 
 describe("cross-SDK vectors", () => {
@@ -279,13 +307,11 @@ describe("restore", () => {
         expect(rfqSecretsOfRecord({})).toBeUndefined();
     });
 
-    it("refuses loudly on a legacy record holding only a bare preimage", () => {
-        // Pre-derived-secrets shape: P at the top level, sender key never
-        // persisted. `undefined` here would read as "no secrets" and silently
-        // lose a live preimage.
-        expect(() => rfqSecretsOfRecord({ preimageHex: "cd".repeat(32) })).toThrow(
-            /legacy swap record/,
-        );
+    it("stays total for a record with no arm, so a history loop cannot abort", () => {
+        // A bare preimage names no arm: neither descriptor nor stored sender
+        // key. Callers iterate history with this, so it reports "nothing to
+        // reconstruct" rather than throwing on one record and losing the rest.
+        expect(rfqSecretsOfRecord({ preimageHex: "cd".repeat(32) })).toBeUndefined();
     });
 
     it("claims a restored index so the next swap cannot reuse it", async () => {
