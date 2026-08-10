@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # Per-package regtest controller.
 #
-# Both packages share the regtest submodule at ./regtest but use distinct
-# .env.regtest overrides (packages/<pkg>/.env.regtest). This script wires the
+# Each package shares the regtest submodule at ./regtest but uses its own
+# .env.regtest override (packages/<pkg>/.env.regtest). This script wires the
 # right override file into the regtest Node CLI via --env.
 #
-# Usage: scripts/regtest.sh <ts-sdk|boltz-swap|swap> <up|down|reset|setup|test|cycle> [test file...]
+# `swap-rfq` is a second PROFILE of the swap package, not a fourth package: same
+# sources and same setup waiter, but `.env.regtest.rfq` and the RFQ e2e files
+# only. It exists because the two swap corridors need opposite arkd timelock
+# types — see that file's header. The profiles share ports, so only one stack
+# can be up at a time.
+#
+# Usage: scripts/regtest.sh <ts-sdk|boltz-swap|swap|swap-rfq> <up|down|reset|setup|test|cycle> [test file...]
 #   up     – clean + start with the package's .env.regtest
 #   down   – stop the stack (preserves data)
 #   reset  – clean (remove containers, volumes)
@@ -19,7 +25,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REGTEST_DIR="$ROOT_DIR/regtest"
 
 usage() {
-  echo "Usage: $0 <ts-sdk|boltz-swap|swap> <up|down|reset|setup|test|cycle> [test file...]" >&2
+  echo "Usage: $0 <ts-sdk|boltz-swap|swap|swap-rfq> <up|down|reset|setup|test|cycle> [test file...]" >&2
   exit 1
 }
 
@@ -35,12 +41,15 @@ if [ "${1:-}" = "--" ]; then
 fi
 TEST_FILES=("$@")
 
+# A profile resolves to a package directory plus an env-file suffix; a plain
+# package name is the profile with no suffix.
 case "$PKG" in
-  ts-sdk|boltz-swap|swap) ;;
+  ts-sdk|boltz-swap|swap) PKG_DIR="$PKG"; ENV_SUFFIX="" ;;
+  swap-rfq)               PKG_DIR="swap"; ENV_SUFFIX=".rfq" ;;
   *) usage ;;
 esac
 
-ENV_FILE="$ROOT_DIR/packages/$PKG/.env.regtest"
+ENV_FILE="$ROOT_DIR/packages/$PKG_DIR/.env.regtest$ENV_SUFFIX"
 if [ ! -f "$ENV_FILE" ]; then
   echo "Missing env file: $ENV_FILE" >&2
   exit 1
@@ -51,7 +60,7 @@ fi
 # The submodule itself lives at the repo root, so expose it inside the package
 # via a symlink (git-ignored, recreated idempotently on every run) so that the
 # relative path resolves regardless of the package the controller targets.
-ln -sfn "$REGTEST_DIR" "$ROOT_DIR/packages/$PKG/regtest"
+ln -sfn "$REGTEST_DIR" "$ROOT_DIR/packages/$PKG_DIR/regtest"
 
 cmd_up() {
   node "$REGTEST_DIR/regtest.mjs" start --env "$ENV_FILE"
@@ -66,7 +75,7 @@ cmd_reset() {
 }
 
 cmd_setup() {
-  case "$PKG" in
+  case "$PKG_DIR" in
     ts-sdk)
       pnpm -C "$ROOT_DIR/packages/ts-sdk" exec node test/setup.mjs
       ;;
@@ -100,6 +109,13 @@ cmd_test() {
         pnpm -C "$ROOT_DIR/packages/swap" exec vitest run "${TEST_FILES[@]}"
       else
         pnpm -C "$ROOT_DIR/packages/swap" run test:integration
+      fi
+      ;;
+    swap-rfq)
+      if [ "${#TEST_FILES[@]}" -gt 0 ]; then
+        pnpm -C "$ROOT_DIR/packages/swap" exec vitest run "${TEST_FILES[@]}"
+      else
+        pnpm -C "$ROOT_DIR/packages/swap" run test:integration:rfq
       fi
       ;;
   esac

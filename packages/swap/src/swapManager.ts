@@ -64,12 +64,7 @@
  * failsafe rather than being replaced.
  */
 import { hex } from "@scure/base";
-import {
-    VHTLCV2ContractHandler,
-    type ContractEvent,
-    type IContractManager,
-    type VHTLC,
-} from "@arkade-os/sdk";
+import { type ContractEvent, type IContractManager, type VHTLC } from "@arkade-os/sdk";
 
 import {
     ONCHAIN_CLAIM_MARGIN_SECONDS,
@@ -85,6 +80,7 @@ import {
     type LockupFate,
     type LockupSpendIndexer,
 } from "./refund";
+import { registerLockupContract } from "./lockupContract";
 
 // ── Records ──────────────────────────────────────────────────────────────────
 
@@ -324,15 +320,8 @@ export interface RfqSwapManagerConfig {
  * `ContractManager` (`await wallet.getContractManager()`). */
 export type SwapContractRegistry = Pick<
     IContractManager,
-    "createContract" | "onContractEvent" | "setContractWatchState"
+    "createContract" | "getContracts" | "onContractEvent" | "setContractWatchState"
 >;
-
-/** The contract type a swap lockup registers under. `@arkade-os/sdk`'s handler
- * for `VHTLC.ScriptV2` — the covenant script this corridor builds. */
-export const SWAP_LOCKUP_CONTRACT_TYPE = "vhtlc-v2";
-
-export const SWAP_LOCKUP_CONTRACT_LABEL = "Arkade RFQ swap lockup";
-export const SWAP_LOCKUP_CONTRACT_KIND = "rfq-swap-lockup";
 
 /** The observation seams. None is owned by the manager, and none holds keys —
  * same philosophy as `onchainHtlc.ts`'s `ChainSource`. There is no
@@ -687,6 +676,11 @@ export class RfqSwapManager {
     /**
      * Register this swap's lockup with the wallet's contract manager, once.
      *
+     * The backstop, not the primary site: `requestLightningSend` /
+     * `requestOnchainSend` register before the caller can fund, so this covers
+     * swaps whose records predate that — and costs nothing when it does not,
+     * since `createContract` is first-writer-wins.
+     *
      * Best-effort by design: a failure here is reported and retried on the next
      * pass, and never aborts the pass it is part of. Registration buys latency
      * and puts the lockup in the wallet's contract set; it decides nothing. The
@@ -695,20 +689,38 @@ export class RfqSwapManager {
      * this would trade a real deadline for a bookkeeping one.
      */
     private async ensureRegistered(swap: RfqSwap): Promise<void> {
-        if (!this.deps.contracts) return;
+        const contracts = this.deps.contracts;
+        if (!contracts) return;
         if (this.registered.has(swap.rfqId)) return;
 
         const lockup = swap.lockup;
         if (!lockup) {
-            // A caller that wired a contract manager but no covenant asked for
-            // something that cannot be delivered. Said once — marking it
-            // settled — rather than every pass, because no retry can fix a
-            // missing field.
+            // No covenant to build a row from — but `requestLightningSend` /
+            // `requestOnchainSend` already wrote one before the caller could
+            // fund, so ASK before complaining. A row that exists is a row this
+            // manager can still retire; only a genuinely absent one is worth
+            // reporting, and no retry can conjure the missing field that would
+            // fix it.
+            try {
+                const [existing] = await contracts.getContracts({
+                    script: hex.encode(swap.lockupPkScript),
+                });
+                if (existing) {
+                    this.registered.set(swap.rfqId, true);
+                    return;
+                }
+            } catch (error) {
+                // Unreadable store: nothing was learned, so decide nothing and
+                // look again next pass — reporting a missing covenant here
+                // would be a guess.
+                this.emitFailed(swap, error);
+                return;
+            }
             this.registered.set(swap.rfqId, false);
             this.emitFailed(
                 swap,
                 new Error(
-                    `swap ${swap.rfqId} carries no lockup script, so it cannot be registered as a contract — pass \`lockup\` to subscribe instead of polling`,
+                    `swap ${swap.rfqId} carries no lockup script and has no contract row, so it cannot be registered — pass \`lockup\` to subscribe instead of polling`,
                 ),
             );
             return;
@@ -731,14 +743,7 @@ export class RfqSwapManager {
         }
 
         try {
-            await this.deps.contracts.createContract({
-                type: SWAP_LOCKUP_CONTRACT_TYPE,
-                params: VHTLCV2ContractHandler.serializeParams(lockup.script.options),
-                script,
-                address: lockup.address,
-                label: SWAP_LOCKUP_CONTRACT_LABEL,
-                metadata: { genericallySpendable: false, kind: SWAP_LOCKUP_CONTRACT_KIND },
-            });
+            await registerLockupContract(contracts, lockup.script, lockup.address);
             this.registered.set(swap.rfqId, true);
         } catch (error) {
             // Left out of `registered` so the next pass tries again — a
@@ -754,9 +759,10 @@ export class RfqSwapManager {
      * the poll — a settled swap that stayed watched would cost the wallet a
      * script for its whole life. Best-effort — the swap is over either way. */
     private retireContract(swap: RfqSwap): void {
-        // Only a swap that actually got a row: retiring one that was never
-        // written would throw "not found" and report a failure on a swap that
-        // had in fact just succeeded.
+        // Only a swap this manager has confirmed a row for — whether it wrote
+        // that row or found one the request path had already written. Retiring
+        // one that never existed would throw "not found" and report a failure
+        // on a swap that had in fact just succeeded.
         if (!this.deps.contracts || !this.registered.get(swap.rfqId)) return;
         void this.deps.contracts
             .setContractWatchState(hex.encode(swap.lockupPkScript), "retained")

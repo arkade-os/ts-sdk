@@ -112,6 +112,11 @@ jobs:
           - package: swap
             group: all
             test_files: ""
+          # Same package, second stack: the RFQ corridor needs seconds-typed
+          # arkd timelocks and the offer corridor needs block-typed ones.
+          - package: swap-rfq
+            group: all
+            test_files: ""
 
     steps:
       - uses: actions/checkout@v6
