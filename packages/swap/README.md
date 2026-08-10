@@ -28,6 +28,10 @@ solver fills, the deposit comes back through `cancelOffer` rather than through a
 Naming the sides *user* and *solver* says who does what without borrowing a guarantee the contract
 does not make.
 
+This route does not negotiate over a relay. `quoteOffer` prices a swap from the market card's
+own price feed, so the terms you show are indicative: nothing is signed, and no solver has
+reserved inventory or promised a fill until one lands on the funded contract.
+
 ## The four layers
 
 1. **`offer`** — the swap covenant itself. Two program JSONs (want-BTC / want-asset), the
@@ -87,27 +91,27 @@ deposit lands at `address`.
 | `offerHex`     | The encoded offer. **Persist this** — it is the only input `cancelOffer` needs to rebuild the covenant.                                        |
 | `swapPkScript` | The covenant's scriptPubKey: the key an indexer watches to spot the deposit and its later spend.                                               |
 
-The minimum a maker must keep to stay in control of a swap is `offerHex` plus the funding txid.
+The minimum you must keep to stay in control of a swap is `offerHex` plus the funding txid.
 Everything else — status, amounts, timestamps — `restoreAssetSwaps` rebuilds from chain, and the
 offer bytes themselves are recoverable from the funding tx if the record is lost.
 
-## Cancelling an offer no taker filled
+## Cancelling an offer no solver filled
 
 ```ts
 const txid = await cancelOffer(wallet, ARK, swap.offerHex, swap.fundingTxid, swap.swapAddress);
 ```
 
-**An unfilled offer never expires.** Neither program carries a timelock, so a deposit no taker
-picked up sits at the swap address indefinitely — nothing reclaims it for the maker, and there is
-no "expired" state to wait for. Cancelling is the only way out, and the maker has to ask.
+**An unfilled offer never expires.** Neither program carries a timelock, so a deposit no solver
+picked up sits at the swap address indefinitely — nothing reclaims it for you, and there is no
+"expired" state to wait for. Cancelling is the only way out, and you have to ask.
 
 The two ways out of the covenant are deliberately asymmetric:
 
 - **`fulfill`** is signed by the **server alone**, but the covenant constrains it to pay output 0
-  to the maker's script for at least `wantAmount`. A taker cannot take the deposit without
+  to your payout script for at least `wantAmount`. A solver cannot take the deposit without
   delivering the other side.
-- **`cancel`** is a **2-of-2 of the maker and the server**. Cancelling is cooperative, not a
-  unilateral withdrawal.
+- **`cancel`** is a **2-of-2 of you and the server**. Cancelling is cooperative, not a unilateral
+  withdrawal.
 
 So cancel *races* a fill rather than pre-empting it. If the solver fills in the same moment,
 `cancelOffer` throws `no spendable VTXO at the swap address` — that means the swap **completed**,
