@@ -414,6 +414,17 @@ interface ServiceWorkerWalletOptions {
      */
     lookAheadWindow?: number;
     /**
+     * Timelock floors forwarded to the worker wallet. Lowering either below its
+     * per-network default relaxes a fund-safety bound; intended for local
+     * testing and for fast public test networks (mutinynet) whose arkd runs
+     * below the mainnet-grade floors.
+     *
+     * @see WalletConfig.minBatchExpirySeconds
+     */
+    minBatchExpirySeconds?: bigint;
+    /** @see WalletConfig.minCheckpointExitDelaySeconds */
+    minCheckpointExitDelaySeconds?: bigint;
+    /**
      * Per-request timeout overrides for wallet-updater messages.
      * @see DEFAULT_MESSAGE_TIMEOUTS
      */
@@ -460,6 +471,8 @@ type MessageBusInitConfig = {
     walletMode?: ServiceWorkerWalletMode;
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
     lookAheadWindow?: number;
+    minBatchExpirySeconds?: bigint;
+    minCheckpointExitDelaySeconds?: bigint;
     messageTimeouts?: Record<string, number>;
 };
 
@@ -1553,6 +1566,8 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
             walletMode: options.walletMode,
             watcherConfig: options.watcherConfig,
             lookAheadWindow: options.lookAheadWindow,
+            minBatchExpirySeconds: options.minBatchExpirySeconds,
+            minCheckpointExitDelaySeconds: options.minCheckpointExitDelaySeconds,
             messageTimeouts,
         };
 
