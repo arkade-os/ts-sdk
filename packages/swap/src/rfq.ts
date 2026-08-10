@@ -959,6 +959,12 @@ export async function requestOnchainSend(
     secrets: SwapSecrets;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
+    // Before anything irreversible (HD allocation, quote, funding): the L1
+    // claim leaf pins OP_SIZE 32, so any other length funds an unclaimable
+    // HTLC, and restore rejects the record outright (`decodeHex32`).
+    if (params.preimage && params.preimage.length !== 32) {
+        throw new Error(`preimage must be 32 bytes, got ${params.preimage.length}`);
+    }
     const derivedSecrets = await deriveSwapSecrets(wallet);
     const secrets = derivedSecrets
         ? params.preimage

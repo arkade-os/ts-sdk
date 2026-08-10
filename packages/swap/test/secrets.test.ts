@@ -12,6 +12,7 @@ import {
     InMemoryWalletRepository,
     MnemonicIdentity,
     SingleKey,
+    strictSigningDescriptorIndex,
     type IWallet,
 } from "@arkade-os/sdk";
 
@@ -61,7 +62,7 @@ const hdWallet = async (repository = new InMemoryWalletRepository()) => {
                 return out;
             },
             async advanceSigningDescriptorWatermark(descriptor: string) {
-                await provider.advanceLastIndexUsed(Number(descriptor.match(/\/(\d+)\)\s*$/)![1]));
+                await provider.advanceLastIndexUsed(strictSigningDescriptorIndex(descriptor)!);
             },
             async signerForDescriptor(descriptor: string) {
                 return new DescriptorIdentity({ descriptor, signer: provider, base: identity });
@@ -202,6 +203,14 @@ describe("the fallback arm", () => {
         expect(randomSwapSecrets({ preimage: true }).preimage).toHaveLength(32);
     });
 
+    it("rejects a supplied preimage that is not 32 bytes", () => {
+        // The HTLC claim leaf pins OP_SIZE 32: any other length funds an
+        // unclaimable swap, so it must be refused before money moves.
+        expect(() => randomSwapSecrets({ preimage: new Uint8Array(20) })).toThrow(
+            /preimage must be 32 bytes/,
+        );
+    });
+
     it("resolves its signer and preimage from the stored bytes", async () => {
         const wallet = staticWallet();
         const secrets = randomSwapSecrets({ preimage: true });
@@ -266,8 +275,17 @@ describe("restore", () => {
         );
     });
 
-    it("has nothing to reconstruct for a record with no descriptor", () => {
-        expect(rfqSecretsOfRecord({ preimageHex: "cd".repeat(32) })).toBeUndefined();
+    it("has nothing to reconstruct for a record with no secrets fields", () => {
+        expect(rfqSecretsOfRecord({})).toBeUndefined();
+    });
+
+    it("refuses loudly on a legacy record holding only a bare preimage", () => {
+        // Pre-derived-secrets shape: P at the top level, sender key never
+        // persisted. `undefined` here would read as "no secrets" and silently
+        // lose a live preimage.
+        expect(() => rfqSecretsOfRecord({ preimageHex: "cd".repeat(32) })).toThrow(
+            /legacy swap record/,
+        );
     });
 
     it("claims a restored index so the next swap cannot reuse it", async () => {
@@ -316,4 +334,4 @@ describe("nothing secret reaches the record", () => {
     });
 });
 
-const indexOf = (descriptor: string): number => Number(descriptor.match(/\/(\d+)\)\s*$/)![1]);
+const indexOf = (descriptor: string): number => strictSigningDescriptorIndex(descriptor)!;

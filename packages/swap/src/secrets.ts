@@ -98,6 +98,12 @@ export type SwapSecrets = DerivedSwapSecrets | StoredSwapSecrets;
  * descriptor until the wallet rotates, and two swaps sharing a descriptor
  * derive the *identical* preimage, so one solver learning its own preimage
  * would learn the other swap's.
+ *
+ * Cost of allocating: the index is consumed even when the quote is later
+ * refused, and a swap index never turns into a funded receive contract, so a
+ * long run of swaps widens the "unused" gap a seed-only `restore()` scan sees
+ * (see the README's gap-limit note). Restores that keep the swap repository
+ * are unaffected — `adoptSwapDescriptor` re-claims each record's index.
  */
 export async function deriveSwapSecrets(wallet: IWallet): Promise<DerivedSwapSecrets | undefined> {
     if (!isHDAllocationCapable(wallet)) return undefined;
@@ -113,6 +119,10 @@ export async function deriveSwapSecrets(wallet: IWallet): Promise<DerivedSwapSec
 export function randomSwapSecrets(
     opts: { preimage?: boolean | Uint8Array } = {},
 ): StoredSwapSecrets {
+    if (opts.preimage instanceof Uint8Array && opts.preimage.length !== 32) {
+        // The HTLC claim leaf pins OP_SIZE 32: any other length is unclaimable.
+        throw new Error(`preimage must be 32 bytes, got ${opts.preimage.length}`);
+    }
     const preimage =
         opts.preimage instanceof Uint8Array
             ? opts.preimage
@@ -168,7 +178,19 @@ export function rfqSecretsOfRecord(record: {
         };
     }
     const fallback = record.fallbackSecrets;
-    if (!fallback) return undefined;
+    if (!fallback) {
+        if (record.preimageHex) {
+            // Pre-derived-secrets record shape: P stored bare, sender key not
+            // persisted at all. Refuse loudly rather than return `undefined` —
+            // silence here reads as "no secrets" and loses a live preimage.
+            throw new Error(
+                "legacy swap record: preimageHex is set but neither signingDescriptor " +
+                    "nor fallbackSecrets is; read the preimage directly off the record " +
+                    "(its sender key was never persisted)",
+            );
+        }
+        return undefined;
+    }
     if (fallback.version !== 1 || fallback.type !== "stored") {
         throw new Error("unsupported RFQ fallback secrets record");
     }
@@ -269,5 +291,15 @@ export async function preimageForRfqSecrets(
             `wallet cannot sign deterministically for ${secrets.signingDescriptor}; its preimage is not derivable`,
         );
     }
-    return derivePreimage(signer);
+    try {
+        return await derivePreimage(signer);
+    } catch (cause) {
+        // The structural guard above cannot see call-time refusals:
+        // `DescriptorIdentity` always exposes `signSchnorrDeterministic` and
+        // only throws when its base cannot actually sign deterministically.
+        throw new Error(
+            `wallet cannot sign deterministically for ${secrets.signingDescriptor}; its preimage is not derivable`,
+            { cause },
+        );
+    }
 }

@@ -129,6 +129,9 @@ function hasPeekableDescriptor(
 // dependency cycle.
 export { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
 
+// captures the trailing child index N from "...xpub.../0/N)"
+const TRAILING_CHILD_INDEX = /\/(\d+)\)\s*$/;
+
 /**
  * Parse the trailing HD child index from a materialized signing
  * descriptor (`tr(...xpub.../0/<index>)`). Returns 0 when the
@@ -138,11 +141,20 @@ export { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
  */
 export function signingDescriptorIndex(descriptor: unknown): number {
     if (typeof descriptor !== "string") return 0;
-    // captures the trailing child index N from "...xpub.../0/N)"
-    const m = descriptor.match(/\/(\d+)\)\s*$/);
-    if (!m) return 0;
+    return strictSigningDescriptorIndex(descriptor) ?? 0;
+}
+
+/**
+ * Strict sibling of {@link signingDescriptorIndex}: `undefined` instead of
+ * the 0 fallback, for callers that must tell "no parseable index" apart from
+ * index 0 — a watermark move mapped to 0 would move nothing while reporting
+ * success.
+ */
+export function strictSigningDescriptorIndex(descriptor: string): number | undefined {
+    const m = descriptor.match(TRAILING_CHILD_INDEX);
+    if (!m) return undefined;
     const n = Number(m[1]);
-    return Number.isInteger(n) && n >= 0 ? n : 0;
+    return Number.isInteger(n) && n >= 0 ? n : undefined;
 }
 
 /**

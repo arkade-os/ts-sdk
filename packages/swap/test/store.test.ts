@@ -65,9 +65,9 @@ describe("asset swap store", () => {
         expect((await getAssetSwaps(repository)).map((s) => s.id)).toEqual(["a"]);
     });
 
-    it("reports failed add and update writes", async () => {
+    it("reports failed add writes and keeps update writes best-effort", async () => {
         const broken = (existing: AssetSwap[] = []): AssetSwapRepository => ({
-            version: 1,
+            version: 2,
             saveSwap: async () => {
                 throw new Error("quota exceeded");
             },
@@ -80,17 +80,20 @@ describe("asset swap store", () => {
             [Symbol.asyncDispose]: async () => {},
         });
 
+        // add gates funding: a lost pre-funding record must fail the caller
         await expect(addAssetSwap(broken(), swap("a"))).rejects.toThrow(
             /failed to save swap a: quota exceeded/,
         );
+        // update records post-broadcast transitions: it must never throw after
+        // the irreversible action it describes
         await expect(
             updateAssetSwap(broken([swap("a")]), "a", { status: "cancelled" }),
-        ).rejects.toThrow(/failed to save swap a: quota exceeded/);
+        ).resolves.toMatchObject([{ id: "a", status: "cancelled" }]);
     });
 
     it("treats read failures as an empty swap list", async () => {
         const broken: AssetSwapRepository = {
-            version: 1,
+            version: 2,
             saveSwap: async () => {},
             getAllSwaps: async () => {
                 throw new Error("backend gone");

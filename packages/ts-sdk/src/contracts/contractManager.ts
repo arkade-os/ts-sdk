@@ -846,14 +846,20 @@ export class ContractManager implements IContractManager {
     /** @see IContractManager.getNextSigningDescriptor */
     async getNextSigningDescriptor(): Promise<string | undefined> {
         const descriptor = await this.config.lookAhead?.allocate?.();
-        if (descriptor !== undefined) await this.scheduleLookAheadDrain();
+        // The allocation is already committed (the watermark moved), so the
+        // band slide must not fail this call: a drain failure would surface an
+        // indexer error for a descriptor the caller can use — and a retry
+        // would burn another index. Fire-and-forget, like promotion does.
+        if (descriptor !== undefined) this.requestLookAheadDrain();
         return descriptor;
     }
 
     /** @see IContractManager.advanceSigningDescriptorWatermark */
     async advanceSigningDescriptorWatermark(index: number): Promise<void> {
         await this.advanceLookAheadWatermark(index);
-        await this.scheduleLookAheadDrain();
+        // Same rule as getNextSigningDescriptor: the watermark is committed,
+        // the band slide is best-effort.
+        this.requestLookAheadDrain();
     }
 
     /**

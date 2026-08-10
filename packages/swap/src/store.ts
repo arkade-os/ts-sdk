@@ -111,9 +111,9 @@ export const getAssetSwaps = async (repository: AssetSwapRepository): Promise<As
     }
 };
 
-// Surface persistence failures: onchain sends must prove the pre-funding
-// record write landed before the caller broadcasts the lockup.
-const saveSwapSafely = async (repository: AssetSwapRepository, swap: AssetSwap): Promise<void> => {
+// Surface persistence failures on ADD only: onchain sends must prove the
+// pre-funding record write landed before the caller broadcasts the lockup.
+const saveSwapOrThrow = async (repository: AssetSwapRepository, swap: AssetSwap): Promise<void> => {
     try {
         await repository.saveSwap(swap);
     } catch (error) {
@@ -122,14 +122,16 @@ const saveSwapSafely = async (repository: AssetSwapRepository, swap: AssetSwap):
     }
 };
 
-/** Add a swap; no-op if the id is already stored. Returns the updated list. */
+/** Add a swap; no-op if the id is already stored. Returns the updated list.
+ * THROWS on a failed write — nothing irreversible may happen until this record
+ * is durable, so the caller must not fund on a failure. */
 export const addAssetSwap = async (
     repository: AssetSwapRepository,
     swap: AssetSwap,
 ): Promise<AssetSwap[]> => {
     const swaps = await getAssetSwaps(repository);
     if (swaps.some((s) => s.id === swap.id)) return swaps;
-    await saveSwapSafely(repository, swap);
+    await saveSwapOrThrow(repository, swap);
     // the list is already newest-first, so place the one new record rather than
     // re-sorting the whole history around it
     const at = swaps.findIndex((s) => byNewest(swap, s) <= 0);
@@ -138,7 +140,12 @@ export const addAssetSwap = async (
     return merged;
 };
 
-/** Merge changes into a swap by id. Returns the updated list. */
+/** Merge changes into a swap by id. Returns the updated list.
+ * Best-effort on the write, unlike {@link addAssetSwap}: updates record status
+ * transitions that follow an irreversible action (a broadcast claim, a spent
+ * lockup), so failing the caller here would report as failed a swap whose
+ * funds already moved. A stale status is recoverable — crash recovery
+ * re-derives the true state from the chain (`classifyOnchainHtlc`). */
 export const updateAssetSwap = async (
     repository: AssetSwapRepository,
     id: string,
@@ -150,6 +157,12 @@ export const updateAssetSwap = async (
         s.id === id ? { ...s, ...changes } : s,
     );
     const updated = swaps.find((s) => s.id === id);
-    if (updated) await saveSwapSafely(repository, updated);
+    if (updated) {
+        try {
+            await repository.saveSwap(updated);
+        } catch (error) {
+            console.warn(`[swap] failed to persist update for swap ${id}`, error);
+        }
+    }
     return swaps;
 };
