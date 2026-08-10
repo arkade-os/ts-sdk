@@ -154,7 +154,11 @@ export function strictSigningDescriptorIndex(descriptor: string): number | undef
     const m = descriptor.match(TRAILING_CHILD_INDEX);
     if (!m) return undefined;
     const n = Number(m[1]);
-    return Number.isInteger(n) && n >= 0 ? n : undefined;
+    // `isSafeInteger`, not `isInteger`: past 2^53 the parse stops being
+    // faithful (".../0/9007199254740993" reads back as ...992), so a caller
+    // would advance a watermark to an index the descriptor never named.
+    // Unparseable is the honest answer — callers already reject it.
+    return Number.isSafeInteger(n) && n >= 0 ? n : undefined;
 }
 
 /**

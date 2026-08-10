@@ -182,6 +182,26 @@ describe("HDWalletCapable", () => {
             await wallet.dispose();
         });
 
+        it("ignores an index past the BIP32 non-hardened ceiling", async () => {
+            // Nothing can derive at or above 2^31, so persisting such a
+            // watermark would brick the repo: every later allocation would
+            // fail to materialize, permanently. Reached through the
+            // contract-manager API, which takes a raw index and has no
+            // `isOurs` gate in front of it.
+            const wallet = await makeWallet({ hd: true });
+            const provider: HDDescriptorProvider = (wallet as any)._descriptorProvider;
+            await provider.advanceLastIndexUsed(4);
+
+            for (const bad of [0x80000000, Number.MAX_SAFE_INTEGER, 1e20]) {
+                await provider.advanceLastIndexUsed(bad);
+                expect(await provider.getLastIndexUsed()).toBe(4);
+            }
+            expect(await wallet.getNextSigningDescriptor()).toBe(
+                provider.materializeDescriptorAt(5),
+            );
+            await wallet.dispose();
+        });
+
         it("refuses a descriptor from another seed", async () => {
             const wallet = await makeWallet({ hd: true });
             await expect(wallet.advanceSigningDescriptorWatermark("tr(deadbeef)")).rejects.toThrow(

@@ -194,6 +194,74 @@ describe("HD look-ahead band composition", () => {
             manager.dispose();
         }
     });
+
+    /**
+     * Regression: a watermark move fires its band slide fire-and-forget, so the
+     * drain outlives the synchronous `dispose()`. It used to resume on the far
+     * side of teardown and register speculative entries with a stopped watcher,
+     * then sync their full history and persist the hits — writing to
+     * repositories the disposed manager no longer owns.
+     */
+    it("registers nothing when dispose() lands mid-drain", async () => {
+        const provider = await makeHdProviderForTest();
+        // Fund the whole band the post-dispose drain would cover, so a drain
+        // that survives disposal leaves an unmistakable trace: a catch-up
+        // fetch and promoted repository rows.
+        const watermark = 5;
+        const funded = new Set(
+            [3, 4, 5, 6, 7].map((i) =>
+                defaultScriptHex(provider.materializeDescriptorAt(i), SERVER_A, TL_A),
+            ),
+        );
+        const indexer = makeMockIndexer(funded);
+        const contractRepository = new InMemoryContractRepository();
+
+        let current = -1;
+        let release: (() => void) | undefined;
+        const manager = await ContractManager.create({
+            indexerProvider: indexer,
+            contractRepository,
+            walletRepository: new InMemoryWalletRepository(),
+            watcherConfig: { failsafePollIntervalMs: 100_000, reconnectDelayMs: 100_000 },
+            lookAhead: {
+                size,
+                currentWatermark: async () => {
+                    // Park every drain after the boot one, so the test can
+                    // dispose with a drain provably in flight.
+                    if (current >= 0 && !release) {
+                        await new Promise<void>((resolve) => {
+                            release = resolve;
+                        });
+                    }
+                    return current;
+                },
+                materialize: (index) => provider.materializeDescriptorAt(index),
+                candidateDeps: () => ({
+                    network: { hrp: "tark" },
+                    serverPubKey: SERVER_A,
+                    csvTimelocks: [TL_A],
+                }),
+                advanceWatermark: async (index) => {
+                    current = index;
+                },
+            },
+        });
+
+        // The boot band was [0, 1] and none of it is funded.
+        expect(await contractRepository.getContracts({})).toEqual([]);
+        const fetchesBeforeDispose = indexer.getVtxosCalls.length;
+
+        await manager.advanceSigningDescriptorWatermark(watermark);
+        expect(release).toBeDefined();
+
+        manager.dispose();
+        release!();
+        // Let the drain unwind as far as it is going to get.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(indexer.getVtxosCalls).toHaveLength(fetchesBeforeDispose);
+        expect(await contractRepository.getContracts({})).toEqual([]);
+    });
 });
 
 describe("Wallet HD look-ahead", () => {
