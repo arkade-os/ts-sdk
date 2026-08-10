@@ -1,11 +1,28 @@
 # @arkade-os/swap
 
-Maker-side [Arkade Intents](https://arkade.money) atomic swaps: discover markets, quote and
+Offer-maker side [Arkade Intents](https://arkade.money) atomic swaps: discover markets, quote and
 validate, create offers, track them, cancel them, and rebuild the whole record set from chain after
 a wallet restore. Framework-free TypeScript over `@arkade-os/sdk`: the core API and
 `InMemoryAssetSwapRepository` use no DOM and no Node-specific APIs, so they run in Node, the
 browser, and React Native alike. `IndexedDbAssetSwapRepository` is the one exception — it needs a
 platform-provided or polyfilled IndexedDB.
+
+## Roles: maker and taker
+
+Arkade Intents names its roles after the **offer**, not the quote:
+
+- **maker** — creates the offer and funds the swap address. That is the consumer of this package:
+  it prices a swap against the registry's markets, deposits one side, and waits.
+- **taker** — the solver that fills the offer, delivering `wantAmount` to the maker's script over
+  the covenant's `fulfill` path. Same sense the solver registry and
+  [`@arkade-os/solver-discovery`](https://www.npmjs.com/package/@arkade-os/solver-discovery) use.
+
+**This inverts generic RFQ vocabulary, so watch out for the collision.** In RFQ systems the side
+that *requests* a quote is conventionally the taker and the side that *answers* with a price is the
+maker — which makes "maker-side" elsewhere mean the liquidity provider, the exact opposite of what
+it means here. This package is the quote-requesting side, and it is called the **maker** side for
+that reason; nothing in it is an "RFQ taker layer". Throughout this package — its docs, its types,
+its comments — `taker` always means the solver that fills, never the party asking for a price.
 
 ## The seven layers
 

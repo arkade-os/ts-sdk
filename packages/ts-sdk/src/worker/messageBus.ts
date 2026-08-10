@@ -159,6 +159,10 @@ type Initialize = {
         watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
         /** @see WalletConfig.lookAheadWindow */
         lookAheadWindow?: number;
+        /** @see WalletConfig.minBatchExpirySeconds */
+        minBatchExpirySeconds?: bigint;
+        /** @see WalletConfig.minCheckpointExitDelaySeconds */
+        minCheckpointExitDelaySeconds?: bigint;
         /**
          * Page-supplied per-operation timeout map. Keys are message types
          * (e.g. "SETTLE"). Overrides constructor-supplied
@@ -430,6 +434,8 @@ export class MessageBus {
                 walletMode: config.walletMode,
                 watcherConfig: config.watcherConfig,
                 lookAheadWindow: config.lookAheadWindow,
+                minBatchExpirySeconds: config.minBatchExpirySeconds,
+                minCheckpointExitDelaySeconds: config.minCheckpointExitDelaySeconds,
             });
             return { wallet, arkProvider, readonlyWallet: wallet };
         }

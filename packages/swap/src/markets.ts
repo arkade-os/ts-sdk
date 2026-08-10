@@ -1,3 +1,13 @@
+/**
+ * Quoting: solver discovery and the pricing guardrails around a plan.
+ *
+ * This is the maker's quote-requesting side — the layer that asks what a swap
+ * would cost before `offer` commits to it. Generic RFQ vocabulary calls the
+ * quote-requesting role the *taker*; Arkade Intents names roles after the
+ * offer, so here that role is the **maker**, and `taker` (in this package and
+ * in the solver registry) always means the solver that fills. Nothing in this
+ * file is a "taker layer" in the RFQ sense — see the README's Roles section.
+ */
 import {
     bestMarket,
     discover,
