@@ -150,7 +150,11 @@ import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 import { validateVtxosForScript, saveVtxosForContract } from "../contracts/vtxoOwnership";
-import { WalletReceiveRotator, signingDescriptorIndex } from "./walletReceiveRotator";
+import {
+    WalletReceiveRotator,
+    signingDescriptorIndex,
+    strictSigningDescriptorIndex,
+} from "./walletReceiveRotator";
 import { HDDescriptorProvider } from "./hdDescriptorProvider";
 import { DescriptorProvider } from "../identity/descriptorProvider";
 import { DescriptorIdentity } from "../identity/descriptorIdentity";
@@ -2547,9 +2551,8 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // it cannot parse, and 0 is a legitimate index, so a bare or
         // malformed descriptor would move the watermark nowhere while
         // reporting success.
-        const match = descriptor.match(/\/(\d+)\)\s*$/);
-        const index = match ? Number(match[1]) : NaN;
-        if (!Number.isInteger(index) || index < 0) {
+        const index = strictSigningDescriptorIndex(descriptor);
+        if (index === undefined) {
             throw new Error(`descriptor has no trailing child index: ${descriptor}`);
         }
         await (await this.getContractManager()).advanceSigningDescriptorWatermark(index);

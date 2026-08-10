@@ -40,7 +40,12 @@ import {
 import { decodeOffer, OFFER_CONTRACT_KIND } from "./offer";
 import type { AssetSwapRepository } from "./repository";
 import { classifyDepositSpend, spendTxidsOf, type RestoreIndexer, type SpendKind } from "./restore";
-import { getAssetSwaps, updateAssetSwap, type AssetSwap, type AssetSwapStatus } from "./store";
+import {
+    getAssetSwaps,
+    updateAssetSwapBestEffort,
+    type AssetSwap,
+    type AssetSwapStatus,
+} from "./store";
 
 /** Statuses a spend cannot move: the swap is already resolved. */
 const TERMINAL: readonly AssetSwapStatus[] = ["fulfilled", "cancelled", "recoverable"];
@@ -110,7 +115,7 @@ export async function watchOfferSwaps({
     const serverPubkey = ArkAddress.decode(await wallet.getAddress()).serverPubKey;
     const indexer: RestoreIndexer = new RestIndexerProvider(arkServerUrl);
 
-    // events arrive independently but updateAssetSwap is read-modify-write over
+    // events arrive independently but the update is read-modify-write over
     // the whole list, so two concurrent handlers would lose one of the writes
     let queue: Promise<void> = Promise.resolve();
     const enqueue = (task: () => Promise<void>): void => {
@@ -160,8 +165,11 @@ export async function watchOfferSwaps({
             const changes = spendUpdate(swap, { txid: spentTxid, kind, at: event.timestamp });
             if (!changes) continue;
 
-            await updateAssetSwap(repository, swap.id, changes);
-            onUpdate?.({ ...swap, ...changes });
+            // notify only on a write that landed: `onUpdate` is documented as
+            // firing after the change is persisted, and a consumer that caches
+            // from it would otherwise run ahead of the store
+            const { persisted } = await updateAssetSwapBestEffort(repository, swap.id, changes);
+            if (persisted) onUpdate?.({ ...swap, ...changes });
         }
     };
 

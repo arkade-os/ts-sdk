@@ -3808,7 +3808,21 @@ export class ArkadeSwaps {
         const keys = new Map<string, SwapOwnerKey>([[identityKey, { publicKey: identityKey }]]);
         if (!isHDWalletCapable(this.wallet)) return [...keys.values()];
 
-        for (const signingDescriptor of await this.wallet.getUsedSigningDescriptors()) {
+        // Behind a service worker this is a bus round-trip, which a restarted
+        // or not-yet-initialized worker fails. Losing the descriptor keys costs
+        // the HD-bound swaps; failing here costs the restore its every swap.
+        let usedDescriptors: string[] = [];
+        try {
+            usedDescriptors = await this.wallet.getUsedSigningDescriptors();
+        } catch (error) {
+            logger.warn(
+                "Could not read used signing descriptors; using the identity key only",
+                error,
+            );
+            return [...keys.values()];
+        }
+
+        for (const signingDescriptor of usedDescriptors) {
             try {
                 const publicKey = hex.encode(
                     deriveDescriptorLeafCompressedPubKey(signingDescriptor),

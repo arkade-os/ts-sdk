@@ -719,6 +719,14 @@ export class ContractManager implements IContractManager {
     private lookAheadDrain?: Promise<void>;
     /** A refill was requested while a drain was running. */
     private lookAheadDirty = false;
+    /** A fire-and-forget drain failed, so the band is behind the watermark and
+     * owes a retry. @see requestLookAheadDrain */
+    private lookAheadRefillOwed = false;
+    /** Set by {@link dispose}, cleared by a re-`initialize`. A drain is a
+     * fire-and-forget async loop that outlives the synchronous `dispose()`,
+     * so it re-checks this at every await boundary instead of running on
+     * against a torn-down watcher. */
+    private disposed = false;
 
     private constructor(config: ContractManagerConfig) {
         this.config = config;
@@ -806,6 +814,9 @@ export class ContractManager implements IContractManager {
         if (this.initialized) {
             return;
         }
+        // Re-arm after a dispose(): this instance is being brought back up, so
+        // the look-ahead is allowed to drain again.
+        this.disposed = false;
 
         // Register persisted contracts with the watcher BEFORE the first
         // sync. `addContract` seeds `lastKnownVtxos` from the repo without
@@ -892,14 +903,20 @@ export class ContractManager implements IContractManager {
     /** @see IContractManager.getNextSigningDescriptor */
     async getNextSigningDescriptor(): Promise<string | undefined> {
         const descriptor = await this.config.lookAhead?.allocate?.();
-        if (descriptor !== undefined) await this.scheduleLookAheadDrain();
+        // The allocation is already committed (the watermark moved), so the
+        // band slide must not fail this call: a drain failure would surface an
+        // indexer error for a descriptor the caller can use — and a retry
+        // would burn another index. Fire-and-forget, like promotion does.
+        if (descriptor !== undefined) this.requestLookAheadDrain();
         return descriptor;
     }
 
     /** @see IContractManager.advanceSigningDescriptorWatermark */
     async advanceSigningDescriptorWatermark(index: number): Promise<void> {
         await this.advanceLookAheadWatermark(index);
-        await this.scheduleLookAheadDrain();
+        // Same rule as getNextSigningDescriptor: the watermark is committed,
+        // the band slide is best-effort.
+        this.requestLookAheadDrain();
     }
 
     /**
@@ -910,7 +927,7 @@ export class ContractManager implements IContractManager {
      * recursing.
      */
     private scheduleLookAheadDrain(): Promise<void> {
-        if (!this.config.lookAhead) return Promise.resolve();
+        if (!this.config.lookAhead || this.disposed) return Promise.resolve();
         if (this.lookAheadDrain) {
             this.lookAheadDirty = true;
             return this.lookAheadDrain;
@@ -919,7 +936,8 @@ export class ContractManager implements IContractManager {
             do {
                 this.lookAheadDirty = false;
                 await this.ensureLookAhead();
-            } while (this.lookAheadDirty);
+            } while (this.lookAheadDirty && !this.disposed);
+            this.lookAheadRefillOwed = false;
         })().finally(() => {
             this.lookAheadDrain = undefined;
         });
@@ -929,15 +947,22 @@ export class ContractManager implements IContractManager {
 
     /**
      * Request a drain without awaiting it. Used from inside a sync (promotion),
-     * where awaiting the drain that the sync itself is part of would deadlock.
+     * and after an allocation the drain must not be able to fail — the
+     * watermark already moved, and a retry would burn another index.
+     *
+     * A failure here is not terminal: it leaves the watch band behind the
+     * watermark, so funded indices inside it would go unregistered and the
+     * balance would under-report for the rest of the session. Record the debt
+     * so the next contract event retries it. @see handleContractEvent
      */
     private requestLookAheadDrain(): void {
-        if (!this.config.lookAhead) return;
+        if (!this.config.lookAhead || this.disposed) return;
         if (this.lookAheadDrain) {
             this.lookAheadDirty = true;
             return;
         }
         void this.scheduleLookAheadDrain().catch((err) => {
+            this.lookAheadRefillOwed = true;
             console.error("ContractManager: look-ahead refill failed", err);
         });
     }
@@ -960,9 +985,10 @@ export class ContractManager implements IContractManager {
      */
     private async ensureLookAhead(): Promise<void> {
         const lookAhead = this.config.lookAhead;
-        if (!lookAhead) return;
+        if (!lookAhead || this.disposed) return;
 
         const watermark = await lookAhead.currentWatermark();
+        if (this.disposed) return;
         // A fresh wallet (watermark -1) yields [0, size - 1].
         const from = Math.max(0, watermark - lookAhead.size);
         const to = watermark + lookAhead.size;
@@ -1000,6 +1026,10 @@ export class ContractManager implements IContractManager {
             const persistedScripts = new Set(persisted.map((c) => c.script));
 
             for (const [script, { index, params }] of band) {
+                // Re-checked per entry: dispose() may land between two
+                // registrations, and everything below re-populates state it
+                // just tore down.
+                if (this.disposed) return;
                 // A persisted row is watched through the repository path; it is
                 // declassified rather than tracked as speculative.
                 if (persistedScripts.has(script)) {
@@ -1047,6 +1077,9 @@ export class ContractManager implements IContractManager {
      * exist. Targeted + explicitly windowed, so the global cursor stays put.
      */
     private async runLookAheadCatchUp(): Promise<void> {
+        // `syncContracts` writes VTXO rows, so a disposed manager must not
+        // reach it — the repositories now belong to whatever replaced it.
+        if (this.disposed) return;
         const pending = [...this.lookAheadEntries.values()].filter((e) => e.catchUpPending);
         if (pending.length === 0) return;
         try {
@@ -1937,6 +1970,10 @@ export class ContractManager implements IContractManager {
         // the startWatching callback's `.catch`, or diagnostics would keep
         // reporting online after a real degradation. Terminal failures still
         // propagate. The event is forwarded to subscribers either way.
+        // A drain that failed after an allocation left the band short; any
+        // event proves the transport is back, so pay the debt here rather than
+        // waiting for the next allocation or a restart.
+        if (this.lookAheadRefillOwed) this.requestLookAheadDrain();
         try {
             switch (event.type) {
                 // Delta-sync only the changed virtual outputs for this contract.
@@ -2270,6 +2307,14 @@ export class ContractManager implements IContractManager {
      * Implements the disposable pattern for cleanup.
      */
     dispose(): void {
+        // Close the look-ahead first, before the watcher goes away. A drain
+        // started by getNextSigningDescriptor / advanceSigningDescriptorWatermark
+        // is fire-and-forget, so one can still be parked on an await here; the
+        // flag is what stops it from calling addContract or persisting
+        // catch-up VTXOs on the far side of this teardown.
+        this.disposed = true;
+        const pendingDrain = this.lookAheadDrain;
+
         // Stop watching
         this.stopWatcherFn?.();
         this.stopWatcherFn = undefined;
@@ -2279,6 +2324,16 @@ export class ContractManager implements IContractManager {
 
         // Speculative entries are pure derivation; a fresh manager rebuilds them.
         this.lookAheadEntries.clear();
+        // dispose() is synchronous and cannot await the drain, so sweep again
+        // once it unwinds: the iteration it was already inside can register
+        // one last entry after the clear above.
+        if (pendingDrain) {
+            void pendingDrain
+                .catch(() => {})
+                .then(() => {
+                    if (this.disposed) this.lookAheadEntries.clear();
+                });
+        }
 
         // Mark as uninitialized
         this.initialized = false;

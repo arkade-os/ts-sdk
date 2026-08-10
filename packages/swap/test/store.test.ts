@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { addAssetSwap, getAssetSwaps, updateAssetSwap, AssetSwap } from "../src/store";
+import {
+    addAssetSwap,
+    getAssetSwaps,
+    updateAssetSwap,
+    updateAssetSwapBestEffort,
+    AssetSwap,
+} from "../src/store";
 import { AssetSwapRepository, InMemoryAssetSwapRepository } from "../src/repository";
 
 const swap = (id: string): AssetSwap => ({
@@ -65,7 +71,7 @@ describe("asset swap store", () => {
         expect((await getAssetSwaps(repository)).map((s) => s.id)).toEqual(["a"]);
     });
 
-    it("reports failed add and update writes", async () => {
+    it("reports failed add writes and keeps update writes best-effort", async () => {
         const broken = (existing: AssetSwap[] = []): AssetSwapRepository => ({
             version: 1,
             saveSwap: async () => {
@@ -80,15 +86,26 @@ describe("asset swap store", () => {
             [Symbol.asyncDispose]: async () => {},
         });
 
+        // add gates funding: a lost pre-funding record must fail the caller
         await expect(addAssetSwap(broken(), swap("a"))).rejects.toThrow(
             /failed to save swap a: quota exceeded/,
         );
+        // so does a gating update — cancelOffer's `cancelling` marker is
+        // written before the broadcast it is there to explain
         await expect(
             updateAssetSwap(broken([swap("a")]), "a", { status: "cancelled" }),
         ).rejects.toThrow(/failed to save swap a: quota exceeded/);
+        // the best-effort variant records what follows an irreversible action:
+        // it must never throw after it, but must report the lost write
+        await expect(
+            updateAssetSwapBestEffort(broken([swap("a")]), "a", { status: "cancelled" }),
+        ).resolves.toMatchObject({
+            persisted: false,
+            swaps: [{ id: "a", status: "cancelled" }],
+        });
     });
 
-    it("treats read failures as an empty swap list", async () => {
+    it("reads a failed read as empty history, but never writes on one", async () => {
         const broken: AssetSwapRepository = {
             version: 1,
             saveSwap: async () => {},
@@ -102,7 +119,16 @@ describe("asset swap store", () => {
             clear: async () => {},
             [Symbol.asyncDispose]: async () => {},
         };
+        // a history view degrades to empty rather than crashing
         await expect(getAssetSwaps(broken)).resolves.toEqual([]);
-        await expect(updateAssetSwap(broken, "a", { status: "cancelled" })).resolves.toEqual([]);
+        // but a mutation must not read "backend gone" as "no such swap" and
+        // report success having written nothing
+        await expect(updateAssetSwap(broken, "a", { status: "cancelled" })).rejects.toThrow(
+            /backend gone/,
+        );
+        await expect(addAssetSwap(broken, swap("a"))).rejects.toThrow(/backend gone/);
+        await expect(
+            updateAssetSwapBestEffort(broken, "a", { status: "cancelled" }),
+        ).resolves.toMatchObject({ persisted: false });
     });
 });

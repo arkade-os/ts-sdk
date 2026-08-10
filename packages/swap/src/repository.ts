@@ -32,7 +32,9 @@ export const marketsCacheKey = (network: string, registry: string) =>
 export interface AssetSwapRepository extends AsyncDisposable {
     readonly version: 1;
 
-    /** Insert or replace a swap by id. */
+    /** Insert or replace a swap by id. Store the record whole: `fallbackSecrets`
+     * is secret-bearing, and a field-mapped backend that drops it loses the
+     * stored arm's claim and refund keys. */
     saveSwap(swap: AssetSwap): Promise<void>;
     /** All stored swaps, in no particular order — `getAssetSwaps` is the
      * canonical newest-first read. */

@@ -20,8 +20,10 @@ export {
 export {
     BTC_ASSET_ID,
     getAssetSwaps,
+    getAssetSwapsOrThrow,
     addAssetSwap,
     updateAssetSwap,
+    updateAssetSwapBestEffort,
     type AssetSwap,
     type AssetSwapFallbackSecrets,
     type AssetSwapStatus,

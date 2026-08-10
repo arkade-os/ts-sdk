@@ -92,28 +92,36 @@ const byNewest = (a: AssetSwap, b: AssetSwap): number => b.createdAt - a.created
 
 /** All swaps, newest-first. Insertion order is not chronological — the restore
  * scan rebuilds records in tx-scan order — so sort at read to keep
- * newest-first canonical for every consumer. A broken backend reads as no
- * swaps rather than crashing the caller. */
+ * newest-first canonical for every consumer. */
+export const getAssetSwapsOrThrow = async (
+    repository: AssetSwapRepository,
+): Promise<AssetSwap[]> => {
+    return (await repository.getAllSwaps())
+        .filter(
+            (s) =>
+                s &&
+                typeof s.id === "string" &&
+                // offer swaps carry the TLV; onchain-corridor swaps carry
+                // the payment hash instead — either marks a valid record
+                (typeof s.offerHex === "string" || typeof s.paymentHash === "string"),
+        )
+        .sort(byNewest);
+};
+
+/** The consumer read: a broken backend reads as no swaps rather than crashing
+ * a history view. Mutations must use {@link getAssetSwapsOrThrow} instead —
+ * swallowing the read there would let "the backend is gone" masquerade as "no
+ * such swap" and skip the write silently. */
 export const getAssetSwaps = async (repository: AssetSwapRepository): Promise<AssetSwap[]> => {
     try {
-        return (await repository.getAllSwaps())
-            .filter(
-                (s) =>
-                    s &&
-                    typeof s.id === "string" &&
-                    // offer swaps carry the TLV; onchain-corridor swaps carry
-                    // the payment hash instead — either marks a valid record
-                    (typeof s.offerHex === "string" || typeof s.paymentHash === "string"),
-            )
-            .sort(byNewest);
+        return await getAssetSwapsOrThrow(repository);
     } catch {
         return [];
     }
 };
 
-// Surface persistence failures: onchain sends must prove the pre-funding
-// record write landed before the caller broadcasts the lockup.
-const saveSwapSafely = async (repository: AssetSwapRepository, swap: AssetSwap): Promise<void> => {
+// Surface persistence failures: the caller decides what a lost write means.
+const saveSwapOrThrow = async (repository: AssetSwapRepository, swap: AssetSwap): Promise<void> => {
     try {
         await repository.saveSwap(swap);
     } catch (error) {
@@ -122,14 +130,16 @@ const saveSwapSafely = async (repository: AssetSwapRepository, swap: AssetSwap):
     }
 };
 
-/** Add a swap; no-op if the id is already stored. Returns the updated list. */
+/** Add a swap; no-op if the id is already stored. Returns the updated list.
+ * THROWS on a failed write — nothing irreversible may happen until this record
+ * is durable, so the caller must not fund on a failure. */
 export const addAssetSwap = async (
     repository: AssetSwapRepository,
     swap: AssetSwap,
 ): Promise<AssetSwap[]> => {
-    const swaps = await getAssetSwaps(repository);
+    const swaps = await getAssetSwapsOrThrow(repository);
     if (swaps.some((s) => s.id === swap.id)) return swaps;
-    await saveSwapSafely(repository, swap);
+    await saveSwapOrThrow(repository, swap);
     // the list is already newest-first, so place the one new record rather than
     // re-sorting the whole history around it
     const at = swaps.findIndex((s) => byNewest(swap, s) <= 0);
@@ -138,7 +148,10 @@ export const addAssetSwap = async (
     return merged;
 };
 
-/** Merge changes into a swap by id. Returns the updated list. */
+/** Merge changes into a swap by id. Returns the updated list.
+ * THROWS on a failed read or write, like {@link addAssetSwap} — use this for a
+ * write that gates something irreversible. Transitions written *after* the
+ * irreversible act belong on {@link updateAssetSwapBestEffort}. */
 export const updateAssetSwap = async (
     repository: AssetSwapRepository,
     id: string,
@@ -146,10 +159,38 @@ export const updateAssetSwap = async (
     // record stored under the old key and report one swap twice
     changes: Partial<Omit<AssetSwap, "id">>,
 ): Promise<AssetSwap[]> => {
-    const swaps = (await getAssetSwaps(repository)).map((s) =>
+    const swaps = (await getAssetSwapsOrThrow(repository)).map((s) =>
         s.id === id ? { ...s, ...changes } : s,
     );
     const updated = swaps.find((s) => s.id === id);
-    if (updated) await saveSwapSafely(repository, updated);
+    if (updated) await saveSwapOrThrow(repository, updated);
     return swaps;
+};
+
+/**
+ * {@link updateAssetSwap} for transitions that follow an irreversible action (a
+ * broadcast claim, a spent lockup): failing the caller there would report as
+ * failed a swap whose funds already moved, and a stale status is recoverable —
+ * crash recovery re-derives the true state from the chain
+ * (`classifyOnchainHtlc`).
+ *
+ * `persisted` is the part that must not be hidden: a caller that notifies on a
+ * change, or treats one as terminal, has to know the store did not agree.
+ */
+export const updateAssetSwapBestEffort = async (
+    repository: AssetSwapRepository,
+    id: string,
+    changes: Partial<Omit<AssetSwap, "id">>,
+): Promise<{ swaps: AssetSwap[]; persisted: boolean }> => {
+    try {
+        return { swaps: await updateAssetSwap(repository, id, changes), persisted: true };
+    } catch (error) {
+        console.warn(`[swap] failed to persist update for swap ${id}`, error);
+        // the read may be what failed, so report the merge over what we can
+        // still see rather than claiming an empty history
+        const swaps = (await getAssetSwaps(repository)).map((s) =>
+            s.id === id ? { ...s, ...changes } : s,
+        );
+        return { swaps, persisted: false };
+    }
 };

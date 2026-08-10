@@ -69,6 +69,75 @@ describe("WalletMessageHandler handleMessage", () => {
         expect(response.error?.message).toBe("Wallet handler not initialized");
     });
 
+    describe("HD signing-descriptor allocation", () => {
+        const descriptor = "tr(deadbeef/86'/1'/0'/0/7)";
+
+        // A readonly-initialized worker, or one past clear()/stop(), has a
+        // readonlyWallet and no signing wallet. Answering "advanced" there lets
+        // the same index be issued twice, and two swaps bound to one descriptor
+        // derive the same preimage.
+        it.each([
+            ["ADVANCE_SIGNING_DESCRIPTOR_WATERMARK", { descriptor }],
+            ["GET_NEXT_SIGNING_DESCRIPTOR", undefined],
+        ])("errors on %s when there is no signing wallet", async (type, payload) => {
+            (updater as any).readonlyWallet = {};
+            (updater as any).wallet = undefined;
+
+            const response = await updater.handleMessage({
+                ...baseMessage(),
+                type,
+                ...(payload ? { payload } : {}),
+            } as any);
+
+            expect(response.error).toBeInstanceOf(Error);
+            expect(response.error?.name).toBe("WalletNotInitializedError");
+        });
+
+        // A wallet that is present but cannot allocate is a fact about the
+        // wallet, not a missing one: it still answers like a static wallet,
+        // because the page-side structural guards cannot see across the bus.
+        it("still answers like a static wallet for a non-HD signing wallet", async () => {
+            (updater as any).readonlyWallet = {};
+            (updater as any).wallet = {};
+
+            await expect(
+                updater.handleMessage({
+                    ...baseMessage(),
+                    type: "ADVANCE_SIGNING_DESCRIPTOR_WATERMARK",
+                    payload: { descriptor },
+                } as any),
+            ).resolves.toMatchObject({ type: "SIGNING_DESCRIPTOR_WATERMARK_ADVANCED" });
+
+            await expect(
+                updater.handleMessage({
+                    ...baseMessage(),
+                    type: "GET_NEXT_SIGNING_DESCRIPTOR",
+                } as any),
+            ).resolves.toMatchObject({
+                type: "NEXT_SIGNING_DESCRIPTOR",
+                payload: { descriptor: undefined },
+            });
+        });
+
+        it("advances the watermark on an allocating wallet", async () => {
+            const advance = vi.fn().mockResolvedValue(undefined);
+            (updater as any).readonlyWallet = {};
+            (updater as any).wallet = {
+                getNextSigningDescriptor: vi.fn().mockResolvedValue(descriptor),
+                advanceSigningDescriptorWatermark: advance,
+            };
+
+            await expect(
+                updater.handleMessage({
+                    ...baseMessage(),
+                    type: "ADVANCE_SIGNING_DESCRIPTOR_WATERMARK",
+                    payload: { descriptor },
+                } as any),
+            ).resolves.toMatchObject({ type: "SIGNING_DESCRIPTOR_WATERMARK_ADVANCED" });
+            expect(advance).toHaveBeenCalledWith(descriptor);
+        });
+    });
+
     it("handles SETTLE messages", async () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {};

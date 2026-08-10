@@ -47,6 +47,7 @@ import {
     type ProviderConnectionState,
 } from "../wallet";
 import { computeOffchainBalance } from "../balance";
+import { isHDAllocationCapable, isHDWalletCapable } from "../hdWalletCapable";
 import { gatedContracts } from "../../contracts/spendability";
 import type {
     DeprecatedSignerMigrationReport,
@@ -367,6 +368,43 @@ export type RequestRefreshOutpoints = RequestEnvelope & {
 };
 export type ResponseRefreshOutpoints = ResponseEnvelope & {
     type: "REFRESH_OUTPOINTS_SUCCESS";
+};
+
+// HD signing-descriptor surface. Descriptor allocation and the watermark are
+// owned by the worker-side Wallet (single writer); the page proxies both as
+// plain strings — unlike scanContracts there is no callback to cross the
+// structured-clone boundary.
+export type RequestGetCurrentSigningDescriptor = RequestEnvelope & {
+    type: "GET_CURRENT_SIGNING_DESCRIPTOR";
+};
+export type ResponseGetCurrentSigningDescriptor = ResponseEnvelope & {
+    type: "CURRENT_SIGNING_DESCRIPTOR";
+    payload: { descriptor?: string };
+};
+
+export type RequestGetNextSigningDescriptor = RequestEnvelope & {
+    type: "GET_NEXT_SIGNING_DESCRIPTOR";
+};
+export type ResponseGetNextSigningDescriptor = ResponseEnvelope & {
+    type: "NEXT_SIGNING_DESCRIPTOR";
+    payload: { descriptor?: string };
+};
+
+export type RequestGetUsedSigningDescriptors = RequestEnvelope & {
+    type: "GET_USED_SIGNING_DESCRIPTORS";
+    payload?: { lookAhead?: number };
+};
+export type ResponseGetUsedSigningDescriptors = ResponseEnvelope & {
+    type: "USED_SIGNING_DESCRIPTORS";
+    payload: { descriptors: string[] };
+};
+
+export type RequestAdvanceSigningDescriptorWatermark = RequestEnvelope & {
+    type: "ADVANCE_SIGNING_DESCRIPTOR_WATERMARK";
+    payload: { descriptor: string };
+};
+export type ResponseAdvanceSigningDescriptorWatermark = ResponseEnvelope & {
+    type: "SIGNING_DESCRIPTOR_WATERMARK_ADVANCED";
 };
 
 export type RequestGetAllSpendingPaths = RequestEnvelope & {
@@ -735,6 +773,10 @@ export type WalletUpdaterRequest =
     | RequestIsContractManagerWatching
     | RequestRefreshVtxos
     | RequestRefreshOutpoints
+    | RequestGetCurrentSigningDescriptor
+    | RequestGetNextSigningDescriptor
+    | RequestGetUsedSigningDescriptors
+    | RequestAdvanceSigningDescriptorWatermark
     | RequestSend
     | RequestGetAssetDetails
     | RequestIssue
@@ -783,6 +825,10 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseIsContractManagerWatching
         | ResponseRefreshVtxos
         | ResponseRefreshOutpoints
+        | ResponseGetCurrentSigningDescriptor
+        | ResponseGetNextSigningDescriptor
+        | ResponseGetUsedSigningDescriptors
+        | ResponseAdvanceSigningDescriptorWatermark
         | ResponseContractEvent
         | ResponseSend
         | ResponseGetAssetDetails
@@ -1161,6 +1207,72 @@ export class WalletMessageHandler
                     return this.tagged({
                         id,
                         type: "REFRESH_OUTPOINTS_SUCCESS",
+                    });
+                }
+                // The HD *probes* below answer like a static wallet (undefined
+                // / empty) rather than erroring when the worker wallet is
+                // readonly or non-HD: the page-side structural guards
+                // (isHDWalletCapable / isHDAllocationCapable) cannot see
+                // across the message bus, so "no HD state" must be a value.
+                //
+                // The two *allocating* cases split that condition. A wallet
+                // that is present but cannot allocate is a fact about the
+                // wallet, and still answers as a static one. No signing wallet
+                // at all — a readonly-initialized worker, or one past clear() /
+                // stop() — is an initialization error like every other mutating
+                // case here: answering "allocated" or "advanced" there would
+                // let the same index be issued twice, and two swaps sharing a
+                // descriptor derive the same preimage.
+                case "GET_CURRENT_SIGNING_DESCRIPTOR": {
+                    const wallet = this.wallet;
+                    const descriptor = isHDWalletCapable(wallet)
+                        ? await wallet.getCurrentSigningDescriptor()
+                        : undefined;
+                    return this.tagged({
+                        id,
+                        type: "CURRENT_SIGNING_DESCRIPTOR",
+                        payload: { descriptor },
+                    });
+                }
+                case "GET_NEXT_SIGNING_DESCRIPTOR": {
+                    const wallet = this.wallet;
+                    if (!wallet) throw new WalletNotInitializedError();
+                    const descriptor = isHDAllocationCapable(wallet)
+                        ? await wallet.getNextSigningDescriptor()
+                        : undefined;
+                    return this.tagged({
+                        id,
+                        type: "NEXT_SIGNING_DESCRIPTOR",
+                        payload: { descriptor },
+                    });
+                }
+                case "GET_USED_SIGNING_DESCRIPTORS": {
+                    const wallet = this.wallet;
+                    const descriptors = isHDWalletCapable(wallet)
+                        ? await wallet.getUsedSigningDescriptors(
+                              (message as RequestGetUsedSigningDescriptors).payload,
+                          )
+                        : [];
+                    return this.tagged({
+                        id,
+                        type: "USED_SIGNING_DESCRIPTORS",
+                        payload: { descriptors },
+                    });
+                }
+                case "ADVANCE_SIGNING_DESCRIPTOR_WATERMARK": {
+                    const wallet = this.wallet;
+                    if (!wallet) throw new WalletNotInitializedError();
+                    if (isHDAllocationCapable(wallet)) {
+                        // Throws on a foreign or index-less descriptor — that
+                        // propagates to the page as an error response.
+                        await wallet.advanceSigningDescriptorWatermark(
+                            (message as RequestAdvanceSigningDescriptorWatermark).payload
+                                .descriptor,
+                        );
+                    }
+                    return this.tagged({
+                        id,
+                        type: "SIGNING_DESCRIPTOR_WATERMARK_ADVANCED",
                     });
                 }
                 case "SEND": {

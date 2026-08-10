@@ -104,6 +104,10 @@ export {
 } from "./wallet";
 import { Batch } from "./wallet/batch";
 import {
+    signingDescriptorIndex,
+    strictSigningDescriptorIndex,
+} from "./wallet/walletReceiveRotator";
+import {
     Wallet,
     ReadonlyWallet,
     MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD,
@@ -490,6 +494,8 @@ export {
     isHDDeterministicSignCapable,
     isHDWalletCapable,
     isHDAllocationCapable,
+    signingDescriptorIndex,
+    strictSigningDescriptorIndex,
     deriveDescriptorLeafCompressedPubKey,
     OnchainWallet,
     Ramps,

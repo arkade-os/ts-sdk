@@ -3,6 +3,7 @@ import { hex } from "@scure/base";
 import { ArkAddress, asset, type IWallet } from "@arkade-os/sdk";
 import { cancelOffer, encodeOffer, offerVtxoScript, type Offer } from "../src/offer";
 import { InMemoryAssetSwapRepository } from "../src/repository";
+import { addAssetSwap } from "../src/store";
 
 // cancelOffer's guards fire before any signing: mock only the network seam
 // (Arkade.connect for the current server key, ArkadeContract for the vtxo
@@ -13,6 +14,7 @@ const state = vi.hoisted(() => ({
     serverKey: new Uint8Array(0) as Uint8Array,
     utxos: [] as { txid: string; vout: number; value: number }[],
     connectOptions: undefined as { contractManager?: unknown } | undefined,
+    sends: 0,
 }));
 
 vi.mock("@arkade-os/sdk", async (importOriginal) => {
@@ -29,6 +31,20 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
             },
             ArkadeContract: class {
                 getUtxos = async () => state.utxos;
+                functions = {
+                    cancel: () => {
+                        const chain = {
+                            from: () => chain,
+                            to: () => chain,
+                            withAsset: () => chain,
+                            send: async () => {
+                                state.sends += 1;
+                                return { txid: "cc".repeat(32) };
+                            },
+                        };
+                        return chain;
+                    },
+                };
             },
         },
     };
@@ -94,6 +110,44 @@ describe("cancelOffer guards", () => {
                 repository: new InMemoryAssetSwapRepository(),
             }),
         ).rejects.toThrow("pass fundingTxid");
+    });
+
+    it("does not broadcast when the in-flight marker cannot be written", async () => {
+        // The `cancelling` marker is what keeps a crash between submit and
+        // record from leaving a swap that still looks pending. It is written
+        // before `send()`, so a lost write must stop the broadcast, not warn
+        // past it.
+        state.serverKey = fundedServerKey;
+        state.utxos = [{ txid: "a".repeat(64), vout: 0, value: 10_000 }];
+        state.sends = 0;
+
+        const repository = new InMemoryAssetSwapRepository();
+        await addAssetSwap(repository, {
+            id: "a".repeat(64),
+            fromAsset: "btc",
+            toAsset: "aa".repeat(32) + "0000",
+            fromAmount: "10000",
+            toAmount: "50000",
+            swapAddress: fundedAddress,
+            swapPkScript: hex.encode(script.pkScript),
+            offerHex,
+            fundingTxid: "a".repeat(64),
+            status: "pending",
+            createdAt: 1_700_000_000_000,
+        });
+        vi.spyOn(repository, "saveSwap").mockRejectedValue(new Error("quota exceeded"));
+        // this is the one test that gets past vtxo selection, so the maker
+        // address has to decode
+        const funded = { ...wallet, getAddress: async () => fundedAddress } as unknown as IWallet;
+
+        await expect(
+            cancelOffer(funded, "http://ark", offerHex, {
+                repository,
+                fundingTxid: "a".repeat(64),
+            }),
+        ).rejects.toThrow(/quota exceeded/);
+        expect(state.sends).toBe(0);
+        vi.restoreAllMocks();
     });
 
     // without this the contract takes the direct-indexer fallback and a

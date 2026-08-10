@@ -305,9 +305,14 @@ const swap = await requestOnchainSend(/* … */);
 swap.secrets; // { derivable: true, signingDescriptor } — persist it, it holds no secret
 await saveSwap({ ...record, ...rfqSecretsToRecord(swap.secrets) });
 
-// Later, from the seed plus that descriptor:
-const preimage = await preimageForRfqSecrets(wallet, rfqSecretsOfRecord(record)!);
-const sender = await senderIdentityForRfqSecrets(wallet, rfqSecretsOfRecord(record)!);
+// Later, from the seed plus that descriptor. Guard the lookup: offer-corridor
+// records (and records that lost their secrets fields) carry no secrets at
+// all, and a `!` here would crash the whole recovery loop on the first one.
+const secrets = rfqSecretsOfRecord(record);
+if (secrets) {
+    const preimage = await preimageForRfqSecrets(wallet, secrets);
+    const sender = await senderIdentityForRfqSecrets(wallet, secrets);
+}
 ```
 
 `derivable: false` is the fallback for wallets that cannot allocate (static / `auto` / custom
@@ -330,6 +335,14 @@ preimage for both corridors.
 
 **Not covered:** seed-only discovery after the swap repository is wiped. An unspent L1 HTLC reveals
 too little public quote data to rediscover, so the record remains required.
+
+**Gap-limit interaction:** every swap request — including one whose quote is refused — consumes one
+index from the wallet's receive stream, and a swap index never becomes a funded receive contract,
+so it looks *unused* to a seed-only `restore()` gap scan. Many consecutive swap allocations between
+two funded receive indices can therefore exceed the scan's `gapLimit` (default 20) and stop it
+before later-funded addresses are found. Keep the swap repository in backups (restore then adopts
+each record's descriptor via `adoptSwapDescriptor`), or raise `gapLimit` on seed-only restores
+after heavy swap use.
 
 ## Breaking changes on this branch (pre-release migration notes)
 
@@ -361,6 +374,19 @@ scanned? })` — the server key is required because a spend is classified by reb
   indistinguishable from a fill. Leaves have no such failure mode.
 - **A spend that cannot be classified is no longer restored as `fulfilled`.** It leaves the funding
   txid unanswered so a later scan decides it. Records are never written on a guess.
+- **`AssetSwap` gained the secret-bearing `signingDescriptor?` / `fallbackSecrets?` fields**, and
+  `preimageHex` narrowed from "the claim preimage P" to "caller-supplied P only". The repository
+  version stays `1` — the package is unreleased, so there is no stored record to migrate — but a
+  field-mapped backend must persist the record whole: silently dropping `fallbackSecrets` on write
+  loses the stored arm's claim and refund keys.
+- **A write that gates something irreversible throws; one that follows it does not.**
+  `addAssetSwap` and `updateAssetSwap` throw on a failed read or write — nothing irreversible may
+  happen until the record is durable, which is why `cancelOffer` writes its `cancelling` marker
+  before broadcasting. `updateAssetSwapBestEffort` is the other half: it records transitions that
+  follow an irreversible action (a broadcast claim, a spent lockup), so it cannot fail the caller,
+  and returns `{ swaps, persisted }` instead. `watchOfferSwaps` uses it and fires `onUpdate` only
+  when `persisted` is true — the callback is documented as following a persisted change, and a
+  consumer caching from it must not run ahead of the store.
 - **`lightningSendProgram` and `htlcSendProgram` are gone** along with the program-artifact layer
   they compiled. Derive scripts through `lightningSendVtxoScript` / `onchainHtlcScript`.
 - **`lightningSendVtxoScript` takes two new required fields**: `senderPubkey` (the trader's VHTLC
