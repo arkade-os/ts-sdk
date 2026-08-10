@@ -375,10 +375,8 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
      * Never. A live VHTLC is escrow: the counterparty's claim leaf is armed,
      * and generic selection — send, settle, RENEWAL, offboard — would move the
      * lockup out from under a swap the counterparty is still entitled to
-     * complete, or race a claim already in flight. `vhtlc` answers `true` only
-     * because that was its behaviour before the gate existed and narrowing it
-     * would have changed in-flight swaps; a type with no deployed rows inherits
-     * no such obligation.
+     * complete, or race a claim already in flight. The `vhtlc` handler now
+     * answers the same, for the same reason.
      *
      * Recovery is unaffected: the gate guards only GENERIC selection, and every
      * way out of a lockup names its outpoints explicitly — `settle({ inputs })`,
@@ -399,8 +397,9 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
      * `fetchContractVtxosBulk` drops this contract's VTXOs before they are
      * persisted. The row would exist and be watched while its balance stayed
      * permanently invisible, and `getSyncState()` would report `degraded`
-     * forever. (The `vhtlc` handler has the same gap; nothing registers V1 rows
-     * through `ContractManager` today, so it has never been hit.)
+     * forever. (The `vhtlc` handler had the same gap and now closes it the same
+     * way; nothing registers V1 rows through `ContractManager` in this repo, so
+     * it was never hit here.)
      *
      * `refundWithoutReceiver` is the leaf, for both roles the annotation
      * serves, because it is the only collaborative path this wallet can

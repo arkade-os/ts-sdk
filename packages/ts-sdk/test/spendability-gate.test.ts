@@ -170,8 +170,25 @@ describe("ContractHandler.isGenericallySpendable", () => {
         expect(DefaultContractHandler.isGenericallySpendable?.(row)).toBe(true);
         expect(DelegateContractHandler.isGenericallySpendable?.(row)).toBe(true);
         expect(BoardingContractHandler.isGenericallySpendable?.(row)).toBe(true);
-        // Today's behaviour verbatim — Phase 0 changes nothing for VHTLC.
-        expect(VHTLCContractHandler.isGenericallySpendable?.(row)).toBe(true);
+    });
+
+    /**
+     * This assertion used to read `true`, pinned as "today's behaviour
+     * verbatim" and deferred on the grounds that narrowing it would stop
+     * in-flight swaps from being selected.
+     *
+     * That premise did not hold. The `vhtlc` handler had no `deriveTapscripts`
+     * and no VHTLC script defines `forfeit()`, so `deriveContractTapscripts`
+     * threw for every `vhtlc` row, `annotatableIn` dropped its VTXOs, and they
+     * never reached this gate — there was no selection to preserve. The
+     * handler now derives its annotation leaf, so those VTXOs DO arrive here,
+     * and a VHTLC is escrow rather than wallet-owned money: it must not be
+     * credited to `available`, nor swept by an unprompted renewal.
+     */
+    it("answers false for vhtlc — escrow, not wallet-owned money", () => {
+        const row = contract("s", "vhtlc");
+        expect(VHTLCContractHandler.isGenericallySpendable?.(row)).toBe(false);
+        expect(isContractGenericallySpendable(row)).toBe(false);
     });
 
     it("makes arkade opt-in, never opt-out", () => {
