@@ -5,7 +5,7 @@ import { asset, ArkAddress, Transaction } from "@arkade-os/sdk";
 import { encodeOffer, offerVtxoScript, OFFER_CONTRACT_KIND, type Offer } from "../src/offer";
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import { addAssetSwap, getAssetSwaps, type AssetSwap } from "../src/store";
-import { spendUpdate, watchOfferSwaps } from "../src/watch";
+import { retireSettledOfferContracts, spendUpdate, watchOfferSwaps } from "../src/watch";
 
 const ASSET_ID = "f1".repeat(34);
 
@@ -61,6 +61,7 @@ const makeWallet = (getVirtualTxs: (txids: string[]) => Promise<{ txs: string[] 
     const callbacks = new Set<(event: any) => void>();
     // a real ark address, so ArkAddress.decode recovers SERVER_KEY from it
     const address = new ArkAddress(SERVER_KEY, key("66"), "tark").encode();
+    const setContractWatchState = vi.fn(async (_script: string, _watch: string) => {});
     const wallet = {
         getAddress: async () => address,
         getContractManager: async () => ({
@@ -68,11 +69,13 @@ const makeWallet = (getVirtualTxs: (txids: string[]) => Promise<{ txs: string[] 
                 callbacks.add(cb);
                 return () => callbacks.delete(cb);
             },
+            setContractWatchState,
         }),
     } as any;
     return {
         wallet,
         getVirtualTxs,
+        setContractWatchState,
         emit: (event: any) => callbacks.forEach((cb) => cb(event)),
         listeners: () => callbacks.size,
     };
@@ -299,6 +302,150 @@ describe("watchOfferSwaps", () => {
         vi.restoreAllMocks();
     });
 
+    it("retires the contract when the fill leaves no live record at the script", async () => {
+        const offer = makeOffer();
+        const fill = spendPsbt(offer, "fulfill");
+        const repository = new InMemoryAssetSwapRepository();
+        await addAssetSwap(repository, swapFor(offer));
+
+        await withIndexer(
+            async () => ({ txs: [fill.psbt] }),
+            async ({ wallet, emit, setContractWatchState }) => {
+                const watcher = await watchOfferSwaps({
+                    wallet,
+                    arkServerUrl: "http://ark",
+                    repository,
+                });
+                emit(spentEvent(offer, fill.txid));
+                await watcher.idle();
+                watcher.stop();
+
+                expect(setContractWatchState).toHaveBeenCalledWith(
+                    hex.encode(offer.swapPkScript),
+                    "retained",
+                );
+            },
+        );
+    });
+
+    it("keeps watching while another deposit at the same script is still live", async () => {
+        // identical offers share one script and are told apart by their
+        // funding txid: retiring on one fill would unwatch the other's deposit
+        const offer = makeOffer();
+        const fill = spendPsbt(offer, "fulfill");
+        const repository = new InMemoryAssetSwapRepository();
+        await addAssetSwap(repository, swapFor(offer));
+        await addAssetSwap(
+            repository,
+            swapFor(offer, { id: "ee".repeat(32), fundingTxid: "ee".repeat(32) }),
+        );
+
+        await withIndexer(
+            async () => ({ txs: [fill.psbt] }),
+            async ({ wallet, emit, setContractWatchState }) => {
+                const watcher = await watchOfferSwaps({
+                    wallet,
+                    arkServerUrl: "http://ark",
+                    repository,
+                });
+                emit(spentEvent(offer, fill.txid));
+                await watcher.idle();
+                watcher.stop();
+
+                expect(setContractWatchState).not.toHaveBeenCalled();
+            },
+        );
+    });
+
+    it("keeps watching when the sibling deposit was swept", async () => {
+        // `recoverable` is terminal for a spend but the funds are still the
+        // maker's at that script: reading liveness off TERMINAL unwatches them
+        const offer = makeOffer();
+        const fill = spendPsbt(offer, "fulfill");
+        const repository = new InMemoryAssetSwapRepository();
+        await addAssetSwap(repository, swapFor(offer));
+        await addAssetSwap(
+            repository,
+            swapFor(offer, {
+                id: "ee".repeat(32),
+                fundingTxid: "ee".repeat(32),
+                status: "recoverable",
+            }),
+        );
+
+        await withIndexer(
+            async () => ({ txs: [fill.psbt] }),
+            async ({ wallet, emit, setContractWatchState }) => {
+                const watcher = await watchOfferSwaps({
+                    wallet,
+                    arkServerUrl: "http://ark",
+                    repository,
+                });
+                emit(spentEvent(offer, fill.txid));
+                await watcher.idle();
+                watcher.stop();
+
+                expect(setContractWatchState).not.toHaveBeenCalled();
+            },
+        );
+    });
+
+    it("does not retire a change the store refused", async () => {
+        // the record still reads `pending` to the next restore scan, so
+        // unwatching it here would strand a deposit the scan still tracks
+        const offer = makeOffer();
+        const fill = spendPsbt(offer, "fulfill");
+        const repository = new InMemoryAssetSwapRepository();
+        await addAssetSwap(repository, swapFor(offer));
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        vi.spyOn(repository, "saveSwap").mockRejectedValue(new Error("quota exceeded"));
+
+        await withIndexer(
+            async () => ({ txs: [fill.psbt] }),
+            async ({ wallet, emit, setContractWatchState }) => {
+                const watcher = await watchOfferSwaps({
+                    wallet,
+                    arkServerUrl: "http://ark",
+                    repository,
+                });
+                emit(spentEvent(offer, fill.txid));
+                await watcher.idle();
+                watcher.stop();
+
+                expect(setContractWatchState).not.toHaveBeenCalled();
+            },
+        );
+        vi.restoreAllMocks();
+    });
+
+    it("keeps the status write when the retire fails", async () => {
+        // best-effort: a failed retire costs polling, never correctness
+        const offer = makeOffer();
+        const fill = spendPsbt(offer, "fulfill");
+        const repository = new InMemoryAssetSwapRepository();
+        await addAssetSwap(repository, swapFor(offer));
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        await withIndexer(
+            async () => ({ txs: [fill.psbt] }),
+            async ({ wallet, emit, setContractWatchState }) => {
+                setContractWatchState.mockRejectedValue(new Error("repository unavailable"));
+                const watcher = await watchOfferSwaps({
+                    wallet,
+                    arkServerUrl: "http://ark",
+                    repository,
+                });
+                emit(spentEvent(offer, fill.txid));
+                await watcher.idle();
+                watcher.stop();
+
+                expect(await getAssetSwaps(repository)).toMatchObject([{ status: "fulfilled" }]);
+                expect(warn).toHaveBeenCalled();
+            },
+        );
+        vi.restoreAllMocks();
+    });
+
     it("stops delivering after stop()", async () => {
         const offer = makeOffer();
         const fill = spendPsbt(offer, "fulfill");
@@ -321,5 +468,41 @@ describe("watchOfferSwaps", () => {
                 expect(await getAssetSwaps(repository)).toMatchObject([{ status: "pending" }]);
             },
         );
+    });
+});
+
+describe("retireSettledOfferContracts", () => {
+    // the batch path: a consumer that applies restore results without running
+    // the watcher retires with one call rather than a re-implementation
+    const btcOffer = makeOffer();
+    const assetOffer = makeOffer("want-btc");
+    const btcScript = hex.encode(btcOffer.swapPkScript);
+    const assetScript = hex.encode(assetOffer.swapPkScript);
+    const manager = () => ({
+        setContractWatchState: vi.fn(async (_script: string, _watch: string) => {}),
+    });
+
+    it("retires each settled script once and leaves the others watched", async () => {
+        const { setContractWatchState } = manager();
+        await retireSettledOfferContracts({ setContractWatchState }, [
+            swapFor(btcOffer, { status: "fulfilled" }),
+            swapFor(btcOffer, { id: "ee".repeat(32), status: "cancelled" }),
+            swapFor(assetOffer, { id: "ff".repeat(32), status: "pending" }),
+        ]);
+
+        expect(setContractWatchState.mock.calls).toEqual([[btcScript, "retained"]]);
+        expect(setContractWatchState).not.toHaveBeenCalledWith(assetScript, "retained");
+    });
+
+    it("never retires a script with a swept deposit at it", async () => {
+        const { setContractWatchState } = manager();
+        await retireSettledOfferContracts({ setContractWatchState }, [
+            swapFor(btcOffer, { status: "recoverable" }),
+            swapFor(assetOffer, { id: "ee".repeat(32), status: "recoverable" }),
+            swapFor(assetOffer, { id: "ff".repeat(32), status: "fulfilled" }),
+        ]);
+
+        // neither on its own account, nor as a sibling of a fill
+        expect(setContractWatchState).not.toHaveBeenCalled();
     });
 });

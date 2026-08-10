@@ -45,7 +45,9 @@ export {
 } from "./restore";
 export {
     watchOfferSwaps,
+    retireSettledOfferContracts,
     spendUpdate,
+    type OfferContractRetirer,
     type OfferSwapWatcher,
     type WatchOfferSwapsParams,
 } from "./watch";

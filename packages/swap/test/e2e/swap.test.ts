@@ -351,6 +351,12 @@ describe("maker-side swap loop (regtest)", () => {
             const [resolved] = await getAssetSwaps(swapRepository);
             expect(resolved.spentTxid).toBeTruthy();
             expect(updates.map((u) => u.status)).toContain("cancelled");
+
+            // and the settled script leaves the watched set: no live record is
+            // left at it, so the row is kept for history and dropped from every
+            // background channel
+            const rows = await (await wallet.getContractManager()).getContracts();
+            expect(rows.find((c) => c.script === secondScript)?.watch).toBe("retained");
         } finally {
             watcher.stop();
         }

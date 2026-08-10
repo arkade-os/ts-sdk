@@ -285,6 +285,13 @@ export const OFFER_CONTRACT_KIND = "asset-swap-offer";
  * all — background renewal would forfeit a live offer into an ordinary payment
  * and silently destroy it. The SDK's gate defaults closed, so the value is
  * redundant; it is written anyway because this is the one site that knows why.
+ *
+ * **The watch state is set unconditionally, not only on a fresh row.** Identical
+ * offers share one script, and `createContract` is first-writer-wins, so
+ * re-offering a script that `retireSettledOfferContracts` retired would
+ * leave the row `retained` — funded, but out of the subscription, the poll and
+ * every sync. The invariant this states is the one the corridor needs: an offer
+ * address handed to a maker is a watched address.
  */
 async function registerOfferContract(
     wallet: IWallet,
@@ -295,6 +302,7 @@ async function registerOfferContract(
     expectedPkScript: Uint8Array,
 ): Promise<void> {
     const { program, args, keys } = swapProgramBinding(binding, serverPubkey);
+    const contractManager = await wallet.getContractManager();
     const client = await arkade.Arkade.connect({
         arkade: new RestArkProvider(arkServerUrl),
         indexer: new RestIndexerProvider(arkServerUrl),
@@ -303,7 +311,7 @@ async function registerOfferContract(
         // default network while its script is right — a row that disagrees with
         // the address the maker is about to fund
         network: getNetwork(network),
-        contractManager: await wallet.getContractManager(),
+        contractManager,
     });
     const contract = new arkade.ArkadeContract(client, program, args, keys);
     // the row is keyed by script: registering anything but the script being
@@ -316,6 +324,10 @@ async function registerOfferContract(
         label: OFFER_CONTRACT_LABEL,
         metadata: { genericallySpendable: false, kind: OFFER_CONTRACT_KIND },
     });
+    // Throws like the registration itself: an address returned without coverage
+    // is the failure both of these exist to prevent, and nothing is at stake
+    // yet, so the caller can retry.
+    await contractManager.setContractWatchState(hex.encode(expectedPkScript), "watched");
 }
 
 // ── Maker operations ─────────────────────────────────────────────────────────
