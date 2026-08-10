@@ -292,6 +292,89 @@ describe("VHTLCV2ContractHandler", () => {
             const script = VHTLCV2ContractHandler.createScript(fullParams());
             expect(paths.map(leafHex)).not.toContain(script.refundWithoutReceiverScript);
         });
+
+        /**
+         * A rejection is the easy failure; a socket that opens and then goes
+         * quiet is the one `fetch` has no answer for. It never settles, so the
+         * `catch` above never runs — and since every later query joins the same
+         * in-flight read, one stalled tip would wedge path resolution for the
+         * manager's lifetime rather than for one call.
+         */
+        it("gives up on a stalled tip read, and lets the next query start a fresh one", async () => {
+            let reads = 0;
+            const manager = await managerFor(() => {
+                reads += 1;
+                return new Promise<number>(() => {});
+            });
+            const contract = contractOf(fullParams());
+            await manager.createContract(contract);
+            const script = VHTLCV2ContractHandler.createScript(contract.params);
+            const query = () =>
+                manager.getSpendablePaths({
+                    contractScript: contract.script,
+                    collaborative: true,
+                    walletPubKey: SENDER,
+                });
+
+            vi.useFakeTimers();
+            try {
+                const first = query();
+                // Well past any bound, so the test does not encode the exact one.
+                await vi.advanceTimersByTimeAsync(60_000);
+                expect((await first).map(leafHex)).not.toContain(
+                    script.refundWithoutReceiverScript,
+                );
+
+                const second = query();
+                await vi.advanceTimersByTimeAsync(60_000);
+                await second;
+                // Not still joined to the first, dead read.
+                expect(reads).toBe(2);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("does not wedge on a source that throws synchronously", async () => {
+            let reads = 0;
+            const manager = await managerFor(() => {
+                reads += 1;
+                if (reads === 1) throw new Error("provider not ready");
+                return Promise.resolve(800_000);
+            });
+            const contract = contractOf(fullParams());
+            await manager.createContract(contract);
+            const script = VHTLCV2ContractHandler.createScript(contract.params);
+            const query = () =>
+                manager.getSpendablePaths({
+                    contractScript: contract.script,
+                    collaborative: true,
+                    walletPubKey: SENDER,
+                });
+
+            expect((await query()).map(leafHex)).not.toContain(script.refundWithoutReceiverScript);
+            // The transient throw must not outlive itself: the provider has
+            // recovered, so the matured leaf comes back.
+            expect((await query()).map(leafHex)).toContain(script.refundWithoutReceiverScript);
+        });
+
+        it("does not read the tip for getAllSpendingPaths, which ignores timelocks", async () => {
+            let reads = 0;
+            const manager = await managerFor(async () => {
+                reads += 1;
+                return 800_000;
+            });
+            const contract = contractOf(fullParams());
+            await manager.createContract(contract);
+
+            await manager.getAllSpendingPaths({
+                contractScript: contract.script,
+                collaborative: true,
+                walletPubKey: SENDER,
+            });
+
+            expect(reads).toBe(0);
+        });
     });
 
     describe("path selection", () => {

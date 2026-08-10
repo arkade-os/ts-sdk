@@ -161,6 +161,17 @@ const DEFAULT_SCAN_BATCH = 10;
  */
 const CHAIN_TIP_TTL_MS = 30_000;
 
+/**
+ * How long a chain tip read may take before a path query stops waiting on it.
+ *
+ * A path query answers from local state; the tip only enriches it. `fetch`
+ * carries no timeout of its own, and a connection that opens and then goes
+ * quiet neither resolves nor rejects — so without this one stalled read would
+ * hang every path query that joins it, for as long as the socket stays open.
+ * Expiry is treated as "tip unknown", the same as a read that fails.
+ */
+const CHAIN_TIP_TIMEOUT_MS = 5_000;
+
 export type RefreshVtxosOptions = {
     /**
      * Narrow the refresh to these scripts. A subset query, so the
@@ -1699,31 +1710,51 @@ export class ContractManager implements IContractManager {
         // Collapse concurrent misses onto one read. Without this, a pass that
         // resolves paths for many contracts fires a provider request per
         // contract on the tick the TTL lapses — every one of them racing to
-        // write the same height. Assignment happens before the first await
-        // inside, so a caller arriving later in the same tick joins this
-        // promise rather than starting its own.
-        this.chainTipInflight ??= (async () => {
-            try {
-                const height = await source();
-                // Stamped after the await, not before, so the TTL measures
-                // from when the height was actually true.
-                if (height !== undefined) {
-                    this.chainTipCache = { height, at: Date.now() };
-                }
-                // A source that answers `undefined` is saying "no height
-                // available", which is not a value worth remembering — leaving
-                // the cache alone lets the next call past the TTL ask again
-                // rather than serving an absence for 30 seconds.
-                return height;
-            } catch {
-                // Unknown, i.e. exactly the pre-existing behaviour. A tip that
-                // cannot be read must not turn a path query into a rejection.
-                return undefined;
-            } finally {
+        // write the same height.
+        if (!this.chainTipInflight) {
+            // Cleared from out here rather than a `finally` inside the read: a
+            // source that throws synchronously settles the read before the
+            // assignment below, and an inner `finally` would then clear the
+            // field before it was ever set — pinning it for good.
+            this.chainTipInflight = this.readChainTip(source).finally(() => {
                 this.chainTipInflight = undefined;
-            }
-        })();
+            });
+        }
         return this.chainTipInflight;
+    }
+
+    /**
+     * One chain tip read, bounded by {@link CHAIN_TIP_TIMEOUT_MS}. Never
+     * rejects: an unreadable tip is "unknown", which is what the callers did
+     * before a tip existed at all, and a path query is not worth failing over
+     * a provider hiccup.
+     */
+    private async readChainTip(
+        source: () => Promise<number | undefined>,
+    ): Promise<number | undefined> {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+            const height = await Promise.race([
+                source(),
+                new Promise<undefined>((resolve) => {
+                    timer = setTimeout(() => resolve(undefined), CHAIN_TIP_TIMEOUT_MS);
+                }),
+            ]);
+            // Stamped after the await, not before, so the TTL measures from
+            // when the height was actually true. A source answering
+            // `undefined` — or a read that timed out — is saying "no height
+            // available", which is not worth remembering: leaving the cache
+            // alone lets the next call ask again rather than serving an
+            // absence for the rest of the TTL.
+            if (height !== undefined) {
+                this.chainTipCache = { height, at: Date.now() };
+            }
+            return height;
+        } catch {
+            return undefined;
+        } finally {
+            clearTimeout(timer);
+        }
     }
 
     /**
@@ -1755,6 +1786,11 @@ export class ContractManager implements IContractManager {
     /**
      * Get every currently valid spending path for a contract.
      *
+     * No `blockHeight`: this enumerates paths "regardless of current
+     * spendability", so no handler evaluates a timelock here and the tip would
+     * be fetched only to be discarded — leaving a purely local answer waiting
+     * on the network for nothing.
+     *
      * @param options - Options for getting spending paths
      */
     async getAllSpendingPaths(options: GetAllSpendingPathsOptions): Promise<PathSelection[]> {
@@ -1770,7 +1806,6 @@ export class ContractManager implements IContractManager {
         const context: PathContext = {
             collaborative,
             currentTime: Date.now(),
-            blockHeight: await this.currentBlockHeight(),
             walletPubKey,
         };
 
