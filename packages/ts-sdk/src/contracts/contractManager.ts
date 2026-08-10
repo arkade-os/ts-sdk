@@ -29,6 +29,7 @@ import { ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
 import {
     getAllNormalizedVtxos,
     getNormalizedVtxos,
+    isVirtualCoin,
     normalizeVtxo,
     type NormalizedExtendedVirtualCoin,
 } from "../wallet/vtxo";
@@ -171,6 +172,17 @@ const CHAIN_TIP_TTL_MS = 30_000;
  * Expiry is treated as "tip unknown", the same as a read that fails.
  */
 const CHAIN_TIP_TIMEOUT_MS = 5_000;
+
+/**
+ * An input for {@link IContractManager.assertSpendableNow}.
+ *
+ * The outpoint and script are what identify the owning contract. A full
+ * {@link VirtualCoin} is accepted and preferred: a relative (CSV) timelock is
+ * measured from this coin's own confirmation, so `status.block_height` /
+ * `status.block_time` are the only way to answer one. Pass the coin where you
+ * have it; the bare shape still answers every absolute (CLTV) question.
+ */
+export type AssertSpendableInput = { txid: string; vout: number; script: string };
 
 export type RefreshVtxosOptions = {
     /**
@@ -360,6 +372,30 @@ export interface IContractManager extends Disposable {
      */
     assertAnnotatable(
         vtxos: readonly { txid: string; vout: number; script: string }[],
+    ): Promise<void>;
+
+    /**
+     * Throw when one of `vtxos` belongs to a contract that provably cannot be
+     * spent right now, asking each owning handler's
+     * {@link ContractHandler.assertSpendableNow}.
+     *
+     * The complement of {@link isContractGenericallySpendable}, which keeps
+     * escrow out of generic selection and leaves explicit-input APIs open on
+     * purpose. This does not close that door — it makes walking through it too
+     * early report itself locally, naming the timelock, instead of coming back
+     * as a protocol-level rejection after the round trip.
+     *
+     * Handlers answer only where they are certain, so contracts with no opinion
+     * (which is all of them but VHTLC today) pass through untouched and cost
+     * nothing — not even a chain-tip read.
+     *
+     * Optional so that adding it is not a breaking change for an embedder with
+     * its own `IContractManager`. An implementation that omits it simply offers
+     * no opinion, which is the same answer every non-VHTLC contract gives.
+     */
+    assertSpendableNow?(
+        vtxos: readonly AssertSpendableInput[],
+        walletPubKey?: () => Promise<string | undefined>,
     ): Promise<void>;
 
     /**
@@ -593,11 +629,16 @@ export interface ContractManagerConfig {
      * VTXO's confirmation height, and `status.block_height` is never populated
      * for a virtual coin, so it stays `false` regardless of the tip.
      *
+     * Both fields matter. `height` answers height-typed timelocks; `time` (the
+     * tip's timestamp, in SECONDS) is what seconds-typed ones should be judged
+     * against, because the machine's clock is an estimate of chain time and a
+     * drifting one reads the boundary wrong.
+     *
      * Resolve `undefined` rather than rejecting when the tip cannot be read:
      * the callers treat it as "unknown", which is the pre-existing behaviour,
      * and a path query is not worth failing over a provider hiccup.
      */
-    chainTip?: () => Promise<number | undefined>;
+    chainTip?: () => Promise<{ height: number; time: number } | undefined>;
 }
 
 /**
@@ -709,10 +750,10 @@ export class ContractManager implements IContractManager {
     private syncDegradedReason?: string;
     /** Epoch-ms of the last successful provider sync, if any. */
     private lastSyncedAt?: number;
-    /** Last chain tip read, with the epoch-ms it was read at. @see currentBlockHeight */
-    private chainTipCache?: { height: number; at: number };
+    /** Last chain tip read, with the epoch-ms it was read at. @see currentChainTip */
+    private chainTipCache?: { height: number; time: number; at: number };
     /** In-flight chain tip read, so concurrent cache misses share one. */
-    private chainTipInflight?: Promise<number | undefined>;
+    private chainTipInflight?: Promise<{ height: number; time: number } | undefined>;
     /** Speculative look-ahead scripts, keyed by script. @see LookAheadEntry */
     private lookAheadEntries: Map<string, LookAheadEntry> = new Map();
     /** In-flight look-ahead drain, if any. @see scheduleLookAheadDrain */
@@ -1627,6 +1668,70 @@ export class ContractManager implements IContractManager {
         );
     }
 
+    /** @inheritdoc */
+    async assertSpendableNow(
+        vtxos: readonly AssertSpendableInput[],
+        walletPubKey?: () => Promise<string | undefined>,
+    ): Promise<void> {
+        if (vtxos.length === 0) return;
+        const contracts = await this.config.contractRepository.getContracts({
+            script: Array.from(new Set(vtxos.map((vtxo) => vtxo.script))),
+        });
+        const byScript = new Map(contracts.map((contract) => [contract.script, contract]));
+
+        // Only the inputs whose handler actually asks. Contracts with no
+        // opinion — every type but VHTLC today — must cost nothing: no
+        // chain-tip read, and no identity access either. `walletPubKey` is a
+        // thunk for exactly that reason; resolving it eagerly made an ordinary
+        // settle depend on a key it never consults.
+        const asking = vtxos.filter((vtxo) => {
+            const contract = byScript.get(vtxo.script);
+            return (
+                contract !== undefined &&
+                contractHandlers.get(contract.type)?.assertSpendableNow !== undefined
+            );
+        });
+        if (asking.length === 0) return;
+
+        const tip = await this.currentChainTip();
+        const walletKey = await walletPubKey?.();
+        // Per INPUT, not per contract. A relative (CSV) timelock is measured
+        // from the moment THIS coin confirmed, so two vtxos on one contract can
+        // disagree about whether the same leaf is open. A batch-wide context
+        // cannot express that, and a handler handed one would have to answer
+        // for the whole set or not at all.
+        for (const vtxo of asking) {
+            const contract = byScript.get(vtxo.script)!;
+            const handler = contractHandlers.get(contract.type);
+            // Filtered for above; narrowing for the type system.
+            if (!handler?.assertSpendableNow) continue;
+            const context: PathContext = {
+                collaborative: true,
+                currentTime: Date.now(),
+                blockHeight: tip?.height,
+                chainTime: tip?.time,
+                walletPubKey: walletKey,
+                // `isVirtualCoin` alone is too weak here: it only asks for a
+                // string `script`, which every AssertSpendableInput has, so a
+                // bare outpoint would be published as a coin with no `status`.
+                // `isCsvSpendable` reads `vtxo.status.block_time` unguarded, so
+                // the next handler to answer a CSV question would meet a
+                // TypeError instead of a `false`. Carry the coin only when it
+                // really is one.
+                vtxo: isVirtualCoin(vtxo) && "status" in vtxo ? vtxo : undefined,
+            };
+            // Awaited even though every shipped handler answers synchronously:
+            // the signature permits a promise, and an un-awaited one would drop
+            // its rejection on the floor — a refusal that never reaches the
+            // caller is worse than no guard, because it reads as approval.
+            await handler.assertSpendableNow(
+                handler.createScript(contract.params),
+                contract,
+                context,
+            );
+        }
+    }
+
     // Field-by-field, so every filter a caller can express reaches the
     // repository. A field missing here is not a narrower query — it is an
     // unfiltered one.
@@ -1734,16 +1839,16 @@ export class ContractManager implements IContractManager {
      * reported unspendable slightly longer than it truly is, never spendable
      * before it is.
      */
-    private async currentBlockHeight(): Promise<number | undefined> {
+    private async currentChainTip(): Promise<{ height: number; time: number } | undefined> {
         const source = this.config.chainTip;
         if (!source) return undefined;
         if (this.chainTipCache && Date.now() - this.chainTipCache.at < CHAIN_TIP_TTL_MS) {
-            return this.chainTipCache.height;
+            return { height: this.chainTipCache.height, time: this.chainTipCache.time };
         }
         // Collapse concurrent misses onto one read. Without this, a pass that
         // resolves paths for many contracts fires a provider request per
         // contract on the tick the TTL lapses — every one of them racing to
-        // write the same height.
+        // write the same tip.
         if (!this.chainTipInflight) {
             // Cleared from out here rather than a `finally` inside the read: a
             // source that throws synchronously settles the read before the
@@ -1763,26 +1868,26 @@ export class ContractManager implements IContractManager {
      * a provider hiccup.
      */
     private async readChainTip(
-        source: () => Promise<number | undefined>,
-    ): Promise<number | undefined> {
+        source: () => Promise<{ height: number; time: number } | undefined>,
+    ): Promise<{ height: number; time: number } | undefined> {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
-            const height = await Promise.race([
+            const tip = await Promise.race([
                 source(),
                 new Promise<undefined>((resolve) => {
                     timer = setTimeout(() => resolve(undefined), CHAIN_TIP_TIMEOUT_MS);
                 }),
             ]);
             // Stamped after the await, not before, so the TTL measures from
-            // when the height was actually true. A source answering
-            // `undefined` — or a read that timed out — is saying "no height
-            // available", which is not worth remembering: leaving the cache
-            // alone lets the next call ask again rather than serving an
-            // absence for the rest of the TTL.
-            if (height !== undefined) {
-                this.chainTipCache = { height, at: Date.now() };
+            // when the tip was actually true. A source answering `undefined` —
+            // or a read that timed out — is saying "no tip available", which
+            // is not worth remembering: leaving the cache alone lets the next
+            // call ask again rather than serving an absence for the rest of
+            // the TTL.
+            if (tip !== undefined) {
+                this.chainTipCache = { ...tip, at: Date.now() };
             }
-            return height;
+            return tip;
         } catch {
             return undefined;
         } finally {
@@ -1805,10 +1910,12 @@ export class ContractManager implements IContractManager {
         if (!handler) return [];
 
         const script = handler.createScript(contract.params);
+        const tip = await this.currentChainTip();
         const context: PathContext = {
             collaborative,
             currentTime: Date.now(),
-            blockHeight: await this.currentBlockHeight(),
+            blockHeight: tip?.height,
+            chainTime: tip?.time,
             walletPubKey,
             vtxo,
         };

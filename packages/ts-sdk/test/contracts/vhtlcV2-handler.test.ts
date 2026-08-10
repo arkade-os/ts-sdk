@@ -24,6 +24,7 @@ import {
     type Contract,
 } from "../../src";
 import { contractHandlers } from "../../src/contracts/handlers";
+import type { PathContext } from "../../src/contracts/types";
 import { VHTLCContractHandler } from "../../src/contracts/handlers/vhtlc";
 import { VHTLCV2ContractHandler } from "../../src/contracts/handlers/vhtlcV2";
 import { deriveContractTapscripts } from "../../src/wallet/utils";
@@ -270,8 +271,143 @@ describe("VHTLCV2ContractHandler", () => {
      * height, matured or not. This pins the wiring, not the arithmetic: same
      * contract, same maturity, the only variable is whether a tip is supplied.
      */
+    /**
+     * The settle pre-flight. `isGenericallySpendable: false` keeps a lockup out
+     * of generic selection and deliberately leaves `settle({ inputs })` open —
+     * naming an outpoint is the intent that gate protects. Naming one before
+     * the refund path opens is still a mistake, and without this it is one the
+     * server reports, after the round trip, without saying which timelock was
+     * short.
+     *
+     * The refusals are the easy half. The silences are the point: this must
+     * never convert a spend the server would have accepted into a local throw.
+     */
+    describe("assertSpendableNow", () => {
+        const contextAt = (over: Partial<PathContext> = {}): PathContext => ({
+            collaborative: true,
+            currentTime: Date.now(),
+            walletPubKey: SENDER,
+            ...over,
+        });
+
+        const check = (params: Record<string, string>, context: PathContext) =>
+            VHTLCV2ContractHandler.assertSpendableNow!(
+                VHTLCV2ContractHandler.createScript(params),
+                contractOf(params),
+                context,
+            );
+
+        it("refuses the sender's spend before the refund height, naming it", () => {
+            expect(() => check(fullParams(), contextAt({ blockHeight: 799_999 }))).toThrow(
+                /refund path opens at block 800000, now 799999/,
+            );
+        });
+
+        it("allows it once the height is reached", () => {
+            expect(() => check(fullParams(), contextAt({ blockHeight: 800_000 }))).not.toThrow();
+        });
+
+        it("refuses a seconds-typed locktime against the clock", () => {
+            const future = Math.floor(Date.now() / 1000) + 3600;
+            expect(() =>
+                check(fullParams({ refundLocktime: String(future) }), contextAt()),
+            ).toThrow(/cannot be spent yet/);
+        });
+
+        it("says nothing when the height is unknown — unreadable is not immature", () => {
+            // The false-refusal case this design exists to avoid: height-typed
+            // locktime, no chain tip. `isCltvSatisfied` reports false here, so
+            // anything refusing on that alone would reject a mature lockup.
+            expect(() => check(fullParams(), contextAt({ blockHeight: undefined }))).not.toThrow();
+        });
+
+        it("says nothing to the receiver, whose claim turns on a preimage", () => {
+            expect(() =>
+                check(fullParams(), contextAt({ walletPubKey: RECEIVER, blockHeight: 799_999 })),
+            ).not.toThrow();
+        });
+
+        it("says nothing to a wallet that is neither party", () => {
+            const stranger = "0".repeat(64);
+            expect(() =>
+                check(fullParams(), contextAt({ walletPubKey: stranger, blockHeight: 799_999 })),
+            ).not.toThrow();
+        });
+
+        /**
+         * A seconds-typed locktime must be judged against the chain, not the
+         * host. The server matures these against median-time-past, which trails
+         * wall clock, so a machine whose clock runs slow would otherwise refuse
+         * a spend the chain already accepts — the same false refusal the
+         * `unknown` state exists to prevent, arriving by a different door.
+         */
+        it("prefers chain time over the host clock for a seconds-typed locktime", () => {
+            const locktime = Math.floor(Date.now() / 1000) + 3600;
+            // Host clock says an hour short; the chain says matured.
+            expect(() =>
+                check(
+                    fullParams({ refundLocktime: String(locktime) }),
+                    contextAt({ chainTime: locktime + 1 }),
+                ),
+            ).not.toThrow();
+            // And the reverse: chain behind, host ahead — still refused.
+            expect(() =>
+                check(
+                    fullParams({ refundLocktime: String(locktime) }),
+                    contextAt({
+                        currentTime: (locktime + 3600) * 1000,
+                        chainTime: locktime - 1,
+                    }),
+                ),
+            ).toThrow(/cannot be spent yet/);
+        });
+
+        it("says nothing about a unilateral spend, which answers to its CSV", () => {
+            expect(() =>
+                check(fullParams(), contextAt({ collaborative: false, blockHeight: 799_999 })),
+            ).not.toThrow();
+        });
+
+        it("is shared with the v1 handler, so the two cannot drift", () => {
+            const params = {
+                sender: SENDER,
+                receiver: RECEIVER,
+                server: SERVER,
+                hash: HASH,
+                refundLocktime: "800000",
+                claimDelay: "10",
+                refundDelay: "12",
+                refundNoReceiverDelay: "14",
+            };
+            const v1Contract: Contract = {
+                type: "vhtlc",
+                params,
+                script: hex.encode(VHTLCContractHandler.createScript(params).pkScript),
+                address: "address",
+                state: "active",
+                createdAt: Date.now(),
+            };
+            expect(() =>
+                VHTLCContractHandler.assertSpendableNow!(
+                    VHTLCContractHandler.createScript(params),
+                    v1Contract,
+                    contextAt({ blockHeight: 799_999 }),
+                ),
+            ).toThrow(/refund path opens at block 800000/);
+        });
+    });
+
     describe("blockHeight reaches the handler through ContractManager", () => {
-        const managerFor = async (chainTip?: () => Promise<number | undefined>) =>
+        type Tip = { height: number; time: number } | undefined;
+        /** A tip at `height`; its time only matters to the seconds-typed cases. */
+        const at =
+            (height: number, time = 1_700_000_000): (() => Promise<Tip>) =>
+            async () => ({
+                height,
+                time,
+            });
+
+        const managerFor = async (chainTip?: () => Promise<Tip>) =>
             ContractManager.create({
                 indexerProvider: createMockIndexerProvider(),
                 contractRepository: new InMemoryContractRepository(),
@@ -279,9 +415,7 @@ describe("VHTLCV2ContractHandler", () => {
                 chainTip,
             });
 
-        const refundLeafOffered = async (
-            chainTip?: () => Promise<number | undefined>,
-        ): Promise<boolean> => {
+        const refundLeafOffered = async (chainTip?: () => Promise<Tip>): Promise<boolean> => {
             const manager = await managerFor(chainTip);
             const contract = contractOf(fullParams());
             await manager.createContract(contract);
@@ -299,11 +433,11 @@ describe("VHTLCV2ContractHandler", () => {
         });
 
         it("withholds it when the tip is below the locktime", async () => {
-            expect(await refundLeafOffered(async () => 799_999)).toBe(false);
+            expect(await refundLeafOffered(at(799_999))).toBe(false);
         });
 
         it("offers it once the tip reaches the locktime", async () => {
-            expect(await refundLeafOffered(async () => 800_000)).toBe(true);
+            expect(await refundLeafOffered(at(800_000))).toBe(true);
         });
 
         it("collapses concurrent cache misses onto a single tip read", async () => {
@@ -313,7 +447,7 @@ describe("VHTLCV2ContractHandler", () => {
                 // Resolve on a later turn, so all three callers are waiting on
                 // the same in-flight read rather than being served in sequence.
                 await Promise.resolve();
-                return 800_000;
+                return { height: 800_000, time: 1_700_000_000 };
             });
             const contract = contractOf(fullParams());
             await manager.createContract(contract);
@@ -331,6 +465,99 @@ describe("VHTLCV2ContractHandler", () => {
             for (const paths of results) {
                 expect(paths.map(leafHex)).toContain(script.refundWithoutReceiverScript);
             }
+        });
+
+        /**
+         * The handler cases above prove the rule; these prove it is reachable.
+         * The settle pre-flight calls `assertSpendableNow?.()` optionally — an
+         * unimplemented manager is a valid "no opinion" — so a wiring break
+         * here would not fail loudly, it would go quiet. That is the failure
+         * mode worth a test of its own.
+         */
+        const assertThrough = async (tip: number | undefined) => {
+            const manager = await managerFor(tip === undefined ? undefined : at(tip));
+            const contract = contractOf(fullParams());
+            await manager.createContract(contract);
+            const vtxo = { txid: "a".repeat(64), vout: 0, script: contract.script };
+            return manager.assertSpendableNow!([vtxo], async () => SENDER);
+        };
+
+        it("refuses an immature lockup through the manager, not just the handler", async () => {
+            await expect(assertThrough(799_999)).rejects.toThrow(/cannot be spent yet/);
+        });
+
+        it("allows it through the manager once mature", async () => {
+            await expect(assertThrough(800_000)).resolves.toBeUndefined();
+        });
+
+        it("stays silent when no tip is available", async () => {
+            await expect(assertThrough(undefined)).resolves.toBeUndefined();
+        });
+
+        /**
+         * A bare outpoint must not be published to handlers as a coin. It has
+         * no `status`, and `isCsvSpendable` reads `vtxo.status.block_time`
+         * unguarded — so a handler answering a CSV question would meet a
+         * TypeError rather than a `false`. Asserted through the real dispatch
+         * with a temporary handler, because the type system cannot say this:
+         * every AssertSpendableInput structurally satisfies `isVirtualCoin`.
+         */
+        it("does not hand a handler a coin that has no status", async () => {
+            const manager = await managerFor(at(799_999));
+            const contract = contractOf(fullParams());
+            await manager.createContract(contract);
+
+            const real = contractHandlers.get("vhtlc-v2")!;
+            let seen: PathContext | undefined;
+            contractHandlers.unregister("vhtlc-v2");
+            contractHandlers.register({
+                ...real,
+                assertSpendableNow: (_s: unknown, _c: unknown, ctx: PathContext) => {
+                    seen = ctx;
+                },
+            } as never);
+            try {
+                await manager.assertSpendableNow!(
+                    [{ txid: "c".repeat(64), vout: 0, script: contract.script }],
+                    async () => SENDER,
+                );
+            } finally {
+                contractHandlers.unregister("vhtlc-v2");
+                contractHandlers.register(real as never);
+            }
+
+            expect(seen).toBeDefined();
+            expect(seen!.vtxo).toBeUndefined();
+        });
+
+        it("never reads a tip when no contract has an opinion", async () => {
+            let reads = 0;
+            const manager = await managerFor(async () => {
+                reads += 1;
+                return { height: 800_000, time: 1_700_000_000 };
+            });
+            // A `default` row: its handler implements no assertSpendableNow, so
+            // the whole check must short-circuit before touching the provider.
+            // Script derived, not invented — createContract refuses any row
+            // whose script disagrees with its params.
+            const defaultHandler = contractHandlers.get("default")!;
+            const params = {
+                pubKey: SENDER,
+                serverPubKey: SERVER,
+                csvTimelock: JSON.stringify({ type: "blocks", value: "144" }),
+            };
+            const script = hex.encode(defaultHandler.createScript(params).pkScript);
+            await manager.createContract({
+                type: "default",
+                params,
+                script,
+                address: "address",
+            } as never);
+            await manager.assertSpendableNow!(
+                [{ txid: "b".repeat(64), vout: 0, script }],
+                async () => SENDER,
+            );
+            expect(reads).toBe(0);
         });
 
         it("treats an unreadable tip as unknown rather than failing the query", async () => {
@@ -362,7 +589,7 @@ describe("VHTLCV2ContractHandler", () => {
             let reads = 0;
             const manager = await managerFor(() => {
                 reads += 1;
-                return new Promise<number>(() => {});
+                return new Promise<Tip>(() => {});
             });
             const contract = contractOf(fullParams());
             await manager.createContract(contract);
@@ -398,7 +625,7 @@ describe("VHTLCV2ContractHandler", () => {
             const manager = await managerFor(() => {
                 reads += 1;
                 if (reads === 1) throw new Error("provider not ready");
-                return Promise.resolve(800_000);
+                return at(800_000)();
             });
             const contract = contractOf(fullParams());
             await manager.createContract(contract);
@@ -420,7 +647,7 @@ describe("VHTLCV2ContractHandler", () => {
             let reads = 0;
             const manager = await managerFor(async () => {
                 reads += 1;
-                return 800_000;
+                return at(800_000)();
             });
             const contract = contractOf(fullParams());
             await manager.createContract(contract);

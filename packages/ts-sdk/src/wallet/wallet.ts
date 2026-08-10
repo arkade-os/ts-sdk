@@ -2038,8 +2038,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
             lookAhead: this.lookAheadConfig(),
             // Without this a PathContext carries no blockHeight, and every
             // height-typed CLTV reads as unsatisfied however mature it is.
+            // The tip's `time` matters just as much: it is what seconds-typed
+            // timelocks are judged against, in place of this host's clock.
             // @see ContractManagerConfig.chainTip
-            chainTip: async () => (await this.onchainProvider.getChainTip()).height,
+            chainTip: async () => {
+                const { height, time } = await this.onchainProvider.getChainTip();
+                return { height, time };
+            },
         });
 
         // Register the wallet's baseline always-active contracts: every
@@ -3785,9 +3790,17 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // a bad arknote should still report itself first — and before the
         // intent. Arknotes and boarding inputs carry no vtxo script, so they
         // are not the ones this can speak about.
-        await (
-            await this.getContractManager()
-        ).assertAnnotatable(params.inputs.filter(isVirtualCoin));
+        const settleInputVtxos = params.inputs.filter(isVirtualCoin);
+        const contractManager = await this.getContractManager();
+        await contractManager.assertAnnotatable(settleInputVtxos);
+        // And the timelock, for the same reason one line up: a lockup named
+        // before its refund path opens builds and registers fine here, and is
+        // refused by the server — after the round trip, in terms that do not
+        // say which timelock was not yet mature. Only handlers that are certain
+        // answer, so this is a no-op for ordinary coins.
+        await contractManager.assertSpendableNow?.(settleInputVtxos, async () =>
+            hex.encode(await this.identity.xOnlyPublicKey()),
+        );
 
         // Optimistically hide these inputs from concurrent getVtxos() callers
         // while the settlement is in flight. Set before safeRegisterIntent so

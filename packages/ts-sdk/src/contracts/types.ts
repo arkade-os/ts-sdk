@@ -217,6 +217,18 @@ export interface PathContext {
      */
     role?: string;
 
+    /**
+     * Chain tip timestamp in SECONDS, when known.
+     *
+     * Timelocks mature against chain time, not the machine's clock, so any
+     * seconds-typed comparison should prefer this and fall back to
+     * {@link currentTime} only when it is absent. The two differ by more than
+     * pedantry: the server matures absolute locktimes against median-time-past,
+     * which trails wall clock, and a host whose clock drifts turns a local
+     * decision into a wrong one in whichever direction it drifted.
+     */
+    chainTime?: number;
+
     /** The specific virtual output being evaluated. */
     vtxo?: VirtualCoin;
 }
@@ -311,6 +323,36 @@ export interface ContractHandler<P = Record<string, unknown>, S extends VtxoScri
      * call its own `createScript(contract.params)`.
      */
     isGenericallySpendable?(contract: Contract): boolean;
+
+    /**
+     * Refuse a spend this contract definitively cannot make right now, with a
+     * reason the caller can act on. Called before anything is signed or
+     * submitted, for inputs the caller named explicitly.
+     *
+     * This is the counterpart to {@link isGenericallySpendable}, not a
+     * duplicate of it. That gate keeps escrow out of GENERIC selection and
+     * deliberately leaves explicit-input APIs open, because naming an outpoint
+     * is the intent it protects. Naming one too early is still a mistake
+     * though, and without this it is a mistake the server reports — as a
+     * protocol-level rejection, after the round trip, in terms that do not name
+     * the timelock that was not yet mature.
+     *
+     * **Throw only on a definite no.** Absent, silent, or unsure all mean "no
+     * opinion" and the spend proceeds. A handler must not refuse merely because
+     * it found no path: `getSpendablePaths` legitimately returns empty for
+     * spendable contracts — `arkade`'s skips every covenant leaf, so a program
+     * spendable only through its emulator-signed leaf reports nothing — and an
+     * unreadable timelock (height-typed with no chain tip) is unknown, not
+     * immature. @see cltvMaturity, which keeps those apart.
+     *
+     * Returning a promise is allowed so a handler needing I/O is not forced to
+     * throw synchronously — callers await the result. Prefer synchronous where
+     * possible: this runs on the path between a caller's decision to spend and
+     * the spend itself.
+     *
+     * @throws Error when the contract provably cannot be spent at `context`
+     */
+    assertSpendableNow?(script: S, contract: Contract, context: PathContext): void | Promise<void>;
 }
 
 /**
