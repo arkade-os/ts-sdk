@@ -572,12 +572,15 @@ export interface ContractManagerConfig {
      * Current chain tip height, for the `blockHeight` a {@link PathContext}
      * carries. Absent, or resolving `undefined`, leaves `blockHeight` unset.
      *
-     * Height-typed timelocks cannot be evaluated without it: `isCltvSatisfied`
-     * and `isCsvSpendable` both answer `false` outright when `blockHeight` is
-     * missing, so every height-gated path is reported unspendable no matter how
-     * mature it is. Nothing populated this before, which made that the only
-     * behaviour available. Seconds-typed timelocks read `currentTime` and are
-     * unaffected either way.
+     * `isCltvSatisfied` answers `false` outright for a height-typed locktime
+     * when `blockHeight` is missing, so every such path was reported
+     * unspendable however mature it was. Nothing populated this before, which
+     * made that the only behaviour available. Seconds-typed locktimes read
+     * `currentTime` and are unaffected either way.
+     *
+     * Block-typed CSV is not fixed by this. `isCsvSpendable` also needs the
+     * VTXO's confirmation height, and `status.block_height` is never populated
+     * for a virtual coin, so it stays `false` regardless of the tip.
      *
      * Resolve `undefined` rather than rejecting when the tip cannot be read:
      * the callers treat it as "unknown", which is the pre-existing behaviour,

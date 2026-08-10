@@ -2033,7 +2033,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             watcherConfig: this.watcherConfig,
             lookAhead: this.lookAheadConfig(),
             // Without this a PathContext carries no blockHeight, and every
-            // height-typed timelock reads as unsatisfied however mature it is.
+            // height-typed CLTV reads as unsatisfied however mature it is.
             // @see ContractManagerConfig.chainTip
             chainTip: async () => (await this.onchainProvider.getChainTip()).height,
         });
