@@ -1,34 +1,38 @@
 # @arkade-os/swap
 
-Offer-maker side [Arkade Intents](https://arkade.money) atomic swaps: discover markets, quote and
+Client-side [Arkade Intents](https://arkade.money) asset swaps: discover markets, quote and
 validate, create offers, track them, cancel them, and rebuild the whole record set from chain after
 a wallet restore. Framework-free TypeScript over `@arkade-os/sdk`: the core API and
 `InMemoryAssetSwapRepository` use no DOM and no Node-specific APIs, so they run in Node, the
 browser, and React Native alike. `IndexedDbAssetSwapRepository` is the one exception — it needs a
 platform-provided or polyfilled IndexedDB.
 
-## Roles: maker and taker
+## Roles
 
-Arkade Intents names its roles after the **offer**, not the quote:
+Arkade Intents names two participants:
 
-- **maker** — creates the offer and funds the swap address. That is the consumer of this package:
-  it prices a swap against the registry's markets, deposits one side, and waits.
-- **taker** — the solver that fills the offer, delivering `wantAmount` to the maker's script over
-  the covenant's `fulfill` path. Same sense the solver registry and
-  [`@arkade-os/solver-discovery`](https://www.npmjs.com/package/@arkade-os/solver-discovery) use.
+- **user** — states an intent and, through a wallet or application, approves and funds it. That is
+  the consumer of this package: it prices a swap against the registry's markets, funds the derived
+  contract, and tracks it to a fill or a cancellation.
+- **solver** — supplies inventory and pricing, and fills the funded contract by delivering
+  `wantAmount` to the user's script over the covenant's `fulfill` path. Some specifications and
+  repositories use *provider* or *market maker* as synonyms.
 
-**This inverts generic RFQ vocabulary, so watch out for the collision.** In RFQ systems the side
-that *requests* a quote is conventionally the taker and the side that *answers* with a price is the
-maker — which makes "maker-side" elsewhere mean the liquidity provider, the exact opposite of what
-it means here. This package is the quote-requesting side, and it is called the **maker** side for
-that reason; nothing in it is an "RFQ taker layer". Throughout this package — its docs, its types,
-its comments — `taker` always means the solver that fills, never the party asking for a price.
+**`maker` and `taker` in this package name contract positions, not product roles.** The covenant
+programs bind `makerWP`, and the `Offer` type carries `makerPkScript` and `makerPublicKey`; those
+identify the side that funds the swap and receives `wantAmount`. Read them as script field names.
+
+Arkade Intents documentation deliberately avoids maker and taker for the participants themselves.
+A resting maker order is firm once taken, and nothing here is: the user funds first, and if no
+solver fills, the deposit comes back through `cancelOffer` rather than through an executed trade.
+Naming the sides *user* and *solver* says who does what without borrowing a guarantee the contract
+does not make.
 
 ## The four layers
 
 1. **`offer`** — the swap covenant itself. Two program JSONs (want-BTC / want-asset), the
    `Offer` type, the TLV wire codec (`encodeOffer`/`decodeOffer`, `OFFER_PACKET_TYPE`), address
-   derivation (`offerVtxoScript`), and the maker operations `createOffer`/`cancelOffer`. Identical
+   derivation (`offerVtxoScript`), and the user-side operations `createOffer`/`cancelOffer`. Identical
    offers always derive identical swap addresses — the program JSONs are hashed into the address,
    so their bytes are frozen (guarded by a golden test).
 2. **`markets`** — solver discovery and pricing guardrails: `discoverMarkets` (1-hour cached

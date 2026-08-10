@@ -1,12 +1,11 @@
 /**
  * Quoting: solver discovery and the pricing guardrails around a plan.
  *
- * This is the maker's quote-requesting side — the layer that asks what a swap
- * would cost before `offer` commits to it. Generic RFQ vocabulary calls the
- * quote-requesting role the *taker*; Arkade Intents names roles after the
- * offer, so here that role is the **maker**, and `taker` (in this package and
- * in the solver registry) always means the solver that fills. Nothing in this
- * file is a "taker layer" in the RFQ sense — see the README's Roles section.
+ * The user side of a swap — the layer that works out what one would cost
+ * before `offer` commits to it. Prices come from the market's own feed, not
+ * from a solver quote over a relay, so nothing here is signed and no solver
+ * has reserved anything. See the README's Roles section for why this package
+ * says user and solver rather than maker and taker.
  */
 import {
     bestMarket,

@@ -1,11 +1,10 @@
 /**
  * Arkade Intents — an atomic-swap covenant on Arkade.
  *
- * Roles follow the offer, not the quote: the **maker** creates and funds the
- * offer (this package's consumer), the **taker** is the solver that fills it
- * through `fulfill`. Generic RFQ vocabulary inverts that — there the
- * quote-requesting side is the "taker" — so read every `taker` here, and in
- * the solver registry, as the filling solver.
+ * The user funds this contract; a solver fills it through `fulfill`. The
+ * `maker*` fields below (`makerWP`, `makerPkScript`, `makerPublicKey`) name
+ * the funding side's position in the script, not a product role — see the
+ * README's Roles section.
  *
  * The contracts are the two JSON files, one per WANT side:
  *   swap-want-asset.program.json  the fill must deliver an asset
