@@ -81,6 +81,7 @@ import {
     type LockupSpendIndexer,
 } from "./refund";
 import { registerLockupContract } from "./lockupContract";
+import { RefundNotLocallyPossibleError } from "./secrets";
 
 // ── Records ──────────────────────────────────────────────────────────────────
 
@@ -97,6 +98,21 @@ export type RfqSwapState =
     | "claimable"
     /** onchain-send: our L1 claim is broadcast — the trader has the coins. */
     | "claimed"
+    /**
+     * This wallet cannot push the swap's Arkade refund itself — no secrets on
+     * the record, a descriptor from another seed, or nothing wired to act. The
+     * lockup comes back only if the counterparty claims it, or if the wallet
+     * that can sign it is restored. {@link RfqSwapCommon.blockedReason} says
+     * which.
+     *
+     * **Not terminal, and not a dead end.** The money is still at the lockup,
+     * so a solver claim is still observable and still ends the swap `settled`;
+     * and the refusal is re-checked every pass, so restoring the right wallet
+     * (or wiring the callbacks) returns the swap to `pending` and resumes the
+     * normal drive. For an onchain-send swap it says nothing about the L1
+     * half, which keeps being driven and claimed.
+     */
+    | "needs_counterparty"
     /** Terminal: the lockup was spent by a hash-verified claim — the
      * counterparty completed its side. Read off chain, never reported. */
     | "settled"
@@ -105,7 +121,9 @@ export type RfqSwapState =
     /** Terminal: an action failed and its window closed. */
     | "failed";
 
-/** The states after which the manager stops monitoring a swap. */
+/** The states after which the manager stops monitoring a swap. Deliberately
+ * without `needs_counterparty`: retiring on it would unwatch a funded lockup
+ * whose claim is still the thing that ends the swap. */
 export const RFQ_SWAP_TERMINAL_STATES = ["settled", "refunded", "failed"] as const;
 
 export const isRfqSwapTerminal = (state: RfqSwapState): boolean =>
@@ -158,6 +176,9 @@ interface RfqSwapCommon {
     refundArkTxid?: string;
     /** Why `state` is `failed`. */
     failure?: string;
+    /** Why `state` is `needs_counterparty`. Distinct from {@link failure},
+     * which means an action was attempted and did not work. */
+    blockedReason?: string;
 }
 
 /** `arkade:BTC->lightning:BTC`. Nothing for the trader to claim: the solver
@@ -269,6 +290,11 @@ export type ArkadeRefundResult = { arkTxid: string; amount: number } | null;
  * and its own MTP retry loop, which would nest inside the manager's. Wire it
  * to `findLockupVtxos` + `pushRefundWithoutReceiver`, which is the atomic push
  * `refundIfUnresolved` itself calls.
+ *
+ * Resolve the sender key through `senderIdentityForSwapRecord`: it is
+ * what turns "this wallet cannot sign this swap" into
+ * {@link RefundNotLocallyPossibleError}, which the manager reports as
+ * `needs_counterparty` instead of retrying for the whole refund window.
  */
 export interface RfqSwapManagerCallbacks {
     /** Build and broadcast the L1 claim. See `claimOnchainFill`. */
@@ -276,6 +302,18 @@ export interface RfqSwapManagerCallbacks {
     /** Push `refundWithoutReceiver` for every output at the lockup. See
      * `pushRefundWithoutReceiver`; return `null` for an empty lockup. */
     refundArkade: (swap: RfqSwap) => Promise<ArkadeRefundResult>;
+    /**
+     * Whether a local refund is possible at all — the record's secrets, against
+     * this wallet. Called every pass, including *before* the refund window
+     * opens, so a swap nobody can refund says so while the solver can still
+     * act, instead of at the deadline; and so restoring the right wallet lifts
+     * the state again.
+     *
+     * Optional: omit to answer "yes" and learn at push time, from
+     * {@link RefundNotLocallyPossibleError}. Local by contract — no network
+     * call belongs here.
+     */
+    canRefundArkade?: (swap: RfqSwap) => Promise<{ ok: true } | { ok: false; reason: string }>;
     /** Persist the record. Called after any pass that changed it. */
     saveSwap: (swap: RfqSwap) => Promise<void>;
 }
@@ -390,7 +428,9 @@ const notify = <T extends (...args: never[]) => void>(
  * 3. **Take the lockup back**, once `refundLocktime` has passed and step 1 has
  *    not ended the swap. This runs for onchain-send too, including after a
  *    successful claim: the trader's lockup is still funded and still theirs to
- *    recover if the solver never comes for it.
+ *    recover if the solver never comes for it. When no local refund is possible
+ *    at all — no secrets, another wallet's descriptor, nothing wired — the swap
+ *    reports `needs_counterparty` instead of retrying a push that cannot work.
  */
 export class RfqSwapManager {
     private readonly deps: RfqSwapManagerDeps;
@@ -415,6 +455,16 @@ export class RfqSwapManager {
      * on a swap that in fact succeeded.
      */
     private readonly registered = new Map<string, boolean>();
+    /**
+     * Swaps whose `refundArkade` answered {@link RefundNotLocallyPossibleError}
+     * in this process. Membership stops the push from being re-issued every
+     * pass — it cannot start working on its own, and re-issuing it is the
+     * grind `needs_counterparty` exists to remove. Only
+     * {@link RfqSwapManagerCallbacks.canRefundArkade} clears it, so a caller
+     * with no probe learns again on the next start, when the wallet that can
+     * sign may well have been restored.
+     */
+    private readonly refundRefused = new Set<string>();
     /** Live `onContractEvent` subscription, held so `stop()` can drop it. */
     private unsubscribeContracts: (() => void) | null = null;
     /** Terminal records, kept so a late {@link waitForSwapCompletion} still
@@ -635,6 +685,7 @@ export class RfqSwapManager {
         const swap = this.monitored.get(rfqId);
         if (swap) this.byLockupScript.delete(hex.encode(swap.lockupPkScript));
         this.monitored.delete(rfqId);
+        this.refundRefused.delete(rfqId);
     }
 
     /**
@@ -896,12 +947,12 @@ export class RfqSwapManager {
         });
 
         if (action === "claim" && phase.phase === "claimable") {
-            this.setState(swap, "claimable");
+            this.setOnchainState(swap, "claimable");
             if (!this.config.enableAutoActions || !this.callbacks) return "handled";
             try {
                 const { txid } = await this.callbacks.claimOnchain(swap, phase.utxo);
                 swap.claimTxid = txid;
-                this.setState(swap, "claimed");
+                this.setOnchainState(swap, "claimed");
                 this.emitAction(swap, "claimOnchain");
             } catch (error) {
                 // The window is still open, so the next pass tries again; no
@@ -920,7 +971,7 @@ export class RfqSwapManager {
                 swap.claimTxid = phase.txid;
                 this.touch(swap);
             }
-            this.setState(swap, "claimed");
+            this.setOnchainState(swap, "claimed");
         }
 
         // Everything else — still waiting for the fill, the window closed
@@ -936,8 +987,44 @@ export class RfqSwapManager {
 
     private async driveArkadeRefund(swap: RfqSwap): Promise<void> {
         const now = this.config.now();
-        if (now < swap.refundLocktime) return;
-        if (!this.config.enableAutoActions || !this.callbacks) return;
+
+        // Ask first, and ask on every pass. Before the window opens this is
+        // what makes "nobody here can refund this" reportable while the solver
+        // can still act; after it, it is what lifts the state again when the
+        // wallet that can sign is restored.
+        const refusal = await this.probeRefusal(swap);
+        if (refusal) {
+            // Before the window, an onchain-send swap's live claim keeps the
+            // label — it is a different half with a different key, and it is
+            // the half the trader can still act on. After the window the
+            // refusal wins, which {@link setOnchainState} is the other side of.
+            const claiming = swap.state === "claimable" || swap.state === "claimed";
+            if (now < swap.refundLocktime && claiming) return;
+            return this.block(swap, refusal);
+        }
+        // A probe that answered is the only thing that can retract a refusal
+        // the push itself reported; without one there is nothing new to learn,
+        // and re-issuing a push that cannot work is the grind this state
+        // removes. Step 1 still ends the swap if the counterparty acts.
+        if (this.refundRefused.has(swap.rfqId)) {
+            if (!this.callbacks?.canRefundArkade) return;
+            this.refundRefused.delete(swap.rfqId);
+        }
+
+        if (now < swap.refundLocktime) return this.unblock(swap);
+
+        if (!this.config.enableAutoActions || !this.callbacks) {
+            // The loudest gap this state closes: with nothing wired to act, the
+            // swap would otherwise sit `pending` past its window forever —
+            // monitored, never acted on, never reported.
+            return this.block(
+                swap,
+                this.callbacks
+                    ? "automatic actions are disabled, so this wallet will not push the refund"
+                    : "no callbacks are wired, so this wallet cannot push the refund",
+            );
+        }
+        this.unblock(swap);
 
         try {
             const pushed = await this.callbacks.refundArkade(swap);
@@ -959,6 +1046,15 @@ export class RfqSwapManager {
             this.setState(swap, "refunded");
             this.emitAction(swap, "refundArkade");
         } catch (error) {
+            if (error instanceof RefundNotLocallyPossibleError) {
+                // Not a failure to retry: a capability this wallet does not
+                // have. Caught before the retry branch, so it costs one call
+                // rather than a pass-per-poll storm of `onSwapFailed` ending in
+                // `failed` — a label that would claim an action failed when the
+                // truth is that none was ever possible here.
+                this.refundRefused.add(swap.rfqId);
+                return this.block(swap, error.message);
+            }
             // Reported UNWRAPPED, so a caller can tell the failures apart with
             // `instanceof`. That matters most for `LockupNeedsRecoveryError`: a
             // swept lockup cannot be taken back by any offchain spend until it
@@ -979,6 +1075,49 @@ export class RfqSwapManager {
                 this.setState(swap, "failed");
             }
         }
+    }
+
+    /**
+     * L1 progress, which past the refund window must not overwrite a refusal.
+     * The two halves are independent — a claimed fill says nothing about
+     * whether this wallet can take the Arkade lockup back — and `claimed` is
+     * re-asserted from chain on every pass, so without this a blocked swap
+     * would flip between the two states forever. The claim itself always runs;
+     * only the label defers, and only once the refund is the live half.
+     */
+    private setOnchainState(swap: OnchainSendSwap, state: RfqSwapState): void {
+        if (swap.state === "needs_counterparty" && this.config.now() >= swap.refundLocktime) return;
+        this.setState(swap, state);
+    }
+
+    /** The probe's refusal reason, or `undefined` when a local refund is
+     * possible as far as anyone here can tell. A probe that throws is treated
+     * as a refusal: a capability check that cannot answer is not a yes. */
+    private async probeRefusal(swap: RfqSwap): Promise<string | undefined> {
+        const probe = this.callbacks?.canRefundArkade;
+        if (!probe) return undefined;
+        try {
+            const answer = await probe(swap);
+            return answer.ok ? undefined : answer.reason;
+        } catch (error) {
+            return errorMessage(error);
+        }
+    }
+
+    /** Report that no local refund will happen, without ending the swap. */
+    private block(swap: RfqSwap, reason: string): void {
+        if (swap.blockedReason !== reason) {
+            swap.blockedReason = reason;
+            this.touch(swap);
+        }
+        this.setState(swap, "needs_counterparty");
+    }
+
+    /** The way back out, taken as soon as a refund becomes possible again. */
+    private unblock(swap: RfqSwap): void {
+        if (swap.state !== "needs_counterparty") return;
+        delete swap.blockedReason;
+        this.setState(swap, "pending");
     }
 
     private touch(swap: RfqSwap): void {

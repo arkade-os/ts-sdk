@@ -41,6 +41,7 @@ import {
     type LockupSpendIndexer,
 } from "../src/refund";
 import { SWAP_LOCKUP_CONTRACT_TYPE } from "../src/lockupContract";
+import { RefundNotLocallyPossibleError } from "../src/secrets";
 import {
     RfqSwapManager,
     isRfqSwapTerminal,
@@ -277,6 +278,7 @@ const spies = (
     over: {
         claim?: () => Promise<{ txid: string }>;
         refund?: () => Promise<ArkadeRefundResult>;
+        probe?: () => Promise<{ ok: true } | { ok: false; reason: string }>;
     } = {},
 ): Spies => {
     const claims: { rfqId: string; utxo: ChainUtxo }[] = [];
@@ -299,6 +301,9 @@ const spies = (
             async saveSwap(swap) {
                 saved.push(swap.state);
             },
+            // optional on the interface: only wired when a test asks for it,
+            // so the unprobed configuration stays the default here too
+            ...(over.probe ? { canRefundArkade: over.probe } : {}),
         },
     };
 };
@@ -948,6 +953,188 @@ describe("RfqSwapManager — the lightning-send leg", () => {
 
         expect(swap.state).toBe("refunded");
         expect(swap.refundArkTxid).toBeUndefined();
+    });
+});
+
+/**
+ * A refund nobody here can push is not a failure and not an ending: the lockup
+ * is still funded, and the solver claiming it is still what resolves the swap.
+ * So the state has to be reported without retrying, without `onSwapFailed`,
+ * and — the item-5 interaction — without unwatching the contract.
+ */
+describe("RfqSwapManager — a refund this wallet cannot make", () => {
+    const cannotSign = () =>
+        new RefundNotLocallyPossibleError(
+            "foreign-descriptor",
+            "this wallet cannot derive tr(xpub…/0/7); the swap was created on another wallet",
+        );
+
+    it("reports it on the first pass, with a reason and no failure event", async () => {
+        const s = spies({
+            refund: async () => {
+                throw cannotSign();
+            },
+        });
+        const failures: string[] = [];
+        const swap = lightningSwap();
+        const m = manager({ now: REFUND_LOCKTIME + 1, spies: s });
+        m.onSwapFailed((_swap, error) => failures.push(error.message));
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("needs_counterparty");
+        expect(swap.blockedReason).toMatch(/created on another wallet/);
+        // `failure` is for an action that was attempted and did not work
+        expect(swap.failure).toBeUndefined();
+        expect(failures).toEqual([]);
+    });
+
+    it("is not retried, and never becomes `failed`", async () => {
+        // The behaviour this whole state exists for: at the default cadence the
+        // retry branch would burn ~1440 passes against a push that cannot work,
+        // and end on a label claiming an action failed.
+        let now = REFUND_LOCKTIME + 1;
+        const s = spies({
+            refund: async () => {
+                throw cannotSign();
+            },
+        });
+        const swap = lightningSwap();
+        const m = manager({ now: () => now, spies: s });
+        await m.addSwap(swap);
+        await m.poll();
+        now = REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS + 1;
+        await m.poll();
+        await m.poll();
+
+        expect(s.refunds).toEqual([RFQ_ID]);
+        expect(swap.state).toBe("needs_counterparty");
+        // and it is still monitored: the swap has not ended
+        expect(await m.hasSwap(RFQ_ID)).toBe(true);
+    });
+
+    it("leaves an ordinary refusal on the retry path", async () => {
+        // The narrowness of the new branch. `LockupNeedsRecoveryError` is the
+        // case that must keep retrying: the caller can recover the lockup while
+        // the window is open, after which the next pass simply succeeds.
+        const s = spies({
+            refund: async () => {
+                throw new LockupNeedsRecoveryError(["aa".repeat(32) + ":0"], BigInt(0));
+            },
+        });
+        const swap = lightningSwap();
+        const m = manager({ now: REFUND_LOCKTIME + 1, spies: s });
+        await m.addSwap(swap);
+        await m.poll();
+        await m.poll();
+
+        expect(s.refunds).toEqual([RFQ_ID, RFQ_ID]);
+        expect(swap.state).toBe("pending");
+    });
+
+    it("reports a wallet with nothing wired to act, instead of sitting `pending`", async () => {
+        // The loudest gap, and the one that needs no key material to see: with
+        // `enableAutoActions` off the swap would otherwise stay `pending` past
+        // its window forever — monitored, never acted on, never reported.
+        const s = spies();
+        const swap = lightningSwap();
+        const m = manager({ now: REFUND_LOCKTIME + 1, spies: s, enableAutoActions: false });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(s.refunds).toEqual([]);
+        expect(swap.state).toBe("needs_counterparty");
+        expect(swap.blockedReason).toMatch(/automatic actions are disabled/);
+    });
+
+    it("keeps the lockup watched", async () => {
+        // The item-5 interaction from the other side: the money is still at the
+        // lockup, so retiring its contract here would unwatch live funds and
+        // lose the solver claim that still ends this swap.
+        const s = spies({
+            refund: async () => {
+                throw cannotSign();
+            },
+        });
+        const contracts = fakeContracts();
+        const swap = lightningSwap({ lockup: LOCKUP_HANDLE });
+        const m = manager({ contracts, now: REFUND_LOCKTIME + 1, spies: s });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("needs_counterparty");
+        expect(contracts.retired).toEqual([]);
+        expect(contracts.watched()).toEqual([LOCKUP_SCRIPT_HEX]);
+    });
+
+    it("still ends `settled` when the counterparty claims the lockup", async () => {
+        const s = spies({
+            refund: async () => {
+                throw cannotSign();
+            },
+        });
+        const swap = lightningSwap();
+        let claimed = false;
+        const m = manager({
+            indexer: {
+                getVtxos: async () =>
+                    claimed
+                        ? fakeIndexer({ vtxos: spentBy(CLAIM_SPEND.txid) }).getVtxos()
+                        : fakeIndexer({ vtxos: unspent() }).getVtxos(),
+                getVirtualTxs: fakeIndexer({ txs: [CLAIM_SPEND] }).getVirtualTxs,
+            } as unknown as LockupSpendIndexer,
+            now: REFUND_LOCKTIME + 1,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+        expect(swap.state).toBe("needs_counterparty");
+
+        claimed = true;
+        await m.poll();
+
+        expect(swap.state).toBe("settled");
+        expect(await m.hasSwap(RFQ_ID)).toBe(false);
+    });
+
+    it("says so before the window opens, when a probe is wired", async () => {
+        // Reportable while the solver can still act, rather than at the
+        // deadline — which is the whole reason the probe exists.
+        const s = spies({
+            probe: async () => ({ ok: false, reason: "the signing wallet is not this one" }),
+        });
+        const swap = lightningSwap();
+        const m = manager({ now: REFUND_LOCKTIME - 3600, spies: s });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("needs_counterparty");
+        expect(swap.blockedReason).toBe("the signing wallet is not this one");
+        expect(s.refunds).toEqual([]);
+    });
+
+    it("goes back to `pending` and refunds once the probe says yes", async () => {
+        // Not a dead end: restoring the wallet that can sign resumes the normal
+        // drive, which is why the probe re-runs on every pass.
+        let ok = false;
+        const s = spies({
+            probe: async () =>
+                ok ? { ok: true } : { ok: false, reason: "the signing wallet is not this one" },
+        });
+        const swap = lightningSwap();
+        const states: RfqSwapState[] = [];
+        const m = manager({ now: REFUND_LOCKTIME + 1, spies: s });
+        m.onSwapUpdate((updated) => states.push(updated.state));
+        await m.addSwap(swap);
+        await m.poll();
+        expect(swap.state).toBe("needs_counterparty");
+
+        ok = true;
+        await m.poll();
+
+        expect(states).toEqual(["needs_counterparty", "pending", "refunded"]);
+        expect(swap.blockedReason).toBeUndefined();
+        expect(s.refunds).toEqual([RFQ_ID]);
     });
 });
 

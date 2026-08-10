@@ -18,6 +18,7 @@ import {
 
 import {
     RFQ_PREIMAGE_TAG,
+    RefundNotLocallyPossibleError,
     adoptSwapDescriptor,
     buildPreimageMessage,
     derivePreimage,
@@ -28,6 +29,7 @@ import {
     rfqSecretsOfRecord,
     rfqSecretsToRecord,
     senderIdentityForRfqSecrets,
+    senderIdentityForSwapRecord,
     senderPubkeyForRfqSecrets,
 } from "../src/secrets";
 import { paymentHashOf } from "../src/onchainHtlc";
@@ -173,6 +175,12 @@ describe("derivation", () => {
             /cannot derive .*; the swap was created on another wallet/,
         );
         await expect(preimageForRfqSecrets(foreign, secrets)).rejects.toThrow(/cannot derive/);
+        // typed at the throw site — and a faithful subclass, so the message
+        // assertions above are unchanged
+        await expect(senderIdentityForRfqSecrets(foreign, secrets)).rejects.toMatchObject({
+            name: "RefundNotLocallyPossibleError",
+            reason: "foreign-descriptor",
+        });
     });
 
     it("refuses a wallet with no HD surface at all for a derivable record", async () => {
@@ -182,6 +190,74 @@ describe("derivation", () => {
         await expect(senderIdentityForRfqSecrets(staticWallet(), secrets)).rejects.toThrow(
             /cannot derive/,
         );
+        await expect(senderIdentityForRfqSecrets(staticWallet(), secrets)).rejects.toBeInstanceOf(
+            RefundNotLocallyPossibleError,
+        );
+    });
+});
+
+describe("senderIdentityForSwapRecord", () => {
+    // The composition `rfqSecretsOfRecord` deliberately does not do. Each cause
+    // reaches a consumer as one catchable type carrying WHICH one it was:
+    // "restore the other wallet" and "this record never had secrets" are
+    // different instructions to a user.
+    const refusal = async (promise: Promise<unknown>) =>
+        promise.catch((error: unknown) => error as RefundNotLocallyPossibleError);
+
+    it("refuses a record that names no arm", async () => {
+        // The cause that is a RETURN VALUE one level down, so a consumer wiring
+        // `senderIdentityForRfqSecrets` would skip it and hit a TypeError at
+        // the push site instead — which the manager would retry for hours.
+        const { wallet } = await hdWallet();
+        const error = await refusal(senderIdentityForSwapRecord(wallet, {}));
+
+        expect(error).toBeInstanceOf(RefundNotLocallyPossibleError);
+        expect(error.reason).toBe("no-secrets");
+        // and the totality it is built on is untouched
+        expect(rfqSecretsOfRecord({})).toBeUndefined();
+    });
+
+    it("refuses a fallback record this version cannot read", async () => {
+        const { wallet } = await hdWallet();
+        const error = await refusal(
+            senderIdentityForSwapRecord(wallet, {
+                fallbackSecrets: {
+                    version: 2,
+                    type: "stored",
+                    senderPrivateKeyHex: "11".repeat(32),
+                } as unknown as AssetSwapFallbackSecrets,
+            }),
+        );
+
+        expect(error).toBeInstanceOf(RefundNotLocallyPossibleError);
+        expect(error.reason).toBe("unreadable-secrets");
+        expect(error.message).toMatch(/unsupported RFQ fallback secrets record/);
+    });
+
+    it("refuses a descriptor from another seed", async () => {
+        const { wallet } = await hdWallet();
+        const record = rfqSecretsToRecord((await deriveSwapSecrets(wallet))!);
+        const error = await refusal(senderIdentityForSwapRecord(staticWallet(), record));
+
+        expect(error).toBeInstanceOf(RefundNotLocallyPossibleError);
+        expect(error.reason).toBe("foreign-descriptor");
+    });
+
+    it("hands back the signer for a record this wallet can derive", async () => {
+        const { wallet } = await hdWallet();
+        const secrets = (await deriveSwapSecrets(wallet))!;
+        const identity = await senderIdentityForSwapRecord(wallet, rfqSecretsToRecord(secrets));
+
+        expect(await identity.xOnlyPublicKey()).toEqual(
+            await senderPubkeyForRfqSecrets(wallet, secrets),
+        );
+    });
+
+    it("hands back the stored key for a fallback record, on any wallet", async () => {
+        const record = rfqSecretsToRecord(randomSwapSecrets({ preimage: true }));
+        const identity = await senderIdentityForSwapRecord(staticWallet(), record);
+
+        expect(await identity.xOnlyPublicKey()).toHaveLength(32);
     });
 });
 
