@@ -2032,6 +2032,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
             onVtxosSpent,
             watcherConfig: this.watcherConfig,
             lookAhead: this.lookAheadConfig(),
+            // Without this a PathContext carries no blockHeight, and every
+            // height-typed CLTV reads as unsatisfied however mature it is.
+            // @see ContractManagerConfig.chainTip
+            chainTip: async () => (await this.onchainProvider.getChainTip()).height,
         });
 
         // Register the wallet's baseline always-active contracts: every

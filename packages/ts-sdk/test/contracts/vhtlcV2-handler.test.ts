@@ -258,6 +258,183 @@ describe("VHTLCV2ContractHandler", () => {
         expect(isContractGenericallySpendable(contract)).toBe(false);
     });
 
+    /**
+     * The handler's own CLTV check has always been right, and the tests below
+     * prove it by handing the context a `blockHeight` directly. What nothing
+     * proved is that anything ever PUTS one there.
+     *
+     * `refundLocktime` here is 800000 — under `CLTV_HEIGHT_THRESHOLD`, so
+     * height-typed — and `isCltvSatisfied` answers `false` outright when
+     * `blockHeight` is missing. No construction site populated it, so through
+     * the manager the sender's collaborative refund was unreachable at every
+     * height, matured or not. This pins the wiring, not the arithmetic: same
+     * contract, same maturity, the only variable is whether a tip is supplied.
+     */
+    describe("blockHeight reaches the handler through ContractManager", () => {
+        const managerFor = async (chainTip?: () => Promise<number | undefined>) =>
+            ContractManager.create({
+                indexerProvider: createMockIndexerProvider(),
+                contractRepository: new InMemoryContractRepository(),
+                walletRepository: new InMemoryWalletRepository(),
+                chainTip,
+            });
+
+        const refundLeafOffered = async (
+            chainTip?: () => Promise<number | undefined>,
+        ): Promise<boolean> => {
+            const manager = await managerFor(chainTip);
+            const contract = contractOf(fullParams());
+            await manager.createContract(contract);
+            const script = VHTLCV2ContractHandler.createScript(contract.params);
+            const paths = await manager.getSpendablePaths({
+                contractScript: contract.script,
+                collaborative: true,
+                walletPubKey: SENDER,
+            });
+            return paths.map(leafHex).includes(script.refundWithoutReceiverScript!);
+        };
+
+        it("withholds the matured refund leaf when no tip source is configured", async () => {
+            expect(await refundLeafOffered(undefined)).toBe(false);
+        });
+
+        it("withholds it when the tip is below the locktime", async () => {
+            expect(await refundLeafOffered(async () => 799_999)).toBe(false);
+        });
+
+        it("offers it once the tip reaches the locktime", async () => {
+            expect(await refundLeafOffered(async () => 800_000)).toBe(true);
+        });
+
+        it("collapses concurrent cache misses onto a single tip read", async () => {
+            let reads = 0;
+            const manager = await managerFor(async () => {
+                reads += 1;
+                // Resolve on a later turn, so all three callers are waiting on
+                // the same in-flight read rather than being served in sequence.
+                await Promise.resolve();
+                return 800_000;
+            });
+            const contract = contractOf(fullParams());
+            await manager.createContract(contract);
+
+            const query = () =>
+                manager.getSpendablePaths({
+                    contractScript: contract.script,
+                    collaborative: true,
+                    walletPubKey: SENDER,
+                });
+            const results = await Promise.all([query(), query(), query()]);
+
+            expect(reads).toBe(1);
+            const script = VHTLCV2ContractHandler.createScript(contract.params);
+            for (const paths of results) {
+                expect(paths.map(leafHex)).toContain(script.refundWithoutReceiverScript);
+            }
+        });
+
+        it("treats an unreadable tip as unknown rather than failing the query", async () => {
+            const paths = await (async () => {
+                const manager = await managerFor(async () => {
+                    throw new Error("provider down");
+                });
+                const contract = contractOf(fullParams());
+                await manager.createContract(contract);
+                return manager.getSpendablePaths({
+                    contractScript: contract.script,
+                    collaborative: true,
+                    walletPubKey: SENDER,
+                });
+            })();
+            // Resolved, not rejected — and the height-gated leaf stays out.
+            const script = VHTLCV2ContractHandler.createScript(fullParams());
+            expect(paths.map(leafHex)).not.toContain(script.refundWithoutReceiverScript);
+        });
+
+        /**
+         * A rejection is the easy failure; a socket that opens and then goes
+         * quiet is the one `fetch` has no answer for. It never settles, so the
+         * `catch` above never runs — and since every later query joins the same
+         * in-flight read, one stalled tip would wedge path resolution for the
+         * manager's lifetime rather than for one call.
+         */
+        it("gives up on a stalled tip read, and lets the next query start a fresh one", async () => {
+            let reads = 0;
+            const manager = await managerFor(() => {
+                reads += 1;
+                return new Promise<number>(() => {});
+            });
+            const contract = contractOf(fullParams());
+            await manager.createContract(contract);
+            const script = VHTLCV2ContractHandler.createScript(contract.params);
+            const query = () =>
+                manager.getSpendablePaths({
+                    contractScript: contract.script,
+                    collaborative: true,
+                    walletPubKey: SENDER,
+                });
+
+            vi.useFakeTimers();
+            try {
+                const first = query();
+                // Well past any bound, so the test does not encode the exact one.
+                await vi.advanceTimersByTimeAsync(60_000);
+                expect((await first).map(leafHex)).not.toContain(
+                    script.refundWithoutReceiverScript,
+                );
+
+                const second = query();
+                await vi.advanceTimersByTimeAsync(60_000);
+                await second;
+                // Not still joined to the first, dead read.
+                expect(reads).toBe(2);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("does not wedge on a source that throws synchronously", async () => {
+            let reads = 0;
+            const manager = await managerFor(() => {
+                reads += 1;
+                if (reads === 1) throw new Error("provider not ready");
+                return Promise.resolve(800_000);
+            });
+            const contract = contractOf(fullParams());
+            await manager.createContract(contract);
+            const script = VHTLCV2ContractHandler.createScript(contract.params);
+            const query = () =>
+                manager.getSpendablePaths({
+                    contractScript: contract.script,
+                    collaborative: true,
+                    walletPubKey: SENDER,
+                });
+
+            expect((await query()).map(leafHex)).not.toContain(script.refundWithoutReceiverScript);
+            // The transient throw must not outlive itself: the provider has
+            // recovered, so the matured leaf comes back.
+            expect((await query()).map(leafHex)).toContain(script.refundWithoutReceiverScript);
+        });
+
+        it("does not read the tip for getAllSpendingPaths, which ignores timelocks", async () => {
+            let reads = 0;
+            const manager = await managerFor(async () => {
+                reads += 1;
+                return 800_000;
+            });
+            const contract = contractOf(fullParams());
+            await manager.createContract(contract);
+
+            await manager.getAllSpendingPaths({
+                contractScript: contract.script,
+                collaborative: true,
+                walletPubKey: SENDER,
+            });
+
+            expect(reads).toBe(0);
+        });
+    });
+
     describe("path selection", () => {
         it("gives the sender refundWithoutReceiver only once the CLTV is satisfied", () => {
             const contract = contractOf(fullParams());
