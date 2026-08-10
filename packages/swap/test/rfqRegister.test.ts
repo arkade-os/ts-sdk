@@ -54,6 +54,7 @@ import {
 } from "../src/rfq";
 import { onchainHtlcScript } from "../src/onchainHtlc";
 import {
+    LockupRegistrationFailed,
     SWAP_LOCKUP_CONTRACT_KIND,
     SWAP_LOCKUP_CONTRACT_LABEL,
     SWAP_LOCKUP_CONTRACT_TYPE,
@@ -251,11 +252,27 @@ describe.each([
         for (const value of forbidden) expect(serialized).not.toContain(value);
     });
 
+    it("returns the covenant the row was written from", async () => {
+        // Without it a polling caller cannot populate `RfqSwapManager`'s
+        // `lockup`, and the manager can neither subscribe nor retire the row
+        // this call just wrote.
+        const { wallet } = recordingWallet();
+        const result = await request(wallet);
+        expect(hex.encode(result.script.pkScript)).toBe(hex.encode(result.swapPkScript));
+    });
+
     it("fails the request rather than handing back an address it never registered", async () => {
         const { wallet } = recordingWallet(() => {
             throw new Error("repository unavailable");
         });
-        await expect(request(wallet)).rejects.toThrow("repository unavailable");
+        // Typed apart from SwapRefusal / AddressMismatch: the quote is fine and
+        // the same call can be retried once the store is, which is the opposite
+        // of what those two mean.
+        const error = await request(wallet).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(LockupRegistrationFailed);
+        expect((error as LockupRegistrationFailed).cause).toMatchObject({
+            message: "repository unavailable",
+        });
     });
 });
 
@@ -363,21 +380,10 @@ describe("a registered lockup, against a real contract manager", () => {
         // registration, and must be a no-op for those that do not.
         const { wallet, contractRepository } = await realWallet();
         const swap = await lightningSend(wallet as unknown as IWallet);
-        const script = lightningSendVtxoScript({
-            solverPubkey: SOLVER,
-            refundLocktime: REFUND_LOCKTIME,
-            serverPubkey: SERVER,
-            paymentHash: PAYMENT_HASH,
-            claimDelay: 4096,
-            emulatorPubkey: EMULATOR_PUBKEY,
-            senderPubkey: swap.senderPubkey,
-            receiverPkScript: RECEIVER_PK_SCRIPT,
-            refundPkScript: ArkAddress.decode(swap.refundAddress).pkScript,
-        });
-        expect(hex.encode(script.pkScript)).toBe(hex.encode(swap.swapPkScript));
 
         const before = await contractRepository.getContracts();
-        await registerLockupContract(await wallet.getContractManager(), script, swap.address);
+        // `swap.script` is what a caller hands the manager as `lockup.script`.
+        await registerLockupContract(await wallet.getContractManager(), swap.script, swap.address);
         expect(await contractRepository.getContracts()).toEqual(before);
     });
 });

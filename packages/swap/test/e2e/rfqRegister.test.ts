@@ -37,12 +37,12 @@ import {
     SWAP_LOCKUP_CONTRACT_LABEL,
     SWAP_LOCKUP_CONTRACT_TYPE,
     lightningSendVtxoScript,
+    registerLockupContract,
     requestLightningSend,
     unilateralClaimDelay,
     type RfqQuote,
     type RfqTransport,
 } from "../../src";
-import { registerLockupContract } from "../../src/lockupContract";
 
 const ARK_URL = "http://localhost:7070";
 const EMULATOR_URL = "http://localhost:7073";
@@ -235,20 +235,10 @@ describe("RFQ lockup registration (regtest)", () => {
         // throw, and must not rewrite what the funded row says.
         const manager = await wallet.getContractManager();
         const [before] = await manager.getContracts({ script: lockupScript });
-        const script = lightningSendVtxoScript({
-            solverPubkey: SOLVER,
-            refundLocktime: swap.quote.refund_locktime!,
-            serverPubkey,
-            paymentHash: PAYMENT_HASH,
-            claimDelay,
-            emulatorPubkey,
-            senderPubkey: swap.senderPubkey,
-            receiverPkScript: RECEIVER_PK_SCRIPT,
-            refundPkScript: ArkAddress.decode(swap.refundAddress).pkScript,
-        });
-        expect(hex.encode(script.pkScript)).toBe(lockupScript);
 
-        await registerLockupContract(manager, script, swap.address);
+        // `swap.script` is exactly what a caller hands the manager as the
+        // record's `lockup.script`, so this is the backstop's real input.
+        await registerLockupContract(manager, swap.script, swap.address);
         const [after] = await manager.getContracts({ script: lockupScript });
         expect(after).toEqual(before);
     }, 120_000);

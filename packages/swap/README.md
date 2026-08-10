@@ -179,8 +179,16 @@ const swap = await requestLightningSend(
     },
 );
 // quote verified against the LOCAL derivation and gated; now fund and go offline:
-await wallet.send({ address: swap.address, amount: BigInt(swap.fundAmount) });
+await wallet.send({ address: swap.address, amount: swap.fundAmount });
 ```
+
+Both `request*` functions register the lockup with the wallet's contract manager before returning
+an address, the way `createOffer` registers its covenant: the lockup is watched from the moment it
+lands and stays out of generic coin selection, so nothing can spend a live swap out from under
+itself. A write failure throws `LockupRegistrationFailed` — the one throw here that does not mean
+"walk away from this quote", since nothing is funded yet and the quote is still good. Keep
+`swap.script`: it is the covenant object `RfqSwapManager` takes as a record's `lockup`, without
+which the manager can only poll and cannot retire the row when the swap ends.
 
 The trust model is the offer side's, applied to quotes: only `solver_pubkey`,
 `refund_locktime`, `valid_until` and the amounts are used from a quote; every other contract
@@ -241,7 +249,7 @@ await addAssetSwap(repository, {
     htlcLocktime: swap.htlc.refundLocktime,
     ...rfqSecretsToRecord(swap.secrets),
 });
-await wallet.send({ address: swap.address, amount: BigInt(swap.fundAmount) });
+await wallet.send({ address: swap.address, amount: swap.fundAmount });
 
 // Unlike lightning-send the maker must STAY CLAIM-CAPABLE: watch for the fill
 // and claim before the HTLC's refund leaf opens. chain is YOUR ChainSource.

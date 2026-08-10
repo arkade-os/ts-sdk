@@ -40,9 +40,9 @@ import {
     REFUND_MTP_LAG_SECONDS,
     type LockupSpendIndexer,
 } from "../src/refund";
+import { SWAP_LOCKUP_CONTRACT_TYPE } from "../src/lockupContract";
 import {
     RfqSwapManager,
-    SWAP_LOCKUP_CONTRACT_TYPE,
     isRfqSwapTerminal,
     nextOnchainAction,
     type ArkadeRefundResult,
@@ -321,11 +321,19 @@ type FakeContracts = SwapContractRegistry & {
     listenerCount: () => number;
 };
 
-const fakeContracts = (over: { failCreate?: () => boolean } = {}): FakeContracts => {
+const fakeContracts = (
+    over: {
+        failCreate?: () => boolean;
+        failRead?: () => boolean;
+        /** Rows written by something other than this manager — what the request
+         * entrypoints leave behind before the caller funds. */
+        preexisting?: CreateContractParams[];
+    } = {},
+): FakeContracts => {
     const listeners = new Set<(event: ContractEvent) => void>();
-    const created: CreateContractParams[] = [];
+    const created: CreateContractParams[] = [...(over.preexisting ?? [])];
     const retired: { script: string; watch: string }[] = [];
-    const rows = new Map<string, string>();
+    const rows = new Map<string, string>(created.map((c) => [c.script, c.watch ?? "watched"]));
     return {
         created,
         retired,
@@ -342,6 +350,12 @@ const fakeContracts = (over: { failCreate?: () => boolean } = {}): FakeContracts
             created.push(params);
             rows.set(params.script, params.watch ?? "watched");
             return { ...params, state: "active", createdAt: 1 } as Contract;
+        },
+        async getContracts(filter?: { script?: string }) {
+            if (over.failRead?.()) throw new Error("contract repository unavailable");
+            return created
+                .filter((row) => filter?.script === undefined || row.script === filter.script)
+                .map((row) => ({ ...row, state: "active", createdAt: 1 }) as Contract);
         },
         onContractEvent(callback: (event: ContractEvent) => void) {
             listeners.add(callback);
@@ -1290,6 +1304,58 @@ describe("RfqSwapManager — the lockup as a contract", () => {
 
             expect(failures.filter((f) => /carries no lockup script/.test(f))).toHaveLength(1);
             expect(contracts.created).toEqual([]);
+        });
+
+        it("counts a row the request path already wrote, instead of reporting it missing", async () => {
+            // `requestLightningSend` registers before the caller can fund, and
+            // returns no covenant object a polling caller has to carry — so a
+            // record without `lockup` is the normal case, not a broken one.
+            // Complaining here would report a problem that was already solved,
+            // and would leave the row un-retired for good.
+            const s = spies();
+            const contracts = fakeContracts({
+                preexisting: [{ script: LOCKUP_SCRIPT_HEX } as CreateContractParams],
+            });
+            const failures: string[] = [];
+            const m = manager({
+                indexer: fakeIndexer({ vtxos: spentBy(CLAIM_SPEND.txid), txs: [CLAIM_SPEND] }),
+                contracts,
+                now: SAFE_NOW,
+                spies: s,
+            });
+            m.onSwapFailed((_swap, error) => failures.push(error.message));
+
+            const swap = lightningSwap(); // no `lockup`
+            await m.addSwap(swap);
+            await m.poll();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+
+            expect(failures).toEqual([]);
+            expect(swap.state).toBe("settled");
+            expect(contracts.retired).toEqual([{ script: LOCKUP_SCRIPT_HEX, watch: "retained" }]);
+        });
+
+        it("decides nothing about a covenant it could not look up", async () => {
+            // An unreadable store means the row's existence is UNKNOWN. Calling
+            // it absent would be a guess, and a permanent one — the answer is
+            // settled once and never revisited.
+            const s = spies();
+            let broken = true;
+            const contracts = fakeContracts({
+                failRead: () => broken,
+                preexisting: [{ script: LOCKUP_SCRIPT_HEX } as CreateContractParams],
+            });
+            const failures: string[] = [];
+            const m = manager({ contracts, now: SAFE_NOW, spies: s });
+            m.onSwapFailed((_swap, error) => failures.push(error.message));
+
+            await m.addSwap(lightningSwap()); // no `lockup`
+            await m.poll();
+            expect(failures.some((f) => /carries no lockup script/.test(f))).toBe(false);
+
+            broken = false;
+            await m.poll();
+            expect(failures.filter((f) => /carries no lockup script/.test(f))).toEqual([]);
         });
 
         it("needs no contract manager at all", async () => {

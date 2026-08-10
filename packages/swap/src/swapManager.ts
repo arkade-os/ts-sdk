@@ -320,14 +320,8 @@ export interface RfqSwapManagerConfig {
  * `ContractManager` (`await wallet.getContractManager()`). */
 export type SwapContractRegistry = Pick<
     IContractManager,
-    "createContract" | "onContractEvent" | "setContractWatchState"
+    "createContract" | "getContracts" | "onContractEvent" | "setContractWatchState"
 >;
-
-export {
-    SWAP_LOCKUP_CONTRACT_KIND,
-    SWAP_LOCKUP_CONTRACT_LABEL,
-    SWAP_LOCKUP_CONTRACT_TYPE,
-} from "./lockupContract";
 
 /** The observation seams. None is owned by the manager, and none holds keys —
  * same philosophy as `onchainHtlc.ts`'s `ChainSource`. There is no
@@ -695,20 +689,38 @@ export class RfqSwapManager {
      * this would trade a real deadline for a bookkeeping one.
      */
     private async ensureRegistered(swap: RfqSwap): Promise<void> {
-        if (!this.deps.contracts) return;
+        const contracts = this.deps.contracts;
+        if (!contracts) return;
         if (this.registered.has(swap.rfqId)) return;
 
         const lockup = swap.lockup;
         if (!lockup) {
-            // A caller that wired a contract manager but no covenant asked for
-            // something that cannot be delivered. Said once — marking it
-            // settled — rather than every pass, because no retry can fix a
-            // missing field.
+            // No covenant to build a row from — but `requestLightningSend` /
+            // `requestOnchainSend` already wrote one before the caller could
+            // fund, so ASK before complaining. A row that exists is a row this
+            // manager can still retire; only a genuinely absent one is worth
+            // reporting, and no retry can conjure the missing field that would
+            // fix it.
+            try {
+                const [existing] = await contracts.getContracts({
+                    script: hex.encode(swap.lockupPkScript),
+                });
+                if (existing) {
+                    this.registered.set(swap.rfqId, true);
+                    return;
+                }
+            } catch (error) {
+                // Unreadable store: nothing was learned, so decide nothing and
+                // look again next pass — reporting a missing covenant here
+                // would be a guess.
+                this.emitFailed(swap, error);
+                return;
+            }
             this.registered.set(swap.rfqId, false);
             this.emitFailed(
                 swap,
                 new Error(
-                    `swap ${swap.rfqId} carries no lockup script, so it cannot be registered as a contract — pass \`lockup\` to subscribe instead of polling`,
+                    `swap ${swap.rfqId} carries no lockup script and has no contract row, so it cannot be registered — pass \`lockup\` to subscribe instead of polling`,
                 ),
             );
             return;
@@ -731,7 +743,7 @@ export class RfqSwapManager {
         }
 
         try {
-            await registerLockupContract(this.deps.contracts, lockup.script, lockup.address);
+            await registerLockupContract(contracts, lockup.script, lockup.address);
             this.registered.set(swap.rfqId, true);
         } catch (error) {
             // Left out of `registered` so the next pass tries again — a
@@ -747,9 +759,10 @@ export class RfqSwapManager {
      * the poll — a settled swap that stayed watched would cost the wallet a
      * script for its whole life. Best-effort — the swap is over either way. */
     private retireContract(swap: RfqSwap): void {
-        // Only a swap that actually got a row: retiring one that was never
-        // written would throw "not found" and report a failure on a swap that
-        // had in fact just succeeded.
+        // Only a swap this manager has confirmed a row for — whether it wrote
+        // that row or found one the request path had already written. Retiring
+        // one that never existed would throw "not found" and report a failure
+        // on a swap that had in fact just succeeded.
         if (!this.deps.contracts || !this.registered.get(swap.rfqId)) return;
         void this.deps.contracts
             .setContractWatchState(hex.encode(swap.lockupPkScript), "retained")

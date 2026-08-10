@@ -638,7 +638,9 @@ export interface InvoiceFacts {
  * `settled`); failure refunds to `refundAddress`.
  *
  * Throws {@link SwapRefusal} (closed reason), {@link AddressMismatch} (never
- * fund), or a gate error with a stable `reason`.
+ * fund), a gate error with a stable `reason`, or
+ * {@link LockupRegistrationFailed} — the last one alone means the quote is
+ * still good and the same call can be retried once local storage is.
  *
  * Broadcasts nothing, but does write locally: the lockup is registered with the
  * wallet's contract manager before the address is returned, exactly as
@@ -681,6 +683,10 @@ export async function requestLightningSend(
     fundAmount: number;
     /** The covenant's scriptPubKey, for watching the lockup and its spend. */
     swapPkScript: Uint8Array;
+    /** The covenant itself. Hand it to `RfqSwapManager` as the record's
+     * `lockup` (with `address`): without it the manager can only poll, and
+     * cannot retire the row this call just wrote. */
+    script: InstanceType<typeof VHTLC.ScriptV2>;
     /** Where a failed swap refunds. */
     refundAddress: string;
     /** The VHTLC `sender` x-only key, bound into the covenant. Public. */
@@ -746,6 +752,7 @@ export async function requestLightningSend(
         address,
         fundAmount: params.invoice.amountSats,
         swapPkScript: script.pkScript,
+        script,
         refundAddress,
         senderPubkey,
         secrets,
@@ -933,8 +940,10 @@ export function deriveOnchainSend(input: {
  * the caller funds `address` with its own wallet before `quote.valid_until`.
  *
  * Registers the arkade lockup before returning the address, on the same terms
- * as {@link requestLightningSend}. The L1 HTLC is not a contract row: it lives
- * on bitcoin, not on Ark, and the wallet's contract manager knows nothing of it.
+ * as {@link requestLightningSend} — including {@link LockupRegistrationFailed},
+ * the one throw here that does not mean "walk away from this quote". The L1
+ * HTLC is not a contract row: it lives on bitcoin, not on Ark, and the wallet's
+ * contract manager knows nothing of it.
  *
  * Two obligations, both LOUD:
  * - **Persist `secrets` (with the record) BEFORE funding.** On an HD wallet it
@@ -970,6 +979,9 @@ export async function requestOnchainSend(
     address: string;
     fundAmount: number;
     swapPkScript: Uint8Array;
+    /** The arkade covenant itself — the record's `lockup` for
+     * `RfqSwapManager`, same role as {@link requestLightningSend}'s. */
+    script: InstanceType<typeof VHTLC.ScriptV2>;
     refundAddress: string;
     /** The EXPECTED L1 fill, derived locally — watch and claim against this. */
     htlc: OnchainHtlc;
@@ -1053,6 +1065,7 @@ export async function requestOnchainSend(
         address: derived.address,
         fundAmount: quote.from_amount,
         swapPkScript: derived.swapPkScript,
+        script: derived.script,
         refundAddress,
         htlc: derived.htlc,
         senderPubkey,

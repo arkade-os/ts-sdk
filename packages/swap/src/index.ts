@@ -146,11 +146,16 @@ export {
     type RefundOutcome,
 } from "./refund";
 export {
-    RFQ_SWAP_TERMINAL_STATES,
-    RfqSwapManager,
+    LockupRegistrationFailed,
     SWAP_LOCKUP_CONTRACT_KIND,
     SWAP_LOCKUP_CONTRACT_LABEL,
     SWAP_LOCKUP_CONTRACT_TYPE,
+    registerLockupContract,
+    type LockupContractWriter,
+} from "./lockupContract";
+export {
+    RFQ_SWAP_TERMINAL_STATES,
+    RfqSwapManager,
     isRfqSwapTerminal,
     nextOnchainAction,
     type ArkadeRefundResult,
