@@ -112,7 +112,7 @@ export type SpendKind = "cancelled" | "fulfilled" | "indeterminate";
  * Classify a spend by the covenant leaf it took.
  *
  * The covenant's whole vocabulary is two leaves: `cancel` returns the deposit
- * to the maker, `fulfill` is the solver paying for it. A submitted ark tx keeps
+ * to the user, `fulfill` is the solver paying for it. A submitted ark tx keeps
  * each input's `tapLeafScript`, so the spend *states* which one it used — this
  * reads an answer rather than inferring one.
  *
@@ -129,7 +129,7 @@ export type SpendKind = "cancelled" | "fulfilled" | "indeterminate";
  * moved. That works only while the deposit is invisible to the wallet. Once the
  * covenant is a registered contract the deposit joins the wallet's own coins,
  * every wallet-level asset figure becomes a *net* delta, and an asset offer's
- * cancel — asset out of the covenant, same asset back to the maker — nets to
+ * cancel — asset out of the covenant, same asset back to the user — nets to
  * zero and reads exactly like its fill. Leaves do not have that failure mode,
  * and they also survive batching: a solver filling several offers in one tx
  * gives each input its own leaf.

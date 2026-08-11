@@ -5,7 +5,7 @@
  * `rfq.ts` ships two other transports: `httpTransport`, and `relayTransport`
  * which speaks the dev broker's `{op:"sub"|"event"}` framing. Neither is what a
  * deployed solver listens on. This is, and it satisfies the same
- * {@link RfqTransport} interface, so everything above the transport — the maker
+ * {@link RfqTransport} interface, so everything above the transport — the user
  * flow, quote verification, the store — is identical whichever one it is handed.
  *
  * ## Why this is a separate entry point

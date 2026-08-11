@@ -2,13 +2,13 @@
  * Coverage: whether an offer's script is in the wallet's watched set.
  *
  * Both edges live here because they are one decision seen from two sides.
- * `createOffer` promotes a script the moment it hands the maker an address to
+ * `createOffer` promotes a script the moment it hands the user an address to
  * fund ({@link promoteOfferContract}); the watcher and the restore consumer
  * retire it once nothing at that script holds funds any more
  * ({@link retireSettledOfferContracts}). Identical offers derive one script, so
  * those two can name the same row — and a demotion that lands after a promotion
  * recreates exactly the failure the promotion exists to prevent: an address the
- * maker was told to fund, out of the subscription, the poll and every sync.
+ * user was told to fund, out of the subscription, the poll and every sync.
  *
  * Two things keep them apart:
  *
@@ -17,7 +17,7 @@
  *   than left to interleave inside the manager.
  * - **The issuance mark.** A swap record is keyed by its funding txid, so an
  *   offer that has been created but not yet funded has no record at all — it is
- *   invisible to a liveness check over records, for as long as the maker takes
+ *   invisible to a liveness check over records, for as long as the user takes
  *   to send. {@link promoteOfferContract} therefore records the issuance
  *   itself, and a script with an address still waiting for its deposit is never
  *   retired.
@@ -34,7 +34,7 @@ import type { AssetSwap, AssetSwapStatus } from "./store";
 /**
  * Statuses after which the covenant no longer holds funds, so its contract can
  * leave the watched set. NOT `recoverable`: a swept deposit is still the
- * maker's money at that script, and unwatching it is how it goes missing.
+ * user's money at that script, and unwatching it is how it goes missing.
  */
 export const RETIRABLE: readonly AssetSwapStatus[] = ["fulfilled", "cancelled"];
 
@@ -118,7 +118,7 @@ export async function promoteOfferContract(
  *
  * `retained`, not deleted: the row is what keeps the deposit's VTXOs
  * annotatable and its history readable, while `retained` is what drops it from
- * the subscription, the failsafe poll and every sync. A maker who has made
+ * the subscription, the failsafe poll and every sync. A user who has made
  * hundreds of offers otherwise re-subscribes to hundreds of dead scripts on
  * every wallet start.
  *

@@ -1,5 +1,5 @@
 /**
- * ClaimPacket sealing: P encrypted to covclaimd so the maker can go offline
+ * ClaimPacket sealing: P encrypted to covclaimd so the user can go offline
  * after funding — the solver carries the packet blindly and cannot decrypt it.
  *
  * Scheme (per the covclaimd wire protocol):

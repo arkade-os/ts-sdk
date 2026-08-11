@@ -281,8 +281,8 @@ export const OFFER_CONTRACT_KIND = "asset-swap-offer";
  *
  * `metadata.genericallySpendable: false` is what keeps the deposit out of
  * generic coin selection. The covenant's `cancel` leaf is an untimelocked
- * 2-of-2 of maker and server, so an offer VTXO is *always* cryptographically
- * spendable by the maker's own wallet; nothing in the program artifact says
+ * 2-of-2 of user and server, so an offer VTXO is *always* cryptographically
+ * spendable by the user's own wallet; nothing in the program artifact says
  * "escrow". Without the marker, `send`, `settle` or — with no user action at
  * all — background renewal would forfeit a live offer into an ordinary payment
  * and silently destroy it. The SDK's gate defaults closed, so the value is
@@ -292,7 +292,7 @@ export const OFFER_CONTRACT_KIND = "asset-swap-offer";
  * offers share one script, and `createContract` is first-writer-wins, so
  * re-offering a script that a settlement retired would leave the row `retained`
  * — funded, but out of the subscription, the poll and every sync. The invariant
- * this states is the one the corridor needs: an offer address handed to a maker
+ * this states is the one the corridor needs: an offer address handed to a user
  * is a watched address, and {@link promoteOfferContract} is what keeps a
  * settlement racing this call from taking it back.
  */
@@ -312,7 +312,7 @@ async function registerOfferContract(
         identity: wallet.identity,
         // without this the row's `address` would be derived against the SDK's
         // default network while its script is right — a row that disagrees with
-        // the address the maker is about to fund
+        // the address the user is about to fund
         network: getNetwork(network),
         contractManager,
     });
@@ -330,7 +330,7 @@ async function registerOfferContract(
     await promoteOfferContract(contractManager, hex.encode(expectedPkScript));
 }
 
-// ── Maker operations ─────────────────────────────────────────────────────────
+// ── User operations ─────────────────────────────────────────────────────────
 
 /**
  * Build a new offer for `wallet` (the user). Fund `address` with the side
@@ -358,7 +358,7 @@ export async function createOffer(
     wallet: IWallet,
     arkServerUrl: string,
     /** Covenant co-signer (emulator) x-only key — the SOLVER's deployment,
-     * not the maker's. This library does NOT fetch or verify it: clients
+     * not the user's. This library does NOT fetch or verify it: clients
      * have no network path to the emulator, only the solver and covclaimd
      * do. The caller must obtain this out-of-band, before calling this
      * function, from the solver's signed registry/corridor card (its
@@ -459,7 +459,7 @@ export async function createOffer(
  *
  * Marking the deposit as escrow (see {@link registerOfferContract}) does not
  * close this path: the gate's subject is *implicit* coin selection, and cancel
- * names its input outpoint explicitly. The maker keeps the only spend route
+ * names its input outpoint explicitly. The user keeps the only spend route
  * that was ever theirs to take.
  *
  * Identical offers derive the same address, so `fundingTxid` selects the exact
@@ -472,7 +472,7 @@ export async function createOffer(
  *
  * **When the matching swap record is present, this records its own outcome,
  * and that is what makes the live watcher cheap.** `cancel` is a 2-of-2 of
- * maker and server, so a cancel can only be the maker's own act: on a
+ * user and server, so a cancel can only be the user's own act: on a
  * successful submit this *is* the authoritative answer, and writing it here
  * means `watchOfferSwaps` has nothing left to decide for our own cancels — it
  * sees a terminal record and leaves it alone. The status moves to `cancelling`
