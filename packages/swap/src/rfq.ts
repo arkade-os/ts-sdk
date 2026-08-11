@@ -1485,6 +1485,10 @@ export async function requestLightningReceive(
     invoice: string;
     /** What the trader pays: the quote's `from_amount`. */
     payAmount: number;
+    /** What the solver's lockup must carry: the quote's `to_amount`. Persist
+     * it with the record — `pushClaim` refuses to publish `P` for less, and
+     * captured at claim time instead it would be whatever the solver funded. */
+    expectedAmount: number;
     /** Last moment the invoice can be paid, unix seconds: `min(invoice
      * expiry, valid_until)`. Absolute on purpose — a countdown returned from
      * here is stale before the caller reads it; derive one at display time. */
@@ -1563,6 +1567,7 @@ export async function requestLightningReceive(
         quote,
         invoice: derived.invoice,
         payAmount: quote.from_amount,
+        expectedAmount: quote.to_amount,
         invoiceExpiresAt: payDeadline,
         address: derived.address,
         swapPkScript: derived.swapPkScript,
@@ -1692,6 +1697,9 @@ export async function requestOnchainReceive(
     address: string;
     /** What the trader's L1 funding must carry: the quote's `from_amount`. */
     fundAmount: number;
+    /** What the solver's lockup must carry: the quote's `to_amount`. Persist
+     * it with the record — see {@link requestLightningReceive}. */
+    expectedAmount: number;
     swapPkScript: Uint8Array;
     script: InstanceType<typeof VHTLC.ScriptV2>;
     /** The EXPECTED L1 contract, derived locally — fund only this address. */
@@ -1767,6 +1775,7 @@ export async function requestOnchainReceive(
         quote,
         address: derived.address,
         fundAmount: quote.from_amount,
+        expectedAmount: quote.to_amount,
         swapPkScript: derived.swapPkScript,
         script: derived.script,
         htlc: derived.htlc,

@@ -22,6 +22,7 @@ import {
 
 import { receiveVtxoScript } from "../src/rfq";
 import {
+    LockupAmountMismatchError,
     awaitLockupFunding,
     claimReceiveLockup,
     pushClaim,
@@ -66,6 +67,8 @@ const VTXOS: LockupVtxo[] = [
     { txid: "11".repeat(32), vout: 0, value: 60_000, recoverable: false },
     { txid: "22".repeat(32), vout: 1, value: 40_000, recoverable: false },
 ];
+/** The quote's `to_amount`, captured at request time. */
+const EXPECTED_AMOUNT = 100_000;
 
 /** A scripted arkd, same contract as refund.test.ts's. */
 type FakeArk = ClaimArkProvider & {
@@ -113,6 +116,7 @@ describe("pushClaim", () => {
             preimage: PREIMAGE,
             vtxos: VTXOS,
             destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
         });
 
         expect(ark.submitted).toHaveLength(1);
@@ -159,6 +163,7 @@ describe("pushClaim", () => {
             preimage: PREIMAGE,
             vtxos: VTXOS,
             destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
         });
         expect(fieldPresentAtSignTime).toBe(false);
     });
@@ -172,6 +177,7 @@ describe("pushClaim", () => {
                 preimage: new Uint8Array(32).fill(8),
                 vtxos: VTXOS,
                 destinationPkScript: DESTINATION_PK_SCRIPT,
+                expectedAmount: EXPECTED_AMOUNT,
             }),
         ).rejects.toThrow(/does not match/);
         expect(ark.submitted).toHaveLength(0);
@@ -185,6 +191,78 @@ describe("pushClaim", () => {
                 preimage: PREIMAGE,
                 vtxos: [{ txid: "33".repeat(32), vout: 0, value: 5_000, recoverable: true }],
                 destinationPkScript: DESTINATION_PK_SCRIPT,
+                expectedAmount: EXPECTED_AMOUNT,
+            }),
+        ).rejects.toThrow(LockupNeedsRecoveryError);
+    });
+
+    // The dust-funding attack: the script is the one we derived ourselves, so
+    // only the value says anything is wrong. Claiming anyway publishes `P` and
+    // lets the solver settle the payer's HTLC in full.
+    it("refuses a lockup funded below the agreed amount, with nothing signed or submitted", async () => {
+        const ark = fakeArk();
+        await expect(
+            pushClaim(ark, {
+                script: swapScript(),
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+                vtxos: [{ txid: "44".repeat(32), vout: 0, value: 330, recoverable: false }],
+                destinationPkScript: DESTINATION_PK_SCRIPT,
+                expectedAmount: EXPECTED_AMOUNT,
+            }),
+        ).rejects.toThrow(LockupAmountMismatchError);
+        // `P` reaches the Ark server at submit, so this is the whole guarantee.
+        expect(ark.submitted).toHaveLength(0);
+    });
+
+    it("sums across outputs and tolerates overfunding", async () => {
+        // VTXOS is 60_000 + 40_000: neither output covers the amount alone.
+        const split = fakeArk();
+        await pushClaim(split, {
+            script: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: VTXOS,
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+        });
+        expect(split.submitted).toHaveLength(1);
+
+        const over = fakeArk();
+        const result = await pushClaim(over, {
+            script: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: VTXOS,
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT - 1,
+        });
+        expect(result.amount).toBe(100_000);
+    });
+
+    it("claims the remainder of a partially-claimed lockup regardless of the amount", async () => {
+        const ark = fakeArk();
+        const result = await pushClaim(ark, {
+            script: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: [{ txid: "55".repeat(32), vout: 0, value: 1_000, recoverable: false }],
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+            partiallyClaimed: true,
+        });
+        expect(result.amount).toBe(1_000);
+    });
+
+    it("refuses a swept output before the amount is even considered", async () => {
+        await expect(
+            pushClaim(fakeArk(), {
+                script: swapScript(),
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+                vtxos: [{ txid: "33".repeat(32), vout: 0, value: 330, recoverable: true }],
+                destinationPkScript: DESTINATION_PK_SCRIPT,
+                expectedAmount: EXPECTED_AMOUNT,
             }),
         ).rejects.toThrow(LockupNeedsRecoveryError);
     });
@@ -197,6 +275,7 @@ describe("pushClaim", () => {
                 preimage: PREIMAGE,
                 vtxos: [],
                 destinationPkScript: DESTINATION_PK_SCRIPT,
+                expectedAmount: EXPECTED_AMOUNT,
             }),
         ).rejects.toThrow(/nothing to claim/);
     });
@@ -224,6 +303,7 @@ describe("awaitLockupFunding + claimReceiveLockup", () => {
             preimage: PREIMAGE,
             swapPkScript: swapScript().pkScript,
             destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
             pollMs: 1,
         });
         expect(ark.submitted).toHaveLength(1);
