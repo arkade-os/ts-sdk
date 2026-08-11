@@ -1,12 +1,18 @@
 /**
  * Quoting: solver discovery and the pricing guardrails around a plan.
  *
- * This is the maker's quote-requesting side — the layer that asks what a swap
- * would cost before `offer` commits to it. Generic RFQ vocabulary calls the
- * quote-requesting role the *taker*; Arkade Intents names roles after the
- * offer, so here that role is the **maker**, and `taker` (in this package and
- * in the solver registry) always means the solver that fills. Nothing in this
- * file is a "taker layer" in the RFQ sense — see the README's Roles section.
+ * The user side of a swap — the layer that works out what one would cost
+ * before `offer` commits to it. This is request-for-quote like every other
+ * Arkade Intents corridor; what is specific here is that the quote resolves
+ * client-side, from the market card the solver publishes (its price feed and
+ * its fee) rather than over a relay roundtrip. The card commits a solver to a
+ * price; only a fill commits it to this swap, so nothing here is signed and no
+ * inventory is reserved.
+ *
+ * Relay-negotiated quotes are where every corridor converges, this one
+ * included. What stays specific to intra-Arkade is the settlement covenant,
+ * not the negotiation. See the README's Roles section for why this package
+ * says user and solver rather than maker and taker.
  */
 import {
     bestMarket,
@@ -25,7 +31,7 @@ import { BTC_ASSET_ID } from "./store";
 
 /** Shared quote options so every quote path agrees.
  * No safety margin on top of the market fee: pricing drift between quote
- * and fill is the solver's risk to manage, not the maker's to prepay. */
+ * and fill is the solver's risk to manage, not the user's to prepay. */
 export const QUOTE_OPTIONS = { safetyBps: 0 } as const;
 
 /** Feed fetcher with a short per-URL TTL cache. A quote UI refetches the
@@ -220,7 +226,7 @@ export type PlanError =
     | "above-max"
     | "below-dust";
 
-/** Validate a plan against the maker's balance and the server dust limit. */
+/** Validate a plan against the user's balance and the server dust limit. */
 export const validatePlan = (
     plan: OfferPlan,
     giveBalance: bigint,

@@ -2,7 +2,12 @@
     "name": "@arkade-os/swap",
     "version": "0.0.1",
     "type": "module",
-    "description": "Arkade Intents offer-maker side atomic swaps: discover markets, quote, create/track/cancel offers, restore from chain.",
+    "description": "Client-side Arkade Intents asset swaps: discover markets, quote, create/track/cancel offers, restore from chain.",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/arkade-os/ts-sdk.git",
+        "directory": "packages/swap"
+    },
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",
     "exports": {

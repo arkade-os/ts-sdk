@@ -1,11 +1,10 @@
 /**
  * Arkade Intents — an atomic-swap covenant on Arkade.
  *
- * Roles follow the offer, not the quote: the **maker** creates and funds the
- * offer (this package's consumer), the **taker** is the solver that fills it
- * through `fulfill`. Generic RFQ vocabulary inverts that — there the
- * quote-requesting side is the "taker" — so read every `taker` here, and in
- * the solver registry, as the filling solver.
+ * The user funds this contract; a solver fills it through `fulfill`. The
+ * `maker*` fields below (`makerWP`, `makerPkScript`, `makerPublicKey`) name
+ * the funding side's position in the script, not a product role — see the
+ * README's Roles section.
  *
  * The contracts are the two JSON files, one per WANT side:
  *   swap-want-asset.program.json  the fill must deliver an asset
@@ -14,7 +13,9 @@
  * Coins locked by a contract can only be spent by a transaction that delivers
  * `$wantAmount` (of `$wantAssetTxid`, or of BTC) to `$makerWP` — the `fulfill`
  * covenant, co-signed by the Arkade signer only after executing that script —
- * or cooperatively by the maker (`cancel`). The deposit side is whatever the
+ * or returned to the user by `cancel`, this route's refund path. The two
+ * outcomes are the same pair every Arkade Intents corridor offers after
+ * funding: a fill, or the money back. The deposit side is whatever the
  * funding tx put in the offer vtxo (sats, or any asset riding a dust carrier)
  * — the covenant never inspects it, which is what lets asset↔asset swaps ride
  * the want-asset program. This file is just plumbing: bind an offer's values
@@ -56,16 +57,16 @@ export const swapPrograms: Record<
 
 /** A full-fill offer. Exactly one field names an asset: `wantAsset` set = the
  * fill must deliver that asset (the deposit may be BTC or another asset,
- * identified by the funding vtxo itself); `offerAsset` set = the maker
+ * identified by the funding vtxo itself); `offerAsset` set = the user
  * deposits that asset and wants sats. */
 export interface Offer {
     /** The scriptPubKey of the swap contract. */
     swapPkScript: Uint8Array;
-    /** Amount the maker wants (asset units, or sats when wanting BTC). */
+    /** Amount the user wants (asset units, or sats when wanting BTC). */
     wantAmount: bigint;
-    /** The asset the maker wants. Omitted when wanting BTC. */
+    /** The asset the user wants. Omitted when wanting BTC. */
     wantAsset?: asset.AssetId;
-    /** The asset the maker deposits. Omitted when depositing BTC. */
+    /** The asset the user deposits. Omitted when depositing BTC. */
     offerAsset?: asset.AssetId;
     /** Maker's taproot scriptPubKey (34 bytes) — where the fill must pay. */
     makerPkScript: Uint8Array;
@@ -80,7 +81,7 @@ export interface Offer {
  * change here changes the derived swap addresses — see the golden test). */
 function swapProgramBinding(offer: Omit<Offer, "swapPkScript">, serverPubkey: Uint8Array) {
     // a wrong-width script would bind a truncated makerWP into the covenant and
-    // only surface as an unspendable address once the maker funds it — the same
+    // only surface as an unspendable address once the user funds it — the same
     // failure the xOnly guard below rejects for keys
     if (offer.makerPkScript.length !== FIELDS.makerPkScript.width) {
         throw new Error("makerPkScript is not a 34-byte taproot scriptPubKey");
@@ -117,7 +118,7 @@ export function offerVtxoScript(
 
 // ── Offer wire format ────────────────────────────────────────────────────────
 // The offer travels inside the funding tx as an Extension packet (type 0x03)
-// so a taker (the arkade solver) can discover it from the txid alone.
+// so a solver can discover it from the txid alone.
 // Payload: `[type: 1B][length: 2B BE][value]` records.
 
 /** Extension packet type tag for Arkade Intents offers. */
@@ -149,7 +150,7 @@ const NAMES = Object.fromEntries(Object.entries(FIELDS).map(([k, f]) => [f.tag, 
 
 /** Drop the prefix of a 33-byte compressed key; pass an x-only key through.
  * A malformed key would otherwise bind silently into the covenant and only
- * surface as an unspendable address once the maker funds it. */
+ * surface as an unspendable address once the user funds it. */
 const XONLY_LEN = 32;
 const xOnly = (key: Uint8Array, label: string): Uint8Array => {
     // deliberately not FIELDS.makerPublicKey.width: this also normalizes the ark
@@ -332,7 +333,7 @@ async function registerOfferContract(
 // ── Maker operations ─────────────────────────────────────────────────────────
 
 /**
- * Build a new offer for `wallet` (the maker). Fund `address` with the side
+ * Build a new offer for `wallet` (the user). Fund `address` with the side
  * you deposit, embedding the returned extension, and the solver does the rest:
  *
  *   // BTC -> asset
@@ -434,19 +435,21 @@ export async function createOffer(
 }
 
 /**
- * Cancel an offer: spend the swap VTXO back to the maker. Returns the ark txid.
+ * Cancel an offer: spend the swap VTXO back to the user. Returns the ark txid.
  *
- * This is how a maker exits an offer no taker filled. **Neither program carries
- * a timelock**, so an unfilled deposit does not expire and nothing reclaims it
- * on the maker's behalf — it sits at the swap address until cancelled. There is
- * no "expired" state to wait for; a maker who wants the deposit back must ask.
+ * This is the refund path — how a user takes back a deposit no solver filled.
+ * **Neither program carries a timelock**, so an unfilled deposit keeps its
+ * place at the swap address rather than expiring: no deadline to miss and no
+ * "expired" state to unwind, at the cost of the refund being something the
+ * user asks for rather than something a clock delivers.
  *
  * Both paths out of the covenant are deliberately asymmetric:
  *   - `fulfill` is signed by the **server alone**, but the covenant constrains
- *     it to pay output 0 to `makerWP` for at least `wantAmount` — the taker
+ *     it to pay output 0 to `makerWP` for at least `wantAmount` — a solver
  *     cannot take the deposit without delivering.
- *   - `cancel` is a **2-of-2 of the maker and the server**, so cancelling is
- *     cooperative: the server co-signs. It is not a unilateral withdrawal.
+ *   - `cancel` is a **2-of-2 of the user and the server**, so cancelling is
+ *     cooperative: the server co-signs. No solver signature is involved, so the
+ *     refund never depends on the counterparty being reachable.
  *
  * Cancel therefore races a fill rather than pre-empting it. An offer the solver
  * is filling in the same moment may be spent by `fulfill` first, in which case

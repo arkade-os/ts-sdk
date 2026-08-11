@@ -3,6 +3,11 @@
     "version": "0.3.63",
     "type": "module",
     "description": "A production-ready TypeScript package that brings Boltz submarine-swaps to Arkade.",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/arkade-os/ts-sdk.git",
+        "directory": "packages/boltz-swap"
+    },
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",
     "exports": {
