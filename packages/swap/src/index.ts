@@ -114,6 +114,7 @@ export {
 export { sealClaimPacket, type ClaimPacketInput, type SealedClaimPacket } from "./claimPacket";
 export {
     RFQ_PREIMAGE_TAG,
+    RefundNotLocallyPossibleError,
     adoptSwapDescriptor,
     buildPreimageMessage,
     derivePreimage,
@@ -124,9 +125,11 @@ export {
     rfqSecretsOfRecord,
     rfqSecretsToRecord,
     senderIdentityForRfqSecrets,
+    senderIdentityForSwapRecord,
     senderPubkeyForRfqSecrets,
     type DerivedSwapSecrets,
     type DeterministicSigner,
+    type RefundBlockedReason,
     type StoredSwapSecrets,
     type SwapSecrets,
 } from "./secrets";

@@ -328,9 +328,21 @@ await saveSwap({ ...record, ...rfqSecretsToRecord(swap.secrets) });
 const secrets = rfqSecretsOfRecord(record);
 if (secrets) {
     const preimage = await preimageForRfqSecrets(wallet, secrets);
-    const sender = await senderIdentityForRfqSecrets(wallet, secrets);
 }
+
+// For a refund, take the composition instead of the guard: it turns all three
+// ways a wallet can fail to produce the sender key — no secrets on the record,
+// an unreadable fallback arm, a descriptor from another seed — into one typed
+// `RefundNotLocallyPossibleError` carrying which. Wire `refundArkade` to this.
+const sender = await senderIdentityForSwapRecord(wallet, record);
 ```
+
+`RfqSwapManager` catches that error and reports `needs_counterparty` with a `blockedReason`,
+instead of retrying a push that cannot work until the refund window closes. The state is **not**
+terminal: the lockup stays funded and watched, a solver claim still ends the swap `settled`, and a
+`canRefundArkade` probe answering `ok` — after the right wallet is restored — returns it to
+`pending`. The manager reports the same state when nothing is wired to act (`enableAutoActions:
+false`, or no callbacks) and the window has passed.
 
 `derivable: false` is the fallback for wallets that cannot allocate (static / `auto` / custom
 signers). It carries the raw `senderPrivateKey` and, for onchain sends, `preimage`;
@@ -369,7 +381,10 @@ The package is pre-release; these notes replace a changelog for consumers tracki
   `senderPrivateKey` is gone from both return types; caller-owned onchain preimages live inside
   `secrets` and must be persisted with the record. `pushRefundWithoutReceiver` /
   `refundIfUnresolved` take `sender: Identity` instead of `senderPrivateKey: Uint8Array` — build
-  it with `senderIdentityForRfqSecrets`. `AssetSwap` gains `signingDescriptor?`,
+  it from the record with `senderIdentityForSwapRecord`, which is what keeps a wallet that cannot
+  sign reporting `RefundNotLocallyPossibleError` rather than a `TypeError` at the push site;
+  `senderIdentityForRfqSecrets` is for callers that already hold resolved secrets. `AssetSwap`
+  gains `signingDescriptor?`,
   `preimageHex?`, and complete stored-arm `fallbackSecrets?`. Landed while the package is
   unpublished and consumer-free, which is the whole window for doing it: after a consumer ships,
   the same change becomes a secret migration across every deployed wallet.

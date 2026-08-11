@@ -214,6 +214,37 @@ export async function adoptSwapDescriptor(
     await wallet.advanceSigningDescriptorWatermark(signingDescriptor);
 }
 
+/** Why a wallet cannot produce a swap's sender key. Different instructions to
+ * a user: restore the other wallet, or accept that this record never carried
+ * the secrets at all. */
+export type RefundBlockedReason =
+    /** The record names no arm: neither `signingDescriptor` nor `fallbackSecrets`. */
+    | "no-secrets"
+    /** It names an arm this version cannot read. */
+    | "unreadable-secrets"
+    /** The descriptor belongs to another seed, or this wallet is static. */
+    | "foreign-descriptor";
+
+/**
+ * The wallet cannot produce this swap's sender key, so no local refund is
+ * possible: not a failure to retry, a capability this wallet does not have.
+ *
+ * Thrown where the cause is discovered rather than translated at the edge, so
+ * a `refundArkade` wired through {@link senderIdentityForSwapRecord} reports it
+ * to `RfqSwapManager` unwrapped — which is what stops the manager grinding
+ * against a push that can never work for the whole refund window.
+ */
+export class RefundNotLocallyPossibleError extends Error {
+    override readonly name = "RefundNotLocallyPossibleError";
+    constructor(
+        readonly reason: RefundBlockedReason,
+        message: string,
+        options?: { cause?: unknown },
+    ) {
+        super(message, options);
+    }
+}
+
 /**
  * The VHTLC `sender` identity — the signer for every interactive refund.
  *
@@ -233,11 +264,61 @@ export async function senderIdentityForRfqSecrets(
         ? await wallet.signerForDescriptor(secrets.signingDescriptor)
         : undefined;
     if (!signer || !isDeterministicSigner(signer)) {
-        throw new Error(
+        // Typed at the throw site, not in a translator: this is the function
+        // that discovers the cause. A faithful `Error` subclass, so callers
+        // matching on the message keep working.
+        throw new RefundNotLocallyPossibleError(
+            "foreign-descriptor",
             `this wallet cannot derive ${secrets.signingDescriptor}; the swap was created on another wallet`,
         );
     }
     return signer;
+}
+
+/**
+ * The VHTLC `sender` identity for a stored swap record, or a typed refusal.
+ *
+ * The record→identity composition {@link rfqSecretsOfRecord} deliberately does
+ * not do: it stays total so history iteration can call it, so *this* is where
+ * "no secrets on the record" becomes a refusal rather than an `undefined` the
+ * caller has to remember to check.
+ *
+ * **Wire `refundArkade` here, not to {@link senderIdentityForRfqSecrets}.**
+ * Only two of the three causes are throws; a caller one level down would skip
+ * the third silently and turn it into a `TypeError` at the push site, which
+ * `RfqSwapManager` then treats as retryable and grinds against for the whole
+ * refund window.
+ *
+ * Takes the record shape structurally, matching {@link rfqSecretsOfRecord}, so
+ * either record type can be passed.
+ */
+export async function senderIdentityForSwapRecord(
+    wallet: IWallet,
+    record: {
+        signingDescriptor?: string;
+        preimageHex?: string;
+        fallbackSecrets?: AssetSwapFallbackSecrets;
+    },
+): Promise<Identity> {
+    let secrets: SwapSecrets | undefined;
+    try {
+        secrets = rfqSecretsOfRecord(record);
+    } catch (error) {
+        throw new RefundNotLocallyPossibleError(
+            "unreadable-secrets",
+            error instanceof Error ? error.message : String(error),
+            // the record's own diagnosis, kept for a caller that wants more
+            // than the message
+            { cause: error },
+        );
+    }
+    if (!secrets) {
+        throw new RefundNotLocallyPossibleError(
+            "no-secrets",
+            "this swap record carries no signing descriptor and no fallback secrets",
+        );
+    }
+    return senderIdentityForRfqSecrets(wallet, secrets);
 }
 
 /** The `sender` x-only pubkey, the only half the request flow needs. */
