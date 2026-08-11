@@ -28,8 +28,8 @@
  * - **Report funding.** `vtxo_received` needs no status: a funded offer is
  *   `pending`, which is what it already was.
  * - **Keep watching a script it has finished with.** A persisted terminal
- *   status retires the contract to `retained`, once no live record is left at
- *   that script ({@link retireSettledOfferContracts}).
+ *   status retires the contract to `retained`, once nothing at that script
+ *   still needs coverage ({@link retireOfferContract}).
  */
 import { base64, hex } from "@scure/base";
 import {
@@ -38,9 +38,9 @@ import {
     Transaction,
     type ContractEvent,
     type ContractVtxo,
-    type IContractManager,
     type IWallet,
 } from "@arkade-os/sdk";
+import { RETIRABLE, retireOfferContract } from "./coverage";
 import { decodeOffer, OFFER_CONTRACT_KIND } from "./offer";
 import type { AssetSwapRepository } from "./repository";
 import { classifyDepositSpend, spendTxidsOf, type RestoreIndexer, type SpendKind } from "./restore";
@@ -54,68 +54,6 @@ import {
 /** Statuses a spend cannot move: the swap is already resolved.
  * @see RETIRABLE — a different question, and not the same set. */
 const TERMINAL: readonly AssetSwapStatus[] = ["fulfilled", "cancelled", "recoverable"];
-
-/**
- * Statuses after which the covenant no longer holds funds, so its contract can
- * leave the watched set. NOT `recoverable`: a swept deposit is still the
- * maker's money at that script, and unwatching it is how it goes missing.
- */
-const RETIRABLE: readonly AssetSwapStatus[] = ["fulfilled", "cancelled"];
-
-/** The one contract-manager capability retiring needs. */
-export type OfferContractRetirer = Pick<IContractManager, "setContractWatchState">;
-
-/**
- * Drop `script` from the watched set unless another record there still holds
- * funds. Identical offers share one script, so the check is per script, not per
- * record.
- *
- * `retained`, not deleted: the row is what keeps the deposit's VTXOs
- * annotatable and its history readable, while `retained` is what drops it from
- * the subscription, the failsafe poll and every sync. A maker who has made
- * hundreds of offers otherwise re-subscribes to hundreds of dead scripts on
- * every wallet start.
- *
- * A `recoverable` record blocks its script for good — nothing moves a record
- * off that status — so a script that once held a swept deposit stays watched
- * for the life of the wallet. Accepted: the cost is polling, and the
- * alternative (tracking when recovery completed) buys less than it costs.
- *
- * Best-effort, exactly as core's own demotion is: a failed retire costs
- * polling, never correctness.
- */
-async function retireOfferContract(
-    manager: OfferContractRetirer,
-    swaps: AssetSwap[],
-    script: string,
-): Promise<void> {
-    // NOT `!TERMINAL.includes(...)`: `recoverable` is terminal for a spend and
-    // not retirable, so reading liveness off TERMINAL unwatches swept funds.
-    if (swaps.some((s) => s.swapPkScript === script && !RETIRABLE.includes(s.status))) return;
-    try {
-        await manager.setContractWatchState(script, "retained");
-    } catch (err) {
-        console.warn(`[swap] could not retire offer contract ${script}`, err);
-    }
-}
-
-/**
- * Retire every offer script in `swaps` that no live record still holds — the
- * batch form of what the watcher does per spend event, for a consumer that
- * applies {@link restoreAssetSwaps} results without running the watcher.
- *
- * Takes the caller's full record list: liveness is a property of all records at
- * a script, so a partial list would retire a script another record still holds.
- */
-export async function retireSettledOfferContracts(
-    manager: OfferContractRetirer,
-    swaps: AssetSwap[],
-): Promise<void> {
-    const settled = new Set(
-        swaps.filter((s) => RETIRABLE.includes(s.status)).map((s) => s.swapPkScript),
-    );
-    for (const script of settled) await retireOfferContract(manager, swaps, script);
-}
 
 /**
  * The record change a classified spend implies, or `undefined` when it implies

@@ -45,12 +45,11 @@ export {
 } from "./restore";
 export {
     watchOfferSwaps,
-    retireSettledOfferContracts,
     spendUpdate,
-    type OfferContractRetirer,
     type OfferSwapWatcher,
     type WatchOfferSwapsParams,
 } from "./watch";
+export { retireSettledOfferContracts, type OfferContractRetirer } from "./coverage";
 export {
     ARKADE_ASSET,
     ARKADE_BTC,

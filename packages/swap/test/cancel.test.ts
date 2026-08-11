@@ -3,7 +3,7 @@ import { hex } from "@scure/base";
 import { ArkAddress, asset, type IWallet } from "@arkade-os/sdk";
 import { cancelOffer, encodeOffer, offerVtxoScript, type Offer } from "../src/offer";
 import { InMemoryAssetSwapRepository } from "../src/repository";
-import { addAssetSwap } from "../src/store";
+import { addAssetSwap, getAssetSwaps, type AssetSwap } from "../src/store";
 
 // cancelOffer's guards fire before any signing: mock only the network seam
 // (Arkade.connect for the current server key, ArkadeContract for the vtxo
@@ -69,12 +69,29 @@ const script = offerVtxoScript(binding, fundedServerKey);
 const offerHex = hex.encode(encodeOffer({ ...binding, swapPkScript: script.pkScript }));
 const fundedAddress = new ArkAddress(fundedServerKey, script.tweakedPublicKey, "tark").encode();
 
-const contractManager = { marker: "the wallet's manager" };
+const setContractWatchState = vi.fn(async (_script: string, _watch: string) => {});
+const contractManager = { marker: "the wallet's manager", setContractWatchState };
 const wallet = {
     identity: {},
     getAddress: async () => "unused-before-a-vtxo-is-selected",
     getContractManager: async () => contractManager,
 } as unknown as IWallet;
+
+/** The record a funded, cancellable deposit leaves in the caller's store. */
+const pendingSwap = (over: Partial<AssetSwap> = {}): AssetSwap => ({
+    id: "a".repeat(64),
+    fromAsset: "btc",
+    toAsset: "aa".repeat(32) + "0000",
+    fromAmount: "10000",
+    toAmount: "50000",
+    swapAddress: fundedAddress,
+    swapPkScript: hex.encode(script.pkScript),
+    offerHex,
+    fundingTxid: "a".repeat(64),
+    status: "pending",
+    createdAt: 1_700_000_000_000,
+    ...over,
+});
 
 describe("cancelOffer guards", () => {
     it("diagnoses a rotated server key instead of reporting a missing VTXO", async () => {
@@ -122,19 +139,7 @@ describe("cancelOffer guards", () => {
         state.sends = 0;
 
         const repository = new InMemoryAssetSwapRepository();
-        await addAssetSwap(repository, {
-            id: "a".repeat(64),
-            fromAsset: "btc",
-            toAsset: "aa".repeat(32) + "0000",
-            fromAmount: "10000",
-            toAmount: "50000",
-            swapAddress: fundedAddress,
-            swapPkScript: hex.encode(script.pkScript),
-            offerHex,
-            fundingTxid: "a".repeat(64),
-            status: "pending",
-            createdAt: 1_700_000_000_000,
-        });
+        await addAssetSwap(repository, pendingSwap());
         vi.spyOn(repository, "saveSwap").mockRejectedValue(new Error("quota exceeded"));
         // this is the one test that gets past vtxo selection, so the maker
         // address has to decode
@@ -162,5 +167,71 @@ describe("cancelOffer guards", () => {
             }),
         ).rejects.toThrow("no spendable VTXO");
         expect(state.connectOptions?.contractManager).toBe(contractManager);
+    });
+});
+
+// A cancel through the same repository never reaches the watcher's retire:
+// `cancelOffer` writes the terminal status itself, and a watcher that later
+// sees the spend finds a terminal record and returns before writing anything
+// (`spendUpdate`). This site is the only one that can drop the script.
+describe("cancelOffer coverage", () => {
+    const funded = { ...wallet, getAddress: async () => fundedAddress } as unknown as IWallet;
+    const cancellable = () => {
+        state.serverKey = fundedServerKey;
+        state.utxos = [{ txid: "a".repeat(64), vout: 0, value: 10_000 }];
+        setContractWatchState.mockClear();
+    };
+    const cancel = (repository: InMemoryAssetSwapRepository) =>
+        cancelOffer(funded, "http://ark", offerHex, { repository, fundingTxid: "a".repeat(64) });
+
+    it("retires the offer contract once the cancel is recorded", async () => {
+        cancellable();
+        const repository = new InMemoryAssetSwapRepository();
+        await addAssetSwap(repository, pendingSwap());
+
+        await cancel(repository);
+
+        const [cancelled] = await getAssetSwaps(repository);
+        expect(cancelled.status).toBe("cancelled");
+        expect(setContractWatchState.mock.calls).toEqual([
+            [hex.encode(script.pkScript), "retained"],
+        ]);
+    });
+
+    it("keeps watching while another deposit at the same script is live", async () => {
+        // identical offers share one script: cancelling one deposit says
+        // nothing about the other's
+        cancellable();
+        const repository = new InMemoryAssetSwapRepository();
+        await addAssetSwap(repository, pendingSwap());
+        await addAssetSwap(
+            repository,
+            pendingSwap({ id: "b".repeat(64), fundingTxid: "b".repeat(64) }),
+        );
+
+        await cancel(repository);
+
+        expect(setContractWatchState).not.toHaveBeenCalled();
+    });
+
+    it("does not retire a settlement the store refused", async () => {
+        // the record still reads `cancelling` to the next restore scan, which
+        // will resolve it — unwatching now would drop the script on a status
+        // nothing has persisted
+        cancellable();
+        const repository = new InMemoryAssetSwapRepository();
+        await addAssetSwap(repository, pendingSwap());
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        // the in-flight marker still has to land: it gates the broadcast
+        const store = repository.saveSwap.bind(repository);
+        const saveSwap = vi.spyOn(repository, "saveSwap");
+        saveSwap.mockRejectedValue(new Error("quota exceeded"));
+        saveSwap.mockImplementationOnce(store);
+
+        await expect(cancel(repository)).resolves.toBe("cc".repeat(32));
+
+        expect(setContractWatchState).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalled();
+        vi.restoreAllMocks();
     });
 });

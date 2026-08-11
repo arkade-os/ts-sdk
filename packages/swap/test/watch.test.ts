@@ -5,7 +5,8 @@ import { asset, ArkAddress, Transaction } from "@arkade-os/sdk";
 import { encodeOffer, offerVtxoScript, OFFER_CONTRACT_KIND, type Offer } from "../src/offer";
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import { addAssetSwap, getAssetSwaps, type AssetSwap } from "../src/store";
-import { retireSettledOfferContracts, spendUpdate, watchOfferSwaps } from "../src/watch";
+import { retireSettledOfferContracts } from "../src/coverage";
+import { spendUpdate, watchOfferSwaps } from "../src/watch";
 
 const ASSET_ID = "f1".repeat(34);
 
