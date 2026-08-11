@@ -3409,6 +3409,32 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         }
 
         if (params.selectedVtxos && params.selectedVtxos.length > 0) {
+            // REFUSE asset-bearing inputs on this path rather than spend them.
+            //
+            // This branch builds its own outputs and has never emitted an asset
+            // packet, so an asset carried in on a selected VTXO was already
+            // being dropped silently — the coin is spent, the assets are not
+            // re-declared, and nothing says so. That predates `extensions`, but
+            // combining the two makes it worse in a specific way: an extension
+            // output now EXISTS, so the transaction looks well-formed while
+            // still omitting the asset packet that had to be in it.
+            //
+            // Refusing converts a silent loss into a loud one. Not attempting
+            // to build the packet here is deliberate: `_sendImpl` derives asset
+            // routing from recipients and a change receiver that this path does
+            // not have, and inventing that mapping for a BTC-only helper is how
+            // asset accounting gets quietly wrong. Callers moving assets want
+            // `send()`, which does it properly.
+            const assetBearing = params.selectedVtxos.filter(
+                (v) => v.assets && v.assets.length > 0,
+            );
+            if (assetBearing.length > 0) {
+                throw new Error(
+                    `sendBitcoin({ selectedVtxos }) cannot spend asset-bearing VTXOs: ` +
+                        `${assetBearing.length} of ${params.selectedVtxos.length} carry assets. ` +
+                        `Use send() for asset-aware transfers.`,
+                );
+            }
             void this.logUngatedInputs("sendBitcoin({ selectedVtxos })", params.selectedVtxos);
             return this._withTxLock(async () => {
                 // Snapshot the active receive tapscript synchronously
