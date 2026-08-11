@@ -1421,7 +1421,14 @@ describe("WalletMessageHandler repo-backed reads", () => {
             dustAmount: 546n,
             pendingRecoveryOutpoints: vi.fn().mockResolvedValue(new Set<string>()),
             getContractManager: vi.fn().mockResolvedValue({
-                getContracts: vi.fn().mockResolvedValue(contracts),
+                // Honors the `type` filter the way every real ContractRepository
+                // does. A mock that ignored it would hide exactly the bug this
+                // scoping exists to prevent.
+                getContracts: vi.fn().mockImplementation(async (filter?: any) => {
+                    if (!filter?.type) return contracts;
+                    const wanted = Array.isArray(filter.type) ? filter.type : [filter.type];
+                    return contracts.filter((c) => wanted.includes(c.type));
+                }),
                 onContractEvent: vi.fn().mockReturnValue(vi.fn()),
             }),
             onchainProvider: {
@@ -1612,10 +1619,10 @@ describe("WalletMessageHandler repo-backed reads", () => {
         expect(vtxos).toHaveLength(2);
     });
 
-    it("GET_BALANCE accounts for VTXOs from all contracts", async () => {
+    it("GET_BALANCE accounts for VTXOs from all wallet-owned contracts", async () => {
         const contracts = [
-            { address: "contract-1", script: "s1" },
-            { address: "contract-2", script: "s2" },
+            { address: "contract-1", script: "s1", type: "default" },
+            { address: "contract-2", script: "s2", type: "delegate" },
         ];
         setupHandler(contracts);
 
@@ -1671,6 +1678,113 @@ describe("WalletMessageHandler repo-backed reads", () => {
         // Should not appear twice
         const vtxos = (response as any).payload.vtxos;
         expect(vtxos).toHaveLength(1);
+    });
+
+    // The service worker is a second implementation of IWallet, and callers
+    // hold it interchangeably with the core Wallet. Balance scope and the
+    // getVtxos `type` filter must therefore behave identically in both, or the
+    // same call returns different answers depending on which one you got.
+    describe("contract-type scope parity with ReadonlyWallet", () => {
+        const scopedContracts = [
+            { address: "wallet-addr", script: "s-default", type: "default" },
+            { address: "escrow-addr", script: "s-vhtlc", type: "vhtlc" },
+        ];
+
+        const seedScopedVtxos = async () => {
+            await walletRepo.saveVtxos("wallet-addr", [
+                createMockExtendedVtxo({
+                    txid: "aa".repeat(32),
+                    value: 10000,
+                    virtualStatus: { state: "settled" },
+                    script: "s-default",
+                }),
+            ]);
+            await walletRepo.saveVtxos("escrow-addr", [
+                createMockExtendedVtxo({
+                    txid: "bb".repeat(32),
+                    value: 50000,
+                    virtualStatus: { state: "settled" },
+                    script: "s-vhtlc",
+                }),
+            ]);
+        };
+
+        it("GET_BALANCE excludes vhtlc escrow from every bucket", async () => {
+            setupHandler(scopedContracts);
+            await seedScopedVtxos();
+
+            const response = await updater.handleMessage({
+                ...baseMessage(),
+                type: "GET_BALANCE",
+            } as any);
+
+            // Only the 10000 default-contract VTXO. The 50000 escrow must not
+            // leak into settled/available/total.
+            expect(response).toMatchObject({
+                type: "BALANCE",
+                payload: { settled: 10000, available: 10000, total: 10000 },
+            });
+        });
+
+        it("GET_VTXOS still reports escrow when unscoped", async () => {
+            setupHandler(scopedContracts);
+            await seedScopedVtxos();
+
+            const response = await updater.handleMessage({
+                ...baseMessage(),
+                type: "GET_VTXOS",
+                payload: { filter: { withRecoverable: true } },
+            } as any);
+
+            const scripts = (response as any).payload.vtxos.map((v: any) => v.script);
+            expect(scripts).toContain("s-vhtlc");
+            expect(scripts).toContain("s-default");
+        });
+
+        it("GET_VTXOS honors filter.type rather than silently ignoring it", async () => {
+            setupHandler(scopedContracts);
+            await seedScopedVtxos();
+
+            const ask = async (type: string | string[]) => {
+                const response = await updater.handleMessage({
+                    ...baseMessage(),
+                    type: "GET_VTXOS",
+                    payload: { filter: { withRecoverable: true, type } },
+                } as any);
+                return (response as any).payload.vtxos.map((v: any) => v.script).sort();
+            };
+
+            expect(await ask("vhtlc")).toEqual(["s-vhtlc"]);
+            expect(await ask(["default", "delegate"])).toEqual(["s-default"]);
+            // Membership across the listed types, not an intersection.
+            expect(await ask(["default", "vhtlc"])).toEqual(["s-default", "s-vhtlc"]);
+        });
+
+        it("does not leak the wallet's primary-address bucket into a non-default scope", async () => {
+            // The primary-address bucket is read separately from the contract
+            // buckets, so it needs its own gate — otherwise a vhtlc-scoped read
+            // picks up the wallet's own outputs.
+            setupHandler(scopedContracts);
+            await seedScopedVtxos();
+            await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [
+                createMockExtendedVtxo({
+                    txid: "cc".repeat(32),
+                    value: 7000,
+                    virtualStatus: { state: "settled" },
+                    script: TEST_DEFAULT_SCRIPT,
+                }),
+            ]);
+
+            const response = await updater.handleMessage({
+                ...baseMessage(),
+                type: "GET_VTXOS",
+                payload: { filter: { withRecoverable: true, type: "vhtlc" } },
+            } as any);
+
+            const scripts = (response as any).payload.vtxos.map((v: any) => v.script);
+            expect(scripts).toEqual(["s-vhtlc"]);
+            expect(scripts).not.toContain(TEST_DEFAULT_SCRIPT);
+        });
     });
 
     it("finalizePendingTxs receives repo-backed VTXOs filtered by state", async () => {

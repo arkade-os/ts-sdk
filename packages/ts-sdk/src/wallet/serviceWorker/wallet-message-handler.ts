@@ -1351,7 +1351,11 @@ export class WalletMessageHandler
     private async handleGetBalance() {
         const [boardingUtxos, allVtxos, pendingOutpoints] = await Promise.all([
             this.getAllBoardingUtxos(),
-            this.getVtxosFromRepo(),
+            // Scoped to the wallet's own receiving contracts, mirroring
+            // ReadonlyWallet.getBalance. Contract types the wallet does not own
+            // outright ("vhtlc" escrow) are tracked and readable through
+            // GET_VTXOS, but are not spendable balance.
+            this.getVtxosFromRepo(["default", "delegate"]),
             this.readonlyWallet
                 ? this.readonlyWallet.pendingRecoveryOutpoints()
                 : Promise.resolve(new Set<string>()),
@@ -1368,8 +1372,9 @@ export class WalletMessageHandler
             }
         }
 
-        // offchain — bucketed from a single repo read, with the same capability reads
-        // Wallet.getBalance uses so the two agree. No chain tip: this is an offline-first read.
+        // offchain — bucketed from a single repo read, with the same contract-type
+        // scope and the same capability reads Wallet.getBalance uses so the two
+        // agree. No chain tip: this is an offline-first read.
         const now = { timestamp: new Date() };
 
         let settled = 0;
@@ -1437,10 +1442,10 @@ export class WalletMessageHandler
         return this.readonlyWallet.getBoardingUtxos();
     }
     /**
-     * Get spendable vtxos from the repository
+     * Get spendable vtxos from the repository, optionally scoped to contract type(s).
      */
-    private async getSpendableVtxos() {
-        const vtxos = await this.getVtxosFromRepo();
+    private async getSpendableVtxos(type?: string | string[]) {
+        const vtxos = await this.getVtxosFromRepo(type);
         return vtxos.filter((v) => !hasTerminalSpend(v));
     }
 
@@ -1721,7 +1726,7 @@ export class WalletMessageHandler
         if (!this.readonlyWallet) {
             throw new WalletNotInitializedError();
         }
-        const vtxos = await this.getSpendableVtxos();
+        const vtxos = await this.getSpendableVtxos(message.payload.filter?.type);
         const dustAmount = this.readonlyWallet.dustAmount;
         const includeRecoverable = message.payload.filter?.withRecoverable ?? false;
         const filteredVtxos = includeRecoverable
@@ -1767,8 +1772,13 @@ export class WalletMessageHandler
     /**
      * Read all virtual outputs from the repository, aggregated across all contract
      * addresses and the wallet's primary address, with deduplication.
+     *
+     * @param type - Optional contract type(s) to scope to, matching
+     * {@link GetVtxosFilter.type} on the core wallet. Omit for every type.
      */
-    private async getVtxosFromRepo(): Promise<NormalizedExtendedVirtualCoin[]> {
+    private async getVtxosFromRepo(
+        type?: string | string[],
+    ): Promise<NormalizedExtendedVirtualCoin[]> {
         if (!this.walletRepository || !this.readonlyWallet) return [];
         const seen = new Set<string>();
         const allVtxos: NormalizedExtendedVirtualCoin[] = [];
@@ -1788,9 +1798,20 @@ export class WalletMessageHandler
         // each bucket by its owning contract script before deduplication so a
         // wrong-script row never wins the txid:vout race.
         const manager = await this.readonlyWallet.getContractManager();
-        const contracts = await manager.getContracts();
+        const contracts = await manager.getContracts(type ? { type } : undefined);
         for (const contract of contracts) {
             addVtxos(await getVtxosForContract(this.walletRepository, contract));
+        }
+
+        // The primary-address bucket is the wallet's own "default" contract, so
+        // a scope that excludes "default" must exclude this bucket too —
+        // otherwise `getVtxos({ type: "vhtlc" })` would leak the wallet's own
+        // outputs into a vhtlc-scoped read.
+        const scopeIncludesDefault =
+            type === undefined ||
+            (Array.isArray(type) ? type.includes("default") : type === "default");
+        if (!scopeIncludesDefault) {
+            return allVtxos;
         }
 
         // Also check the wallet's primary address. Decode it to its script
