@@ -3471,10 +3471,26 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
                     });
                 }
 
+                // `changeVout` is read BEFORE the extension output is appended,
+                // deliberately: it indexes the change, and appending after would
+                // make the extension the last output and silently retarget it.
+                const changeVout = selected.changeAmount > 0n ? outputs.length - 1 : 0;
+
+                if (params.extensions && params.extensions.length > 0) {
+                    outputs.push(
+                        Extension.create(
+                            params.extensions.map((ext) => ({
+                                type: () => ext.type,
+                                serialize: () => ext.payload,
+                            })),
+                        ).txOut(),
+                    );
+                }
+
                 return this._submitOffchainSpend(selected.inputs, outputs, {
                     sentAmount: params.amount,
                     changeAmount: selected.changeAmount,
-                    changeVout: selected.changeAmount > 0n ? outputs.length - 1 : 0,
+                    changeVout,
                     offchainTapscript,
                     serverPubKey,
                     serverUnrollScript,
@@ -3485,6 +3501,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         return this.send({
             address: params.address,
             amount: params.amount,
+            extensions: params.extensions,
         });
     }
 

@@ -397,6 +397,29 @@ export interface SendBitcoinParams {
      * @see IReadonlyWallet.getSpendableVtxos
      */
     selectedVtxos?: ExtendedVirtualCoin[];
+
+    /**
+     * Extension packets to commit in the transaction's OP_RETURN, the same
+     * shape `Recipient.extensions` takes on {@link IWallet.send}.
+     *
+     * Here because the two send paths had drifted apart: `send` could carry an
+     * extension but not choose its inputs, and `sendBitcoin({ selectedVtxos })`
+     * could choose its inputs but not carry an extension — so a caller that
+     * needed both had to give one up. Giving up input selection is not a real
+     * option for anything spending contract-gated coins, which is what made
+     * this the missing half rather than a preference.
+     *
+     * The concrete case: a swap solver funding an HTLC lockup has to pick coins
+     * whose batch outlives the swap AND commit the claim packet that lets
+     * covclaimd claim on the receiver's behalf. Without this it had to route
+     * the packet out of band and hope, which is strictly worse — an out-of-band
+     * registration lives in someone's memory, while an on-chain one is
+     * recoverable by anyone reading the transaction.
+     */
+    extensions?: Array<{
+        type: number;
+        payload: Uint8Array;
+    }>;
 }
 
 /**
