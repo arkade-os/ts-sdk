@@ -8,7 +8,7 @@ TypeScript packages for the Arkade Bitcoin wallet ecosystem — on-chain/off-cha
 |---------|-------------|
 | [`@arkade-os/sdk`](packages/ts-sdk/) | Bitcoin wallet SDK with Taproot and Ark protocol support |
 | [`@arkade-os/boltz-swap`](packages/boltz-swap/) | Lightning and chain swaps using Boltz |
-| [`@arkade-os/swap`](packages/swap/) | Offer-maker side Arkade Intents atomic swaps: market discovery, offers, restore |
+| [`@arkade-os/swap`](packages/swap/) | Client-side Arkade Intents asset swaps: market discovery, offers, restore |
 | [Regtest stack](regtest/) | Shared regtest environment ([arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest) submodule) |
 
 ## Prerequisites
