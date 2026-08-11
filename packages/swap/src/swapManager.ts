@@ -648,10 +648,11 @@ export class RfqSwapManager {
 
     /**
      * Resolve once this swap's PAYOUT is decided — which for onchain-send is
-     * the L1 claim, not the end of the record's life: at `claimed` the trader
-     * has the coins it swapped for, and what remains is the manager watching
-     * the Arkade lockup close. Lightning-send has no such split and resolves at
-     * `settled`/`refunded`.
+     * the L1 claim, not the end of the record's life: once `claimTxid` is set
+     * the trader has the coins it swapped for, and what remains is the manager
+     * watching the Arkade lockup close. That holds however the record is
+     * labelled afterwards, `needs_counterparty` included. Lightning-send has no
+     * such split and resolves at `settled`/`refunded`.
      *
      * Rejects only on `failed`. `refunded` resolves: a refund is an outcome the
      * caller asked this manager to drive, not an exception.
@@ -1224,17 +1225,18 @@ export interface RfqSwapOutcome {
     txid?: string;
 }
 
+// The txid, not the label — same reason `driveOnchain` guards on it. The label
+// moves on: a claimed onchain send whose Arkade half is refused past the window
+// reads `needs_counterparty`, and keying on `claimed` would hang a waiter on a
+// payout that already happened and that the record can prove.
 const isPayoutDecided = (swap: RfqSwap): boolean =>
     swap.state === "settled" ||
     swap.state === "refunded" ||
-    (swap.kind === "onchain_send" && swap.state === "claimed");
+    (swap.kind === "onchain_send" && swap.claimTxid !== undefined);
 
 const outcomeOf = (swap: RfqSwap): RfqSwapOutcome => ({
     state: swap.state,
-    txid:
-        swap.kind === "onchain_send" && swap.state === "claimed"
-            ? swap.claimTxid
-            : swap.refundArkTxid,
+    txid: swap.kind === "onchain_send" && swap.claimTxid ? swap.claimTxid : swap.refundArkTxid,
 });
 
 const errorMessage = (error: unknown): string =>

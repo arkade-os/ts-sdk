@@ -1299,6 +1299,20 @@ describe("RfqSwapManager — bookkeeping", () => {
         expect(await m.hasSwap(RFQ_ID)).toBe(true); // still watching the lockup
     });
 
+    it("resolves for a claimed onchain send the refund refusal has since relabelled", async () => {
+        // The shape a restart loads when the Arkade half was refused after the
+        // window: the L1 payout is done and the txid proves it, so the caller
+        // must not hang waiting for a label that will never come back.
+        const swap = onchainSwap({ state: "needs_counterparty", claimTxid: "dd".repeat(32) });
+        const m = manager({ now: REFUND_LOCKTIME + 1, spies: spies() });
+        await m.addSwap(swap);
+
+        await expect(m.waitForSwapCompletion(RFQ_ID)).resolves.toEqual({
+            state: "needs_counterparty",
+            txid: "dd".repeat(32),
+        });
+    });
+
     it("settles a waiter only once the record has been persisted", async () => {
         // A caller that awaits completion and then reads its own storage must
         // not find the record still saying `pending`.
