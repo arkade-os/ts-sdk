@@ -947,6 +947,11 @@ export class RfqSwapManager {
         });
 
         if (action === "claim" && phase.phase === "claimable") {
+            // The txid, not the label, is what says the claim was made. Until
+            // `needs_counterparty` existed the `claimed` state carried both, and
+            // step 2 skipped this branch on it; a blocked swap keeps the txid
+            // while the label defers, and re-broadcasting would publish P twice.
+            if (swap.claimTxid) return "continue";
             this.setOnchainState(swap, "claimable");
             if (!this.config.enableAutoActions || !this.callbacks) return "handled";
             try {
@@ -1113,11 +1118,13 @@ export class RfqSwapManager {
         this.setState(swap, "needs_counterparty");
     }
 
-    /** The way back out, taken as soon as a refund becomes possible again. */
+    /** The way back out, taken as soon as a refund becomes possible again.
+     * Back to what the record can prove, not to `pending` unconditionally: an
+     * onchain-send swap that already claimed its fill has a txid for it, and
+     * reporting that swap as `pending` would un-say something true. */
     private unblock(swap: RfqSwap): void {
         if (swap.state !== "needs_counterparty") return;
-        delete swap.blockedReason;
-        this.setState(swap, "pending");
+        this.setState(swap, swap.kind === "onchain_send" && swap.claimTxid ? "claimed" : "pending");
     }
 
     private touch(swap: RfqSwap): void {
@@ -1128,6 +1135,10 @@ export class RfqSwapManager {
     private setState(swap: RfqSwap, state: RfqSwapState): void {
         if (swap.state === state) return;
         const previous = swap.state;
+        // Every exit from the refusal clears its reason, not just `unblock`'s:
+        // a swap the counterparty finally claimed leaves through `settled`, and
+        // a stale `blockedReason` there reads as a live refusal.
+        if (previous === "needs_counterparty") delete swap.blockedReason;
         swap.state = state;
         this.touch(swap);
         notify(this.swapUpdateListeners, (listener) => listener(swap, previous));

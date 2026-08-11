@@ -239,8 +239,9 @@ export class RefundNotLocallyPossibleError extends Error {
     constructor(
         readonly reason: RefundBlockedReason,
         message: string,
+        options?: { cause?: unknown },
     ) {
-        super(message);
+        super(message, options);
     }
 }
 
@@ -306,6 +307,9 @@ export async function senderIdentityForSwapRecord(
         throw new RefundNotLocallyPossibleError(
             "unreadable-secrets",
             error instanceof Error ? error.message : String(error),
+            // the record's own diagnosis, kept for a caller that wants more
+            // than the message
+            { cause: error },
         );
     }
     if (!secrets) {

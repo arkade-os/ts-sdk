@@ -381,7 +381,10 @@ The package is pre-release; these notes replace a changelog for consumers tracki
   `senderPrivateKey` is gone from both return types; caller-owned onchain preimages live inside
   `secrets` and must be persisted with the record. `pushRefundWithoutReceiver` /
   `refundIfUnresolved` take `sender: Identity` instead of `senderPrivateKey: Uint8Array` — build
-  it with `senderIdentityForRfqSecrets`. `AssetSwap` gains `signingDescriptor?`,
+  it from the record with `senderIdentityForSwapRecord`, which is what keeps a wallet that cannot
+  sign reporting `RefundNotLocallyPossibleError` rather than a `TypeError` at the push site;
+  `senderIdentityForRfqSecrets` is for callers that already hold resolved secrets. `AssetSwap`
+  gains `signingDescriptor?`,
   `preimageHex?`, and complete stored-arm `fallbackSecrets?`. Landed while the package is
   unpublished and consumer-free, which is the whole window for doing it: after a consumer ships,
   the same change becomes a secret migration across every deployed wallet.

@@ -1094,6 +1094,9 @@ describe("RfqSwapManager — a refund this wallet cannot make", () => {
         await m.poll();
 
         expect(swap.state).toBe("settled");
+        // and the refusal's reason goes with it: a settled swap carrying one
+        // reads as still blocked
+        expect(swap.blockedReason).toBeUndefined();
         expect(await m.hasSwap(RFQ_ID)).toBe(false);
     });
 
@@ -1111,6 +1114,77 @@ describe("RfqSwapManager — a refund this wallet cannot make", () => {
         expect(swap.state).toBe("needs_counterparty");
         expect(swap.blockedReason).toBe("the signing wallet is not this one");
         expect(s.refunds).toEqual([]);
+    });
+
+    it("keeps a claimed L1 fill across the refusal, and claims it only once", async () => {
+        // The two halves have different keys: being unable to take the Arkade
+        // lockup back says nothing about the fill the trader already has. The
+        // label defers while blocked — `claimed` is re-read from chain every
+        // pass and would otherwise flip — but `claimTxid` is what carries the
+        // fact, and it is what stops a second broadcast of P.
+        let ok = false;
+        let now = SAFE_NOW;
+        const s = spies({
+            probe: async () => (ok ? { ok: true } : { ok: false, reason: "not this wallet" }),
+        });
+        const swap = onchainSwap();
+        const states: RfqSwapState[] = [];
+        const m = manager({
+            chain: fakeChain({ utxos: [FILL], mtp: SAFE_NOW }),
+            now: () => now,
+            spies: s,
+        });
+        m.onSwapUpdate((updated) => states.push(updated.state));
+        await m.addSwap(swap);
+        await m.poll();
+        // pre-window, the live claim keeps the label
+        expect(swap.state).toBe("claimed");
+
+        now = REFUND_LOCKTIME + 1;
+        await m.poll();
+        await m.poll();
+        expect(swap.state).toBe("needs_counterparty");
+
+        ok = true;
+        await m.poll();
+
+        // back to `claimed`, not `pending` — and the resumed push then refunds
+        expect(states).toEqual([
+            "claimable",
+            "claimed",
+            "needs_counterparty",
+            "claimed",
+            "refunded",
+        ]);
+        expect(swap.claimTxid).toBe("dd".repeat(32));
+        expect(s.claims).toHaveLength(1);
+        expect(swap.blockedReason).toBeUndefined();
+    });
+
+    it("re-attempts a push-reported refusal only when the probe retracts it", async () => {
+        // Without a probe the push is not re-issued; with one, its `ok` is the
+        // single thing that clears the refusal and lets the push run again.
+        let ok = false;
+        const s = spies({
+            probe: async () => (ok ? { ok: true } : { ok: false, reason: "not this wallet" }),
+            refund: async () => {
+                if (!ok) throw cannotSign();
+                return { arkTxid: "ee".repeat(32), amount: 100_000 };
+            },
+        });
+        const swap = lightningSwap();
+        const m = manager({ now: REFUND_LOCKTIME + 1, spies: s });
+        await m.addSwap(swap);
+        // a refusing probe reports before the push is ever tried
+        await m.poll();
+        expect(s.refunds).toEqual([]);
+        expect(swap.state).toBe("needs_counterparty");
+
+        ok = true;
+        await m.poll();
+
+        expect(s.refunds).toEqual([RFQ_ID]);
+        expect(swap.state).toBe("refunded");
     });
 
     it("goes back to `pending` and refunds once the probe says yes", async () => {
