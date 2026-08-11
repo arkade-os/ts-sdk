@@ -1,16 +1,16 @@
 /**
  * Live offer status, driven by the wallet's own contract events.
  *
- * Before this, nothing told a maker their offer had been filled: the deposit's
+ * Before this, nothing told a user their offer had been filled: the deposit's
  * fate was only visible by re-running {@link restoreAssetSwaps}, a scan over
  * sent transactions. Now that `createOffer` registers the covenant with the
  * contract manager, the wallet is already watching that script and already
- * emits `vtxo_spent` for it — so the maker's own wallet knows, and this module
+ * emits `vtxo_spent` for it — so the user's own wallet knows, and this module
  * turns that knowledge into a status.
  *
  * **Detection and classification are separate problems, answered separately.**
  * The event says a deposit was spent; it does not say by whom. The covenant's
- * `cancel` leaf is a 2-of-2 of the maker and the server, so *only the maker can
+ * `cancel` leaf is a 2-of-2 of the user and the server, so *only the user can
  * cancel* — which makes the cheapest classifier an exact one: a spend whose
  * txid is the one `cancelOffer` recorded is a cancel, and anything else that
  * spends an offer deposit is a fill. The fallback, for a cancel this device did
@@ -131,7 +131,7 @@ export async function watchOfferSwaps({
     };
 
     const classify = async (swap: AssetSwap, vtxo: ContractVtxo, spentTxid: string) => {
-        // the exact answer: only the maker can cancel, and cancelOffer records
+        // the exact answer: only the user can cancel, and cancelOffer records
         // the txid it submitted
         if (swap.spentTxid === spentTxid && swap.status === "cancelling") return "cancelled";
         try {

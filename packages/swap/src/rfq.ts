@@ -1,36 +1,40 @@
 /**
- * RFQ v1 — the maker / intent-submitter side of quoted swaps.
+ * RFQ v1 — the user side of quoted swaps.
  *
  * RFQ is the negotiation layer only. After the quote, **filling is
- * non-interactive maker-taker** for every corridor this module serves — the
- * MAKER is this side (the trader posting and funding the intent), the TAKER
- * is the solver that fills it:
+ * non-interactive** for every corridor this module serves: the user funds,
+ * and the solver fills by observing that funding rather than by being told.
+ * (Roles are *user* and *solver* throughout — see the README's Roles section
+ * for why this package does not name the participants maker and taker.)
  *
  * - `arkade:BTC -> lightning:BTC` / `arkade:BTC -> onchain:BTC` (send) — the
- *   trader funds its own locally derived VHTLC contract ({@link
+ *   user funds its own locally derived VHTLC contract ({@link
  *   lightningSendVtxoScript}) and the onchain leg claims its L1 HTLC with `P`;
  *   the solver fills by observing the funding on-chain. A failed swap refunds
- *   to the trader's address — by the trader's own `sender` key on every
- *   interactive path, or, if the trader's own key is ever lost, by the server
- *   and solver together via the `nonInteractiveRefund` leaf (no trader
+ *   to the user's address — by the user's own `sender` key on every
+ *   interactive path, or, if the user's own key is ever lost, by the server
+ *   and solver together via the `nonInteractiveRefund` leaf (no user
  *   signature, no timelock), which the emulator co-signs under a covenant
- *   provably paying only the trader's pre-committed address.
+ *   provably paying only the user's pre-committed address.
  * - `lightning:BTC -> arkade:BTC` / `onchain:BTC -> arkade:BTC` (receive) —
- *   the trader generates `P`, pays the solver's hold invoice or funds the L1
+ *   the user generates `P`, pays the solver's hold invoice or funds the L1
  *   HTLC, and may go offline; the solver funds the Arkade lockup pinned to
- *   the trader's payout ({@link receiveVtxoScript}, roles inverted), and the
- *   claim — the trader's own collaborative spend, or covclaimd's — reveals
- *   `P` publicly, which is what settles the trader's side.
- * - `arkade:BTC|asset -> arkade:BTC|asset` — the trader accepts the quote by
+ *   the user's payout ({@link receiveVtxoScript}, roles inverted), and the
+ *   claim — the user's own collaborative spend, or covclaimd's — reveals
+ *   `P` publicly, which is what settles the user's side.
+ * - `arkade:BTC|asset -> arkade:BTC|asset` — the user accepts the quote by
  *   creating and funding an Intents **offer** (`createOffer`) bound to the
  *   quoted terms; the offer covenant lets any filler deliver, so the solver
- *   fills without further interaction, or the trader cancels cooperatively.
+ *   fills without further interaction, or the user cancels cooperatively.
  *
  * There is deliberately NO accept message anywhere: acceptance is funding.
+ * Every corridor then ends the same way — a fill, or the value back: a
+ * timelocked refund on the HTLC corridors, a cooperative cancel on the
+ * Arkade-only one.
  *
- * Trust model, identical to the offer side: from a quote the trader uses only
+ * Trust model, identical to the offer side: from a quote the user uses only
  * the binding fields — `solver_pubkey`, `refund_locktime`, `valid_until`, the
- * amounts. Every other contract parameter is the trader's own data (its
+ * amounts. Every other contract parameter is the user's own data (its
  * invoice, its Ark server connection, its refund address) or obtained
  * out-of-band from a source it independently trusts — the emulator's x-only
  * key, from the solver's signed registry/corridor card, since clients have no
@@ -269,7 +273,7 @@ export const verifyLockupAddress = (quote: RfqQuote, derivedAddress: string): st
     return derivedAddress;
 };
 
-/** The maker's gates, checked immediately before funding — never at quote
+/** The user's gates, checked immediately before funding — never at quote
  * time. Throws with a stable `reason` property. `invoiceExpiresAt` applies to
  * BOLT11 profiles only; `onchain` adds the L1-HTLC gates (§ guardrails of the
  * onchain spec) and is required for the onchain pairs. */
@@ -319,8 +323,8 @@ export const assertFundable = (input: {
             fail("claim_window_too_short", "L1 HTLC locktime leaves no safe claim window");
         }
         if (direction === "send") {
-            // The solver claims Arkade with P AFTER the maker's L1 claim; the
-            // maker's Arkade refund must therefore open LAST, with reorg margin.
+            // The solver claims Arkade with P AFTER the user's L1 claim; the
+            // user's Arkade refund must therefore open LAST, with reorg margin.
             if (
                 input.quote.refund_locktime === undefined ||
                 htlcLocktime + ONCHAIN_ORDER_MARGIN_SECONDS > input.quote.refund_locktime
@@ -506,7 +510,7 @@ export const relayTransport = (
     };
 };
 
-// ── Lightning send: derivation + the maker flow ──────────────────────────────
+// ── Lightning send: derivation + the user flow ──────────────────────────────
 
 /** BIP68 sequence granularity; the delay derivation rounds up to it. */
 const SEQUENCE_GRANULARITY_SECONDS = 512;
@@ -637,11 +641,11 @@ export interface InvoiceFacts {
 }
 
 /**
- * The lightning-send maker flow, mirroring `createOffer`'s shape: quote →
+ * The lightning-send user flow, mirroring `createOffer`'s shape: quote →
  * derive locally → verify → gate. Pure of funding on purpose — it returns the
  * address and amount, and the caller funds with its own wallet
  * (`wallet.send({ address, amount })`) before `quote.valid_until`, after
- * which the maker may go OFFLINE: filling is non-interactive. Success reveals
+ * which the user may go OFFLINE: filling is non-interactive. Success reveals
  * the preimage in the solver's claim witness (also served via status as
  * `settled`); failure refunds to `refundAddress`.
  *
@@ -808,23 +812,23 @@ export const offerTermsFromQuote = (
 
 /** The Arkade lockup for an onchain send uses the SAME {@link
  * lightningSendVtxoScript} the Lightning leg does — only the SOURCE of the
- * payment hash differs (maker-generated P instead of a BOLT11). One function,
+ * payment hash differs (user-generated P instead of a BOLT11). One function,
  * one golden test. */
 
 const l1NetworkFromArk = (network: string): OnchainNetwork =>
     network === "bitcoin" ? "bitcoin" : network === "regtest" ? "regtest" : "testnet";
 
 /** The rfq_request for `arkade:BTC->onchain:BTC`. Exact-out means "this much
- * lands in the L1 HTLC". `senderPubkey` is the maker's own key for the
+ * lands in the L1 HTLC". `senderPubkey` is the user's own key for the
  * VHTLC's sender-side leaves — same role as in {@link lightningSendRequest}.
  * On the wire it's `client_refund_pubkey`, same as there. */
 export const onchainSendRequest = (input: {
     rfqId: string;
-    /** `sha256(P)`, hex — maker-chosen; see {@link paymentHashOf}. */
+    /** `sha256(P)`, hex — user-chosen; see {@link paymentHashOf}. */
     paymentHash: string;
-    /** Maker's x-only L1 key for the HTLC's claim leaf. */
+    /** User's x-only L1 key for the HTLC's claim leaf. */
     payoutPubkey: Uint8Array;
-    /** Maker's arkade address — where the covenant refund must pay. */
+    /** User's arkade address — where the covenant refund must pay. */
     refundAddress: string;
     senderPubkey: Uint8Array;
     amount: number;
@@ -877,9 +881,9 @@ export const lightningReceiveRequest = (input: {
     },
 });
 
-/** The rfq_request for `onchain:BTC->arkade:BTC`. The maker funds the L1 HTLC
+/** The rfq_request for `onchain:BTC->arkade:BTC`. The user funds the L1 HTLC
  * (holding its refund role) and receives Arkade; P travels sealed to
- * covclaimd (see `sealClaimPacket`) so the maker can go offline after
+ * covclaimd (see `sealClaimPacket`) so the user can go offline after
  * funding. `payoutPubkey` is the trader's own x-only Arkade key — the
  * covenant's `receiver` role, same as the Lightning receive leg's. */
 export const onchainReceiveRequest = (input: {
@@ -913,7 +917,7 @@ export const onchainReceiveRequest = (input: {
 
 /**
  * The pure core of {@link requestOnchainSend}: derive BOTH contracts locally
- * from the quote's binding fields plus the maker's own data, and refuse on any
+ * from the quote's binding fields plus the user's own data, and refuse on any
  * mismatch. Binding: `solver_pubkey`, `refund_locktime`, `htlc_pubkey`,
  * `htlc_locktime`, `min_confirmations`; `lockup_address` and `htlc_address`
  * are compare-only.
@@ -928,7 +932,7 @@ export function deriveOnchainSend(input: {
     hrp: string;
     l1Network: OnchainNetwork;
     refundAddress: string;
-    /** The maker's own key for the VHTLC's sender-side leaves — same role as
+    /** The user's own key for the VHTLC's sender-side leaves — same role as
      * in {@link requestLightningSend}. */
     senderPubkey: Uint8Array;
 }): {
@@ -997,7 +1001,7 @@ export function deriveOnchainSend(input: {
 }
 
 /**
- * The `arkade:BTC->onchain:BTC` maker flow, mirroring `requestLightningSend`:
+ * The `arkade:BTC->onchain:BTC` user flow, mirroring `requestLightningSend`:
  * quote → derive BOTH contracts locally → verify → gate. Pure of funding —
  * the caller funds `address` with its own wallet before `quote.valid_until`.
  *
@@ -1013,7 +1017,7 @@ export function deriveOnchainSend(input: {
  *   re-derive from the seed; otherwise it carries the raw secrets, and losing
  *   them forfeits the L1 claim and every interactive refund path — leaving
  *   recovery dependent on the solver via `nonInteractiveRefund`.
- * - **Stay claim-capable.** Unlike lightning-send the maker cannot go fully
+ * - **Stay claim-capable.** Unlike lightning-send the user cannot go fully
  *   offline: it must claim the L1 HTLC (`awaitOnchainFill` →
  *   `claimOnchainFill`) before `htlc.refundLocktime`. Missing that window
  *   forfeits the fill and falls back to the Arkade covenant refund.
@@ -1028,7 +1032,7 @@ export async function requestOnchainSend(
     params: {
         amount: number;
         amountSide: "from" | "to";
-        /** Maker's x-only L1 key that will claim the HTLC. */
+        /** User's x-only L1 key that will claim the HTLC. */
         payoutPubkey: Uint8Array;
         /** Optional caller-owned P. Persist it with the returned secrets before funding. */
         preimage?: Uint8Array;
@@ -1037,7 +1041,7 @@ export async function requestOnchainSend(
 ): Promise<{
     rfqId: string;
     quote: RfqQuote;
-    /** The maker's OWN arkade lockup derivation — the only address to fund. */
+    /** The user's OWN arkade lockup derivation — the only address to fund. */
     address: string;
     fundAmount: number;
     swapPkScript: Uint8Array;
@@ -1272,7 +1276,7 @@ export function deriveLightningReceive(input: {
 }
 
 /**
- * The `lightning:BTC->arkade:BTC` maker flow: quote → derive the covenant
+ * The `lightning:BTC->arkade:BTC` user flow: quote → derive the covenant
  * locally → verify → gate. Returns the solver's hold invoice to PAY — the
  * payment itself is the trader's own Lightning wallet's job, exactly as
  * funding is the caller's job on the send corridors. Once the paid HTLC is
@@ -1467,7 +1471,7 @@ export function deriveOnchainReceive(input: {
 }
 
 /**
- * The `onchain:BTC->arkade:BTC` maker flow: quote → derive BOTH contracts
+ * The `onchain:BTC->arkade:BTC` user flow: quote → derive BOTH contracts
  * locally → verify → gate. Returns the L1 HTLC to fund (`htlc.address`, for
  * `fundAmount`) — the funding transaction itself is the trader's own L1
  * wallet's job, exactly as on the send corridors. After `min_confirmations`

@@ -6,8 +6,8 @@
  *
  * | direction                             | claimKey            | refundKey          |
  * |---------------------------------------|---------------------|--------------------|
- * | arkade->onchain (solver funds L1)     | maker's payout key  | solver's htlc key  |
- * | onchain->arkade (maker funds L1)      | solver's htlc key   | maker's refund key |
+ * | arkade->onchain (solver funds L1)     | user's payout key   | solver's htlc key  |
+ * | onchain->arkade (user funds L1)       | solver's htlc key   | user's refund key  |
  *
  * The hash-lock commitment is HASH160-style — `ripemd160(sha256(P))` — the
  * same construction the lightning-send program uses, so ONE preimage unlocks
@@ -43,7 +43,7 @@ export const ONCHAIN_SECONDS_PER_BLOCK = 600;
  *
  * 330, not 546: Bitcoin Core's dust threshold is a function of the OUTPUT
  * type, and 546 is the P2PKH figure. Both payout scripts on this corridor are
- * taproot — the claim pays the maker's Arkade-side L1 address and the refund
+ * taproot — the claim pays the user's Arkade-side L1 address and the refund
  * pays the trader's — for which the threshold is 330 (the same number
  * `FALLBACK_WALLET_DUST_AMOUNT` already uses in the core SDK). Holding the
  * P2PKH number here rejects payouts between 330 and 546 that the network
@@ -64,7 +64,7 @@ export const ONCHAIN_DUST_SATS = BigInt(330);
 
 // ── Preimage utilities ───────────────────────────────────────────────────────
 
-/** 32 random bytes. The maker generates P for BOTH onchain directions. */
+/** 32 random bytes. The user generates P for BOTH onchain directions. */
 export const newPreimage = (): Uint8Array => crypto.getRandomValues(new Uint8Array(32));
 
 /** `sha256(P)`, hex — the wire `payment_hash`, same convention as BOLT11. */

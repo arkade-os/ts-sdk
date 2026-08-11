@@ -72,7 +72,7 @@ export interface AssetSwap {
      * created on a wallet that can allocate.
      */
     signingDescriptor?: string;
-    /** P, hex, when the maker supplied a preimage that is not seed-derived. */
+    /** P, hex, when the user supplied a preimage that is not seed-derived. */
     preimageHex?: string;
     /**
      * Complete stored-arm secrets for wallets that cannot derive. Versioned

@@ -87,7 +87,7 @@ funds an offer should keep cancelling within reach.
 5. **`watch`** — `watchOfferSwaps` drives swap status from the wallet's own contract events, so a
    fill shows up without re-running a scan. Registration is what makes it possible: only a
    registered covenant is watched. See "Live status" below.
-6. **`rfq`** — the maker / intent-submitter side of quoted swaps: RFQ negotiation over HTTP or a
+6. **`rfq`** — the user side of quoted swaps: RFQ negotiation over HTTP or a
    relay, then non-interactive filling (see below). All four reference-solver corridors:
    `arkade:BTC -> lightning:BTC` and `arkade:BTC -> onchain:BTC` (send), `lightning:BTC ->
    arkade:BTC` and `onchain:BTC -> arkade:BTC` (receive), plus `arkade:BTC|asset ->
@@ -294,7 +294,7 @@ other, and every request times out appearing to blame the solver.
 
 ## Onchain corridor: `arkade:BTC -> onchain:BTC` (and back)
 
-The off-board direction is implemented end to end on the maker side. The maker generates `P`
+The off-board direction is implemented end to end on the user side. The user generates `P`
 itself — `sha256(P)` is the wire `payment_hash`, and the script commitment is
 `ripemd160(sha256(P))` in BOTH contracts, so one preimage unlocks the Arkade leaf and the L1 leaf.
 The Arkade lockup is byte-identical to the lightning-send program (`htlcSendProgram` is an alias —
@@ -336,7 +336,7 @@ await addAssetSwap(repository, {
 });
 await wallet.send({ address: swap.address, amount: swap.fundAmount });
 
-// Unlike lightning-send the maker must STAY CLAIM-CAPABLE: watch for the fill
+// Unlike lightning-send the user must STAY CLAIM-CAPABLE: watch for the fill
 // and claim before the HTLC's refund leaf opens. chain is YOUR ChainSource.
 const utxo = await awaitOnchainFill(chain, swap.htlc, minConfirmations);
 await claimOnchainFill(chain, {
@@ -353,12 +353,12 @@ await claimOnchainFill(chain, {
 (`solver_pubkey`, `refund_locktime`, `htlc_pubkey`, `htlc_locktime`, `min_confirmations`) and
 refuses on any mismatch — `lockup_address` and `htlc_address` are compare-only. `assertFundable`
 adds three onchain gates, run immediately before funding: `timelock_order` (the L1 locktime plus a
-2 h reorg margin must fall before the Arkade refund, so the maker's escape hatch opens LAST),
+2 h reorg margin must fall before the Arkade refund, so the user's escape hatch opens LAST),
 `claim_window_too_short`, and `confirmations_out_of_range`. `claimOnchainFill` refuses to
 broadcast — publishing `P` — with less than 90 minutes before the refund leaf opens: past that
 point the safe move is to let the swap die and take the Arkade covenant refund rather than race
 the solver's refund with `P` exposed. If the solver never fills, there is nothing to do: the
-covenant refund pays the maker's address after `refund_locktime`, pushable by anyone.
+covenant refund pays the user's address after `refund_locktime`, pushable by anyone.
 
 Crash recovery is record-driven, not chain-driven: `classifyOnchainHtlc` re-derives the HTLC's
 state (unfunded / awaiting confirmations / claimable / refundable / claimed-with-P / swept) from
