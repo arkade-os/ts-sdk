@@ -24,7 +24,6 @@ const deterministic = () =>
         {
             preimage: PREIMAGE,
             covclaimdPubkey: COVCLAIMD_PK,
-            arkadeScript: new Uint8Array([0xcd, 0x76]),
         },
         new Uint8Array(32).fill(0x11),
         new Uint8Array(12).fill(0x0a),
@@ -39,7 +38,6 @@ describe("sealClaimPacket", () => {
                 "14ec375e22b0f016fb127e4740e9599f6b07d04bd040751d9fade4c5427b9787" +
                 "915a33390ddb0d72093c69eff4d6a335", // ciphertext ‖ GCM tag
         );
-        expect(packet.arkade_script).toBe("zXY=");
     });
 
     it("round-trips: covclaimd's key recovers exactly P", async () => {
@@ -60,14 +58,12 @@ describe("sealClaimPacket", () => {
             sealClaimPacket({
                 preimage: PREIMAGE.slice(1),
                 covclaimdPubkey: COVCLAIMD_PK,
-                arkadeScript: new Uint8Array(1),
             }),
         ).rejects.toThrow(/32 bytes/);
         await expect(
             sealClaimPacket({
                 preimage: PREIMAGE,
                 covclaimdPubkey: COVCLAIMD_PK.slice(1),
-                arkadeScript: new Uint8Array(1),
             }),
         ).rejects.toThrow(/compressed/);
         await expect(
@@ -75,7 +71,6 @@ describe("sealClaimPacket", () => {
                 {
                     preimage: PREIMAGE,
                     covclaimdPubkey: COVCLAIMD_PK,
-                    arkadeScript: new Uint8Array(1),
                 },
                 new Uint8Array(32).fill(0x11),
                 new Uint8Array(11),
@@ -87,12 +82,10 @@ describe("sealClaimPacket", () => {
         const a = await sealClaimPacket({
             preimage: PREIMAGE,
             covclaimdPubkey: COVCLAIMD_PK,
-            arkadeScript: new Uint8Array(1),
         });
         const b = await sealClaimPacket({
             preimage: PREIMAGE,
             covclaimdPubkey: COVCLAIMD_PK,
-            arkadeScript: new Uint8Array(1),
         });
         expect(a.ciphertext).not.toBe(b.ciphertext);
     });

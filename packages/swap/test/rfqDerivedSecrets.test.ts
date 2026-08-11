@@ -194,6 +194,86 @@ const onchainTransport = (seen: { paymentHash?: string; senderPubkey?: string })
     async close() {},
 });
 
+describe("requestLightningSend and the corridor spread", () => {
+    /** The lightning harness with a fee on the quote: from = to + 72. */
+    const spreadTransport = (fromAmount: number, toAmount: number): RfqTransport => ({
+        async requestQuote(payload) {
+            const profile = (payload as { profile: Record<string, unknown> }).profile;
+            const script = lightningSendVtxoScript({
+                solverPubkey: SOLVER,
+                refundLocktime: REFUND_LOCKTIME,
+                serverPubkey: SERVER,
+                paymentHash: PAYMENT_HASH,
+                claimDelay: 4096,
+                emulatorPubkey: EMULATOR_PUBKEY,
+                senderPubkey: hex.decode(profile.client_refund_pubkey as string),
+                receiverPkScript: RECEIVER_PK_SCRIPT,
+                refundPkScript: ArkAddress.decode(REFUND_ADDRESS).pkScript,
+            });
+            return {
+                v: 1,
+                type: "rfq_quote",
+                rfq_id: payload.rfq_id as string,
+                pair: LIGHTNING_SEND_PAIR,
+                from_amount: fromAmount,
+                to_amount: toAmount,
+                solver_pubkey: hex.encode(SOLVER),
+                valid_until: VALID_UNTIL,
+                refund_locktime: REFUND_LOCKTIME,
+                profile: {
+                    receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
+                    lockup_address: script.address("tark", SERVER).encode(),
+                },
+            } satisfies RfqQuote;
+        },
+        async status() {
+            return null;
+        },
+        async close() {},
+    });
+
+    it("funds from_amount — the invoice PLUS the fee, never the bare invoice", async () => {
+        const wallet = await hdWallet();
+        const result = await requestLightningSend(
+            wallet,
+            "http://ark",
+            EMULATOR_PUBKEY,
+            spreadTransport(1072, 1000),
+            { invoice: INVOICE },
+        );
+        expect(result.fundAmount).toBe(1072);
+    });
+
+    it("refuses a quote whose to_amount reprices the invoice", async () => {
+        const wallet = await hdWallet();
+        await expect(
+            requestLightningSend(
+                wallet,
+                "http://ark",
+                EMULATOR_PUBKEY,
+                spreadTransport(1000, 999),
+                {
+                    invoice: INVOICE,
+                },
+            ),
+        ).rejects.toThrow(/does not match the invoice/);
+    });
+
+    it("refuses a quote whose from_amount is below the invoice — a negative spread is not a quote", async () => {
+        const wallet = await hdWallet();
+        await expect(
+            requestLightningSend(
+                wallet,
+                "http://ark",
+                EMULATOR_PUBKEY,
+                spreadTransport(999, 1000),
+                {
+                    invoice: INVOICE,
+                },
+            ),
+        ).rejects.toThrow(/below the invoice amount/);
+    });
+});
 describe("requestLightningSend on an HD wallet", () => {
     it("returns a descriptor and no key material", async () => {
         const wallet = await hdWallet();

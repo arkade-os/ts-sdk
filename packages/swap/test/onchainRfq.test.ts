@@ -82,16 +82,27 @@ describe("request builders", () => {
         const request = onchainReceiveRequest({
             rfqId: RFQ_ID,
             paymentHash: PAYMENT_HASH,
-            destinationAddress: "ark1q...",
+            payoutAddress: "ark1q...",
+            payoutPubkey: key(9),
             refundPubkey: key(7),
-            claimPacket: { ciphertext: "abc=", arkade_script: "zXY=" },
+            claimPacket: "abc=",
             amount: 100_000,
             amountSide: "from",
-        }) as Record<string, unknown>;
-        expect(request.pair).toBe("onchain:BTC->arkade:BTC");
-        expect((request.profile as Record<string, unknown>).claim_packet).toEqual({
-            ciphertext: "abc=",
-            arkade_script: "zXY=",
+        });
+        expect(request).toEqual({
+            v: 1,
+            type: "rfq_request",
+            rfq_id: RFQ_ID,
+            pair: "onchain:BTC->arkade:BTC",
+            amount_side: "from",
+            amount: 100_000,
+            profile: {
+                payment_hash: PAYMENT_HASH,
+                claim_packet: "abc=",
+                refund_pubkey: hex.encode(key(7)),
+                payout_address: "ark1q...",
+                payout_pubkey: hex.encode(key(9)),
+            },
         });
     });
 });

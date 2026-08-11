@@ -20,17 +20,16 @@ import { sha256 } from "@noble/hashes/sha2.js";
 const HKDF_INFO = new TextEncoder().encode("covclaimd/preimage/v1");
 
 export interface SealedClaimPacket {
-    /** `ephPub(33) ‖ nonce(12) ‖ ciphertext`, base64 — wire-ready. */
+    /** `ephPub(33) ‖ nonce(12) ‖ ciphertext`, base64 — wire-ready. This is
+     * the whole packet: the RFQ request's `claim_packet` field carries
+     * exactly this string. */
     ciphertext: string;
-    /** The arkade script the packet is bound to, base64 — wire-ready. */
-    arkade_script: string;
 }
 
 export interface ClaimPacketInput {
     preimage: Uint8Array;
     /** covclaimd's public key, 33-byte compressed (from its /v1 info). */
     covclaimdPubkey: Uint8Array;
-    arkadeScript: Uint8Array;
 }
 
 /**
@@ -92,5 +91,5 @@ export async function sealWithEntropy(
     packet.set(ephemeralPub, 0);
     packet.set(nonce, 33);
     packet.set(sealed, 45);
-    return { ciphertext: base64.encode(packet), arkade_script: base64.encode(input.arkadeScript) };
+    return { ciphertext: base64.encode(packet) };
 }
