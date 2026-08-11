@@ -111,7 +111,12 @@ export function assertValidServerUnrollScript(
     // Use the type the script itself encodes (BIP-68 disable flag) rather than
     // re-deriving it from the magnitude: a block-typed checkpoint delay above
     // 511 blocks is legal and would otherwise be misread as seconds.
-    assertTimelockInPolicy(script.params.timelock, policy, "checkpoint exit delay");
+    assertTimelockInPolicy(
+        script.params.timelock,
+        policy,
+        "checkpoint exit delay",
+        "minCheckpointExitDelaySeconds",
+    );
 
     return script;
 }

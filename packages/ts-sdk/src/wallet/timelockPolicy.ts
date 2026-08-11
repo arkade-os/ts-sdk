@@ -44,8 +44,9 @@ export const toSeconds = (t: RelativeTimelock): bigint =>
  * Check an already-typed server-supplied relative timelock against `policy`.
  *
  * `label` names the value in thrown messages (e.g. `"batch expiry"`,
- * `"checkpoint exit delay"`) so callers share this one implementation without
- * losing message specificity.
+ * `"checkpoint exit delay"`) and `overrideOption` names the wallet-config
+ * option that lowers this particular floor (e.g. `"minBatchExpirySeconds"`), so
+ * callers share this one implementation without losing message specificity.
  *
  * @throws {ServerResponseMismatchError} if the timelock is out of policy.
  */
@@ -53,8 +54,12 @@ export function assertTimelockInPolicy(
     timelock: RelativeTimelock,
     policy: TimelockFloorPolicy,
     label: string,
+    overrideOption: string,
 ): RelativeTimelock {
     if (policy.requireSeconds && timelock.type === "blocks") {
+        // No override named here on purpose: `requireSeconds` is not settable
+        // through the wallet config, so only the floor half of this policy is
+        // something a caller can act on.
         throw new ServerResponseMismatchError(
             `${label} rejected: block-typed timelocks are not accepted (got ${timelock.value})`,
         );
@@ -64,7 +69,8 @@ export function assertTimelockInPolicy(
     if (seconds < policy.minSeconds) {
         throw new ServerResponseMismatchError(
             `${label} rejected: ${timelock.value} ${timelock.type} is below the ` +
-                `${policy.minSeconds}s floor`,
+                `${policy.minSeconds}s floor; pass ${overrideOption} to Wallet.create ` +
+                `to lower it`,
         );
     }
 
@@ -81,6 +87,7 @@ export function assertTimelockWithinFloor(
     value: bigint,
     policy: TimelockFloorPolicy,
     label: string,
+    overrideOption: string,
 ): RelativeTimelock {
-    return assertTimelockInPolicy(toTimelock(value), policy, label);
+    return assertTimelockInPolicy(toTimelock(value), policy, label, overrideOption);
 }

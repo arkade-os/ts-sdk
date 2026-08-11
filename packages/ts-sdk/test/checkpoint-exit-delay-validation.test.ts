@@ -195,4 +195,17 @@ describe("assertValidServerUnrollScript", () => {
             ),
         ).toThrow(/below the 86400s floor/);
     });
+
+    it("names the override that would accept the delay", () => {
+        // The floor is a client-side policy, so a rejection is actionable — but
+        // only if the message says which knob moves it. 4096s is what the hosted
+        // mutinynet operator advertises, and mutinynet is structurally identical
+        // to testnet here, so this is the rejection consumers actually meet.
+        expect(() =>
+            assertValidServerUnrollScript(
+                encodeCheckpointTapscript(4096n),
+                defaultCheckpointExitDelayPolicy(networks.bitcoin),
+            ),
+        ).toThrow(/minCheckpointExitDelaySeconds/);
+    });
 });
