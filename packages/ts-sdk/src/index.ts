@@ -219,8 +219,11 @@ import {
     assertSubmittedArkTxid,
     matchServerCheckpoints,
     verifyTapscriptSignatures,
+    claimWithPreimageIdentity,
+    signAndSubmitOffchainTx,
     ArkTxInput,
     OffchainTx,
+    VerifyServerSignatures,
     combineTapscriptSigs,
     isValidArkAddress,
 } from "./utils/arkTransaction";
@@ -584,6 +587,8 @@ export {
     assertSubmittedArkTxid,
     matchServerCheckpoints,
     verifyTapscriptSignatures,
+    claimWithPreimageIdentity,
+    signAndSubmitOffchainTx,
     waitForIncomingFunds,
     hasBoardingTxExpired,
     combineTapscriptSigs,
@@ -758,6 +763,7 @@ export type {
     TapscriptType,
     ArkTxInput,
     OffchainTx,
+    VerifyServerSignatures,
     TapLeaves,
     IncomingFunds,
 

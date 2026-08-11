@@ -327,7 +327,10 @@ refuses, with `LockupAmountMismatchError`, to publish `P` for a lockup funded be
 `pkScript` is not enough on this leg, since a solver that funds the correctly derived script with
 dust still settles the payer's HTLC in full once `P` is out. The gate sums every live output and
 runs before signing — `P` reaches the Ark server at submit — and is skipped only for a lockup we
-have already partially claimed (`partiallyClaimed`), where `P` is public anyway. Until covclaimd's
+have already partially claimed (`partiallyClaimed`), where `P` is public anyway. The push itself is
+core's `signAndSubmitOffchainTx` plus `claimWithPreimageIdentity`, with `verifyServerSignatures`
+on: the server's countersignature is checked per input, against the leaf the local build spends,
+before finalizing. Until covclaimd's
 reference vectors are cross-checked, the `sealClaimPacket` test vector is pinned from this
 implementation and marked provisional (`TODO(claim-packet-vectors)`).
 

@@ -13,7 +13,7 @@ import {
 } from "../script/base";
 import { P2A } from "./anchor";
 import { CSVMultisigTapscript } from "../script/tapscript";
-import { setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
+import { ConditionWitness, setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
 import { Transaction } from "./transaction";
 import { ArkAddress } from "../script/address";
 import { Extension } from "../extension";
@@ -526,6 +526,61 @@ export function assertSubmittedArkTxid(
 }
 
 /**
+ * Opt-in proof that the server co-signed what it handed back.
+ *
+ * Be precise about what this buys, because it is less than it sounds like. It
+ * does NOT protect a preimage or any other condition value: those reach the
+ * server at `submitTx`, before any of this runs. What it buys is a loud,
+ * immediate failure instead of a caller reporting success, watching nothing
+ * confirm, and learning the truth when the counterparty's refund lands.
+ */
+export interface VerifyServerSignatures {
+    /** The Ark server's key; x-only or compressed, both accepted. */
+    serverPubkey: Uint8Array;
+}
+
+/**
+ * Verify the server's signature on one input of `serverTx` against the leaf
+ * the LOCAL transaction spends at that index.
+ *
+ * Two things this ordering buys. The expected leaf is read from `localTx`, so a
+ * response carrying some other leaf is a mismatch rather than a self-consistent
+ * pass — taking the leaf from the server's own copy would ask the counterparty
+ * what it should have signed. And it is per-input, so a transaction mixing
+ * leaves, or spending several contracts at once, is checked honestly instead of
+ * against one assumed-shared leaf.
+ */
+function assertServerSignedLeaf(
+    serverTx: Transaction,
+    localTx: Transaction,
+    inputIndex: number,
+    serverPubkeyHex: string,
+    context: string,
+): void {
+    const leaf = localTx.getInput(inputIndex).tapLeafScript?.[0];
+    if (!leaf) {
+        throw new Error(
+            `${context}: input ${inputIndex} carries no spend leaf to verify the server signature against`,
+        );
+    }
+    try {
+        verifyTapscriptSignatures(
+            serverTx,
+            inputIndex,
+            [serverPubkeyHex],
+            undefined,
+            undefined,
+            tapLeafHash(scriptFromTapLeafScript(leaf)),
+        );
+    } catch (error) {
+        throw new ServerResponseMismatchError(
+            `${context}: input ${inputIndex} is not signed by the server on the leaf being spent ` +
+                `(${error instanceof Error ? error.message : String(error)})`,
+        );
+    }
+}
+
+/**
  * Assert every checkpoint in `checkpoints` is the one this wallet would build
  * for one of `inputs`, by rebuilding it from local VTXO data.
  *
@@ -589,6 +644,10 @@ export function assertCheckpointsMatchInputs(
  * machinery. Optional {@link hooks} let the wallet mark/clear its pending-tx
  * recovery flag around the network round-trip; a stateless caller omits them.
  *
+ * `options.verifyServerSignatures` is off by default, so every existing caller
+ * is unchanged; see {@link VerifyServerSignatures} for what it does and does
+ * not prove.
+ *
  * @returns The Ark transaction id and the server-signed checkpoint PSBTs
  * (the raw server response, for the wallet's bookkeeping).
  */
@@ -597,6 +656,7 @@ export async function submitOffchainTx(
     offchainTx: OffchainTx,
     signer: OffchainTxSigner,
     hooks?: { beforeSubmit?: () => Promise<void>; afterFinalize?: () => Promise<void> },
+    options?: { verifyServerSignatures?: VerifyServerSignatures },
 ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
     const { arkTx: signedArkTx, userSignedCheckpoints } = await signer.signArkTx(
         offchainTx.arkTx,
@@ -630,6 +690,43 @@ export async function submitOffchainTx(
     // each must be one we built: nothing below signs a checkpoint that has not
     // been matched to a local one.
     const matched = matchServerCheckpoints(signedCheckpointTxs, offchainTx.checkpoints, "submitTx");
+
+    const verify = options?.verifyServerSignatures;
+    if (verify) {
+        // Fail closed: `finalArkTx` is optional in the wire type and
+        // `assertSubmittedArkTxid` skips it when absent, but a check that was
+        // asked for and cannot be run is a failed check, not a passed one.
+        if (response.finalArkTx === undefined) {
+            throw new ServerResponseMismatchError(
+                "submitTx: server returned no final ark tx to verify its signatures against",
+            );
+        }
+        const finalArkTx = Transaction.fromPSBT(base64.decode(response.finalArkTx));
+        const serverPubkeyHex = hex.encode(
+            verify.serverPubkey.length === 33
+                ? verify.serverPubkey.subarray(1)
+                : verify.serverPubkey,
+        );
+        for (let i = 0; i < offchainTx.arkTx.inputsLength; i++) {
+            assertServerSignedLeaf(
+                finalArkTx,
+                offchainTx.arkTx,
+                i,
+                serverPubkeyHex,
+                "submitTx ark tx",
+            );
+        }
+        // Each checkpoint carries exactly one input, the VTXO being spent.
+        matched.forEach(({ server, local }, index) =>
+            assertServerSignedLeaf(
+                server,
+                local,
+                0,
+                serverPubkeyHex,
+                `submitTx checkpoint ${index}`,
+            ),
+        );
+    }
 
     let finalCheckpoints: string[];
     if (userSignedCheckpoints) {
@@ -675,6 +772,8 @@ export async function signAndSubmitOffchainTx(params: {
     inputs: ArkTxInput[];
     outputs: TransactionOutput[];
     serverUnrollScript: CSVMultisigTapscript.Type;
+    /** Forwarded to {@link submitOffchainTx}; omitted, nothing is checked. */
+    verifyServerSignatures?: VerifyServerSignatures;
 }): Promise<string> {
     const offchainTx = buildOffchainTx(params.inputs, params.outputs, params.serverUnrollScript);
     // Single key: every input is signed by the same identity (all indexes), and
@@ -684,6 +783,41 @@ export async function signAndSubmitOffchainTx(params: {
         signArkTx: async (arkTx) => ({ arkTx: await params.identity.sign(arkTx) }),
         signCheckpoint: (checkpoint) => params.identity.sign(checkpoint),
     };
-    const { arkTxid } = await submitOffchainTx(params.provider, offchainTx, signer);
+    const { arkTxid } = await submitOffchainTx(params.provider, offchainTx, signer, undefined, {
+        verifyServerSignatures: params.verifyServerSignatures,
+    });
     return arkTxid;
+}
+
+/**
+ * Decorate a signer so it reveals `preimage` on every input it signs.
+ *
+ * The ordering encoded here is the whole point: the condition witness is NOT
+ * part of what is signed, so attaching it before signing leaves a signature
+ * over a PSBT that no longer matches once the field is present — which the
+ * server rejects as `INVALID_SIGNATURE`. Decorate per spend, never wallet-wide.
+ *
+ * For any condition-leaf spend (VHTLC claims on both swap directions); the
+ * generic signature keeps the decorated identity's own type, so the result is
+ * still whatever was passed in.
+ */
+export function claimWithPreimageIdentity<
+    T extends { sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> },
+>(identity: T, preimage: Uint8Array): T {
+    return {
+        ...identity,
+        sign: async (tx: Transaction, inputIndexes?: number[]): Promise<Transaction> => {
+            // Clone-and-round-trip so the caller's transaction is never mutated
+            // and the signed result is a fresh object we can add a field to.
+            const signed = Transaction.fromPSBT(
+                (await identity.sign(tx.clone(), inputIndexes)).toPSBT(),
+            );
+            const indexes =
+                inputIndexes ?? Array.from({ length: signed.inputsLength }, (_, i) => i);
+            for (const index of indexes) {
+                setArkPsbtField(signed, index, ConditionWitness, [preimage]);
+            }
+            return signed;
+        },
+    };
 }
