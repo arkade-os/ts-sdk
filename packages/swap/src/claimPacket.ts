@@ -8,9 +8,13 @@
  * - AES-256-GCM with the ephemeral pubkey as additional data;
  * - wire layout `ephPub(33) ‖ nonce(12) ‖ ciphertext`, base64.
  *
- * TODO(claim-packet-vectors): byte-exactness against covclaimd's reference
- * implementation is pinned here only by our own generated vectors — confirm
- * against covclaimd's before production use (see the package README).
+ * Byte-exactness against covclaimd is pinned by `test/e2e/covclaimd.test.ts`,
+ * which seals with this function and registers the result with a LIVE
+ * covclaimd. Acceptance is the assertion: covclaimd decrypts before it will
+ * register, so a wrong key dies at the AEAD tag with a 400 — and that negative
+ * case is asserted too, because otherwise acceptance would prove nothing. The
+ * unit vectors below remain as a fast self-consistency check; they were never
+ * evidence that covclaimd can open what this produces.
  */
 import { base64 } from "@scure/base";
 import { secp256k1 } from "@noble/curves/secp256k1.js";

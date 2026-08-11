@@ -120,6 +120,7 @@ export {
     requestOnchainSend,
 } from "./rfq";
 export { sealClaimPacket, type ClaimPacketInput, type SealedClaimPacket } from "./claimPacket";
+export { CovclaimdProvider, type CovclaimdPubKeys } from "./covclaimd";
 export { awaitLockupFunding, claimReceiveLockup, pushClaim, type ClaimArkProvider } from "./claim";
 export {
     RFQ_PREIMAGE_TAG,
