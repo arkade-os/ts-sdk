@@ -308,7 +308,9 @@ senderPrivateKeyHex, preimageHex? }`.
 BOTH contracts locally (the role-inverted VHTLC, and the L1 HTLC for the onchain leg) → verify
 against the quote's compare-only addresses → gate. `requestLightningReceive` returns the solver's
 hold invoice to pay; `requestOnchainReceive` returns the L1 HTLC to fund — the payment/broadcast
-itself is the trader's own wallet's job, exactly as on the send corridors. Until covclaimd's
+itself is the trader's own wallet's job, exactly as on the send corridors. The trader-side
+completion lands in `claim.ts`: `claimReceiveLockup` waits for the solver's funding and pushes the
+collaborative claim with the swap's own `P` and receiver key (covclaimd optional). Until covclaimd's
 reference vectors are cross-checked, the `sealClaimPacket` test vector is pinned from this
 implementation and marked provisional (`TODO(claim-packet-vectors)`).
 

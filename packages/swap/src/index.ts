@@ -119,6 +119,7 @@ export {
     requestOnchainSend,
 } from "./rfq";
 export { sealClaimPacket, type ClaimPacketInput, type SealedClaimPacket } from "./claimPacket";
+export { awaitLockupFunding, claimReceiveLockup, pushClaim, type ClaimArkProvider } from "./claim";
 export {
     RFQ_PREIMAGE_TAG,
     adoptSwapDescriptor,
