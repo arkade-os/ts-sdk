@@ -364,6 +364,36 @@ describe("SQLiteWalletRepository", () => {
                 expect(await repository.getVtxosForScript(script1)).toEqual([]);
             });
 
+            it("should delete only the named VTXOs by outpoint", async () => {
+                const vtxo1 = createMockVtxo("tx1", 0, 10000);
+                const vtxo2 = createMockVtxo("tx2", 0, 20000);
+
+                await repository.saveVtxos("address1", [vtxo1]);
+                await repository.saveVtxos("address2", [vtxo2]);
+
+                await repository.deleteVtxosByOutpoint([{ txid: "tx1", vout: 0 }]);
+
+                expect(await repository.getVtxos("address1")).toEqual([]);
+                const remaining = await repository.getVtxos("address2");
+                expect(remaining).toHaveLength(1);
+                expect(remaining[0].txid).toBe("tx2");
+            });
+
+            it("should delete more outpoints than the chunk size in one call", async () => {
+                const count = 250; // exceeds the 200-per-statement chunk size
+                const vtxos = Array.from({ length: count }, (_, i) =>
+                    createMockVtxo(`tx${i}`, 0, 1000),
+                );
+                await repository.saveVtxos("bulk-address", vtxos);
+                expect(await repository.getVtxos("bulk-address")).toHaveLength(count);
+
+                await repository.deleteVtxosByOutpoint(
+                    vtxos.map((v) => ({ txid: v.txid, vout: v.vout })),
+                );
+
+                expect(await repository.getVtxos("bulk-address")).toEqual([]);
+            });
+
             it("should read by script, not address", async () => {
                 const address1 = "address1";
                 const scriptA = "scriptA";

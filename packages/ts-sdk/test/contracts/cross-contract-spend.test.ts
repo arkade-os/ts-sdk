@@ -162,15 +162,23 @@ describe("Cross-contract spending", () => {
         const defaultVtxo = makeMockVirtualCoin(0xaa, 1000);
         const delegateVtxo = makeMockVirtualCoin(0xbb, 1000);
 
-        (mockIndexer.getVtxos as any).mockImplementation((opts: { scripts?: string[] }) => {
-            const scripts = opts?.scripts ?? [];
-            const vtxos = scripts.flatMap((s: string) => {
-                if (s === defaultContract.script) return [{ ...defaultVtxo, script: s }];
-                if (s === delegateContract.script) return [{ ...delegateVtxo, script: s }];
-                return [];
-            });
-            return Promise.resolve({ vtxos });
-        });
+        (mockIndexer.getVtxos as any).mockImplementation(
+            (opts: { scripts?: string[]; outpoints?: { txid: string; vout: number }[] }) => {
+                const owned = [
+                    { ...defaultVtxo, script: defaultContract.script },
+                    { ...delegateVtxo, script: delegateContract.script },
+                ];
+                if (opts?.outpoints) {
+                    const wanted = new Set(opts.outpoints.map((o) => `${o.txid}:${o.vout}`));
+                    return Promise.resolve({
+                        vtxos: owned.filter((v) => wanted.has(`${v.txid}:${v.vout}`)),
+                    });
+                }
+                const scripts = opts?.scripts ?? [];
+                const vtxos = scripts.flatMap((s: string) => owned.filter((v) => v.script === s));
+                return Promise.resolve({ vtxos });
+            },
+        );
 
         // getVtxos (public) should see VTXOs from both contracts.
         const allVtxos = await wallet.getVtxos();

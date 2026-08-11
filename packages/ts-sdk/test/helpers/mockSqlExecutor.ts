@@ -171,6 +171,19 @@ export function createMockSQLExecutor(): SQLExecutor {
                 const tableMatch = trimmed.match(/DELETE\s+FROM\s+(\w+)/i);
                 if (!tableMatch) throw new Error(`Cannot parse DELETE: ${trimmed}`);
                 const t = getTable(tableMatch[1]);
+                // DELETE ... WHERE (txid = ? AND vout = ?) [OR (...)] — by outpoint pairs.
+                if (/WHERE\s+\(txid\s*=\s*\?\s+AND\s+vout\s*=\s*\?\)/i.test(trimmed) && params) {
+                    const targets = new Set<string>();
+                    for (let i = 0; i + 1 < params.length; i += 2) {
+                        targets.add(`${String(params[i])}\x00${String(params[i + 1])}`);
+                    }
+                    for (const [key, row] of t.rows) {
+                        if (targets.has(`${String(row.txid)}\x00${String(row.vout)}`)) {
+                            t.rows.delete(key);
+                        }
+                    }
+                    return;
+                }
                 const whereCols = parseWhereCols(trimmed);
                 if (whereCols.length === 0) {
                     t.rows.clear();
