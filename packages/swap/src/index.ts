@@ -53,6 +53,7 @@ export {
     ARKADE_ASSET,
     ARKADE_BTC,
     LIGHTNING_BTC,
+    LIGHTNING_RECEIVE_PAIR,
     LIGHTNING_SEND_PAIR,
     MIN_HEADROOM_SECONDS,
     RFQ_TERMINAL_STATES,
@@ -60,12 +61,17 @@ export {
     SwapRefusal,
     arkadeSwapRequest,
     assertFundable,
+    deriveLightningReceive,
+    deriveOnchainReceive,
     httpTransport,
+    lightningReceiveRequest,
     lightningSendRequest,
     lightningSendVtxoScript,
     newRfqId,
     offerTermsFromQuote,
+    receiveVtxoScript,
     relayTransport,
+    requestLightningReceive,
     requestLightningSend,
     rfqPair,
     unilateralClaimDelay,
@@ -109,9 +115,11 @@ export {
     deriveOnchainSend,
     onchainReceiveRequest,
     onchainSendRequest,
+    requestOnchainReceive,
     requestOnchainSend,
 } from "./rfq";
 export { sealClaimPacket, type ClaimPacketInput, type SealedClaimPacket } from "./claimPacket";
+export { awaitLockupFunding, claimReceiveLockup, pushClaim, type ClaimArkProvider } from "./claim";
 export {
     RFQ_PREIMAGE_TAG,
     RefundNotLocallyPossibleError,

@@ -45,14 +45,15 @@ its comments — `taker` always means the solver that fills, never the party ask
    fill shows up without re-running a scan. Registration is what makes it possible: only a
    registered covenant is watched. See "Live status" below.
 6. **`rfq`** — the maker / intent-submitter side of quoted swaps: RFQ negotiation over HTTP or a
-   relay, then non-interactive filling (see below). Covers `arkade:BTC|asset -> lightning:BTC`
-   (implemented against the reference solver), `arkade:BTC|asset -> arkade:BTC|asset` (quote,
-   then take by funding an offer from layer 1), and the onchain corridor below.
+   relay, then non-interactive filling (see below). All four reference-solver corridors:
+   `arkade:BTC -> lightning:BTC` and `arkade:BTC -> onchain:BTC` (send), `lightning:BTC ->
+   arkade:BTC` and `onchain:BTC -> arkade:BTC` (receive), plus `arkade:BTC|asset ->
+   arkade:BTC|asset` (quote, then take by funding an offer from layer 1).
 7. **`onchainHtlc`** — the Bitcoin-L1 side of `arkade:BTC <-> onchain:BTC`: a NUMS-keyed taproot
    HTLC as pure local derivation (golden-pinned), claim/refund spend builders with signing as a
    callback, the injected `ChainSource` seam (the package holds no L1 backend and no keys),
    preimage extraction from a spend's witness, and crash-recovery classification.
-   `claimPacket` seals P to covclaimd for the on-board direction.
+   `claimPacket` seals P to covclaimd for the receive directions.
 
 Everything the package persists — swap records, the restore-scan cursor, and the markets cache —
 goes through a single `AssetSwapRepository`, following the Arkade repository convention
@@ -302,14 +303,16 @@ indistinguishable from an unfunded one, which is why persisting before funding i
 `fallbackSecrets` is versioned and discriminated: `{ version: 1, type: "stored",
 senderPrivateKeyHex, preimageHex? }`.
 
-**On-board (`onchain:BTC -> arkade:BTC`) is milestone 2 and partially gated.** The wire request
-(`onchainReceiveRequest`), the L1 HTLC (roles swapped: the solver claims, the maker refunds) and
-`sealClaimPacket` (P sealed to covclaimd so the maker can go offline after funding) are in place.
-The missing piece is verifying the solver-funded Arkade VHTLC locally before funding L1, which
-requires the SDK's non-interactive-claim API — not merged upstream yet (`arkade-os/ts-sdk#613`);
-the one-call on-board flow lands when it is. Until covclaimd's reference vectors are
-cross-checked, the `sealClaimPacket` test vector is pinned from this implementation and marked
-provisional (`TODO(claim-packet-vectors)`).
+**On-board corridors are covered.** `requestLightningReceive` (`lightning:BTC -> arkade:BTC`) and
+`requestOnchainReceive` (`onchain:BTC -> arkade:BTC`) mirror the send-side flows: quote → derive
+BOTH contracts locally (the role-inverted VHTLC, and the L1 HTLC for the onchain leg) → verify
+against the quote's compare-only addresses → gate. `requestLightningReceive` returns the solver's
+hold invoice to pay; `requestOnchainReceive` returns the L1 HTLC to fund — the payment/broadcast
+itself is the trader's own wallet's job, exactly as on the send corridors. The trader-side
+completion lands in `claim.ts`: `claimReceiveLockup` waits for the solver's funding and pushes the
+collaborative claim with the swap's own `P` and receiver key (covclaimd optional). Until covclaimd's
+reference vectors are cross-checked, the `sealClaimPacket` test vector is pinned from this
+implementation and marked provisional (`TODO(claim-packet-vectors)`).
 
 ## RFQ secrets are derived, not stored
 
@@ -421,6 +424,16 @@ scanned? })` — the server key is required because a spend is classified by reb
   consumer caching from it must not run ahead of the store.
 - **`lightningSendProgram` and `htlcSendProgram` are gone** along with the program-artifact layer
   they compiled. Derive scripts through `lightningSendVtxoScript` / `onchainHtlcScript`.
+- **The receive corridors are wired, and the wire shape settled.** `lightningReceiveRequest` is
+  new; `onchainReceiveRequest`'s profile now matches the shipped solver schema (`payment_hash`,
+  `claim_packet`, `refund_pubkey`, `payout_address`, `payout_pubkey` — the earlier
+  `destination_address` / object-shaped `claim_packet` never interoperated). `sealClaimPacket`
+  drops the vestigial `arkadeScript` input: the packet was never cryptographically bound to it,
+  and the solver recomputes the script from its own row, so the wire carries only the ciphertext.
+  `requestLightningSend` now returns `fundAmount = quote.from_amount` — the invoice plus the
+  corridor's fee — and refuses quotes whose `to_amount` reprices the invoice; solvers charge
+  per-corridor fees on all four pairs, and funding the bare invoice amount underfunds by exactly
+  the fee.
 - **`lightningSendVtxoScript` takes two new required fields**: `senderPubkey` (the trader's VHTLC
   sender key — generate, persist, see `requestLightningSend`) and `receiverPkScript` (the solver's
   claim destination, from `profile.receiver_pk_script`). Callers that built the lockup directly
