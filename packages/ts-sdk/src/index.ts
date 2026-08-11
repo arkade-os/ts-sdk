@@ -325,6 +325,8 @@ import {
     resolveCheckpointExitDelayPolicy,
     DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
     REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+    MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+    SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
 } from "./wallet/checkpointExitDelay";
 import type { CheckpointExitDelayPolicy } from "./wallet/checkpointExitDelay";
 import { buildForfeitTx } from "./forfeit";
@@ -652,6 +654,8 @@ export {
     resolveCheckpointExitDelayPolicy,
     DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
     REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+    MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+    SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
     type CheckpointExitDelayPolicy,
     buildForfeitTx,
     isRecoverable,

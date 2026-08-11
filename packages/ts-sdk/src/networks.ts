@@ -8,6 +8,17 @@ export interface Network {
     pubKeyHash: number;
     scriptHash: number;
     wif: number;
+    /**
+     * Canonical name this network was resolved from, when known.
+     *
+     * `bech32` cannot separate the tb-family — testnet, signet and mutinynet
+     * share every field above — so anything that has to tell them apart (a
+     * per-network timelock floor, for one) has no other handle. Optional
+     * because a hand-built `Network` carries no name: consumers must read a
+     * missing one as "unknown" and fall back to their strictest branch rather
+     * than guess at one.
+     */
+    name?: NetworkName;
 }
 export const getNetwork = (network: NetworkName): Network => {
     const found = networks[network];
@@ -18,10 +29,10 @@ export const getNetwork = (network: NetworkName): Network => {
 };
 
 export const networks = {
-    bitcoin: withArkPrefix(NETWORK, "ark"),
-    testnet: withArkPrefix(TEST_NETWORK, "tark"),
-    signet: withArkPrefix(TEST_NETWORK, "tark"),
-    mutinynet: withArkPrefix(TEST_NETWORK, "tark"),
+    bitcoin: withArkPrefix(NETWORK, "ark", "bitcoin"),
+    testnet: withArkPrefix(TEST_NETWORK, "tark", "testnet"),
+    signet: withArkPrefix(TEST_NETWORK, "tark", "signet"),
+    mutinynet: withArkPrefix(TEST_NETWORK, "tark", "mutinynet"),
     regtest: withArkPrefix(
         {
             ...TEST_NETWORK,
@@ -30,13 +41,19 @@ export const networks = {
             scriptHash: 0xc4,
         },
         "tark",
+        "regtest",
     ),
 };
 
-function withArkPrefix(network: Omit<Network, "hrp">, prefix: string): Network {
+function withArkPrefix(
+    network: Omit<Network, "hrp" | "name">,
+    prefix: string,
+    name: NetworkName,
+): Network {
     return {
         ...network,
         hrp: prefix,
+        name,
     };
 }
 

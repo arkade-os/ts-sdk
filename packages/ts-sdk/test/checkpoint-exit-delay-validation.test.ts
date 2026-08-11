@@ -7,6 +7,8 @@ import {
     resolveCheckpointExitDelayPolicy,
     DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
     REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+    MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+    SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
 } from "../src/wallet/checkpointExitDelay";
 import { ServerResponseMismatchError } from "../src/providers/errors";
 import { networks } from "../src/networks";
@@ -207,5 +209,90 @@ describe("assertValidServerUnrollScript", () => {
                 defaultCheckpointExitDelayPolicy(networks.bitcoin),
             ),
         ).toThrow(/minCheckpointExitDelaySeconds/);
+    });
+
+    it("quotes the value that would accept it, not just the option name", () => {
+        // Naming the option still leaves the reader to derive what to set it to.
+        // The rejected delay is exactly that value, so the message carries it
+        // and nothing has to be worked out from the rest of the sentence.
+        expect(() =>
+            assertValidServerUnrollScript(
+                encodeCheckpointTapscript(4096n),
+                defaultCheckpointExitDelayPolicy(networks.bitcoin),
+            ),
+        ).toThrow(/minCheckpointExitDelaySeconds: 4096n/);
+    });
+});
+
+describe("hosted networks that advertise below the generic floor", () => {
+    // Verbatim `ArkInfo.checkpointTapscript` as served by each hosted Arkade
+    // Service. Held as raw wire strings rather than re-encoded from the
+    // constants, so a constant that drifts from what the operator actually
+    // serves fails here instead of passing against itself.
+    const ADVERTISED = {
+        bitcoin: "039e0440b27520b43a8363118c084a04d4f6a50ebfa58e81957f8cceceb2aee0ab64c9fd2d9977ac",
+        signet: "03a80040b275202697695adaf0635333d6240739de02feb3f6852e180c596b69a77536aadb7123ac",
+        mutinynet:
+            "03080040b27520dfcaec558c7e78cf3e38b898ba8a43cfb5727266bae32c5c5b3aeb32c558aa0bac",
+    } as const;
+
+    it("defaults mutinynet to the delay its operator advertises", () => {
+        expect(MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS).toBe(4_096n);
+        expect(defaultCheckpointExitDelayPolicy(networks.mutinynet)).toEqual({
+            minSeconds: MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+            requireSeconds: true,
+        });
+    });
+
+    it("defaults signet to the delay its operator advertises", () => {
+        // 168 * 512: a 24h setting rounded down to BIP-68's 512s granularity,
+        // which is the only reason it misses the 86400s floor — by 384s.
+        expect(SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS).toBe(86_016n);
+        expect(defaultCheckpointExitDelayPolicy(networks.signet)).toEqual({
+            minSeconds: SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+            requireSeconds: true,
+        });
+    });
+
+    it("leaves bitcoin and testnet on the generic floor", () => {
+        expect(defaultCheckpointExitDelayPolicy(networks.bitcoin).minSeconds).toBe(
+            DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+        );
+        expect(defaultCheckpointExitDelayPolicy(networks.testnet).minSeconds).toBe(
+            DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+        );
+    });
+
+    for (const network of ["bitcoin", "signet", "mutinynet"] as const) {
+        it(`accepts what the hosted ${network} service serves, with no override`, () => {
+            const result = assertValidServerUnrollScript(
+                ADVERTISED[network],
+                defaultCheckpointExitDelayPolicy(networks[network]),
+            );
+            expect(result.params.timelock.type).toBe("seconds");
+        });
+    }
+
+    it("does not spill the relaxed floors onto testnet", () => {
+        // testnet shares every other `Network` field with signet and mutinynet,
+        // so a default keyed on anything but the name would relax it too.
+        for (const tapscript of [ADVERTISED.signet, ADVERTISED.mutinynet]) {
+            expect(() =>
+                assertValidServerUnrollScript(
+                    tapscript,
+                    defaultCheckpointExitDelayPolicy(networks.testnet),
+                ),
+            ).toThrow(/below the 86400s floor/);
+        }
+    });
+
+    it("keeps the generic floor for a Network that carries no name", () => {
+        // Fail closed: a hand-built network has no name to match on and must not
+        // inherit a relaxed floor just because it looks like the tb-family.
+        const { name, ...unnamed } = networks.mutinynet;
+        expect(name).toBe("mutinynet");
+        expect(defaultCheckpointExitDelayPolicy(unnamed).minSeconds).toBe(
+            DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+        );
     });
 });

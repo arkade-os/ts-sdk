@@ -46,7 +46,9 @@ export const toSeconds = (t: RelativeTimelock): bigint =>
  * `label` names the value in thrown messages (e.g. `"batch expiry"`,
  * `"checkpoint exit delay"`) and `overrideOption` names the wallet-config
  * option that lowers this particular floor (e.g. `"minBatchExpirySeconds"`), so
- * callers share this one implementation without losing message specificity.
+ * callers share this one implementation without losing message specificity. A
+ * floor rejection quotes the value that would accept the timelock alongside the
+ * option name, so acting on the message needs nothing the message did not say.
  *
  * @throws {ServerResponseMismatchError} if the timelock is out of policy.
  */
@@ -69,8 +71,8 @@ export function assertTimelockInPolicy(
     if (seconds < policy.minSeconds) {
         throw new ServerResponseMismatchError(
             `${label} rejected: ${timelock.value} ${timelock.type} is below the ` +
-                `${policy.minSeconds}s floor; pass ${overrideOption} to Wallet.create ` +
-                `to lower it`,
+                `${policy.minSeconds}s floor; pass ${overrideOption}: ${seconds}n to ` +
+                `Wallet.create to lower it`,
         );
     }
 

@@ -1,6 +1,6 @@
 import { hex } from "@scure/base";
 import { Bytes, equalBytes } from "@scure/btc-signer/utils.js";
-import type { Network } from "../networks";
+import type { Network, NetworkName } from "../networks";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { ServerResponseMismatchError } from "../providers/errors";
 import { assertTimelockInPolicy, isRegtest } from "./timelockPolicy";
@@ -17,6 +17,42 @@ export const DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS = 86_400n;
  * 1-block attack.
  */
 export const REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS = 1_200n;
+
+/**
+ * Wall-clock floor for the checkpoint exit delay on mutinynet.
+ *
+ * The hosted mutinynet Arkade Service advertises exactly this: its
+ * `checkpointTapscript` decodes to a 4096s (8 * 512) CSV, sized for a chain
+ * that mines ~30s blocks. {@link DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS}
+ * rejects it, which left mutinynet unusable until the caller went and found
+ * `minCheckpointExitDelaySeconds` and then this number.
+ */
+export const MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS = 4_096n;
+
+/**
+ * Wall-clock floor for the checkpoint exit delay on signet.
+ *
+ * The hosted signet Arkade Service advertises 86016s (168 * 512): a 24h
+ * setting rounded down to BIP-68's 512s granularity, since 86400 is not a
+ * multiple of 512 and so cannot be encoded in a seconds-typed timelock at all.
+ * That lands 384s under {@link DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS} and
+ * is rejected by it, so signet needs its own floor for the same reason
+ * mutinynet does.
+ */
+export const SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS = 86_016n;
+
+/**
+ * Floors for the networks whose hosted Arkade Service advertises a delay below
+ * {@link DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS}.
+ *
+ * Each entry is that operator's own advertised value, so the default accepts
+ * exactly what it serves and nothing lower. Deliberately not a blanket
+ * relaxation: `bitcoin` and `testnet` are absent and keep the generic floor.
+ */
+const HOSTED_MIN_CHECKPOINT_EXIT_DELAY_SECONDS: Partial<Record<NetworkName, bigint>> = {
+    signet: SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+    mutinynet: MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+};
 
 /** Bounds applied to a server-supplied `ArkInfo.checkpointTapscript`. */
 export type CheckpointExitDelayPolicy = {
@@ -47,9 +83,21 @@ export type CheckpointExitDelayPolicy = {
  * selected by the operator.
  */
 export function defaultCheckpointExitDelayPolicy(network: Network): CheckpointExitDelayPolicy {
-    return isRegtest(network)
-        ? { minSeconds: REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS, requireSeconds: false }
-        : { minSeconds: DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS, requireSeconds: true };
+    if (isRegtest(network)) {
+        return { minSeconds: REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS, requireSeconds: false };
+    }
+    // A `Network` assembled by hand carries no name and falls through to the
+    // generic floor: an unrecognized network must not pick up a relaxed one.
+    const hosted = network.name
+        ? HOSTED_MIN_CHECKPOINT_EXIT_DELAY_SECONDS[network.name]
+        : undefined;
+    // Only `minSeconds` moves for the hosted networks. Each advertises a
+    // seconds-typed delay, so `requireSeconds` stays on and the block-typed
+    // branch remains regtest-only.
+    return {
+        minSeconds: hosted ?? DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+        requireSeconds: true,
+    };
 }
 
 /** Resolve a policy for `network`, applying any caller overrides on top. */
