@@ -28,9 +28,44 @@ solver fills, the deposit comes back through `cancelOffer` rather than through a
 Naming the sides *user* and *solver* says who does what without borrowing a guarantee the contract
 does not make.
 
-This route does not negotiate over a relay. `quoteOffer` prices a swap from the market card's
-own price feed, so the terms you show are indicative: nothing is signed, and no solver has
-reserved inventory or promised a fill until one lands on the funded contract.
+## Request for quote
+
+Every Arkade Intents route is request-for-quote: the user states an intent, receives the solver's
+terms as a quote, funds the contract it derives from those terms, and a solver fills it. This
+route is no exception — what is specific to it is *where the quote is resolved*. `quoteOffer`
+prices the swap client-side from the market card the solver publishes: its price feed and its fee,
+the same two inputs a relay quote would carry. Same protocol, one fewer network hop, and a quote
+that is ready before the user finishes typing an amount.
+
+The card commits a solver to a price; a fill commits it to your swap. Nothing is signed and no
+inventory is reserved until a solver lands on the funded contract, so treat the quote as terms to
+show and validate — which is what `validatePlan` is for — rather than as a reservation.
+
+Relay-negotiated quotes are where this is going, and not only here: every corridor — Lightning,
+onchain, and intra-Arkade alike — converges on asking solvers for quotes over the relay, under one
+message family. What stays specific to this route is the settlement script, not the negotiation:
+both legs live in the same ledger, so a non-interactive swap covenant replaces the HTLC that
+cross-ledger corridors need. The quote you resolve locally today is the quote a solver will answer
+with then.
+
+## Funding, then fill or cancel
+
+Every swap has the same two beats, on this route and on the cross-ledger corridors:
+
+1. **Funding** — the user funds the contract it derived from the quote. Funding *is* acceptance;
+   there is no accept message to send, here or anywhere in Arkade Intents.
+2. **Fill, or cancel** — a solver fills by delivering the other side, or the user takes the
+   deposit back.
+
+Cancel is this route's refund path. Where an HTLC corridor refunds through a timelocked leaf, this
+covenant refunds through `cancelOffer` — a 2-of-2 with the Arkade server, **no solver signature
+involved**. Same job, same guarantee that the money comes home, reached by a script that fits a
+single-ledger swap.
+
+The one thing to design for: the covenant carries no timelock, so an offer keeps its place until
+it is filled or cancelled. There is no window to miss, no deadline to race, and no expired state
+to recover from — the trade-off is that the deposit comes back when you ask for it, so a UI that
+funds an offer should keep cancelling within reach.
 
 ## The four layers
 
@@ -95,23 +130,25 @@ The minimum you must keep to stay in control of a swap is `offerHex` plus the fu
 Everything else — status, amounts, timestamps — `restoreAssetSwaps` rebuilds from chain, and the
 offer bytes themselves are recoverable from the funding tx if the record is lost.
 
-## Cancelling an offer no solver filled
+## Cancelling: the refund path
 
 ```ts
 const txid = await cancelOffer(wallet, ARK, swap.offerHex, swap.fundingTxid, swap.swapAddress);
 ```
 
 **An unfilled offer never expires.** Neither program carries a timelock, so a deposit no solver
-picked up sits at the swap address indefinitely — nothing reclaims it for you, and there is no
-"expired" state to wait for. Cancelling is the only way out, and you have to ask.
+picked up keeps its place at the swap address — the terms stay open as long as you want them to,
+with no deadline to miss and no "expired" state to unwind. Getting the deposit back is
+`cancelOffer`, available from the moment funding lands and settling as soon as you ask.
 
 The two ways out of the covenant are deliberately asymmetric:
 
 - **`fulfill`** is signed by the **server alone**, but the covenant constrains it to pay output 0
   to your payout script for at least `wantAmount`. A solver cannot take the deposit without
   delivering the other side.
-- **`cancel`** is a **2-of-2 of you and the server**. Cancelling is cooperative, not a unilateral
-  withdrawal.
+- **`cancel`** is a **2-of-2 of you and the server** — no solver signature. Your refund never
+  depends on the counterparty being reachable or willing, which is the same property the HTLC
+  corridors buy with a timelock, bought here with a cooperative path that needs no waiting.
 
 So cancel *races* a fill rather than pre-empting it. If the solver fills in the same moment,
 `cancelOffer` throws `no spendable VTXO at the swap address` — that means the swap **completed**,
