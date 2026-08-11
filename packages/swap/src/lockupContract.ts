@@ -27,17 +27,28 @@ export type LockupContractWriter = Pick<IContractManager, "createContract">;
  *
  * Deliberately NOT a {@link SwapRefusal} or an {@link AddressMismatch}: those
  * say "the quote is bad, never fund it", while this says "the quote is fine and
- * your own store failed". A caller that retries the same quote after fixing its
- * storage is doing the right thing; one that retries past a refusal is not.
+ * your own store failed".
+ *
+ * The throw is the safe point: nothing is funded, and on the receive legs the
+ * invoice never left the function, so the abandoned quote is inert and simply
+ * retrying the request is the recovery. `script` travels beside `address` so a
+ * caller that still holds the swap — `RfqSwapManager`'s `ensureRegistered`, or
+ * one resuming from its own record — can retry `registerLockupContract` alone
+ * instead of re-quoting. It is NOT enough to resume a request that threw here:
+ * that caller never received the invoice or `secrets`.
  */
 export class LockupRegistrationFailed extends Error {
     /** The lockup address that was never registered — never fund it: nothing
      * is watching it. */
     readonly address: string;
-    constructor(address: string, cause: unknown) {
+    /** The covenant the row would have been written from — the other half of
+     * `registerLockupContract`, so the write is retryable without a quote. */
+    readonly script: InstanceType<typeof VHTLC.ScriptV2>;
+    constructor(script: InstanceType<typeof VHTLC.ScriptV2>, address: string, cause: unknown) {
         super(`failed to register the lockup contract for ${address}`, { cause });
         this.name = "LockupRegistrationFailed";
         this.address = address;
+        this.script = script;
     }
 }
 
@@ -71,6 +82,6 @@ export async function registerLockupContract(
             metadata: { genericallySpendable: false, kind: SWAP_LOCKUP_CONTRACT_KIND },
         });
     } catch (error) {
-        throw new LockupRegistrationFailed(address, error);
+        throw new LockupRegistrationFailed(script, address, error);
     }
 }

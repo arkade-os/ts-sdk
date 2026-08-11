@@ -57,6 +57,7 @@ import {
     type RfqQuote,
     type RfqTransport,
 } from "../src/rfq";
+import { LockupRegistrationFailed } from "../src/lockupContract";
 import { onchainHtlcScript, paymentHashOf } from "../src/onchainHtlc";
 import { preimageForRfqSecrets } from "../src/secrets";
 
@@ -609,10 +610,14 @@ const lightningReceiveFlow = async (
         invoice?: Partial<InvoiceFacts>;
         decode?: (bolt11: string) => InvoiceFacts;
         maxPayAmount?: number;
+        register?: () => Promise<unknown>;
+        /** Reuse a wallet across flows, to observe what a second call
+         * allocates. Carries its own writer, so `register` does not apply. */
+        wallet?: IWallet;
     } = {},
 ) => {
-    const createContract = vi.fn(async () => ({}));
-    const wallet = await hdWallet(createContract);
+    const createContract = vi.fn(over.register ?? (async () => ({})));
+    const wallet = over.wallet ?? (await hdWallet(createContract));
     const seen: { paymentHash?: string; payoutPubkey?: string; claimPacket?: unknown } = {};
     const transport: RfqTransport = {
         async requestQuote(payload) {
@@ -726,6 +731,36 @@ describe("requestLightningReceive on an HD wallet", () => {
 
         const allowed = await lightningReceiveFlow({ maxPayAmount: 5_000 });
         expect((await allowed.run()).payAmount).toBe(5_000);
+    });
+
+    it("carries the covenant beside the address when registration fails", async () => {
+        const flow = await lightningReceiveFlow({
+            register: async () => {
+                throw new Error("repository unavailable");
+            },
+        });
+        const error = (await flow.run().catch((e: unknown) => e)) as LockupRegistrationFailed;
+
+        expect(error).toBeInstanceOf(LockupRegistrationFailed);
+        expect(error.cause).toMatchObject({ message: "repository unavailable" });
+        // Both halves of `registerLockupContract`'s call travel together, so a
+        // holder of the record can retry the write without a quote.
+        expect(error.script.address("tark", SERVER).encode()).toBe(error.address);
+        // The invoice must be unreachable, not merely discouraged: a payer who
+        // pays into an unwatched lockup loses the payment.
+        expect(error).not.toHaveProperty("invoice");
+        expect(error.message).not.toContain("lnbcrt");
+    });
+
+    it("derives a fresh payment hash per call, so starting over cannot reuse H", async () => {
+        const wallet = await hdWallet();
+        const first = await lightningReceiveFlow({ wallet });
+        await first.run();
+        const second = await lightningReceiveFlow({ wallet });
+        await second.run();
+
+        expect(first.seen.paymentHash).toBeDefined();
+        expect(second.seen.paymentHash).not.toBe(first.seen.paymentHash);
     });
 });
 
