@@ -218,11 +218,33 @@ Refusals carry a closed reason set (`SwapRefusal`); unknown reasons are a generi
 `swap-lightning-send.program.json` bytes are frozen the same way the offer programs are — a
 golden test pins the compiled leaves and scriptPubKey to the reference solver's exact script.
 
-Transports are symmetric-outbound: `httpTransport` (POST `/v1/swap`, GET `/v1/rfq/<rfq_id>`) and
-`relayTransport` (the dev broker framing; the production target is Nostr — a directed kind with
-NIP-44 content — which swaps only the transport function). Status by `rfq_id` reaches terminal
-states `settled / refused / expired / refunded / stuck`; receipts (the preimage) appear only in
+Transports are symmetric-outbound: `httpTransport` (POST `/v1/swap`, GET `/v1/rfq/<rfq_id>`),
+`relayTransport` (the dev broker framing), and `nostrRfqTransport` — the production one a
+deployed solver actually listens on. Status by `rfq_id` reaches terminal states
+`settled / refused / expired / refunded / stuck`; receipts (the preimage) appear only in
 `settled`, and the chain itself is always the fallback nobody can withhold.
+
+### The Nostr transport is a separate entry point
+
+```ts
+import { nostrRfqTransport } from "@arkade-os/swap/nostr";
+
+const transport = nostrRfqTransport({
+    relays: card.transports.nostr.relays,
+    solverPubkey: card.discovery_pubkey,
+});
+```
+
+`nostr-tools` is an **optional peer dependency**, so it is only required if you import this
+subpath — a consumer doing HTTP-only swaps never resolves it, and the package root pulls in
+nothing Nostr-related. The trade is that importing `@arkade-os/swap/nostr` without `nostr-tools`
+installed fails at resolution, which is the intended loud failure rather than a transport that
+silently degrades.
+
+Directed traffic rides kind `24859`, which is **ephemeral** (NIP-01's 20000–29999): a conforming
+relay does not retain it. This must match the solver's `NOSTR_KIND_DIRECTED` — the two sides
+subscribe by `kinds`, so a mismatch is not an error either can report. They simply never see each
+other, and every request times out appearing to blame the solver.
 
 ## Onchain corridor: `arkade:BTC -> onchain:BTC` (and back)
 

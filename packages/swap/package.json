@@ -15,13 +15,23 @@
                 "types": "./dist/index.d.ts",
                 "default": "./dist/index.cjs"
             }
+        },
+        "./nostr": {
+            "import": {
+                "types": "./dist/nostr.d.ts",
+                "default": "./dist/nostr.js"
+            },
+            "require": {
+                "types": "./dist/nostr.d.ts",
+                "default": "./dist/nostr.cjs"
+            }
         }
     },
     "files": [
         "dist"
     ],
     "scripts": {
-        "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+        "build": "tsup src/index.ts src/nostr.ts --format esm,cjs --dts --clean",
         "typecheck": "tsc --noEmit",
         "format": "prettier --write src test",
         "lint": "prettier --check src test",
@@ -48,12 +58,21 @@
         "@scure/base": "2.0.0",
         "@scure/btc-signer": "2.0.1"
     },
+    "peerDependencies": {
+        "nostr-tools": "^2.12.0"
+    },
+    "peerDependenciesMeta": {
+        "nostr-tools": {
+            "optional": true
+        }
+    },
     "publishConfig": {
         "access": "public",
         "registry": "https://registry.npmjs.org/"
     },
     "packageManager": "pnpm@10.25.0",
     "devDependencies": {
-        "fake-indexeddb": "6.2.5"
+        "fake-indexeddb": "6.2.5",
+        "nostr-tools": "^2.12.0"
     }
 }
