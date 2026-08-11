@@ -405,15 +405,37 @@ describe("verifyReceiveInvoice", () => {
     });
 
     it("refuses an invoice on another payment hash", () => {
-        expect(() => verify({ paymentHash: "ff".repeat(32) })).toThrow(/not this swap's/);
+        expect(() => verify({ paymentHash: "ff".repeat(32) })).toThrow(
+            expect.objectContaining({ reason: "invoice_hash_mismatch" }),
+        );
     });
 
     it("refuses an amountless invoice and one repricing the quote", () => {
-        expect(() => verify({ amountSats: 0 })).toThrow(/names no amount/);
-        expect(() => verify({ amountSats: 5_001 })).toThrow(/not the quoted from_amount/);
+        expect(() => verify({ amountSats: 0 })).toThrow(
+            expect.objectContaining({ reason: "invoice_amount_mismatch" }),
+        );
+        expect(() => verify({ amountSats: 5_001 })).toThrow(
+            expect.objectContaining({ reason: "invoice_amount_mismatch" }),
+        );
+    });
+
+    // NaN fails every comparison, so an unchecked one would sail through both
+    // this function's expiry arithmetic and assertReceivable's two gates.
+    it("refuses a non-finite expiry, which would disarm every gate downstream", () => {
+        expect(() => verify({ expiresAt: NaN })).toThrow(
+            expect.objectContaining({ reason: "invoice_undecodable" }),
+        );
+        expect(() => verify({ amountSats: NaN })).toThrow(
+            expect.objectContaining({ reason: "invoice_amount_mismatch" }),
+        );
     });
 
     it("blames the solver for an undecodable invoice", () => {
+        expect(() =>
+            verify({}, () => {
+                throw new Error("bad checksum");
+            }),
+        ).toThrow(expect.objectContaining({ reason: "invoice_undecodable" }));
         expect(() =>
             verify({}, () => {
                 throw new Error("bad checksum");
@@ -444,12 +466,26 @@ describe("assertReceivable", () => {
 
     it("refuses once the pay deadline has passed", () => {
         expect(() => assertReceivable({ quote: quote(), payDeadline: NOW, now: NOW })).toThrow(
-            /expired/,
+            expect.objectContaining({ reason: "quote_expired" }),
         );
     });
 
+    // Unreachable through requestLightningReceive — deriveLightningReceive
+    // refuses the missing binding field first — but this is exported, so the
+    // standalone call has to hold its own.
+    it("refuses a quote carrying no refund_locktime", () => {
+        expect(() =>
+            assertReceivable({
+                quote: quote({ refund_locktime: undefined }),
+                payDeadline: INVOICE_EXPIRES_AT,
+                now: NOW,
+            }),
+        ).toThrow(expect.objectContaining({ reason: "missing_refund_locktime" }));
+    });
+
     // Measured from the pay deadline, not from now: the payer can pay at the
-    // last moment and the claim window is what remains after that.
+    // last moment and the claim window is what remains after that. Both sides
+    // of the floor are pinned, so a `<` that slips to `<=` fails here.
     it("refuses when a last-moment payment would leave no claim window", () => {
         expect(() =>
             assertReceivable({
@@ -457,7 +493,12 @@ describe("assertReceivable", () => {
                 payDeadline: INVOICE_EXPIRES_AT,
                 now: NOW,
             }),
-        ).toThrow(/before the solver's refund opens/);
+        ).toThrow(expect.objectContaining({ reason: "claim_window_too_short" }));
+        assertReceivable({
+            quote: quote({ refund_locktime: INVOICE_EXPIRES_AT + 1_800 }),
+            payDeadline: INVOICE_EXPIRES_AT,
+            now: NOW,
+        });
     });
 
     it("applies maxPayAmount to from_amount only when given", () => {
@@ -474,7 +515,7 @@ describe("assertReceivable", () => {
                 now: NOW,
                 maxPayAmount: 4_999,
             }),
-        ).toThrow(/above the 4999 ceiling/);
+        ).toThrow(expect.objectContaining({ reason: "price_too_high" }));
     });
 });
 
@@ -560,9 +601,9 @@ describe("requestLightningReceive on an HD wallet", () => {
         expect(result.secrets.derivable).toBe(true);
         expect(result.payAmount).toBe(5_000);
         expect(result.invoice).toBe("lnbcrt49u1p...");
+        // Absolute, so this pins exactly rather than tolerating drift between
+        // module load (NOW) and the clock requestLightningReceive captures.
         expect(result.invoiceExpiresAt).toBe(INVOICE_EXPIRES_AT);
-        expect(result.secondsToPay).toBeGreaterThan(500);
-        expect(result.secondsToPay).toBeLessThanOrEqual(600);
         // The quote was requested against sha256 of the derived preimage, and
         // the covenant's receiver key is the allocated one.
         const preimage = await preimageForRfqSecrets(flow.wallet, result.secrets);

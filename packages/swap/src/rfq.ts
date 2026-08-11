@@ -281,9 +281,13 @@ export const verifyLockupAddress = (quote: RfqQuote, derivedAddress: string): st
  * BOLT11 profiles only; `onchain` adds the L1-HTLC gates (§ guardrails of the
  * onchain spec) and is required for the onchain pairs.
  *
- * The lightning-receive leg does NOT use this: the refund CLTV there is the
- * solver's, not the trader's, so `MIN_HEADROOM_SECONDS` gates the wrong side —
- * see {@link assertReceivable}. */
+ * The lightning-receive leg does NOT use this: see {@link assertReceivable}.
+ * `refund_locktime` is the SOLVER's on both receive corridors, so
+ * `MIN_HEADROOM_SECONDS` gates the wrong side on either — but only the
+ * lightning leg has a second clock that can actually run out (the hold
+ * invoice's), which is what the split buys. The onchain-receive leg stays here
+ * until its own deadline gets the same treatment; the headroom check is merely
+ * over-strict there, never unsafe. */
 export const assertFundable = (input: {
     quote: RfqQuote;
     invoiceExpiresAt?: number;
@@ -638,7 +642,8 @@ export function lightningSendVtxoScript(params: {
 export interface InvoiceFacts {
     /** The raw BOLT11 — what travels in the request profile. */
     raw: string;
-    /** `sha256(P)`, hex (64 chars). */
+    /** `sha256(P)`, LOWERCASE hex (64 chars) — {@link verifyReceiveInvoice}
+     * compares it byte-for-byte against `paymentHashOf`, which emits lowercase. */
     paymentHash: string;
     amountSats: number;
     /** Absolute expiry, unix seconds. */
@@ -1194,7 +1199,7 @@ export const verifyReceiveInvoice = (input: {
     /** `sha256(P)`, hex — the trader's OWN. */
     paymentHash: string;
     quote: RfqQuote;
-}): { payDeadline: number; amountSats: number } => {
+}): { payDeadline: number } => {
     let decoded: InvoiceFacts;
     try {
         decoded = input.decode(input.invoice);
@@ -1202,6 +1207,16 @@ export const verifyReceiveInvoice = (input: {
         throw gateError(
             "invoice_undecodable",
             `solver sent an undecodable invoice: ${error instanceof Error ? error.message : String(error)}`,
+        );
+    }
+    // A decoder that reports the expiry of an invoice carrying no expiry tag
+    // as NaN would otherwise disarm every gate downstream: NaN fails every
+    // comparison, so it passes `now >= payDeadline` AND the claim-window
+    // floor, and the invoice goes out with no effective deadline at all.
+    if (!Number.isFinite(decoded.expiresAt)) {
+        throw gateError(
+            "invoice_undecodable",
+            `solver's invoice decoded to a non-finite expiry (${decoded.expiresAt})`,
         );
     }
     if (decoded.paymentHash !== input.paymentHash) {
@@ -1221,10 +1236,9 @@ export const verifyReceiveInvoice = (input: {
             `solver's invoice asks for ${decoded.amountSats}, not the quoted from_amount ${input.quote.from_amount}`,
         );
     }
-    return {
-        payDeadline: Math.min(decoded.expiresAt, input.quote.valid_until),
-        amountSats: decoded.amountSats,
-    };
+    // No `amountSats` in the return: the check above pins it to
+    // `quote.from_amount`, which the caller already has.
+    return { payDeadline: Math.min(decoded.expiresAt, input.quote.valid_until) };
 };
 
 /**
@@ -1433,11 +1447,10 @@ export async function requestLightningReceive(
     invoice: string;
     /** What the trader pays: the quote's `from_amount`. */
     payAmount: number;
-    /** Last moment the invoice can be paid: `min(invoice expiry,
-     * valid_until)`. */
+    /** Last moment the invoice can be paid, unix seconds: `min(invoice
+     * expiry, valid_until)`. Absolute on purpose — a countdown returned from
+     * here is stale before the caller reads it; derive one at display time. */
     invoiceExpiresAt: number;
-    /** `invoiceExpiresAt` as a countdown from this call. */
-    secondsToPay: number;
     /** The trader's OWN derivation of the lockup the solver must fund. */
     address: string;
     swapPkScript: Uint8Array;
@@ -1513,7 +1526,6 @@ export async function requestLightningReceive(
         invoice: derived.invoice,
         payAmount: quote.from_amount,
         invoiceExpiresAt: payDeadline,
-        secondsToPay: payDeadline - now,
         address: derived.address,
         swapPkScript: derived.swapPkScript,
         script: derived.script,

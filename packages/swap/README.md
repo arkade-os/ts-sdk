@@ -317,8 +317,8 @@ this swap's `H` and to `quote.from_amount` — an invoice on another payment has
 here with no on-chain trace, since the payer pays it in full and no lockup on `H` is ever funded.
 `assertReceivable` replaces `assertFundable` on this leg: the refund CLTV is the solver's, so the
 window that can run out is the hold invoice's, and the claim window is measured from
-`payDeadline = min(invoice expiry, valid_until)` — returned as `invoiceExpiresAt` / `secondsToPay`,
-which is what to show a payer, not `valid_until`. The optional `maxPayAmount` caps `from_amount`
+`payDeadline = min(invoice expiry, valid_until)` — returned as the absolute `invoiceExpiresAt`,
+which is the deadline to show a payer, not `valid_until`. The optional `maxPayAmount` caps `from_amount`
 (`price_too_high`). The trader-side
 completion lands in `claim.ts`: `claimReceiveLockup` waits for the solver's funding and pushes the
 collaborative claim with the swap's own `P` and receiver key (covclaimd optional). Until covclaimd's
