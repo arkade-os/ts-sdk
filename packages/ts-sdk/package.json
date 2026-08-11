@@ -2,6 +2,11 @@
     "name": "@arkade-os/sdk",
     "version": "0.4.58",
     "description": "TypeScript SDK for building Bitcoin wallets using the Arkade protocol",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/arkade-os/ts-sdk.git",
+        "directory": "packages/ts-sdk"
+    },
     "type": "module",
     "main": "./dist/index.cjs",
     "module": "./dist/index.js",
