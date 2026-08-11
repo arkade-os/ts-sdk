@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
+import { Script } from "@scure/btc-signer";
 import { Wallet, SingleKey } from "../src";
+import { VtxoScript } from "../src/script/base";
 import { ArkAddress } from "../src/script/address";
 import {
     assertRecipientArkAddress,
@@ -104,6 +106,97 @@ describe("validateRecipients address binding", () => {
             makeContext(),
         );
         expect(validated).toHaveLength(1);
+    });
+});
+
+/**
+ * A published taptree is a claim about the output: these, and only these, are
+ * the paths that can spend it. Nothing downstream re-derives the address from
+ * it — a reader takes the leaves and builds a spend — so a tree that does not
+ * belong to the address is a false statement, and it fails wherever it is
+ * eventually read rather than where it was attached.
+ *
+ * The concrete case is a daemon claiming a preimage-gated output on the
+ * receiver's behalf: it walks the published tree looking for the closure it
+ * can spend, and a tree for some other contract fails that walk with nothing
+ * useful to say. Refusing here turns that into an error at the call that
+ * caused it.
+ */
+describe("validateRecipients published taptree", () => {
+    // Three ordinary key-path leaves — enough to build real VtxoScripts. Their
+    // content is beside the point: what is under test is that the tree and the
+    // address agree, not what the tree permits. The keys are real curve points
+    // (G, 2G, 3G) because the taproot builder validates every key-path leaf.
+    const leafA = Script.encode([hex.decode(SERVER_KEY_HEX).slice(1), "CHECKSIG"]);
+    const leafB = Script.encode([
+        hex.decode("c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"),
+        "CHECKSIG",
+    ]);
+    const leafC = Script.encode([
+        hex.decode("f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"),
+        "CHECKSIG",
+    ]);
+    const script = new VtxoScript([leafA, leafB]);
+    const otherContract = new VtxoScript([leafA, leafC]);
+    const addressFor = (vs: VtxoScript) =>
+        new ArkAddress(SERVER_XONLY, vs.tweakedPublicKey, "tark").encode();
+
+    it("passes a taptree that derives the recipient address through to the output", () => {
+        const validated = validateRecipients(
+            [{ address: addressFor(script), amount: 2000, tapTree: script.encode() }],
+            1000,
+            makeContext(),
+        );
+        expect(validated[0].tapTree).toEqual(script.encode());
+    });
+
+    it("rejects a well-formed taptree belonging to a different contract", () => {
+        expect(() =>
+            validateRecipients(
+                [{ address: addressFor(script), amount: 2000, tapTree: otherContract.encode() }],
+                1000,
+                makeContext(),
+            ),
+        ).toThrow(/Invalid tapTree/);
+    });
+
+    it("rejects bytes that are not a taptree at all", () => {
+        expect(() =>
+            validateRecipients(
+                [
+                    {
+                        address: addressFor(script),
+                        amount: 2000,
+                        tapTree: new Uint8Array([0xff, 0xff]),
+                    },
+                ],
+                1000,
+                makeContext(),
+            ),
+        ).toThrow(/Invalid tapTree/);
+    });
+
+    it("validates against the address, not the output script, for a sub-dust recipient", () => {
+        // Sub-dust pays to the `RETURN` form of the same taproot key, so a
+        // check written against the output script would reject this pairing
+        // even though the tree describes exactly the right key.
+        const encoded = addressFor(script);
+        const validated = validateRecipients(
+            [{ address: encoded, amount: 100, tapTree: script.encode() }],
+            1000,
+            makeContext(),
+        );
+        expect(validated[0].tapTree).toEqual(script.encode());
+        expect(validated[0].script).toEqual(ArkAddress.decode(encoded).subdustPkScript);
+    });
+
+    it("leaves the taptree undefined when the caller published none", () => {
+        const validated = validateRecipients(
+            [{ address: addressFor(script), amount: 2000 }],
+            1000,
+            makeContext(),
+        );
+        expect(validated[0].tapTree).toBeUndefined();
     });
 });
 

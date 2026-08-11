@@ -13,6 +13,7 @@ import type {
     ArkTransaction,
     ExtendedCoin,
     Recipient,
+    SendParams,
 } from "..";
 import type { SettlementEvent } from "../../providers/ark";
 import type { Identity } from "../../identity";
@@ -358,8 +359,17 @@ export class ExpoWallet implements IWallet {
         return this.wallet.settle(params, eventCallback);
     }
 
-    send(...recipients: [Recipient, ...Recipient[]]): Promise<string> {
-        return this.wallet.send(...recipients);
+    send(...recipients: [Recipient, ...Recipient[]]): Promise<string>;
+    send(params: SendParams): Promise<string>;
+    send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
+        // Overloads cannot be forwarded through a spread — the call is resolved
+        // against the union, which matches neither signature — so the wrapped
+        // wallet is picked by the same shape test its own `send` applies.
+        const [first] = args;
+        if (args.length === 1 && first && "recipients" in first) {
+            return this.wallet.send(first as SendParams);
+        }
+        return this.wallet.send(...(args as [Recipient, ...Recipient[]]));
     }
 
     get assetManager(): IAssetManager {

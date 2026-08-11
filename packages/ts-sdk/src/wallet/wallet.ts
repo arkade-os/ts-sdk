@@ -62,6 +62,7 @@ import {
     ReadonlyWalletConfig,
     Recipient,
     SendBitcoinParams,
+    SendParams,
     SettleParams,
     TxType,
     VirtualCoin,
@@ -69,7 +70,7 @@ import {
     WalletConfig,
 } from ".";
 import { createAssetPacket, selectCoinsWithAsset, selectedCoinsToAssetInputs } from "./asset";
-import { VtxoScript } from "../script/base";
+import { TapTreeCoder, VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { signerSetFromInfo, toXOnlySignerHex } from "./signerRotation";
 import { assertValidBatchExpiry, resolveBatchExpiryPolicy } from "./batchExpiry";
@@ -178,6 +179,24 @@ function intentProofJobs(coins: ReadonlyArray<{ tapTree: Bytes }>): InputSigning
         lookupScript: VtxoScript.decode(coin.tapTree).pkScript,
     }));
     return [{ index: 0, lookupScript: coinJobs[0].lookupScript }, ...coinJobs];
+}
+
+// `send` takes either a recipient list or an options object. They are told
+// apart by `recipients`, which no `Recipient` has and every `SendParams` does
+// — rather than by "one argument", which both forms produce for a single
+// recipient. A `Recipient` is required to carry `address`, so an object with
+// neither key is neither form and says so here rather than failing later as a
+// missing address.
+function asSendParams(args: [SendParams] | [Recipient, ...Recipient[]]): SendParams {
+    const [first] = args;
+    if (args.length === 1 && first && "recipients" in first) {
+        const params = first as SendParams;
+        if (params.recipients.length === 0) {
+            throw new Error("At least one receiver is required");
+        }
+        return params;
+    }
+    return { recipients: args as [Recipient, ...Recipient[]] };
 }
 
 // Built-in ArkProvider implementations (Rest/Expo) expose `serverUrl`,
@@ -4786,13 +4805,38 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
      * });
      * ```
      */
-    async send(...args: [Recipient, ...Recipient[]]): Promise<string> {
-        return this._withTxLock(() => this._sendImpl(...args));
+    async send(...args: [Recipient, ...Recipient[]]): Promise<string>;
+    /**
+     * Send BTC and/or assets, choosing the inputs as well as the outputs.
+     *
+     * @param params - Recipients plus the virtual outputs to spend
+     * @returns Promise resolving to the Arkade transaction ID
+     * @see SendParams
+     *
+     * @example
+     * ```typescript
+     * const txid = await wallet.send({
+     *     recipients: [{ address: 'ark1q...', amount: 1000 }],
+     *     selectedVtxos: mine, // spent as given, nothing added
+     * });
+     * ```
+     */
+    async send(params: SendParams): Promise<string>;
+    async send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
+        const params = asSendParams(args);
+        return this._withTxLock(() => this._sendImpl(params));
     }
 
-    private async _sendImpl(...args: [Recipient, ...Recipient[]]): Promise<string> {
+    private async _sendImpl({ recipients: args, selectedVtxos }: SendParams): Promise<string> {
         if (args.length === 0) {
             throw new Error("At least one receiver is required");
+        }
+        if (selectedVtxos && selectedVtxos.length === 0) {
+            // Distinguished from `undefined`, which means "choose for me". An
+            // empty array is a caller that meant to name inputs and named none
+            // — silently selecting for it would spend coins it had decided not
+            // to spend.
+            throw new Error("send({ selectedVtxos }): no inputs");
         }
 
         // Snapshot the active receive tapscript synchronously before any
@@ -4821,115 +4865,170 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             this.recipientAddressContext(serverPubKey),
         );
 
-        const allVirtualCoins = await this.getVtxos({
-            withRecoverable: false,
-        });
-        // Drop funds under a past-cutoff (EXPIRED) deprecated signer: the operator
-        // will not co-sign a spend of them, so selecting one would fail at submit.
-        const pendingRecovery = await this.pendingRecoveryOutpoints();
-        const virtualCoins = pendingRecovery.size
-            ? allVirtualCoins.filter((c) => !pendingRecovery.has(`${c.txid}:${c.vout}`))
-            : allVirtualCoins;
+        // Left empty when the caller named its own inputs: that path never
+        // reaches for a coin it was not given, so reading the wallet's own
+        // outputs would only be a chance to disagree with it.
+        let virtualCoins: NormalizedExtendedVirtualCoin[] = [];
+        if (!selectedVtxos) {
+            const allVirtualCoins = await this.getVtxos({
+                withRecoverable: false,
+            });
+            // Drop funds under a past-cutoff (EXPIRED) deprecated signer: the operator
+            // will not co-sign a spend of them, so selecting one would fail at submit.
+            const pendingRecovery = await this.pendingRecoveryOutpoints();
+            virtualCoins = pendingRecovery.size
+                ? allVirtualCoins.filter((c) => !pendingRecovery.has(`${c.txid}:${c.vout}`))
+                : allVirtualCoins;
+        }
 
         // keep track of asset changes
         const assetChanges = new Map<string, bigint>();
 
-        let selectedCoins: ExtendedVirtualCoin[] = [];
+        let selectedCoins: ExtendedVirtualCoin[] = selectedVtxos ? [...selectedVtxos] : [];
         let btcAmountToSelect = 0;
 
         for (const recipient of recipients) {
             btcAmountToSelect += Math.max(recipient.amount, Number(this.dustAmount));
         }
 
-        // select assets
-        for (const recipient of recipients) {
-            if (!recipient.assets) {
-                continue;
+        if (selectedVtxos) {
+            // Caller-selected inputs. Every asset arriving on one still has to
+            // leave on an output, so the whole input set is folded in at once
+            // and the recipients' amounts drawn back off it — where the generic
+            // path below builds the same map incrementally, as it picks coins.
+            for (const coin of selectedCoins) {
+                for (const asset of coin.assets ?? []) {
+                    const existing = assetChanges.get(asset.assetId) ?? 0n;
+                    assetChanges.set(asset.assetId, existing + asset.amount);
+                }
             }
-            for (const receiverAsset of recipient.assets) {
-                let amountToSelect = receiverAsset.amount;
-
-                // check if existing change covers the needed amount
-                const existingChange = assetChanges.get(receiverAsset.assetId) ?? 0n;
-                if (existingChange >= amountToSelect) {
-                    assetChanges.set(receiverAsset.assetId, existingChange - amountToSelect);
-                    if (assetChanges.get(receiverAsset.assetId) === 0n) {
-                        assetChanges.delete(receiverAsset.assetId);
+            for (const recipient of recipients) {
+                for (const asset of recipient.assets) {
+                    const remaining = (assetChanges.get(asset.assetId) ?? 0n) - asset.amount;
+                    if (remaining < 0n) {
+                        throw new Error(
+                            `send({ selectedVtxos }): inputs are short ${-remaining} of asset ${asset.assetId}`,
+                        );
                     }
+                    if (remaining === 0n) {
+                        assetChanges.delete(asset.assetId);
+                    } else {
+                        assetChanges.set(asset.assetId, remaining);
+                    }
+                }
+            }
+        } else {
+            // select assets
+            for (const recipient of recipients) {
+                if (!recipient.assets) {
                     continue;
                 }
-                if (existingChange > 0n) {
-                    amountToSelect -= existingChange;
-                    assetChanges.delete(receiverAsset.assetId);
-                }
+                for (const receiverAsset of recipient.assets) {
+                    let amountToSelect = receiverAsset.amount;
 
+                    // check if existing change covers the needed amount
+                    const existingChange = assetChanges.get(receiverAsset.assetId) ?? 0n;
+                    if (existingChange >= amountToSelect) {
+                        assetChanges.set(receiverAsset.assetId, existingChange - amountToSelect);
+                        if (assetChanges.get(receiverAsset.assetId) === 0n) {
+                            assetChanges.delete(receiverAsset.assetId);
+                        }
+                        continue;
+                    }
+                    if (existingChange > 0n) {
+                        amountToSelect -= existingChange;
+                        assetChanges.delete(receiverAsset.assetId);
+                    }
+
+                    const availableCoins = virtualCoins.filter(
+                        (c) =>
+                            !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
+                    );
+
+                    const { selected, totalAssetAmount } = selectCoinsWithAsset(
+                        availableCoins,
+                        receiverAsset.assetId,
+                        amountToSelect,
+                    );
+
+                    for (const coin of selected) {
+                        selectedCoins.push(coin);
+                        // asset coins contain btc, subtract from total amount to select
+                        btcAmountToSelect -= coin.value;
+                        // coin may contain other assets, add them to asset changes
+                        if (coin.assets) {
+                            for (const a of coin.assets) {
+                                if (a.assetId === receiverAsset.assetId) {
+                                    continue;
+                                }
+                                const existing = assetChanges.get(a.assetId) ?? 0n;
+                                assetChanges.set(a.assetId, existing + a.amount);
+                            }
+                        }
+                    }
+
+                    const assetChangeAmount = totalAssetAmount - amountToSelect;
+                    if (assetChangeAmount > 0n) {
+                        const existing = assetChanges.get(receiverAsset.assetId) ?? 0n;
+                        assetChanges.set(receiverAsset.assetId, existing + assetChangeAmount);
+                    }
+                }
+            }
+
+            // select remaining btc
+            if (btcAmountToSelect > 0) {
                 const availableCoins = virtualCoins.filter(
                     (c) => !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
                 );
+                const { inputs: btcCoins } = selectVirtualCoins(availableCoins, btcAmountToSelect);
 
-                const { selected, totalAssetAmount } = selectCoinsWithAsset(
-                    availableCoins,
-                    receiverAsset.assetId,
-                    amountToSelect,
-                );
-
-                for (const coin of selected) {
-                    selectedCoins.push(coin);
-                    // asset coins contain btc, subtract from total amount to select
-                    btcAmountToSelect -= coin.value;
-                    // coin may contain other assets, add them to asset changes
+                // some coins may contain assets, add them to asset changes
+                for (const coin of btcCoins) {
                     if (coin.assets) {
-                        for (const a of coin.assets) {
-                            if (a.assetId === receiverAsset.assetId) {
-                                continue;
-                            }
-                            const existing = assetChanges.get(a.assetId) ?? 0n;
-                            assetChanges.set(a.assetId, existing + a.amount);
+                        for (const asset of coin.assets) {
+                            const existing = assetChanges.get(asset.assetId) ?? 0n;
+                            assetChanges.set(asset.assetId, existing + asset.amount);
                         }
                     }
                 }
 
-                const assetChangeAmount = totalAssetAmount - amountToSelect;
-                if (assetChangeAmount > 0n) {
-                    const existing = assetChanges.get(receiverAsset.assetId) ?? 0n;
-                    assetChanges.set(receiverAsset.assetId, existing + assetChangeAmount);
-                }
+                selectedCoins = [...selectedCoins, ...btcCoins];
             }
-        }
-
-        // select remaining btc
-        if (btcAmountToSelect > 0) {
-            const availableCoins = virtualCoins.filter(
-                (c) => !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
-            );
-            const { inputs: btcCoins } = selectVirtualCoins(availableCoins, btcAmountToSelect);
-
-            // some coins may contain assets, add them to asset changes
-            for (const coin of btcCoins) {
-                if (coin.assets) {
-                    for (const asset of coin.assets) {
-                        const existing = assetChanges.get(asset.assetId) ?? 0n;
-                        assetChanges.set(asset.assetId, existing + asset.amount);
-                    }
-                }
-            }
-
-            selectedCoins = [...selectedCoins, ...btcCoins];
         }
 
         let totalBtcSelected = selectedCoins.reduce((sum, c) => sum + c.value, 0);
 
         // build tx outputs
-        const outputs = recipients.map((recipient) => ({
+        const outputs: TransactionOutput[] = recipients.map((recipient) => ({
             script: recipient.script,
             amount: BigInt(recipient.amount),
+            // Published so the output is self-describing — see `Recipient.tapTree`.
+            // Already checked against the recipient address in `validateRecipients`.
+            ...(recipient.tapTree ? { tapTree: TapTreeCoder.decode(recipient.tapTree) } : {}),
         }));
 
         const totalBtcOutput = outputs.reduce((sum, o) => sum + Number(o.amount), 0);
         let changeAmount = totalBtcSelected - totalBtcOutput;
 
+        if (changeAmount < 0) {
+            // Only reachable with caller-selected inputs: generic selection
+            // either covers the outputs or throws while it is still selecting.
+            throw new Error(
+                `send({ selectedVtxos }): inputs total ${totalBtcSelected} sats, outputs need ${totalBtcOutput}`,
+            );
+        }
+
         // enforce minimum change amount when there are asset changes
         if (assetChanges.size > 0 && changeAmount < Number(this.dustAmount)) {
+            if (selectedVtxos) {
+                // Asset change needs a change output at or above dust, and this
+                // path may not reach for a coin the caller did not name. Loud,
+                // because the alternative is dropping the change assets.
+                throw new Error(
+                    `send({ selectedVtxos }): ${changeAmount} sats of change cannot carry ` +
+                        `${assetChanges.size} asset change(s), needs ${this.dustAmount}`,
+                );
+            }
             const availableCoins = virtualCoins.filter(
                 (c) => !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
             );

@@ -16,6 +16,7 @@ import {
     ReissuanceParams,
     BurnParams,
     Recipient,
+    SendParams,
 } from "..";
 import { SettlementEvent } from "../../providers/ark";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "../activity";
@@ -1699,12 +1700,21 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
         }
     }
 
-    async send(...recipients: [Recipient, ...Recipient[]]): Promise<string> {
+    async send(...recipients: [Recipient, ...Recipient[]]): Promise<string>;
+    async send(params: SendParams): Promise<string>;
+    async send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
+        const [first] = args;
+        const { recipients, selectedVtxos } =
+            args.length === 1 && first && "recipients" in first
+                ? (first as SendParams)
+                : { recipients: args as [Recipient, ...Recipient[]], selectedVtxos: undefined };
         const message: RequestSend = {
             tag: this.messageTag,
             type: "SEND",
             id: getRandomId(),
-            payload: { recipients },
+            // Omitted rather than sent as `undefined`, so an older worker sees
+            // exactly the payload it saw before.
+            payload: selectedVtxos ? { recipients, selectedVtxos } : { recipients },
         };
 
         try {
