@@ -263,13 +263,25 @@ describe("hosted networks that advertise below the generic floor", () => {
         );
     });
 
+    // Each network's floor is exactly the delay its own fixture decodes to, so
+    // asserting the decoded value against the constant pins the two together:
+    // a constant moved in either direction stops matching the wire bytes.
+    const ADVERTISED_SECONDS = {
+        bitcoin: 605_184n,
+        signet: SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+        mutinynet: MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+    } as const;
+
     for (const network of ["bitcoin", "signet", "mutinynet"] as const) {
         it(`accepts what the hosted ${network} service serves, with no override`, () => {
             const result = assertValidServerUnrollScript(
                 ADVERTISED[network],
                 defaultCheckpointExitDelayPolicy(networks[network]),
             );
-            expect(result.params.timelock.type).toBe("seconds");
+            expect(result.params.timelock).toEqual({
+                value: ADVERTISED_SECONDS[network],
+                type: "seconds",
+            });
         });
     }
 
