@@ -76,7 +76,7 @@ export function isCancelSpend(offer: Offer, spend: Tx): boolean {
  * spending tx, which this scan looks up in the `txs` you pass. When the
  * deposit reads as spent but its spender is not in `txs` yet (the wallet's own
  * history still syncing), the swap is restored as `fulfilled` — the likelier
- * reading, since a maker-initiated cancel normally has its tx locally.
+ * reading, since a user-initiated cancel normally has its tx locally.
  *
  * That guess is **not** revisited: once you persist the record, its id lands
  * in `existingIds` and every later scan skips it. A swap the user cancelled
