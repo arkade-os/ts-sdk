@@ -268,6 +268,32 @@ const gateError = (reason: string, message: string): Error & { reason: string } 
     return error;
 };
 
+/**
+ * Refuse a number no gate can compare against.
+ *
+ * Every threshold on these corridors is a `<`, `>=`, or `-` over a number
+ * that arrived from the solver, from a caller-injected decoder, or from a
+ * caller's own configuration. `NaN` is the dangerous one: it fails EVERY
+ * comparison, so an unchecked `NaN` does not fail its gate — it deletes it,
+ * silently, and the flow proceeds as if the check had passed. The wire is
+ * JSON, where a field typed `number` here can arrive as a string and turn the
+ * first arithmetic on it into `NaN`, so the static type is not the guarantee
+ * it looks like.
+ *
+ * The infinities happen to fail closed at each site today, and are refused
+ * anyway: no clock or sats amount produces one, so it means the number's
+ * source is broken, and saying that beats depending on which side of a
+ * comparison it landed on.
+ *
+ * `undefined` passes: optional means optional, and every caller of this
+ * checks for absence separately where absence is itself a refusal.
+ */
+const assertFinite = (value: number | undefined, reason: string, label: string): void => {
+    if (value !== undefined && !Number.isFinite(value)) {
+        throw gateError(reason, `${label} is not a finite number (${String(value)})`);
+    }
+};
+
 /** Compare-only check of the solver's address against YOUR derivation.
  * Throws {@link AddressMismatch}; returns the address so calls chain. */
 export const verifyLockupAddress = (quote: RfqQuote, derivedAddress: string): string => {
@@ -1192,6 +1218,9 @@ export const MIN_CLAIM_WINDOW_SECONDS = 30 * 60;
  *
  * There is no check for "is this actually a hold invoice": on the wire it is
  * indistinguishable from an ordinary one.
+ *
+ * Reasons: `invoice_undecodable` | `invoice_hash_mismatch` |
+ * `invoice_amount_mismatch` | `quote_malformed`.
  */
 export const verifyReceiveInvoice = (input: {
     invoice: string;
@@ -1209,16 +1238,12 @@ export const verifyReceiveInvoice = (input: {
             `solver sent an undecodable invoice: ${error instanceof Error ? error.message : String(error)}`,
         );
     }
-    // A decoder that reports the expiry of an invoice carrying no expiry tag
-    // as NaN would otherwise disarm every gate downstream: NaN fails every
-    // comparison, so it passes `now >= payDeadline` AND the claim-window
-    // floor, and the invoice goes out with no effective deadline at all.
-    if (!Number.isFinite(decoded.expiresAt)) {
-        throw gateError(
-            "invoice_undecodable",
-            `solver's invoice decoded to a non-finite expiry (${decoded.expiresAt})`,
-        );
-    }
+    // Both operands of the `payDeadline` min, before either reaches it: a
+    // decoder that reports the expiry of an invoice with no expiry tag as NaN,
+    // or a solver that sends a `valid_until` JSON never typechecked, would
+    // otherwise disarm every gate downstream — see {@link assertFinite}.
+    assertFinite(decoded.expiresAt, "invoice_undecodable", "the decoded invoice expiry");
+    assertFinite(input.quote.valid_until, "quote_malformed", "quote valid_until");
     if (decoded.paymentHash !== input.paymentHash) {
         throw gateError(
             "invoice_hash_mismatch",
@@ -1255,6 +1280,9 @@ export const verifyReceiveInvoice = (input: {
  * `amountSide: "to"` the price is the free variable. Optional because a bad
  * price is visible to the caller before anything is published — unlike an
  * opaque invoice or an underfunded lockup.
+ *
+ * Reasons: `quote_expired` | `missing_refund_locktime` | `claim_window_too_short` |
+ * `price_too_high` | `quote_malformed` | `invalid_gate_input`.
  */
 export const assertReceivable = (input: {
     quote: RfqQuote;
@@ -1265,6 +1293,13 @@ export const assertReceivable = (input: {
     /** Absolute sats ceiling on `from_amount`. */
     maxPayAmount?: number;
 }): void => {
+    // Ahead of the comparisons, never inside them: this function is exported,
+    // so it cannot assume verifyReceiveInvoice vetted `payDeadline`, and the
+    // two knobs are the caller's own — a `NaN` ceiling would leave
+    // `from_amount > NaN` false and delete the price gate it was asked for.
+    assertFinite(input.payDeadline, "quote_malformed", "payDeadline");
+    assertFinite(input.minClaimWindowSeconds, "invalid_gate_input", "minClaimWindowSeconds");
+    assertFinite(input.maxPayAmount, "invalid_gate_input", "maxPayAmount");
     const minClaimWindow = input.minClaimWindowSeconds ?? MIN_CLAIM_WINDOW_SECONDS;
     if (input.now >= input.payDeadline) {
         throw gateError("quote_expired", "quote or invoice already expired — request a fresh one");
@@ -1272,6 +1307,7 @@ export const assertReceivable = (input: {
     if (input.quote.refund_locktime === undefined) {
         throw gateError("missing_refund_locktime", "receive quote carries no refund_locktime");
     }
+    assertFinite(input.quote.refund_locktime, "quote_malformed", "quote refund_locktime");
     if (input.quote.refund_locktime - input.payDeadline < minClaimWindow) {
         throw gateError(
             "claim_window_too_short",

@@ -422,12 +422,33 @@ describe("verifyReceiveInvoice", () => {
     // NaN fails every comparison, so an unchecked one would sail through both
     // this function's expiry arithmetic and assertReceivable's two gates.
     it("refuses a non-finite expiry, which would disarm every gate downstream", () => {
-        expect(() => verify({ expiresAt: NaN })).toThrow(
-            expect.objectContaining({ reason: "invoice_undecodable" }),
-        );
+        for (const expiresAt of [NaN, Infinity, -Infinity]) {
+            expect(() => verify({ expiresAt })).toThrow(
+                expect.objectContaining({ reason: "invoice_undecodable" }),
+            );
+        }
         expect(() => verify({ amountSats: NaN })).toThrow(
             expect.objectContaining({ reason: "invoice_amount_mismatch" }),
         );
+    });
+
+    // The wire is JSON: `valid_until` is typed number here but nothing
+    // typechecks the solver's payload, and it is the other operand of the min.
+    it("refuses a quote whose valid_until is not a finite number", () => {
+        const malformed = { ...quote, valid_until: "soon" as unknown as number };
+        expect(() =>
+            verifyReceiveInvoice({
+                invoice: "lnbcrt49u1p...",
+                decode: (raw) => ({
+                    raw,
+                    paymentHash: PAYMENT_HASH,
+                    amountSats: 5_000,
+                    expiresAt: INVOICE_EXPIRES_AT,
+                }),
+                paymentHash: PAYMENT_HASH,
+                quote: malformed,
+            }),
+        ).toThrow(expect.objectContaining({ reason: "quote_malformed" }));
     });
 
     it("blames the solver for an undecodable invoice", () => {
@@ -516,6 +537,37 @@ describe("assertReceivable", () => {
                 maxPayAmount: 4_999,
             }),
         ).toThrow(expect.objectContaining({ reason: "price_too_high" }));
+    });
+
+    // Each of these would otherwise delete the gate it belongs to rather than
+    // fail it: every comparison against a non-finite number is false.
+    it("refuses a non-finite input instead of silently dropping its gate", () => {
+        expect(() => assertReceivable({ quote: quote(), payDeadline: NaN, now: NOW })).toThrow(
+            expect.objectContaining({ reason: "quote_malformed" }),
+        );
+        expect(() =>
+            assertReceivable({
+                quote: quote({ refund_locktime: NaN }),
+                payDeadline: INVOICE_EXPIRES_AT,
+                now: NOW,
+            }),
+        ).toThrow(expect.objectContaining({ reason: "quote_malformed" }));
+        expect(() =>
+            assertReceivable({
+                quote: quote(),
+                payDeadline: INVOICE_EXPIRES_AT,
+                now: NOW,
+                maxPayAmount: NaN,
+            }),
+        ).toThrow(expect.objectContaining({ reason: "invalid_gate_input" }));
+        expect(() =>
+            assertReceivable({
+                quote: quote(),
+                payDeadline: INVOICE_EXPIRES_AT,
+                now: NOW,
+                minClaimWindowSeconds: NaN,
+            }),
+        ).toThrow(expect.objectContaining({ reason: "invalid_gate_input" }));
     });
 });
 
