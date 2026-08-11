@@ -159,6 +159,7 @@ export {
     type RefundIndexer,
     type RefundOutcome,
 } from "./refund";
+export { sweepRefundableLockups, type LockupSweepReport } from "./lockupSweep";
 export {
     LockupRegistrationFailed,
     SWAP_LOCKUP_CONTRACT_KIND,
