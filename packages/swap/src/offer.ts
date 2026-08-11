@@ -36,6 +36,7 @@ import {
 
 import wantAssetProgram from "./swap-want-asset.program.json";
 import wantBtcProgram from "./swap-want-btc.program.json";
+import { promoteOfferContract, retireOfferContract } from "./coverage";
 import type { AssetSwapRepository } from "./repository";
 import { getAssetSwapsOrThrow, updateAssetSwap, updateAssetSwapBestEffort } from "./store";
 
@@ -285,6 +286,14 @@ export const OFFER_CONTRACT_KIND = "asset-swap-offer";
  * all — background renewal would forfeit a live offer into an ordinary payment
  * and silently destroy it. The SDK's gate defaults closed, so the value is
  * redundant; it is written anyway because this is the one site that knows why.
+ *
+ * **The watch state is set unconditionally, not only on a fresh row.** Identical
+ * offers share one script, and `createContract` is first-writer-wins, so
+ * re-offering a script that a settlement retired would leave the row `retained`
+ * — funded, but out of the subscription, the poll and every sync. The invariant
+ * this states is the one the corridor needs: an offer address handed to a maker
+ * is a watched address, and {@link promoteOfferContract} is what keeps a
+ * settlement racing this call from taking it back.
  */
 async function registerOfferContract(
     wallet: IWallet,
@@ -295,6 +304,7 @@ async function registerOfferContract(
     expectedPkScript: Uint8Array,
 ): Promise<void> {
     const { program, args, keys } = swapProgramBinding(binding, serverPubkey);
+    const contractManager = await wallet.getContractManager();
     const client = await arkade.Arkade.connect({
         arkade: new RestArkProvider(arkServerUrl),
         indexer: new RestIndexerProvider(arkServerUrl),
@@ -303,7 +313,7 @@ async function registerOfferContract(
         // default network while its script is right — a row that disagrees with
         // the address the maker is about to fund
         network: getNetwork(network),
-        contractManager: await wallet.getContractManager(),
+        contractManager,
     });
     const contract = new arkade.ArkadeContract(client, program, args, keys);
     // the row is keyed by script: registering anything but the script being
@@ -316,6 +326,7 @@ async function registerOfferContract(
         label: OFFER_CONTRACT_LABEL,
         metadata: { genericallySpendable: false, kind: OFFER_CONTRACT_KIND },
     });
+    await promoteOfferContract(contractManager, hex.encode(expectedPkScript));
 }
 
 // ── Maker operations ─────────────────────────────────────────────────────────
@@ -487,6 +498,7 @@ export async function cancelOffer(
     const { repository, fundingTxid, swapAddress } = opts;
     const offer = decodeOffer(hex.decode(offerHex));
 
+    const contractManager = await wallet.getContractManager();
     const client = await arkade.Arkade.connect({
         arkade: new RestArkProvider(arkServerUrl),
         indexer: new RestIndexerProvider(arkServerUrl),
@@ -494,7 +506,7 @@ export async function cancelOffer(
         // registered offers resolve their VTXOs from the contract repository
         // instead of a direct indexer query; the indexer above stays as the
         // fallback for offers created before registration existed
-        contractManager: await wallet.getContractManager(),
+        contractManager,
         // no `network`, unlike registerOfferContract: the row lookup is by
         // script and the payout script comes from wallet.getAddress(), so the
         // client's network (which only shapes address derivation) is unused here
@@ -557,10 +569,20 @@ export async function cancelOffer(
         // Past the point of no return: the cancel is broadcast, so a lost write
         // must not fail the caller. The watcher classifies by covenant leaf and
         // the restore scan re-derives the outcome.
-        await updateAssetSwapBestEffort(repository, swapId, {
+        const { persisted, swaps } = await updateAssetSwapBestEffort(repository, swapId, {
             status: "cancelled",
             spentTxid: txid,
         });
+        // Retiring belongs here for the same reason the status does: recording
+        // its own outcome is what leaves the watcher nothing to do, and a
+        // watcher that sees a terminal record returns before it would retire
+        // (`spendUpdate`). Nothing else would ever drop this script.
+        //
+        // Only on a persisted write, as the watcher does: a record that still
+        // reads `pending` to the next restore scan must stay watched.
+        if (persisted) {
+            await retireOfferContract(contractManager, swaps, hex.encode(offer.swapPkScript));
+        }
     }
     return txid;
 }

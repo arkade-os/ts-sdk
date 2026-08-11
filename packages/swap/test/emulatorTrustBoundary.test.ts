@@ -109,6 +109,7 @@ const wallet = {
             state: "active",
             createdAt: 0,
         }),
+        setContractWatchState: async () => {},
     }),
 } as unknown as IWallet;
 

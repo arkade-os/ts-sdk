@@ -27,6 +27,9 @@
  *   reactivity, never an alternative sink.
  * - **Report funding.** `vtxo_received` needs no status: a funded offer is
  *   `pending`, which is what it already was.
+ * - **Keep watching a script it has finished with.** A persisted terminal
+ *   status retires the contract to `retained`, once nothing at that script
+ *   still needs coverage ({@link retireOfferContract}).
  */
 import { base64, hex } from "@scure/base";
 import {
@@ -37,6 +40,7 @@ import {
     type ContractVtxo,
     type IWallet,
 } from "@arkade-os/sdk";
+import { RETIRABLE, retireOfferContract } from "./coverage";
 import { decodeOffer, OFFER_CONTRACT_KIND } from "./offer";
 import type { AssetSwapRepository } from "./repository";
 import { classifyDepositSpend, spendTxidsOf, type RestoreIndexer, type SpendKind } from "./restore";
@@ -47,7 +51,8 @@ import {
     type AssetSwapStatus,
 } from "./store";
 
-/** Statuses a spend cannot move: the swap is already resolved. */
+/** Statuses a spend cannot move: the swap is already resolved.
+ * @see RETIRABLE — a different question, and not the same set. */
 const TERMINAL: readonly AssetSwapStatus[] = ["fulfilled", "cancelled", "recoverable"];
 
 /**
@@ -168,8 +173,20 @@ export async function watchOfferSwaps({
             // notify only on a write that landed: `onUpdate` is documented as
             // firing after the change is persisted, and a consumer that caches
             // from it would otherwise run ahead of the store
-            const { persisted } = await updateAssetSwapBestEffort(repository, swap.id, changes);
-            if (persisted) onUpdate?.({ ...swap, ...changes });
+            const { persisted, swaps } = await updateAssetSwapBestEffort(
+                repository,
+                swap.id,
+                changes,
+            );
+            // a lost write must not retire: the next restore scan still
+            // believes this deposit is live
+            if (!persisted) continue;
+            onUpdate?.({ ...swap, ...changes });
+            // `swaps` is the post-update view, so the liveness check sees this
+            // record's new status without a third read
+            if (changes.status && RETIRABLE.includes(changes.status)) {
+                await retireOfferContract(manager, swaps, event.contractScript);
+            }
         }
     };
 
