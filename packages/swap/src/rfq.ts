@@ -1277,8 +1277,9 @@ export function deriveLightningReceive(input: {
  * payment itself is the trader's own Lightning wallet's job, exactly as
  * funding is the caller's job on the send corridors. Once the paid HTLC is
  * held, the solver funds the lockup; the trader claims it with `P` (its own,
- * generated here) — itself via the collaborative claim leaf, or via covclaimd
- * if it is offline.
+ * generated here) — itself via the collaborative claim leaf
+ * ({@link claimReceiveLockup} in `claim.ts`), or via covclaimd if it is
+ * offline.
  *
  * The same obligations as {@link requestOnchainSend}: persist `secrets`
  * BEFORE paying — the preimage and the payout key re-derive from it (or, on a
