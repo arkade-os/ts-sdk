@@ -401,6 +401,31 @@ before finalizing. Until covclaimd's
 reference vectors are cross-checked, the `sealClaimPacket` test vector is pinned from this
 implementation and marked provisional (`TODO(claim-packet-vectors)`).
 
+`RfqSwapManager` drives the lightning-receive leg too, as `kind: "lightning_receive"` records
+carrying `expectedAmount` and wired to a `claimLockup` callback (`pushClaim`, with `expectedAmount`
+and `partiallyClaimed` passed through — the manager's value check decides *when* to act, the inner
+one decides whether `P` is published). Nothing is asked of the solver: the reference solver's
+`rfq_status_request` consults neither receive store, so a status poll answers `unknown` for every
+one of these swaps and chain observation is the only workable design. States mean what they do on
+the send legs with the roles swapped — `settled` is *our own* claim landing, matched by a
+hash-verified preimage spend rather than by the txid we submitted, so a claim that lands without us
+still counts; `claimed` is a local belief and not terminal; and **`refunded` is a loss**, the solver
+having taken back a lockup we failed to claim. A lockup funded below `expectedAmount` is reported
+`needs_counterparty` and never claimed, which is non-terminal — a solver that tops it up before
+the window shuts makes it claimable again.
+
+**There is no client-side refund on this leg, and that is the whole answer to "what if I cannot
+claim in time".** Every non-claim leaf of the covenant is the solver's, so `refundArkade` is never
+called for a receive record and no amount of waiting produces one. The deadline is the quote's
+`refund_locktime`: the manager claims right up to it and stops there, because publishing `P` into
+the solver's live refund window risks losing the race and giving away the preimage anyway. Wall
+clock with no margin is already conservative — the solver's leaf is a CLTV maturing against
+median-time-past, which trails, so the real window runs past that instant rather than ending before
+it. Past it the outcome is not symmetric with a send: the solver reclaims the lockup, the held
+Lightning HTLC lapses, and **the payer is refunded** — the trader loses the incoming payment, not
+funds it was holding. Which is why staying online to claim is an obligation and not a preference:
+covclaimd cannot claim this covenant today, so the claim packet's offline path does not yet run.
+
 ## RFQ secrets are derived, not stored
 
 The two secrets an RFQ swap needs — the VHTLC `sender` key and, for an onchain send, the preimage —
@@ -525,3 +550,9 @@ scanned? })` — the server key is required because a spend is classified by reb
   sender key — generate, persist, see `requestLightningSend`) and `receiverPkScript` (the solver's
   claim destination, from `profile.receiver_pk_script`). Callers that built the lockup directly
   must supply both; callers going through `requestLightningSend` are unaffected.
+- **`RfqSwapManagerCallbacks` gained a required `claimLockup`**, and `RfqSwap` a third member,
+  `LightningReceiveSwap`. Required rather than optional for the same reason `claimOnchain` is: a
+  receive swap monitored with nothing wired to claim it expires quietly, and a compile error is the
+  right way to learn a corridor was added. A caller with only send swaps can satisfy it with a stub
+  that throws. `RfqSwapActionName` gains `"claimLockup"`, so an exhaustive `switch` over it needs a
+  new arm.

@@ -182,6 +182,7 @@ export {
     isRfqSwapTerminal,
     nextOnchainAction,
     type ArkadeRefundResult,
+    type LightningReceiveSwap,
     type LightningSendSwap,
     type OnchainSendAction,
     type OnchainSendSwap,
