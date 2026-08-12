@@ -492,9 +492,12 @@ export async function pushRefundWithoutReceiver(
     ark: RefundArkProvider,
     input: {
         script: InstanceType<typeof VHTLC.ScriptV2>;
-        /** The `sender` signer. Build it from the swap's `secrets` with
-         * `contractSigner` — on an HD wallet that resolves from
-         * the seed, with no stored key bytes anywhere. */
+        /** The `sender` signer. Build it from the swap record with
+         * {@link senderIdentityForSwapRecord} — on an HD wallet that resolves
+         * from the seed, with no stored key bytes anywhere, and every way the
+         * wallet can fail to produce it arrives as one typed
+         * {@link RefundNotLocallyPossibleError} the manager reads as permanent
+         * rather than retrying for the rest of the refund window. */
         sender: Identity;
         vtxos: readonly LockupVtxo[];
         /** Defaults to the contract's own committed refund destination. */

@@ -308,6 +308,12 @@ async function derivePreimage(wallet: IWallet, descriptor: string): Promise<Uint
  * Monotonic, and a no-op wherever there is no index to reserve — a shared-key
  * descriptor, or another seed's artifact. Restores iterate whole histories, so
  * an artifact this wallet has nothing to adopt for must not abort the loop.
+ *
+ * Telling "another seed's" apart from a failure needs
+ * {@link HDWalletCapable.signerForDescriptor}, so an allocation-capable wallet
+ * that does not also implement it gets only the watermark call's own untyped
+ * refusal, and a foreign artifact reaches the caller as an error rather than a
+ * skip. Every wallet shipped here implements both.
  */
 export async function adoptContractDescriptor(wallet: IWallet, descriptor: string): Promise<void> {
     if (!isHDAllocationCapable(wallet)) return;

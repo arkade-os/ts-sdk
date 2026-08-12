@@ -43,6 +43,12 @@ export interface HDWalletCapable {
      * handed out for a foreign descriptor signs happily with the wrong key,
      * and that surfaces only as a rejected transaction or a dead script —
      * far from the call that caused it.
+     *
+     * The returned identity must actually sign — `sign`, `signMessage` and
+     * `signerSession`, not just `xOnlyPublicKey`. A watch-only identity
+     * carrying the right key is not a signer, and `contractSigner` refuses it
+     * as `WalletCannotSignError`: returning one here would otherwise pass
+     * every check and throw at push time, after the contract is funded.
      */
     signerForDescriptor(descriptor: string): Promise<Identity>;
 }

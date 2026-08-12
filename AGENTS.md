@@ -62,7 +62,10 @@ keys and never branch on wallet *type* — they ask the wallet and use what come
   fresh) lives inside the wallet, invisible to callers.
 - `wallet.signerForDescriptor(descriptor)` returns the descriptor's `Identity` and **throws**
   (`ForeignDescriptorError`) for a key the wallet does not hold — it never silently substitutes
-  the baseline identity, which would sign with the wrong key.
+  the baseline identity, which would sign with the wrong key. The identity it returns must be a
+  full signer (`sign`, `signMessage`, `signerSession`, `xOnlyPublicKey`); one carrying the right
+  key but no ability to use it is refused as `WalletCannotSignError`, a distinct failure with a
+  distinct remedy — attach the signer, rather than restore another seed.
 - Structural probes (`isHDAllocationCapable`, `isHDWalletCapable`) are feature detection — "does
   this wallet speak the descriptor API" — never policy. Code that branches *behavior* on whether a
   wallet is HD, or calls `randomSecretKey()` for a signing/refund/claim key, is a defect: the

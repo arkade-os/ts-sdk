@@ -5,6 +5,7 @@
  * never named a key at all.
  */
 import { describe, expect, it } from "vitest";
+import { hex } from "@scure/base";
 import {
     InMemoryWalletRepository,
     MnemonicIdentity,
@@ -17,6 +18,12 @@ import { RefundNotLocallyPossibleError, senderIdentityForSwapRecord } from "../s
 const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
+/**
+ * The minimum an `IWallet` can be and still answer for a key: an identity and
+ * nothing else. Deliberately structural — it must keep failing the
+ * `isHDWalletCapable` / `isHDAllocationCapable` probes, which is what routes
+ * these cases down the identity path rather than the descriptor one.
+ */
 const staticWallet = (identity = SingleKey.fromRandomBytes()) =>
     ({ identity }) as unknown as IWallet;
 
@@ -30,7 +37,7 @@ describe("senderIdentityForSwapRecord", () => {
     it("hands back the signer for a record this wallet owns", async () => {
         const identity = SingleKey.fromRandomBytes();
         const wallet = staticWallet(identity);
-        const own = `tr(${Buffer.from(await identity.xOnlyPublicKey()).toString("hex")})`;
+        const own = `tr(${hex.encode(await identity.xOnlyPublicKey())})`;
 
         expect(await senderIdentityForSwapRecord(wallet, { signingDescriptor: own })).toBe(
             identity,
@@ -70,7 +77,7 @@ describe("senderIdentityForSwapRecord", () => {
         // so typing a signer outage as one would abandon a refundable swap
         // for the rest of its window. It must come back out unchanged.
         const identity = SingleKey.fromRandomBytes();
-        const own = `tr(${Buffer.from(await identity.xOnlyPublicKey()).toString("hex")})`;
+        const own = `tr(${hex.encode(await identity.xOnlyPublicKey())})`;
         const outage = new Error("remote signer unreachable");
         const flaky = {
             identity: {
@@ -96,7 +103,7 @@ describe("senderIdentityForSwapRecord", () => {
         // so reporting "created on another wallet" would send the user after
         // a seed they already have; the remedy is to attach the signer.
         const identity = SingleKey.fromRandomBytes();
-        const own = `tr(${Buffer.from(await identity.xOnlyPublicKey()).toString("hex")})`;
+        const own = `tr(${hex.encode(await identity.xOnlyPublicKey())})`;
         const watchOnly = {
             identity: {
                 xOnlyPublicKey: () => identity.xOnlyPublicKey(),

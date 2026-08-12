@@ -424,7 +424,7 @@ This package holds no key logic at all. It names the leg it is building and the 
 
 ```ts
 // a leg we fund — all it needs is the key that refunds it
-const { pubkey, descriptor } = await provisionRefundKey(wallet);
+const { pubkey: refundPubkey, descriptor: refundDescriptor } = await provisionRefundKey(wallet);
 // a leg we claim — the key that receives it, and the P that unlocks it
 const { pubkey, descriptor, preimage, paymentHash, mustPersistPreimage } =
     await provisionClaimSecret(wallet);
@@ -457,7 +457,7 @@ await saveSwap({ ...record, ...swapSecretsToRecord(swap.secrets) });
 // Later, from the seed plus that descriptor. Only ask for a preimage the
 // corridor gave us one for: a lightning send's P belongs to the payee, so
 // this throws on those records rather than inventing something the chain will
-// never match.
+// never match. `LIGHTNING_SEND_PAIR` is exported from this package.
 if (record.signingDescriptor && record.pair !== LIGHTNING_SEND_PAIR) {
     const preimage = await contractPreimage(
         wallet,
@@ -467,9 +467,10 @@ if (record.signingDescriptor && record.pair !== LIGHTNING_SEND_PAIR) {
 }
 
 // For a refund, take the composition instead of the guard: it turns all three
-// ways a wallet can fail to produce the sender key — no secrets on the record,
-// an unreadable fallback arm, a descriptor from another seed — into one typed
-// `RefundNotLocallyPossibleError` carrying which. Wire `refundArkade` to this.
+// ways a wallet can fail to produce the sender key — the record names no
+// descriptor, the descriptor is another seed's, the wallet holds the key but
+// cannot sign — into one typed `RefundNotLocallyPossibleError` carrying which,
+// and lets a signer outage stay retryable. Wire `refundArkade` to this.
 const sender = await senderIdentityForSwapRecord(wallet, record);
 ```
 

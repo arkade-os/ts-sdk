@@ -347,6 +347,10 @@ describe("requestOnchainSend on an HD wallet", () => {
 
             const signer = await wallet.signerForDescriptor!(result.secrets.descriptor);
             expect(hex.encode(result.senderPubkey)).toBe(hex.encode(await signer.xOnlyPublicKey()));
+            // A P the wallet did not derive cannot be re-derived, HD descriptor
+            // or not — so the record must carry it. The flag is what callers
+            // branch on; the warning only tells a human the same thing.
+            expect(result.secrets.mustPersistPreimage).toBe(true);
             expect(warn).toHaveBeenCalledWith(
                 expect.stringContaining("cannot be re-derived from the seed"),
             );
@@ -381,6 +385,7 @@ describe("requestOnchainSend on an HD wallet", () => {
             expect(
                 await contractPreimage(wallet, result.secrets.descriptor, result.secrets.preimage),
             ).toEqual(preimage);
+            expect(result.secrets.mustPersistPreimage).toBe(true);
             expect(warn).toHaveBeenCalledWith(
                 expect.stringContaining("cannot be re-derived from the seed"),
             );

@@ -16,6 +16,7 @@ import type {
 } from "..";
 import type { SettlementEvent } from "../../providers/ark";
 import type { Identity } from "../../identity";
+import type { HDAllocationCapable, HDWalletCapable } from "../hdWalletCapable";
 import type { IContractManager } from "../../contracts/contractManager";
 import type { IDelegateManager } from "../delegate";
 import type { TaskQueue, TaskItem } from "../../worker/expo/taskQueue";
@@ -113,7 +114,7 @@ export function warnOnRemovedBackgroundFields(bg: unknown): void {
  * const balance = await wallet.getBalance();
  * ```
  */
-export class ExpoWallet implements IWallet {
+export class ExpoWallet implements IWallet, HDWalletCapable, HDAllocationCapable {
     readonly identity: Identity;
     readonly arkProvider: Wallet["arkProvider"];
     readonly indexerProvider: Wallet["indexerProvider"];

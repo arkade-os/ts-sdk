@@ -213,9 +213,13 @@ const onchainSend = (wallet: IWallet) =>
     });
 
 describe.each([
-    ["requestLightningSend", lightningSend],
-    ["requestOnchainSend", onchainSend],
-])("%s registers the lockup before returning an address", (_name, request) => {
+    // `hasPreimage` pins which corridor owns P: a lightning send's belongs to
+    // the payee, an onchain send mints its own. Asserted rather than inferred,
+    // so a corridor that stopped carrying one cannot quietly narrow the
+    // secret-leak check below to the rfqId.
+    ["requestLightningSend", lightningSend, false],
+    ["requestOnchainSend", onchainSend, true],
+])("%s registers the lockup before returning an address", (_name, request, hasPreimage) => {
     it("writes the row the funded script is keyed by", async () => {
         const { wallet, created } = recordingWallet();
         const result = await request(wallet);
@@ -247,12 +251,13 @@ describe.each([
         const secrets = result.secrets;
         expect(secrets).not.toHaveProperty("senderPrivateKey");
 
+        expect(secrets.preimage !== undefined).toBe(hasPreimage);
+
         const serialized = JSON.stringify(created[0]);
         const forbidden = [
             result.rfqId,
             ...(secrets.preimage ? [hex.encode(secrets.preimage)] : []),
         ];
-        expect(forbidden.length).toBeGreaterThan(0);
         for (const value of forbidden) expect(serialized).not.toContain(value);
     });
 

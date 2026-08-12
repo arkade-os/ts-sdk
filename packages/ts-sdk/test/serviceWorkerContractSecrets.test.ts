@@ -41,6 +41,7 @@ import {
 import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
 import { MockEventSource } from "./mocks/eventSource";
 import {
+    WalletCannotSignError,
     contractPreimage,
     contractSigner,
     provisionClaimSecret,
@@ -216,11 +217,20 @@ async function staticPair() {
 const bareDescriptorFor = async (identity: Identity) =>
     `tr(${hex.encode(await identity.xOnlyPublicKey())})`;
 
-const foreignDescriptor = () =>
-    MnemonicIdentity.fromMnemonic(OTHER_MNEMONIC, { isMainnet: false }).descriptor.replace(
-        "/*)",
-        "/0)",
+/**
+ * A concrete descriptor under a seed this wallet does not hold. Materialized
+ * through the provider rather than by substituting the wildcard in the
+ * template: a substitution that misses leaves the template ranged, and the
+ * test would then be asserting about a wildcard descriptor while reading as
+ * though it named a key.
+ */
+const foreignDescriptor = async () => {
+    const provider = await HDDescriptorProvider.create(
+        MnemonicIdentity.fromMnemonic(OTHER_MNEMONIC, { isMainnet: false }),
+        new InMemoryWalletRepository(),
     );
+    return provider.materializeDescriptorAt(0);
+};
 
 /**
  * The assertion that matters: not "the signer claims this key" but "the signer
@@ -277,7 +287,7 @@ describe("ServiceWorkerWallet.signerForDescriptor", () => {
         // and surfaces as a rejected transaction far from the call.
         const { sw } = await hdPair();
 
-        await expect(sw.signerForDescriptor(foreignDescriptor())).rejects.toBeInstanceOf(
+        await expect(sw.signerForDescriptor(await foreignDescriptor())).rejects.toBeInstanceOf(
             ForeignDescriptorError,
         );
     });
@@ -312,7 +322,7 @@ describe("page-side and worker-side wallets answer identically", () => {
 
     it("refuse the same foreign descriptor", async () => {
         const { sw, inner } = await hdPair();
-        const foreign = foreignDescriptor();
+        const foreign = await foreignDescriptor();
 
         await expect(inner.signerForDescriptor(foreign)).rejects.toBeInstanceOf(
             ForeignDescriptorError,
@@ -407,5 +417,34 @@ describe("contract secrets behind the service worker", () => {
         const signer = await contractSigner(sw as unknown as IWallet, secret.descriptor);
         expect(signer).toBe(identity);
         await expect(signsUnderDescriptorKey(signer, secret.descriptor)).resolves.toBe(true);
+    });
+
+    it("refuses a page identity that holds the key but cannot sign with it", async () => {
+        // The fund-stranding shape: a page whose identity carries the right
+        // public key and no way to sign. Every pubkey check passes, so without
+        // this refusal the swap funds and only the push discovers there is no
+        // signer — with the refund window already running.
+        const full = SingleKey.fromHex(STATIC_KEY_HEX);
+        const walletRepository = new InMemoryWalletRepository();
+        const inner = await makeInnerWallet({ identity: full, hd: false, walletRepository });
+        const watchOnly = {
+            xOnlyPublicKey: () => full.xOnlyPublicKey(),
+            compressedPublicKey: () => full.compressedPublicKey(),
+        } as unknown as Identity;
+        const sw = makeServiceWorkerWallet({ identity: watchOnly, inner, walletRepository });
+        const descriptor = await bareDescriptorFor(watchOnly);
+
+        // It IS our key — reporting it foreign would send the user after a
+        // seed they already have. The remedy is to attach a signer.
+        const error = await contractSigner(sw as unknown as IWallet, descriptor).catch(
+            (e: unknown) => e,
+        );
+        expect(error).toBeInstanceOf(WalletCannotSignError);
+        expect(error).not.toBeInstanceOf(ForeignDescriptorError);
+
+        // And it is refused at provisioning, before anything is funded.
+        await expect(provisionRefundKey(sw as unknown as IWallet)).rejects.toBeInstanceOf(
+            WalletCannotSignError,
+        );
     });
 });
