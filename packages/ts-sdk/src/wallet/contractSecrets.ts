@@ -319,12 +319,25 @@ async function derivePreimage(wallet: IWallet, descriptor: string): Promise<Uint
  * which would derive that artifact's preimage a second time, for a different
  * one.
  *
- * Monotonic, and a no-op wherever there is no index to reserve. Restores
- * iterate whole histories, so an artifact this wallet has nothing to adopt for
- * must not abort the loop.
+ * Monotonic, and a no-op wherever there is no index to reserve — a shared-key
+ * descriptor, or another seed's artifact. Restores iterate whole histories, so
+ * an artifact this wallet has nothing to adopt for must not abort the loop.
  */
 export async function adoptContractDescriptor(wallet: IWallet, descriptor: string): Promise<void> {
     if (!isHDAllocationCapable(wallet)) return;
     if (!isPerArtifactDescriptor(descriptor)) return;
+    if (isHDWalletCapable(wallet)) {
+        try {
+            await wallet.signerForDescriptor(descriptor);
+        } catch (error) {
+            // Ownership is checked here rather than left to the watermark
+            // call, whose refusal is untyped on some transports (the
+            // service-worker bus flattens it). Only the typed "not my key"
+            // refusal is a no-op: a signer that fails to answer propagates,
+            // so a transient failure is retried, not skipped.
+            if (error instanceof ForeignDescriptorError) return;
+            throw error;
+        }
+    }
     await wallet.advanceSigningDescriptorWatermark(descriptor);
 }

@@ -259,14 +259,20 @@ describe("contractSigner", () => {
             signerForDescriptor: async () => wallet.identity,
         } as unknown as IWallet;
 
-        await expect(contractSigner(broken, descriptor)).rejects.toThrow(/holds no key/);
+        // Typed, so consumers can tell "wrong wallet" (permanent, stop) from
+        // a transient signing failure (retry) — the documented contract.
+        await expect(contractSigner(broken, descriptor)).rejects.toBeInstanceOf(
+            ForeignDescriptorError,
+        );
         await expect(contractPreimage(broken, descriptor)).rejects.toThrow(/holds no key/);
     });
 
     it("refuses a wallet with no descriptor surface for another wallet's record", async () => {
         const { wallet } = await hdWallet();
         const { descriptor } = await provisionRefundKey(wallet);
-        await expect(contractSigner(staticWallet(), descriptor)).rejects.toThrow(/holds no key/);
+        await expect(contractSigner(staticWallet(), descriptor)).rejects.toBeInstanceOf(
+            ForeignDescriptorError,
+        );
     });
 
     it("signs deterministically, from the same identity the message is built from", async () => {
@@ -328,6 +334,38 @@ describe("adoptContractDescriptor", () => {
             adoptContractDescriptor(wallet, `tr(${"ab".repeat(32)})`),
         ).resolves.toBeUndefined();
         expect(spy).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op for another seed's artifact", async () => {
+        // A repository can hold records from two seeds — a device migration, a
+        // seed rotation. The foreign record has no index of ours to reserve,
+        // and the loop must reach the own records that follow it.
+        const { wallet } = await hdWallet();
+        const other = MnemonicIdentity.fromMnemonic(
+            "legal winner thank year wave sausage worth useful legal winner thank yellow",
+            { isMainnet: false },
+        );
+        const otherProvider = await HDDescriptorProvider.create(
+            other,
+            new InMemoryWalletRepository(),
+        );
+        // Honest resolution: the wallet refuses the foreign descriptor with
+        // the typed error, exactly as the real wallets do.
+        const honest = {
+            ...wallet,
+            signerForDescriptor: (d: string) => resolveDescriptorSigner(d, wallet.identity),
+        } as unknown as IWallet;
+        const spy = vi.spyOn(honest, "advanceSigningDescriptorWatermark" as never);
+
+        await expect(
+            adoptContractDescriptor(honest, otherProvider.materializeDescriptorAt(2)),
+        ).resolves.toBeUndefined();
+        expect(spy).not.toHaveBeenCalled();
+
+        // and an own artifact still adopts through the same path
+        const own = (await provisionRefundKey(wallet)).descriptor;
+        await adoptContractDescriptor(honest, own);
+        expect(spy).toHaveBeenCalledWith(own);
     });
 });
 
