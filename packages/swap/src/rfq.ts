@@ -735,6 +735,20 @@ export async function requestLightningSend(
     /** How the `sender` key is recovered later. Persist it with the record —
      * on the derivable arm it holds nothing secret. */
     secrets: SwapSecrets;
+    /**
+     * Every input the covenant was built from, as it was AT REQUEST TIME.
+     *
+     * Returned so a consumer can persist the swap without re-deriving any of
+     * it. Half of these are not on the quote — `serverPubkey` and `claimDelay`
+     * come from this wallet's own `getInfo()`, `emulatorPubkey` from a
+     * per-network pin, `refundPkScript` from decoding an address — so a
+     * consumer rebuilding them itself would need a second round trip and a copy
+     * of this function's logic, which would then drift.
+     *
+     * All public. Feed straight into `RfqSwapOrigin`; see `rfqRecord.ts` for
+     * why every one of them must be stored rather than re-read later.
+     */
+    treeParams: Parameters<typeof lightningSendVtxoScript>[0];
 }> {
     const rfqId = params.rfqId ?? newRfqId();
     // No preimage on this corridor: a lightning send's P belongs to the payee.
@@ -772,7 +786,9 @@ export async function requestLightningSend(
 
     const serverPubkey = xOnly(hex.decode(info.signerPubkey), "ark signer key");
     const network = getNetwork(info.network as NetworkName);
-    const script = lightningSendVtxoScript({
+    // Named rather than inlined so the exact inputs the covenant was built from
+    // can be returned to the caller — see `treeParams` on the return type.
+    const treeParams = {
         solverPubkey: xOnly(hex.decode(quote.solver_pubkey), "solver key"),
         refundLocktime: quote.refund_locktime,
         serverPubkey,
@@ -785,7 +801,8 @@ export async function requestLightningSend(
         senderPubkey,
         receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
         refundPkScript: ArkAddress.decode(refundAddress).pkScript,
-    });
+    };
+    const script = lightningSendVtxoScript(treeParams);
     const address = script.address(network.hrp, serverPubkey).encode();
     verifyLockupAddress(quote, address);
     assertFundable({
@@ -811,6 +828,7 @@ export async function requestLightningSend(
         refundAddress,
         senderPubkey,
         secrets,
+        treeParams,
     };
 }
 
@@ -1391,6 +1409,9 @@ export function deriveLightningReceive(input: {
     /** The solver's hold invoice on `H` — what the trader pays to arm the swap. */
     invoice: string;
     refundLocktime: number;
+    /** Every input the covenant was built from — see the same field on
+     * `requestLightningSend`'s result for why a consumer needs them. */
+    treeParams: Parameters<typeof receiveVtxoScript>[0];
 } {
     const { quote } = input;
     const profile = quote.profile ?? {};
@@ -1405,7 +1426,9 @@ export function deriveLightningReceive(input: {
         throw new Error("lightning-receive quote is missing a binding field");
     }
 
-    const script = receiveVtxoScript({
+    // Named rather than inlined so the exact inputs can be handed back — see
+    // `treeParams` on the return type.
+    const treeParams = {
         solverPubkey: xOnly(hex.decode(quote.solver_pubkey), "solver key"),
         refundLocktime,
         serverPubkey: input.serverPubkey,
@@ -1415,10 +1438,11 @@ export function deriveLightningReceive(input: {
         solverRefundPkScript: solverHex(solverRefundPkScriptHex, "profile.solver_refund_pk_script"),
         payoutPubkey: input.payoutPubkey,
         payoutPkScript: ArkAddress.decode(input.payoutAddress).pkScript,
-    });
+    };
+    const script = receiveVtxoScript(treeParams);
     const address = script.address(input.hrp, input.serverPubkey).encode();
     verifyLockupAddress(quote, address);
-    return { address, swapPkScript: script.pkScript, script, invoice, refundLocktime };
+    return { address, swapPkScript: script.pkScript, script, invoice, refundLocktime, treeParams };
 }
 
 /**
@@ -1499,6 +1523,9 @@ export async function requestLightningReceive(
     /** How the preimage and the payout key are recovered later. Persist it
      * with the record BEFORE paying the invoice. */
     secrets: SwapSecrets;
+    /** Every input the covenant was built from — see the same field on
+     * `requestLightningSend`'s result. */
+    treeParams: Parameters<typeof receiveVtxoScript>[0];
 }> {
     const rfqId = params.rfqId ?? newRfqId();
     const secrets = await deriveSwapSecrets(wallet, { preimage: true });
@@ -1570,6 +1597,7 @@ export async function requestLightningReceive(
         payoutAddress,
         payoutPubkey,
         secrets,
+        treeParams: derived.treeParams,
     };
 }
 

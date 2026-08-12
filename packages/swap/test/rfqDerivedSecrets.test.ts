@@ -264,6 +264,47 @@ describe("requestLightningSend and the corridor spread", () => {
         ).rejects.toThrow(/below the invoice amount/);
     });
 });
+/**
+ * The loop a persisting consumer depends on: what the entry point hands back
+ * must rebuild the very covenant it just funded. Without it a consumer would
+ * re-fetch `getInfo()` and re-derive the tree itself, and any drift between the
+ * two derivations is a lockup nobody can spend.
+ */
+describe("treeParams round-trips to the funded script", () => {
+    it.each([
+        ["hd", async () => await hdWallet()],
+        ["static", async () => staticWallet()],
+    ] as const)("on a %s wallet", async (_kind, makeWallet) => {
+        const result = await requestLightningSend(
+            await makeWallet(),
+            "http://ark",
+            lightningTransport(),
+            { invoice: INVOICE, emulatorPubkey: EMULATOR_PUBKEY_HEX },
+        );
+
+        const rebuilt = lightningSendVtxoScript(result.treeParams);
+        expect(hex.encode(rebuilt.pkScript)).toBe(hex.encode(result.swapPkScript));
+        expect(hex.encode(rebuilt.pkScript)).toBe(hex.encode(result.script.pkScript));
+    });
+
+    it("carries the inputs no quote and no second round trip could supply", async () => {
+        const result = await requestLightningSend(
+            staticWallet(),
+            "http://ark",
+            lightningTransport(),
+            { invoice: INVOICE, emulatorPubkey: EMULATOR_PUBKEY_HEX },
+        );
+        // serverPubkey and claimDelay come from this wallet's own getInfo(),
+        // emulatorPubkey from a per-network pin, refundPkScript from decoding an
+        // address. None of them is on the quote.
+        expect(result.treeParams.serverPubkey).toHaveLength(32);
+        expect(result.treeParams.emulatorPubkey).toHaveLength(32);
+        expect(result.treeParams.claimDelay % 512).toBe(0);
+        expect(result.treeParams.refundPkScript.length).toBeGreaterThan(0);
+        expect(result.treeParams.paymentHash).toBe(INVOICE.paymentHash);
+    });
+});
+
 describe("requestLightningSend on an HD wallet", () => {
     it("returns a descriptor and no key material", async () => {
         const wallet = await hdWallet();
