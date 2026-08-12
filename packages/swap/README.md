@@ -728,7 +728,15 @@ scanned? })` — the server key is required because a spend is classified by reb
   rather than silently satisfy an older shape. Existing databases upgrade in place: the new store is
   added and the three original ones are untouched. Store RFQ records whole for the same reason as
   above: every field is either a covenant tree parameter or manager state, and dropping one leaves a
-  record whose covenant `rebuildRfqSwap` cannot reproduce.
+  record whose covenant `rebuildRfqSwap` cannot reproduce — which it now refuses to do, checking the
+  rebuilt covenant against the record's own `lockupAddress` and throwing at restore rather than
+  handing back a swap nobody can spend.
+- **Pruning is the consumer's, and nothing here does it for you.** `shouldRetainRfqSwap(record, now)`
+  answers whether a record is still worth keeping — live swaps and `needs_counterparty` always,
+  terminal ones for `RFQ_SWAP_RETENTION_SECONDS` (30 days) after `updatedAt`. Sweep with it at boot
+  and pass the rejects to `removeRfqSwap`; skip it and a hot wallet's `rfqSwaps` store grows without
+  bound. `now` is **unix seconds**, the unit `RfqSwap.updatedAt` carries — `Date.now()` would retire
+  every terminal record after ~43 minutes.
 - **A write that gates something irreversible throws; one that follows it does not.**
   `addAssetSwap` and `updateAssetSwap` throw on a failed read or write — nothing irreversible may
   happen until the record is durable, which is why `cancelOffer` writes its `cancelling` marker

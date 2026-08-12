@@ -683,6 +683,10 @@ export function lightningSendVtxoScript(params: {
     });
 }
 
+/** Every input {@link lightningSendVtxoScript} builds from. Derived from the
+ * builder rather than restated, so the two cannot drift. */
+export type LightningSendTreeParams = Parameters<typeof lightningSendVtxoScript>[0];
+
 /** The BOLT11 facts the trader read from its OWN decode — this module takes
  * the facts, not the decoder, so any wallet's existing decoder serves. */
 export interface InvoiceFacts {
@@ -765,10 +769,12 @@ export async function requestLightningSend(
      * come from this wallet's own `getInfo()`, `emulatorPubkey` from a
      * per-network pin, `refundPkScript` from decoding an address.
      *
-     * All public. Feed straight into `RfqSwapOrigin`; see `rfqRecord.ts` for
-     * why every one of them must be stored rather than re-read later.
+     * All public. `RfqSwapOrigin` holds the same fields under the same names,
+     * hex-encoded — hex each binary one and the record is complete; see
+     * `rfqRecord.ts` for why every one of them must be stored rather than
+     * re-read later.
      */
-    treeParams: Parameters<typeof lightningSendVtxoScript>[0];
+    treeParams: LightningSendTreeParams;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
     // This leg is one we fund, so all it needs is the key that refunds it.
@@ -1402,6 +1408,10 @@ export function receiveVtxoScript(params: {
     });
 }
 
+/** Every input {@link receiveVtxoScript} builds from; see
+ * {@link LightningSendTreeParams}. */
+export type LightningReceiveTreeParams = Parameters<typeof receiveVtxoScript>[0];
+
 /**
  * The pure core of {@link requestLightningReceive}: derive the solver-funded
  * covenant locally from the quote's binding fields plus the trader's own data
@@ -1428,7 +1438,7 @@ export function deriveLightningReceive(input: {
     refundLocktime: number;
     /** Every input the covenant was built from — see the same field on
      * `requestLightningSend`'s result for why a consumer needs them. */
-    treeParams: Parameters<typeof receiveVtxoScript>[0];
+    treeParams: LightningReceiveTreeParams;
 } {
     const { quote } = input;
     const profile = quote.profile ?? {};
@@ -1543,7 +1553,7 @@ export async function requestLightningReceive(
     secrets: ProvisionedClaimSecret;
     /** Every input the covenant was built from; see the same field on
      * `requestLightningSend`'s result. */
-    treeParams: Parameters<typeof receiveVtxoScript>[0];
+    treeParams: LightningReceiveTreeParams;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
     // A leg we claim: the key that receives it, and the P that unlocks it.

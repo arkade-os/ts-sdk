@@ -30,15 +30,26 @@
  * public. `preimageHex` is stored only when the SDK's provisioned claim
  * secret says it cannot be re-derived.
  */
+import { ArkAddress } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
 import { lightningSendVtxoScript, receiveVtxoScript } from "./rfq";
 import {
     isRfqSwapTerminal,
     type LightningReceiveSwap,
     type LightningSendSwap,
-    type RfqSwap,
     type RfqSwapState,
 } from "./swapManager";
+
+/**
+ * The swap kinds this projection covers.
+ *
+ * `onchain_send` is deliberately absent: {@link RfqSwapOrigin} carries no L1
+ * half, so a record could not reproduce its `htlc`, `funding`, `claimTxid` or
+ * `minConfirmations`, and storing one here would round-trip a swap whose L1
+ * refund window nothing is watching. Taking this rather than `RfqSwap` is what
+ * makes that a compile error at the call site instead of a silent loss.
+ */
+export type PersistableRfqSwap = LightningSendSwap | LightningReceiveSwap;
 
 /**
  * How long a retired swap's record is kept, in SECONDS.
@@ -107,8 +118,10 @@ export interface RfqSwapOrigin {
     preimageHex?: string;
 
     // ── Lockup and display ───────────────────────────────────────────────────
-    /** The Arkade address that was actually funded. Taken, never re-derived:
-     * a local re-derivation would silently use the SDK's default network. */
+    /** The Arkade address that was actually funded. Taken, never re-derived: a
+     * local re-derivation would silently use the SDK's default network. Being
+     * independent of the tree parameters is also what lets the rebuild check
+     * itself — see {@link rebuildRfqSwap}. */
     lockupAddress: string;
     /** Consumer display metadata. {@link rebuildRfqSwap} ignores it —
      * `RfqSwapCommon` carries no amount of its own. */
@@ -128,7 +141,7 @@ export interface RfqSwapRecord extends RfqSwapOrigin {
 }
 
 /** The manager's mutable half, projected off a live record. */
-const managerState = (swap: RfqSwap) => ({
+const managerState = (swap: PersistableRfqSwap) => ({
     rfqId: swap.rfqId,
     state: swap.state,
     createdAt: swap.createdAt,
@@ -142,7 +155,10 @@ const managerState = (swap: RfqSwap) => ({
 });
 
 /** First write, at the moment the caller hands the swap to the manager. */
-export function createRfqSwapRecord(origin: RfqSwapOrigin, swap: RfqSwap): RfqSwapRecord {
+export function createRfqSwapRecord(
+    origin: RfqSwapOrigin,
+    swap: PersistableRfqSwap,
+): RfqSwapRecord {
     return { ...origin, ...managerState(swap) };
 }
 
@@ -155,7 +171,10 @@ export function createRfqSwapRecord(origin: RfqSwapOrigin, swap: RfqSwap): RfqSw
  * deletes `blockedReason` when a swap leaves `needs_counterparty`, precisely
  * because a stale `blockedReason` reads as a live refusal.
  */
-export function updateRfqSwapRecord(record: RfqSwapRecord, swap: RfqSwap): RfqSwapRecord {
+export function updateRfqSwapRecord(
+    record: RfqSwapRecord,
+    swap: PersistableRfqSwap,
+): RfqSwapRecord {
     const {
         refundArkTxid: _refundArkTxid,
         claimArkTxid: _claimArkTxid,
@@ -179,37 +198,68 @@ const bytes = (value: string | undefined, name: string): Uint8Array =>
     hex.decode(required(value, name));
 
 /**
+ * The one thing a record can check about itself.
+ *
+ * It stores both the tree parameters and `lockupAddress` — the address that was
+ * actually funded — and the two are independent: the parameters rebuild the
+ * covenant, the address was taken verbatim from the entry point. They must
+ * agree. A parameter stored wrong or dropped by a field-mapped backend
+ * otherwise yields a live record watching a covenant nobody funded, whose
+ * refund cannot be signed, and nothing says so until the refund is due. Here it
+ * throws at restore instead.
+ */
+function assertRebuildMatchesLockup(pkScript: Uint8Array, lockupAddress: string): void {
+    const funded = ArkAddress.decode(lockupAddress).pkScript;
+    if (hex.encode(funded) !== hex.encode(pkScript)) {
+        throw new Error(
+            `rfq swap record rebuilds ${hex.encode(pkScript)}, but its lockup address holds ` +
+                `${hex.encode(funded)} — a stored tree parameter is wrong, so the covenant ` +
+                `cannot be spent`,
+        );
+    }
+}
+
+/**
+ * The covenant a record describes, from its tree parameters alone — the same
+ * builder over the same binding fields that made it.
+ */
+export function rfqSwapCovenant(origin: RfqSwapOrigin): ReturnType<typeof receiveVtxoScript> {
+    return origin.kind === "lightning_send"
+        ? lightningSendVtxoScript({
+              solverPubkey: bytes(origin.solverPubkey, "solverPubkey"),
+              refundLocktime: origin.refundLocktime,
+              serverPubkey: bytes(origin.serverPubkey, "serverPubkey"),
+              paymentHash: origin.paymentHash,
+              claimDelay: origin.claimDelay,
+              emulatorPubkey: bytes(origin.emulatorPubkey, "emulatorPubkey"),
+              refundPkScript: bytes(origin.refundPkScript, "refundPkScript"),
+              senderPubkey: bytes(origin.senderPubkey, "senderPubkey"),
+              receiverPkScript: bytes(origin.receiverPkScript, "receiverPkScript"),
+          })
+        : receiveVtxoScript({
+              solverPubkey: bytes(origin.solverPubkey, "solverPubkey"),
+              refundLocktime: origin.refundLocktime,
+              serverPubkey: bytes(origin.serverPubkey, "serverPubkey"),
+              paymentHash: origin.paymentHash,
+              claimDelay: origin.claimDelay,
+              emulatorPubkey: bytes(origin.emulatorPubkey, "emulatorPubkey"),
+              solverRefundPkScript: bytes(origin.solverRefundPkScript, "solverRefundPkScript"),
+              payoutPubkey: bytes(origin.payoutPubkey, "payoutPubkey"),
+              payoutPkScript: bytes(origin.payoutPkScript, "payoutPkScript"),
+          });
+}
+
+/**
  * Rebuild the live record. Pure: everything it needs is on the record.
  *
  * Hand the result to {@link RfqSwapManager.start}. The covenant is rebuilt the
- * way it was made — the same builder over the same binding fields — so the
- * `lockupPkScript` it produces is the one the funded lockup is keyed by.
+ * way it was made, and then checked against the address that was actually
+ * funded — see {@link assertRebuildMatchesLockup} — so the `lockupPkScript` it
+ * produces is the one the funded lockup is keyed by.
  */
-export function rebuildRfqSwap(record: RfqSwapRecord): RfqSwap {
-    const script =
-        record.kind === "lightning_send"
-            ? lightningSendVtxoScript({
-                  solverPubkey: bytes(record.solverPubkey, "solverPubkey"),
-                  refundLocktime: record.refundLocktime,
-                  serverPubkey: bytes(record.serverPubkey, "serverPubkey"),
-                  paymentHash: record.paymentHash,
-                  claimDelay: record.claimDelay,
-                  emulatorPubkey: bytes(record.emulatorPubkey, "emulatorPubkey"),
-                  refundPkScript: bytes(record.refundPkScript, "refundPkScript"),
-                  senderPubkey: bytes(record.senderPubkey, "senderPubkey"),
-                  receiverPkScript: bytes(record.receiverPkScript, "receiverPkScript"),
-              })
-            : receiveVtxoScript({
-                  solverPubkey: bytes(record.solverPubkey, "solverPubkey"),
-                  refundLocktime: record.refundLocktime,
-                  serverPubkey: bytes(record.serverPubkey, "serverPubkey"),
-                  paymentHash: record.paymentHash,
-                  claimDelay: record.claimDelay,
-                  emulatorPubkey: bytes(record.emulatorPubkey, "emulatorPubkey"),
-                  solverRefundPkScript: bytes(record.solverRefundPkScript, "solverRefundPkScript"),
-                  payoutPubkey: bytes(record.payoutPubkey, "payoutPubkey"),
-                  payoutPkScript: bytes(record.payoutPkScript, "payoutPkScript"),
-              });
+export function rebuildRfqSwap(record: RfqSwapRecord): PersistableRfqSwap {
+    const script = rfqSwapCovenant(record);
+    assertRebuildMatchesLockup(script.pkScript, record.lockupAddress);
 
     const common = {
         rfqId: record.rfqId,
