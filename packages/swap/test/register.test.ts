@@ -86,10 +86,7 @@ const wallet = {
     getContractManager: async () => contractManager,
 } as unknown as IWallet;
 
-// Explicit override, not fetched: the key defaults to the SDK's per-network
-// pin, and this suite overrides it so its golden expectations don't move with
-// the pinned constants. Same value the RestEmulatorProvider stub above used
-// to hand back, so this file's expectations are unchanged.
+// overridden so the golden expectations don't move with the pinned constants
 const emulatorPubkey = hex.decode(
     "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
 );

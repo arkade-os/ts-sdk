@@ -316,16 +316,11 @@ describe("requestOnchainSend on an HD wallet", () => {
             amount: 100_000,
             amountSide: "to" as const,
             payoutPubkey: PAYOUT_PUBKEY,
+            emulatorPubkey: EMULATOR_PUBKEY,
         };
 
-        await requestOnchainSend(wallet, "http://ark", onchainTransport(first), {
-            ...params,
-            emulatorPubkey: EMULATOR_PUBKEY,
-        });
-        await requestOnchainSend(wallet, "http://ark", onchainTransport(second), {
-            ...params,
-            emulatorPubkey: EMULATOR_PUBKEY,
-        });
+        await requestOnchainSend(wallet, "http://ark", onchainTransport(first), params);
+        await requestOnchainSend(wallet, "http://ark", onchainTransport(second), params);
 
         expect(second.senderPubkey).not.toBe(first.senderPubkey);
         expect(second.paymentHash).not.toBe(first.paymentHash);

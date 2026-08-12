@@ -112,9 +112,7 @@ describe("maker-side swap loop (regtest)", () => {
     const history: Tx[] = [];
 
     it("derives, funds, and restores a pending offer from chain data alone", async () => {
-        // no emulatorPubkey: the SDK's pinned regtest co-signer key must match
-        // the key the arkade-regtest stack actually runs, or funding would
-        // derive an address the emulator never co-signs for
+        // no override — asserts the default pin matches the regtest stack
         offer = await createOffer(wallet, ARK_URL, {
             wantAmount: WANT_AMOUNT,
             wantAsset,

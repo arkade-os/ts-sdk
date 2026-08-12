@@ -38,7 +38,7 @@ import {
 import wantAssetProgram from "./swap-want-asset.program.json";
 import wantBtcProgram from "./swap-want-btc.program.json";
 import { promoteOfferContract, retireOfferContract } from "./coverage";
-import { resolveEmulatorKey, type EmulatorPubkeyOverride } from "./emulatorKey";
+import { resolveEmulatorKey, xOnly, type EmulatorPubkeyOverride } from "./emulatorKey";
 import type { AssetSwapRepository } from "./repository";
 import { getAssetSwapsOrThrow, updateAssetSwap, updateAssetSwapBestEffort } from "./store";
 
@@ -148,21 +148,6 @@ const NAMES = Object.fromEntries(Object.entries(FIELDS).map(([k, f]) => [f.tag, 
     number,
     FieldName
 >;
-
-/** Drop the prefix of a 33-byte compressed key; pass an x-only key through.
- * A malformed key would otherwise bind silently into the covenant and only
- * surface as an unspendable address once the user funds it. */
-const XONLY_LEN = 32;
-const xOnly = (key: Uint8Array, label: string): Uint8Array => {
-    // deliberately not FIELDS.makerPublicKey.width: this also normalizes the ark
-    // and emulator signer keys, which have no TLV record of their own — the two
-    // lengths agree by spec, not because one derives from the other
-    if (key.length === XONLY_LEN) return key;
-    if (key.length !== 33 || (key[0] !== 0x02 && key[0] !== 0x03)) {
-        throw new Error(`${label} is not a compressed or x-only public key`);
-    }
-    return key.slice(1);
-};
 
 function tlv(type: number, value: Uint8Array): Uint8Array {
     // the length prefix is u16 — reject rather than emit a truncated length
@@ -354,14 +339,6 @@ async function registerOfferContract(
  * funding rather than after: nothing is at stake yet, so a failure can throw
  * and be retried, where the same failure after `wallet.send` would leave a
  * funded deposit unwatched with no way to notice.
- *
- * The covenant co-signer key defaults to the one pinned per network inside the
- * SDK, resolved from the Ark server's reported network — never fetched from
- * the emulator itself (the service being authenticated must not name its own
- * trust anchor). `params.emulatorPubkey` overrides the pin: pass the solver
- * card's `emulator_pubkey`, a self-hosted emulator's key, a key for an
- * unpinned network (signet, testnet — those throw without it), or a rotated
- * key the SDK hasn't shipped yet.
  */
 export async function createOffer(
     wallet: IWallet,
@@ -370,13 +347,7 @@ export async function createOffer(
         wantAmount: bigint;
         wantAsset?: asset.AssetId;
         offerAsset?: asset.AssetId;
-        /** Co-sign with this emulator key instead of the one pinned for the
-         * network — as bytes (x-only or 33-byte compressed, e.g. the solver
-         * card's `emulator_pubkey`) or 33-byte compressed hex (same contract
-         * as `Arkade.connect`'s `emulatorPubkey` option). The library never
-         * fetches or verifies it: whoever supplies it is trusting that
-         * operator as co-signer in place of the network's.
-         * @see resolveEmulatorKey */
+        /** Co-signer key override; see {@link resolveEmulatorKey}. */
         emulatorPubkey?: EmulatorPubkeyOverride;
     },
 ): Promise<{
@@ -403,9 +374,6 @@ export async function createOffer(
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
-    // the ark signer key arrives compressed (33B) today; drop the prefix by
-    // length so an already-x-only key is passed through rather than shortened
-    // to 31 bytes
     const serverPubKey = xOnly(hex.decode(info.signerPubkey), "ark signer key");
     const network = getNetwork(info.network as NetworkName);
     const emuKey = resolveEmulatorKey(network, params.emulatorPubkey);

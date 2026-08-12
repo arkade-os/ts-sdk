@@ -36,13 +36,9 @@
  * the binding fields — `solver_pubkey`, `refund_locktime`, `valid_until`, the
  * amounts. Every other contract parameter is the user's own data (its
  * invoice, its Ark server connection, its refund address) or a trusted
- * constant — the emulator's key defaults to the SDK's per-network pin and is
- * never fetched from the emulator itself (clients have no network path to it
- * anyway; only the solver and covclaimd do); a caller overriding it, e.g.
- * from the solver's signed registry/corridor card, must have checked it
- * against a source it independently trusts. Anything address-shaped the
- * solver sends is compare-only: a mismatch means refuse-to-fund, never "use
- * theirs".
+ * constant — the emulator key defaults to the SDK's per-network pin (see
+ * `resolveEmulatorKey`). Anything address-shaped the solver sends is
+ * compare-only: a mismatch means refuse-to-fund, never "use theirs".
  *
  * Transport is symmetric-outbound: the reference framing below speaks the dev
  * broker (`{op:"sub"|"event"}` over WebSocket) or plain HTTP; the production
@@ -87,17 +83,7 @@ import {
 } from "./secrets";
 import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
-import { resolveEmulatorKey, type EmulatorPubkeyOverride } from "./emulatorKey";
-
-/** Drop the prefix of a 33-byte compressed key; pass an x-only key through —
- * same rule as offer.ts, kept local so this module stays self-contained. */
-const xOnly = (key: Uint8Array, label: string): Uint8Array => {
-    if (key.length === 32) return key;
-    if (key.length !== 33 || (key[0] !== 0x02 && key[0] !== 0x03)) {
-        throw new Error(`${label} is not a compressed or x-only public key`);
-    }
-    return key.slice(1);
-};
+import { resolveEmulatorKey, xOnly, type EmulatorPubkeyOverride } from "./emulatorKey";
 
 /** Decode a solver-supplied hex field, turning a malformed value (odd length,
  * non-hex chars) into a solver-blaming diagnostic instead of a bare
@@ -626,8 +612,7 @@ export function lightningSendVtxoScript(params: {
      * {@link unilateralRefundDelay} and {@link unilateralRefundWithoutReceiverDelay}
      * derive from this same value — one rounding, shared across all three tiers. */
     claimDelay: number;
-    /** Emulator x-only key. Not fetched here or anywhere in this package; see
-     * {@link resolveEmulatorKey} for where it comes from and why. */
+    /** Emulator x-only key, as resolved by {@link resolveEmulatorKey}. */
     emulatorPubkey: Uint8Array;
     /** Where a refund must pay: the trader's P2TR pkScript (34 bytes). Also
      * `nonInteractiveRefund`'s covenant destination. */
@@ -717,13 +702,7 @@ export async function requestLightningSend(
     params: {
         invoice: InvoiceFacts;
         rfqId?: string;
-        /** Covenant co-signer (emulator) key override — see {@link
-         * resolveEmulatorKey}. Omitted, the SDK's per-network pin applies;
-         * never fetched from the emulator itself. Supplied (e.g. the solver's
-         * signed registry/corridor card's `emulator_pubkey`, added in
-         * arkade-os/solver-registry#18), the caller is responsible for having
-         * checked it against a source it independently trusts — the same
-         * never-trust-only-compare rule as {@link verifyLockupAddress}. */
+        /** Co-signer key override; see {@link resolveEmulatorKey}. */
         emulatorPubkey?: EmulatorPubkeyOverride;
     },
 ): Promise<{
@@ -787,23 +766,19 @@ export async function requestLightningSend(
     }
 
     const serverPubkey = xOnly(hex.decode(info.signerPubkey), "ark signer key");
+    const network = getNetwork(info.network as NetworkName);
     const script = lightningSendVtxoScript({
         solverPubkey: xOnly(hex.decode(quote.solver_pubkey), "solver key"),
         refundLocktime: quote.refund_locktime,
         serverPubkey,
         paymentHash: params.invoice.paymentHash,
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
-        emulatorPubkey: resolveEmulatorKey(
-            getNetwork(info.network as NetworkName),
-            params.emulatorPubkey,
-        ),
+        emulatorPubkey: resolveEmulatorKey(network, params.emulatorPubkey),
         senderPubkey,
         receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
         refundPkScript: ArkAddress.decode(refundAddress).pkScript,
     });
-    const address = script
-        .address(getNetwork(info.network as NetworkName).hrp, serverPubkey)
-        .encode();
+    const address = script.address(network.hrp, serverPubkey).encode();
     verifyLockupAddress(quote, address);
     assertFundable({
         quote,
@@ -1077,8 +1052,7 @@ export async function requestOnchainSend(
         /** Optional caller-owned P. Persist it with the returned secrets before funding. */
         preimage?: Uint8Array;
         rfqId?: string;
-        /** Covenant co-signer (emulator) key override — same parameter, same
-         * caller obligation, as {@link requestLightningSend}'s. */
+        /** Co-signer key override; see {@link resolveEmulatorKey}. */
         emulatorPubkey?: EmulatorPubkeyOverride;
     },
 ): Promise<{
@@ -1144,17 +1118,15 @@ export async function requestOnchainSend(
         }),
     );
 
+    const network = getNetwork(info.network as NetworkName);
     const derived = deriveOnchainSend({
         quote,
         paymentHash,
         payoutPubkey: params.payoutPubkey,
         serverPubkey: xOnly(hex.decode(info.signerPubkey), "ark signer key"),
-        emulatorPubkey: resolveEmulatorKey(
-            getNetwork(info.network as NetworkName),
-            params.emulatorPubkey,
-        ),
+        emulatorPubkey: resolveEmulatorKey(network, params.emulatorPubkey),
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
-        hrp: getNetwork(info.network as NetworkName).hrp,
+        hrp: network.hrp,
         l1Network: l1NetworkFromArk(info.network),
         refundAddress,
         senderPubkey,
@@ -1482,11 +1454,10 @@ export async function requestLightningReceive(
     arkServerUrl: string,
     transport: RfqTransport,
     params: {
-        /** Covenant co-signer (emulator) key override — same parameter, same
-         * caller obligation, as {@link requestLightningSend}'s. */
-        emulatorPubkey?: EmulatorPubkeyOverride;
         amount: number;
         amountSide: "from" | "to";
+        /** Co-signer key override; see {@link resolveEmulatorKey}. */
+        emulatorPubkey?: EmulatorPubkeyOverride;
         /** covclaimd's 33-byte compressed pubkey (from its own info endpoint)
          * — the claim packet seals to it and only it can ever read `P` early. */
         covclaimdPubkey: Uint8Array;
@@ -1557,18 +1528,16 @@ export async function requestLightningReceive(
     );
     assertQuotedAmount(quote, params.amountSide, params.amount);
 
+    const network = getNetwork(info.network as NetworkName);
     const derived = deriveLightningReceive({
         quote,
         paymentHash,
         payoutPubkey,
         payoutAddress,
         serverPubkey: xOnly(hex.decode(info.signerPubkey), "ark signer key"),
-        emulatorPubkey: resolveEmulatorKey(
-            getNetwork(info.network as NetworkName),
-            params.emulatorPubkey,
-        ),
+        emulatorPubkey: resolveEmulatorKey(network, params.emulatorPubkey),
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
-        hrp: getNetwork(info.network as NetworkName).hrp,
+        hrp: network.hrp,
     });
     const now = Math.floor(Date.now() / 1000);
     const { payDeadline } = verifyReceiveInvoice({
@@ -1703,11 +1672,10 @@ export async function requestOnchainReceive(
     arkServerUrl: string,
     transport: RfqTransport,
     params: {
-        /** Covenant co-signer (emulator) key override — same parameter, same
-         * caller obligation, as {@link requestLightningSend}'s. */
-        emulatorPubkey?: EmulatorPubkeyOverride;
         amount: number;
         amountSide: "from" | "to";
+        /** Co-signer key override; see {@link resolveEmulatorKey}. */
+        emulatorPubkey?: EmulatorPubkeyOverride;
         /** Trader's x-only L1 key for the HTLC's refund leaf. */
         refundPubkey: Uint8Array;
         /** covclaimd's 33-byte compressed pubkey — see {@link requestLightningReceive}. */
@@ -1765,6 +1733,7 @@ export async function requestOnchainReceive(
     );
     assertQuotedAmount(quote, params.amountSide, params.amount);
 
+    const network = getNetwork(info.network as NetworkName);
     const derived = deriveOnchainReceive({
         quote,
         paymentHash,
@@ -1772,12 +1741,9 @@ export async function requestOnchainReceive(
         payoutAddress,
         refundPubkey: params.refundPubkey,
         serverPubkey: xOnly(hex.decode(info.signerPubkey), "ark signer key"),
-        emulatorPubkey: resolveEmulatorKey(
-            getNetwork(info.network as NetworkName),
-            params.emulatorPubkey,
-        ),
+        emulatorPubkey: resolveEmulatorKey(network, params.emulatorPubkey),
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
-        hrp: getNetwork(info.network as NetworkName).hrp,
+        hrp: network.hrp,
         l1Network: l1NetworkFromArk(info.network),
     });
     assertFundable({

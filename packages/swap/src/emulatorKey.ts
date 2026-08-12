@@ -1,44 +1,37 @@
 /**
- * One place the whole package resolves the covenant co-signer ("emulator")
- * key, so `createOffer` and every rfq entrypoint agree on the rule:
- *
- * The key defaults to the SDK's per-network pin, resolved from the network the
- * Ark server reports — never fetched from the emulator itself, because the
- * service being authenticated must not name its own trust anchor. A caller
- * that means to co-sign with a different deployment (the solver card's
- * `emulator_pubkey`, a self-hosted emulator, an unpinned network, or a key
- * rotation the SDK hasn't shipped) passes the override — and in doing so takes
- * on the obligation of having checked that value against a source it
- * independently trusts.
+ * Resolution of the covenant co-signer ("emulator") key, shared by
+ * `createOffer` and the rfq entrypoints: the caller's override if given, else
+ * the SDK's per-network pin. See {@link resolveEmulatorPubkey} for the trust
+ * model.
  */
 import { hex } from "@scure/base";
 import { resolveEmulatorPubkey, type Network } from "@arkade-os/sdk";
 
-/** A caller-supplied co-signer key: bytes (x-only or 33-byte compressed, e.g.
- * a solver card's `emulator_pubkey`) or 33-byte compressed hex (the same
- * contract as `Arkade.connect`'s `emulatorPubkey` option). */
+/** A caller-supplied co-signer key: bytes (x-only or 33-byte compressed) or
+ * 33-byte compressed hex. */
 export type EmulatorPubkeyOverride = Uint8Array | string;
 
-/**
- * The x-only co-signer key for `network`: the override if given, else the
+/** Drop the prefix of a 33-byte compressed key; pass an x-only key through.
+ * A malformed key would otherwise bind silently into a covenant and only
+ * surface as an unspendable address once funded. */
+export const xOnly = (key: Uint8Array, label: string): Uint8Array => {
+    if (key.length === 32) return key;
+    if (key.length !== 33 || (key[0] !== 0x02 && key[0] !== 0x03)) {
+        throw new Error(`${label} is not a compressed or x-only public key`);
+    }
+    return key.slice(1);
+};
+
+/** The x-only co-signer key for `network`: the override if given, else the
  * SDK's pinned key. Throws on a malformed override, and on a network with no
- * pin when no override is supplied (signet, testnet) — a wrong or guessed key
- * would bind a covenant nobody will ever co-sign.
- */
+ * pin when no override is supplied. */
 export function resolveEmulatorKey(
     network: Network,
     override?: EmulatorPubkeyOverride,
 ): Uint8Array {
-    if (override instanceof Uint8Array) {
-        // drop the prefix by length so an already-x-only key passes through
-        // rather than being shortened to 31 bytes
-        if (override.length === 32) return override;
-        if (override.length !== 33 || (override[0] !== 0x02 && override[0] !== 0x03)) {
-            throw new Error("emulator pubkey is not a compressed or x-only public key");
-        }
-        return override.slice(1);
-    }
-    // resolveEmulatorPubkey validates the hex form and returns 33-byte
-    // compressed hex, so slicing the prefix cannot truncate a malformed key
-    return hex.decode(resolveEmulatorPubkey(network, override)).slice(1);
+    const key =
+        override instanceof Uint8Array
+            ? override
+            : hex.decode(resolveEmulatorPubkey(network, override));
+    return xOnly(key, "emulator pubkey");
 }

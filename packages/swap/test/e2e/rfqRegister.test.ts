@@ -167,10 +167,9 @@ beforeAll(async () => {
     claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
     hrp = ArkAddress.decode(address).hrp;
 
-    // The SDK's pinned regtest co-signer key — the same default
-    // `requestLightningSend` resolves internally, so the stub solver derives
-    // the same script without this suite ever asking the emulator for it.
-    emulatorPubkey = hex.decode(REGTEST_EMULATOR_PUBKEY).slice(1);
+    // the pinned regtest key: the stub solver derives with the same default
+    // `requestLightningSend` resolves internally
+    emulatorPubkey = xOnly(hex.decode(REGTEST_EMULATOR_PUBKEY));
 }, 120_000);
 
 describe("RFQ lockup registration (regtest)", () => {
@@ -178,8 +177,6 @@ describe("RFQ lockup registration (regtest)", () => {
     let lockupScript: string;
 
     it("registers the lockup before the maker can fund it", async () => {
-        // no emulatorPubkey override: exercises the default resolution against
-        // the same pinned key the stub solver derived with
         swap = await requestLightningSend(wallet, ARK_URL, stubTransport(), {
             invoice: {
                 raw: "lnbcrt10u1p",
