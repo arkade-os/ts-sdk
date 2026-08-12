@@ -246,7 +246,16 @@ export async function provisionClaimSecret(
                 preimageSalt,
                 mustPersistPreimage: false,
             };
-        } catch {
+        } catch (cause) {
+            // "Cannot sign deterministically" is the only refusal this arm may
+            // absorb. A wallet that does not hold the key, or holds it and
+            // cannot sign at all, must propagate: degrading those to a stored
+            // preimage would fund a leg nothing can spend and report success.
+            // `provisionRefundKey` resolved a signer moments ago, so reaching
+            // here means the signer changed under us.
+            if (cause instanceof ForeignDescriptorError || cause instanceof WalletCannotSignError) {
+                throw cause;
+            }
             // The probe IS the use: DescriptorIdentity exposes the method and
             // only refuses at call time, so asking first would answer for a
             // different question than the one that matters. Discard the salt —
@@ -345,9 +354,11 @@ export async function contractPreimage(
     opts: { stored?: Uint8Array; salt?: Uint8Array } = {},
 ): Promise<Uint8Array> {
     if (opts.stored) {
-        // The check the deleted record decoder used to make. A truncated
-        // column or a partial write would otherwise restore silently and be
-        // diagnosed only at claim time, with the timeout margin already spent.
+        // The check the deleted record decoder used to make, and the same
+        // OP_SIZE 32 rule provisioning enforces. An empty array is truthy, so
+        // a truncated column or a partial write would otherwise restore
+        // silently and be diagnosed only at claim time, with the timeout
+        // margin already spent.
         if (opts.stored.length !== 32) {
             throw new Error(`stored preimage must be 32 bytes, got ${opts.stored.length}`);
         }

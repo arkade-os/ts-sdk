@@ -335,7 +335,11 @@ export const preimageForSwapRecord = async (
         );
     }
 
-    if (record.paymentHash && hex.encode(sha256(preimage)) !== record.paymentHash) {
+    // Case-folded: `hex.encode` always emits lowercase, but `hex.decode`
+    // accepts either, so a backend that normalises hex to uppercase round-trips
+    // the salt and the preimage fine and then fails only here — a spurious
+    // hash-mismatch on a preimage that is actually correct.
+    if (record.paymentHash && hex.encode(sha256(preimage)) !== record.paymentHash.toLowerCase()) {
         throw new PreimageNotRecoverableError(
             "hash-mismatch",
             "the derived preimage does not match this swap's payment hash: wrong wallet, or a tampered salt",

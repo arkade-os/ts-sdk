@@ -325,6 +325,29 @@ describe("provisionClaimSecret", () => {
         }
     });
 
+    it("propagates a key refusal instead of degrading it to a stored preimage", async () => {
+        // The salted arm's fallback may absorb "cannot sign deterministically"
+        // and nothing else. A wallet that does not hold the key must not come
+        // back with a random preimage and a success — that funds a leg nothing
+        // can spend.
+        const base = SingleKey.fromRandomBytes();
+        const wallet = {
+            identity: base,
+            getCurrentSigningDescriptor: async () => undefined,
+            getNextSigningDescriptor: async () => undefined,
+            getUsedSigningDescriptors: async () => [],
+            advanceSigningDescriptorWatermark: async () => {},
+            // Resolves once for provisioning, then stops holding the key —
+            // the only way to reach the salted arm's catch with a key error.
+            signerForDescriptor: vi
+                .fn()
+                .mockResolvedValueOnce(base)
+                .mockRejectedValue(new ForeignDescriptorError("tr(deadbeef)")),
+        } as unknown as IWallet;
+
+        await expect(provisionClaimSecret(wallet)).rejects.toBeInstanceOf(ForeignDescriptorError);
+    });
+
     it("refuses a watch-only identity before it reaches the salted arm", async () => {
         // The fallback must not paper over a wallet that cannot spend the leg
         // at all: #738's check fires first, so such a wallet learns before it
@@ -455,14 +478,17 @@ describe("contractPreimage", () => {
     });
 
     it("refuses a stored preimage that is not 32 bytes", async () => {
-        // The check the deleted record decoder made. A truncated column or a
-        // partial write would otherwise restore silently and be caught only
-        // when the claim is built, with the timeout margin already spent.
-        const { wallet } = await hdWallet();
+        // The check the deleted record decoder made — a truncated column would
+        // otherwise restore silently and be caught only when the claim is
+        // built. The empty case is the one an explicit length test buys: a
+        // zero-length array is truthy, so it would be handed straight back.
+        const wallet = staticWallet();
         const { descriptor } = await provisionRefundKey(wallet);
-        await expect(
-            contractPreimage(wallet, descriptor, new Uint8Array(20).fill(3)),
-        ).rejects.toThrow(/stored preimage must be 32 bytes/);
+        for (const stored of [new Uint8Array(0), new Uint8Array(20).fill(3), new Uint8Array(31)]) {
+            await expect(contractPreimage(wallet, descriptor, { stored })).rejects.toThrow(
+                /stored preimage must be 32 bytes/,
+            );
+        }
     });
 
     it("refuses to derive for a descriptor that carries none", async () => {

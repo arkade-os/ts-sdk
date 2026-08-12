@@ -242,6 +242,36 @@ describe("preimageForSwapRecord", () => {
             ).toBe("not-derivable");
         });
 
+        it("accepts an uppercase payment hash", async () => {
+            // `hex.encode` emits lowercase but `hex.decode` accepts either, so
+            // a backend that normalises hex to uppercase round-trips the salt
+            // fine and would fail only here — a spurious mismatch on a correct
+            // preimage, which is the hardest kind to diagnose.
+            const key = SingleKey.fromRandomBytes();
+            const secrets = await provisionClaimSecret(staticWallet(key));
+            const record = recordOf(secrets);
+            record.paymentHash = record.paymentHash.toUpperCase();
+
+            expect(hex.encode(await preimageForSwapRecord(staticWallet(key), record))).toBe(
+                hex.encode(secrets.preimage),
+            );
+        });
+
+        it("catches the wrong wallet even with no payment hash to check", async () => {
+            // The key check in `contractSigner` fires before anything is
+            // derived, so the guard is a second line of defence, not the only
+            // one: a record with no `paymentHash` is still not claimable by a
+            // wallet that does not hold its descriptor's key.
+            const secrets = await provisionClaimSecret(staticWallet());
+            const record = swapSecretsToRecord(secrets);
+
+            expect(
+                await reasonOf(
+                    preimageForSwapRecord(staticWallet(SingleKey.fromRandomBytes()), record),
+                ),
+            ).toBe("not-derivable");
+        });
+
         it("stays quiet when the record carries no payment hash", async () => {
             const key = SingleKey.fromRandomBytes();
             const secrets = await provisionClaimSecret(staticWallet(key));
