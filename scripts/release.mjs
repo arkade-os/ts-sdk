@@ -238,6 +238,10 @@ ${DEPENDENT_PACKAGES.map(
   --cleanup [target]       Restore local manifests and delete local
                            package-scoped tags. With no target, auto-detect
                            from release state or dirty manifests.
+  --allow-any-branch       Escape hatch: publish a stable version from a
+                           non-${RELEASE_BRANCH} branch. The release commit and tag
+                           land on the current branch, so only use this when
+                           the branch is the intended source of the release.
   --help                   Show this message
 
 Releasing SDK implies a dependent release of ${DEPENDENT_PACKAGES.map((p) => p.name).join(" and ")}
@@ -245,9 +249,10 @@ because they depend on SDK via workspace:* (pnpm rewrites this to an exact
 version on pack/publish).
 
 Stable releases (patch/minor/major or a literal non-prerelease version) must
-be run from master. Prerelease releases (prepatch/preminor/premajor/
-prerelease, or a literal -alpha/-beta/-rc/-next version) may be run from any
-branch and publish under a matching npm dist-tag, never 'latest'.
+be run from master, unless --allow-any-branch is passed. Prerelease releases
+(prepatch/preminor/premajor/prerelease, or a literal -alpha/-beta/-rc/-next
+version) may be run from any branch and publish under a matching npm
+dist-tag, never 'latest'.
 `,
     );
 }
@@ -261,6 +266,7 @@ function parseArgs(argv) {
         dependentBumps: {},
         dryRun: false,
         cleanup: false,
+        allowAnyBranch: false,
         help: false,
     };
     const positional = [];
@@ -276,6 +282,9 @@ function parseArgs(argv) {
                 break;
             case "--cleanup":
                 args.cleanup = true;
+                break;
+            case "--allow-any-branch":
+                args.allowAnyBranch = true;
                 break;
             case "--preid":
                 if (i + 1 >= argv.length) die("--preid requires a value");
@@ -406,9 +415,14 @@ function selectedInDependencyOrder(plan) {
         .map((p) => p.key);
 }
 
-function summarizePlan({ target, bump, preid, dependentBumps = {}, plan }) {
+function summarizePlan({ target, bump, preid, dependentBumps = {}, allowAnyBranch, plan }) {
     console.log("Release plan:");
     console.log(`  target: ${target}`);
+    console.log(
+        `  branch: ${gitCurrentBranch() || "detached HEAD"}${
+            allowAnyBranch ? " (--allow-any-branch: branch check bypassed)" : ""
+        }`,
+    );
     const opts = [bump];
     if (preid) opts.push(`--preid ${preid}`);
     for (const pkg of DEPENDENT_PACKAGES) {
@@ -449,17 +463,27 @@ function gitCurrentBranch() {
     }).trim();
 }
 
-function assertReleaseBranch(plan) {
+function assertReleaseBranch(plan, allowAnyBranch = false) {
     const hasStableVersion = [...plan.values()].some((v) => !parseVersion(v.next).pre);
     if (!hasStableVersion) return;
 
     const branch = gitCurrentBranch();
-    if (branch !== RELEASE_BRANCH) {
-        die(
-            `Stable releases must be run from ${RELEASE_BRANCH}; current branch is ${branch || "detached HEAD"}. ` +
-                `Prerelease versions (prepatch/preminor/premajor/prerelease, or a literal -alpha/-beta/-rc/-next version) may be run from any branch.`,
+    if (branch === RELEASE_BRANCH) return;
+
+    if (allowAnyBranch) {
+        console.warn(
+            `Warning: --allow-any-branch is set; releasing a stable version from ` +
+                `${branch || "detached HEAD"} instead of ${RELEASE_BRANCH}. ` +
+                `The release commit and tag will land on this branch.`,
         );
+        return;
     }
+
+    die(
+        `Stable releases must be run from ${RELEASE_BRANCH}; current branch is ${branch || "detached HEAD"}. ` +
+            `Prerelease versions (prepatch/preminor/premajor/prerelease, or a literal -alpha/-beta/-rc/-next version) may be run from any branch. ` +
+            `Pass --allow-any-branch to release a stable version from this branch anyway.`,
+    );
 }
 
 function gitClean() {
@@ -637,7 +661,7 @@ function dryRun(args) {
 
 function release(args) {
     const plan = computeTargetVersions(args);
-    assertReleaseBranch(plan);
+    assertReleaseBranch(plan, args.allowAnyBranch);
     summarizePlan({ ...args, plan });
 
     if (!gitClean()) {

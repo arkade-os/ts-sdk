@@ -63,3 +63,8 @@ with `--boltz-bump` / `--swap-bump <bump-or-version>`.
 
 The script runs tests, builds, commits, tags, publishes to npm (requires local npm credentials),
 and pushes commit + tags to `origin`.
+
+Stable versions must be released from `master`; prereleases may come from any branch.
+`--allow-any-branch` is the escape hatch for a stable release off a feature branch — the release
+commit and tag land on that branch, so reach for it only when the branch really is the intended
+source of the release.
