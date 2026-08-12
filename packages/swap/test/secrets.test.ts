@@ -359,13 +359,14 @@ describe("the static arm", () => {
         ).toBeUndefined();
     });
 
-    it("refuses to derive a preimage for a record that lost its stored one", async () => {
-        // Reaching derivation with a static descriptor means the record lost
-        // P: deriving would hand two swaps one preimage, so it must refuse.
+    it("refuses to derive a preimage for a record that carries none", async () => {
+        // Deriving off a static descriptor would hand two swaps one preimage,
+        // so it refuses — without accusing the record of losing anything: a
+        // lightning send legitimately has no P of ours, and lands here too.
         const wallet = staticWallet();
         const secrets = await deriveSwapSecrets(wallet);
         await expect(preimageForRfqSecrets(wallet, secrets)).rejects.toThrow(
-            /not per-swap and the record stores no preimage/,
+            /is not per-swap, so its preimage cannot be derived/,
         );
     });
 

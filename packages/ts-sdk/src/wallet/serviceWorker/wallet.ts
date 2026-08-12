@@ -21,7 +21,6 @@ import { SettlementEvent } from "../../providers/ark";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "../activity";
 import { hex } from "@scure/base";
 import {
-    DescriptorIdentity,
     Identity,
     ReadonlyIdentity,
     isHDCapableIdentity,
@@ -32,6 +31,7 @@ import {
 } from "../../identity";
 import { HDDescriptorProvider } from "../hdDescriptorProvider";
 import type { HDWalletCapable, HDAllocationCapable } from "../hdWalletCapable";
+import { resolveDescriptorSigner } from "../hdWalletCapable";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
 import { setupServiceWorker } from "../../worker/browser/utils";
@@ -1809,15 +1809,15 @@ export class ServiceWorkerWallet
      *
      * Runs page-side: an Identity cannot cross the message bus, and it does
      * not need to — the page owns the signing identity, and derivation reads
-     * no allocation state. Mirrors {@link Wallet.signerForDescriptor}'s
-     * fallback: the wallet identity itself for a non-HD identity or a foreign
-     * descriptor.
+     * no allocation state. Shares {@link resolveDescriptorSigner} with
+     * {@link Wallet.signerForDescriptor} so the two sides of the bus cannot
+     * answer differently for one descriptor.
      */
     async signerForDescriptor(descriptor: string): Promise<Identity> {
-        if (!isHDCapableIdentity(this.identity)) return this.identity;
-        const provider = await HDDescriptorProvider.create(this.identity, this.walletRepository);
-        if (!provider.isOurs(descriptor)) return this.identity;
-        return new DescriptorIdentity({ descriptor, signer: provider, base: this.identity });
+        const provider = isHDCapableIdentity(this.identity)
+            ? await HDDescriptorProvider.create(this.identity, this.walletRepository)
+            : undefined;
+        return resolveDescriptorSigner(descriptor, this.identity, provider);
     }
 
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {

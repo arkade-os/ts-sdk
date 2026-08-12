@@ -33,6 +33,7 @@ import {
     isHDWalletCapable,
     isHDAllocationCapable,
     ForeignDescriptorError,
+    resolveDescriptorSigner,
 } from "./wallet/hdWalletCapable";
 import type { HDAllocationCapable, HDWalletCapable } from "./wallet/hdWalletCapable";
 import { ArkAddress } from "./script/address";
@@ -517,6 +518,7 @@ export {
     isHDWalletCapable,
     isHDAllocationCapable,
     ForeignDescriptorError,
+    resolveDescriptorSigner,
     signingDescriptorIndex,
     strictSigningDescriptorIndex,
     deriveDescriptorLeafPubKey,

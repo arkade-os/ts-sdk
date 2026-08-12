@@ -445,14 +445,19 @@ A stored preimage is the one secret at rest in the design, and it is never a pri
 
 ```ts
 const swap = await requestOnchainSend(/* … */);
-swap.secrets; // { derivable: true, signingDescriptor } — persist it, it holds no secret
+// Always persist it. On an HD wallet it is just `{ derivable: true,
+// signingDescriptor }` and holds nothing secret; on a static wallet it also
+// carries `preimage`, which is the swap's only claim secret.
 await saveSwap({ ...record, ...rfqSecretsToRecord(swap.secrets) });
 
 // Later, from the seed plus that descriptor. Guard the lookup: offer-corridor
 // records (and records that lost their secrets fields) carry no secrets at
 // all, and a `!` here would crash the whole recovery loop on the first one.
 const secrets = rfqSecretsOfRecord(record);
-if (secrets) {
+// Only ask for a preimage the corridor gave us one for: a lightning send's P
+// belongs to the payee, so this throws on those records rather than inventing
+// something the chain will never match.
+if (secrets && record.pair !== LIGHTNING_SEND_PAIR) {
     const preimage = await preimageForRfqSecrets(wallet, secrets);
 }
 

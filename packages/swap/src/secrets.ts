@@ -27,6 +27,7 @@ import { hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { randomBytes } from "@noble/hashes/utils.js";
 import { schnorr } from "@noble/curves/secp256k1.js";
+import { equalBytes } from "@scure/btc-signer/utils.js";
 import {
     Identity,
     IWallet,
@@ -245,8 +246,12 @@ function decodeHex32(value: string, label: string): Uint8Array {
 /**
  * Claim a restored swap's index so a later allocation cannot reissue it —
  * which would derive that swap's preimage a second time, for a different swap.
- * Monotonic; a no-op on a wallet that cannot allocate, and on a static
- * descriptor, which has no index to reserve.
+ *
+ * Monotonic, and a no-op wherever there is no index to reserve: a wallet with
+ * no allocation API, a static descriptor, or an HD descriptor a wallet
+ * running without an index stream cannot place. Restores iterate whole
+ * histories, so a record this wallet has nothing to adopt for must not abort
+ * the loop.
  */
 export async function adoptSwapDescriptor(
     wallet: IWallet,
@@ -302,46 +307,33 @@ export async function senderIdentityForRfqSecrets(
     secrets: SwapSecrets,
 ): Promise<Identity> {
     if (!secrets.derivable) return SingleKey.fromPrivateKey(secrets.senderPrivateKey);
-    let signer: Identity;
-    if (isHDWalletCapable(wallet)) {
-        try {
-            signer = await wallet.signerForDescriptor(secrets.signingDescriptor);
-        } catch (cause) {
-            // Typed at the throw site, not in a translator: this is the
-            // function that discovers the cause.
-            throw new RefundNotLocallyPossibleError(
-                "foreign-descriptor",
-                `this wallet cannot derive ${secrets.signingDescriptor}; the swap was created on another wallet`,
-                { cause },
-            );
-        }
-    } else {
-        // No descriptor API at all — the identity is the only key this wallet
-        // has, and the equality check below decides whether it is the right one.
-        signer = wallet.identity;
-    }
-    const expected = descriptorKeyOf(secrets.signingDescriptor);
-    const actual = await signer.xOnlyPublicKey();
-    if (!expected || !bytesEqual(actual, expected)) {
-        throw new RefundNotLocallyPossibleError(
+    const refuse = (cause?: unknown) =>
+        new RefundNotLocallyPossibleError(
             "foreign-descriptor",
             `this wallet cannot derive ${secrets.signingDescriptor}; the swap was created on another wallet`,
+            cause ? { cause } : undefined,
         );
+    // A wallet with no descriptor API has only its identity; the key check
+    // below decides whether that is the right key for this record.
+    let signer: Identity;
+    try {
+        signer = isHDWalletCapable(wallet)
+            ? await wallet.signerForDescriptor(secrets.signingDescriptor)
+            : wallet.identity;
+        if (
+            !equalBytes(
+                await signer.xOnlyPublicKey(),
+                deriveDescriptorLeafPubKey(secrets.signingDescriptor),
+            )
+        ) {
+            throw refuse();
+        }
+    } catch (cause) {
+        // Also catches an unparseable descriptor: a record whose key cannot be
+        // read is one no wallet can prove it holds.
+        throw cause instanceof RefundNotLocallyPossibleError ? cause : refuse(cause);
     }
     return signer;
-}
-
-/** The descriptor's leaf key, or undefined when it cannot be parsed. */
-function descriptorKeyOf(descriptor: string): Uint8Array | undefined {
-    try {
-        return deriveDescriptorLeafPubKey(descriptor);
-    } catch {
-        return undefined;
-    }
-}
-
-function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
-    return a.length === b.length && a.every((byte, i) => byte === b[i]);
 }
 
 /**
@@ -438,11 +430,13 @@ export async function preimageForRfqSecrets(
     }
     if (secrets.preimage) return secrets.preimage;
     if (!isPerSwapDescriptor(secrets.signingDescriptor)) {
-        // A static descriptor is the same key for every swap: deriving here
-        // would hand two swaps one preimage. Creation stores P for these
-        // records, so reaching this line means the record lost it.
+        // A static descriptor is the same key for every swap, so deriving
+        // here would hand two swaps one preimage. Two records reach this: a
+        // lightning send, whose P belongs to the payee and was never ours,
+        // and a corridor that stores P having lost it. Neither can produce
+        // one, and the message must not accuse the first of losing anything.
         throw new Error(
-            `swap descriptor ${secrets.signingDescriptor} is not per-swap and the record stores no preimage`,
+            `swap descriptor ${secrets.signingDescriptor} is not per-swap, so its preimage cannot be derived; this record carries none`,
         );
     }
     const signer = await senderIdentityForRfqSecrets(wallet, secrets);

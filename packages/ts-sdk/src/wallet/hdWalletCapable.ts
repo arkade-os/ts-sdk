@@ -1,4 +1,9 @@
+import { equalBytes } from "@scure/btc-signer/utils.js";
 import { Identity } from "../identity";
+import { DescriptorIdentity } from "../identity/descriptorIdentity";
+import { deriveDescriptorLeafPubKey, parseHDDescriptor } from "../identity/descriptor";
+import { isHDCapableIdentity } from "../identity/hdCapableIdentity";
+import type { DescriptorProvider } from "../identity/descriptorProvider";
 
 /**
  * Capability a wallet exposes so descriptor-blind consumers — Boltz swaps and
@@ -53,6 +58,55 @@ export class ForeignDescriptorError extends Error {
     constructor(readonly descriptor: string) {
         super(`this wallet holds no key for descriptor: ${descriptor}`);
     }
+}
+
+/** Anything that can derive and sign for a descriptor it claims. */
+type DescriptorOwner = Pick<
+    DescriptorProvider,
+    "isOurs" | "signWithDescriptor" | "signMessageWithDescriptor"
+>;
+
+/**
+ * The identity that signs `descriptor`, or {@link ForeignDescriptorError}.
+ *
+ * Shared by every {@link HDWalletCapable.signerForDescriptor} implementation
+ * so they cannot drift: the page-side and worker-side wallets answering
+ * differently for one descriptor is a signer that passes a public-key check
+ * and then throws on every signature — after the artifact is funded.
+ */
+export async function resolveDescriptorSigner(
+    descriptor: string,
+    identity: Identity,
+    provider?: DescriptorOwner,
+): Promise<Identity> {
+    // Whoever owns the derivation signs it: the wallet's descriptor provider,
+    // or — on a wallet configured without one — a seed-backed identity that
+    // owns the descriptor itself.
+    const owner = provider?.isOurs(descriptor)
+        ? provider
+        : isHDCapableIdentity(identity) && identity.isOurs(descriptor)
+          ? identity
+          : undefined;
+    // Only a descriptor carrying a derivation path has anything to derive.
+    // It wins over the identity even when its leaf key aliases the identity
+    // key (a fresh HD wallet's index 0), because the identity cannot sign
+    // deterministically for an index.
+    if (owner && parseHDDescriptor(descriptor)) {
+        return new DescriptorIdentity({ descriptor, signer: owner, base: identity });
+    }
+    // A pathless `tr(pubkey)` has no derivation to perform, so the identity
+    // signs it directly when it holds that key — and a descriptor we cannot
+    // read a key out of is one no wallet can claim.
+    let key: Uint8Array;
+    try {
+        key = deriveDescriptorLeafPubKey(descriptor);
+    } catch {
+        throw new ForeignDescriptorError(descriptor);
+    }
+    // Deliberately outside the try: a signer that fails to answer is an error
+    // to propagate, not evidence that the key is someone else's.
+    if (equalBytes(await identity.xOnlyPublicKey(), key)) return identity;
+    throw new ForeignDescriptorError(descriptor);
 }
 
 /** Structural type guard for {@link HDWalletCapable}. */
