@@ -486,9 +486,9 @@ A caller-supplied preimage keeps `signingDescriptor` for the sender key and stor
 On an HD wallet each swap **allocates** its own descriptor rather than peeking at the current one:
 two swaps sharing a descriptor derive the _identical_ preimage, so one solver learning its own
 preimage would learn the other swap's. (Static wallets share their one descriptor by design — that
-is why their preimages are stored per swap, never derived.) On restore, `adoptSwapDescriptor`
-moves the wallet's watermark past a restored record's index so it cannot be handed out twice; a
-static descriptor names no index and adopts as a no-op.
+is why their preimages are stored per swap, never derived.) On restore, `adoptContractDescriptor`
+(from `@arkade-os/sdk`) moves the wallet's watermark past a restored record's index so it cannot be
+handed out twice; a static descriptor names no index and adopts as a no-op.
 
 The derivation is `sha256(signSchnorrDeterministic(sha256("Arkade-RFQ-Preimage-v1" ‖ xonly(32) ‖
 u32le(0))))`, mirroring NArk's Boltz scheme (`SwapsManagementService.cs:128-160`) with an
@@ -504,7 +504,7 @@ index from the wallet's receive stream, and a swap index never becomes a funded 
 so it looks _unused_ to a seed-only `restore()` gap scan. Many consecutive swap allocations between
 two funded receive indices can therefore exceed the scan's `gapLimit` (default 20) and stop it
 before later-funded addresses are found. Keep the swap repository in backups (restore then adopts
-each record's descriptor via `adoptSwapDescriptor`), or raise `gapLimit` on seed-only restores
+each record's descriptor via `adoptContractDescriptor`), or raise `gapLimit` on seed-only restores
 after heavy swap use.
 
 ## Breaking changes on this branch (pre-release migration notes)
