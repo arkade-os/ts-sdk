@@ -620,7 +620,7 @@ const lightningReceiveFlow = async (
             seen.paymentHash = profile.payment_hash as string;
             seen.payoutPubkey = profile.payout_pubkey as string;
             seen.claimPacket = profile.claim_packet;
-            return receiveQuote(payload, { from: 5_000, to: 5_000, ...over.quote });
+            return receiveQuote(payload, { from: 5_000, to: 4_950, ...over.quote });
         },
         async status() {
             return null;
@@ -658,6 +658,8 @@ describe("requestLightningReceive on an HD wallet", () => {
 
         expect(result.secrets.derivable).toBe(true);
         expect(result.payAmount).toBe(5_000);
+        // What the claim gate compares against is the side that LANDS.
+        expect(result.expectedAmount).toBe(4_950);
         expect(result.invoice).toBe("lnbcrt49u1p...");
         // Absolute, so this pins exactly rather than tolerating drift between
         // module load (NOW) and the clock requestLightningReceive captures.
@@ -796,6 +798,7 @@ describe("requestOnchainReceive on an HD wallet", () => {
         );
 
         expect(result.fundAmount).toBe(100_000);
+        expect(result.expectedAmount).toBe(99_000);
         expect(result.htlc.address).toMatch(/^bcrt1p/);
         const preimage = await preimageForRfqSecrets(wallet, result.secrets);
         expect(seen.paymentHash).toBe(paymentHashOf(preimage));

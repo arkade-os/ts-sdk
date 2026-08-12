@@ -53,6 +53,51 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 export type ClaimArkProvider = RefundArkProvider;
 
 /**
+ * The lockup is funded for less than the swap agreed.
+ *
+ * The attack this names: the solver funds the correctly derived script with
+ * dust. Deriving the script locally — what protects every other corridor —
+ * proves nothing here, because the script was never the lie. Claiming anyway
+ * publishes `P`, which is what lets the solver settle the payer's Lightning
+ * HTLC in full.
+ */
+export class LockupAmountMismatchError extends Error {
+    readonly name = "LockupAmountMismatchError";
+    readonly reason = "amount_mismatch";
+    readonly expectedAmount: number;
+    readonly lockedAmount: number;
+    constructor(expectedAmount: number, lockedAmount: number) {
+        super(
+            `lockup holds ${lockedAmount} sats, below the agreed ${expectedAmount} — ` +
+                "refusing to publish the preimage",
+        );
+        this.expectedAmount = expectedAmount;
+        this.lockedAmount = lockedAmount;
+    }
+}
+
+/**
+ * Refuse an amount the gate below cannot compare against — `rfq.ts`'s
+ * `assertFinite` rule, at the one threshold that lives outside that module.
+ *
+ * `NaN` and `undefined` both fail EVERY comparison, so neither one fails the
+ * value gate: they delete it, and `P` goes out for a dust lockup. Both are
+ * reachable despite the static types — `expectedAmount` arrives from the
+ * caller's persisted record, and the values are `Number()`d off the indexer's
+ * JSON. Unlike `assertFinite`, absence is refused here too: the field is
+ * required, so `undefined` means the record predates it, which is exactly the
+ * case that must not proceed.
+ */
+const assertFiniteAmount = (value: number, reason: string, label: string): void => {
+    if (Number.isFinite(value)) return;
+    const error = new Error(`${label} is not a finite number (${String(value)})`) as Error & {
+        reason: string;
+    };
+    error.reason = reason;
+    throw error;
+};
+
+/**
  * A signer that reveals a preimage when spending a condition leaf.
  *
  * The ordering encoded here is the whole point: the condition witness is NOT
@@ -86,9 +131,16 @@ const claimIdentity = (identity: Identity, preimage: Uint8Array): Identity => ({
  * is signed: a wrong value can never open the leaf, and catching it here
  * beats learning it from the server's rejection.
  *
+ * So is the funded VALUE, against `expectedAmount` — and for the same reason,
+ * only more sharply: disclosure happens at SUBMIT, since `P` rides the PSBT to
+ * the Ark server. A check that waits for the transaction to land has already
+ * leaked the secret.
+ *
  * Swept outputs are refused, not attempted, exactly as in
  * {@link pushRefundWithoutReceiver} — one aggregate transaction means a
- * single non-live input would take the live ones down with it.
+ * single non-live input would take the live ones down with it. That refusal
+ * comes first, which is what leaves the value gate a plain sum over live
+ * outputs.
  */
 export async function pushClaim(
     ark: ClaimArkProvider,
@@ -104,6 +156,15 @@ export async function pushClaim(
         vtxos: readonly LockupVtxo[];
         /** Where the claimed sats land — the swap's payout address, decoded. */
         destinationPkScript: Uint8Array;
+        /** What the lockup must carry: the quote's `to_amount`, captured at
+         * REQUEST time and persisted with the record. Required rather than
+         * optional, so the guard cannot be skipped by the records that need
+         * it most. */
+        expectedAmount: number;
+        /** Set when this lockup already carries a claim of ours: `P` is public
+         * by then, so the value gate protects nothing and would only strand
+         * the remainder. */
+        partiallyClaimed?: boolean;
     },
 ): Promise<{ arkTxid: string; amount: number }> {
     if (input.vtxos.length === 0) throw new Error("nothing to claim: no funded outputs");
@@ -114,6 +175,22 @@ export async function pushClaim(
             swept.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`),
             input.script.options.refundLocktime,
         );
+    }
+
+    // Summed across every live output: funding in several is legitimate, and a
+    // first-output check would miss the dust exactly as a first-output claim
+    // would leave sats behind.
+    const locked = input.vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
+    assertFiniteAmount(locked, "lockup_malformed", "the lockup's summed value");
+    // Ahead of the comparison, never inside it — and only on the path that
+    // compares: once `P` is public, refusing a partial claim over a record
+    // that predates `expectedAmount` would strand the remainder to protect
+    // nothing.
+    if (!input.partiallyClaimed) {
+        assertFiniteAmount(input.expectedAmount, "invalid_gate_input", "expectedAmount");
+        if (locked < input.expectedAmount) {
+            throw new LockupAmountMismatchError(input.expectedAmount, locked);
+        }
     }
 
     const committed = input.script.options.preimageHash;
@@ -131,7 +208,6 @@ export async function pushClaim(
 
     const leaf = input.script.claim();
     const tapTree = input.script.encode();
-    const amount = input.vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
     const signer = claimIdentity(input.receiver, input.preimage);
 
     const { arkTx, checkpoints } = buildOffchainTx(
@@ -144,7 +220,7 @@ export async function pushClaim(
         })),
         // One aggregate output: unlike the covenant refund, this leaf inspects
         // nothing about the output set.
-        [{ script: input.destinationPkScript, amount: BigInt(amount) }],
+        [{ script: input.destinationPkScript, amount: BigInt(locked) }],
         serverUnrollScript,
     );
 
@@ -166,7 +242,7 @@ export async function pushClaim(
     );
 
     await ark.finalizeTx(submitted.arkTxid, finalCheckpoints);
-    return { arkTxid: submitted.arkTxid, amount };
+    return { arkTxid: submitted.arkTxid, amount: locked };
 }
 
 /**
@@ -202,6 +278,12 @@ export async function awaitLockupFunding(
  * funded, the claim itself is gated by nothing but the solver's own refund
  * deadline (`refund_locktime` from the quote), which is the number the
  * caller's deadline should be measured against.
+ *
+ * The wait returns on the first output seen, so a funding the indexer
+ * surfaces piecemeal reaches {@link pushClaim}'s value gate short and throws
+ * {@link LockupAmountMismatchError}. Nothing was signed, so retrying once the
+ * rest lands is safe — and that is also the answer to a genuinely underfunded
+ * lockup, which never gets past the gate at all.
  */
 export async function claimReceiveLockup(
     indexer: RefundIndexer,
@@ -223,5 +305,7 @@ export async function claimReceiveLockup(
         preimage: input.preimage,
         vtxos,
         destinationPkScript: input.destinationPkScript,
+        expectedAmount: input.expectedAmount,
+        partiallyClaimed: input.partiallyClaimed,
     });
 }
