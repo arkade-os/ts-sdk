@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import { Script } from "@scure/btc-signer";
-import { Wallet, SingleKey } from "../src";
+import { Wallet, SingleKey, type Recipient } from "../src";
 import { VtxoScript } from "../src/script/base";
 import { ArkAddress } from "../src/script/address";
 import {
@@ -160,6 +160,19 @@ describe("validateRecipients published taptree", () => {
         ).toThrow(/Invalid tapTree/);
     });
 
+    it("points a rejected taptree at the encoding it needed", () => {
+        // The check ignores leaf depths and rebuilds the tree in arkd's shape,
+        // so a valid tree from another encoder can be refused. The message has
+        // to name that, or there is nothing to act on.
+        expect(() =>
+            validateRecipients(
+                [{ address: addressFor(script), amount: 2000, tapTree: otherContract.encode() }],
+                1000,
+                makeContext(),
+            ),
+        ).toThrow(/Expected VtxoScript\.encode\(\) form/);
+    });
+
     it("rejects bytes that are not a taptree at all", () => {
         expect(() =>
             validateRecipients(
@@ -297,5 +310,224 @@ describe("Wallet recipient address binding", () => {
                 outputs: [{ address: encodeAddr(SERVER_XONLY, "ark"), amount: 2000n }],
             }),
         ).rejects.toThrow(/expected prefix "tark", got "ark"/);
+    });
+});
+
+/**
+ * `send({ selectedVtxos })` spends what it is named and nothing else, so every
+ * way the named set can fail to cover the outputs has to be an error rather
+ * than a top-up. These all land before any network call — the selected path
+ * never reads the wallet's own outputs — so a wallet with only its info
+ * mocked is enough to reach them.
+ */
+describe("send with caller-selected vtxos", () => {
+    const ASSET_A = "a".repeat(64);
+    const ASSET_B = "b".repeat(64);
+    const ADDR = encodeAddr(SERVER_XONLY, "tark");
+
+    const mockIdentity = SingleKey.fromHex(
+        "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
+    );
+
+    const mockArkInfo = {
+        signerPubkey: SERVER_KEY_HEX,
+        forfeitPubkey: SERVER_KEY_HEX,
+        batchExpiry: BigInt(144),
+        unilateralExitDelay: BigInt(144),
+        boardingExitDelay: BigInt(144),
+        roundInterval: BigInt(144),
+        network: "mutinynet",
+        dust: BigInt(1000),
+        forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+        checkpointTapscript:
+            "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+    };
+
+    // Only `value` and `assets` are read before the errors under test fire.
+    const coin = (value: number, assets?: { assetId: string; amount: bigint }[]) =>
+        ({ value, ...(assets ? { assets } : {}) }) as never;
+
+    const makeWallet = () =>
+        Wallet.create({ identity: mockIdentity, arkServerUrl: "http://localhost:7070" });
+
+    beforeEach(() => {
+        mockFetch.mockReset();
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(mockArkInfo),
+        });
+    });
+
+    it("rejects an empty selection instead of choosing for the caller", async () => {
+        const wallet = await makeWallet();
+        await expect(
+            wallet.send({ recipients: [{ address: ADDR, amount: 2000 }], selectedVtxos: [] }),
+        ).rejects.toThrow(/send\(\{ selectedVtxos \}\): no inputs/);
+    });
+
+    it("errors on a bitcoin shortfall rather than topping up from the wallet", async () => {
+        const wallet = await makeWallet();
+        await expect(
+            wallet.send({
+                recipients: [{ address: ADDR, amount: 500 }],
+                selectedVtxos: [coin(300)],
+            }),
+        ).rejects.toThrow(/inputs total 300 sats, outputs need 500/);
+    });
+
+    it("errors on an asset shortfall, naming the asset and the gap", async () => {
+        const wallet = await makeWallet();
+        await expect(
+            wallet.send({
+                recipients: [
+                    { address: ADDR, amount: 2000, assets: [{ assetId: ASSET_A, amount: 200n }] },
+                ],
+                selectedVtxos: [coin(5000, [{ assetId: ASSET_A, amount: 100n }])],
+            }),
+        ).rejects.toThrow(new RegExp(`inputs are short 100 of asset ${ASSET_A}`));
+    });
+
+    it("pools an asset across every named input before calling it short", async () => {
+        // Two coins of 100 against a demand of 250. The gap of 50 is only
+        // reachable by summing both — one coin alone would report 150.
+        const wallet = await makeWallet();
+        await expect(
+            wallet.send({
+                recipients: [
+                    { address: ADDR, amount: 2000, assets: [{ assetId: ASSET_A, amount: 250n }] },
+                ],
+                selectedVtxos: [
+                    coin(5000, [{ assetId: ASSET_A, amount: 100n }]),
+                    coin(5000, [{ assetId: ASSET_A, amount: 100n }]),
+                ],
+            }),
+        ).rejects.toThrow(/inputs are short 50 of asset/);
+    });
+
+    it("reports no shortfall when the pooled inputs cover the demand", async () => {
+        const wallet = await makeWallet();
+        const err = await wallet
+            .send({
+                recipients: [
+                    { address: ADDR, amount: 2000, assets: [{ assetId: ASSET_A, amount: 150n }] },
+                ],
+                selectedVtxos: [
+                    coin(5000, [{ assetId: ASSET_A, amount: 100n }]),
+                    coin(5000, [{ assetId: ASSET_A, amount: 100n }]),
+                ],
+            })
+            .catch((e: unknown) => e);
+        // It fails later, at the submit this mock cannot serve. What matters is
+        // that it got past the accounting rather than being turned away there.
+        expect(String(err)).not.toMatch(/inputs are short/);
+    });
+
+    it("draws each recipient in turn off the pooled amount", async () => {
+        // 100 in, two recipients wanting 60 each. Only a running subtraction
+        // sees the second one overdraw.
+        const wallet = await makeWallet();
+        await expect(
+            wallet.send({
+                recipients: [
+                    { address: ADDR, amount: 2000, assets: [{ assetId: ASSET_A, amount: 60n }] },
+                    { address: ADDR, amount: 2000, assets: [{ assetId: ASSET_A, amount: 60n }] },
+                ],
+                selectedVtxos: [coin(9000, [{ assetId: ASSET_A, amount: 100n }])],
+            }),
+        ).rejects.toThrow(/inputs are short 20 of asset/);
+    });
+
+    it("re-declares an asset the caller's coins carried in but no recipient asked for", async () => {
+        // Asset B rides in on the named coin and is spoken for by nobody, so it
+        // has to leave as change — which is what makes the dust floor bite.
+        const wallet = await makeWallet();
+        await expect(
+            wallet.send({
+                recipients: [{ address: ADDR, amount: 2000 }],
+                selectedVtxos: [coin(2000, [{ assetId: ASSET_B, amount: 100n }])],
+            }),
+        ).rejects.toThrow(/0 sats of change cannot carry 1 asset change\(s\), needs 1000/);
+    });
+
+    it("refuses when the change left over cannot carry the asset change at dust", async () => {
+        const wallet = await makeWallet();
+        await expect(
+            wallet.send({
+                recipients: [
+                    { address: ADDR, amount: 2000, assets: [{ assetId: ASSET_A, amount: 40n }] },
+                ],
+                selectedVtxos: [coin(2000, [{ assetId: ASSET_A, amount: 100n }])],
+            }),
+        ).rejects.toThrow(/cannot carry 1 asset change\(s\), needs 1000/);
+    });
+});
+
+/**
+ * The two call forms are told apart by the presence of `recipients`, not by
+ * argument count — a single recipient produces one argument either way.
+ */
+describe("send argument dispatch", () => {
+    const mockIdentity = SingleKey.fromHex(
+        "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
+    );
+
+    const mockArkInfo = {
+        signerPubkey: SERVER_KEY_HEX,
+        forfeitPubkey: SERVER_KEY_HEX,
+        batchExpiry: BigInt(144),
+        unilateralExitDelay: BigInt(144),
+        boardingExitDelay: BigInt(144),
+        roundInterval: BigInt(144),
+        network: "mutinynet",
+        dust: BigInt(1000),
+        forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+        checkpointTapscript:
+            "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+    };
+
+    const makeWallet = () =>
+        Wallet.create({ identity: mockIdentity, arkServerUrl: "http://localhost:7070" });
+
+    beforeEach(() => {
+        mockFetch.mockReset();
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(mockArkInfo),
+        });
+    });
+
+    it("reads a lone recipient object as a recipient, not as params", async () => {
+        // Reaching the address check at all means it was validated as a
+        // recipient; read as params it would have found no `recipients`.
+        const wallet = await makeWallet();
+        await expect(
+            wallet.send({ address: encodeAddr(SERVER_XONLY, "ark"), amount: 2000 }),
+        ).rejects.toThrow(/expected prefix "tark", got "ark"/);
+    });
+
+    it("reads an object carrying recipients as params", async () => {
+        const wallet = await makeWallet();
+        await expect(
+            wallet.send({
+                recipients: [{ address: encodeAddr(SERVER_XONLY, "ark"), amount: 2000 }],
+            }),
+        ).rejects.toThrow(/expected prefix "tark", got "ark"/);
+    });
+
+    it("rejects params carrying an empty recipient list", async () => {
+        const wallet = await makeWallet();
+        await expect(
+            wallet.send({ recipients: [] } as unknown as { recipients: [Recipient] }),
+        ).rejects.toThrow(/At least one receiver is required/);
+    });
+
+    it("rejects a call with no arguments at all", async () => {
+        // Unreachable from TypeScript, which types the variadic form as
+        // non-empty — but this ships as JavaScript, where `send()` is just a
+        // call. It lands on the guard in `_sendImpl`, not in `asSendParams`.
+        const wallet = await makeWallet();
+        await expect((wallet as unknown as { send(): Promise<string> }).send()).rejects.toThrow(
+            /At least one receiver is required/,
+        );
     });
 });

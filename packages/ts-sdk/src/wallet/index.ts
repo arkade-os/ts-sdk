@@ -426,7 +426,10 @@ export interface Recipient {
      * on this output's `PSBT_OUT_TAP_TREE` so its spending paths are recoverable
      * from the transaction alone — an address commits only to the output key.
      *
-     * Refused unless it derives the recipient address's taproot key.
+     * Refused unless it derives the recipient address's taproot key, and it must
+     * come from `VtxoScript.encode()`: leaf depths are ignored on read and the
+     * tree is rebuilt in arkd's canonical shape, so a tree from another encoder
+     * is refused even where it commits to the same address.
      */
     tapTree?: Bytes;
 }

@@ -4829,6 +4829,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
 
     private async _sendImpl({ recipients: args, selectedVtxos }: SendParams): Promise<string> {
         if (args.length === 0) {
+            // Only a JavaScript caller gets here: the variadic overload's tuple
+            // type rules out `send()` at compile time, nothing rules it out at
+            // run time, and `asSendParams` passes the empty list through.
             throw new Error("At least one receiver is required");
         }
         if (selectedVtxos && selectedVtxos.length === 0) {
