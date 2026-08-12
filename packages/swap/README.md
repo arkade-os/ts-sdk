@@ -355,8 +355,8 @@ Crash recovery is record-driven, not chain-driven: `classifyOnchainHtlc` re-deri
 state (unfunded / awaiting confirmations / claimable / refundable / claimed-with-P / swept) from
 `ChainSource` plus the stored outpoint — without the stored record a spent HTLC is
 indistinguishable from an unfunded one, which is why persisting before funding is mandatory. The
-`AssetSwap` record carries the onchain fields (`paymentHash`, `signingDescriptor`,
-`preimageHex` for caller-supplied P, `fallbackSecrets`, `htlcPkScriptHex`, `htlcLocktime`,
+`AssetSwap` record carries the onchain fields (`paymentHash`, `signingDescriptor` or
+`identityKey`, `preimageHex`, `fallbackSecrets`, `htlcPkScriptHex`, `htlcLocktime`,
 `l1Txid`) and the statuses `awaiting_fill / claimable / claimed / refunded_l1`.
 `fallbackSecrets` is versioned and discriminated: `{ version: 1, type: "stored",
 senderPrivateKeyHex, preimageHex? }`.
@@ -454,8 +454,19 @@ terminal: the lockup stays funded and watched, a solver claim still ends the swa
 `pending`. The manager reports the same state when nothing is wired to act (`enableAutoActions:
 false`, or no callbacks) and the window has passed.
 
-`derivable: false` is the fallback for wallets that cannot allocate (static / `auto` / custom
-signers). It carries the raw `senderPrivateKey` and, for onchain sends, `preimage`;
+A wallet that cannot allocate is not a wallet with no key. When one is present — a static / `auto` /
+single-key wallet — `deriveSwapSecrets` returns the **identity arm** (`derivable: true`,
+`identityKey: true`): the swap's sender/payout key is the wallet's own identity key, so the record
+still carries nothing secret and a refund needs only the same wallet. That is the tradeoff the
+Boltz integration shipped for years, whose signer fell back to `wallet.identity`. Its cost is key
+reuse across swaps, which is exactly why **the identity arm never derives a preimage**:
+`derivePreimage` is a function of the key alone, so one key would repeat P across swaps and one
+solver could claim another's lockup. Preimage-bearing flows attach a fresh random preimage instead,
+and `preimageHex` is then mandatory on the record — `preimageForRfqSecrets` throws rather than
+derive one.
+
+`derivable: false` is the last resort, for wallets that cannot sign at all (readonly identities,
+remote signers). It carries the raw `senderPrivateKey` and, for onchain sends, `preimage`;
 `rfqSecretsToRecord` stores them under `AssetSwap.fallbackSecrets` as a complete versioned
 record. The discriminant is a type-level fact, so a consumer written against the derivable arm
 alone will not compile against the fallback. A caller-supplied preimage on an HD wallet keeps

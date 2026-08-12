@@ -77,6 +77,7 @@ export {
 
 import {
     deriveSwapSecrets,
+    isIdentitySwapSecrets,
     preimageForRfqSecrets,
     randomSwapSecrets,
     senderPubkeyForRfqSecrets,
@@ -1095,7 +1096,12 @@ export async function requestOnchainSend(
     if (params.preimage && params.preimage.length !== 32) {
         throw new Error(`preimage must be 32 bytes, got ${params.preimage.length}`);
     }
-    const derivedSecrets = await deriveSwapSecrets(wallet);
+    const derivedSecrets = await deriveSwapSecrets(wallet, {
+        // The identity arm must never derive P — one key would repeat it
+        // across swaps — so it needs a random one attached here, unless the
+        // caller brought their own.
+        preimage: params.preimage === undefined,
+    });
     const secrets = derivedSecrets
         ? params.preimage
             ? { ...derivedSecrets, preimage: params.preimage }
@@ -1106,6 +1112,10 @@ export async function requestOnchainSend(
             params.preimage
                 ? "[swap] this swap's sender key is random; the supplied preimage and sender key MUST be persisted before funding"
                 : "[swap] this swap's preimage and sender key are random and MUST be persisted before funding",
+        );
+    } else if (isIdentitySwapSecrets(secrets)) {
+        console.warn(
+            "[swap] this swap's sender key is the wallet's own identity key, but its preimage is random and MUST be persisted before funding",
         );
     } else if (params.preimage) {
         console.warn(
@@ -1515,10 +1525,16 @@ export async function requestLightningReceive(
     secrets: SwapSecrets;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
-    const secrets = (await deriveSwapSecrets(wallet)) ?? randomSwapSecrets({ preimage: true });
+    const secrets =
+        (await deriveSwapSecrets(wallet, { preimage: true })) ??
+        randomSwapSecrets({ preimage: true });
     if (!secrets.derivable) {
         console.warn(
             "[swap] this swap's preimage and payout key are random and MUST be persisted before paying",
+        );
+    } else if (isIdentitySwapSecrets(secrets)) {
+        console.warn(
+            "[swap] this swap's payout key is the wallet's own identity key, but its preimage is random and MUST be persisted before paying",
         );
     }
     const preimage = await preimageForRfqSecrets(wallet, secrets);
@@ -1723,10 +1739,16 @@ export async function requestOnchainReceive(
     secrets: SwapSecrets;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
-    const secrets = (await deriveSwapSecrets(wallet)) ?? randomSwapSecrets({ preimage: true });
+    const secrets =
+        (await deriveSwapSecrets(wallet, { preimage: true })) ??
+        randomSwapSecrets({ preimage: true });
     if (!secrets.derivable) {
         console.warn(
             "[swap] this swap's preimage and payout key are random and MUST be persisted before funding",
+        );
+    } else if (isIdentitySwapSecrets(secrets)) {
+        console.warn(
+            "[swap] this swap's payout key is the wallet's own identity key, but its preimage is random and MUST be persisted before funding",
         );
     }
     const preimage = await preimageForRfqSecrets(wallet, secrets);

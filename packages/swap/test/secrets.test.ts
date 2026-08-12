@@ -24,6 +24,7 @@ import {
     derivePreimage,
     deriveSwapSecrets,
     isDeterministicSigner,
+    isIdentitySwapSecrets,
     preimageForRfqSecrets,
     randomSwapSecrets,
     rfqSecretsOfRecord,
@@ -73,8 +74,12 @@ const hdWallet = async (repository = new InMemoryWalletRepository()) => {
     };
 };
 
-/** A wallet with no HD state at all — the fallback corridor. */
+/** A wallet with no HD state — its identity key is the sender key. */
 const staticWallet = () => ({ identity: SingleKey.fromRandomBytes() }) as unknown as IWallet;
+
+/** A wallet that cannot sign at all (readonly, remote signer) — the only
+ * corridor left for the random fallback arm. */
+const keylessWallet = () => ({}) as unknown as IWallet;
 
 describe("buildPreimageMessage", () => {
     it("lays out TAG ‖ xonly(32) ‖ u32le(index)", () => {
@@ -296,9 +301,105 @@ describe("cross-SDK vectors", () => {
     });
 });
 
+describe("the identity arm", () => {
+    // A wallet that cannot allocate still HAS a key, and that key is as
+    // recoverable as a descriptor is — so the random arm is the last resort,
+    // not the default for every non-HD wallet.
+    const STATIC_KEY = hex.decode(
+        "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
+    );
+    const singleKeyWallet = (key = STATIC_KEY) =>
+        ({ identity: SingleKey.fromPrivateKey(key) }) as unknown as IWallet;
+    const staticPubkey = async () =>
+        hex.encode(await SingleKey.fromPrivateKey(STATIC_KEY).xOnlyPublicKey());
+
+    it("is what a wallet with a key but no HD state gets", async () => {
+        const secrets = (await deriveSwapSecrets(singleKeyWallet()))!;
+
+        expect(secrets).toEqual({ derivable: true, identityKey: true });
+        expect(isIdentitySwapSecrets(secrets)).toBe(true);
+    });
+
+    it("is not preferred over an allocation the wallet can make", async () => {
+        const { wallet } = await hdWallet();
+        const secrets = (await deriveSwapSecrets(wallet, { preimage: true }))!;
+
+        expect(isIdentitySwapSecrets(secrets)).toBe(false);
+        // The HD arm derives its preimage from the fresh descriptor; attaching
+        // a random one would defeat the whole store-nothing property.
+        expect(secrets.preimage).toBeUndefined();
+    });
+
+    it("signs with the wallet's own key, and the record keeps no secret", async () => {
+        const wallet = singleKeyWallet();
+        const secrets = (await deriveSwapSecrets(wallet))!;
+
+        expect(hex.encode(await senderPubkeyForRfqSecrets(wallet, secrets))).toBe(
+            await staticPubkey(),
+        );
+        expect(rfqSecretsToRecord(secrets)).toEqual({ identityKey: true });
+    });
+
+    it("survives a restart: a fresh wallet on the same key resolves the record", async () => {
+        const record = rfqSecretsToRecord((await deriveSwapSecrets(singleKeyWallet()))!);
+        const identity = await senderIdentityForSwapRecord(singleKeyWallet(), record);
+
+        expect(hex.encode(await identity.xOnlyPublicKey())).toBe(await staticPubkey());
+    });
+
+    it("refuses a record whose wallet instance cannot sign", async () => {
+        const error = await senderIdentityForSwapRecord(keylessWallet(), {
+            identityKey: true,
+        }).catch((e: unknown) => e as RefundNotLocallyPossibleError);
+
+        expect(error).toBeInstanceOf(RefundNotLocallyPossibleError);
+        expect(error.reason).toBe("foreign-descriptor");
+    });
+
+    it("refuses to derive a preimage from the reused key", async () => {
+        // `derivePreimage` is key-only, so one key would repeat P across every
+        // swap and one solver could claim another's lockup.
+        const wallet = singleKeyWallet();
+        const secrets = (await deriveSwapSecrets(wallet))!;
+
+        await expect(preimageForRfqSecrets(wallet, secrets)).rejects.toThrow(
+            /carry a stored preimage/,
+        );
+    });
+
+    it("attaches a fresh preimage per swap, on one shared sender key", async () => {
+        const wallet = singleKeyWallet();
+        const first = (await deriveSwapSecrets(wallet, { preimage: true }))!;
+        const second = (await deriveSwapSecrets(wallet, { preimage: true }))!;
+
+        expect(first.preimage).toHaveLength(32);
+        expect(hex.encode(first.preimage!)).not.toBe(hex.encode(second.preimage!));
+        expect(hex.encode(await senderPubkeyForRfqSecrets(wallet, first))).toBe(
+            hex.encode(await senderPubkeyForRfqSecrets(wallet, second)),
+        );
+    });
+
+    it("round-trips that preimage through the record", async () => {
+        const wallet = singleKeyWallet();
+        const secrets = (await deriveSwapSecrets(wallet, { preimage: true }))!;
+        const record = rfqSecretsToRecord(secrets);
+
+        expect(record).toEqual({
+            identityKey: true,
+            preimageHex: hex.encode(secrets.preimage!),
+        });
+        const restored = rfqSecretsOfRecord(record)!;
+        expect(await preimageForRfqSecrets(wallet, restored)).toEqual(secrets.preimage);
+        expect(hex.encode(await senderPubkeyForRfqSecrets(wallet, restored))).toBe(
+            await staticPubkey(),
+        );
+    });
+});
+
 describe("the fallback arm", () => {
-    it("is what a wallet with no HD state gets", async () => {
-        expect(await deriveSwapSecrets(staticWallet())).toBeUndefined();
+    it("is what a wallet with no signing key at all gets", async () => {
+        // Readonly and remote-signer wallets, not merely non-HD ones.
+        expect(await deriveSwapSecrets(keylessWallet())).toBeUndefined();
     });
 
     it("carries the secrets, and a preimage only when asked", () => {

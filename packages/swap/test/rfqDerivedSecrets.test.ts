@@ -45,7 +45,7 @@ import {
     type RfqTransport,
 } from "../src/rfq";
 import { onchainHtlcScript, paymentHashOf } from "../src/onchainHtlc";
-import { preimageForRfqSecrets } from "../src/secrets";
+import { isIdentitySwapSecrets, preimageForRfqSecrets, rfqSecretsToRecord } from "../src/secrets";
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
@@ -353,7 +353,7 @@ describe("requestOnchainSend on an HD wallet", () => {
         }
     });
 
-    it("warns and returns raw fallback secrets when allocation is unavailable", async () => {
+    it("uses the wallet's own key when allocation is unavailable", async () => {
         const wallet = staticWallet();
         const preimage = new Uint8Array(32).fill(8);
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -366,13 +366,49 @@ describe("requestOnchainSend on an HD wallet", () => {
                 preimage,
             });
 
-            expect(result.secrets.derivable).toBe(false);
-            if (result.secrets.derivable) throw new Error("expected stored secrets");
-            expect(result.secrets.senderPrivateKey).toBeInstanceOf(Uint8Array);
-            expect(result.secrets.preimage).toEqual(preimage);
+            expect(isIdentitySwapSecrets(result.secrets)).toBe(true);
+            // The covenant binds the wallet's own key, so the record carries
+            // no private key that could be lost with the app's storage.
+            expect(hex.encode(result.senderPubkey)).toBe(
+                hex.encode(await staticWallet().identity!.xOnlyPublicKey()),
+            );
+            expect(rfqSecretsToRecord(result.secrets)).toEqual({
+                identityKey: true,
+                preimageHex: hex.encode(preimage),
+            });
             expect(await preimageForRfqSecrets(wallet, result.secrets)).toEqual(preimage);
-            expect(warn).toHaveBeenCalledWith(expect.stringContaining("sender key is random"));
-            expect(warn.mock.calls.join("\n")).not.toContain("preimage and sender key are random");
+            expect(warn).toHaveBeenCalledWith(expect.stringContaining("wallet's own identity key"));
+            expect(warn.mock.calls.join("\n")).not.toContain("sender key is random");
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    it("gives each swap its own preimage when the caller supplies none", async () => {
+        // The sender key repeats across swaps on this arm, so P must NOT be a
+        // function of it: two swaps sharing a preimage would let either
+        // solver claim the other's lockup.
+        const seen: { paymentHash?: string }[] = [{}, {}];
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+            for (const capture of seen) {
+                const result = await requestOnchainSend(
+                    staticWallet(),
+                    "http://ark",
+                    onchainTransport(capture),
+                    {
+                        emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                        amount: 100_000,
+                        amountSide: "to",
+                        payoutPubkey: PAYOUT_PUBKEY,
+                    },
+                );
+
+                if (!result.secrets.derivable) throw new Error("expected derivable secrets");
+                expect(result.secrets.preimage).toHaveLength(32);
+                expect(capture.paymentHash).toBe(paymentHashOf(result.secrets.preimage!));
+            }
+            expect(seen[0].paymentHash).not.toBe(seen[1].paymentHash);
         } finally {
             warn.mockRestore();
         }
