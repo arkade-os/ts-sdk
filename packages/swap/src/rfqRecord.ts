@@ -155,9 +155,28 @@ export function createRfqSwapRecord(origin: RfqSwapOrigin, swap: RfqSwap): RfqSw
     return { ...origin, ...managerState(swap) };
 }
 
-/** Every later write. The origin half is carried through untouched. */
+/**
+ * Every later write. The origin half is carried through untouched.
+ *
+ * The mutable half is REPLACED, not merged. `managerState` omits a key the live
+ * swap no longer carries, so spreading it over the old record could only ever
+ * set these fields, never clear them — and the manager clears them on purpose:
+ * it `delete`s `blockedReason` when a swap leaves `needs_counterparty`
+ * (`swapManager.ts`), precisely because "a stale `blockedReason` reads as a live
+ * refusal". Merging would persist a refusal for a swap that had recovered, and
+ * a reload would show it.
+ */
 export function updateRfqSwapRecord(record: RfqSwapRecord, swap: RfqSwap): RfqSwapRecord {
-    return { ...record, ...managerState(swap) };
+    // Dropped by name so adding a field to the mutable half is a compile error
+    // here rather than a value that silently survives forever.
+    const {
+        refundArkTxid: _refundArkTxid,
+        claimArkTxid: _claimArkTxid,
+        failure: _failure,
+        blockedReason: _blockedReason,
+        ...origin
+    } = record;
+    return { ...origin, ...managerState(swap) };
 }
 
 /** Names the missing field rather than letting `hex.decode(undefined)` throw

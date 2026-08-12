@@ -73,11 +73,16 @@ describe("asset swap store", () => {
 
     it("reports failed add writes and keeps update writes best-effort", async () => {
         const broken = (existing: AssetSwap[] = []): AssetSwapRepository => ({
-            version: 1,
+            version: 2,
             saveSwap: async () => {
                 throw new Error("quota exceeded");
             },
             getAllSwaps: async () => existing,
+            // Unused by this test's subject, but part of the v2 contract: a
+            // stub missing them is not an AssetSwapRepository.
+            saveRfqSwap: async () => {},
+            getAllRfqSwaps: async () => [],
+            removeRfqSwap: async () => {},
             getScannedTxids: async () => new Set(),
             markTxidsScanned: async () => {},
             getCachedMarkets: async () => undefined,

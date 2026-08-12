@@ -517,10 +517,17 @@ scanned? })` — the server key is required because a spend is classified by reb
 - **A spend that cannot be classified is no longer restored as `fulfilled`.** It leaves the funding
   txid unanswered so a later scan decides it. Records are never written on a guess.
 - **`AssetSwap` gained the secret-bearing `signingDescriptor?` / `fallbackSecrets?` fields**, and
-  `preimageHex` narrowed from "the claim preimage P" to "caller-supplied P only". The repository
-  version stays `1` — the package is unreleased, so there is no stored record to migrate — but a
-  field-mapped backend must persist the record whole: silently dropping `fallbackSecrets` on write
-  loses the stored arm's claim and refund keys.
+  `preimageHex` narrowed from "the claim preimage P" to "caller-supplied P only". A field-mapped
+  backend must persist the record whole: silently dropping `fallbackSecrets` on write loses the
+  stored arm's claim and refund keys.
+- **The repository interface is at version `2`.** It gained `saveRfqSwap` / `getAllRfqSwaps` /
+  `removeRfqSwap` for monitored RFQ swaps, and the IndexedDB backend a matching `rfqSwaps` object
+  store at `DB_VERSION` 2. The bump is deliberate: an implementor must acknowledge the new methods
+  rather than silently satisfy an older shape. Existing databases upgrade in place — the new store
+  is added, the three original ones are untouched — so there is nothing to migrate by hand. Store
+  RFQ records whole for the same reason as above: every field is either a covenant tree parameter
+  or manager state, and dropping one leaves a record whose covenant `rebuildRfqSwap` cannot
+  reproduce.
 - **A write that gates something irreversible throws; one that follows it does not.**
   `addAssetSwap` and `updateAssetSwap` throw on a failed read or write — nothing irreversible may
   happen until the record is durable, which is why `cancelOffer` writes its `cancelling` marker

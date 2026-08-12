@@ -190,6 +190,28 @@ describe("updateRfqSwapRecord", () => {
         expect(moved.signingDescriptor).toBe(sendOrigin.signingDescriptor);
     });
 
+    it("clears a field the swap no longer carries, not just sets new ones", () => {
+        // The manager `delete`s `blockedReason` when a swap leaves
+        // `needs_counterparty` — restoring the right wallet lifts the refusal.
+        // A merged update would persist it, and a reload would then show a live
+        // refusal for a swap that had recovered.
+        const blocked = updateRfqSwapRecord(createRfqSwapRecord(sendOrigin, swapOf(sendOrigin)), {
+            ...swapOf(sendOrigin, "needs_counterparty"),
+            blockedReason: "no secrets on this wallet",
+            failure: "an earlier push failed",
+        } as LightningSendSwap);
+        expect(blocked.blockedReason).toBe("no secrets on this wallet");
+        expect(blocked.failure).toBe("an earlier push failed");
+
+        // recovered: the manager passes a swap carrying neither field
+        const recovered = updateRfqSwapRecord(blocked, swapOf(sendOrigin, "pending"));
+        expect(recovered.blockedReason).toBeUndefined();
+        expect(recovered.failure).toBeUndefined();
+        // and the origin half is still intact
+        expect(recovered.solverPubkey).toBe(sendOrigin.solverPubkey);
+        expect(recovered.lockupAddress).toBe(sendOrigin.lockupAddress);
+    });
+
     it("keeps a rebuilt covenant identical across a state change", () => {
         const record = createRfqSwapRecord(sendOrigin, swapOf(sendOrigin));
         const moved = updateRfqSwapRecord(record, swapOf(sendOrigin, "settled"));

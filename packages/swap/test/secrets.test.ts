@@ -135,7 +135,10 @@ describe("derivation", () => {
         const preimages: string[] = [];
 
         for (let i = 0; i < 4; i++) {
-            const secrets = (await deriveSwapSecrets(wallet))!;
+            const secrets = await deriveSwapSecrets(wallet);
+            // An HD wallet must take the allocated arm; if it fell through to
+            // the baseline one, this whole test's premise is gone.
+            if (isBaselineSwapSecrets(secrets)) throw new Error("expected the allocated arm");
             descriptors.push(secrets.signingDescriptor);
             pubkeys.push(hex.encode(await senderPubkeyForRfqSecrets(wallet, secrets)));
             preimages.push(hex.encode(await preimageForRfqSecrets(wallet, secrets)));
@@ -453,7 +456,11 @@ describe("the baseline arm", () => {
     it("keeps allocating a fresh descriptor when the wallet can", async () => {
         // The HD path must not regress into the baseline arm.
         const { wallet } = await hdWallet();
-        const secrets = (await deriveSwapSecrets(wallet, { preimage: true }))!;
+        const secrets = await deriveSwapSecrets(wallet, { preimage: true });
+        // Narrow before reading `signingDescriptor`: only the allocated arm has
+        // one, and this test exists to prove the HD path did not fall through
+        // to the baseline arm.
+        if (isBaselineSwapSecrets(secrets)) throw new Error("expected the allocated arm");
         expect(secrets.signingDescriptor).toBeDefined();
         // derived, not generated: nothing secret at rest on this arm
         expect(secrets.preimage).toBeUndefined();

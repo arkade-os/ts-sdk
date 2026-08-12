@@ -45,7 +45,7 @@ import {
     type RfqTransport,
 } from "../src/rfq";
 import { onchainHtlcScript, paymentHashOf } from "../src/onchainHtlc";
-import { preimageForRfqSecrets } from "../src/secrets";
+import { isBaselineSwapSecrets, preimageForRfqSecrets } from "../src/secrets";
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
@@ -386,9 +386,18 @@ describe("requestOnchainSend on an HD wallet", () => {
             expect(result.secrets.preimage).toEqual(preimage);
             expect(await preimageForRfqSecrets(wallet, result.secrets)).toEqual(preimage);
 
+            // Narrowed, not asserted: only the allocated arm carries a
+            // descriptor, and an HD wallet must be on that arm here.
+            if (isBaselineSwapSecrets(result.secrets)) {
+                throw new Error("expected the allocated arm on an HD wallet");
+            }
             const signer = await wallet.signerForDescriptor!(result.secrets.signingDescriptor);
             expect(hex.encode(result.senderPubkey)).toBe(hex.encode(await signer.xOnlyPublicKey()));
-            expect(warn).toHaveBeenCalledWith(expect.stringContaining("supplied by the caller"));
+            // The warning now names the property that matters — the preimage is
+            // not derivable — rather than how it got here. It covers the
+            // baseline arm's generated preimage too, which has the same
+            // persistence obligation and used to be silent.
+            expect(warn).toHaveBeenCalledWith(expect.stringContaining("not derivable"));
         } finally {
             warn.mockRestore();
         }
@@ -422,8 +431,10 @@ describe("requestOnchainSend on an HD wallet", () => {
             // a caller-supplied preimage still rides through untouched
             expect(result.secrets.preimage).toEqual(preimage);
             expect(await preimageForRfqSecrets(wallet, result.secrets)).toEqual(preimage);
-            // nothing to warn about any more: no random key was created
+            // no random KEY was created, so nothing warns about one; the
+            // generated preimage does warn, because it must be persisted
             expect(warn.mock.calls.join("\n")).not.toContain("random");
+            expect(warn).toHaveBeenCalledWith(expect.stringContaining("not derivable"));
         } finally {
             warn.mockRestore();
         }

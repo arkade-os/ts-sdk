@@ -1111,9 +1111,13 @@ export async function requestOnchainSend(
     // `preimage: true` asks for one either way: derived on the allocated arm,
     // generated per swap on the baseline arm, and a caller's own passed through.
     const secrets = await deriveSwapSecrets(wallet, { preimage: params.preimage ?? true });
-    if (params.preimage) {
+    // Both arms that CARRY a preimage hold one nothing can re-derive: a
+    // caller's own, and the baseline arm's generated one. The allocated arm
+    // carries none — its preimage is a function of the descriptor and the seed,
+    // so there is nothing to lose by not persisting it.
+    if (secrets.preimage) {
         console.warn(
-            "[swap] this swap's preimage was supplied by the caller and MUST be persisted with the signing descriptor before funding",
+            "[swap] this swap's preimage is not derivable and MUST be persisted with the swap record before funding",
         );
     }
     const preimage = await preimageForRfqSecrets(wallet, secrets);
