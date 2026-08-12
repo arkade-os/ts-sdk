@@ -181,12 +181,9 @@ function intentProofJobs(coins: ReadonlyArray<{ tapTree: Bytes }>): InputSigning
     return [{ index: 0, lookupScript: coinJobs[0].lookupScript }, ...coinJobs];
 }
 
-// `send` takes either a recipient list or an options object. They are told
-// apart by `recipients`, which no `Recipient` has and every `SendParams` does
-// — rather than by "one argument", which both forms produce for a single
-// recipient. A `Recipient` is required to carry `address`, so an object with
-// neither key is neither form and says so here rather than failing later as a
-// missing address.
+// `send` takes either a recipient list or an options object, told apart by
+// `recipients` — which no `Recipient` has and every `SendParams` does — rather
+// than by "one argument", which both forms produce for a single recipient.
 function asSendParams(args: [SendParams] | [Recipient, ...Recipient[]]): SendParams {
     const [first] = args;
     if (args.length === 1 && first && "recipients" in first) {
@@ -4821,16 +4818,12 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
 
     private async _sendImpl({ recipients: args, selectedVtxos }: SendParams): Promise<string> {
         if (args.length === 0) {
-            // Only a JavaScript caller gets here: the variadic overload's tuple
-            // type rules out `send()` at compile time, nothing rules it out at
-            // run time, and `asSendParams` passes the empty list through.
+            // The variadic tuple type rules out `send()`; only a JS caller gets here.
             throw new Error("At least one receiver is required");
         }
         if (selectedVtxos && selectedVtxos.length === 0) {
-            // Distinguished from `undefined`, which means "choose for me". An
-            // empty array is a caller that meant to name inputs and named none
-            // — silently selecting for it would spend coins it had decided not
-            // to spend.
+            // Distinct from `undefined`, which means "choose for me": a caller that
+            // meant to name inputs and named none is not asking the wallet to pick.
             throw new Error("send({ selectedVtxos }): no inputs");
         }
 
@@ -4860,9 +4853,8 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             this.recipientAddressContext(serverPubKey),
         );
 
-        // Left empty when the caller named its own inputs: that path never
-        // reaches for a coin it was not given, so reading the wallet's own
-        // outputs would only be a chance to disagree with it.
+        // Left empty when the caller named its own inputs: that path never reaches
+        // for a coin it was not given, so the wallet's own outputs go unread.
         let virtualCoins: NormalizedExtendedVirtualCoin[] = [];
         if (!selectedVtxos) {
             const allVirtualCoins = await this.getVtxos({
@@ -4887,10 +4879,9 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         }
 
         if (selectedVtxos) {
-            // Caller-selected inputs. Every asset arriving on one still has to
-            // leave on an output, so the whole input set is folded in at once
-            // and the recipients' amounts drawn back off it — where the generic
-            // path below builds the same map incrementally, as it picks coins.
+            // Every asset arriving on a named input still has to leave on an output,
+            // so the whole input set is folded in at once and the recipients' amounts
+            // drawn back off it; the generic path below builds the map as it picks.
             for (const coin of selectedCoins) {
                 for (const asset of coin.assets ?? []) {
                     const existing = assetChanges.get(asset.assetId) ?? 0n;
@@ -4997,7 +4988,6 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         const outputs: TransactionOutput[] = recipients.map((recipient) => ({
             script: recipient.script,
             amount: BigInt(recipient.amount),
-            // Published so the output is self-describing — see `Recipient.tapTree`.
             // Already checked against the recipient address in `validateRecipients`.
             ...(recipient.tapTree ? { tapTree: TapTreeCoder.decode(recipient.tapTree) } : {}),
         }));
@@ -5006,8 +4996,8 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         let changeAmount = totalBtcSelected - totalBtcOutput;
 
         if (changeAmount < 0) {
-            // Only reachable with caller-selected inputs: generic selection
-            // either covers the outputs or throws while it is still selecting.
+            // Only reachable with caller-selected inputs: generic selection either
+            // covers the outputs or throws while it is still selecting.
             throw new Error(
                 `send({ selectedVtxos }): inputs total ${totalBtcSelected} sats, outputs need ${totalBtcOutput}`,
             );
@@ -5016,9 +5006,8 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // enforce minimum change amount when there are asset changes
         if (assetChanges.size > 0 && changeAmount < Number(this.dustAmount)) {
             if (selectedVtxos) {
-                // Asset change needs a change output at or above dust, and this
-                // path may not reach for a coin the caller did not name. Loud,
-                // because the alternative is dropping the change assets.
+                // Asset change needs a change output at or above dust, and this path
+                // may not reach for a coin the caller did not name.
                 throw new Error(
                     `send({ selectedVtxos }): ${changeAmount} sats of change cannot carry ` +
                         `${assetChanges.size} asset change(s), needs ${this.dustAmount}`,
