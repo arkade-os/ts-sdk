@@ -87,9 +87,7 @@ const wallet = {
 } as unknown as IWallet;
 
 // overridden so the golden expectations don't move with the pinned constants
-const emulatorPubkey = hex.decode(
-    "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
-);
+const emulatorPubkey = "02466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27";
 const testAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");
 const create = (maker: IWallet = wallet) =>
     createOffer(maker, "http://ark", {

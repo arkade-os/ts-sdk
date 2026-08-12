@@ -8,7 +8,6 @@ export {
     OFFER_PACKET_TYPE,
     type Offer,
 } from "./offer";
-export { resolveEmulatorKey, type EmulatorPubkeyOverride } from "./emulatorKey";
 export {
     discoverMarkets,
     findMarket,

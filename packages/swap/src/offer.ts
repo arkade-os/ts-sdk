@@ -31,6 +31,8 @@ import {
     arkade,
     asset,
     getNetwork,
+    resolveEmulatorPubkey,
+    toXOnlySignerHex,
     type IWallet,
     type NetworkName,
 } from "@arkade-os/sdk";
@@ -38,7 +40,6 @@ import {
 import wantAssetProgram from "./swap-want-asset.program.json";
 import wantBtcProgram from "./swap-want-btc.program.json";
 import { promoteOfferContract, retireOfferContract } from "./coverage";
-import { resolveEmulatorKey, xOnly, type EmulatorPubkeyOverride } from "./emulatorKey";
 import type { AssetSwapRepository } from "./repository";
 import { getAssetSwapsOrThrow, updateAssetSwap, updateAssetSwapBestEffort } from "./store";
 
@@ -82,8 +83,7 @@ export interface Offer {
  * change here changes the derived swap addresses — see the golden test). */
 function swapProgramBinding(offer: Omit<Offer, "swapPkScript">, serverPubkey: Uint8Array) {
     // a wrong-width script would bind a truncated makerWP into the covenant and
-    // only surface as an unspendable address once the user funds it — the same
-    // failure the xOnly guard below rejects for keys
+    // only surface as an unspendable address once the user funds it
     if (offer.makerPkScript.length !== FIELDS.makerPkScript.width) {
         throw new Error("makerPkScript is not a 34-byte taproot scriptPubKey");
     }
@@ -347,8 +347,9 @@ export async function createOffer(
         wantAmount: bigint;
         wantAsset?: asset.AssetId;
         offerAsset?: asset.AssetId;
-        /** Co-signer key override; see {@link resolveEmulatorKey}. */
-        emulatorPubkey?: EmulatorPubkeyOverride;
+        /** Co-signer key override (33-byte compressed hex); see
+         * {@link resolveEmulatorPubkey}. */
+        emulatorPubkey?: string;
     },
 ): Promise<{
     /** The encoded offer, hex. **Persist this** — it is the only input
@@ -374,9 +375,11 @@ export async function createOffer(
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
-    const serverPubKey = xOnly(hex.decode(info.signerPubkey), "ark signer key");
+    const serverPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
     const network = getNetwork(info.network as NetworkName);
-    const emuKey = resolveEmulatorKey(network, params.emulatorPubkey);
+    const emuKey = hex.decode(
+        toXOnlySignerHex(resolveEmulatorPubkey(network, params.emulatorPubkey)),
+    );
 
     // the script derives from every field but the script itself, so build the
     // binding first and complete the offer with it — an Offer value never

@@ -82,6 +82,7 @@ const SERVER = key(3);
 const SOLVER = key(1);
 const RECEIVER_PK_SCRIPT = p2tr(key(1));
 const EMULATOR_PUBKEY = key(9);
+const EMULATOR_PUBKEY_HEX = "02" + hex.encode(EMULATOR_PUBKEY);
 const PREIMAGE = new Uint8Array(32).fill(7);
 const PAYMENT_HASH = paymentHashOf(PREIMAGE);
 const REFUND_ADDRESS = new ArkAddress(SERVER, key(21), "tark").encode();
@@ -162,7 +163,7 @@ describe("requestLightningSend never touches the emulator", () => {
             "http://ark",
             lightningTransport(EMULATOR_PUBKEY),
             {
-                emulatorPubkey: EMULATOR_PUBKEY,
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 invoice: {
                     raw: "lnbc1...",
                     paymentHash: PAYMENT_HASH,
@@ -180,7 +181,7 @@ describe("requestLightningSend never touches the emulator", () => {
         // in the derivation, not a dead parameter
         await expect(
             requestLightningSend(wallet, "http://ark", lightningTransport(key(29)), {
-                emulatorPubkey: EMULATOR_PUBKEY,
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 invoice: {
                     raw: "lnbc1...",
                     paymentHash: PAYMENT_HASH,
@@ -252,7 +253,7 @@ describe("requestOnchainSend never touches the emulator", () => {
             "http://ark",
             onchainTransport(EMULATOR_PUBKEY),
             {
-                emulatorPubkey: EMULATOR_PUBKEY,
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 amount: 100_000,
                 amountSide: "to",
                 payoutPubkey: PAYOUT_PUBKEY,
@@ -271,7 +272,7 @@ describe("requestOnchainSend never touches the emulator", () => {
         // and only be caught by whoever funded a lockup they cannot spend.
         await expect(
             requestOnchainSend(wallet, "http://ark", onchainTransport(key(29)), {
-                emulatorPubkey: EMULATOR_PUBKEY,
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 amount: 100_000,
                 amountSide: "to",
                 payoutPubkey: PAYOUT_PUBKEY,
@@ -287,7 +288,7 @@ describe("createOffer never touches the emulator", () => {
         const offer = await createOffer(wallet, "http://ark", {
             wantAmount: 1000n,
             wantAsset,
-            emulatorPubkey: EMULATOR_PUBKEY,
+            emulatorPubkey: EMULATOR_PUBKEY_HEX,
         });
         expect(decodeOffer(hex.decode(offer.offerHex)).emulatorPubkey).toEqual(EMULATOR_PUBKEY);
     });

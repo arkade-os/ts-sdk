@@ -37,7 +37,7 @@
  * amounts. Every other contract parameter is the user's own data (its
  * invoice, its Ark server connection, its refund address) or a trusted
  * constant — the emulator key defaults to the SDK's per-network pin (see
- * `resolveEmulatorKey`). Anything address-shaped the solver sends is
+ * `resolveEmulatorPubkey`). Anything address-shaped the solver sends is
  * compare-only: a mismatch means refuse-to-fund, never "use theirs".
  *
  * Transport is symmetric-outbound: the reference framing below speaks the dev
@@ -53,6 +53,7 @@ import {
     VHTLC,
     asset,
     getNetwork,
+    resolveEmulatorPubkey,
     type IWallet,
     type NetworkName,
 } from "@arkade-os/sdk";
@@ -83,7 +84,15 @@ import {
 } from "./secrets";
 import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
-import { resolveEmulatorKey, xOnly, type EmulatorPubkeyOverride } from "./emulatorKey";
+
+/** Drop the prefix of a 33-byte compressed key; pass an x-only key through. */
+const xOnly = (key: Uint8Array, label: string): Uint8Array => {
+    if (key.length === 32) return key;
+    if (key.length !== 33 || (key[0] !== 0x02 && key[0] !== 0x03)) {
+        throw new Error(`${label} is not a compressed or x-only public key`);
+    }
+    return key.slice(1);
+};
 
 /** Decode a solver-supplied hex field, turning a malformed value (odd length,
  * non-hex chars) into a solver-blaming diagnostic instead of a bare
@@ -612,7 +621,7 @@ export function lightningSendVtxoScript(params: {
      * {@link unilateralRefundDelay} and {@link unilateralRefundWithoutReceiverDelay}
      * derive from this same value — one rounding, shared across all three tiers. */
     claimDelay: number;
-    /** Emulator x-only key, as resolved by {@link resolveEmulatorKey}. */
+    /** Emulator x-only key (32 bytes). */
     emulatorPubkey: Uint8Array;
     /** Where a refund must pay: the trader's P2TR pkScript (34 bytes). Also
      * `nonInteractiveRefund`'s covenant destination. */
@@ -702,8 +711,9 @@ export async function requestLightningSend(
     params: {
         invoice: InvoiceFacts;
         rfqId?: string;
-        /** Co-signer key override; see {@link resolveEmulatorKey}. */
-        emulatorPubkey?: EmulatorPubkeyOverride;
+        /** Co-signer key override (33-byte compressed hex); see
+         * {@link resolveEmulatorPubkey}. */
+        emulatorPubkey?: string;
     },
 ): Promise<{
     rfqId: string;
@@ -773,7 +783,10 @@ export async function requestLightningSend(
         serverPubkey,
         paymentHash: params.invoice.paymentHash,
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
-        emulatorPubkey: resolveEmulatorKey(network, params.emulatorPubkey),
+        emulatorPubkey: xOnly(
+            hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
+            "emulator signer key",
+        ),
         senderPubkey,
         receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
         refundPkScript: ArkAddress.decode(refundAddress).pkScript,
@@ -1052,8 +1065,9 @@ export async function requestOnchainSend(
         /** Optional caller-owned P. Persist it with the returned secrets before funding. */
         preimage?: Uint8Array;
         rfqId?: string;
-        /** Co-signer key override; see {@link resolveEmulatorKey}. */
-        emulatorPubkey?: EmulatorPubkeyOverride;
+        /** Co-signer key override (33-byte compressed hex); see
+         * {@link resolveEmulatorPubkey}. */
+        emulatorPubkey?: string;
     },
 ): Promise<{
     rfqId: string;
@@ -1124,7 +1138,10 @@ export async function requestOnchainSend(
         paymentHash,
         payoutPubkey: params.payoutPubkey,
         serverPubkey: xOnly(hex.decode(info.signerPubkey), "ark signer key"),
-        emulatorPubkey: resolveEmulatorKey(network, params.emulatorPubkey),
+        emulatorPubkey: xOnly(
+            hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
+            "emulator signer key",
+        ),
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
         hrp: network.hrp,
         l1Network: l1NetworkFromArk(info.network),
@@ -1456,8 +1473,9 @@ export async function requestLightningReceive(
     params: {
         amount: number;
         amountSide: "from" | "to";
-        /** Co-signer key override; see {@link resolveEmulatorKey}. */
-        emulatorPubkey?: EmulatorPubkeyOverride;
+        /** Co-signer key override (33-byte compressed hex); see
+         * {@link resolveEmulatorPubkey}. */
+        emulatorPubkey?: string;
         /** covclaimd's 33-byte compressed pubkey (from its own info endpoint)
          * — the claim packet seals to it and only it can ever read `P` early. */
         covclaimdPubkey: Uint8Array;
@@ -1535,7 +1553,10 @@ export async function requestLightningReceive(
         payoutPubkey,
         payoutAddress,
         serverPubkey: xOnly(hex.decode(info.signerPubkey), "ark signer key"),
-        emulatorPubkey: resolveEmulatorKey(network, params.emulatorPubkey),
+        emulatorPubkey: xOnly(
+            hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
+            "emulator signer key",
+        ),
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
         hrp: network.hrp,
     });
@@ -1674,8 +1695,9 @@ export async function requestOnchainReceive(
     params: {
         amount: number;
         amountSide: "from" | "to";
-        /** Co-signer key override; see {@link resolveEmulatorKey}. */
-        emulatorPubkey?: EmulatorPubkeyOverride;
+        /** Co-signer key override (33-byte compressed hex); see
+         * {@link resolveEmulatorPubkey}. */
+        emulatorPubkey?: string;
         /** Trader's x-only L1 key for the HTLC's refund leaf. */
         refundPubkey: Uint8Array;
         /** covclaimd's 33-byte compressed pubkey — see {@link requestLightningReceive}. */
@@ -1741,7 +1763,10 @@ export async function requestOnchainReceive(
         payoutAddress,
         refundPubkey: params.refundPubkey,
         serverPubkey: xOnly(hex.decode(info.signerPubkey), "ark signer key"),
-        emulatorPubkey: resolveEmulatorKey(network, params.emulatorPubkey),
+        emulatorPubkey: xOnly(
+            hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
+            "emulator signer key",
+        ),
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
         hrp: network.hrp,
         l1Network: l1NetworkFromArk(info.network),
