@@ -4791,10 +4791,13 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     }
 
     /**
-     * Send BTC and/or assets to one or more recipients.
+     * Send BTC and/or assets to one or more recipients, passed either as
+     * variadic `Recipient`s or as a single `SendParams` object — the latter
+     * also carries the virtual outputs to spend.
      *
-     * @param args - Recipients with their addresses, BTC amounts, and assets
+     * @param args - Recipients, or a `SendParams` object
      * @returns Promise resolving to the Arkade transaction ID
+     * @see SendParams
      *
      * @example
      * ```typescript
@@ -4803,25 +4806,14 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
      *     amount: 1000, // (optional, default to dust) btc amount to send to the output
      *     assets: [{ assetId: 'abc123...', amount: 50n }] // (optional) list of assets to send
      * });
-     * ```
-     */
-    async send(...args: [Recipient, ...Recipient[]]): Promise<string>;
-    /**
-     * Send BTC and/or assets, choosing the inputs as well as the outputs.
      *
-     * @param params - Recipients plus the virtual outputs to spend
-     * @returns Promise resolving to the Arkade transaction ID
-     * @see SendParams
-     *
-     * @example
-     * ```typescript
+     * // choosing the inputs as well as the outputs
      * const txid = await wallet.send({
      *     recipients: [{ address: 'ark1q...', amount: 1000 }],
      *     selectedVtxos: mine, // spent as given, nothing added
      * });
      * ```
      */
-    async send(params: SendParams): Promise<string>;
     async send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
         const params = asSendParams(args);
         return this._withTxLock(() => this._sendImpl(params));

@@ -1700,8 +1700,6 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
         }
     }
 
-    async send(...recipients: [Recipient, ...Recipient[]]): Promise<string>;
-    async send(params: SendParams): Promise<string>;
     async send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
         const [first] = args;
         const { recipients, selectedVtxos } =

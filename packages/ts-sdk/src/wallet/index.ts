@@ -963,32 +963,25 @@ export interface IWallet extends IReadonlyWallet {
     ): Promise<string>;
 
     /**
-     * Send bitcoin and/or assets to one or more Arkade recipients.
+     * Send bitcoin and/or assets to one or more Arkade recipients, passed
+     * either as variadic `Recipient`s or as a single `SendParams` object —
+     * the latter also carries the inputs to spend.
      *
-     * @param recipients - One or more recipients
-     * @returns Arkade transaction id
-     * @example
-     * ```typescript
-     * await wallet.send({ address: 'ark1q...', amount: 1000 })
-     * ```
-     */
-    send(...recipients: [Recipient, ...Recipient[]]): Promise<string>;
-
-    /**
-     * Send bitcoin and/or assets, choosing the inputs as well as the outputs.
-     *
-     * @param params - Recipients plus the inputs to spend
+     * @param args - Recipients, or a `SendParams` object
      * @returns Arkade transaction id
      * @see SendParams
      * @example
      * ```typescript
+     * await wallet.send({ address: 'ark1q...', amount: 1000 })
+     *
+     * // choosing the inputs as well as the outputs
      * await wallet.send({
      *     recipients: [{ address: 'ark1q...', amount: 1000 }],
      *     selectedVtxos: mine,
      * })
      * ```
      */
-    send(params: SendParams): Promise<string>;
+    send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string>;
 
     // TODO: this needs to be async or find a workaround
     /** Asset manager bound to this wallet instance. */
