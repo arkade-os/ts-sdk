@@ -2,20 +2,25 @@ import { expect, describe, it, beforeEach } from "vitest";
 import * as bip68 from "bip68";
 import { base64, hex } from "@scure/base";
 import { hash160 } from "@scure/btc-signer/utils.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import {
     ArkError,
     ArkErrorName,
     buildOffchainTx,
     ConditionWitness,
+    contractPreimage,
     CSVMultisigTapscript,
     EsploraProvider,
     Identity,
     isArkError,
+    IWallet,
     networks,
     OnchainWallet,
+    provisionClaimSecret,
     RestArkProvider,
     RestIndexerProvider,
     setArkPsbtField,
+    SingleKey,
     Unroll,
     VHTLC,
     Transaction,
@@ -147,6 +152,176 @@ describe("vhtlc", () => {
 
         await arkProvider.finalizeTx(arkTxid, finalCheckpoints);
     });
+
+    it(
+        "should claim with a preimage re-derived from a static wallet's seed and salt",
+        { timeout: 60000 },
+        async () => {
+            // The property the salted arm exists for, proved against a real
+            // covenant: a static wallet stores NOTHING secret, and a restore
+            // holding only the record's public fields still claims.
+            //
+            // Two things only chain execution can settle. The record commits to
+            // `sha256(P)` while the covenant commits to `ripemd160(sha256(P))`,
+            // so a derived P has to satisfy a hash form the record never names;
+            // and the claim leaf pins OP_SIZE 32, which a 32-byte derivation
+            // output meets only by construction.
+            const alice = createTestIdentity();
+
+            // A static wallet: one key, no descriptor surface, its identity is
+            // its whole policy.
+            const key = SingleKey.fromRandomBytes();
+            const seedHex = key.toHex();
+            const secret = await provisionClaimSecret({ identity: key } as unknown as IWallet);
+
+            // Nothing secret is at rest, and the salt is what replaced it.
+            expect(secret.mustPersistPreimage).toBe(false);
+            expect(secret.preimageSalt).toHaveLength(32);
+
+            // What a consumer persists — every field public.
+            const record = {
+                signingDescriptor: secret.descriptor,
+                preimageSaltHex: hex.encode(secret.preimageSalt!),
+                paymentHash: hex.encode(secret.paymentHash),
+            };
+
+            const vhtlcScript = new VHTLC.Script({
+                // The corridor's hash form, not the record's.
+                preimageHash: hash160(secret.preimage),
+                sender: await alice.xOnlyPublicKey(),
+                // The leg we claim: the provisioned key receives it.
+                receiver: secret.pubkey,
+                server: X_ONLY_PUBLIC_KEY,
+                refundLocktime: BigInt(1000),
+                unilateralClaimDelay: { type: "blocks", value: 100n },
+                unilateralRefundDelay: { type: "blocks", value: 50n },
+                unilateralRefundWithoutReceiverDelay: { type: "blocks", value: 50n },
+            });
+
+            const address = vhtlcScript.address(networks.regtest.hrp, X_ONLY_PUBLIC_KEY).encode();
+            const fundAmount = 1000;
+            execCommand(
+                `${arkdExec} ark send --to ${address} --amount ${fundAmount} --password secret`,
+            );
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // ── The restore. Everything but `record` and the seed is gone. ──
+            const restored = SingleKey.fromHex(seedHex);
+            const wallet = { identity: restored } as unknown as IWallet;
+            const preimage = await contractPreimage(wallet, record.signingDescriptor, {
+                salt: hex.decode(record.preimageSaltHex),
+            });
+
+            expect(hex.encode(preimage)).toBe(hex.encode(secret.preimage));
+            expect(hex.encode(sha256(preimage))).toBe(record.paymentHash);
+            // The seam: the derived P satisfies the hash the covenant pins.
+            expect(hex.encode(hash160(preimage))).toBe(
+                hex.encode(vhtlcScript.options.preimageHash),
+            );
+
+            const claimIdentity: Identity = {
+                sign: async (tx: Transaction, inputIndexes?: number[]) => {
+                    const cpy = tx.clone();
+                    setArkPsbtField(cpy, 0, ConditionWitness, [preimage]);
+                    return restored.sign(cpy, inputIndexes);
+                },
+                compressedPublicKey: () => restored.compressedPublicKey(),
+                xOnlyPublicKey: () => restored.xOnlyPublicKey(),
+                signerSession: () => restored.signerSession(),
+                signMessage: (message, signatureType) =>
+                    restored.signMessage(message, signatureType),
+            };
+
+            const arkProvider = new RestArkProvider("http://localhost:7070");
+            const indexerProvider = new RestIndexerProvider("http://localhost:7070");
+
+            const spendable = await indexerProvider.getVtxos({
+                scripts: [hex.encode(vhtlcScript.pkScript)],
+                spendableOnly: true,
+            });
+            expect(spendable.vtxos).toHaveLength(1);
+
+            const info = await arkProvider.getInfo();
+            const checkpointUnrollClosure = CSVMultisigTapscript.decode(
+                hex.decode(info.checkpointTapscript),
+            );
+
+            const { arkTx, checkpoints } = buildOffchainTx(
+                [
+                    {
+                        ...spendable.vtxos[0],
+                        tapLeafScript: vhtlcScript.claim(),
+                        tapTree: vhtlcScript.encode(),
+                    },
+                ],
+                [{ script: vhtlcScript.pkScript, amount: BigInt(fundAmount) }],
+                checkpointUnrollClosure,
+            );
+
+            const signedArkTx = await claimIdentity.sign(arkTx);
+            const { arkTxid, signedCheckpointTxs } = await arkProvider.submitTx(
+                base64.encode(signedArkTx.toPSBT()),
+                checkpoints.map((c) => base64.encode(c.toPSBT())),
+            );
+            expect(arkTxid).toBeDefined();
+
+            const finalCheckpoints = await Promise.all(
+                signedCheckpointTxs.map(async (c) => {
+                    const signed = await claimIdentity.sign(
+                        Transaction.fromPSBT(base64.decode(c)),
+                        [0],
+                    );
+                    return base64.encode(signed.toPSBT());
+                }),
+            );
+            // The server accepting this is the assertion: a covenant funded
+            // before the restore, unlocked by a preimage that existed nowhere
+            // in between.
+            await arkProvider.finalizeTx(arkTxid, finalCheckpoints);
+        },
+    );
+
+    it(
+        "should give two swaps on one static wallet unrelated covenants",
+        { timeout: 60000 },
+        async () => {
+            // The collision this design exists to avoid, at the address level:
+            // one key, two swaps, and nothing they share is claimable twice.
+            const alice = await createTestIdentity().xOnlyPublicKey();
+            const key = SingleKey.fromRandomBytes();
+            const wallet = { identity: key } as unknown as IWallet;
+
+            const scriptFor = async () => {
+                const secret = await provisionClaimSecret(wallet);
+                return {
+                    secret,
+                    address: new VHTLC.Script({
+                        preimageHash: hash160(secret.preimage),
+                        sender: alice,
+                        receiver: secret.pubkey,
+                        server: X_ONLY_PUBLIC_KEY,
+                        refundLocktime: BigInt(1000),
+                        unilateralClaimDelay: { type: "blocks", value: 100n },
+                        unilateralRefundDelay: { type: "blocks", value: 50n },
+                        unilateralRefundWithoutReceiverDelay: { type: "blocks", value: 50n },
+                    })
+                        .address(networks.regtest.hrp, X_ONLY_PUBLIC_KEY)
+                        .encode(),
+                };
+            };
+
+            const first = await scriptFor();
+            const second = await scriptFor();
+
+            // Same wallet key on both covenants — that is the static policy.
+            expect(hex.encode(second.secret.pubkey)).toBe(hex.encode(first.secret.pubkey));
+            expect(second.secret.descriptor).toBe(first.secret.descriptor);
+            // Everything derived from the salt differs, so one counterparty
+            // learning its own preimage learns nothing about the other.
+            expect(second.address).not.toBe(first.address);
+            expect(hex.encode(second.secret.preimage)).not.toBe(hex.encode(first.secret.preimage));
+        },
+    );
 
     it("should unilaterally claim", { timeout: 300_000 }, async () => {
         const alice = await createTestArkWallet();
