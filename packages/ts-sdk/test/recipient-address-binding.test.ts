@@ -110,23 +110,14 @@ describe("validateRecipients address binding", () => {
 });
 
 /**
- * A published taptree is a claim about the output: these, and only these, are
- * the paths that can spend it. Nothing downstream re-derives the address from
- * it — a reader takes the leaves and builds a spend — so a tree that does not
- * belong to the address is a false statement, and it fails wherever it is
- * eventually read rather than where it was attached.
- *
- * The concrete case is a daemon claiming a preimage-gated output on the
- * receiver's behalf: it walks the published tree looking for the closure it
- * can spend, and a tree for some other contract fails that walk with nothing
- * useful to say. Refusing here turns that into an error at the call that
- * caused it.
+ * The concrete case: a daemon claiming a preimage-gated output on the receiver's
+ * behalf walks the published tree for the closure it can spend, and a tree for
+ * some other contract fails that walk with nothing useful to say. Checking here
+ * turns that into an error at the call that caused it.
  */
 describe("validateRecipients published taptree", () => {
-    // Three ordinary key-path leaves — enough to build real VtxoScripts. Their
-    // content is beside the point: what is under test is that the tree and the
-    // address agree, not what the tree permits. The keys are real curve points
-    // (G, 2G, 3G) because the taproot builder validates every key-path leaf.
+    // Three ordinary key-path leaves, enough to build real VtxoScripts. Real curve
+    // points (G, 2G, 3G) because the taproot builder validates every key-path leaf.
     const leafA = Script.encode([hex.decode(SERVER_KEY_HEX).slice(1), "CHECKSIG"]);
     const leafB = Script.encode([
         hex.decode("c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"),
@@ -161,9 +152,8 @@ describe("validateRecipients published taptree", () => {
     });
 
     it("points a rejected taptree at the encoding it needed", () => {
-        // The check ignores leaf depths and rebuilds the tree in arkd's shape,
-        // so a valid tree from another encoder can be refused. The message has
-        // to name that, or there is nothing to act on.
+        // The check ignores leaf depths and rebuilds the tree in arkd's shape, so a
+        // valid tree from another encoder is refused — the message has to name that.
         expect(() =>
             validateRecipients(
                 [{ address: addressFor(script), amount: 2000, tapTree: otherContract.encode() }],
@@ -314,11 +304,10 @@ describe("Wallet recipient address binding", () => {
 });
 
 /**
- * `send({ selectedVtxos })` spends what it is named and nothing else, so every
- * way the named set can fail to cover the outputs has to be an error rather
- * than a top-up. These all land before any network call — the selected path
- * never reads the wallet's own outputs — so a wallet with only its info
- * mocked is enough to reach them.
+ * Every way the named set can fail to cover the outputs has to be an error rather
+ * than a top-up. These all land before any network call — the selected path never
+ * reads the wallet's own outputs — so a wallet with only its info mocked reaches
+ * them.
  */
 describe("send with caller-selected vtxos", () => {
     const ASSET_A = "a".repeat(64);
