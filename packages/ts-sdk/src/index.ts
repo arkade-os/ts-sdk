@@ -23,6 +23,8 @@ import {
     deriveDescriptorLeafCompressedPubKey,
     normalizeToDescriptor,
     parseHDDescriptor,
+    identityDescriptor,
+    isSigningIdentity,
 } from "./identity";
 import type {
     DescriptorIdentityOptions,
@@ -552,6 +554,8 @@ export {
     deriveDescriptorLeafCompressedPubKey,
     normalizeToDescriptor,
     parseHDDescriptor,
+    identityDescriptor,
+    isSigningIdentity,
     OnchainWallet,
     Ramps,
     DustChangeError,

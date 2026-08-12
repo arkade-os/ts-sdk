@@ -158,7 +158,7 @@ import {
 import { HDDescriptorProvider } from "./hdDescriptorProvider";
 import { DescriptorProvider } from "../identity/descriptorProvider";
 import { HDWalletCapable, resolveDescriptorSigner } from "./hdWalletCapable";
-import { deriveDescriptorLeafPubKey, normalizeToDescriptor } from "../identity/descriptor";
+import { deriveDescriptorLeafPubKey, identityDescriptor } from "../identity/descriptor";
 import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
 import { CandidateDeps, Contract, ContractWithVtxos, DiscoveryDeps } from "../contracts/types";
 import {
@@ -2548,7 +2548,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         if (this._descriptorProvider instanceof HDDescriptorProvider) {
             return (await this.getContractManager()).getNextSigningDescriptor();
         }
-        return normalizeToDescriptor(hex.encode(await this.identity.xOnlyPublicKey()));
+        return identityDescriptor(this.identity);
     }
 
     /**
@@ -2912,9 +2912,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // `isHDCapableIdentity`.
         const hd = provider instanceof HDDescriptorProvider;
 
-        const staticDescriptor = hd
-            ? undefined
-            : `tr(${hex.encode(await this.identity.xOnlyPublicKey())})`;
+        const staticDescriptor = hd ? undefined : await identityDescriptor(this.identity);
         const materialize = (index: number): string =>
             hd ? provider.materializeDescriptorAt(index) : staticDescriptor!;
 

@@ -294,6 +294,17 @@ describe("contractPreimage", () => {
         expect(await contractPreimage(wallet, descriptor, stored)).toEqual(stored);
     });
 
+    it("refuses a stored preimage that is not 32 bytes", async () => {
+        // The check the deleted record decoder made. A truncated column or a
+        // partial write would otherwise restore silently and be caught only
+        // when the claim is built, with the timeout margin already spent.
+        const { wallet } = await hdWallet();
+        const { descriptor } = await provisionRefundKey(wallet);
+        await expect(
+            contractPreimage(wallet, descriptor, new Uint8Array(20).fill(3)),
+        ).rejects.toThrow(/stored preimage must be 32 bytes/);
+    });
+
     it("refuses to derive for a descriptor that carries none", async () => {
         // Deriving off a shared key would hand two artifacts one preimage —
         // without accusing the record of losing anything: a leg whose P

@@ -27,6 +27,7 @@ import {
     type LegacySerializedIdentity,
     serializeReadonlyIdentity,
     serializeSigningIdentity,
+    isSigningIdentity,
 } from "../../identity";
 import type { HDWalletCapable, HDAllocationCapable } from "../hdWalletCapable";
 import { resolveDescriptorSigner } from "../hdWalletCapable";
@@ -277,15 +278,6 @@ const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
 function getRequestDedupKey(request: WalletUpdaterRequest): string {
     const { id, tag, ...rest } = request;
     return JSON.stringify(rest);
-}
-
-function isSigningCapable(identity: Identity | ReadonlyIdentity): identity is Identity {
-    const candidate = identity as Partial<Identity>;
-    return (
-        typeof candidate.signMessage === "function" &&
-        typeof candidate.sign === "function" &&
-        typeof candidate.signerSession === "function"
-    );
 }
 
 class ServiceWorkerReadonlyAssetManager implements IReadonlyAssetManager {
@@ -1609,7 +1601,7 @@ export class ServiceWorkerWallet
         const contractRepository =
             options.storage?.contractRepository ?? new IndexedDBContractRepository();
 
-        if (!isSigningCapable(options.identity)) {
+        if (!isSigningIdentity(options.identity)) {
             throw new Error(
                 "ServiceWorkerWallet.create() requires a signing Identity; got a ReadonlyIdentity",
             );

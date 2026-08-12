@@ -21,11 +21,10 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { randomBytes } from "@noble/hashes/utils.js";
 import { equalBytes } from "@scure/btc-signer/utils.js";
-import { hex } from "@scure/base";
-import { Identity, ReadonlyIdentity } from "../identity";
+import { Identity, ReadonlyIdentity, isSigningIdentity } from "../identity";
 import {
     deriveDescriptorLeafPubKey,
-    normalizeToDescriptor,
+    identityDescriptor,
     parseHDDescriptor,
 } from "../identity/descriptor";
 import {
@@ -118,7 +117,7 @@ async function provisionDescriptor(wallet: IWallet): Promise<string> {
         ? await wallet.getNextSigningDescriptor()
         : undefined;
     // A wallet that cannot allocate still provides a key it holds.
-    return allocated ?? normalizeToDescriptor(hex.encode(await wallet.identity.xOnlyPublicKey()));
+    return allocated ?? (await identityDescriptor(wallet.identity));
 }
 
 /**
@@ -229,27 +228,6 @@ export class WalletCannotSignError extends Error {
 }
 
 /**
- * Whether `value` is a complete {@link Identity} rather than the read-only
- * half of one.
- *
- * All four members are checked because all four are load-bearing downstream —
- * `signerSession` in particular, which an interactive refund needs and which a
- * watch-only identity lacks. A partial identity passes a pubkey check happily
- * and then fails as a `TypeError` deep inside a push, where the swap layer
- * reads it as retryable and grinds against it for the whole refund window.
- */
-function isSigningIdentity(value: unknown): value is Identity {
-    if (typeof value !== "object" || value === null) return false;
-    const v = value as Record<string, unknown>;
-    return (
-        typeof v.sign === "function" &&
-        typeof v.signMessage === "function" &&
-        typeof v.signerSession === "function" &&
-        typeof v.xOnlyPublicKey === "function"
-    );
-}
-
-/**
  * The preimage for a provisioned descriptor: `stored` when the artifact kept
  * one, otherwise re-derived from the seed.
  *
@@ -262,7 +240,15 @@ export async function contractPreimage(
     descriptor: string,
     stored?: Uint8Array,
 ): Promise<Uint8Array> {
-    if (stored) return stored;
+    if (stored) {
+        // The check the deleted record decoder used to make. A truncated
+        // column or a partial write would otherwise restore silently and be
+        // diagnosed only at claim time, with the timeout margin already spent.
+        if (stored.length !== 32) {
+            throw new Error(`stored preimage must be 32 bytes, got ${stored.length}`);
+        }
+        return stored;
+    }
     if (!isPerArtifactDescriptor(descriptor)) {
         throw new Error(
             `descriptor ${descriptor} names no single artifact, so its preimage cannot be derived; none was stored`,
