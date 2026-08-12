@@ -43,11 +43,16 @@ import {
 } from "./swapManager";
 
 /**
- * How long a retired swap's record is kept.
+ * How long a retired swap's record is kept, in SECONDS.
  *
  * Terminal records are history, not garbage: the covenant's spender is a
  * transaction the wallet never signed, so its own history cannot reconstruct
  * them. Kept for a month, then dropped so a hot wallet's store stays bounded.
+ *
+ * Seconds, not milliseconds, because that is the unit `RfqSwap.updatedAt`
+ * carries — the manager stamps it from `RfqSwapManagerConfig.now`, which is
+ * "wall clock, in unix seconds". Comparing it against `Date.now()` would drop
+ * every terminal record after ~43 minutes.
  */
 export const RFQ_SWAP_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 
@@ -236,6 +241,12 @@ export function rebuildRfqSwap(record: RfqSwapRecord): RfqSwap {
  * money is still at the lockup, the counterparty's move is still what ends the
  * swap, and the refusal is re-checked every pass — restoring the right wallet
  * returns it to `pending`.
+ *
+ * @param now Current time in **unix seconds** — the same unit as
+ * `RfqSwap.updatedAt`, which the manager stamps from
+ * `RfqSwapManagerConfig.now`. Pass `Math.floor(Date.now() / 1000)`, never
+ * `Date.now()`: milliseconds against a seconds window would retire every
+ * terminal record after ~43 minutes.
  */
 export function shouldRetainRfqSwap(record: RfqSwapRecord, now: number): boolean {
     if (!isRfqSwapTerminal(record.state)) return true;

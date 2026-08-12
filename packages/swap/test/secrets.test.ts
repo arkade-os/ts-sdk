@@ -23,6 +23,7 @@ import {
     buildPreimageMessage,
     derivePreimage,
     deriveSwapSecrets,
+    isBaselineSwapSecrets,
     isDeterministicSigner,
     preimageForRfqSecrets,
     randomSwapSecrets,
@@ -31,6 +32,7 @@ import {
     senderIdentityForRfqSecrets,
     senderIdentityForSwapRecord,
     senderPubkeyForRfqSecrets,
+    type SwapSecrets,
 } from "../src/secrets";
 import { paymentHashOf } from "../src/onchainHtlc";
 
@@ -432,6 +434,20 @@ describe("the baseline arm", () => {
         expect(hex.encode(await signer.xOnlyPublicKey())).toBe(
             hex.encode(await wallet.identity.xOnlyPublicKey()),
         );
+    });
+
+    it("does not classify a falsy `baseline` as the baseline arm", async () => {
+        // A deserialized record could carry `baseline: false`; the types forbid
+        // it but the store does not. Treating that as the baseline arm would
+        // sign with the wallet's own key for a covenant never bound to it.
+        const impostor = {
+            derivable: true,
+            baseline: false,
+            signingDescriptor: `tr(${"a7".repeat(32)})`,
+        } as unknown as SwapSecrets;
+        expect(isBaselineSwapSecrets(impostor)).toBe(false);
+        // and the genuine arm still narrows
+        expect(isBaselineSwapSecrets((await deriveSwapSecrets(staticWallet()))!)).toBe(true);
     });
 
     it("keeps allocating a fresh descriptor when the wallet can", async () => {

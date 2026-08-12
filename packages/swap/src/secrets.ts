@@ -134,9 +134,16 @@ export interface StoredSwapSecrets {
  */
 export type SwapSecrets = DerivedSwapSecrets | BaselineSwapSecrets | StoredSwapSecrets;
 
-/** Narrow the two `derivable: true` arms apart. */
+/**
+ * Narrow the two `derivable: true` arms apart.
+ *
+ * Checks the VALUE, not the property's presence. `"baseline" in secrets` would
+ * accept `{ baseline: false }` — which the types forbid but a deserialized
+ * record does not, and misclassifying there would sign with the wallet's own
+ * key for a swap whose covenant was never bound to it.
+ */
 export const isBaselineSwapSecrets = (secrets: SwapSecrets): secrets is BaselineSwapSecrets =>
-    secrets.derivable && "baseline" in secrets;
+    secrets.derivable && (secrets as BaselineSwapSecrets).baseline === true;
 
 /**
  * The secrets for one swap. Never mints a signing key.
