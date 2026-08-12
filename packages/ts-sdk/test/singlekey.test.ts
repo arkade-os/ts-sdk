@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
+import { hex } from "@scure/base";
 import { SingleKey, ReadonlySingleKey } from "../src/identity/singleKey";
 import { InMemoryStorageAdapter } from "../src/storage/inMemory";
 import { schnorr, verifyAsync } from "@noble/secp256k1";
+
+const zeroAux = new Uint8Array(32);
 
 describe("SingleKey", () => {
     it("should create random keys with fromRandomBytes", async () => {
@@ -149,6 +152,41 @@ describe("SingleKey", () => {
             const compressedPubKey = await key.compressedPublicKey();
             const readonlyCompressedPubKey = await readonlyKey.compressedPublicKey();
             expect(Array.from(compressedPubKey)).toEqual(Array.from(readonlyCompressedPubKey));
+        });
+    });
+
+    describe("signSchnorrDeterministic", () => {
+        const messageHash = new Uint8Array(32).fill(0x11);
+
+        it("returns the same signature every call", async () => {
+            // What a static wallet's swap preimage is derived from: a signature
+            // that moves would make the preimage unrecoverable.
+            const key = SingleKey.fromHex("11".repeat(32));
+            const first = await key.signSchnorrDeterministic(messageHash);
+            const second = await key.signSchnorrDeterministic(messageHash);
+
+            expect(Buffer.from(first).toString("hex")).toBe(Buffer.from(second).toString("hex"));
+            expect(await schnorr.verifyAsync(first, messageHash, await key.xOnlyPublicKey())).toBe(
+                true,
+            );
+        });
+
+        it("matches an aux_rand = 0 BIP-340 signature, not signMessage's", async () => {
+            // signMessage's schnorr branch draws a random aux_rand. Routing the
+            // deterministic path through it would still verify, so only this
+            // comparison catches the mistake.
+            const key = SingleKey.fromHex("22".repeat(32));
+            const deterministic = await key.signSchnorrDeterministic(messageHash);
+
+            expect(Buffer.from(deterministic).toString("hex")).toBe(
+                Buffer.from(
+                    await schnorr.signAsync(messageHash, hex.decode("22".repeat(32)), zeroAux),
+                ).toString("hex"),
+            );
+
+            const a = await key.signMessage(messageHash, "schnorr");
+            const b = await key.signMessage(messageHash, "schnorr");
+            expect(Buffer.from(a).toString("hex")).not.toBe(Buffer.from(b).toString("hex"));
         });
     });
 });

@@ -672,11 +672,9 @@ describe("requestLightningReceive on an HD wallet", () => {
         expect(result.invoiceExpiresAt).toBe(INVOICE_EXPIRES_AT);
         // The quote was requested against sha256 of the derived preimage, and
         // the covenant's receiver key is the allocated one.
-        const preimage = await contractPreimage(
-            flow.wallet,
-            result.secrets.descriptor,
-            result.secrets.preimage,
-        );
+        const preimage = await contractPreimage(flow.wallet, result.secrets.descriptor, {
+            stored: result.secrets.preimage,
+        });
         expect(flow.seen.paymentHash).toBe(paymentHashOf(preimage));
         expect(flow.seen.payoutPubkey).toBe(hex.encode(result.payoutPubkey));
         // The wire carries the sealed packet string, never an object.
@@ -835,11 +833,9 @@ describe("requestOnchainReceive on an HD wallet", () => {
         expect(result.fundAmount).toBe(100_000);
         expect(result.expectedAmount).toBe(99_000);
         expect(result.htlc.address).toMatch(/^bcrt1p/);
-        const preimage = await contractPreimage(
-            wallet,
-            result.secrets.descriptor,
-            result.secrets.preimage,
-        );
+        const preimage = await contractPreimage(wallet, result.secrets.descriptor, {
+            stored: result.secrets.preimage,
+        });
         expect(seen.paymentHash).toBe(paymentHashOf(preimage));
     });
 });

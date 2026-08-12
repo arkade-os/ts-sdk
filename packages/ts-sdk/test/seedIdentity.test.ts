@@ -221,6 +221,49 @@ describe("SeedIdentity", () => {
             expect(defaulted.descriptor).toMatch(/\/86'\/0'\/0'\]/);
         });
     });
+
+    describe("signSchnorrDeterministic", () => {
+        const messageHash = new Uint8Array(32).fill(0x33);
+        const identityOf = () =>
+            SeedIdentity.fromSeed(mnemonicToSeedSync(TEST_MNEMONIC), { isMainnet: false });
+
+        it("is stable across calls and across instances on one seed", async () => {
+            // An `auto`-mode wallet resolves its bare descriptor to the
+            // identity itself, so this is what its swap preimage derives from.
+            const first = await identityOf().signSchnorrDeterministic(messageHash);
+            const second = await identityOf().signSchnorrDeterministic(messageHash);
+
+            expect(hex.encode(first)).toBe(hex.encode(second));
+            expect(
+                await schnorr.verifyAsync(first, messageHash, await identityOf().xOnlyPublicKey()),
+            ).toBe(true);
+        });
+
+        it("agrees with the descriptor sibling for the identity's own key", async () => {
+            // The two paths reach the same key by different routes; a
+            // construction drift between them would make a preimage derived
+            // through one unrecoverable through the other.
+            const identity = identityOf();
+            expect(hex.encode(await identity.signSchnorrDeterministic(messageHash))).toBe(
+                hex.encode(
+                    await identity.signSchnorrDeterministicWithDescriptor(
+                        identity.descriptor.replace("/*", "/0"),
+                        messageHash,
+                    ),
+                ),
+            );
+        });
+
+        it("does not draw a random aux_rand, unlike signMessage", async () => {
+            const identity = identityOf();
+            const a = await identity.signMessage(messageHash, "schnorr");
+            const b = await identity.signMessage(messageHash, "schnorr");
+            expect(hex.encode(a)).not.toBe(hex.encode(b));
+            expect(hex.encode(await identity.signSchnorrDeterministic(messageHash))).toBe(
+                hex.encode(await identity.signSchnorrDeterministic(messageHash)),
+            );
+        });
+    });
 });
 
 describe("MnemonicIdentity", () => {

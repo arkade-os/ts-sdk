@@ -104,6 +104,19 @@ export class SingleKey implements Identity {
         return schnorr.signAsync(message, this.key);
     }
 
+    /**
+     * BIP-340 sign `messageHash` with aux_rand = 0, so the signature — and
+     * anything derived from it — is reproducible from the key alone.
+     *
+     * What lets a static wallet derive a swap preimage instead of storing one
+     * (see `wallet/contractSecrets.ts`). Deliberately NOT `signMessage`, whose
+     * schnorr branch draws a random aux_rand: a preimage derived from that is
+     * unrecoverable, and the loss would only surface at claim time.
+     */
+    async signSchnorrDeterministic(messageHash: Uint8Array): Promise<Uint8Array> {
+        return schnorr.signAsync(messageHash, this.key, new Uint8Array(32));
+    }
+
     async toReadonly(): Promise<ReadonlySingleKey> {
         return new ReadonlySingleKey(await this.compressedPublicKey());
     }

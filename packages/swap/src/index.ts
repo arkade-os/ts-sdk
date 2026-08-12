@@ -25,8 +25,10 @@ export {
     updateAssetSwap,
     updateAssetSwapBestEffort,
     swapSecretsToRecord,
+    preimageForSwapRecord,
     type AssetSwap,
     type AssetSwapStatus,
+    type SwapSecretsProjection,
 } from "./store";
 export {
     type AssetSwapRepository,

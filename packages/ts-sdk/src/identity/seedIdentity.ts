@@ -228,6 +228,20 @@ export class SeedIdentity implements HDCapableIdentity {
         return this.signMessageWithKey(this.derivedKey, message, signatureType);
     }
 
+    /**
+     * BIP-340 sign `messageHash` with this identity's own key, aux_rand = 0.
+     *
+     * The descriptor-less sibling of
+     * {@link signSchnorrDeterministicWithDescriptor}, for an `auto`-mode wallet
+     * whose bare `tr(pubkey)` resolves to the identity itself rather than to a
+     * {@link DescriptorIdentity}. Deliberately NOT routed through
+     * `signMessage`, whose schnorr branch draws a random aux_rand and would
+     * make the "deterministic" signature unreproducible.
+     */
+    async signSchnorrDeterministic(messageHash: Uint8Array): Promise<Uint8Array> {
+        return schnorr.signAsync(messageHash, this.derivedKey, new Uint8Array(32));
+    }
+
     signerSession(): SignerSession {
         return TreeSignerSession.random();
     }

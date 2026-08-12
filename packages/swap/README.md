@@ -436,34 +436,42 @@ descriptor, which is public, and `contractSigner(wallet, descriptor)` recovers t
 
 What each swap stores, and what is recoverable:
 
-| Wallet answers with | Spending key          | Preimage (when the leg needs one) | Secret at rest    |
-| ------------------- | --------------------- | --------------------------------- | ----------------- |
-| fresh HD descriptor | re-derives from seed  | derives deterministically         | none              |
-| static `tr(pubkey)` | the wallet's identity | random, stored on the record      | the preimage only |
+| Wallet answers with       | Spending key          | Preimage (when the leg needs one)     | Secret at rest    |
+| ------------------------- | --------------------- | ------------------------------------- | ----------------- |
+| fresh HD descriptor       | re-derives from seed  | derives deterministically             | none              |
+| static `tr(pubkey)`       | the wallet's identity | derives from a public per-swap salt   | none              |
+| a signer that cannot sign |                       |                                       |                   |
+| deterministically         | the wallet's identity | random, stored on the record          | the preimage only |
 
-The preimage split follows the **descriptor's shape**, not the wallet's type: an HD child
-descriptor is unique to its swap, so `sha256(sign_det(...))` is safe; a static descriptor is the
-same key for every swap, so a derived preimage would repeat across swaps — one solver learning its
-own preimage would learn every other swap's — and a per-swap random preimage is stored instead.
-`mustPersistPreimage` says which you got. A stored preimage is the one secret at rest in the
-design, and it is never a private key.
+The preimage split follows the **descriptor's shape**, not the wallet's type. An HD child
+descriptor is unique to its swap, so `sha256(sign_det(...))` over the key alone is safe. A static
+descriptor is the same key for every swap, so that derivation would repeat across swaps — one
+solver learning its own preimage would learn every other swap's — and the uniqueness has to come
+from the message instead: the SDK mints 32 random bytes per swap, signs a **salted** message, and
+stores the salt in the clear.
+
+**The salt is not a secret.** Knowing it yields nothing without the seed, which is the whole
+difference from the preimage it replaces: the record goes from carrying a per-swap _secret_ to a
+per-swap _public_ value, exactly what `signingDescriptor` already is. Recoverability is unchanged
+in shape — keep the record and the swap recovers from the seed.
+
+Only a signer that cannot sign deterministically at all — an external or extension signer — still
+gets a random stored preimage. `mustPersistPreimage` says which you got, and it is the only thing
+to branch on. A stored preimage remains the one secret at rest in the design, and it is never a
+private key.
 
 ```ts
 const swap = await requestOnchainSend(/* … */);
-// `swapSecretsToRecord` stores the public descriptor always, and `preimageHex`
-// only when the wallet said it cannot re-derive P.
+// `swapSecretsToRecord` stores the public descriptor always, then whichever of
+// `preimageSaltHex` (derivable) or `preimageHex` (not) the wallet produced.
 await saveSwap({ ...record, ...swapSecretsToRecord(swap.secrets) });
 
-// Later, from the seed plus that descriptor. Only ask for a preimage the
-// corridor gave us one for: a lightning send's P belongs to the payee, so
-// this throws on those records rather than inventing something the chain will
-// never match. `LIGHTNING_SEND_PAIR` is exported from this package.
-if (record.signingDescriptor && record.pair !== LIGHTNING_SEND_PAIR) {
-    const preimage = await contractPreimage(
-        wallet,
-        record.signingDescriptor,
-        record.preimageHex ? hex.decode(record.preimageHex) : undefined,
-    );
+// Later, from the seed plus the record's public fields. Only ask for a
+// preimage the corridor gave us one for: a lightning send's P belongs to the
+// payee, so this throws on those records rather than inventing something the
+// chain will never match. `LIGHTNING_SEND_PAIR` is exported from this package.
+if (record.pair !== LIGHTNING_SEND_PAIR) {
+    const preimage = await preimageForSwapRecord(wallet, record);
 }
 
 // For a refund, take the composition instead of the guard: it turns all three
@@ -481,21 +489,38 @@ terminal: the lockup stays funded and watched, a solver claim still ends the swa
 `pending`. The manager reports the same state when nothing is wired to act (`enableAutoActions:
 false`, or no callbacks) and the window has passed.
 
+`preimageForSwapRecord` is the read path to wire, not a hand-rolled `contractPreimage` call: it
+knows which of the record's fields are derivation inputs, and it verifies the result against
+`paymentHash`. A caller that forgets to pass the salt gets a _wrong_ preimage from a wallet that can
+derive, not an error — and that surfaces as an opaque script failure at claim time.
+
 A caller-supplied preimage keeps `signingDescriptor` for the sender key and stores only
 `preimageHex` as secret material.
 
 On an HD wallet each swap **allocates** its own descriptor rather than peeking at the current one:
 two swaps sharing a descriptor derive the _identical_ preimage, so one solver learning its own
-preimage would learn the other swap's. (Static wallets share their one descriptor by design — that
-is why their preimages are stored per swap, never derived.) On restore, `adoptContractDescriptor`
+preimage would learn the other swap's. (Static wallets share their one descriptor by design — the
+per-swap salt is what separates their preimages instead.) On restore, `adoptContractDescriptor`
 (from `@arkade-os/sdk`) moves the wallet's watermark past a restored record's index so it cannot be
 handed out twice; a static descriptor names no index and adopts as a no-op.
 
-The derivation is `sha256(signSchnorrDeterministic(sha256("Arkade-RFQ-Preimage-v1" ‖ xonly(32) ‖
-u32le(0))))`, mirroring NArk's Boltz scheme (`SwapsManagementService.cs:128-160`) with an
-RFQ-scoped tag. NArk has no RFQ corridor yet, so this tag defines the scheme rather than matching
-one; it is deliberately distinct from the Boltz tag so one wallet key cannot derive the same
-preimage for both corridors.
+Two derivations, picked by the descriptor's shape:
+
+```
+HD child      sha256(sign_det(sha256("Arkade-RFQ-Preimage-v1"             ‖ xonly(32) ‖ u32le(0))))
+static/salted sha256(sign_det(sha256("Arkade-Contract-Preimage-Salted-v1" ‖ xonly(32) ‖ salt(32))))
+```
+
+The first mirrors NArk's Boltz scheme (`SwapsManagementService.cs:128-160`) with an RFQ-scoped tag.
+NArk has no RFQ corridor yet, so this tag defines the scheme rather than matching one; it is
+deliberately distinct from the Boltz tag so one wallet key cannot derive the same preimage for both
+corridors.
+
+The salted tag is corridor-generic where the first is not, and that asymmetry is deliberate: the v1
+tags must be per-corridor because v1 pins its message index, leaving the tag as the only separation
+between two corridors reaching the same key. The salted form mints a fresh salt per swap, so no two
+swaps share a message within a corridor or across two — the salt carries the separation, and the tag
+names the layer rather than the corridor.
 
 **Not covered:** seed-only discovery after the swap repository is wiped. An unspent L1 HTLC reveals
 too little public quote data to rediscover, so the record remains required.
@@ -508,9 +533,38 @@ before later-funded addresses are found. Keep the swap repository in backups (re
 each record's descriptor via `adoptContractDescriptor`), or raise `gapLimit` on seed-only restores
 after heavy swap use.
 
+## Upgrading from 0.0.3
+
+0.0.1–0.0.3 are published. Under npm's 0.0.x rules `^0.0.3` resolves to exactly 0.0.3, so nothing
+auto-upgrades into the changes below — but a consumer that does upgrade meets them all in one jump,
+so they are written as one migration rather than per-release fragments.
+
+**Key provisioning moved into the SDK.** `packages/swap/src/secrets.ts` is gone. `deriveSwapSecrets`,
+`randomSwapSecrets`, `preimageForRfqSecrets`, `senderIdentityForRfqSecrets`, `rfqSecretsToRecord`,
+`rfqSecretsOfRecord`, `isPerSwapDescriptor`, `RFQ_PREIMAGE_TAG` and `SwapSecrets` no longer exist.
+Import `provisionRefundKey`, `provisionClaimSecret`, `contractSigner`, `contractPreimage`,
+`isPerArtifactDescriptor` and `ARKADE_SWAP_PREIMAGE_TAG` from `@arkade-os/sdk` instead;
+`swapSecretsToRecord` and `senderIdentityForSwapRecord` stay in this package. No consumer branches
+on wallet type any more, and no swap record can carry a private key.
+
+**`contractPreimage` takes an options object.** `contractPreimage(wallet, descriptor, stored?)`
+became `contractPreimage(wallet, descriptor, { stored?, salt? })`. Prefer `preimageForSwapRecord`,
+which reads both fields off the record and verifies against `paymentHash`.
+
+**Static wallets derive their preimage instead of storing it.** New records from such wallets carry
+`preimageSaltHex` and no `preimageHex`; `mustPersistPreimage` is now `false` for them, so the
+"persist the preimage" warning stops firing. Nothing at rest is secret unless the signer cannot sign
+deterministically at all.
+
+**`AssetSwap` gains `preimageSaltHex?`, and `AssetSwapRepository.version` is `2`.** External
+repository implementations must recompile — deliberately, because a field-mapped backend that drops
+`preimageSaltHex` leaves the swap unclaimable exactly as one dropping `preimageHex` does. Records
+written by 0.0.1–0.0.3 need no rewrite and no migration: the field is optional, older rows resolve
+through their stored `preimageHex` or their HD descriptor, and `DB_VERSION` is unchanged.
+
 ## Breaking changes on this branch (pre-release migration notes)
 
-The package is pre-release; these notes replace a changelog for consumers tracking the branch.
+Notes from before 0.0.1, kept for consumers who tracked the branch.
 
 - **`secrets.ts` is gone; key provisioning moved into `@arkade-os/sdk`.** This package no longer
   derives, mints, or names keys. It asks the SDK for what the leg needs — `provisionRefundKey(wallet)`

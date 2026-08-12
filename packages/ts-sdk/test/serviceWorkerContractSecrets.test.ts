@@ -392,25 +392,28 @@ describe("contract secrets behind the service worker", () => {
         ).toBe(hex.encode(secret.preimage));
     });
 
-    it("falls back to the identity key on a static worker wallet and must persist the preimage", async () => {
-        // A bare `tr(pubkey)` repeats across artifacts, so deriving from it
-        // would hand two swaps one preimage. The caller is told to store it.
+    it("falls back to the identity key on a static worker wallet and salts the preimage", async () => {
+        // A bare `tr(pubkey)` repeats across artifacts, so deriving from the
+        // key alone would hand two swaps one preimage. A per-swap salt is
+        // where the uniqueness comes from instead, and it is public — so the
+        // worker arm stores nothing secret either.
         const { sw, identity } = await staticPair();
 
         const secret = await provisionClaimSecret(sw as unknown as IWallet);
 
         expect(secret.descriptor).toBe(await bareDescriptorFor(identity));
-        expect(secret.mustPersistPreimage).toBe(true);
+        expect(secret.mustPersistPreimage).toBe(false);
+        expect(secret.preimageSalt).toHaveLength(32);
+        // The salt is the derivation input: without it there is nothing to
+        // derive from that would not collide.
         await expect(contractPreimage(sw as unknown as IWallet, secret.descriptor)).rejects.toThrow(
             /names no single artifact/,
         );
         expect(
             hex.encode(
-                await contractPreimage(
-                    sw as unknown as IWallet,
-                    secret.descriptor,
-                    secret.preimage,
-                ),
+                await contractPreimage(sw as unknown as IWallet, secret.descriptor, {
+                    salt: secret.preimageSalt,
+                }),
             ),
         ).toBe(hex.encode(secret.preimage));
 
@@ -446,5 +449,21 @@ describe("contract secrets behind the service worker", () => {
         await expect(provisionRefundKey(sw as unknown as IWallet)).rejects.toBeInstanceOf(
             WalletCannotSignError,
         );
+    });
+
+    it("derives one preimage across the bus, page-side and worker-side", async () => {
+        // The whole point of resolving page-side: the two contexts must not
+        // answer differently for one descriptor, or a swap funded through one
+        // is unclaimable through the other.
+        const { sw, inner } = await staticPair();
+
+        const secret = await provisionClaimSecret(sw as unknown as IWallet);
+        expect(
+            hex.encode(
+                await contractPreimage(inner as unknown as IWallet, secret.descriptor, {
+                    salt: secret.preimageSalt,
+                }),
+            ),
+        ).toBe(hex.encode(secret.preimage));
     });
 });

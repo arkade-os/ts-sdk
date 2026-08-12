@@ -14,9 +14,17 @@
  * type. An HD child descriptor belongs to exactly one artifact, so its
  * preimage can be a deterministic signature over the key — recoverable from
  * the seed with nothing at rest. A bare `tr(pubkey)` repeats across artifacts,
- * so the same derivation would hand every artifact the identical preimage;
- * those get a random one, and `mustPersistPreimage` tells the caller it is now
- * the artifact's only claim secret.
+ * so the same derivation would hand every artifact the identical preimage.
+ * Those derive from a **salted** message instead: 32 public bytes minted per
+ * artifact and stored in the clear, which restore uniqueness without the key
+ * having to be unique. Only a signer that cannot sign deterministically at all
+ * still gets a random preimage, and `mustPersistPreimage` tells the caller it
+ * is then the artifact's only claim secret.
+ *
+ * Uniqueness therefore never rests on a claim about the descriptor. The shape
+ * test picks the arm; it is not load-bearing for collision safety, so a custom
+ * `DescriptorProvider` handing back one constant descriptor forever still gets
+ * a distinct preimage per artifact.
  */
 import { sha256 } from "@noble/hashes/sha2.js";
 import { randomBytes } from "@noble/hashes/utils.js";
@@ -46,6 +54,20 @@ import type { IWallet } from ".";
 export const ARKADE_SWAP_PREIMAGE_TAG = "Arkade-RFQ-Preimage-v1";
 
 /**
+ * Domain separator for the **salted** preimage derivation, used when the
+ * descriptor repeats across artifacts.
+ *
+ * Corridor-generic where {@link ARKADE_SWAP_PREIMAGE_TAG} is not, and that
+ * asymmetry is deliberate. The v1 tags must be per-corridor
+ * (`Arkade-RFQ-Preimage-v1` here, NArk's `Arkade-Boltz-Preimage-v1` there)
+ * because v1 pins its message index, so the tag is the only thing separating
+ * two corridors that reach the same key. v2 mints a salt per artifact, so no
+ * two artifacts share a message within a corridor, let alone across two — the
+ * salt carries the separation, and the tag names the layer it belongs to.
+ */
+export const ARKADE_SALTED_PREIMAGE_TAG = "Arkade-Contract-Preimage-Salted-v1";
+
+/**
  * `TAG ‖ xonly(32) ‖ u32le(index)` — the message that gets BIP-340 signed.
  *
  * Anchored on the canonical x-only key rather than the descriptor string: a
@@ -68,9 +90,32 @@ export function buildPreimageMessage(xonly: Uint8Array, index: number): Uint8Arr
 }
 
 /**
- * Deriving is only safe when the key belongs to one artifact, so the message
- * index stays pinned. Kept a parameter of {@link buildPreimageMessage} for
- * cross-SDK vectors.
+ * `TAG ‖ xonly(32) ‖ salt(32)` — the salted message that gets BIP-340 signed.
+ *
+ * The salt replaces v1's pinned index as the source of per-artifact
+ * uniqueness, which is what lets a key that repeats across artifacts still
+ * derive a distinct preimage for each. It is public: knowing it yields nothing
+ * without the seed.
+ */
+export function buildSaltedPreimageMessage(xonly: Uint8Array, salt: Uint8Array): Uint8Array {
+    if (xonly.length !== 32) {
+        throw new Error(`x-only pubkey must be 32 bytes, got ${xonly.length}`);
+    }
+    if (salt.length !== 32) {
+        throw new Error(`preimage salt must be 32 bytes, got ${salt.length}`);
+    }
+    const tag = new TextEncoder().encode(ARKADE_SALTED_PREIMAGE_TAG);
+    const message = new Uint8Array(tag.length + 32 + 32);
+    message.set(tag, 0);
+    message.set(xonly, tag.length);
+    message.set(salt, tag.length + 32);
+    return message;
+}
+
+/**
+ * Deriving unsalted is only safe when the key belongs to one artifact, so the
+ * message index stays pinned. Kept a parameter of
+ * {@link buildPreimageMessage} for cross-SDK vectors.
  */
 const PREIMAGE_INDEX = 0;
 
@@ -100,10 +145,21 @@ export interface ProvisionedClaimSecret extends ProvisionedKey {
     /** `sha256(preimage)` — what the contract commits to. */
     paymentHash: Uint8Array;
     /**
+     * The salt {@link preimage} was derived from, when it came from the salted
+     * arm. **Public** — the opposite of {@link preimage} above: persist it with
+     * the artifact in the clear, because without it a wallet holding the seed
+     * still cannot re-derive P.
+     *
+     * Absent on the other two arms: an HD child descriptor already names one
+     * artifact, and a stored preimage needs no derivation input.
+     */
+    preimageSalt?: Uint8Array;
+    /**
      * Persist `preimage` with the artifact: this wallet cannot re-derive it.
-     * True when the caller supplied P, or when the descriptor is shared across
-     * artifacts. When false the preimage re-derives from the seed and nothing
-     * secret needs to be stored.
+     * True when the caller supplied P, or when the signer cannot sign
+     * deterministically. When false the preimage re-derives from the seed —
+     * given {@link preimageSalt}, where there is one — and nothing secret
+     * needs to be stored.
      */
     mustPersistPreimage: boolean;
 }
@@ -149,6 +205,19 @@ export async function provisionRefundKey(wallet: IWallet): Promise<ProvisionedKe
  * Pass `opts.preimage` to bring your own 32-byte P; it comes back verbatim
  * with `mustPersistPreimage` set, since the wallet cannot re-derive what it
  * did not choose.
+ *
+ * Three arms, and which one a wallet lands in is the whole of this function:
+ *
+ * 1. **Caller-supplied P.** Returned unchanged, `mustPersistPreimage: true`.
+ * 2. **Per-artifact descriptor** (an HD child). Derives from the key alone at
+ *    the pinned index. Nothing at rest. Raises rather than falling through if
+ *    the signer cannot sign deterministically — an HD descriptor whose wallet
+ *    refuses is a broken wallet, not a fallback case.
+ * 3. **Anything else** — a static wallet's `tr(pubkey)`, or a constant
+ *    descriptor from a custom provider. Mints a public per-artifact salt and
+ *    derives from it, so a key that repeats still yields a distinct P. Only
+ *    this arm falls back to a stored random preimage, and only when the signer
+ *    refuses — which is discovered by deriving, never by probing.
  */
 export async function provisionClaimSecret(
     wallet: IWallet,
@@ -160,15 +229,39 @@ export async function provisionClaimSecret(
         throw new Error(`preimage must be 32 bytes, got ${opts.preimage.length}`);
     }
     const { descriptor, pubkey } = await provisionRefundKey(wallet);
-    const derivable = !opts.preimage && isPerArtifactDescriptor(descriptor);
-    const preimage =
-        opts.preimage ?? (derivable ? await derivePreimage(wallet, descriptor) : randomBytes(32));
+    const claim = async (): Promise<
+        Pick<ProvisionedClaimSecret, "preimage" | "preimageSalt" | "mustPersistPreimage">
+    > => {
+        if (opts.preimage) return { preimage: opts.preimage, mustPersistPreimage: true };
+        if (isPerArtifactDescriptor(descriptor)) {
+            return {
+                preimage: await derivePreimage(wallet, descriptor),
+                mustPersistPreimage: false,
+            };
+        }
+        const preimageSalt = randomBytes(32);
+        try {
+            return {
+                preimage: await derivePreimage(wallet, descriptor, preimageSalt),
+                preimageSalt,
+                mustPersistPreimage: false,
+            };
+        } catch {
+            // The probe IS the use: DescriptorIdentity exposes the method and
+            // only refuses at call time, so asking first would answer for a
+            // different question than the one that matters. Discard the salt —
+            // a record carrying one it cannot derive from is worse than none.
+            return { preimage: randomBytes(32), mustPersistPreimage: true };
+        }
+    };
+    const { preimage, preimageSalt, mustPersistPreimage } = await claim();
     return {
         descriptor,
         pubkey,
         preimage,
         paymentHash: sha256(preimage),
-        mustPersistPreimage: !derivable,
+        ...(preimageSalt ? { preimageSalt } : {}),
+        mustPersistPreimage,
     };
 }
 
@@ -233,33 +326,38 @@ export class WalletCannotSignError extends Error {
 }
 
 /**
- * The preimage for a provisioned descriptor: `stored` when the artifact kept
- * one, otherwise re-derived from the seed.
+ * The preimage for a provisioned descriptor: `opts.stored` when the artifact
+ * kept one, otherwise re-derived from the seed.
  *
- * Throws for a descriptor shared across artifacts and no stored preimage —
- * deriving there would hand two artifacts one preimage, and the caller was
- * told to persist it (`mustPersistPreimage`).
+ * Resolves in one precedence order, mirroring the arms
+ * {@link provisionClaimSecret} chose between:
+ *
+ * 1. `opts.stored` — a caller-supplied P, or one from a wallet that could not
+ *    derive. Whatever the wallet can do now, a stored P is the artifact's.
+ * 2. a per-artifact descriptor — derive at the pinned index.
+ * 3. `opts.salt` — derive from the salted message.
+ * 4. otherwise throw: a repeating descriptor with neither a stored preimage
+ *    nor a salt has nothing to derive from that would not collide.
  */
 export async function contractPreimage(
     wallet: IWallet,
     descriptor: string,
-    stored?: Uint8Array,
+    opts: { stored?: Uint8Array; salt?: Uint8Array } = {},
 ): Promise<Uint8Array> {
-    if (stored) {
+    if (opts.stored) {
         // The check the deleted record decoder used to make. A truncated
         // column or a partial write would otherwise restore silently and be
         // diagnosed only at claim time, with the timeout margin already spent.
-        if (stored.length !== 32) {
-            throw new Error(`stored preimage must be 32 bytes, got ${stored.length}`);
+        if (opts.stored.length !== 32) {
+            throw new Error(`stored preimage must be 32 bytes, got ${opts.stored.length}`);
         }
-        return stored;
+        return opts.stored;
     }
-    if (!isPerArtifactDescriptor(descriptor)) {
-        throw new Error(
-            `descriptor ${descriptor} names no single artifact, so its preimage cannot be derived; none was stored`,
-        );
-    }
-    return derivePreimage(wallet, descriptor);
+    if (isPerArtifactDescriptor(descriptor)) return derivePreimage(wallet, descriptor);
+    if (opts.salt) return derivePreimage(wallet, descriptor, opts.salt);
+    throw new Error(
+        `descriptor ${descriptor} names no single artifact, so its preimage cannot be derived; no salt and no stored preimage were given`,
+    );
 }
 
 /** An identity that signs with `aux_rand = 0`, which is what makes the
@@ -278,11 +376,16 @@ export function isDeterministicSigner(value: unknown): value is DeterministicSig
 }
 
 /**
- * `sha256(sign_det(sha256(TAG ‖ xonly ‖ index)))`, where the signing key and
- * the message key are the same identity — passing a key in separately is how
- * this silently derives an unrecoverable preimage.
+ * `sha256(sign_det(sha256(TAG ‖ xonly ‖ index)))`, or its salted variant when
+ * `salt` is given — where the signing key and the message key are the same
+ * identity. Passing a key in separately is how this silently derives an
+ * unrecoverable preimage.
  */
-async function derivePreimage(wallet: IWallet, descriptor: string): Promise<Uint8Array> {
+async function derivePreimage(
+    wallet: IWallet,
+    descriptor: string,
+    salt?: Uint8Array,
+): Promise<Uint8Array> {
     const signer = await contractSigner(wallet, descriptor);
     if (!isDeterministicSigner(signer)) {
         // Loud: a preimage from a random-aux signature is unrecoverable, and
@@ -291,7 +394,10 @@ async function derivePreimage(wallet: IWallet, descriptor: string): Promise<Uint
             `wallet cannot sign deterministically for ${descriptor}; its preimage is not derivable`,
         );
     }
-    const message = buildPreimageMessage(await signer.xOnlyPublicKey(), PREIMAGE_INDEX);
+    const xonly = await signer.xOnlyPublicKey();
+    const message = salt
+        ? buildSaltedPreimageMessage(xonly, salt)
+        : buildPreimageMessage(xonly, PREIMAGE_INDEX);
     try {
         return sha256(await signer.signSchnorrDeterministic(sha256(message)));
     } catch (cause) {

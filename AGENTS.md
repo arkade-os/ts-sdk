@@ -71,10 +71,15 @@ keys and never branch on wallet *type* — they ask the wallet and use what come
   wallet is HD, or calls `randomSecretKey()` for a signing/refund/claim key, is a defect: the
   wallet's identity key is the fallback, never a minted one.
 - Per-artifact secrets (swap preimages) key off the **descriptor's shape**, not the wallet's type:
-  an HD child descriptor is unique per artifact and can derive secrets deterministically; a bare
-  `tr(pubkey)` repeats across artifacts, so derived-from-key secrets would collide and must be
-  stored per artifact instead (see `packages/ts-sdk/src/wallet/contractSecrets.ts` and
-  `swapSecretsToRecord` in `packages/swap/src/store.ts`).
+  an HD child descriptor is unique per artifact and derives secrets from the key alone; a bare
+  `tr(pubkey)` repeats across artifacts, so that derivation would collide and the uniqueness comes
+  from a public per-artifact **salt** stored with the artifact instead. Only a signer that cannot
+  sign deterministically at all falls back to a stored secret. See
+  `packages/ts-sdk/src/wallet/contractSecrets.ts`.
+- The ban is on **key material and on anything that signs** — not on public per-artifact values. A
+  package may mint and store public material such as a derivation salt: it is an input the wallet
+  needs back, not a capability, and knowing it grants nothing without the seed. Apply the same test
+  to anything new: could a reader of the repository spend with it?
 
 ## Local Scratch Files
 

@@ -38,9 +38,11 @@ import {
     resolveDescriptorSigner,
 } from "./wallet/hdWalletCapable";
 import {
+    ARKADE_SALTED_PREIMAGE_TAG,
     ARKADE_SWAP_PREIMAGE_TAG,
     adoptContractDescriptor,
     buildPreimageMessage,
+    buildSaltedPreimageMessage,
     contractPreimage,
     contractSigner,
     isDeterministicSigner,
@@ -539,9 +541,11 @@ export {
     isHDAllocationCapable,
     ForeignDescriptorError,
     resolveDescriptorSigner,
+    ARKADE_SALTED_PREIMAGE_TAG,
     ARKADE_SWAP_PREIMAGE_TAG,
     adoptContractDescriptor,
     buildPreimageMessage,
+    buildSaltedPreimageMessage,
     contractPreimage,
     contractSigner,
     isDeterministicSigner,

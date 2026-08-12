@@ -30,12 +30,13 @@ export const marketsCacheKey = (network: string, registry: string) =>
  * subset queries.
  */
 export interface AssetSwapRepository extends AsyncDisposable {
-    readonly version: 1;
+    readonly version: 2;
 
     /** Insert or replace a swap by id. Store the record whole: `preimageHex`
-     * is secret-bearing — the only claim secret of a swap whose descriptor is
-     * not per-swap — and a field-mapped backend that drops it leaves the swap
-     * unclaimable. */
+     * and `preimageSaltHex` both leave the swap unclaimable if a field-mapped
+     * backend drops them — the first is the only claim secret of a swap whose
+     * signer cannot derive, the second the public input every other static
+     * wallet's preimage derives from. */
     saveSwap(swap: AssetSwap): Promise<void>;
     /** All stored swaps, in no particular order — `getAssetSwaps` is the
      * canonical newest-first read. */
@@ -53,7 +54,7 @@ export interface AssetSwapRepository extends AsyncDisposable {
 }
 
 export class InMemoryAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 1 as const;
+    readonly version = 2 as const;
     private readonly swaps = new Map<string, AssetSwap>();
     private readonly scanned = new Set<string>();
     private readonly markets = new Map<string, MarketsCacheEntry>();
