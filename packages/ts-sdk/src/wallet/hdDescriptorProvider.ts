@@ -36,6 +36,12 @@ interface HDWalletSettings {
 const HD_SETTINGS_KEY = "hd";
 
 /**
+ * First hardened BIP32 index (2^31). Non-hardened child indices — the only
+ * kind an xpub-based account template can derive — must stay below it.
+ */
+const HARDENED_INDEX_OFFSET = 0x80000000;
+
+/**
  * HD-wallet {@link DescriptorProvider} that allocates a fresh signing
  * descriptor on every call. The provider holds no notion of "current" — it
  * is a pure rotating allocator. The question of "which descriptor is the
@@ -130,13 +136,16 @@ export class HDDescriptorProvider implements DescriptorProvider, ReceiveRotatorF
      * `getNextSigningDescriptor()` skips indices discovered by a restore
      * scan. Never rewinds: a lower or equal `index` is a no-op.
      *
-     * An invalid `index` (non-integer / negative) is ignored (no-op):
-     * persisting it would corrupt `lastIndexUsed` and make the next
-     * `parseSettings()` throw, mirroring the validation parseSettings
-     * already enforces.
+     * An invalid `index` (non-integer / negative / past the BIP32
+     * non-hardened ceiling) is ignored (no-op): persisting it would corrupt
+     * `lastIndexUsed` and make the next `parseSettings()` throw, mirroring
+     * the validation parseSettings already enforces. The upper bound matters
+     * because the damage outlives the call — `materializeDescriptorAt` cannot
+     * derive at or above 2^31, so a watermark parked there would fail every
+     * subsequent allocation for the life of the repo.
      */
     async advanceLastIndexUsed(index: number): Promise<void> {
-        if (!Number.isInteger(index) || index < 0) return;
+        if (!Number.isInteger(index) || index < 0 || index >= HARDENED_INDEX_OFFSET) return;
         await this.mutate((settings) => {
             if (settings.lastIndexUsed === undefined || index > settings.lastIndexUsed) {
                 settings.lastIndexUsed = index;

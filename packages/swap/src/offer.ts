@@ -28,16 +28,20 @@ import {
     ArkAddress,
     RestArkProvider,
     RestIndexerProvider,
-    RestEmulatorProvider,
     arkade,
     asset,
     getNetwork,
+    resolveEmulatorPubkey,
+    toXOnlySignerHex,
     type IWallet,
     type NetworkName,
 } from "@arkade-os/sdk";
 
 import wantAssetProgram from "./swap-want-asset.program.json";
 import wantBtcProgram from "./swap-want-btc.program.json";
+import { promoteOfferContract, retireOfferContract } from "./coverage";
+import type { AssetSwapRepository } from "./repository";
+import { getAssetSwapsOrThrow, updateAssetSwap, updateAssetSwapBestEffort } from "./store";
 
 // json imports widen "type": "pubkey" to string; parseArtifact validates at runtime
 type Artifact = Parameters<typeof arkade.parseArtifact>[0];
@@ -79,8 +83,7 @@ export interface Offer {
  * change here changes the derived swap addresses — see the golden test). */
 function swapProgramBinding(offer: Omit<Offer, "swapPkScript">, serverPubkey: Uint8Array) {
     // a wrong-width script would bind a truncated makerWP into the covenant and
-    // only surface as an unspendable address once the user funds it — the same
-    // failure the xOnly guard below rejects for keys
+    // only surface as an unspendable address once the user funds it
     if (offer.makerPkScript.length !== FIELDS.makerPkScript.width) {
         throw new Error("makerPkScript is not a 34-byte taproot scriptPubKey");
     }
@@ -145,21 +148,6 @@ const NAMES = Object.fromEntries(Object.entries(FIELDS).map(([k, f]) => [f.tag, 
     number,
     FieldName
 >;
-
-/** Drop the prefix of a 33-byte compressed key; pass an x-only key through.
- * A malformed key would otherwise bind silently into the covenant and only
- * surface as an unspendable address once the user funds it. */
-const XONLY_LEN = 32;
-const xOnly = (key: Uint8Array, label: string): Uint8Array => {
-    // deliberately not FIELDS.makerPublicKey.width: this also normalizes the ark
-    // and emulator signer keys, which have no TLV record of their own — the two
-    // lengths agree by spec, not because one derives from the other
-    if (key.length === XONLY_LEN) return key;
-    if (key.length !== 33 || (key[0] !== 0x02 && key[0] !== 0x03)) {
-        throw new Error(`${label} is not a compressed or x-only public key`);
-    }
-    return key.slice(1);
-};
 
 function tlv(type: number, value: Uint8Array): Uint8Array {
     // the length prefix is u16 — reject rather than emit a truncated length
@@ -260,27 +248,109 @@ export function decodeOffer(data: Uint8Array): Offer {
     };
 }
 
-// ── Maker operations ─────────────────────────────────────────────────────────
+// ── Contract registration ────────────────────────────────────────────────────
+
+/** Label for a registered offer covenant. A script-level string, deliberately
+ * not the swap id: identical offers share one address and `createContract` is
+ * first-writer-wins, so the second deposit would inherit the first's label. */
+export const OFFER_CONTRACT_LABEL = "Arkade swap offer";
+
+/** `metadata.kind` for a registered offer covenant — what this script *is*,
+ * which is the only kind of fact a shared script row can carry truthfully.
+ * Per-offer identity (swap id, `offerHex`, `fundingTxid`) stays in `AssetSwap`. */
+export const OFFER_CONTRACT_KIND = "asset-swap-offer";
+
+/**
+ * Register an offer's covenant as an `"arkade"` contract, so the deposit is
+ * watched, survives restarts and re-derives offline — and, critically, so the
+ * wallet knows the funds are escrowed.
+ *
+ * `metadata.genericallySpendable: false` is what keeps the deposit out of
+ * generic coin selection. The covenant's `cancel` leaf is an untimelocked
+ * 2-of-2 of user and server, so an offer VTXO is *always* cryptographically
+ * spendable by the user's own wallet; nothing in the program artifact says
+ * "escrow". Without the marker, `send`, `settle` or — with no user action at
+ * all — background renewal would forfeit a live offer into an ordinary payment
+ * and silently destroy it. The SDK's gate defaults closed, so the value is
+ * redundant; it is written anyway because this is the one site that knows why.
+ *
+ * **The watch state is set unconditionally, not only on a fresh row.** Identical
+ * offers share one script, and `createContract` is first-writer-wins, so
+ * re-offering a script that a settlement retired would leave the row `retained`
+ * — funded, but out of the subscription, the poll and every sync. The invariant
+ * this states is the one the corridor needs: an offer address handed to a user
+ * is a watched address, and {@link promoteOfferContract} is what keeps a
+ * settlement racing this call from taking it back.
+ */
+async function registerOfferContract(
+    wallet: IWallet,
+    arkServerUrl: string,
+    network: NetworkName,
+    binding: Omit<Offer, "swapPkScript">,
+    serverPubkey: Uint8Array,
+    expectedPkScript: Uint8Array,
+): Promise<void> {
+    const { program, args, keys } = swapProgramBinding(binding, serverPubkey);
+    const contractManager = await wallet.getContractManager();
+    const client = await arkade.Arkade.connect({
+        arkade: new RestArkProvider(arkServerUrl),
+        indexer: new RestIndexerProvider(arkServerUrl),
+        identity: wallet.identity,
+        // without this the row's `address` would be derived against the SDK's
+        // default network while its script is right — a row that disagrees with
+        // the address the user is about to fund
+        network: getNetwork(network),
+        contractManager,
+    });
+    const contract = new arkade.ArkadeContract(client, program, args, keys);
+    // the row is keyed by script: registering anything but the script being
+    // funded would leave the real deposit unwatched and unmarked, which is the
+    // failure this whole registration exists to prevent
+    if (hex.encode(contract.pkScript) !== hex.encode(expectedPkScript)) {
+        throw new Error("derived covenant does not match the offer's swapPkScript");
+    }
+    await contract.register({
+        label: OFFER_CONTRACT_LABEL,
+        metadata: { genericallySpendable: false, kind: OFFER_CONTRACT_KIND },
+    });
+    await promoteOfferContract(contractManager, hex.encode(expectedPkScript));
+}
+
+// ── User operations ─────────────────────────────────────────────────────────
 
 /**
  * Build a new offer for `wallet` (the user). Fund `address` with the side
  * you deposit, embedding the returned extension, and the solver does the rest:
  *
  *   // BTC -> asset
- *   const o = await createOffer(wallet, ARK, EMU, { wantAmount: 1000n, wantAsset })
+ *   const o = await createOffer(wallet, ARK, { wantAmount: 1000n, wantAsset })
  *   await wallet.send({ address: o.address, amount: 1000, extensions: [o.extension] })
  *
  *   // asset -> BTC (the sats are the VTXO carrier for the asset)
- *   const o = await createOffer(wallet, ARK, EMU, { wantAmount: 1000n, offerAsset })
+ *   const o = await createOffer(wallet, ARK, { wantAmount: 1000n, offerAsset })
  *   await wallet.send({ address: o.address, amount: 500,
  *                       assets: [{ assetId, amount: 1000n }],
  *                       extensions: [o.extension] })
+ *
+ * Broadcasts nothing, but does write locally: the covenant is registered with
+ * the wallet's contract manager before the address is returned, so the deposit
+ * is watched from the moment it lands and is marked as escrow (see
+ * {@link registerOfferContract}). Registration deliberately happens *before*
+ * funding rather than after: nothing is at stake yet, so a failure can throw
+ * and be retried, where the same failure after `wallet.send` would leave a
+ * funded deposit unwatched with no way to notice.
  */
 export async function createOffer(
     wallet: IWallet,
     arkServerUrl: string,
-    emulatorUrl: string,
-    params: { wantAmount: bigint; wantAsset?: asset.AssetId; offerAsset?: asset.AssetId },
+    params: {
+        wantAmount: bigint;
+        wantAsset?: asset.AssetId;
+        offerAsset?: asset.AssetId;
+        /** Co-signer key override (33-byte compressed hex); see
+         * {@link resolveEmulatorPubkey}. */
+        emulatorPubkey?: string;
+    },
 ): Promise<{
     /** The encoded offer, hex. **Persist this** — it is the only input
      * `cancelOffer` needs to rebuild the covenant, and the restore scan reads
@@ -300,16 +370,16 @@ export async function createOffer(
     if (Boolean(params.wantAsset) === Boolean(params.offerAsset)) {
         throw new Error("set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC)");
     }
-    const [info, emulatorInfo, makerAddress, makerPublicKey] = await Promise.all([
+    const [info, makerAddress, makerPublicKey] = await Promise.all([
         new RestArkProvider(arkServerUrl).getInfo(),
-        new RestEmulatorProvider(emulatorUrl).getInfo(),
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
-    // both keys arrive compressed (33B) today; drop the prefix by length so an
-    // already-x-only key is passed through rather than shortened to 31 bytes
-    const serverPubKey = xOnly(hex.decode(info.signerPubkey), "ark signer key");
-    const emuKey = xOnly(hex.decode(emulatorInfo.signerPubkey), "emulator signer key");
+    const serverPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
+    const network = getNetwork(info.network as NetworkName);
+    const emuKey = hex.decode(
+        toXOnlySignerHex(resolveEmulatorPubkey(network, params.emulatorPubkey)),
+    );
 
     // the script derives from every field but the script itself, so build the
     // binding first and complete the offer with it — an Offer value never
@@ -325,13 +395,22 @@ export async function createOffer(
     const script = offerVtxoScript(binding, serverPubKey);
     const offer: Offer = { ...binding, swapPkScript: script.pkScript };
 
+    await registerOfferContract(
+        wallet,
+        arkServerUrl,
+        info.network as NetworkName,
+        binding,
+        serverPubKey,
+        script.pkScript,
+    );
+
     const payload = encodeOffer(offer);
     return {
         offerHex: hex.encode(payload),
         extension: { type: OFFER_PACKET_TYPE, payload },
         // VtxoScript.address owns address construction; assembling an ArkAddress
         // from tweakedPublicKey here would silently miss any future step it gains
-        address: script.address(getNetwork(info.network as NetworkName).hrp, serverPubKey).encode(),
+        address: script.address(network.hrp, serverPubKey).encode(),
         swapPkScript: script.pkScript,
     };
 }
@@ -357,7 +436,12 @@ export async function createOffer(
  * is filling in the same moment may be spent by `fulfill` first, in which case
  * this throws "no spendable VTXO at the swap address" — which means the swap
  * completed, not that anything failed. `restoreAssetSwaps` classifies the two
- * spends apart afterwards (see `isCancelSpend`).
+ * spends apart afterwards by the leaf each took (see `classifySpend`).
+ *
+ * Marking the deposit as escrow (see {@link registerOfferContract}) does not
+ * close this path: the gate's subject is *implicit* coin selection, and cancel
+ * names its input outpoint explicitly. The user keeps the only spend route
+ * that was ever theirs to take.
  *
  * Identical offers derive the same address, so `fundingTxid` selects the exact
  * deposit; without it the address must hold exactly one spendable VTXO — with
@@ -366,20 +450,50 @@ export async function createOffer(
  * built with, so cancel keeps working across a server signer rotation; without
  * it a rotated key is detected and reported rather than reading as a missing
  * VTXO.
+ *
+ * **When the matching swap record is present, this records its own outcome,
+ * and that is what makes the live watcher cheap.** `cancel` is a 2-of-2 of
+ * user and server, so a cancel can only be the user's own act: on a
+ * successful submit this *is* the authoritative answer, and writing it here
+ * means `watchOfferSwaps` has nothing left to decide for our own cancels — it
+ * sees a terminal record and leaves it alone. The status moves to `cancelling`
+ * first so a crash between submit and record leaves a marker rather than a
+ * swap that still looks pending.
+ *
+ * Passing a repository that does not contain the swap record is allowed: the
+ * cancel still submits and returns its txid, but no local status is written,
+ * so the watcher or restore scan must classify the spend later.
+ *
+ * When a local record exists, the txid is only knowable after `send()`
+ * returns, so a spend event that arrives in that window finds a `cancelling`
+ * record and classifies the spend by its covenant leaf instead — the same
+ * answer, one indexer read more.
  */
 export async function cancelOffer(
     wallet: IWallet,
     arkServerUrl: string,
     offerHex: string,
-    fundingTxid?: string,
-    swapAddress?: string,
+    opts: {
+        repository: AssetSwapRepository;
+        fundingTxid?: string;
+        swapAddress?: string;
+    },
 ): Promise<string> {
+    const { repository, fundingTxid, swapAddress } = opts;
     const offer = decodeOffer(hex.decode(offerHex));
 
+    const contractManager = await wallet.getContractManager();
     const client = await arkade.Arkade.connect({
         arkade: new RestArkProvider(arkServerUrl),
         indexer: new RestIndexerProvider(arkServerUrl),
         identity: wallet.identity,
+        // registered offers resolve their VTXOs from the contract repository
+        // instead of a direct indexer query; the indexer above stays as the
+        // fallback for offers created before registration existed
+        contractManager,
+        // no `network`, unlike registerOfferContract: the row lookup is by
+        // script and the payout script comes from wallet.getAddress(), so the
+        // client's network (which only shapes address derivation) is unused here
     });
 
     // Rebuild the contract with the offer's own keys (not the client's) so the
@@ -424,6 +538,35 @@ export async function cancelOffer(
             outputs: [{ vout: 0, amount: BigInt(a.amount) }],
         });
     }
+    const swapId = fundingTxid ?? vtxo.txid;
+    // Strict read: a failed one must not read as "no local record here" and
+    // send us past the marker into the broadcast.
+    const hasLocalRecord = (await getAssetSwapsOrThrow(repository)).some((s) => s.id === swapId);
+    // The in-flight marker is useful only when there is a local record to
+    // update; a different or empty repository intentionally leaves the cancel
+    // for event/restore classification. It gates the broadcast, so it throws:
+    // the marker is what keeps a crash here from leaving a swap that still
+    // looks pending.
+    if (hasLocalRecord) await updateAssetSwap(repository, swapId, { status: "cancelling" });
     const { txid } = await cancel.send();
+    if (hasLocalRecord) {
+        // Past the point of no return: the cancel is broadcast, so a lost write
+        // must not fail the caller. The watcher classifies by covenant leaf and
+        // the restore scan re-derives the outcome.
+        const { persisted, swaps } = await updateAssetSwapBestEffort(repository, swapId, {
+            status: "cancelled",
+            spentTxid: txid,
+        });
+        // Retiring belongs here for the same reason the status does: recording
+        // its own outcome is what leaves the watcher nothing to do, and a
+        // watcher that sees a terminal record returns before it would retire
+        // (`spendUpdate`). Nothing else would ever drop this script.
+        //
+        // Only on a persisted write, as the watcher does: a record that still
+        // reads `pending` to the next restore scan must stay watched.
+        if (persisted) {
+            await retireOfferContract(contractManager, swaps, hex.encode(offer.swapPkScript));
+        }
+    }
     return txid;
 }

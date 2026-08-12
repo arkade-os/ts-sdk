@@ -179,6 +179,7 @@ function createMigrationMockWallet(opts: MigrationMockOptions) {
         getAddress: vi.fn().mockResolvedValue(opts.address ?? ARK_ADDRESS),
         getDelegateManager: vi.fn().mockResolvedValue(undefined),
         getVtxos: vi.fn().mockResolvedValue([]),
+        getSpendableVtxos: vi.fn().mockResolvedValue([]),
         settle,
         sendSelectedVtxosToSelf,
         dustAmount: 1000n,
@@ -823,6 +824,7 @@ function createPollableWallet() {
         refreshDeprecatedSigners: vi.fn(),
         rotateServerSigner: vi.fn().mockResolvedValue(undefined),
         getVtxos: vi.fn().mockResolvedValue([]),
+        getSpendableVtxos: vi.fn().mockResolvedValue([]),
         getAddress: vi.fn().mockResolvedValue(ARK_ADDRESS),
         getDelegateManager: vi.fn().mockResolvedValue(undefined),
         getContractManager: vi.fn().mockResolvedValue({
@@ -946,6 +948,7 @@ function createRecoveryMockWallet(opts: RecoveryMockOptions) {
         refreshDeprecatedSigners: vi.fn(),
         rotateServerSigner,
         getVtxos,
+        getSpendableVtxos: getVtxos,
         getAddress,
         getDelegateManager: vi.fn().mockResolvedValue(undefined),
         getContractManager: vi.fn().mockResolvedValue({

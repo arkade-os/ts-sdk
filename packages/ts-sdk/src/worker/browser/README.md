@@ -35,7 +35,12 @@ scheduler.
    (calls `clients.claim()`).
 3. The client sends an `INITIALIZE_MESSAGE_BUS` message with wallet and Ark
    server configuration. The `MessageBus` builds services (wallet, provider)
-   and calls `start()` on each handler, then begins the tick loop.
+   and calls `start()` on each handler, then begins the tick loop. The wallet
+   is built with the repositories the bus was constructed with — the optional
+   `intentRepository` included, without which intent persistence,
+   reconciliation and intent-lock exclusion are no-ops in the worker exactly as
+   they are on the main thread. A custom `buildServices` owns `storage`
+   outright and must wire the repository itself.
 4. Subsequent client messages are routed by `tag` (the handler's `messageTag`)
    or broadcast to all handlers.
 5. Handlers can respond immediately (via `handleMessage`) or later (via `tick`).

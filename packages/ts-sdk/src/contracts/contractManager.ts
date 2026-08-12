@@ -8,6 +8,7 @@ import {
     ContractEvent,
     ContractEventCallback,
     ContractState,
+    ContractWatchState,
     ContractHandler,
     ContractWithVtxos,
     Discoverable,
@@ -19,6 +20,7 @@ import {
     ExtendedContractVtxo,
     hasCandidates,
     isDiscoverable,
+    watchStateOf,
 } from "./types";
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
@@ -27,10 +29,16 @@ import { ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
 import {
     getAllNormalizedVtxos,
     getNormalizedVtxos,
+    isVirtualCoin,
     normalizeVtxo,
     type NormalizedExtendedVirtualCoin,
 } from "../wallet/vtxo";
-import { extendVirtualCoinForContract, type ContractTapscriptCache } from "../wallet/utils";
+import {
+    deriveContractTapscripts,
+    extendVirtualCoinForContract,
+    type ContractTapscriptCache,
+} from "../wallet/utils";
+import { UnannotatableInputError } from "./spendability";
 import { ContractFilter, ContractRepository, IntentRepository } from "../repositories";
 import { reconcileIntents } from "../wallet/intentReconciliation";
 import {
@@ -84,6 +92,45 @@ function toWatchOnlyContract(params: CreateContractParams): Contract {
 }
 
 /**
+ * Which of `vtxos`' contracts this runtime can annotate, with the tapscripts
+ * built along the way and a reason for each that it cannot.
+ *
+ * Two ways a persisted row stops being annotatable, both surviving restarts:
+ * its handler is not registered here (a plugin type in a build that no longer
+ * loads the plugin), or its handler rejects the stored params (a schema that
+ * gained a required field after the row was written). Either way
+ * {@link ContractManager.annotateVtxos} throws for it, and a bulk sync must
+ * drop just that contract's VTXOs rather than let one row fail the whole read —
+ * balance, history, coin selection and `initialize` all go through it.
+ *
+ * Only contracts present in this batch are examined, so nothing is built that
+ * annotation would not have built anyway, and the cache carries the work
+ * forward so it is built exactly once.
+ */
+function annotatableIn(
+    scriptToContract: ReadonlyMap<string, Contract>,
+    vtxos: readonly { script: string }[],
+): { scripts: Set<string>; cache: ContractTapscriptCache; failures: Map<string, string> } {
+    const scripts = new Set<string>();
+    const cache: ContractTapscriptCache = new Map();
+    const failures = new Map<string, string>();
+    for (const script of new Set(vtxos.map((vtxo) => vtxo.script))) {
+        const contract = scriptToContract.get(script);
+        if (!contract) continue; // not ours; dropped by the caller's filter
+        try {
+            cache.set(script, deriveContractTapscripts(contract));
+            scripts.add(script);
+        } catch (err) {
+            failures.set(
+                script,
+                `'${contract.type}' at ${script}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+        }
+    }
+    return { scripts, cache, failures };
+}
+
+/**
  * Hard upper bound on the HD index range probed by {@link scanContracts}.
  * Safety valve: a buggy or malicious `Discoverable` handler that returns a
  * hit at every index would otherwise keep the gap window open forever and
@@ -103,6 +150,39 @@ const SCAN_MAX_INDEX = 10_000;
  * (indices probed but discarded past the gap-close point) under one window.
  */
 const DEFAULT_SCAN_BATCH = 10;
+
+/**
+ * How long a chain tip read stays usable for {@link PathContext.blockHeight}.
+ *
+ * Sized well under a block interval so the cached height is at most one block
+ * behind, and short enough that a caller resolving paths across many contracts
+ * pays a single provider round trip. Staleness is one-directional here: a
+ * height below the true tip can only withhold a height-gated path that has
+ * just matured, never offer one that has not.
+ */
+const CHAIN_TIP_TTL_MS = 30_000;
+
+/**
+ * How long a chain tip read may take before a path query stops waiting on it.
+ *
+ * A path query answers from local state; the tip only enriches it. `fetch`
+ * carries no timeout of its own, and a connection that opens and then goes
+ * quiet neither resolves nor rejects — so without this one stalled read would
+ * hang every path query that joins it, for as long as the socket stays open.
+ * Expiry is treated as "tip unknown", the same as a read that fails.
+ */
+const CHAIN_TIP_TIMEOUT_MS = 5_000;
+
+/**
+ * An input for {@link IContractManager.assertSpendableNow}.
+ *
+ * The outpoint and script are what identify the owning contract. A full
+ * {@link VirtualCoin} is accepted and preferred: a relative (CSV) timelock is
+ * measured from this coin's own confirmation, so `status.block_height` /
+ * `status.block_time` are the only way to answer one. Pass the coin where you
+ * have it; the bare shape still answers every absolute (CLTV) question.
+ */
+export type AssertSpendableInput = { txid: string; vout: number; script: string };
 
 export type RefreshVtxosOptions = {
     /**
@@ -274,7 +354,49 @@ export interface IContractManager extends Disposable {
      * in wallet/handler code, and keeps the wallet from silently stamping the
      * default tapscript onto a non-default vtxo.
      */
-    annotateVtxos(vtxos: VirtualCoin[]): Promise<NormalizedExtendedVirtualCoin[]>;
+    annotateVtxos(
+        vtxos: VirtualCoin[],
+        tapscripts?: ContractTapscriptCache,
+    ): Promise<NormalizedExtendedVirtualCoin[]>;
+
+    /**
+     * Throw unless every one of `vtxos` still has an annotatable contract.
+     *
+     * Spending does not re-derive tapscripts — it uses the ones stored on the
+     * coin — so a contract that stopped being annotatable (handler no longer
+     * registered, or params its handler now rejects) still builds and submits a
+     * transaction fine, and only fails afterwards, in the bookkeeping that
+     * re-annotates the inputs. Calling this before submitting turns that into a
+     * refusal to spend, naming the contract, rather than a broadcast whose local
+     * state could not be recorded.
+     */
+    assertAnnotatable(
+        vtxos: readonly { txid: string; vout: number; script: string }[],
+    ): Promise<void>;
+
+    /**
+     * Throw when one of `vtxos` belongs to a contract that provably cannot be
+     * spent right now, asking each owning handler's
+     * {@link ContractHandler.assertSpendableNow}.
+     *
+     * The complement of {@link isContractGenericallySpendable}, which keeps
+     * escrow out of generic selection and leaves explicit-input APIs open on
+     * purpose. This does not close that door — it makes walking through it too
+     * early report itself locally, naming the timelock, instead of coming back
+     * as a protocol-level rejection after the round trip.
+     *
+     * Handlers answer only where they are certain, so contracts with no opinion
+     * (which is all of them but VHTLC today) pass through untouched and cost
+     * nothing — not even a chain-tip read.
+     *
+     * Optional so that adding it is not a breaking change for an embedder with
+     * its own `IContractManager`. An implementation that omits it simply offers
+     * no opinion, which is the same answer every non-VHTLC contract gives.
+     */
+    assertSpendableNow?(
+        vtxos: readonly AssertSpendableInput[],
+        walletPubKey?: () => Promise<string | undefined>,
+    ): Promise<void>;
 
     /**
      * Update mutable contract fields.
@@ -288,14 +410,31 @@ export interface IContractManager extends Disposable {
 
     /**
      * Convenience helper to update only the contract state. Note
-     * `inactive` does not stop watching; see {@link ContractState} and
-     * {@link deleteContract}.
+     * `inactive` governs receive-address selection and does not stop
+     * watching; see {@link ContractState} and
+     * {@link setContractWatchState}.
      */
     setContractState(script: string, state: ContractState): Promise<void>;
 
     /**
-     * Delete a contract by script and stop watching it. This — not
-     * retiring via {@link setContractState} — is the stop-watching path.
+     * Convenience helper to update only the contract's watch state.
+     *
+     * `retained` is how an owner says "this script is done": it leaves
+     * the subscription and the sweep, while the row — and so history,
+     * annotation and restore — is untouched. `awaiting-funds` asks for
+     * coverage only until the script is funded, after which the manager
+     * demotes it to `retained` itself.
+     *
+     * @see ContractWatchState
+     */
+    setContractWatchState(script: string, watch: ContractWatchState): Promise<void>;
+
+    /**
+     * Delete a contract by script, dropping both the row and the watch.
+     * Destructive: the row is what keeps the contract's VTXOs
+     * annotatable and its transactions readable in history, so to stop
+     * watching a finished contract use
+     * {@link setContractWatchState}(`"retained"`) instead.
      */
     deleteContract(script: string): Promise<void>;
 
@@ -353,6 +492,19 @@ export interface IContractManager extends Disposable {
      * coalesce into a single drain.
      */
     refillLookAhead(): Promise<void>;
+
+    /**
+     * Allocate the next signing descriptor through the manager-owned HD
+     * watermark path. Returns `undefined` when look-ahead/allocation is not
+     * configured.
+     */
+    getNextSigningDescriptor(): Promise<string | undefined>;
+
+    /**
+     * Advance the HD signing descriptor watermark to `index` and refill the
+     * watched look-ahead band. No-op when look-ahead/allocation is not configured.
+     */
+    advanceSigningDescriptorWatermark(index: number): Promise<void>;
 
     /**
      * Explicit, gap-limit contract discovery used by `wallet.restore()`.
@@ -462,6 +614,31 @@ export interface ContractManagerConfig {
      * {@link ContractManager.refillLookAhead}.
      */
     lookAhead?: LookAheadConfig;
+
+    /**
+     * Current chain tip height, for the `blockHeight` a {@link PathContext}
+     * carries. Absent, or resolving `undefined`, leaves `blockHeight` unset.
+     *
+     * `isCltvSatisfied` answers `false` outright for a height-typed locktime
+     * when `blockHeight` is missing, so every such path was reported
+     * unspendable however mature it was. Nothing populated this before, which
+     * made that the only behaviour available. Seconds-typed locktimes read
+     * `currentTime` and are unaffected either way.
+     *
+     * Block-typed CSV is not fixed by this. `isCsvSpendable` also needs the
+     * VTXO's confirmation height, and `status.block_height` is never populated
+     * for a virtual coin, so it stays `false` regardless of the tip.
+     *
+     * Both fields matter. `height` answers height-typed timelocks; `time` (the
+     * tip's timestamp, in SECONDS) is what seconds-typed ones should be judged
+     * against, because the machine's clock is an estimate of chain time and a
+     * drifting one reads the boundary wrong.
+     *
+     * Resolve `undefined` rather than rejecting when the tip cannot be read:
+     * the callers treat it as "unknown", which is the pre-existing behaviour,
+     * and a path query is not worth failing over a provider hiccup.
+     */
+    chainTip?: () => Promise<{ height: number; time: number } | undefined>;
 }
 
 /**
@@ -474,6 +651,10 @@ export interface LookAheadConfig {
     size: number;
     /** Current allocation watermark (`lastIndexUsed ?? -1`). */
     currentWatermark(): Promise<number>;
+    /** Allocate the next signing descriptor, advancing the watermark. */
+    allocate?(): Promise<string | undefined>;
+    /** Advance the allocation watermark to a confirmed/restored index. */
+    advanceWatermark?(index: number): Promise<void>;
     /** Signing descriptor at an HD index. Pure derivation. */
     materialize(index: number): string;
     /**
@@ -482,7 +663,10 @@ export interface LookAheadConfig {
      * `rotateServerSigner` fans the new signer set.
      */
     candidateDeps(): CandidateDeps;
-    /** Fired after a speculative entry at `index` is promoted to a real row. */
+    /**
+     * Fired after a speculative entry at `index` is promoted to a real row.
+     * @deprecated Use `advanceWatermark`; kept for external LookAheadConfig users.
+     */
     onPromoted?(index: number): Promise<void>;
 }
 
@@ -566,12 +750,24 @@ export class ContractManager implements IContractManager {
     private syncDegradedReason?: string;
     /** Epoch-ms of the last successful provider sync, if any. */
     private lastSyncedAt?: number;
+    /** Last chain tip read, with the epoch-ms it was read at. @see currentChainTip */
+    private chainTipCache?: { height: number; time: number; at: number };
+    /** In-flight chain tip read, so concurrent cache misses share one. */
+    private chainTipInflight?: Promise<{ height: number; time: number } | undefined>;
     /** Speculative look-ahead scripts, keyed by script. @see LookAheadEntry */
     private lookAheadEntries: Map<string, LookAheadEntry> = new Map();
     /** In-flight look-ahead drain, if any. @see scheduleLookAheadDrain */
     private lookAheadDrain?: Promise<void>;
     /** A refill was requested while a drain was running. */
     private lookAheadDirty = false;
+    /** A fire-and-forget drain failed, so the band is behind the watermark and
+     * owes a retry. @see requestLookAheadDrain */
+    private lookAheadRefillOwed = false;
+    /** Set by {@link dispose}, cleared by a re-`initialize`. A drain is a
+     * fire-and-forget async loop that outlives the synchronous `dispose()`,
+     * so it re-checks this at every await boundary instead of running on
+     * against a torn-down watcher. */
+    private disposed = false;
 
     private constructor(config: ContractManagerConfig) {
         this.config = config;
@@ -616,8 +812,39 @@ export class ContractManager implements IContractManager {
     }
 
     private markSyncOnline(): void {
-        this.syncDegradedReason = undefined;
         this.lastSyncedAt = Date.now();
+        // An unannotatable contract outlives an otherwise-successful sync: the
+        // operator is reachable and every other contract is current, but this
+        // wallet still cannot read that one, and its VTXOs stopped being
+        // refreshed. Reporting it here is what keeps the skip from being
+        // silent — `getSyncState()` is the channel apps already watch.
+        this.syncDegradedReason = this.annotationDegradedReason();
+    }
+
+    /** Contracts a sync could not annotate, as `script → reason`. */
+    private annotationFailures = new Map<string, string>();
+
+    private annotationDegradedReason(): string | undefined {
+        if (this.annotationFailures.size === 0) return undefined;
+        return `cannot annotate ${this.annotationFailures.size} contract(s), their vtxos are not being synced — ${[...this.annotationFailures.values()].join("; ")}`;
+    }
+
+    /**
+     * Fold one batch's verdict in: what it annotated clears, what it could not
+     * sets. Merged rather than replaced because a batch can cover a subset of
+     * the wallet's contracts (a single-contract fetch, the pending-only
+     * reconcile), and those must not erase what a wider sync found. A row
+     * repaired by an upgrade clears itself on the next batch that includes it.
+     */
+    private recordAnnotationFailures(
+        annotated: ReadonlySet<string>,
+        failures: ReadonlyMap<string, string>,
+    ): void {
+        for (const script of annotated) this.annotationFailures.delete(script);
+        for (const [script, reason] of failures) {
+            this.annotationFailures.set(script, reason);
+            console.warn(`[contracts] cannot annotate contract ${reason}; skipping its vtxos`);
+        }
     }
 
     private markSyncDegraded(err: unknown): void {
@@ -628,6 +855,9 @@ export class ContractManager implements IContractManager {
         if (this.initialized) {
             return;
         }
+        // Re-arm after a dispose(): this instance is being brought back up, so
+        // the look-ahead is allowed to drain again.
+        this.disposed = false;
 
         // Register persisted contracts with the watcher BEFORE the first
         // sync. `addContract` seeds `lastKnownVtxos` from the repo without
@@ -711,6 +941,25 @@ export class ContractManager implements IContractManager {
         return this.scheduleLookAheadDrain();
     }
 
+    /** @see IContractManager.getNextSigningDescriptor */
+    async getNextSigningDescriptor(): Promise<string | undefined> {
+        const descriptor = await this.config.lookAhead?.allocate?.();
+        // The allocation is already committed (the watermark moved), so the
+        // band slide must not fail this call: a drain failure would surface an
+        // indexer error for a descriptor the caller can use — and a retry
+        // would burn another index. Fire-and-forget, like promotion does.
+        if (descriptor !== undefined) this.requestLookAheadDrain();
+        return descriptor;
+    }
+
+    /** @see IContractManager.advanceSigningDescriptorWatermark */
+    async advanceSigningDescriptorWatermark(index: number): Promise<void> {
+        await this.advanceLookAheadWatermark(index);
+        // Same rule as getNextSigningDescriptor: the watermark is committed,
+        // the band slide is best-effort.
+        this.requestLookAheadDrain();
+    }
+
     /**
      * Serialized drain of the look-ahead band: concurrent callers join the
      * active drain and mark it dirty, an idle call starts a new one. Promotion
@@ -719,7 +968,7 @@ export class ContractManager implements IContractManager {
      * recursing.
      */
     private scheduleLookAheadDrain(): Promise<void> {
-        if (!this.config.lookAhead) return Promise.resolve();
+        if (!this.config.lookAhead || this.disposed) return Promise.resolve();
         if (this.lookAheadDrain) {
             this.lookAheadDirty = true;
             return this.lookAheadDrain;
@@ -728,7 +977,8 @@ export class ContractManager implements IContractManager {
             do {
                 this.lookAheadDirty = false;
                 await this.ensureLookAhead();
-            } while (this.lookAheadDirty);
+            } while (this.lookAheadDirty && !this.disposed);
+            this.lookAheadRefillOwed = false;
         })().finally(() => {
             this.lookAheadDrain = undefined;
         });
@@ -738,15 +988,22 @@ export class ContractManager implements IContractManager {
 
     /**
      * Request a drain without awaiting it. Used from inside a sync (promotion),
-     * where awaiting the drain that the sync itself is part of would deadlock.
+     * and after an allocation the drain must not be able to fail — the
+     * watermark already moved, and a retry would burn another index.
+     *
+     * A failure here is not terminal: it leaves the watch band behind the
+     * watermark, so funded indices inside it would go unregistered and the
+     * balance would under-report for the rest of the session. Record the debt
+     * so the next contract event retries it. @see handleContractEvent
      */
     private requestLookAheadDrain(): void {
-        if (!this.config.lookAhead) return;
+        if (!this.config.lookAhead || this.disposed) return;
         if (this.lookAheadDrain) {
             this.lookAheadDirty = true;
             return;
         }
         void this.scheduleLookAheadDrain().catch((err) => {
+            this.lookAheadRefillOwed = true;
             console.error("ContractManager: look-ahead refill failed", err);
         });
     }
@@ -769,9 +1026,10 @@ export class ContractManager implements IContractManager {
      */
     private async ensureLookAhead(): Promise<void> {
         const lookAhead = this.config.lookAhead;
-        if (!lookAhead) return;
+        if (!lookAhead || this.disposed) return;
 
         const watermark = await lookAhead.currentWatermark();
+        if (this.disposed) return;
         // A fresh wallet (watermark -1) yields [0, size - 1].
         const from = Math.max(0, watermark - lookAhead.size);
         const to = watermark + lookAhead.size;
@@ -809,6 +1067,10 @@ export class ContractManager implements IContractManager {
             const persistedScripts = new Set(persisted.map((c) => c.script));
 
             for (const [script, { index, params }] of band) {
+                // Re-checked per entry: dispose() may land between two
+                // registrations, and everything below re-populates state it
+                // just tore down.
+                if (this.disposed) return;
                 // A persisted row is watched through the repository path; it is
                 // declassified rather than tracked as speculative.
                 if (persistedScripts.has(script)) {
@@ -856,6 +1118,9 @@ export class ContractManager implements IContractManager {
      * exist. Targeted + explicitly windowed, so the global cursor stays put.
      */
     private async runLookAheadCatchUp(): Promise<void> {
+        // `syncContracts` writes VTXO rows, so a disposed manager must not
+        // reach it — the repositories now belong to whatever replaced it.
+        if (this.disposed) return;
         const pending = [...this.lookAheadEntries.values()].filter((e) => e.catchUpPending);
         if (pending.length === 0) return;
         try {
@@ -872,6 +1137,13 @@ export class ContractManager implements IContractManager {
             if (!isRetryableProviderError(err)) throw err;
             this.markSyncDegraded(err);
         }
+    }
+
+    private async advanceLookAheadWatermark(index: number): Promise<void> {
+        const lookAhead = this.config.lookAhead;
+        if (!lookAhead) return;
+        const advance = lookAhead.advanceWatermark ?? lookAhead.onPromoted;
+        await advance?.(index);
     }
 
     /**
@@ -901,7 +1173,7 @@ export class ContractManager implements IContractManager {
         for (const [script, entry] of hits) {
             // `upsertContract` declassifies the entry (D10).
             promoted.set(script, await this.persistAndWatchContract(entry.params));
-            await this.config.lookAhead?.onPromoted?.(entry.index);
+            await this.advanceLookAheadWatermark(entry.index);
         }
         // The watermark moved (or a gap closed): slide the band, but not from
         // inside the sync this promotion belongs to.
@@ -1336,7 +1608,10 @@ export class ContractManager implements IContractManager {
         }));
     }
 
-    async annotateVtxos(vtxos: VirtualCoin[]): Promise<NormalizedExtendedVirtualCoin[]> {
+    async annotateVtxos(
+        vtxos: VirtualCoin[],
+        tapscripts?: ContractTapscriptCache,
+    ): Promise<NormalizedExtendedVirtualCoin[]> {
         if (vtxos.length === 0) return [];
 
         const scripts = Array.from(new Set(vtxos.map((v) => v.script)));
@@ -1353,7 +1628,9 @@ export class ContractManager implements IContractManager {
         // identical for every VTXO locked to the same contract. Memoize it per
         // contract to avoid rebuilding the taproot tree once per VTXO — the
         // dominant cost when annotating long spent/swept histories (see #521).
-        const tapscriptCache: ContractTapscriptCache = new Map();
+        // A caller that already built these (the sync, deciding what it could
+        // annotate at all) passes its cache so nothing is built twice.
+        const tapscriptCache: ContractTapscriptCache = tapscripts ?? new Map();
         // `vtxos` is caller-supplied, so normalize before annotating: the annotated coins flow on
         // into forfeit construction and repository writes.
         return vtxos.map((vtxo) =>
@@ -1361,11 +1638,109 @@ export class ContractManager implements IContractManager {
         );
     }
 
+    /** @inheritdoc */
+    async assertAnnotatable(
+        vtxos: readonly { txid: string; vout: number; script: string }[],
+    ): Promise<void> {
+        if (vtxos.length === 0) return;
+        const contracts = await this.config.contractRepository.getContracts({
+            script: Array.from(new Set(vtxos.map((vtxo) => vtxo.script))),
+        });
+        const { scripts, failures } = annotatableIn(
+            new Map(contracts.map((contract) => [contract.script, contract])),
+            vtxos,
+        );
+        // A script with no contract row at all fails the same way, and with the
+        // same consequence, so it belongs in the same refusal.
+        const orphans = vtxos.filter(
+            (vtxo) => !scripts.has(vtxo.script) && !failures.has(vtxo.script),
+        );
+        for (const vtxo of orphans) {
+            failures.set(vtxo.script, `no contract registered for ${vtxo.script}`);
+        }
+        if (failures.size === 0) return;
+        const outpoints = vtxos
+            .filter((vtxo) => failures.has(vtxo.script))
+            .map((vtxo) => `${vtxo.txid}:${vtxo.vout}`);
+        throw new UnannotatableInputError(
+            `refusing to spend ${outpoints.length} vtxo(s) whose contract cannot be annotated ` +
+                `(${outpoints.join(", ")}): ${[...failures.values()].join("; ")}`,
+        );
+    }
+
+    /** @inheritdoc */
+    async assertSpendableNow(
+        vtxos: readonly AssertSpendableInput[],
+        walletPubKey?: () => Promise<string | undefined>,
+    ): Promise<void> {
+        if (vtxos.length === 0) return;
+        const contracts = await this.config.contractRepository.getContracts({
+            script: Array.from(new Set(vtxos.map((vtxo) => vtxo.script))),
+        });
+        const byScript = new Map(contracts.map((contract) => [contract.script, contract]));
+
+        // Only the inputs whose handler actually asks. Contracts with no
+        // opinion — every type but VHTLC today — must cost nothing: no
+        // chain-tip read, and no identity access either. `walletPubKey` is a
+        // thunk for exactly that reason; resolving it eagerly made an ordinary
+        // settle depend on a key it never consults.
+        const asking = vtxos.filter((vtxo) => {
+            const contract = byScript.get(vtxo.script);
+            return (
+                contract !== undefined &&
+                contractHandlers.get(contract.type)?.assertSpendableNow !== undefined
+            );
+        });
+        if (asking.length === 0) return;
+
+        const tip = await this.currentChainTip();
+        const walletKey = await walletPubKey?.();
+        // Per INPUT, not per contract. A relative (CSV) timelock is measured
+        // from the moment THIS coin confirmed, so two vtxos on one contract can
+        // disagree about whether the same leaf is open. A batch-wide context
+        // cannot express that, and a handler handed one would have to answer
+        // for the whole set or not at all.
+        for (const vtxo of asking) {
+            const contract = byScript.get(vtxo.script)!;
+            const handler = contractHandlers.get(contract.type);
+            // Filtered for above; narrowing for the type system.
+            if (!handler?.assertSpendableNow) continue;
+            const context: PathContext = {
+                collaborative: true,
+                currentTime: Date.now(),
+                blockHeight: tip?.height,
+                chainTime: tip?.time,
+                walletPubKey: walletKey,
+                // `isVirtualCoin` alone is too weak here: it only asks for a
+                // string `script`, which every AssertSpendableInput has, so a
+                // bare outpoint would be published as a coin with no `status`.
+                // `isCsvSpendable` reads `vtxo.status.block_time` unguarded, so
+                // the next handler to answer a CSV question would meet a
+                // TypeError instead of a `false`. Carry the coin only when it
+                // really is one.
+                vtxo: isVirtualCoin(vtxo) && "status" in vtxo ? vtxo : undefined,
+            };
+            // Awaited even though every shipped handler answers synchronously:
+            // the signature permits a promise, and an un-awaited one would drop
+            // its rejection on the floor — a refusal that never reaches the
+            // caller is worse than no guard, because it reads as approval.
+            await handler.assertSpendableNow(
+                handler.createScript(contract.params),
+                contract,
+                context,
+            );
+        }
+    }
+
+    // Field-by-field, so every filter a caller can express reaches the
+    // repository. A field missing here is not a narrower query — it is an
+    // unfiltered one.
     private buildContractsDbFilter(filter: GetContractsFilter): ContractFilter {
         return {
             script: filter.script,
             state: filter.state,
             type: filter.type,
+            watch: filter.watch,
         };
     }
 
@@ -1429,23 +1804,95 @@ export class ContractManager implements IContractManager {
 
     /**
      * Set a contract's state. Retiring (`inactive`) keeps it watched;
-     * see {@link ContractState}. To stop watching, use
-     * {@link deleteContract}.
+     * see {@link ContractState}. To stop watching while keeping the row,
+     * use {@link setContractWatchState}.
      */
     async setContractState(script: string, state: ContractState): Promise<void> {
         await this.updateContract(script, { state });
     }
 
+    /** @see IContractManager.setContractWatchState */
+    async setContractWatchState(script: string, watch: ContractWatchState): Promise<void> {
+        await this.updateContract(script, { watch });
+    }
+
     /**
-     * Delete a contract. Also removes it from the watcher — the only way
-     * to stop watching a contract (retiring it via
-     * {@link setContractState} does not).
+     * Delete a contract, dropping the row along with the watch. To stop
+     * watching a finished contract without losing its history, use
+     * {@link setContractWatchState}(`"retained"`).
      *
      * @param script - Contract script
      */
     async deleteContract(script: string): Promise<void> {
         await this.config.contractRepository.deleteContract(script);
         await this.watcher.removeContract(script);
+    }
+
+    /**
+     * Chain tip height for a {@link PathContext}, or `undefined` when there is
+     * no source configured or it cannot be read.
+     *
+     * Cached for {@link CHAIN_TIP_TTL_MS} so a caller resolving paths for many
+     * contracts does not pay a provider round trip each time. Blocks arrive
+     * ~10 minutes apart, so a cache this short can only ever be one block
+     * stale, and a stale-low height is the conservative direction: a path is
+     * reported unspendable slightly longer than it truly is, never spendable
+     * before it is.
+     */
+    private async currentChainTip(): Promise<{ height: number; time: number } | undefined> {
+        const source = this.config.chainTip;
+        if (!source) return undefined;
+        if (this.chainTipCache && Date.now() - this.chainTipCache.at < CHAIN_TIP_TTL_MS) {
+            return { height: this.chainTipCache.height, time: this.chainTipCache.time };
+        }
+        // Collapse concurrent misses onto one read. Without this, a pass that
+        // resolves paths for many contracts fires a provider request per
+        // contract on the tick the TTL lapses — every one of them racing to
+        // write the same tip.
+        if (!this.chainTipInflight) {
+            // Cleared from out here rather than a `finally` inside the read: a
+            // source that throws synchronously settles the read before the
+            // assignment below, and an inner `finally` would then clear the
+            // field before it was ever set — pinning it for good.
+            this.chainTipInflight = this.readChainTip(source).finally(() => {
+                this.chainTipInflight = undefined;
+            });
+        }
+        return this.chainTipInflight;
+    }
+
+    /**
+     * One chain tip read, bounded by {@link CHAIN_TIP_TIMEOUT_MS}. Never
+     * rejects: an unreadable tip is "unknown", which is what the callers did
+     * before a tip existed at all, and a path query is not worth failing over
+     * a provider hiccup.
+     */
+    private async readChainTip(
+        source: () => Promise<{ height: number; time: number } | undefined>,
+    ): Promise<{ height: number; time: number } | undefined> {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+            const tip = await Promise.race([
+                source(),
+                new Promise<undefined>((resolve) => {
+                    timer = setTimeout(() => resolve(undefined), CHAIN_TIP_TIMEOUT_MS);
+                }),
+            ]);
+            // Stamped after the await, not before, so the TTL measures from
+            // when the tip was actually true. A source answering `undefined` —
+            // or a read that timed out — is saying "no tip available", which
+            // is not worth remembering: leaving the cache alone lets the next
+            // call ask again rather than serving an absence for the rest of
+            // the TTL.
+            if (tip !== undefined) {
+                this.chainTipCache = { ...tip, at: Date.now() };
+            }
+            return tip;
+        } catch {
+            return undefined;
+        } finally {
+            clearTimeout(timer);
+        }
     }
 
     /**
@@ -1463,9 +1910,12 @@ export class ContractManager implements IContractManager {
         if (!handler) return [];
 
         const script = handler.createScript(contract.params);
+        const tip = await this.currentChainTip();
         const context: PathContext = {
             collaborative,
             currentTime: Date.now(),
+            blockHeight: tip?.height,
+            chainTime: tip?.time,
             walletPubKey,
             vtxo,
         };
@@ -1475,6 +1925,11 @@ export class ContractManager implements IContractManager {
 
     /**
      * Get every currently valid spending path for a contract.
+     *
+     * No `blockHeight`: this enumerates paths "regardless of current
+     * spendability", so no handler evaluates a timelock here and the tip would
+     * be fetched only to be discarded — leaving a purely local answer waiting
+     * on the network for nothing.
      *
      * @param options - Options for getting spending paths
      */
@@ -1622,6 +2077,10 @@ export class ContractManager implements IContractManager {
         // the startWatching callback's `.catch`, or diagnostics would keep
         // reporting online after a real degradation. Terminal failures still
         // propagate. The event is forwarded to subscribers either way.
+        // A drain that failed after an allocation left the band short; any
+        // event proves the transport is back, so pay the debt here rather than
+        // waiting for the next allocation or a restart.
+        if (this.lookAheadRefillOwed) this.requestLookAheadDrain();
         try {
             switch (event.type) {
                 // Delta-sync only the changed virtual outputs for this contract.
@@ -1728,7 +2187,40 @@ export class ContractManager implements IContractManager {
             await advanceSyncCursor(this.config.walletRepository, cutoff);
         }
 
+        await this.demoteFundedAwaitingContracts(contracts);
+
         return result;
+    }
+
+    /**
+     * Demote every `awaiting-funds` contract in `contracts` that has been
+     * funded — the automatic half of {@link ContractWatchState}.
+     *
+     * Runs after the sync has persisted, so the funding VTXO is saved
+     * while the contract is still watched, and reads the repository
+     * rather than this sync's delta: funds that landed while the app was
+     * closed are outside every later window, and a contract asked to
+     * watch until it is funded must still stop once it is.
+     *
+     * Best-effort. A demotion that fails costs coverage that is merely
+     * no longer needed, and must not fail the sync that carried it.
+     */
+    private async demoteFundedAwaitingContracts(contracts: Contract[]): Promise<void> {
+        const awaiting = contracts.filter((c) => watchStateOf(c) === "awaiting-funds");
+        if (awaiting.length === 0) return;
+
+        for (const contract of awaiting) {
+            try {
+                const vtxos = await getVtxosForContract(this.config.walletRepository, contract);
+                if (vtxos.length === 0) continue;
+                await this.setContractWatchState(contract.script, "retained");
+            } catch (err) {
+                console.warn(
+                    `[contracts] could not demote funded contract ${contract.script}`,
+                    err,
+                );
+            }
+        }
     }
 
     /**
@@ -1754,8 +2246,10 @@ export class ContractManager implements IContractManager {
 
         // Share the annotation path with external callers so the two entry
         // points can't drift.
-        const owned = vtxos.filter((v) => scriptToContract.has(v.script));
-        const annotated = await this.annotateVtxos(owned);
+        const { scripts: annotatable, cache, failures } = annotatableIn(scriptToContract, vtxos);
+        this.recordAnnotationFailures(annotatable, failures);
+        const owned = vtxos.filter((v) => annotatable.has(v.script));
+        const annotated = await this.annotateVtxos(owned, cache);
 
         const byContract = new Map<string, ExtendedContractVtxo[]>();
         // Resolved here rather than re-found in `contracts` below, so a
@@ -1897,8 +2391,10 @@ export class ContractManager implements IContractManager {
         // populated by the indexer, then share the annotation path with
         // external callers via annotateVtxos so the two entry points can't
         // drift.
-        const owned = vtxos.filter((v) => scriptToContract.has(v.script));
-        const annotated = await this.annotateVtxos(owned);
+        const { scripts: annotatable, cache, failures } = annotatableIn(scriptToContract, vtxos);
+        this.recordAnnotationFailures(annotatable, failures);
+        const owned = vtxos.filter((v) => annotatable.has(v.script));
+        const annotated = await this.annotateVtxos(owned, cache);
         for (const vtxo of annotated) {
             result.get(vtxo.script)!.push({
                 ...vtxo,
@@ -1918,6 +2414,14 @@ export class ContractManager implements IContractManager {
      * Implements the disposable pattern for cleanup.
      */
     dispose(): void {
+        // Close the look-ahead first, before the watcher goes away. A drain
+        // started by getNextSigningDescriptor / advanceSigningDescriptorWatermark
+        // is fire-and-forget, so one can still be parked on an await here; the
+        // flag is what stops it from calling addContract or persisting
+        // catch-up VTXOs on the far side of this teardown.
+        this.disposed = true;
+        const pendingDrain = this.lookAheadDrain;
+
         // Stop watching
         this.stopWatcherFn?.();
         this.stopWatcherFn = undefined;
@@ -1927,6 +2431,16 @@ export class ContractManager implements IContractManager {
 
         // Speculative entries are pure derivation; a fresh manager rebuilds them.
         this.lookAheadEntries.clear();
+        // dispose() is synchronous and cannot await the drain, so sweep again
+        // once it unwinds: the iteration it was already inside can register
+        // one last entry after the clear above.
+        if (pendingDrain) {
+            void pendingDrain
+                .catch(() => {})
+                .then(() => {
+                    if (this.disposed) this.lookAheadEntries.clear();
+                });
+        }
 
         // Mark as uninitialized
         this.initialized = false;

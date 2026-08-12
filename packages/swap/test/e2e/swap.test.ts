@@ -13,6 +13,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { execSync } from "child_process";
 import { hex } from "@scure/base";
 import {
+    ArkAddress,
     asset,
     EsploraProvider,
     InMemoryContractRepository,
@@ -21,10 +22,20 @@ import {
     SingleKey,
     Wallet,
 } from "@arkade-os/sdk";
-import { cancelOffer, createOffer, decodeOffer, restoreAssetSwaps, type Tx } from "../../src";
+import {
+    addAssetSwap,
+    cancelOffer,
+    createOffer,
+    decodeOffer,
+    getAssetSwaps,
+    InMemoryAssetSwapRepository,
+    restoreAssetSwaps,
+    watchOfferSwaps,
+    type AssetSwap,
+    type Tx,
+} from "../../src";
 
 const ARK_URL = "http://localhost:7070";
-const EMULATOR_URL = "http://localhost:7073";
 // mempool serves the Esplora REST API under `/api`; the root path is the HTML UI
 const ESPLORA_API_URL = "http://localhost:3000/api";
 const arkdExec = "docker exec -t arkd";
@@ -57,7 +68,11 @@ const waitFor = async (
 };
 
 const indexer = new RestIndexerProvider(ARK_URL);
+const repository = new InMemoryAssetSwapRepository();
 let wallet: Wallet;
+// the key the covenants are funded against — restore classifies each spend by
+// the covenant leaf it took, so it has to rebuild the same script
+let serverPubkey: Uint8Array;
 
 beforeAll(async () => {
     wallet = await Wallet.create({
@@ -81,6 +96,8 @@ beforeAll(async () => {
     const address = await wallet.getAddress();
     execCommand(`${arkdExec} ark send --to ${address} --amount ${FAUCET_SATS} --password secret`);
     await waitFor(async () => (await wallet.getVtxos()).length > 0);
+
+    serverPubkey = ArkAddress.decode(await wallet.getAddress()).serverPubKey;
 }, 120_000);
 
 describe("maker-side swap loop (regtest)", () => {
@@ -95,7 +112,8 @@ describe("maker-side swap loop (regtest)", () => {
     const history: Tx[] = [];
 
     it("derives, funds, and restores a pending offer from chain data alone", async () => {
-        offer = await createOffer(wallet, ARK_URL, EMULATOR_URL, {
+        // no override — asserts the default pin matches the regtest stack
+        offer = await createOffer(wallet, ARK_URL, {
             wantAmount: WANT_AMOUNT,
             wantAsset,
         });
@@ -117,7 +135,11 @@ describe("maker-side swap loop (regtest)", () => {
             redeemTxid: fundingTxid,
             createdAt: Math.floor(Date.now() / 1000),
         });
-        const { restored, scannedTxids } = await restoreAssetSwaps(indexer, history, new Set());
+        // Pending deposits have no spend to classify; serverPubkey is required
+        // by the restore API but does not affect this assertion.
+        const { restored, scannedTxids } = await restoreAssetSwaps(indexer, history, new Set(), {
+            serverPubkey,
+        });
 
         expect(scannedTxids).toEqual([fundingTxid]);
         expect(restored).toHaveLength(1);
@@ -140,16 +162,69 @@ describe("maker-side swap loop (regtest)", () => {
         expect(() => decodeOffer(hex.decode(restoredOfferHex))).not.toThrow();
     }, 120_000);
 
+    // The Phase 2 merge gate: everything below runs through the real
+    // createOffer -> register -> ContractManager path above, never a hand-built
+    // contract row, because a hand-marked fixture cannot catch a writer that
+    // omits or misspells the marker.
+    it("escrows the deposit: owned and watched, but not generically spendable", async () => {
+        const script = hex.encode(offer.swapPkScript);
+        const manager = await wallet.getContractManager();
+        const [row] = await manager.getContracts({ script });
+
+        expect(row).toBeDefined();
+        expect(row?.type).toBe("arkade");
+        expect(row?.metadata?.genericallySpendable).toBe(false);
+
+        // the funding tx also pays the maker's own change, so match the
+        // covenant script too — by txid alone this picks up the change output,
+        // which is ordinary wallet money and rightly stays spendable
+        const isDeposit = (v: { txid: string; script: string }) =>
+            v.txid === fundingTxid && v.script === script;
+        // the raw read keeps it — this is the maker's money, and filtering it
+        // here would make it unrecoverable and erase it from history
+        await waitFor(async () => (await wallet.getVtxos()).some(isDeposit));
+        // ...while the spendable read, the one every coin selection goes
+        // through, does not
+        expect((await wallet.getSpendableVtxos()).some(isDeposit)).toBe(false);
+
+        const balance = await wallet.getBalance();
+        expect(balance.settled + balance.preconfirmed).toBeGreaterThanOrEqual(DEPOSIT_SATS);
+        expect(balance.available).toBeLessThanOrEqual(FAUCET_SATS - DEPOSIT_SATS);
+    }, 120_000);
+
+    it("refuses to fund an unrelated payment out of the escrowed deposit", async () => {
+        // the §3 hazard as a behaviour test: without the marker, coin selection
+        // picks the offer deposit like any other UTXO, the server co-signs the
+        // covenant's untimelocked cancel leaf, and the offer silently ceases to
+        // exist. This send only succeeds if that happens.
+        // an amount the wallet can only reach by dipping into the deposit:
+        // under the totals (which count it, per D1c) but above what is left
+        // once it is excluded
+        const balance = await wallet.getBalance();
+        const needsTheDeposit =
+            balance.settled + balance.preconfirmed - Math.floor(DEPOSIT_SATS / 2);
+
+        await expect(
+            wallet.send({ address: await wallet.getAddress(), amount: needsTheDeposit }),
+        ).rejects.toThrow();
+
+        // and the deposit is still there to be cancelled below
+        const { vtxos } = await indexer.getVtxos({ scripts: [hex.encode(offer.swapPkScript)] });
+        expect(vtxos.find((v) => v.txid === fundingTxid)?.virtualStatus.state).not.toBe("spent");
+    }, 120_000);
+
     it("cancels the deposit cooperatively and restores it as cancelled", async () => {
         // cancel from the chain-recovered bytes, not the createOffer result:
-        // this is the restored-wallet path, plus the swapAddress pin
-        const cancelTxid = await cancelOffer(
-            wallet,
-            ARK_URL,
-            restoredOfferHex,
+        // this is the restored-wallet path, plus the swapAddress pin.
+        // It doubles as the escape-hatch assertion: cancel names its input
+        // outpoint, so the escrow marker must not close the one spend route the
+        // maker actually owns. A future tightening that gates explicit inputs
+        // would strand every offer deposit, and would fail here.
+        const cancelTxid = await cancelOffer(wallet, ARK_URL, restoredOfferHex, {
+            repository,
             fundingTxid,
-            offer.address,
-        );
+            swapAddress: offer.address,
+        });
         expect(cancelTxid).toBeTruthy();
 
         const script = hex.encode(offer.swapPkScript);
@@ -167,7 +242,7 @@ describe("maker-side swap loop (regtest)", () => {
             redeemTxid: cancelTxid,
             createdAt: Math.floor(Date.now() / 1000),
         });
-        const { restored } = await restoreAssetSwaps(indexer, history, new Set());
+        const { restored } = await restoreAssetSwaps(indexer, history, new Set(), { serverPubkey });
         expect(restored).toHaveLength(1);
         expect(restored[0]).toMatchObject({
             status: "cancelled",
@@ -180,4 +255,84 @@ describe("maker-side swap loop (regtest)", () => {
             return vtxos.some((v) => v.txid === cancelTxid && v.value === DEPOSIT_SATS);
         });
     }, 120_000);
+
+    it("drives status from the wallet's own spend event, with no restore call", async () => {
+        // Phase 3 end to end, and the half no unit test can reach: registration
+        // makes the covenant watched, the watcher's SSE delivers `vtxo_spent`,
+        // and the record resolves without anyone scanning history. A second
+        // offer, because the one above is already spent.
+        //
+        // The cancel is submitted against a DIFFERENT repository on purpose.
+        // `cancelOffer` records its own outcome, so cancelling into the watched
+        // store would resolve the record before the event arrived and this test
+        // could not tell the two apart. Cancelling elsewhere is also the case
+        // that actually exercises the classifier: another device's cancel, read
+        // back off the spending transaction's covenant leaf.
+        const elsewhere = new InMemoryAssetSwapRepository();
+        const swapRepository = new InMemoryAssetSwapRepository();
+        const updates: AssetSwap[] = [];
+        const watcher = await watchOfferSwaps({
+            wallet,
+            arkServerUrl: ARK_URL,
+            repository: swapRepository,
+            onUpdate: (swap) => updates.push(swap),
+        });
+
+        try {
+            const second = await createOffer(wallet, ARK_URL, {
+                wantAmount: WANT_AMOUNT + BigInt(1),
+                wantAsset,
+            });
+            const secondFundingTxid = await wallet.send({
+                address: second.address,
+                amount: DEPOSIT_SATS,
+                extensions: [second.extension],
+            });
+            const secondScript = hex.encode(second.swapPkScript);
+            await waitFor(async () => {
+                const { vtxos } = await indexer.getVtxos({ scripts: [secondScript] });
+                return vtxos.some((v) => v.txid === secondFundingTxid);
+            });
+
+            // the record the watcher will resolve. `pending`, as createOffer
+            // leaves it — the watcher's job is to move it
+            await addAssetSwap(swapRepository, {
+                id: secondFundingTxid,
+                fromAsset: "btc",
+                toAsset: wantAsset.toString(),
+                fromAmount: String(DEPOSIT_SATS),
+                toAmount: (WANT_AMOUNT + BigInt(1)).toString(),
+                swapAddress: second.address,
+                swapPkScript: secondScript,
+                offerHex: second.offerHex,
+                fundingTxid: secondFundingTxid,
+                status: "pending",
+                createdAt: Date.now(),
+            });
+
+            await cancelOffer(wallet, ARK_URL, second.offerHex, {
+                repository: elsewhere,
+                fundingTxid: secondFundingTxid,
+                swapAddress: second.address,
+            });
+
+            // no restoreAssetSwaps anywhere in this test: the event carries it
+            await waitFor(async () => {
+                await watcher.idle();
+                const [swap] = await getAssetSwaps(swapRepository);
+                return swap?.status === "cancelled";
+            });
+            const [resolved] = await getAssetSwaps(swapRepository);
+            expect(resolved.spentTxid).toBeTruthy();
+            expect(updates.map((u) => u.status)).toContain("cancelled");
+
+            // and the settled script leaves the watched set: no live record is
+            // left at it, so the row is kept for history and dropped from every
+            // background channel
+            const rows = await (await wallet.getContractManager()).getContracts();
+            expect(rows.find((c) => c.script === secondScript)?.watch).toBe("retained");
+        } finally {
+            watcher.stop();
+        }
+    }, 180_000);
 });

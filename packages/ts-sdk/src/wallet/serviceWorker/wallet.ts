@@ -21,13 +21,17 @@ import { SettlementEvent } from "../../providers/ark";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "../activity";
 import { hex } from "@scure/base";
 import {
+    DescriptorIdentity,
     Identity,
     ReadonlyIdentity,
+    isHDCapableIdentity,
     type SerializedIdentity,
     type LegacySerializedIdentity,
     serializeReadonlyIdentity,
     serializeSigningIdentity,
 } from "../../identity";
+import { HDDescriptorProvider } from "../hdDescriptorProvider";
+import type { HDWalletCapable, HDAllocationCapable } from "../hdWalletCapable";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
 import { setupServiceWorker } from "../../worker/browser/utils";
@@ -48,6 +52,7 @@ import {
     RequestGetSpendablePaths,
     RequestGetTransactionHistory,
     RequestGetVtxos,
+    RequestGetSpendableVtxos,
     RequestInitWallet,
     RequestIsContractManagerWatching,
     RequestRefreshVtxos,
@@ -70,6 +75,7 @@ import {
     ResponseGetSpendablePaths,
     ResponseGetTransactionHistory,
     ResponseGetVtxos,
+    ResponseGetSpendableVtxos,
     ResponseIsContractManagerWatching,
     ResponseReloadWallet,
     ResponseSendBitcoin,
@@ -116,6 +122,13 @@ import {
     deserializeMigrationReport,
     deserializeDeprecatedSignerReport,
     RequestRestoreWallet,
+    RequestGetCurrentSigningDescriptor,
+    ResponseGetCurrentSigningDescriptor,
+    RequestGetNextSigningDescriptor,
+    ResponseGetNextSigningDescriptor,
+    RequestGetUsedSigningDescriptors,
+    ResponseGetUsedSigningDescriptors,
+    RequestAdvanceSigningDescriptorWatermark,
     DEFAULT_MESSAGE_TAG,
     deserializeAggregateError,
     isSerializedAggregateError,
@@ -136,7 +149,7 @@ import type {
     RefreshVtxosOptions,
     ScanResult,
 } from "../../contracts/contractManager";
-import type { ContractState } from "../../contracts/types";
+import type { ContractState, ContractWatchState } from "../../contracts/types";
 import type { IDelegateManager } from "../delegate";
 import type {
     IVtxoManager,
@@ -182,9 +195,16 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     GET_CONTRACT_SYNC_STATE: 10_000,
     GET_DELEGATE_INFO: 10_000,
     IS_CONTRACT_MANAGER_WATCHING: 10_000,
+    GET_CURRENT_SIGNING_DESCRIPTOR: 10_000,
+    // Allocation is a local repository write plus a fire-and-forget band
+    // slide — no indexer round trip on the request path.
+    GET_NEXT_SIGNING_DESCRIPTOR: 10_000,
+    GET_USED_SIGNING_DESCRIPTORS: 20_000,
+    ADVANCE_SIGNING_DESCRIPTOR_WATERMARK: 10_000,
 
     // Medium reads — may involve indexer queries
     GET_VTXOS: 20_000,
+    GET_SPENDABLE_VTXOS: 20_000,
     GET_BOARDING_UTXOS: 20_000,
     GET_TRANSACTION_HISTORY: 20_000,
     GET_CONTRACTS: 20_000,
@@ -245,6 +265,7 @@ const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "GET_EXPIRED_BOARDING_UTXOS",
     "GET_DEPRECATED_SIGNER_STATUS",
     "GET_VTXOS",
+    "GET_SPENDABLE_VTXOS",
     "GET_CONTRACTS",
     "GET_CONTRACTS_WITH_VTXOS",
     "ANNOTATE_VTXOS",
@@ -1125,6 +1146,33 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
+     * The gate has to run *inside* the worker (no plugin object or contract row
+     * metadata exists on this side), so this is its own message rather than a
+     * post-filter over `GET_VTXOS`.
+     *
+     * A worker predating this message answers "Unknown message" and the call
+     * throws. That is deliberate: service workers activate asynchronously, so
+     * new page code runs against a stale worker for a window on every deploy,
+     * and falling back to `GET_VTXOS` there would silently spend ungated coins.
+     * Fail closed — loud and recoverable — rather than make the gate advisory.
+     */
+    async getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
+        const message: RequestGetSpendableVtxos = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_SPENDABLE_VTXOS",
+            payload: { filter },
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetSpendableVtxos).payload.vtxos.map(normalizeVtxo);
+        } catch (error) {
+            throw new Error(`Failed to get spendable vtxos: ${error}`);
+        }
+    }
+
+    /**
      * Trigger a wallet reload inside the service worker.
      *
      * @returns `true` when the wallet was reloaded
@@ -1255,6 +1303,16 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 return syncState;
             },
 
+            /**
+             * The worker owns the spend paths this guards, so it runs the check
+             * on its own manager before submitting. Proxying it would only add a
+             * round-trip whose answer the worker already has.
+             */
+            async assertAnnotatable(): Promise<void> {},
+
+            /** Same reasoning as {@link assertAnnotatable}: the worker checks it. */
+            async assertSpendableNow(): Promise<void> {},
+
             async annotateVtxos(vtxos: VirtualCoin[]): Promise<NormalizedExtendedVirtualCoin[]> {
                 if (vtxos.length === 0) return [];
                 const message: RequestAnnotateVtxos = {
@@ -1301,6 +1359,21 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     return;
                 } catch (e) {
                     throw new Error("Failed to update contract state");
+                }
+            },
+
+            async setContractWatchState(script: string, watch: ContractWatchState): Promise<void> {
+                const message: RequestUpdateContract = {
+                    type: "UPDATE_CONTRACT",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { script, updates: { watch } },
+                };
+                try {
+                    await sendContractMessage(message);
+                    return;
+                } catch (e) {
+                    throw new Error("Failed to update contract watch state");
                 }
             },
 
@@ -1424,6 +1497,37 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 return Promise.resolve();
             },
 
+            async getNextSigningDescriptor(): Promise<string | undefined> {
+                // Descriptor allocation is owned by the worker-side Wallet;
+                // proxy it as a plain string so the worker stays the single
+                // writer of the HD watermark.
+                const message: RequestGetNextSigningDescriptor = {
+                    type: "GET_NEXT_SIGNING_DESCRIPTOR",
+                    id: getRandomId(),
+                    tag: messageTag,
+                };
+                const response = await sendContractMessage(message);
+                return (response as ResponseGetNextSigningDescriptor).payload.descriptor;
+            },
+
+            advanceSigningDescriptorWatermark(): Promise<void> {
+                // The manager interface takes a raw index, which the wallet
+                // message protocol does not carry — so this cannot move the
+                // worker-owned watermark. It must not resolve: its sibling
+                // `getNextSigningDescriptor` really does allocate, and a caller
+                // that pairs the two would reserve nothing while believing an
+                // index was claimed, letting the next allocation reissue it.
+                return Promise.reject(
+                    new Error(
+                        "advanceSigningDescriptorWatermark is not available on the " +
+                            "service-worker contract-manager proxy: the manager API is " +
+                            "index-based and the worker message protocol carries " +
+                            "descriptors. Use ServiceWorkerWallet." +
+                            "advanceSigningDescriptorWatermark(descriptor) instead.",
+                    ),
+                );
+            },
+
             async isWatching(): Promise<boolean> {
                 const message: RequestIsContractManagerWatching = {
                     type: "IS_CONTRACT_MANAGER_WATCHING",
@@ -1452,7 +1556,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 }
 
-export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements IWallet {
+export class ServiceWorkerWallet
+    extends ServiceWorkerReadonlyWallet
+    implements IWallet, HDWalletCapable, HDAllocationCapable
+{
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
     public readonly identity: Identity;
@@ -1627,6 +1734,90 @@ export class ServiceWorkerWallet extends ServiceWorkerReadonlyWallet implements 
             ...options,
             serviceWorker,
         });
+    }
+
+    // ── HD signing-descriptor surface ({@link HDWalletCapable} +
+    // {@link HDAllocationCapable}), so descriptor-deriving plugins (RFQ swaps)
+    // keep their no-secrets-at-rest arm behind the service worker. Allocation
+    // and the watermark stay worker-owned (single writer over the shared
+    // repository) and cross the bus as plain strings; signing never crosses
+    // it — the page holds the identity and descriptor derivation is pure.
+
+    /** @see HDWalletCapable.getCurrentSigningDescriptor */
+    async getCurrentSigningDescriptor(): Promise<string | undefined> {
+        const message: RequestGetCurrentSigningDescriptor = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_CURRENT_SIGNING_DESCRIPTOR",
+        };
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetCurrentSigningDescriptor).payload.descriptor;
+        } catch (error) {
+            throw new Error(`Failed to get current signing descriptor: ${error}`);
+        }
+    }
+
+    /** @see HDAllocationCapable.getNextSigningDescriptor */
+    async getNextSigningDescriptor(): Promise<string | undefined> {
+        const message: RequestGetNextSigningDescriptor = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_NEXT_SIGNING_DESCRIPTOR",
+        };
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetNextSigningDescriptor).payload.descriptor;
+        } catch (error) {
+            throw new Error(`Failed to allocate next signing descriptor: ${error}`);
+        }
+    }
+
+    /** @see HDWalletCapable.getUsedSigningDescriptors */
+    async getUsedSigningDescriptors(opts?: { lookAhead?: number }): Promise<string[]> {
+        const message: RequestGetUsedSigningDescriptors = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_USED_SIGNING_DESCRIPTORS",
+            ...(opts ? { payload: opts } : {}),
+        };
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetUsedSigningDescriptors).payload.descriptors;
+        } catch (error) {
+            throw new Error(`Failed to get used signing descriptors: ${error}`);
+        }
+    }
+
+    /** @see HDAllocationCapable.advanceSigningDescriptorWatermark */
+    async advanceSigningDescriptorWatermark(descriptor: string): Promise<void> {
+        const message: RequestAdvanceSigningDescriptorWatermark = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "ADVANCE_SIGNING_DESCRIPTOR_WATERMARK",
+            payload: { descriptor },
+        };
+        try {
+            await this.sendMessage(message);
+        } catch (error) {
+            throw new Error(`Failed to advance signing-descriptor watermark: ${error}`);
+        }
+    }
+
+    /**
+     * @see HDWalletCapable.signerForDescriptor
+     *
+     * Runs page-side: an Identity cannot cross the message bus, and it does
+     * not need to — the page owns the signing identity, and derivation reads
+     * no allocation state. Mirrors {@link Wallet.signerForDescriptor}'s
+     * fallback: the wallet identity itself for a non-HD identity or a foreign
+     * descriptor.
+     */
+    async signerForDescriptor(descriptor: string): Promise<Identity> {
+        if (!isHDCapableIdentity(this.identity)) return this.identity;
+        const provider = await HDDescriptorProvider.create(this.identity, this.walletRepository);
+        if (!provider.isOurs(descriptor)) return this.identity;
+        return new DescriptorIdentity({ descriptor, signer: provider, base: this.identity });
     }
 
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {

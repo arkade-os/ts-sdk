@@ -26,8 +26,8 @@ import type {
     DescriptorSigner,
     HDDeterministicSignCapable,
 } from "./identity";
-import { isHDWalletCapable } from "./wallet/hdWalletCapable";
-import type { HDWalletCapable } from "./wallet/hdWalletCapable";
+import { isHDWalletCapable, isHDAllocationCapable } from "./wallet/hdWalletCapable";
+import type { HDAllocationCapable, HDWalletCapable } from "./wallet/hdWalletCapable";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
@@ -104,8 +104,13 @@ export {
 } from "./wallet";
 import { Batch } from "./wallet/batch";
 import {
+    signingDescriptorIndex,
+    strictSigningDescriptorIndex,
+} from "./wallet/walletReceiveRotator";
+import {
     Wallet,
     ReadonlyWallet,
+    MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD,
     waitForIncomingFunds,
     IncomingFunds,
     selectVirtualCoins,
@@ -214,8 +219,11 @@ import {
     assertSubmittedArkTxid,
     matchServerCheckpoints,
     verifyTapscriptSignatures,
+    claimWithPreimageIdentity,
+    signAndSubmitOffchainTx,
     ArkTxInput,
     OffchainTx,
+    VerifyServerSignatures,
     combineTapscriptSigs,
     isValidArkAddress,
 } from "./utils/arkTransaction";
@@ -272,6 +280,16 @@ import {
     type EmulatorInfo,
     type ConnectorTreeNode,
 } from "./providers/emulator";
+export {
+    EventSourceUnavailableError,
+    configureEventSource,
+    getConfiguredEventSource,
+    isEventSourceUnavailableError,
+    resolveEventSource,
+    type EventSourceCapable,
+    type EventSourceFactory,
+    type EventSourceLike,
+} from "./providers/eventSource";
 import type {
     ArkadeBatchInput,
     ArkadeExtendedCoin,
@@ -412,6 +430,8 @@ import { DelegateContractHandler } from "./contracts/handlers/delegate";
 import type { DelegateContractParams } from "./contracts/handlers/delegate";
 import { VHTLCContractHandler } from "./contracts/handlers/vhtlc";
 import type { VHTLCContractParams } from "./contracts/handlers/vhtlc";
+import { VHTLCV2ContractHandler } from "./contracts/handlers/vhtlcV2";
+import type { VHTLCV2ContractParams } from "./contracts/handlers/vhtlcV2";
 import { isCsvSpendable, isCltvSatisfied } from "./contracts/handlers/helpers";
 import { BoardingContractHandler } from "./contracts/handlers/boarding";
 import type { BoardingContractParams } from "./contracts/handlers/boarding";
@@ -426,6 +446,15 @@ import {
 } from "./contracts/arkcontract";
 import type { ParsedArkContract } from "./contracts/arkcontract";
 import { hasCandidates, isDiscoverable } from "./contracts/types";
+import {
+    isContractGenericallySpendable,
+    gatedContracts,
+    gateExclusion,
+    outpointExclusion,
+    logExcludedVtxos,
+    UnannotatableInputError,
+} from "./contracts/spendability";
+import type { ExcludableVtxo, VtxoExclusion } from "./contracts/spendability";
 import type {
     Contract,
     ContractVtxo,
@@ -469,6 +498,7 @@ export {
     // Wallets
     Wallet,
     ReadonlyWallet,
+    MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD,
     SingleKey,
     ReadonlySingleKey,
     SeedIdentity,
@@ -478,6 +508,9 @@ export {
     DescriptorIdentity,
     isHDDeterministicSignCapable,
     isHDWalletCapable,
+    isHDAllocationCapable,
+    signingDescriptorIndex,
+    strictSigningDescriptorIndex,
     deriveDescriptorLeafCompressedPubKey,
     OnchainWallet,
     Ramps,
@@ -566,6 +599,8 @@ export {
     assertSubmittedArkTxid,
     matchServerCheckpoints,
     verifyTapscriptSignatures,
+    claimWithPreimageIdentity,
+    signAndSubmitOffchainTx,
     waitForIncomingFunds,
     hasBoardingTxExpired,
     combineTapscriptSigs,
@@ -693,8 +728,15 @@ export {
     DefaultContractHandler,
     DelegateContractHandler,
     VHTLCContractHandler,
+    VHTLCV2ContractHandler,
     BoardingContractHandler,
     ArkadeContractHandler,
+    isContractGenericallySpendable,
+    gatedContracts,
+    gateExclusion,
+    outpointExclusion,
+    logExcludedVtxos,
+    UnannotatableInputError,
     encodeArkContract,
     decodeArkContract,
     contractFromArkContract,
@@ -740,6 +782,7 @@ export type {
     TapscriptType,
     ArkTxInput,
     OffchainTx,
+    VerifyServerSignatures,
     TapLeaves,
     IncomingFunds,
 
@@ -752,6 +795,7 @@ export type {
     DescriptorSigner,
     HDDeterministicSignCapable,
     HDWalletCapable,
+    HDAllocationCapable,
     // Indexer types
     IndexerProvider,
     PageResponse,
@@ -898,9 +942,12 @@ export type {
     CreateContractParams,
     ContractWatcherConfig,
     ParsedArkContract,
+    ExcludableVtxo,
+    VtxoExclusion,
     DefaultContractParams,
     DelegateContractParams,
     VHTLCContractParams,
+    VHTLCV2ContractParams,
     BoardingContractParams,
     ArkadeContractParams,
     Discoverable,

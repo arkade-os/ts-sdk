@@ -914,6 +914,7 @@ import {
   WalletMessageHandler,
   IndexedDBWalletRepository,
   IndexedDBContractRepository,
+  IndexedDBIntentRepository,
 } from '@arkade-os/sdk'
 
 const walletRepo = new IndexedDBWalletRepository()
@@ -922,6 +923,10 @@ const contractRepo = new IndexedDBContractRepository()
 const bus = new MessageBus(walletRepo, contractRepo, {
   messageHandlers: [new WalletMessageHandler()],
   tickIntervalMs: 10_000, // default 10s
+  // Optional, same opt-in as `storage.intentRepository` on a main-thread
+  // wallet. Omit it and the worker persists no settlement intent, reconciles
+  // none on restart, and counts intent-locked VTXOs as available.
+  intentRepository: new IndexedDBIntentRepository(),
 })
 
 bus.start()
@@ -1141,7 +1146,7 @@ const wallet = await Wallet.create({
 
 ### Using with Node.js
 
-Node.js does not provide a global `EventSource` implementation. The SDK relies on `EventSource` for Server-Sent Events during settlement (onboarding/offboarding) and contract watching. You must polyfill it before using the SDK:
+Node.js does not provide a global `EventSource` implementation (24.x has one behind `--experimental-eventsource`). The SDK relies on `EventSource` for Server-Sent Events during settlement (onboarding/offboarding) and contract watching, so tell it which one to use:
 
 ```bash
 npm install eventsource
@@ -1149,11 +1154,14 @@ npm install eventsource
 
 ```typescript
 import { EventSource } from "eventsource";
-(globalThis as any).EventSource = EventSource;
+import { configureEventSource, Wallet } from "@arkade-os/sdk";
 
-// Use dynamic import so the polyfill is set before the SDK evaluates
-const { Wallet } = await import("@arkade-os/sdk");
+configureEventSource((url) => new EventSource(url));
 ```
+
+Order does not matter: the factory is resolved when a stream opens, not when the SDK is imported, so no dynamic-import dance is needed. A single provider can override it — `new RestIndexerProvider(url, { eventSource })` — for a process that needs different transports per connection.
+
+Assigning `globalThis.EventSource` still works and is still the last resort in the resolution order (per-provider option → `configureEventSource` → global).
 
 If you also need IndexedDB persistence (e.g. for `WalletRepository`), set up the shim before any SDK import:
 
@@ -1168,8 +1176,10 @@ setGlobalVars(null, { checkOrigin: false });
 ```
 
 > **Note:** `eventsource` and `indexeddbshim` are optional peer dependencies.
-> Without the `EventSource` polyfill, settlement operations will fail with
-> `ReferenceError: EventSource is not defined`.
+> With no `EventSource` available, settlement fails with a typed
+> `EventSourceUnavailableError` naming the remedy, and contract watching warns
+> once and falls back to its failsafe polling — it does not retry a missing
+> global, and it does not go quiet either.
 
 See [`examples/node/multiple-wallets.ts`](examples/node/multiple-wallets.ts) for a complete working example.
 
@@ -1350,6 +1360,24 @@ Contract freshness behavior:
 - **Immediate sync** on manager initialization, subscription reconnect, and contract events
 - **Failsafe polling** every 20 seconds by default to catch missed events, configurable via `watcherConfig.failsafePollIntervalMs`
 - **Manual refresh** through `manager.refreshVtxos()`; pass `{ includeInactive: true }` to sweep every repository contract
+
+Which contracts get that coverage is `contract.watch`, and it is independent of
+`contract.state` (which only governs receive-address selection — a retired
+receive address stays watched, because it can still be paid):
+
+```typescript
+// Watch a one-shot destination only until it is funded; the manager
+// demotes it to `retained` itself once a VTXO lands.
+await manager.createContract({ ...params, watch: 'awaiting-funds' })
+
+// A finished contract — a settled swap lockup, say. The row stays for
+// history, annotation and restore; it just leaves the subscription and
+// the poll. Unlike `deleteContract`, nothing is lost.
+await manager.setContractWatchState(script, 'retained')
+```
+
+A row with no `watch` value is `watched`, so contracts written by earlier SDK
+versions keep the coverage they have today.
 
 ### Repository Pattern
 
