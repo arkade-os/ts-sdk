@@ -1450,15 +1450,26 @@ export function deriveLightningReceive(input: {
  * ({@link claimReceiveLockup} in `claim.ts`), or via covclaimd if it is
  * offline.
  *
- * The same obligations as {@link requestOnchainSend}: persist `secrets`
- * BEFORE paying — the preimage and the payout key re-derive from it (or, on a
- * non-HD wallet, are carried by it).
+ * Three obligations, all of them before the invoice is handed to a payer:
+ *
+ * 1. Persist `secrets` and `expectedAmount`. The preimage and the payout key
+ *    re-derive from `secrets` (or, on a non-HD wallet, are carried by it), and
+ *    without `expectedAmount` the claim has nothing to compare the funded
+ *    value against.
+ * 2. Stay online. covclaimd cannot claim this covenant today, so the offline
+ *    path the claim packet exists for does not run yet: an unclaimed lockup is
+ *    reclaimed by the solver at `refund_locktime` and the payer refunded.
+ * 3. On {@link LockupRegistrationFailed}, call this function again once the
+ *    store is working. The failed attempt is inert — it returned no invoice,
+ *    so nothing can be paid into the lockup nobody is watching — and the new
+ *    call derives its own preimage and `rfq_id`. Re-registering `error.script`
+ *    does NOT resume it: the invoice and `secrets` were never handed back.
  *
  * The invoice is the solver's, so it is verified here against the trader's own
  * `H` and the quote ({@link verifyReceiveInvoice}) before it is returned —
- * nothing publishable comes back from a failed check. Pay before
- * `invoiceExpiresAt`: the hold-invoice window is minutes, not the quote's
- * `valid_until`.
+ * nothing publishable comes back from a failed check, registration included.
+ * Pay before `invoiceExpiresAt`: the hold-invoice window is minutes, not the
+ * quote's `valid_until`.
  */
 export async function requestLightningReceive(
     wallet: IWallet,
