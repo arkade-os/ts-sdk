@@ -44,6 +44,7 @@ import {
     type RfqQuote,
     type RfqTransport,
 } from "../src/rfq";
+import { createRfqSwapRecord, rebuildRfqSwap } from "../src/rfqRecord";
 import { onchainHtlcScript, paymentHashOf } from "../src/onchainHtlc";
 import { contractPreimage } from "@arkade-os/sdk";
 
@@ -285,6 +286,53 @@ describe("treeParams round-trips to the funded script", () => {
         const rebuilt = lightningSendVtxoScript(result.treeParams);
         expect(hex.encode(rebuilt.pkScript)).toBe(hex.encode(result.swapPkScript));
         expect(hex.encode(rebuilt.pkScript)).toBe(hex.encode(result.script.pkScript));
+    });
+
+    it("a record built from the result rebuilds the covenant that was funded", async () => {
+        // The hop the other two tests leave open: entrypoint -> script and
+        // record -> script are each covered, but the consumer writes
+        // entrypoint -> RECORD by hand, and that is the only place a tree
+        // parameter can go missing. Written out longhand on purpose — this is
+        // the mapping an integrator copies.
+        const result = await requestLightningSend(
+            staticWallet(),
+            "http://ark",
+            lightningTransport(),
+            { invoice: INVOICE, emulatorPubkey: EMULATOR_PUBKEY_HEX },
+        );
+        const t = result.treeParams;
+
+        const record = createRfqSwapRecord(
+            {
+                kind: "lightning_send",
+                solverPubkey: hex.encode(t.solverPubkey),
+                emulatorPubkey: hex.encode(t.emulatorPubkey),
+                serverPubkey: hex.encode(t.serverPubkey),
+                paymentHash: t.paymentHash,
+                refundLocktime: t.refundLocktime,
+                claimDelay: t.claimDelay,
+                senderPubkey: hex.encode(t.senderPubkey),
+                refundPkScript: hex.encode(t.refundPkScript),
+                receiverPkScript: hex.encode(t.receiverPkScript),
+                signingDescriptor: result.secrets.descriptor,
+                lockupAddress: result.address,
+                amount: result.fundAmount,
+            },
+            {
+                kind: "lightning_send",
+                rfqId: result.rfqId,
+                state: "pending",
+                lockupPkScript: result.swapPkScript,
+                paymentHash: t.paymentHash,
+                refundLocktime: t.refundLocktime,
+                createdAt: 1,
+                updatedAt: 1,
+            },
+        );
+
+        expect(hex.encode(rebuildRfqSwap(record).lockupPkScript)).toBe(
+            hex.encode(result.swapPkScript),
+        );
     });
 
     it("carries the inputs no quote and no second round trip could supply", async () => {
