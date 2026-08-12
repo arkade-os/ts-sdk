@@ -422,53 +422,25 @@ export interface Recipient {
     extensions?: Array<{ type: number; payload: Uint8Array }>; // custom extension packets to embed in the tx
 
     /**
-     * The recipient contract's tapleaf set, encoded as `VtxoScript.encode`
-     * produces it, published on this output's `PSBT_OUT_TAP_TREE` field.
+     * The recipient contract's tapleaf set (`VtxoScript.encode` form), published
+     * on this output's `PSBT_OUT_TAP_TREE` so its spending paths are recoverable
+     * from the transaction alone — an address commits only to the output key.
      *
-     * An Arkade address commits only to the taproot output key, so someone
-     * reading the transaction can see where the funds went but not what could
-     * ever spend them. Sending the taptree with the output makes it
-     * self-describing: every spending path is recoverable from the
-     * transaction alone.
-     *
-     * That matters when the party meant to spend the output is not the party
-     * being paid. A daemon claiming a preimage-gated output on a receiver's
-     * behalf has to recognise the contract before it can build the claim, and
-     * the address does not tell it. The alternative is registering the
-     * contract with that daemon out of band — a second delivery that can be
-     * missed, expire, or be lost on restart, while the funded output sits
-     * there unclaimable.
-     *
-     * Refused unless it derives the recipient address's taproot key: a
-     * taptree that does not is a false statement about the output, and one
-     * whose falseness surfaces only in whatever later tries to read it.
+     * Refused unless it derives the recipient address's taproot key.
      */
     tapTree?: Bytes;
 }
 
-/**
- * Object form of the arguments to `IWallet.send`, for callers needing more
- * than a recipient list.
- *
- * `send(...recipients)` is variadic, so it has no trailing slot to put
- * options in. This is the same call with somewhere to put them.
- */
+/** Object form of `IWallet.send`'s arguments; the variadic form has no slot for options. */
 export interface SendParams {
     /** One or more recipients — the variadic arguments of the other form. */
     recipients: [Recipient, ...Recipient[]];
 
     /**
-     * Spend exactly these virtual outputs rather than letting the wallet
-     * choose. Taken as given, like `settle({ inputs })`: what is named here is
-     * spent even where generic selection would have skipped it, and nothing is
-     * added to the set — a shortfall is an error, not a top-up.
-     *
-     * Generic selection optimises for the wallet as a whole, which is the
-     * wrong objective when one output must be funded from particular coins:
-     * it prefers the soonest-expiring batch, and a contract that has to
-     * outlive a long timelock is exactly what must not inherit one. A caller
-     * enforcing a rule the wallet does not know about can only do it by
-     * naming the coins.
+     * Spend exactly these virtual outputs instead of letting the wallet choose.
+     * Taken as given, like `settle({ inputs })`: nothing is added, so a shortfall
+     * is an error rather than a top-up. Use when a contract must be funded from
+     * coins outliving its timelock, which generic selection does not know about.
      *
      * @see IReadonlyWallet.getVtxos
      */

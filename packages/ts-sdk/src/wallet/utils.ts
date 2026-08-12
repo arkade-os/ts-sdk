@@ -252,17 +252,12 @@ export function assertRecipientArkAddress(
 }
 
 /**
- * A published taptree must derive the address it is published against.
+ * A published taptree must derive the address it is published against — nothing
+ * downstream re-derives it, so a mismatched tree fails only in whatever later
+ * tries to spend.
  *
- * The taptree is a claim about the output: *these* are the paths that can
- * spend it. Nothing downstream re-derives the address from it — a reader
- * takes the leaves and builds a spend — so a mismatched tree is a claim that
- * is simply false, and it fails at whatever tries to use it rather than here.
- * Checking is one hash of leaves already in hand.
- *
- * Compared against `pkScript` rather than the output script: a sub-dust output
- * is paid to the `RETURN` form of the same taproot key, and the taptree
- * describes the key either way.
+ * Compared against `pkScript`, not the output script: a sub-dust output pays the
+ * `RETURN` form of the same key.
  */
 function assertTapTreeDerivesAddress(encoded: string, tapTree: Bytes, address: ArkAddress): void {
     let derived: Bytes;
