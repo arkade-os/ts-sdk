@@ -158,8 +158,12 @@ import {
 import { HDDescriptorProvider } from "./hdDescriptorProvider";
 import { DescriptorProvider } from "../identity/descriptorProvider";
 import { DescriptorIdentity } from "../identity/descriptorIdentity";
-import { HDWalletCapable } from "./hdWalletCapable";
-import { deriveDescriptorLeafPubKey } from "../identity/descriptor";
+import { ForeignDescriptorError, HDWalletCapable } from "./hdWalletCapable";
+import {
+    deriveDescriptorLeafPubKey,
+    normalizeToDescriptor,
+    parseHDDescriptor,
+} from "../identity/descriptor";
 import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
 import { CandidateDeps, Contract, ContractWithVtxos, DiscoveryDeps } from "../contracts/types";
 import {
@@ -2535,20 +2539,39 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     }
 
     /**
-     * @see HDWalletCapable.getNextSigningDescriptor
+     * @see HDAllocationCapable.getNextSigningDescriptor
+     *
+     * Every `Wallet` answers — this is where the wallet's key-provisioning
+     * policy lives, so consumers never have to branch on wallet shape:
+     * - HD: allocate a fresh index through the contract manager (which owns
+     *   cross-context serialization and the look-ahead band).
+     * - custom provider: whatever the provider allocates.
+     * - static / `auto`: the identity key as a bare `tr(pubkey)` descriptor —
+     *   the same answer every call, because that IS the static policy.
      */
     async getNextSigningDescriptor(): Promise<string | undefined> {
         const provider = this._descriptorProvider;
-        if (!(provider instanceof HDDescriptorProvider)) return undefined;
-        return (await this.getContractManager()).getNextSigningDescriptor();
+        if (provider instanceof HDDescriptorProvider) {
+            return (await this.getContractManager()).getNextSigningDescriptor();
+        }
+        if (provider) return provider.getNextSigningDescriptor();
+        return normalizeToDescriptor(hex.encode(await this.identity.xOnlyPublicKey()));
     }
 
     /**
-     * @see HDWalletCapable.advanceSigningDescriptorWatermark
+     * @see HDAllocationCapable.advanceSigningDescriptorWatermark
      */
     async advanceSigningDescriptorWatermark(descriptor: string): Promise<void> {
         const provider = this._descriptorProvider;
-        if (!(provider instanceof HDDescriptorProvider)) return;
+        if (!(provider instanceof HDDescriptorProvider)) {
+            // No watermark to move — but stay as loud about foreign
+            // descriptors as the HD arm: a silent accept here would let a
+            // restore adopt records this wallet can never sign for.
+            if (provider ? !provider.isOurs(descriptor) : !(await this.ownsKeyOf(descriptor))) {
+                throw new Error(`descriptor is not derivable from this wallet: ${descriptor}`);
+            }
+            return;
+        }
         if (!provider.isOurs(descriptor)) {
             throw new Error(`descriptor is not derivable from this wallet: ${descriptor}`);
         }
@@ -2561,6 +2584,17 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
             throw new Error(`descriptor has no trailing child index: ${descriptor}`);
         }
         await (await this.getContractManager()).advanceSigningDescriptorWatermark(index);
+    }
+
+    /** True iff `descriptor`'s leaf key is this wallet's identity key. */
+    private async ownsKeyOf(descriptor: string): Promise<boolean> {
+        try {
+            const key = deriveDescriptorLeafPubKey(descriptor);
+            const ours = await this.identity.xOnlyPublicKey();
+            return key.length === ours.length && key.every((b, i) => b === ours[i]);
+        } catch {
+            return false;
+        }
     }
 
     /**
@@ -2605,13 +2639,35 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
 
     /**
      * @see HDWalletCapable.signerForDescriptor
+     *
+     * Fail-loud contract: the returned identity is always the descriptor's
+     * own key. A descriptor this wallet cannot sign for throws
+     * {@link ForeignDescriptorError} instead of silently substituting the
+     * baseline identity — that identity would sign happily with the wrong
+     * key, and the failure would only surface as a rejected transaction or a
+     * dead script, far from the call that caused it.
      */
     async signerForDescriptor(descriptor: string): Promise<Identity> {
         const provider = this._descriptorProvider;
-        if (!(provider instanceof HDDescriptorProvider) || !provider.isOurs(descriptor)) {
-            return this.identity;
+        // A descriptor with a full derivation path signs through the
+        // provider's descriptor machinery — including deterministically,
+        // which preimage derivation depends on. It must win even when the
+        // leaf key aliases the baseline identity key, as a fresh HD wallet's
+        // index 0 does.
+        if (provider?.isOurs(descriptor) && parseHDDescriptor(descriptor) !== null) {
+            return new DescriptorIdentity({ descriptor, signer: provider, base: this.identity });
         }
-        return new DescriptorIdentity({ descriptor, signer: provider, base: this.identity });
+        // Bare descriptors: the identity is the signer when it holds the key
+        // — a static wallet's `tr(pubkey)`, or a record an `auto` wallet
+        // bound before an HD migration. A seed cannot sign for a pathless
+        // descriptor through the machinery above, but the identity can.
+        if (await this.ownsKeyOf(descriptor)) return this.identity;
+        // A custom provider may still claim a bare descriptor whose key is
+        // not the identity's (an HSM-style static provider).
+        if (provider?.isOurs(descriptor)) {
+            return new DescriptorIdentity({ descriptor, signer: provider, base: this.identity });
+        }
+        throw new ForeignDescriptorError(descriptor);
     }
 
     /**

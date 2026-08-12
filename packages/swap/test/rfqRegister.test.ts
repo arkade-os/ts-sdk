@@ -38,6 +38,7 @@ import {
     ProviderUnavailableError,
     ReadonlySingleKey,
     ReadonlyWallet,
+    SingleKey,
     VHTLCV2ContractHandler,
     type ArkProvider,
     type ExtendedVirtualCoin,
@@ -182,6 +183,9 @@ const recordingWallet = (
 ): { wallet: IWallet; created: Record<string, unknown>[] } => {
     const created: Record<string, unknown>[] = [];
     const wallet = {
+        // The sender key comes from the wallet now — a fixture without an
+        // identity is not a wallet these entrypoints can serve.
+        identity: SingleKey.fromRandomBytes(),
         getAddress: async () => REFUND_ADDRESS,
         getContractManager: async () => ({
             createContract: async (params: Record<string, unknown>) => {
@@ -240,18 +244,21 @@ describe.each([
         const { wallet, created } = recordingWallet();
         const result = await request(wallet);
         const secrets = result.secrets as {
+            derivable: boolean;
             senderPrivateKey?: Uint8Array;
             preimage?: Uint8Array;
         };
 
+        // The sender key is the wallet's — no minted key exists to leak.
+        expect(secrets.derivable).toBe(true);
+        expect(secrets.senderPrivateKey).toBeUndefined();
+
         const serialized = JSON.stringify(created[0]);
         const forbidden = [
             result.rfqId,
-            ...[secrets.senderPrivateKey, secrets.preimage]
-                .filter((value): value is Uint8Array => value !== undefined)
-                .map((value) => hex.encode(value)),
+            ...(secrets.preimage ? [hex.encode(secrets.preimage)] : []),
         ];
-        expect(forbidden.length).toBeGreaterThan(1);
+        expect(forbidden.length).toBeGreaterThan(0);
         for (const value of forbidden) expect(serialized).not.toContain(value);
     });
 

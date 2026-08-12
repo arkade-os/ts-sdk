@@ -29,8 +29,16 @@ const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
 export class SingleKey implements Identity {
     private key: Uint8Array;
 
-    private constructor(key: Uint8Array | undefined) {
-        this.key = key || randomPrivateKeyBytes();
+    private constructor(key: Uint8Array) {
+        // No silent random fallback: a caller that lost its key through a
+        // type hole must hear about it here, not discover an unrecoverable
+        // fresh key after funds have moved to it.
+        if (!(key instanceof Uint8Array) || key.length === 0) {
+            throw new Error(
+                "SingleKey requires a private key; use fromRandomBytes() for a fresh one",
+            );
+        }
+        this.key = key;
     }
 
     /** Create a signing identity from raw private key bytes. */

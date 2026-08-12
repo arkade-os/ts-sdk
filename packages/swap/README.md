@@ -421,11 +421,27 @@ Lightning HTLC lapses, and **the payer is refunded** — the trader loses the in
 funds it was holding. Which is why staying online to claim is an obligation and not a preference:
 covclaimd cannot claim this covenant today, so the claim packet's offline path does not yet run.
 
-## RFQ secrets are derived, not stored
+## RFQ secrets come from the wallet, not from this package
 
-The two secrets an RFQ swap needs — the VHTLC `sender` key and, for an onchain send, the preimage —
-are functions of the wallet seed plus one HD-allocated descriptor. The record keeps the descriptor,
-which is public, so a copied browser profile or a device backup yields nothing spendable.
+The VHTLC `sender` key is always the wallet's — this package never generates signing keys and
+never branches on wallet type. `wallet.getNextSigningDescriptor()` is where the policy lives: an
+HD wallet allocates a fresh descriptor per swap; a static wallet answers with its one `tr(pubkey)`
+descriptor. The record keeps the descriptor, which is public, and the signer is recovered later
+through `wallet.signerForDescriptor()`.
+
+What each swap stores, and what is recoverable:
+
+| Wallet answers with     | Sender key            | Preimage (when the swap needs one) | Secret at rest        |
+| ----------------------- | --------------------- | ---------------------------------- | --------------------- |
+| fresh HD descriptor     | re-derives from seed  | derives deterministically          | none                  |
+| static `tr(pubkey)`     | the wallet's identity | random, stored on the record       | the preimage only     |
+| (legacy records)        | stored private key    | stored                             | key + preimage (read-only) |
+
+The preimage split follows the **descriptor's shape**, not the wallet's type: an HD child
+descriptor is unique to its swap, so `sha256(sign_det(...))` is safe; a static descriptor is the
+same key for every swap, so a derived preimage would repeat across swaps — one solver learning its
+own preimage would learn every other swap's — and a per-swap random preimage is stored instead.
+A stored preimage is the one secret at rest in the design, and it is never a private key.
 
 ```ts
 const swap = await requestOnchainSend(/* … */);
@@ -454,17 +470,20 @@ terminal: the lockup stays funded and watched, a solver claim still ends the swa
 `pending`. The manager reports the same state when nothing is wired to act (`enableAutoActions:
 false`, or no callbacks) and the window has passed.
 
-`derivable: false` is the fallback for wallets that cannot allocate (static / `auto` / custom
-signers). It carries the raw `senderPrivateKey` and, for onchain sends, `preimage`;
-`rfqSecretsToRecord` stores them under `AssetSwap.fallbackSecrets` as a complete versioned
-record. The discriminant is a type-level fact, so a consumer written against the derivable arm
-alone will not compile against the fallback. A caller-supplied preimage on an HD wallet keeps
-`signingDescriptor` for the sender key and stores only `preimageHex` as secret material.
+`derivable: false` is a **legacy read-only arm**: records written by older SDKs that minted a
+random sender key when the wallet could not allocate, stored under `AssetSwap.fallbackSecrets`.
+Reading them keeps those swaps refundable; nothing produces them anymore — a wallet that cannot
+allocate now contributes its identity key instead. The discriminant is a type-level fact, so a
+consumer written against the derivable arm alone will not compile against the fallback. A
+caller-supplied preimage keeps `signingDescriptor` for the sender key and stores only
+`preimageHex` as secret material.
 
-Each swap **allocates** its own descriptor rather than peeking at the current one: two swaps sharing
-a descriptor derive the _identical_ preimage, so one solver learning its own preimage would learn the
-other swap's. On restore, `adoptSwapDescriptor` moves the wallet's watermark past a restored record's
-index so it cannot be handed out twice.
+On an HD wallet each swap **allocates** its own descriptor rather than peeking at the current one:
+two swaps sharing a descriptor derive the _identical_ preimage, so one solver learning its own
+preimage would learn the other swap's. (Static wallets share their one descriptor by design — that
+is why their preimages are stored per swap, never derived.) On restore, `adoptSwapDescriptor`
+moves the wallet's watermark past a restored record's index so it cannot be handed out twice; a
+static descriptor names no index and adopts as a no-op.
 
 The derivation is `sha256(signSchnorrDeterministic(sha256("Arkade-RFQ-Preimage-v1" ‖ xonly(32) ‖
 u32le(0))))`, mirroring NArk's Boltz scheme (`SwapsManagementService.cs:128-160`) with an
@@ -487,6 +506,16 @@ after heavy swap use.
 
 The package is pre-release; these notes replace a changelog for consumers tracking the branch.
 
+- **`randomSwapSecrets` is gone; the wallet is the only key source.** `deriveSwapSecrets` now
+  answers for every wallet (HD → fresh descriptor, static → its identity's `tr(pubkey)`, and the
+  same for wallets without the descriptor API) and takes the preimage options `randomSwapSecrets`
+  used to: `deriveSwapSecrets(wallet, { preimage })`. New swaps never carry a stored sender key —
+  `fallbackSecrets` is read-only for records older SDKs wrote. Static-descriptor swaps that need a
+  preimage store a random per-swap `preimageHex` instead of deriving one (a static key would
+  derive the same preimage for every swap). Core `Wallet.signerForDescriptor` now **throws
+  `ForeignDescriptorError`** for a key the wallet does not hold instead of silently answering with
+  the baseline identity; `senderIdentityForRfqSecrets` verifies the returned signer's key against
+  the descriptor, so a wrong-key signer is refused at resolution, not at the solver.
 - **`requestLightningSend` / `requestOnchainSend` return `secrets`, not top-level raw key material.**
   `senderPrivateKey` is gone from both return types; caller-owned onchain preimages live inside
   `secrets` and must be persisted with the record. `pushRefundWithoutReceiver` /

@@ -92,6 +92,7 @@ export {
     normalizeToDescriptor,
     extractPubKey,
     parseHDDescriptor,
+    deriveDescriptorLeafPubKey,
     deriveDescriptorLeafCompressedPubKey,
 } from "./descriptor";
 export type { ParsedHDDescriptor } from "./descriptor";

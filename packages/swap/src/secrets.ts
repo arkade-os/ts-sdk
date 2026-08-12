@@ -1,17 +1,27 @@
 /**
- * RFQ swap secrets, derived from the wallet seed instead of stored.
+ * RFQ swap secrets, provided by the wallet instead of minted here.
  *
- * Both secrets an RFQ corridor needs — the VHTLC `sender` key and, for an
- * onchain send, the preimage — become functions of one HD-allocated
- * descriptor. The record keeps only that descriptor, which is public, so a
- * copied profile or a device backup yields nothing spendable and a wallet with
- * the seed can re-derive everything.
+ * The VHTLC `sender` key always comes from the wallet — this package never
+ * generates signing keys. `wallet.getNextSigningDescriptor()` is where the
+ * policy lives: an HD wallet allocates a fresh descriptor per swap, a static
+ * wallet answers with its one `tr(pubkey)` descriptor. The swap record keeps
+ * the descriptor, which is public, and the signer is recovered later through
+ * `wallet.signerForDescriptor()`.
  *
- * Wallets that cannot allocate (static / `auto` / custom signers) get the
- * fallback arm instead, which carries real secrets the caller must store. That
- * arm is built by the caller, never in here: a restore probing for a derived
- * preimage must be able to come back empty rather than be handed a fresh
- * random one that will never match the chain.
+ * The preimage splits by descriptor shape, not by wallet type:
+ * - A per-swap (HD) descriptor derives its preimage from a deterministic
+ *   signature, so nothing secret is at rest and a wallet with the seed
+ *   re-derives everything.
+ * - A static descriptor is the same key for every swap, so a derived preimage
+ *   would repeat across swaps — one counterparty learning its own preimage
+ *   would learn every other swap's. Those swaps carry a random preimage
+ *   stored on the record instead: one per-swap secret at rest, and never a
+ *   private key.
+ *
+ * Records written by older SDKs may carry `fallbackSecrets` with a stored
+ * sender private key. Those remain readable ({@link rfqSecretsOfRecord},
+ * {@link senderIdentityForRfqSecrets}) so existing swaps stay refundable, but
+ * nothing here produces them anymore.
  */
 import { hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -22,8 +32,11 @@ import {
     IWallet,
     ReadonlyIdentity,
     SingleKey,
+    deriveDescriptorLeafPubKey,
     isHDAllocationCapable,
     isHDWalletCapable,
+    normalizeToDescriptor,
+    parseHDDescriptor,
 } from "@arkade-os/sdk";
 import type { AssetSwapFallbackSecrets } from "./store";
 
@@ -61,22 +74,47 @@ export function buildPreimageMessage(xonly: Uint8Array, index: number): Uint8Arr
 }
 
 /**
- * Every swap allocates its own descriptor, so the key alone separates two
- * swaps and the message index stays pinned. Kept as a parameter of
+ * Preimage derivation is only safe when the key is unique to the swap, so the
+ * message index can stay pinned. Kept as a parameter of
  * {@link buildPreimageMessage} for cross-SDK vectors.
  */
 const PREIMAGE_INDEX = 0;
 
-/** No secrets at rest: everything re-derives from the seed plus this. */
+/**
+ * True iff `descriptor` is an HD child — unique to the swap that allocated
+ * it. A bare `tr(pubkey)` (a static wallet's answer) is the same key for
+ * every swap, so anything deriving per-swap secrets must branch on this —
+ * the descriptor's shape, never the wallet's type.
+ */
+export function isPerSwapDescriptor(descriptor: string): boolean {
+    return parseHDDescriptor(descriptor) !== null;
+}
+
+/**
+ * The wallet-provided secrets for one swap. Persist `signingDescriptor` (and
+ * `preimage`, when present) on the swap record.
+ *
+ * The sender key is never at rest: it re-derives from the wallet via the
+ * descriptor. The `preimage` field is at rest only for swaps whose descriptor
+ * is not per-swap (static wallets) or whose preimage the caller supplied.
+ */
 export interface DerivedSwapSecrets {
     derivable: true;
     /** Public. Persist it on the swap record; it is what restore keys off. */
     signingDescriptor: string;
-    /** Onchain-send only, when the caller supplied P instead of deriving it. */
+    /**
+     * Present when the preimage cannot be re-derived from the seed: caller
+     * supplied it, or the descriptor is static (shared across swaps, so a
+     * derived preimage would collide). A real secret — persist it.
+     */
     preimage?: Uint8Array;
 }
 
-/** The wallet could not allocate. These are real secrets — persist them. */
+/**
+ * Legacy arm: older SDKs stored a random sender key when the wallet could
+ * not allocate. Kept for reading existing records only — nothing produces
+ * this anymore.
+ */
 export interface StoredSwapSecrets {
     derivable: false;
     senderPrivateKey: Uint8Array;
@@ -92,55 +130,58 @@ export interface StoredSwapSecrets {
 export type SwapSecrets = DerivedSwapSecrets | StoredSwapSecrets;
 
 /**
- * Allocate a descriptor for one swap, or `undefined` when the wallet cannot.
+ * Ask the wallet for one swap's secrets. Always answers, and never mints a
+ * signing key: the wallet decides whether the descriptor is fresh (HD) or its
+ * static key; a wallet that predates the descriptor API contributes its
+ * identity key. The only randomness ever produced here is a stored preimage
+ * for swaps whose descriptor cannot derive one safely.
  *
- * Allocates — never peeks. `getCurrentSigningDescriptor` returns the same
- * descriptor until the wallet rotates, and two swaps sharing a descriptor
- * derive the *identical* preimage, so one solver learning its own preimage
- * would learn the other swap's.
+ * `opts.preimage` — pass `true` when this swap needs a preimage we hold (the
+ * claim secret of a receive, the HTLC secret of an onchain send), or supply a
+ * caller-owned 32-byte `P`. On a per-swap descriptor a requested preimage is
+ * left implicit and re-derived on demand ({@link preimageForRfqSecrets}); on
+ * a static descriptor it is minted once and returned for the caller to
+ * persist.
  *
- * Cost of allocating: the index is consumed even when the quote is later
- * refused, and a swap index never turns into a funded receive contract, so a
- * long run of swaps widens the "unused" gap a seed-only `restore()` scan sees
- * (see the README's gap-limit note). Restores that keep the swap repository
- * are unaffected — `adoptSwapDescriptor` re-claims each record's index.
+ * Cost of allocating on an HD wallet: the index is consumed even when the
+ * quote is later refused, and a swap index never turns into a funded receive
+ * contract, so a long run of swaps widens the "unused" gap a seed-only
+ * `restore()` scan sees (see the README's gap-limit note). Restores that keep
+ * the swap repository are unaffected — `adoptSwapDescriptor` re-claims each
+ * record's index.
  */
-export async function deriveSwapSecrets(wallet: IWallet): Promise<DerivedSwapSecrets | undefined> {
-    if (!isHDAllocationCapable(wallet)) return undefined;
-    const signingDescriptor = await wallet.getNextSigningDescriptor();
-    if (!signingDescriptor) return undefined;
-    return { derivable: true, signingDescriptor };
-}
-
-/**
- * The fallback arm. Separate from {@link deriveSwapSecrets} so nothing can
- * fabricate a preimage while probing for a derived one.
- */
-export function randomSwapSecrets(
+export async function deriveSwapSecrets(
+    wallet: IWallet,
     opts: { preimage?: boolean | Uint8Array } = {},
-): StoredSwapSecrets {
+): Promise<DerivedSwapSecrets> {
     if (opts.preimage instanceof Uint8Array && opts.preimage.length !== 32) {
         // The HTLC claim leaf pins OP_SIZE 32: any other length is unclaimable.
         throw new Error(`preimage must be 32 bytes, got ${opts.preimage.length}`);
     }
-    const preimage =
-        opts.preimage instanceof Uint8Array
-            ? opts.preimage
-            : opts.preimage
-              ? randomBytes(32)
-              : undefined;
-    return {
-        derivable: false,
-        senderPrivateKey: schnorr.utils.randomSecretKey(),
-        ...(preimage ? { preimage } : {}),
-    };
+    const allocated = isHDAllocationCapable(wallet)
+        ? await wallet.getNextSigningDescriptor()
+        : undefined;
+    // A wallet that cannot answer still provides its key — the identity. The
+    // one thing that never happens here is a key the wallet doesn't hold.
+    const signingDescriptor =
+        allocated ?? normalizeToDescriptor(hex.encode(await wallet.identity.xOnlyPublicKey()));
+
+    if (opts.preimage instanceof Uint8Array) {
+        return { derivable: true, signingDescriptor, preimage: opts.preimage };
+    }
+    if (opts.preimage && !isPerSwapDescriptor(signingDescriptor)) {
+        // Static key: a derived preimage would repeat across swaps. Mint one
+        // for this swap only; the caller must persist it with the record.
+        return { derivable: true, signingDescriptor, preimage: randomBytes(32) };
+    }
+    return { derivable: true, signingDescriptor };
 }
 
 /**
  * Serialize or restore the secrets arm a persisted record describes. Normal
- * HD swaps store only `signingDescriptor`; caller-supplied preimages add
- * `preimageHex`; fallback swaps use `fallbackSecrets` so both P and the
- * sender identity survive a restart.
+ * HD swaps store only `signingDescriptor`; static-descriptor swaps and
+ * caller-supplied preimages add `preimageHex`; legacy fallback swaps use
+ * `fallbackSecrets` so both P and the sender identity survive a restart.
  */
 export function rfqSecretsToRecord(secrets: SwapSecrets): {
     signingDescriptor?: string;
@@ -204,13 +245,15 @@ function decodeHex32(value: string, label: string): Uint8Array {
 /**
  * Claim a restored swap's index so a later allocation cannot reissue it —
  * which would derive that swap's preimage a second time, for a different swap.
- * Monotonic; a no-op on a wallet that cannot allocate.
+ * Monotonic; a no-op on a wallet that cannot allocate, and on a static
+ * descriptor, which has no index to reserve.
  */
 export async function adoptSwapDescriptor(
     wallet: IWallet,
     signingDescriptor: string,
 ): Promise<void> {
     if (!isHDAllocationCapable(wallet)) return;
+    if (!isPerSwapDescriptor(signingDescriptor)) return;
     await wallet.advanceSigningDescriptorWatermark(signingDescriptor);
 }
 
@@ -222,7 +265,7 @@ export type RefundBlockedReason =
     | "no-secrets"
     /** It names an arm this version cannot read. */
     | "unreadable-secrets"
-    /** The descriptor belongs to another seed, or this wallet is static. */
+    /** The descriptor belongs to another wallet's key. */
     | "foreign-descriptor";
 
 /**
@@ -248,31 +291,57 @@ export class RefundNotLocallyPossibleError extends Error {
 /**
  * The VHTLC `sender` identity — the signer for every interactive refund.
  *
- * The capability probe is not the check that matters: `signerForDescriptor`
- * falls back to the plain wallet identity for a descriptor it cannot derive —
- * a different seed, a static wallet — and that identity signs happily with the
- * wrong key, which surfaces only as a solver rejection or a dead claim script.
- * So the check is on what comes back: only a descriptor-bound signer carries
- * `signSchnorrDeterministic`.
+ * The check that matters is on what comes back, and it is a public-key
+ * equality, never a wallet-type probe: whatever identity the wallet answers
+ * with must BE the descriptor's key. A wallet that answers with the wrong key
+ * — another seed's, after a restore mix-up — would sign happily, and the
+ * failure would surface only as a solver rejection or a dead claim script.
  */
 export async function senderIdentityForRfqSecrets(
     wallet: IWallet,
     secrets: SwapSecrets,
 ): Promise<Identity> {
     if (!secrets.derivable) return SingleKey.fromPrivateKey(secrets.senderPrivateKey);
-    const signer = isHDWalletCapable(wallet)
-        ? await wallet.signerForDescriptor(secrets.signingDescriptor)
-        : undefined;
-    if (!signer || !isDeterministicSigner(signer)) {
-        // Typed at the throw site, not in a translator: this is the function
-        // that discovers the cause. A faithful `Error` subclass, so callers
-        // matching on the message keep working.
+    let signer: Identity;
+    if (isHDWalletCapable(wallet)) {
+        try {
+            signer = await wallet.signerForDescriptor(secrets.signingDescriptor);
+        } catch (cause) {
+            // Typed at the throw site, not in a translator: this is the
+            // function that discovers the cause.
+            throw new RefundNotLocallyPossibleError(
+                "foreign-descriptor",
+                `this wallet cannot derive ${secrets.signingDescriptor}; the swap was created on another wallet`,
+                { cause },
+            );
+        }
+    } else {
+        // No descriptor API at all — the identity is the only key this wallet
+        // has, and the equality check below decides whether it is the right one.
+        signer = wallet.identity;
+    }
+    const expected = descriptorKeyOf(secrets.signingDescriptor);
+    const actual = await signer.xOnlyPublicKey();
+    if (!expected || !bytesEqual(actual, expected)) {
         throw new RefundNotLocallyPossibleError(
             "foreign-descriptor",
             `this wallet cannot derive ${secrets.signingDescriptor}; the swap was created on another wallet`,
         );
     }
     return signer;
+}
+
+/** The descriptor's leaf key, or undefined when it cannot be parsed. */
+function descriptorKeyOf(descriptor: string): Uint8Array | undefined {
+    try {
+        return deriveDescriptorLeafPubKey(descriptor);
+    } catch {
+        return undefined;
+    }
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+    return a.length === b.length && a.every((byte, i) => byte === b[i]);
 }
 
 /**
@@ -368,6 +437,14 @@ export async function preimageForRfqSecrets(
         return secrets.preimage;
     }
     if (secrets.preimage) return secrets.preimage;
+    if (!isPerSwapDescriptor(secrets.signingDescriptor)) {
+        // A static descriptor is the same key for every swap: deriving here
+        // would hand two swaps one preimage. Creation stores P for these
+        // records, so reaching this line means the record lost it.
+        throw new Error(
+            `swap descriptor ${secrets.signingDescriptor} is not per-swap and the record stores no preimage`,
+        );
+    }
     const signer = await senderIdentityForRfqSecrets(wallet, secrets);
     if (!isDeterministicSigner(signer)) {
         // Loud: a preimage from a random-aux signature is unrecoverable, and

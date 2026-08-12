@@ -19,14 +19,21 @@ import {
     isBatchSignable,
     DescriptorIdentity,
     isHDDeterministicSignCapable,
+    deriveDescriptorLeafPubKey,
     deriveDescriptorLeafCompressedPubKey,
+    normalizeToDescriptor,
+    parseHDDescriptor,
 } from "./identity";
 import type {
     DescriptorIdentityOptions,
     DescriptorSigner,
     HDDeterministicSignCapable,
 } from "./identity";
-import { isHDWalletCapable, isHDAllocationCapable } from "./wallet/hdWalletCapable";
+import {
+    isHDWalletCapable,
+    isHDAllocationCapable,
+    ForeignDescriptorError,
+} from "./wallet/hdWalletCapable";
 import type { HDAllocationCapable, HDWalletCapable } from "./wallet/hdWalletCapable";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
@@ -509,9 +516,13 @@ export {
     isHDDeterministicSignCapable,
     isHDWalletCapable,
     isHDAllocationCapable,
+    ForeignDescriptorError,
     signingDescriptorIndex,
     strictSigningDescriptorIndex,
+    deriveDescriptorLeafPubKey,
     deriveDescriptorLeafCompressedPubKey,
+    normalizeToDescriptor,
+    parseHDDescriptor,
     OnchainWallet,
     Ramps,
     DustChangeError,

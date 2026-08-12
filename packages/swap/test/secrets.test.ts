@@ -24,8 +24,8 @@ import {
     derivePreimage,
     deriveSwapSecrets,
     isDeterministicSigner,
+    isPerSwapDescriptor,
     preimageForRfqSecrets,
-    randomSwapSecrets,
     rfqSecretsOfRecord,
     rfqSecretsToRecord,
     senderIdentityForRfqSecrets,
@@ -159,12 +159,15 @@ describe("derivation", () => {
     });
 
     it("refuses a wallet that answers with its own identity for a foreign descriptor", async () => {
-        // Both `Wallet.signerForDescriptor` and the service-worker one fall
-        // back to the wallet identity for a descriptor they cannot derive — a
-        // different seed, a wiped HD state. That identity signs happily with
-        // the wrong key, so the refusal has to come from checking what came
-        // back, not from asking the wallet whether it is HD-capable.
+        // A broken or proxy wallet may answer with its baseline identity for
+        // a descriptor it cannot derive — a different seed, a wiped HD state.
+        // That identity signs happily with the wrong key, so the refusal has
+        // to come from checking the KEY of what came back, not from asking
+        // the wallet what shape it is.
         const { wallet } = await hdWallet();
+        // Burn index 0 first: a fresh seed's baseline key aliases the
+        // index-0 child key, and an aliased key would be a RIGHT answer.
+        await deriveSwapSecrets(wallet);
         const secrets = (await deriveSwapSecrets(wallet))!;
         const foreign = {
             ...wallet,
@@ -253,8 +256,17 @@ describe("senderIdentityForSwapRecord", () => {
         );
     });
 
-    it("hands back the stored key for a fallback record, on any wallet", async () => {
-        const record = rfqSecretsToRecord(randomSwapSecrets({ preimage: true }));
+    it("hands back the stored key for a legacy fallback record, on any wallet", async () => {
+        // Written by an older SDK that minted the sender key; nothing
+        // produces this shape anymore, but the record must stay refundable.
+        const record = {
+            fallbackSecrets: {
+                version: 1,
+                type: "stored",
+                senderPrivateKeyHex: "11".repeat(32),
+                preimageHex: "22".repeat(32),
+            } as AssetSwapFallbackSecrets,
+        };
         const identity = await senderIdentityForSwapRecord(staticWallet(), record);
 
         expect(await identity.xOnlyPublicKey()).toHaveLength(32);
@@ -296,32 +308,100 @@ describe("cross-SDK vectors", () => {
     });
 });
 
-describe("the fallback arm", () => {
-    it("is what a wallet with no HD state gets", async () => {
-        expect(await deriveSwapSecrets(staticWallet())).toBeUndefined();
+describe("the static arm", () => {
+    // A wallet that cannot allocate still provides ITS key: the sender key is
+    // never minted here. The one secret the arm may carry is a per-swap
+    // stored preimage — the same static key would otherwise derive one
+    // preimage for every swap.
+    it("binds the swap to the wallet's identity key", async () => {
+        const wallet = staticWallet();
+        const secrets = await deriveSwapSecrets(wallet);
+
+        expect(secrets.derivable).toBe(true);
+        expect(secrets.signingDescriptor).toBe(
+            `tr(${hex.encode(await wallet.identity.xOnlyPublicKey())})`,
+        );
+        expect(isPerSwapDescriptor(secrets.signingDescriptor)).toBe(false);
+        expect(hex.encode(await senderPubkeyForRfqSecrets(wallet, secrets))).toBe(
+            hex.encode(await wallet.identity.xOnlyPublicKey()),
+        );
+        const signer = await senderIdentityForRfqSecrets(wallet, secrets);
+        expect(signer).toBe(wallet.identity);
+        // and no preimage materializes unless the corridor asks for one
+        expect(secrets.preimage).toBeUndefined();
     });
 
-    it("carries the secrets, and a preimage only when asked", () => {
-        expect(randomSwapSecrets()).toMatchObject({ derivable: false });
-        expect(randomSwapSecrets().preimage).toBeUndefined();
-        expect(randomSwapSecrets({ preimage: true }).preimage).toHaveLength(32);
+    it("stores a fresh preimage per swap instead of deriving a colliding one", async () => {
+        const wallet = staticWallet();
+        const a = await deriveSwapSecrets(wallet, { preimage: true });
+        const b = await deriveSwapSecrets(wallet, { preimage: true });
+
+        // Same key, same descriptor — the uniqueness lives in the stored P.
+        expect(a.signingDescriptor).toBe(b.signingDescriptor);
+        expect(a.preimage).toHaveLength(32);
+        expect(hex.encode(a.preimage!)).not.toBe(hex.encode(b.preimage!));
+        expect(hex.encode(await preimageForRfqSecrets(wallet, a))).toBe(hex.encode(a.preimage!));
     });
 
-    it("rejects a supplied preimage that is not 32 bytes", () => {
+    it("rejects a supplied preimage that is not 32 bytes, before allocating", async () => {
         // The HTLC claim leaf pins OP_SIZE 32: any other length funds an
-        // unclaimable swap, so it must be refused before money moves.
-        expect(() => randomSwapSecrets({ preimage: new Uint8Array(20) })).toThrow(
+        // unclaimable swap, so it must be refused before money moves — and
+        // before an HD index is burned.
+        const { wallet } = await hdWallet();
+        await expect(deriveSwapSecrets(wallet, { preimage: new Uint8Array(20) })).rejects.toThrow(
             /preimage must be 32 bytes/,
         );
+        expect(
+            await (
+                wallet as unknown as { getCurrentSigningDescriptor(): Promise<string> }
+            ).getCurrentSigningDescriptor(),
+        ).toBeUndefined();
+    });
+
+    it("refuses to derive a preimage for a record that lost its stored one", async () => {
+        // Reaching derivation with a static descriptor means the record lost
+        // P: deriving would hand two swaps one preimage, so it must refuse.
+        const wallet = staticWallet();
+        const secrets = await deriveSwapSecrets(wallet);
+        await expect(preimageForRfqSecrets(wallet, secrets)).rejects.toThrow(
+            /not per-swap and the record stores no preimage/,
+        );
+    });
+
+    it("round-trips through the record with only the descriptor and P", async () => {
+        const wallet = staticWallet();
+        const secrets = await deriveSwapSecrets(wallet, { preimage: true });
+        const record = rfqSecretsToRecord(secrets);
+
+        expect(record).toEqual({
+            signingDescriptor: secrets.signingDescriptor,
+            preimageHex: hex.encode(secrets.preimage!),
+        });
+        expect(record).not.toHaveProperty("fallbackSecrets");
+
+        const restored = rfqSecretsOfRecord(record)!;
+        expect(restored.derivable).toBe(true);
+        expect(hex.encode(await preimageForRfqSecrets(wallet, restored))).toBe(
+            hex.encode(secrets.preimage!),
+        );
+        expect(await senderIdentityForRfqSecrets(wallet, restored)).toBe(wallet.identity);
+    });
+});
+
+describe("the legacy stored arm", () => {
+    // Older SDKs minted a random sender key and persisted it. Reading those
+    // records must keep working; producing them must not.
+    const legacySecrets = () => ({
+        derivable: false as const,
+        senderPrivateKey: hex.decode("11".repeat(32)),
+        preimage: hex.decode("22".repeat(32)),
     });
 
     it("resolves its signer and preimage from the stored bytes", async () => {
         const wallet = staticWallet();
-        const secrets = randomSwapSecrets({ preimage: true });
+        const secrets = legacySecrets();
 
-        expect(hex.encode(await preimageForRfqSecrets(wallet, secrets))).toBe(
-            hex.encode(secrets.preimage!),
-        );
+        expect(hex.encode(await preimageForRfqSecrets(wallet, secrets))).toBe("22".repeat(32));
         const signer = await senderIdentityForRfqSecrets(wallet, secrets);
         expect(hex.encode(await signer.xOnlyPublicKey())).toBe(
             hex.encode(await senderPubkeyForRfqSecrets(wallet, secrets)),
@@ -329,14 +409,15 @@ describe("the fallback arm", () => {
     });
 
     it("refuses to invent a preimage it was never given", async () => {
-        await expect(preimageForRfqSecrets(staticWallet(), randomSwapSecrets())).rejects.toThrow(
+        const { preimage: _dropped, ...withoutPreimage } = legacySecrets();
+        await expect(preimageForRfqSecrets(staticWallet(), withoutPreimage)).rejects.toThrow(
             /no stored preimage/,
         );
     });
 
-    it("serializes enough fallback data to restore the sender identity", async () => {
+    it("still serializes and restores the fallback record shape", async () => {
         const wallet = staticWallet();
-        const secrets = randomSwapSecrets({ preimage: true });
+        const secrets = legacySecrets();
         const record = rfqSecretsToRecord(secrets);
 
         expect(record).toEqual({
@@ -344,7 +425,7 @@ describe("the fallback arm", () => {
                 version: 1,
                 type: "stored",
                 senderPrivateKeyHex: hex.encode(secrets.senderPrivateKey),
-                preimageHex: hex.encode(secrets.preimage!),
+                preimageHex: hex.encode(secrets.preimage),
             },
         });
 
@@ -353,7 +434,7 @@ describe("the fallback arm", () => {
         if (restored.derivable) throw new Error("expected stored secrets");
         expect(hex.encode(restored.senderPrivateKey)).toBe(hex.encode(secrets.senderPrivateKey));
         expect(hex.encode(await preimageForRfqSecrets(wallet, restored))).toBe(
-            hex.encode(secrets.preimage!),
+            hex.encode(secrets.preimage),
         );
         expect(hex.encode(await senderPubkeyForRfqSecrets(wallet, restored))).toBe(
             hex.encode(await senderPubkeyForRfqSecrets(wallet, secrets)),
@@ -408,6 +489,18 @@ describe("restore", () => {
 
     it("is a no-op on a wallet that cannot allocate", async () => {
         await expect(adoptSwapDescriptor(staticWallet(), "tr(deadbeef)")).resolves.toBeUndefined();
+    });
+
+    it("is a no-op for a static descriptor, which names no index", async () => {
+        // A static record adopted by ANY wallet has no watermark to move —
+        // and must not be pushed at the wallet, whose HD arm would refuse a
+        // descriptor with no trailing child index.
+        const { wallet } = await hdWallet();
+        const spy = vi.spyOn(wallet, "advanceSigningDescriptorWatermark" as never);
+        await expect(
+            adoptSwapDescriptor(wallet, `tr(${"ab".repeat(32)})`),
+        ).resolves.toBeUndefined();
+        expect(spy).not.toHaveBeenCalled();
     });
 });
 

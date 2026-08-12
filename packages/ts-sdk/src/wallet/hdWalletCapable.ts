@@ -30,10 +30,29 @@ export interface HDWalletCapable {
 
     /**
      * An {@link Identity} whose keys and signatures are those of `descriptor`.
-     * Returns the wallet identity itself when the wallet has no descriptor
-     * signer.
+     * Returns the wallet identity itself when `descriptor` is the identity's
+     * own key (a static wallet's descriptor, or an HD wallet's baseline key).
+     *
+     * Throws {@link ForeignDescriptorError} for a descriptor this wallet
+     * cannot sign for. Never silently substitutes another key: an identity
+     * handed out for a foreign descriptor signs happily with the wrong key,
+     * and that surfaces only as a rejected transaction or a dead script —
+     * far from the call that caused it.
      */
     signerForDescriptor(descriptor: string): Promise<Identity>;
+}
+
+/**
+ * Thrown by {@link HDWalletCapable.signerForDescriptor} when the wallet holds
+ * no key for the requested descriptor — it belongs to another seed, or to an
+ * identity this wallet does not carry. A typed refusal so callers can tell
+ * "not my key" from transient signing failures.
+ */
+export class ForeignDescriptorError extends Error {
+    override readonly name = "ForeignDescriptorError";
+    constructor(readonly descriptor: string) {
+        super(`this wallet holds no key for descriptor: ${descriptor}`);
+    }
 }
 
 /** Structural type guard for {@link HDWalletCapable}. */
@@ -60,22 +79,36 @@ export function isHDWalletCapable(value: unknown): value is HDWalletCapable {
  */
 export interface HDAllocationCapable {
     /**
-     * Allocate the next descriptor, advancing the watermark. `undefined` for
-     * static / `auto` wallets, which cannot allocate.
+     * The signing descriptor a new artifact (a swap, an invoice, a contract)
+     * should bind to. **The wallet decides what that means**: an HD wallet
+     * allocates a fresh index, advancing the watermark; a static wallet
+     * answers with its one `tr(pubkey)` descriptor every time. Consumers must
+     * not probe the wallet's shape or mint key material of their own — they
+     * ask, and use what comes back with
+     * {@link HDWalletCapable.signerForDescriptor}.
+     *
+     * `undefined` only for implementations that genuinely cannot answer;
+     * `Wallet` always answers. Callers that must work against such wallets
+     * fall back to the identity key — never to a random one.
      *
      * Distinct from {@link HDWalletCapable.getCurrentSigningDescriptor}, which
-     * peeks: two artifacts bound to a peek share a key.
+     * peeks: on an HD wallet, two artifacts bound to a peek share a key.
+     * Whether the returned descriptor is unique per call is a property of the
+     * wallet, not of this method — anything deriving per-artifact secrets
+     * from the descriptor must check the descriptor's shape, not the wallet's.
      */
     getNextSigningDescriptor(): Promise<string | undefined>;
 
     /**
      * Move the allocation watermark to `descriptor`'s index so later
      * allocations cannot reissue it. Monotonic — a lower index is a no-op.
+     * On a static wallet there is no watermark: the wallet's own descriptor
+     * is accepted as a no-op.
      *
-     * Throws on a descriptor this wallet cannot derive, or one with no
-     * parseable trailing child index: silently mapping those to index 0 would
-     * move the watermark nowhere and let a restored artifact's index be handed
-     * out again.
+     * Throws on a descriptor this wallet cannot derive, or an HD descriptor
+     * with no parseable trailing child index: silently mapping those to index
+     * 0 would move the watermark nowhere and let a restored artifact's index
+     * be handed out again.
      */
     advanceSigningDescriptorWatermark(descriptor: string): Promise<void>;
 }

@@ -17,6 +17,12 @@ export type AssetSwapStatus =
  * restore layers share one spelling instead of re-typing the literal. */
 export const BTC_ASSET_ID = "btc";
 
+/**
+ * Legacy stored-secrets arm. Older SDKs minted a random sender key when the
+ * wallet could not allocate a descriptor and persisted it here, plaintext.
+ * Read-only since the wallet became the only key source: existing records
+ * stay refundable, but nothing writes this shape anymore.
+ */
 export interface AssetSwapFallbackSecretsV1 {
     version: 1;
     type: "stored";
@@ -67,17 +73,18 @@ export interface AssetSwap {
      * derivation is the right one. */
     paymentHash?: string;
     /**
-     * The HD descriptor this swap's secrets derive from. Public — it is what
-     * lets the record carry no secrets at all. Present iff the swap was
-     * created on a wallet that can allocate.
+     * The wallet descriptor this swap's sender key comes from — a fresh HD
+     * child, or a static wallet's `tr(pubkey)`. Public — the signer
+     * re-derives from the wallet, so the record carries no key material.
      */
     signingDescriptor?: string;
-    /** P, hex, when the user supplied a preimage that is not seed-derived. */
+    /** P, hex, when it cannot be re-derived from the seed: the user supplied
+     * it, or the descriptor is static (shared across swaps, so a derived
+     * preimage would collide). */
     preimageHex?: string;
     /**
-     * Complete stored-arm secrets for wallets that cannot derive. Versioned
-     * and discriminated so restore can rebuild both the sender identity and,
-     * for onchain sends, P.
+     * Legacy stored-arm secrets written by older SDKs — see
+     * {@link AssetSwapFallbackSecretsV1}. Read-only.
      */
     fallbackSecrets?: AssetSwapFallbackSecrets;
     /** The L1 HTLC's pkScript, hex — the chain-watch key. */

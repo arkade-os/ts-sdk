@@ -347,13 +347,18 @@ describe("requestOnchainSend on an HD wallet", () => {
 
             const signer = await wallet.signerForDescriptor!(result.secrets.signingDescriptor);
             expect(hex.encode(result.senderPubkey)).toBe(hex.encode(await signer.xOnlyPublicKey()));
-            expect(warn).toHaveBeenCalledWith(expect.stringContaining("supplied by the caller"));
+            expect(warn).toHaveBeenCalledWith(
+                expect.stringContaining("cannot be re-derived from the seed"),
+            );
         } finally {
             warn.mockRestore();
         }
     });
 
-    it("warns and returns raw fallback secrets when allocation is unavailable", async () => {
+    it("binds a static wallet's swap to its identity key, never a minted one", async () => {
+        // The wallet that cannot allocate still provides ITS key. The one
+        // secret the record carries is the per-swap preimage — a static key
+        // deriving preimages would hand every swap the same one.
         const wallet = staticWallet();
         const preimage = new Uint8Array(32).fill(8);
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -366,13 +371,51 @@ describe("requestOnchainSend on an HD wallet", () => {
                 preimage,
             });
 
-            expect(result.secrets.derivable).toBe(false);
-            if (result.secrets.derivable) throw new Error("expected stored secrets");
-            expect(result.secrets.senderPrivateKey).toBeInstanceOf(Uint8Array);
+            expect(result.secrets.derivable).toBe(true);
+            if (!result.secrets.derivable) throw new Error("expected derived secrets");
+            expect(result.secrets.signingDescriptor).toBe(
+                `tr(${hex.encode(await wallet.identity.xOnlyPublicKey())})`,
+            );
+            expect(hex.encode(result.senderPubkey)).toBe(
+                hex.encode(await wallet.identity.xOnlyPublicKey()),
+            );
             expect(result.secrets.preimage).toEqual(preimage);
             expect(await preimageForRfqSecrets(wallet, result.secrets)).toEqual(preimage);
-            expect(warn).toHaveBeenCalledWith(expect.stringContaining("sender key is random"));
-            expect(warn.mock.calls.join("\n")).not.toContain("preimage and sender key are random");
+            expect(warn).toHaveBeenCalledWith(
+                expect.stringContaining("cannot be re-derived from the seed"),
+            );
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    it("mints a stored per-swap preimage for a static wallet when none is supplied", async () => {
+        const wallet = staticWallet();
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+            const first = await requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 100_000,
+                amountSide: "to",
+                payoutPubkey: PAYOUT_PUBKEY,
+            });
+            const second = await requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 100_000,
+                amountSide: "to",
+                payoutPubkey: PAYOUT_PUBKEY,
+            });
+
+            expect(first.secrets.derivable).toBe(true);
+            if (!first.secrets.derivable || !second.secrets.derivable)
+                throw new Error("expected derived secrets");
+            // Same key for both swaps — that is the static policy — but the
+            // stored preimages must never repeat.
+            expect(second.secrets.signingDescriptor).toBe(first.secrets.signingDescriptor);
+            expect(first.secrets.preimage).toHaveLength(32);
+            expect(hex.encode(second.secrets.preimage!)).not.toBe(
+                hex.encode(first.secrets.preimage!),
+            );
         } finally {
             warn.mockRestore();
         }
