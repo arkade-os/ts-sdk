@@ -1251,9 +1251,19 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // Neither message may reuse "No recoverable VTXOs found": the coins
             // were found and declined, and the handler's text says when to retry.
             if (vtxosToRecover.length === 0) {
+                // Every reason, not the first: lockups at different maturities
+                // become recoverable at different times, and naming one of them
+                // dates the whole wallet by the wrong clock. Same shape as
+                // `IContractManager.assertSpendableNow`'s multi-input refusal.
+                const why =
+                    refused.size === 1
+                        ? [...refused.values()][0]
+                        : [...refused]
+                              .map(([outpoint, reason]) => `${outpoint}: ${reason}`)
+                              .join("; ");
                 throw new Error(
                     `All ${held} recoverable VTXO(s) are held by a contract that refuses a ` +
-                        `spend right now: ${[...refused.values()][0]}`,
+                        `spend right now: ${why}`,
                 );
             }
             ({ vtxosToRecover } = getRecoverableWithSubdust(vtxosToRecover, dustAmount, now));

@@ -499,6 +499,22 @@ describe("VtxoManager - Recovery", () => {
                 expect((wallet.settle as any).mock.calls).toHaveLength(0);
             });
 
+            it("names every refusal when they differ, not just the first", async () => {
+                const early = createMockVtxo(5000, "swept", false);
+                const late = createMockVtxo(4000, "swept", false);
+                const wallet = withRefusals(
+                    [early, late],
+                    new Map([
+                        [`${early.txid}:0`, "opens at block 800000"],
+                        [`${late.txid}:0`, "opens at block 900000"],
+                    ]),
+                );
+
+                await expect(new VtxoManager(wallet).recoverVtxos()).rejects.toThrow(
+                    `${early.txid}:0: opens at block 800000; ${late.txid}:0: opens at block 900000`,
+                );
+            });
+
             it("throws distinctly when what survives is below dust", async () => {
                 const immature = createMockVtxo(5000, "swept", false);
                 const crumb = createMockVtxo(18, "swept", false);

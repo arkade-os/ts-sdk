@@ -571,6 +571,40 @@ describe("VHTLCV2ContractHandler", () => {
             expect(await reasonsThrough(799_999, SERVER)).toEqual(new Map());
         });
 
+        /**
+         * The v1 population is what #702 exposed to recovery, and dispatch is
+         * by `contract.type` — so a `vhtlc` row reaching the same answer is the
+         * half the v2 cases above cannot show.
+         */
+        it("reaches a v1 row through the same dispatch", async () => {
+            const manager = await managerFor(at(799_999));
+            const params = {
+                sender: SENDER,
+                receiver: RECEIVER,
+                server: SERVER,
+                hash: HASH,
+                refundLocktime: "800000",
+                claimDelay: "10",
+                refundDelay: "12",
+                refundNoReceiverDelay: "14",
+            };
+            const script = hex.encode(VHTLCContractHandler.createScript(params).pkScript);
+            await manager.createContract({
+                type: "vhtlc",
+                params,
+                script,
+                address: "address",
+            } as never);
+            const vtxo = { txid: "d".repeat(64), vout: 0, script };
+
+            const refused = await manager.unspendableNowReasons!([vtxo], async () => SENDER);
+
+            expect(refused.get(`${"d".repeat(64)}:0`)).toMatch(/refund path opens at block 800000/);
+            expect(await manager.unspendableNowReasons!([vtxo], async () => RECEIVER)).toEqual(
+                new Map(),
+            );
+        });
+
         it("never reads a tip when no contract has an opinion", async () => {
             let reads = 0;
             const manager = await managerFor(async () => {
