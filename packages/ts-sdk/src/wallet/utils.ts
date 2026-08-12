@@ -271,7 +271,8 @@ function assertTapTreeDerivesAddress(encoded: string, tapTree: Bytes, address: A
     if (hex.encode(derived) !== hex.encode(address.pkScript)) {
         throw new Error(
             `Invalid tapTree for ${encoded}: derives ${hex.encode(derived)}, ` +
-                `address is ${hex.encode(address.pkScript)}`,
+                `address is ${hex.encode(address.pkScript)}. Expected VtxoScript.encode() form: ` +
+                `leaf depths are ignored and the tree is rebuilt in arkd's canonical shape.`,
         );
     }
 }
