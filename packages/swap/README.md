@@ -414,6 +414,16 @@ having taken back a lockup we failed to claim. A lockup funded below `expectedAm
 `needs_counterparty` and never claimed, which is non-terminal — a solver that tops it up before
 the window shuts makes it claimable again.
 
+Proving the corridor end to end needs the reference solver, which the regtest stack does not start,
+so `test/e2e/rfqLightningReceive.test.ts` is **opt-in**: without `SWAP_SOLVER_URL` it skips and
+prints its runbook, leaving `pnpm run regtest:test:swap-rfq` runnable without a solver. With one, it
+drives the whole round trip — quote, verify the solver's hold invoice, pay it from the stack's second
+LND node, let `RfqSwapManager` claim, and then assert that **the payer's own node reports the payment
+succeeded carrying the preimage this test generated and never disclosed**. That single equality is
+the corridor's proof: the solver learns `P` only by reading it back out of the Arkade transaction
+that claimed its lockup, so nothing else could have settled the payment. The file's header is the
+runbook, including the RFQ profile's `reset`-not-`down` rule and the solver's two timing constants.
+
 **There is no client-side refund on this leg, and that is the whole answer to "what if I cannot
 claim in time".** Every non-claim leaf of the covenant is the solver's, so `refundArkade` is never
 called for a receive record and no amount of waiting produces one. The deadline is the quote's
