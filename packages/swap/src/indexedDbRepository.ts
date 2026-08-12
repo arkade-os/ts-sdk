@@ -1,14 +1,16 @@
 import { closeDatabase, openDatabase } from "@arkade-os/sdk";
 import { marketsCacheKey, type AssetSwapRepository, type MarketsCacheEntry } from "./repository";
 import type { AssetSwap } from "./store";
+import type { RfqSwapRecord } from "./rfqRecord";
 
 const DEFAULT_DB_NAME = "arkade-intents";
 /** Bump when adding an object store or index. `initDatabase` only runs inside
  * `onupgradeneeded`, which fires on a version *increase* — its contains-guard
  * cannot backfill a store into a database already open at this version, so a
  * new store added without a bump is simply missing for existing users. */
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_SWAPS = "swaps";
+const STORE_RFQ_SWAPS = "rfqSwaps";
 const STORE_SCANNED = "scannedTxids";
 const STORE_MARKETS = "markets";
 
@@ -18,6 +20,9 @@ const STORE_MARKETS = "markets";
  * the txid / cache key is supplied at put time. */
 const STORES: readonly [name: string, options?: IDBObjectStoreParameters][] = [
     [STORE_SWAPS, { keyPath: "id" }],
+    // v2. Separate from `swaps` rather than sharing it: the two record types
+    // have different keys and no consumer wants them interleaved.
+    [STORE_RFQ_SWAPS, { keyPath: "rfqId" }],
     [STORE_SCANNED],
     [STORE_MARKETS],
 ];
@@ -88,6 +93,22 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
 
     async getAllSwaps(): Promise<AssetSwap[]> {
         return request((await this.readStore(STORE_SWAPS)).getAll());
+    }
+
+    async saveRfqSwap(record: RfqSwapRecord): Promise<void> {
+        await this.write(STORE_RFQ_SWAPS, (store) => {
+            store.put(record);
+        });
+    }
+
+    async getAllRfqSwaps(): Promise<RfqSwapRecord[]> {
+        return request((await this.readStore(STORE_RFQ_SWAPS)).getAll());
+    }
+
+    async removeRfqSwap(rfqId: string): Promise<void> {
+        await this.write(STORE_RFQ_SWAPS, (store) => {
+            store.delete(rfqId);
+        });
     }
 
     async getScannedTxids(): Promise<Set<string>> {
