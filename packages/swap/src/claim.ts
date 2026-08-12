@@ -11,9 +11,10 @@
  *
  * - The claim leaf carries a **preimage condition**, so the preimage rides
  *   the PSBT's `ConditionWitness` field — attached AFTER signing, on the ark
- *   transaction and every checkpoint (the condition is not part of the
- *   signed payload; attaching it first invalidates the signature the server
- *   then rejects as `INVALID_SIGNATURE`).
+ *   transaction and every checkpoint (`claimWithPreimageIdentity` in core owns
+ *   that ordering; the condition is not part of the signed payload, and
+ *   attaching it first invalidates the signature the server then rejects as
+ *   `INVALID_SIGNATURE`).
  * - The leaf is NOT covenant-pinned, so one aggregate output pays the whole
  *   balance wherever the trader says — the `nonInteractiveClaim` pin is the
  *   offline path's, not this one's. The destination is therefore a required
@@ -24,19 +25,15 @@
  * `secrets` (`senderIdentityForRfqSecrets`), a trader that is online never
  * depends on it.
  */
-import { base64, hex } from "@scure/base";
+import { hex } from "@scure/base";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
     CSVMultisigTapscript,
-    ConditionWitness,
     type Identity,
-    Transaction,
     type VHTLC,
-    assertSubmittedArkTxid,
-    buildOffchainTx,
-    matchServerCheckpoints,
-    setArkPsbtField,
+    claimWithPreimageIdentity,
+    signAndSubmitOffchainTx,
 } from "@arkade-os/sdk";
 
 import {
@@ -98,30 +95,6 @@ const assertFiniteAmount = (value: number, reason: string, label: string): void 
 };
 
 /**
- * A signer that reveals a preimage when spending a condition leaf.
- *
- * The ordering encoded here is the whole point: the condition witness is NOT
- * part of what is signed, so attaching it before signing leaves a signature
- * over a PSBT that no longer matches once the field is present. Decorate per
- * claim, never wallet-wide.
- */
-const claimIdentity = (identity: Identity, preimage: Uint8Array): Identity => ({
-    ...identity,
-    sign: async (tx: Transaction, inputIndexes?: number[]): Promise<Transaction> => {
-        // Clone-and-round-trip so the caller's transaction is never mutated
-        // and the signed result is a fresh object we can add a field to.
-        const signed = Transaction.fromPSBT(
-            (await identity.sign(tx.clone(), inputIndexes)).toPSBT(),
-        );
-        const indexes = inputIndexes ?? Array.from({ length: signed.inputsLength }, (_, i) => i);
-        for (const index of indexes) {
-            setArkPsbtField(signed, index, ConditionWitness, [preimage]);
-        }
-        return signed;
-    },
-});
-
-/**
  * Build, sign, and push the collaborative claim of a receive-corridor lockup:
  * move every funded output at the lockup to the trader's own destination,
  * revealing `P` in the witness — which is also what settles the trader's side
@@ -141,6 +114,11 @@ const claimIdentity = (identity: Identity, preimage: Uint8Array): Identity => ({
  * single non-live input would take the live ones down with it. That refusal
  * comes first, which is what leaves the value gate a plain sum over live
  * outputs.
+ *
+ * The server's countersignature is verified before finalizing, per input and
+ * against that input's own leaf. It does not protect `P` — that reached the
+ * server at submit — but it turns "reported claimed, nothing landed, the
+ * solver refunds hours later" into an immediate failure.
  */
 export async function pushClaim(
     ark: ClaimArkProvider,
@@ -208,10 +186,15 @@ export async function pushClaim(
 
     const leaf = input.script.claim();
     const tapTree = input.script.encode();
-    const signer = claimIdentity(input.receiver, input.preimage);
 
-    const { arkTx, checkpoints } = buildOffchainTx(
-        input.vtxos.map((vtxo) => ({
+    // The core primitive owns build → sign → submit → match → finalize; this
+    // module supplies only what is swap-specific: the claim leaf, the preimage
+    // signer, and the server key to check the response against — the covenant
+    // already carries it, so it is not a caller obligation.
+    const arkTxid = await signAndSubmitOffchainTx({
+        identity: claimWithPreimageIdentity(input.receiver, input.preimage),
+        provider: ark,
+        inputs: input.vtxos.map((vtxo) => ({
             txid: vtxo.txid,
             vout: vtxo.vout,
             value: vtxo.value,
@@ -220,29 +203,11 @@ export async function pushClaim(
         })),
         // One aggregate output: unlike the covenant refund, this leaf inspects
         // nothing about the output set.
-        [{ script: input.destinationPkScript, amount: BigInt(locked) }],
+        outputs: [{ script: input.destinationPkScript, amount: BigInt(locked) }],
         serverUnrollScript,
-    );
-
-    // No index list: every input spends the same claim leaf, so all are
-    // signed — and the claim identity attaches `P` after signing.
-    const signedArkTx = await signer.sign(arkTx);
-    const submitted = await ark.submitTx(
-        base64.encode(signedArkTx.toPSBT()),
-        checkpoints.map((c) => base64.encode(c.toPSBT())),
-    );
-    assertSubmittedArkTxid(submitted, signedArkTx, "claim");
-
-    // Only checkpoints we built ourselves get signed — the server's response
-    // is matched against the local set first — and the preimage rides the
-    // checkpoint signatures exactly as it rides the ark transaction's.
-    const matched = matchServerCheckpoints(submitted.signedCheckpointTxs, checkpoints, "claim");
-    const finalCheckpoints = await Promise.all(
-        matched.map(async ({ server }) => base64.encode((await signer.sign(server, [0])).toPSBT())),
-    );
-
-    await ark.finalizeTx(submitted.arkTxid, finalCheckpoints);
-    return { arkTxid: submitted.arkTxid, amount: locked };
+        verifyServerSignatures: { serverPubkey: input.script.options.server },
+    });
+    return { arkTxid, amount: locked };
 }
 
 /**

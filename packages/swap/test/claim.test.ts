@@ -76,21 +76,39 @@ type FakeArk = ClaimArkProvider & {
     finalized: { arkTxid: string; checkpoints: string[] }[];
 };
 
-const fakeArk = (over: { checkpointsFor?: (submitted: string[]) => string[] } = {}): FakeArk => {
+/** The Ark server's own key — key(3) in the covenant above. */
+const SERVER_SIGNER = SingleKey.fromPrivateKey(priv(3));
+
+const serverCosign = async (psbt: string): Promise<string> =>
+    base64.encode((await SERVER_SIGNER.sign(Transaction.fromPSBT(base64.decode(psbt)))).toPSBT());
+
+/** A scripted arkd that countersigns like the real one — `pushClaim` verifies
+ * those signatures before finalizing, so a mute fake would prove nothing. */
+const fakeArk = (
+    over: {
+        checkpointsFor?: (submitted: string[]) => string[];
+        /** Answer without countersigning, as a server that never signed. */
+        cosign?: boolean;
+        finalArkTx?: (signed: string) => string | undefined;
+    } = {},
+): FakeArk => {
     const submitted: { arkTx: string; checkpoints: string[] }[] = [];
     const finalized: { arkTxid: string; checkpoints: string[] }[] = [];
+    const cosign = over.cosign ?? true;
     return {
         submitted,
         finalized,
         getInfo: async () => ({ checkpointTapscript: CHECKPOINT_TAPSCRIPT }),
         submitTx: async (arkTx: string, checkpoints: string[]) => {
             submitted.push({ arkTx, checkpoints });
+            const answered = over.checkpointsFor ? over.checkpointsFor(checkpoints) : checkpoints;
+            const finalArkTx = cosign ? await serverCosign(arkTx) : arkTx;
             return {
                 arkTxid: Transaction.fromPSBT(base64.decode(arkTx)).id,
-                finalArkTx: arkTx,
-                signedCheckpointTxs: over.checkpointsFor
-                    ? over.checkpointsFor(checkpoints)
-                    : checkpoints,
+                finalArkTx: over.finalArkTx ? over.finalArkTx(finalArkTx) : finalArkTx,
+                signedCheckpointTxs: cosign
+                    ? await Promise.all(answered.map(serverCosign))
+                    : answered,
             };
         },
         finalizeTx: async (arkTxid: string, checkpoints: string[]) => {
@@ -313,6 +331,38 @@ describe("pushClaim", () => {
                 expectedAmount: EXPECTED_AMOUNT,
             }),
         ).rejects.toThrow(LockupNeedsRecoveryError);
+    });
+
+    // Not a guard on `P` — that reached the server at submit — but on being
+    // told the claim landed when nothing was co-signed.
+    it("refuses to finalize a claim the server did not co-sign", async () => {
+        const ark = fakeArk({ cosign: false });
+        await expect(
+            pushClaim(ark, {
+                script: swapScript(),
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+                vtxos: VTXOS,
+                destinationPkScript: DESTINATION_PK_SCRIPT,
+                expectedAmount: EXPECTED_AMOUNT,
+            }),
+        ).rejects.toThrow(/not signed by the server/);
+        expect(ark.finalized).toHaveLength(0);
+    });
+
+    it("fails closed when the server returns no final ark tx to check", async () => {
+        const ark = fakeArk({ finalArkTx: () => undefined });
+        await expect(
+            pushClaim(ark, {
+                script: swapScript(),
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+                vtxos: VTXOS,
+                destinationPkScript: DESTINATION_PK_SCRIPT,
+                expectedAmount: EXPECTED_AMOUNT,
+            }),
+        ).rejects.toThrow(/no final ark tx to verify/);
+        expect(ark.finalized).toHaveLength(0);
     });
 
     it("throws on nothing to claim", async () => {
