@@ -26,6 +26,21 @@ import {
 const staticWallet = (key = SingleKey.fromRandomBytes()) =>
     ({ identity: key }) as unknown as IWallet;
 
+/**
+ * A complete identity that cannot sign deterministically — an extension or
+ * remote signer, which is the only thing that still reaches the stored-preimage
+ * arm. A partial identity is refused by `contractSigner` before it gets there.
+ */
+const nonDerivingWallet = (key = SingleKey.fromRandomBytes()) =>
+    ({
+        identity: {
+            sign: (tx: unknown) => key.sign(tx as never),
+            signMessage: (m: Uint8Array) => key.signMessage(m),
+            signerSession: () => key.signerSession(),
+            xOnlyPublicKey: () => key.xOnlyPublicKey(),
+        },
+    }) as unknown as IWallet;
+
 /** What a consumer persists: the projection, plus the committed hash. */
 const recordOf = (secrets: ProvisionedClaimSecret) => ({
     ...swapSecretsToRecord(secrets),
@@ -70,6 +85,57 @@ describe("swapSecretsToRecord", () => {
             const record = swapSecretsToRecord(secrets);
             expect(Boolean(record.preimageHex) && Boolean(record.preimageSaltHex)).toBe(false);
         }
+    });
+});
+
+describe("projection completeness", () => {
+    // The compile-time tie in `SwapSecretsProjection` guarantees a mapper field
+    // is CARRIED by every record type. It cannot guarantee the reader CONSULTS
+    // it, because every field is optional — so a future derivation input that
+    // `swapSecretsToRecord` writes and `preimageForSwapRecord` ignores would
+    // compile happily and surface as a dead script at claim time.
+    //
+    // This is that missing half: every arm goes mapper → record → reader and
+    // must come back with the preimage it was provisioned with. `recordOf`
+    // carries `paymentHash`, so a wrong P trips the guard here too.
+    const arms: {
+        name: string;
+        carries: "preimageHex" | "preimageSaltHex";
+        walletFor: (key: SingleKey) => IWallet;
+        opts: { preimage?: Uint8Array };
+    }[] = [
+        {
+            name: "salted — a static wallet that can derive",
+            carries: "preimageSaltHex",
+            walletFor: (key) => staticWallet(key),
+            opts: {},
+        },
+        {
+            name: "stored — a signer that cannot derive",
+            carries: "preimageHex",
+            walletFor: (key) => nonDerivingWallet(key),
+            opts: {},
+        },
+        {
+            name: "stored — a caller-supplied preimage",
+            carries: "preimageHex",
+            walletFor: (key) => staticWallet(key),
+            opts: { preimage: new Uint8Array(32).fill(5) },
+        },
+    ];
+
+    it.each(arms)("$name round-trips through the record", async ({ carries, walletFor, opts }) => {
+        const wallet = walletFor(SingleKey.fromRandomBytes());
+        const secrets = await provisionClaimSecret(wallet, opts);
+        const record = recordOf(secrets);
+
+        // This case really is exercising the arm it names.
+        expect(record[carries]).toBeDefined();
+        // And the reader reproduces the provisioned preimage from the record
+        // alone — every field it needs survived the mapper.
+        expect(hex.encode(await preimageForSwapRecord(wallet, record))).toBe(
+            hex.encode(secrets.preimage),
+        );
     });
 });
 
