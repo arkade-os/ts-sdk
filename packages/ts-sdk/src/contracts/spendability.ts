@@ -55,6 +55,21 @@ export function outpointExclusion(outpoints: ReadonlySet<string>, reason: string
 }
 
 /**
+ * Outpoints excluded for individually-named reasons — a per-input timelock,
+ * where one shared reason would be wrong because the inputs differ.
+ *
+ * Unlike {@link gateExclusion}, the reasons are the handlers' own sentences and
+ * are not rephrased to follow the outpoint: that text is what tells the reader
+ * when to retry, and a paraphrase here would be a second spelling to keep in
+ * step with it.
+ *
+ * @see outpointExclusion for the shared-reason form.
+ */
+export function outpointReasons(reasons: ReadonlyMap<string, string>): VtxoExclusion {
+    return (vtxo) => reasons.get(`${vtxo.txid}:${vtxo.vout}`);
+}
+
+/**
  * Report VTXOs an exclusion dropped — the only field-diagnosable signal for why
  * a coin is missing from a spend, or why an explicitly named one will fail.
  * Debug level, one line per VTXO per reason.

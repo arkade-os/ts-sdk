@@ -43,6 +43,7 @@ import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 import type { DefaultVtxo } from "../script/default";
 import { getDustAmount } from "./utils";
+import { logExcludedVtxos, outpointReasons } from "../contracts/spendability";
 
 /**
  * Outpoints (`txid:vout`) of VTXOs that are NOT cooperatively spendable because
@@ -1161,6 +1162,31 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     // ========== Recovery Methods ==========
 
     /**
+     * Outpoints recovery must not name yet, with the reason each was refused.
+     * Empty when the manager offers no opinion — an embedder's may not implement
+     * the predicate, and every contract type but VHTLC never answers.
+     *
+     * Reaches only a lockup whose `sender` is this wallet's own key: role
+     * resolution matches that key against the contract's params, so a
+     * descriptor-derived sender (every RFQ lockup) is not matched and such a row
+     * still fails its batch at submit.
+     *
+     * The key stays a thunk so an ordinary recovery never touches the identity,
+     * and the full coins are passed rather than bare outpoints because only they
+     * carry the confirmation a relative timelock is measured from.
+     */
+    private async unspendableNow(
+        vtxos: readonly NormalizedExtendedVirtualCoin[],
+    ): Promise<Map<string, string>> {
+        const contractManager = await this.wallet.getContractManager();
+        return (
+            (await contractManager.unspendableNowReasons?.(vtxos, async () =>
+                hex.encode(await this.wallet.identity.xOnlyPublicKey()),
+            )) ?? new Map()
+        );
+    }
+
+    /**
      * Recover swept/expired virtual outputs by settling them back to the wallet's Arkade address.
      *
      * This method:
@@ -1171,6 +1197,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      *
      * Note: Settled virtual outputs with long expiry are NOT recovered to avoid locking liquidity unnecessarily.
      * Only preconfirmed subdust is recovered to consolidate small amounts.
+     *
+     * Inputs whose contract refuses a spend right now — an immature VHTLC refund
+     * path — are skipped rather than failing the batch that holds them, and
+     * {@link getRecoverableBalance} skips the same set. See
+     * {@link unspendableNow} for which rows that reaches.
      *
      * @param eventCallback - Optional callback to receive settlement events
      * @returns Settlement transaction ID
@@ -1205,6 +1236,43 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         if (vtxosToRecover.length === 0) {
             throw new Error("No recoverable VTXOs found");
+        }
+
+        // Before pricing: the cap below fills slots highest-value-first, so a
+        // refused input filtered after it would occupy a slot and then vanish,
+        // under-filling the settlement.
+        const refused = await this.unspendableNow(vtxosToRecover);
+        if (refused.size > 0) {
+            logExcludedVtxos("recoverVtxos", vtxosToRecover, [outpointReasons(refused)]);
+            const held = vtxosToRecover.length;
+            vtxosToRecover = vtxosToRecover.filter(
+                (vtxo) => !refused.has(`${vtxo.txid}:${vtxo.vout}`),
+            );
+            // Neither message may reuse "No recoverable VTXOs found": the coins
+            // were found and declined, and the handler's text says when to retry.
+            if (vtxosToRecover.length === 0) {
+                // Every reason, not the first: lockups at different maturities
+                // become recoverable at different times, and naming one of them
+                // dates the whole wallet by the wrong clock. Same shape as
+                // `IContractManager.assertSpendableNow`'s multi-input refusal.
+                const why =
+                    refused.size === 1
+                        ? [...refused.values()][0]
+                        : [...refused]
+                              .map(([outpoint, reason]) => `${outpoint}: ${reason}`)
+                              .join("; ");
+                throw new Error(
+                    `All ${held} recoverable VTXO(s) are held by a contract that refuses a ` +
+                        `spend right now: ${why}`,
+                );
+            }
+            ({ vtxosToRecover } = getRecoverableWithSubdust(vtxosToRecover, dustAmount, now));
+            if (vtxosToRecover.length === 0) {
+                throw new Error(
+                    `Excluding ${refused.size} VTXO(s) not yet spendable, the remaining ` +
+                        `recoverable amount is below the dust threshold ${dustAmount}`,
+                );
+            }
         }
 
         // Cap the recovery batch to stay under both the server's intent-size
@@ -1331,6 +1399,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * The batch size caps are not applied here: they defer the overflow to the
      * next cycle rather than reducing what is recoverable.
      *
+     * Inputs a contract refuses right now are excluded, so this and
+     * {@link recoverVtxos} answer over the same set. `Balance.recoverable` still
+     * counts them: that field reports what the wallet owns, this one what a
+     * batch would hand back today.
+     *
      * @returns Object containing recoverable amounts and subdust information
      *
      * @example
@@ -1358,12 +1431,31 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         });
 
         const dustAmount = getDustAmount(this.wallet);
+        const now = await fetchTimeHeight(this.wallet);
 
-        const { vtxosToRecover, includesSubdust } = getRecoverableWithSubdust(
+        let { vtxosToRecover, includesSubdust } = getRecoverableWithSubdust(
             allVtxos,
             dustAmount,
-            await fetchTimeHeight(this.wallet),
+            now,
         );
+
+        // Excluded outright rather than reported in a field of their own: this
+        // answers what a recovery batch would hand back, and `Balance.recoverable`
+        // keeps counting the funds, so nothing disappears. Mirrors `recoverVtxos`
+        // so the preview and the sweep agree by construction — and it is the only
+        // channel through which a caller sees a partial drop.
+        const refused = await this.unspendableNow(vtxosToRecover);
+        if (refused.size > 0) {
+            logExcludedVtxos("getRecoverableBalance", vtxosToRecover, [outpointReasons(refused)]);
+            const remaining = vtxosToRecover.filter(
+                (vtxo) => !refused.has(`${vtxo.txid}:${vtxo.vout}`),
+            );
+            ({ vtxosToRecover, includesSubdust } = getRecoverableWithSubdust(
+                remaining,
+                dustAmount,
+                now,
+            ));
+        }
 
         // Priced the same way `recoverVtxos` prices what it settles. This exists
         // to tell a user what recovery would hand back, so it has to answer net

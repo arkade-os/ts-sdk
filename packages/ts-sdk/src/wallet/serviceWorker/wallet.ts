@@ -1310,7 +1310,15 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
              */
             async assertAnnotatable(): Promise<void> {},
 
-            /** Same reasoning as {@link assertAnnotatable}: the worker checks it. */
+            /**
+             * Same reasoning as {@link assertAnnotatable}: the worker checks it.
+             *
+             * `unspendableNowReasons` is deliberately absent rather than stubbed
+             * alongside it. A stub returning an empty map reads as "nothing
+             * refused", and a filter acting on that silently drops its decision;
+             * absent, the optional call is skipped. Recovery — the only caller —
+             * runs inside the worker against the real manager anyway.
+             */
             async assertSpendableNow(): Promise<void> {},
 
             async annotateVtxos(vtxos: VirtualCoin[]): Promise<NormalizedExtendedVirtualCoin[]> {

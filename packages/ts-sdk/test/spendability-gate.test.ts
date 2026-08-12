@@ -7,6 +7,7 @@ import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
     isContractGenericallySpendable,
+    outpointReasons,
     UnannotatableInputError,
     ProviderUnavailableError,
     ReadonlyWallet,
@@ -457,6 +458,19 @@ describe("spending sites consume the accessor", () => {
             }),
         ).rejects.toThrow();
         expect(wallet.getSpendableVtxos).toHaveBeenCalled();
+    });
+});
+
+describe("outpointReasons", () => {
+    const reasons = outpointReasons(new Map([["a:0", "not yet"]]));
+
+    it("returns the reason recorded for that outpoint", () => {
+        expect(reasons({ txid: "a", vout: 0 })).toBe("not yet");
+    });
+
+    it("returns undefined for anything else", () => {
+        expect(reasons({ txid: "a", vout: 1 })).toBeUndefined();
+        expect(reasons({ txid: "b", vout: 0 })).toBeUndefined();
     });
 });
 

@@ -75,7 +75,10 @@ export function computeOffchainBalance(
         // Pending recovery is tested first, and before expiry: such funds cannot
         // be renewed until they recover, so once their batch expiry passes
         // `canRecoverOnchain` would otherwise report them as renewable-right-now.
-        // The branches are exclusive, so `total` counts each VTXO once.
+        // The branches are exclusive, so `total` counts each VTXO once — which is
+        // also why the gate is applied to `available` alone and not here: a gated
+        // coin dropping out of `recoverable` would meet `canSpendOffchain`, be
+        // false there too, and land in no bucket at all.
         if (isPendingRecovery(vtxo)) {
             pendingRecovery += vtxo.value;
             continue;

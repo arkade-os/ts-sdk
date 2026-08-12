@@ -437,6 +437,132 @@ describe("VtxoManager - Recovery", () => {
             expect((wallet.settle as any).mock.calls).toHaveLength(0);
         });
 
+        describe("inputs a contract refuses right now", () => {
+            // `unspendableNowReasons` is absent from every other mock in this
+            // file, so the optional call is skipped and nothing is filtered —
+            // which is what keeps the rest of these tests untouched.
+            const withRefusals = (
+                vtxos: ExtendedVirtualCoin[],
+                refused: Map<string, string>,
+                arkAddress = "arkade1myaddress",
+            ) => {
+                const wallet = createMockWallet(vtxos, arkAddress, {
+                    contractManager: {
+                        onContractEvent: vi.fn().mockReturnValue(() => {}),
+                        refreshOutpoints: vi.fn().mockResolvedValue(undefined),
+                        unspendableNowReasons: vi.fn().mockResolvedValue(refused),
+                    } as any,
+                });
+                (wallet as any).identity = {
+                    xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32).fill(7)),
+                };
+                return wallet;
+            };
+
+            it("drops the refused outpoint and settles the rest", async () => {
+                const immature = createMockVtxo(5000, "swept", false);
+                const ordinary = createMockVtxo(3000, "swept", false);
+                const wallet = withRefusals(
+                    [immature, ordinary],
+                    new Map([
+                        [`${immature.txid}:0`, "vhtlc … cannot be spent yet: opens at block 9"],
+                    ]),
+                );
+
+                const txid = await new VtxoManager(wallet).recoverVtxos();
+
+                expect(txid).toBe("mock-txid");
+                const settleArgs = (wallet.settle as any).mock.calls[0][0];
+                expect(settleArgs.inputs).toEqual([ordinary]);
+                expect(settleArgs.outputs[0].amount).toBe(3000n);
+            });
+
+            it("recovers a lockup no longer refused", async () => {
+                const matured = createMockVtxo(5000, "swept", false);
+                const wallet = withRefusals([matured], new Map());
+
+                await new VtxoManager(wallet).recoverVtxos();
+
+                expect((wallet.settle as any).mock.calls[0][0].inputs).toEqual([matured]);
+            });
+
+            it("throws with the handler's own reason when every input is refused", async () => {
+                const immature = createMockVtxo(5000, "swept", false);
+                const wallet = withRefusals(
+                    [immature],
+                    new Map([[`${immature.txid}:0`, "its refund path opens at block 800000"]]),
+                );
+
+                await expect(new VtxoManager(wallet).recoverVtxos()).rejects.toThrow(
+                    /refuses a spend right now: its refund path opens at block 800000/,
+                );
+                expect((wallet.settle as any).mock.calls).toHaveLength(0);
+            });
+
+            it("names every refusal when they differ, not just the first", async () => {
+                const early = createMockVtxo(5000, "swept", false);
+                const late = createMockVtxo(4000, "swept", false);
+                const wallet = withRefusals(
+                    [early, late],
+                    new Map([
+                        [`${early.txid}:0`, "opens at block 800000"],
+                        [`${late.txid}:0`, "opens at block 900000"],
+                    ]),
+                );
+
+                await expect(new VtxoManager(wallet).recoverVtxos()).rejects.toThrow(
+                    `${early.txid}:0: opens at block 800000; ${late.txid}:0: opens at block 900000`,
+                );
+            });
+
+            it("throws distinctly when what survives is below dust", async () => {
+                const immature = createMockVtxo(5000, "swept", false);
+                const crumb = createMockVtxo(18, "swept", false);
+                const wallet = withRefusals(
+                    [immature, crumb],
+                    new Map([[`${immature.txid}:0`, "not yet"]]),
+                );
+
+                await expect(new VtxoManager(wallet).recoverVtxos()).rejects.toThrow(
+                    /Excluding 1 VTXO\(s\) not yet spendable, the remaining recoverable amount is below the dust threshold 1000/,
+                );
+            });
+
+            it("reports the drop", async () => {
+                const immature = createMockVtxo(5000, "swept", false);
+                const ordinary = createMockVtxo(3000, "swept", false);
+                const debug = vi.spyOn(console, "debug").mockImplementation(() => {});
+                const wallet = withRefusals(
+                    [immature, ordinary],
+                    new Map([[`${immature.txid}:0`, "not yet"]]),
+                );
+
+                await new VtxoManager(wallet).recoverVtxos();
+
+                expect(debug).toHaveBeenCalledWith(
+                    `[spendability] recoverVtxos: ${immature.txid}:0 not yet`,
+                );
+                debug.mockRestore();
+            });
+
+            it("agrees with getRecoverableBalance on the same set", async () => {
+                const immature = createMockVtxo(5000, "swept", false);
+                const ordinary = createMockVtxo(3000, "swept", false);
+                const refused = new Map([[`${immature.txid}:0`, "not yet"]]);
+
+                const swept = await new VtxoManager(
+                    withRefusals([immature, ordinary], refused),
+                ).recoverVtxos();
+                const preview = await new VtxoManager(
+                    withRefusals([immature, ordinary], refused),
+                ).getRecoverableBalance();
+
+                expect(swept).toBe("mock-txid");
+                expect(preview.recoverable).toBe(3000n);
+                expect(preview.vtxoCount).toBe(1);
+            });
+        });
+
         it("should include subdust when combined value exceeds dust threshold", async () => {
             const vtxos = [
                 createMockVtxo(5000, "swept", false),

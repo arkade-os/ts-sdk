@@ -340,7 +340,13 @@ export interface WalletBalance {
      * intent. Equals `settled + preconfirmed` when nothing is intent-locked.
      */
     available: number;
-    /** Recoverable balance from subdust or expired (swept) virtual outputs. */
+    /**
+     * Recoverable balance from subdust or expired (swept) virtual outputs —
+     * recoverable in principle, so a lockup whose contract refuses a spend right
+     * now is still counted and `total` does not lose it.
+     * `VtxoManager.getRecoverableBalance()` answers the narrower question of
+     * what a batch would hand back today, and excludes it.
+     */
     recoverable: number;
 
     /**
