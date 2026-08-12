@@ -1295,9 +1295,11 @@ export const assertReceivable = (input: {
 }): void => {
     // Ahead of the comparisons, never inside them: this function is exported,
     // so it cannot assume verifyReceiveInvoice vetted `payDeadline`, and the
-    // two knobs are the caller's own — a `NaN` ceiling would leave
-    // `from_amount > NaN` false and delete the price gate it was asked for.
+    // clock and the two knobs are the caller's own — a `NaN` ceiling would
+    // leave `from_amount > NaN` false and delete the price gate it was asked
+    // for, and a `NaN` clock would do the same to the expiry gate below.
     assertFinite(input.payDeadline, "quote_malformed", "payDeadline");
+    assertFinite(input.now, "invalid_gate_input", "now");
     assertFinite(input.minClaimWindowSeconds, "invalid_gate_input", "minClaimWindowSeconds");
     assertFinite(input.maxPayAmount, "invalid_gate_input", "maxPayAmount");
     const minClaimWindow = input.minClaimWindowSeconds ?? MIN_CLAIM_WINDOW_SECONDS;

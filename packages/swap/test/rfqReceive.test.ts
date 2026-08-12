@@ -456,12 +456,13 @@ describe("verifyReceiveInvoice", () => {
             verify({}, () => {
                 throw new Error("bad checksum");
             }),
-        ).toThrow(expect.objectContaining({ reason: "invoice_undecodable" }));
-        expect(() =>
-            verify({}, () => {
-                throw new Error("bad checksum");
+        ).toThrow(
+            expect.objectContaining({
+                reason: "invoice_undecodable",
+                // the decoder's own cause is surfaced, not swallowed
+                message: expect.stringContaining("bad checksum"),
             }),
-        ).toThrow(/undecodable invoice: bad checksum/);
+        );
     });
 });
 
@@ -567,6 +568,11 @@ describe("assertReceivable", () => {
                 now: NOW,
                 minClaimWindowSeconds: NaN,
             }),
+        ).toThrow(expect.objectContaining({ reason: "invalid_gate_input" }));
+        // a NaN clock would leave `now >= payDeadline` false and pass an
+        // expired quote through
+        expect(() =>
+            assertReceivable({ quote: quote(), payDeadline: INVOICE_EXPIRES_AT, now: NaN }),
         ).toThrow(expect.objectContaining({ reason: "invalid_gate_input" }));
     });
 });
