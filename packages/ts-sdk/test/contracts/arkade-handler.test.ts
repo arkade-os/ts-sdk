@@ -151,6 +151,10 @@ async function connectArkade(contractManager?: any) {
         identity,
         network: networks.regtest,
         contractManager,
+        // connect() takes the co-signer key from the network, not from the
+        // emulator's own getInfo, so handlerKeys()'s EMULATOR_KEY has to come
+        // in as the override for the two to derive the same script.
+        emulatorPubkey: "02" + hex.encode(EMULATOR_KEY),
     });
 }
 

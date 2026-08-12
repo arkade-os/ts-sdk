@@ -124,13 +124,32 @@ const EMULATOR_PUBKEYS: Partial<Record<NetworkName, string>> = {
  *   returning an empty string just moves the same failure somewhere harder to
  *   read. A hand-assembled `Network` carries no `name` and lands here too,
  *   matching how the per-network timelock floors treat an unnamed network.
+ *
+ *   Deliberately NOT falling back to whatever key the emulator reports about
+ *   itself: that is the self-report this pin exists to stop trusting, and doing
+ *   it only on unpinned networks would make the guarantee depend on
+ *   `network.name` with no signal to the caller that it had lapsed. The
+ *   unnamed case is the sharp one — a hand-built `Network` can carry
+ *   bitcoin-equivalent parameters, so a silent fallback would drop to
+ *   "trust the endpoint" on exactly the input that looks most like mainnet.
+ *   Callers who mean it pass {@link resolveEmulatorPubkey}'s override, which
+ *   the thrown message names.
  */
 export function defaultEmulatorPubkey(network: Network): string {
     const pinned = network.name ? EMULATOR_PUBKEYS[network.name] : undefined;
     if (!pinned) {
+        // Name the remedy, not just the refusal. Whoever hits this usually has
+        // a working emulator in front of them, so a bare "not pinned" reads as
+        // the SDK being broken rather than as one argument being missing.
+        const cause = network.name
+            ? `no emulator is deployed for ${network.name}`
+            : `this Network carries no name, so it cannot be matched ` +
+              `(build it with getNetwork(...) rather than by hand)`;
         throw new Error(
-            `No emulator pubkey is pinned for network ${network.name ?? "<unnamed>"}. ` +
-                `Pinned networks: ${Object.keys(EMULATOR_PUBKEYS).join(", ")}.`,
+            `No emulator co-signer key is pinned for this network: ${cause}; ` +
+                `pass emulatorPubkey: "<33-byte compressed hex>" to Arkade.connect to ` +
+                `co-sign with your own emulator instead. Pinned networks: ` +
+                `${Object.keys(EMULATOR_PUBKEYS).join(", ")}`,
         );
     }
     return pinned;
@@ -139,8 +158,20 @@ export function defaultEmulatorPubkey(network: Network): string {
 /**
  * Resolve the co-signer key for `network`, letting a caller substitute its own.
  *
- * The override exists for the deployment running an emulator that is not the
- * one pinned above — a private stack, or a network ahead of this constant.
+ * The override is the escape hatch for three situations, and the first is the
+ * one that matters operationally:
+ *
+ * 1. **A network rotated its emulator key and this SDK has not shipped the new
+ *    constant yet.** Since `Arkade.connect` no longer asks the service which
+ *    key it signs with, a rotation is invisible here until the constant is
+ *    updated — covenants keep building against the retired key and fail only
+ *    when a claim is attempted. Passing the new key restores service without
+ *    waiting for a release, so a rotation is a config change rather than an
+ *    outage.
+ * 2. A private or self-hosted emulator, including on a network with no pinned
+ *    key at all (signet, testnet, a hand-built `Network`).
+ * 3. Tests and local stacks.
+ *
  * Supplying it means co-signing with a different service: every covenant built
  * from the returned key can be completed by whoever holds it and by no one
  * else, so it is a statement that you trust that operator in place of the

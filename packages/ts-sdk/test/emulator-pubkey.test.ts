@@ -10,6 +10,51 @@ import {
     REGTEST_EMULATOR_PUBKEY,
     type Network,
 } from "../src/networks";
+import { arkade, CSVMultisigTapscript } from "../src";
+
+const SERVER_XONLY = "11".repeat(32);
+
+/**
+ * Minimal providers for `Arkade.connect`. The emulator counts its `getInfo`
+ * calls so a test can assert connect never asks it who it is.
+ */
+function stubProviders(emulatorSignerPubkey: string) {
+    let emulatorInfoCalls = 0;
+    const checkpointTapscript = hex.encode(
+        CSVMultisigTapscript.encode({
+            timelock: { type: "blocks", value: 10n },
+            pubkeys: [hex.decode(SERVER_XONLY)],
+        }).script,
+    );
+    const arkProvider = {
+        async getInfo() {
+            return { signerPubkey: "02" + SERVER_XONLY, checkpointTapscript } as any;
+        },
+        async submitTx() {
+            throw new Error("not used");
+        },
+        async finalizeTx() {},
+    } as any;
+    const emulator = {
+        async getInfo() {
+            emulatorInfoCalls++;
+            return { signerPubkey: emulatorSignerPubkey };
+        },
+        async submitTx() {
+            throw new Error("not used");
+        },
+        async submitIntent() {
+            throw new Error("not used");
+        },
+        async submitFinalization() {
+            throw new Error("not used");
+        },
+        async submitOnchainTx() {
+            throw new Error("not used");
+        },
+    } as any;
+    return { arkProvider, emulator, emulatorInfoCalls: () => emulatorInfoCalls };
+}
 
 describe("defaultEmulatorPubkey", () => {
     it("returns the pinned key for each network that has a deployed emulator", () => {
@@ -57,19 +102,26 @@ describe("defaultEmulatorPubkey", () => {
     it("throws for a network with no deployed emulator rather than guessing a neighbour's", () => {
         // testnet/signet share every other field with mutinynet, so falling
         // back by shape would hand back mutinynet's co-signer.
-        expect(() => defaultEmulatorPubkey(networks.testnet)).toThrow(/no emulator pubkey/i);
-        expect(() => defaultEmulatorPubkey(networks.signet)).toThrow(/no emulator pubkey/i);
+        expect(() => defaultEmulatorPubkey(networks.testnet)).toThrow(/no emulator is deployed/i);
+        expect(() => defaultEmulatorPubkey(networks.signet)).toThrow(/no emulator is deployed/i);
     });
 
     it("throws for a hand-assembled Network carrying no name", () => {
         const unnamed: Network = { ...networks.bitcoin, name: undefined };
-        expect(() => defaultEmulatorPubkey(unnamed)).toThrow(/<unnamed>/);
+        expect(() => defaultEmulatorPubkey(unnamed)).toThrow(/carries no name/);
+        // Points at the supported way to build one, not just at the failure.
+        expect(() => defaultEmulatorPubkey(unnamed)).toThrow(/getNetwork/);
     });
 
-    it("names the pinned networks in the failure so the message is actionable", () => {
-        expect(() => defaultEmulatorPubkey(networks.testnet)).toThrow(
-            /bitcoin, mutinynet, regtest/,
-        );
+    it("names the override as the remedy, not just the refusal", () => {
+        // Whoever hits this usually has a working emulator in front of them,
+        // so the message has to say which argument revives it — same register
+        // as the timelock-floor rejections naming minCheckpointExitDelaySeconds.
+        for (const network of [networks.testnet, networks.signet]) {
+            expect(() => defaultEmulatorPubkey(network)).toThrow(/emulatorPubkey/);
+            expect(() => defaultEmulatorPubkey(network)).toThrow(/Arkade\.connect/);
+            expect(() => defaultEmulatorPubkey(network)).toThrow(/bitcoin, mutinynet, regtest/);
+        }
     });
 });
 
@@ -114,5 +166,81 @@ describe("resolveEmulatorPubkey", () => {
 
     it("rejects an empty-string override rather than treating it as absent", () => {
         expect(() => resolveEmulatorPubkey(networks.regtest, "")).toThrow(/compressed/);
+    });
+});
+
+describe("Arkade.connect co-signer resolution", () => {
+    // A key the emulator claims for itself, distinct from every pinned value,
+    // standing in for a rogue or misconfigured endpoint.
+    const CLAIMED = "03" + "ab".repeat(32);
+
+    it("uses the network's pinned key and never asks the emulator who it is", async () => {
+        const { arkProvider, emulator, emulatorInfoCalls } = stubProviders(CLAIMED);
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            network: networks.regtest,
+        });
+        expect(hex.encode(ark.emulatorKey!)).toBe(REGTEST_EMULATOR_PUBKEY);
+        // The whole point: the service's self-report is not consulted at all,
+        // so it cannot choose the key its covenants commit to.
+        expect(emulatorInfoCalls()).toBe(0);
+    });
+
+    it("ignores the emulator's claimed key when it differs from the pin", async () => {
+        const { arkProvider, emulator } = stubProviders(CLAIMED);
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            network: networks.regtest,
+        });
+        expect(hex.encode(ark.emulatorKey!)).not.toBe(CLAIMED);
+    });
+
+    it("lets the override replace the pinned key", async () => {
+        const custom = "02" + "cd".repeat(32);
+        const { arkProvider, emulator } = stubProviders(CLAIMED);
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            network: networks.regtest,
+            emulatorPubkey: custom,
+        });
+        expect(hex.encode(ark.emulatorKey!)).toBe(custom);
+        expect(hex.encode(ark.emulatorKey!)).not.toBe(REGTEST_EMULATOR_PUBKEY);
+    });
+
+    it("refuses an emulator on an unpinned network, naming the override", async () => {
+        const { arkProvider, emulator } = stubProviders(CLAIMED);
+        await expect(
+            arkade.Arkade.connect({
+                arkade: arkProvider,
+                emulator,
+                network: networks.signet,
+            }),
+        ).rejects.toThrow(/emulatorPubkey/);
+    });
+
+    it("connects on an unpinned network once the override is supplied", async () => {
+        const custom = "02" + "cd".repeat(32);
+        const { arkProvider, emulator } = stubProviders(CLAIMED);
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            network: networks.signet,
+            emulatorPubkey: custom,
+        });
+        expect(hex.encode(ark.emulatorKey!)).toBe(custom);
+    });
+
+    it("still connects with no emulator on an unpinned network", async () => {
+        // Pure tapscript usage needs no co-signer, so the pin must not become a
+        // precondition for connecting at all.
+        const { arkProvider } = stubProviders(CLAIMED);
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            network: networks.signet,
+        });
+        expect(ark.emulatorKey).toBeUndefined();
     });
 });
