@@ -104,6 +104,15 @@ describe("assertValidBatchExpiry", () => {
         ).toThrow(/below the 86400s floor/);
     });
 
+    it("names its own override, not the checkpoint one", () => {
+        // This floor is reached at settle rather than at connect, so it is the
+        // one most likely to be met by someone who has already cleared the
+        // checkpoint floor and is reaching for the knob that moved that.
+        expect(() =>
+            assertValidBatchExpiry(512n, defaultBatchExpiryPolicy(networks.bitcoin)),
+        ).toThrow(/minBatchExpirySeconds/);
+    });
+
     it("still applies the floor when the value equals the advertised vtxoTreeExpiry", () => {
         expect(() =>
             assertValidBatchExpiry(512n, {
