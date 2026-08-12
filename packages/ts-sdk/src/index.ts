@@ -439,6 +439,7 @@ import {
     gatedContracts,
     gateExclusion,
     outpointExclusion,
+    outpointReasons,
     logExcludedVtxos,
     UnannotatableInputError,
 } from "./contracts/spendability";
@@ -716,6 +717,7 @@ export {
     gatedContracts,
     gateExclusion,
     outpointExclusion,
+    outpointReasons,
     logExcludedVtxos,
     UnannotatableInputError,
     encodeArkContract,

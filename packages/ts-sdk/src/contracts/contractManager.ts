@@ -399,6 +399,22 @@ export interface IContractManager extends Disposable {
     ): Promise<void>;
 
     /**
+     * Which of `vtxos` their owning handler refuses right now, keyed by outpoint
+     * (`txid:vout`) and valued with the handler's own explanation.
+     *
+     * The predicate form of {@link assertSpendableNow}, for callers that must
+     * DROP a refused input rather than fail the batch holding it. Keyed per
+     * outpoint, not per script: a relative (CSV) timelock is measured from each
+     * coin's own confirmation, so two coins on one contract can disagree.
+     *
+     * Optional for the same reason {@link assertSpendableNow} is.
+     */
+    unspendableNowReasons?(
+        vtxos: readonly AssertSpendableInput[],
+        walletPubKey?: () => Promise<string | undefined>,
+    ): Promise<Map<string, string>>;
+
+    /**
      * Update mutable contract fields.
      *
      * `script` and `createdAt` are immutable.
@@ -1673,7 +1689,24 @@ export class ContractManager implements IContractManager {
         vtxos: readonly AssertSpendableInput[],
         walletPubKey?: () => Promise<string | undefined>,
     ): Promise<void> {
-        if (vtxos.length === 0) return;
+        const refused = await this.unspendableNowReasons(vtxos, walletPubKey);
+        if (refused.size === 0) return;
+        // The single-input case rethrows verbatim: the handler's message names
+        // the maturity and what to wait for, and that text is the deliverable.
+        if (refused.size === 1) throw new Error([...refused.values()][0]);
+        throw new Error(
+            `refusing to spend ${refused.size} vtxo(s) that cannot be spent yet: ` +
+                [...refused].map(([outpoint, why]) => `${outpoint}: ${why}`).join("; "),
+        );
+    }
+
+    /** @inheritdoc */
+    async unspendableNowReasons(
+        vtxos: readonly AssertSpendableInput[],
+        walletPubKey?: () => Promise<string | undefined>,
+    ): Promise<Map<string, string>> {
+        const refused = new Map<string, string>();
+        if (vtxos.length === 0) return refused;
         const contracts = await this.config.contractRepository.getContracts({
             script: Array.from(new Set(vtxos.map((vtxo) => vtxo.script))),
         });
@@ -1691,7 +1724,7 @@ export class ContractManager implements IContractManager {
                 contractHandlers.get(contract.type)?.assertSpendableNow !== undefined
             );
         });
-        if (asking.length === 0) return;
+        if (asking.length === 0) return refused;
 
         const tip = await this.currentChainTip();
         const walletKey = await walletPubKey?.();
@@ -1720,16 +1753,24 @@ export class ContractManager implements IContractManager {
                 // really is one.
                 vtxo: isVirtualCoin(vtxo) && "status" in vtxo ? vtxo : undefined,
             };
-            // Awaited even though every shipped handler answers synchronously:
-            // the signature permits a promise, and an un-awaited one would drop
-            // its rejection on the floor — a refusal that never reaches the
-            // caller is worse than no guard, because it reads as approval.
-            await handler.assertSpendableNow(
-                handler.createScript(contract.params),
-                contract,
-                context,
-            );
+            try {
+                // Awaited even though every shipped handler answers
+                // synchronously: the signature permits a promise, and an
+                // un-awaited one would land outside this catch — recorded as no
+                // refusal, which reads as approval.
+                await handler.assertSpendableNow(
+                    handler.createScript(contract.params),
+                    contract,
+                    context,
+                );
+            } catch (err) {
+                refused.set(
+                    `${vtxo.txid}:${vtxo.vout}`,
+                    err instanceof Error ? err.message : String(err),
+                );
+            }
         }
+        return refused;
     }
 
     // Field-by-field, so every filter a caller can express reaches the

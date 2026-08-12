@@ -530,6 +530,47 @@ describe("VHTLCV2ContractHandler", () => {
             expect(seen!.vtxo).toBeUndefined();
         });
 
+        const reasonsThrough = async (
+            tip: number | undefined,
+            walletPubKey = SENDER,
+            vouts = [0],
+        ) => {
+            const manager = await managerFor(tip === undefined ? undefined : at(tip));
+            const contract = contractOf(fullParams());
+            await manager.createContract(contract);
+            return manager.unspendableNowReasons!(
+                vouts.map((vout) => ({ txid: "a".repeat(64), vout, script: contract.script })),
+                async () => walletPubKey,
+            );
+        };
+
+        it("reports the refusal against the outpoint instead of throwing", async () => {
+            const refused = await reasonsThrough(799_999);
+            expect([...refused.keys()]).toEqual([`${"a".repeat(64)}:0`]);
+            expect(refused.get(`${"a".repeat(64)}:0`)).toMatch(/cannot be spent yet/);
+        });
+
+        it("reports every refused input, not just the first", async () => {
+            const refused = await reasonsThrough(799_999, SENDER, [0, 1]);
+            expect(refused.size).toBe(2);
+        });
+
+        it("reports nothing once mature, and nothing without a tip", async () => {
+            expect(await reasonsThrough(800_000)).toEqual(new Map());
+            expect(await reasonsThrough(undefined)).toEqual(new Map());
+        });
+
+        it("reports nothing for the receiver, whose claim it cannot judge", async () => {
+            expect(await reasonsThrough(799_999, RECEIVER)).toEqual(new Map());
+        });
+
+        it("reports nothing for a key the covenant does not name", async () => {
+            // The silent no-op the recovery filter risks: role resolution matches
+            // the wallet's own key, so a lockup committing a derived sender is
+            // never refused — the bound `unspendableNow` documents.
+            expect(await reasonsThrough(799_999, SERVER)).toEqual(new Map());
+        });
+
         it("never reads a tip when no contract has an opinion", async () => {
             let reads = 0;
             const manager = await managerFor(async () => {

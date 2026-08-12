@@ -20,6 +20,7 @@ export {
     gatedContracts,
     gateExclusion,
     outpointExclusion,
+    outpointReasons,
     logExcludedVtxos,
     UnannotatableInputError,
 } from "./spendability";
