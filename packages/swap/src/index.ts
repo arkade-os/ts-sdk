@@ -35,6 +35,15 @@ export {
 } from "./repository";
 export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";
 export {
+    RFQ_SWAP_RETENTION_SECONDS,
+    createRfqSwapRecord,
+    rebuildRfqSwap,
+    shouldRetainRfqSwap,
+    updateRfqSwapRecord,
+    type RfqSwapOrigin,
+    type RfqSwapRecord,
+} from "./rfqRecord";
+export {
     restoreAssetSwaps,
     classifySpend,
     classifyDepositSpend,
@@ -137,6 +146,7 @@ export {
     buildPreimageMessage,
     derivePreimage,
     deriveSwapSecrets,
+    isBaselineSwapSecrets,
     isDeterministicSigner,
     preimageForRfqSecrets,
     randomSwapSecrets,
@@ -145,6 +155,7 @@ export {
     senderIdentityForRfqSecrets,
     senderIdentityForSwapRecord,
     senderPubkeyForRfqSecrets,
+    type BaselineSwapSecrets,
     type DerivedSwapSecrets,
     type DeterministicSigner,
     type RefundBlockedReason,
