@@ -412,7 +412,11 @@ hash-verified preimage spend rather than by the txid we submitted, so a claim th
 still counts; `claimed` is a local belief and not terminal; and **`refunded` is a loss**, the solver
 having taken back a lockup we failed to claim. A lockup funded below `expectedAmount` is reported
 `needs_counterparty` and never claimed, which is non-terminal — a solver that tops it up before
-the window shuts makes it claimable again.
+the window shuts makes it claimable again, and a lockup funded piecemeal moves `claimed` →
+`claimable` → `claimed` again, so `onSwapUpdate` states say what to do next rather than track
+progress in one direction. A `refunded` outcome from `waitForSwapCompletion` reports no `txid` even
+when a claim was submitted and recorded: the chain never took it, and the record still carries
+`claimArkTxid` for anyone diagnosing the loss.
 
 **There is no client-side refund on this leg, and that is the whole answer to "what if I cannot
 claim in time".** Every non-claim leaf of the covenant is the solver's, so `refundArkade` is never

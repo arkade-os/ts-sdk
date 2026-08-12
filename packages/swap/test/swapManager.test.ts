@@ -1114,6 +1114,34 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         expect(s.lockupClaims[0].vtxos).toHaveLength(2);
     });
 
+    it("counts a swept output toward the funded value", async () => {
+        // A recoverable output is the agreed money still sitting at the script,
+        // so it makes the difference between the gate reading this lockup as
+        // fully funded and reading it as one satoshi short. What cannot be done
+        // with it is spend it offchain, and `pushClaim` refuses that by name —
+        // which is why it is handed to the callback rather than dropped here.
+        const s = spies();
+        const swap = receiveSwap();
+        const m = manager({
+            indexer: fakeIndexer({
+                vtxos: unspent(),
+                funded: [
+                    { ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE - 1 },
+                    { ...LOCKUP_OUTPOINT, vout: 1, value: 1, recoverable: true },
+                ],
+            }),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        await pass(m, swap);
+
+        expect(swap.state).toBe("claimed");
+        expect(s.lockupClaims[0].vtxos).toEqual([
+            { ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE - 1, recoverable: false },
+            { ...LOCKUP_OUTPOINT, vout: 1, value: 1, recoverable: true },
+        ]);
+    });
+
     it("refuses to publish the preimage for a dust-funded lockup", async () => {
         // THE attack this leg has and no other: the solver funds the correctly
         // derived script with dust. Claiming makes `P` public, which is what
@@ -1273,6 +1301,81 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
 
         expect(swap.state).toBe("refunded");
         expect(isRfqSwapTerminal(swap.state)).toBe(true);
+    });
+
+    it("reports a lost receive without the txid of the claim that lost it", async () => {
+        // The one combination where a `txid` on the outcome would name an
+        // action that did not happen: the claim was submitted, the chain never
+        // took it, and the solver reclaimed the lockup. The record keeps
+        // `claimArkTxid` for diagnosis; the outcome does not carry it.
+        const s = spies();
+        const swap = receiveSwap({ state: "claimed", claimArkTxid: CLAIM_ARK_TXID });
+        const solverRefund = spendOfLockup({
+            script: RECEIVE_LOCKUP,
+            leaf: "refundWithoutReceiver",
+        });
+        const m = manager({
+            indexer: fakeIndexer({ vtxos: spentBy(solverRefund.txid), txs: [solverRefund] }),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        const waiting = m.waitForSwapCompletion(RFQ_ID);
+        await m.poll();
+
+        expect(swap.claimArkTxid).toBe(CLAIM_ARK_TXID);
+        await expect(waiting).resolves.toEqual({ state: "refunded", txid: undefined });
+    });
+
+    it("reports nothing wired to claim, instead of a lockup nobody here can take", async () => {
+        // `claimable` would name an action this wallet cannot perform by hand
+        // either, and the swap would sit at it until the window shut.
+        const swap = receiveSwap();
+        const m = new RfqSwapManager({ indexer: fundedIndexer() }, { now: () => BEFORE_DEADLINE });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("needs_counterparty");
+        expect(swap.blockedReason).toMatch(/no callbacks are wired/);
+    });
+
+    it("ends refunded, not failed, when only a re-claim was the thing that threw", async () => {
+        // Both `claimArkTxid` and a claim error are set when the window shuts.
+        // A claim went out, so this is an ordinary loss rather than a wallet
+        // that could not act — `failed` is reserved for the latter.
+        let now = BEFORE_DEADLINE;
+        let fail = false;
+        const s = spies({
+            claimLockup: async () => {
+                if (fail) throw new Error("ark server unreachable");
+                return { arkTxid: CLAIM_ARK_TXID, amount: LOCKUP_VALUE };
+            },
+        });
+        const swap = receiveSwap();
+        const funded = [{ ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE }];
+        const m = manager({
+            indexer: fakeIndexer({
+                vtxos: unspent(),
+                get funded() {
+                    return funded;
+                },
+            }),
+            now: () => now,
+            spies: s,
+        });
+        await pass(m, swap);
+        expect(swap.claimArkTxid).toBe(CLAIM_ARK_TXID);
+
+        fail = true;
+        funded.push({ ...LOCKUP_OUTPOINT, vout: 1, value: 500 });
+        await m.poll();
+        expect(s.lockupClaims).toHaveLength(2);
+
+        now = REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS;
+        await m.poll();
+
+        expect(swap.state).toBe("refunded");
+        expect(swap.failure).toBeUndefined();
     });
 
     it("sweeps a lockup topped up after a claim, skipping the value gate", async () => {

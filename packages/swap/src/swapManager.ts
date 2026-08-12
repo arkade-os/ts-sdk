@@ -457,6 +457,11 @@ export interface RfqSwapManagerCallbacks {
 export type RfqSwapActionName = "claimOnchain" | "claimLockup" | "refundArkade";
 
 export interface RfqSwapManagerEvents {
+    /** Every state change, including ones that read as going backwards.
+     * `claimed -> claimable` is legal and expected on a receive swap the solver
+     * funds piecemeal: a lockup topped up after a claim is a new claimable
+     * event, and the label says so before the sweep goes out. Treat these
+     * states as a description of what to do next, not as a progress bar. */
     onSwapUpdate?: (swap: RfqSwap, previous: RfqSwapState) => void;
     /** Fired once, when a swap leaves monitoring `settled` or `refunded`.
      * A swap that ends `failed` reports through `onSwapFailed` instead — the
@@ -1232,10 +1237,23 @@ export class RfqSwapManager {
             }
         }
 
+        if (!this.callbacks) {
+            // Checked BEFORE the label, unlike the auto-actions case below: a
+            // wallet with nothing wired cannot claim by hand off `claimable`
+            // either, so reporting the lockup as claimable would name an action
+            // nobody here can take, and the swap would sit at it until the
+            // window shut. Reported the way `driveArkadeRefund` reports the
+            // same wiring gap, and lifted the moment `setCallbacks` runs.
+            return this.block(
+                swap,
+                "no callbacks are wired, so this wallet cannot claim the lockup",
+            );
+        }
+
         this.setState(swap, "claimable");
         // With auto-actions off the manager watches and reports only, which is
         // the documented way to claim by hand off `claimable`.
-        if (!this.config.enableAutoActions || !this.callbacks) return;
+        if (!this.config.enableAutoActions) return;
 
         try {
             const { arkTxid } = await this.callbacks.claimLockup(swap, vtxos, { partiallyClaimed });
@@ -1244,8 +1262,13 @@ export class RfqSwapManager {
             // these outputs are still there to retry with.
             this.rememberClaimed(swap.rfqId, vtxos);
             swap.claimArkTxid = arkTxid;
-            // Touched explicitly: on a re-claim the state is already `claimed`,
-            // so `setState` is a no-op and the new txid would go unpersisted.
+            // Touched independently of the label below, which today does the
+            // persisting on its own — a re-claim comes back through
+            // `claimable`, so `claimed` is a real transition either way. What
+            // this covers is the txid outliving that coupling: a crash between
+            // here and `setState`, and any later change that stops the label
+            // from moving on a re-claim, both leave a submitted claim recorded
+            // rather than a swap whose preimage is public and whose txid is not.
             this.touch(swap);
             this.setState(swap, "claimed");
             this.emitAction(swap, "claimLockup");
@@ -1593,7 +1616,10 @@ export class RfqSwapManager {
 /** What {@link RfqSwapManager.waitForSwapCompletion} reports. `txid` is the
  * trader's own claim — L1 for a claimed onchain send, Arkade for a claimed
  * receive — or the ark txid for a refund the trader pushed; a solver-side
- * settlement or refund carries none. */
+ * settlement or refund carries none, and a receive swap that ended `refunded`
+ * carries none either, however far its claim got (see {@link outcomeOf}). So
+ * a `txid` here always names something that happened, and `state` remains the
+ * only thing to read for whether the swap paid out. */
 export interface RfqSwapOutcome {
     state: RfqSwapState;
     txid?: string;
@@ -1626,10 +1652,18 @@ const isPayoutDecided = (swap: RfqSwap): boolean =>
     swap.state === "refunded" ||
     (swap.kind === "onchain_send" && swap.claimTxid !== undefined);
 
-const outcomeOf = (swap: RfqSwap): RfqSwapOutcome => ({
-    state: swap.state,
-    txid: traderClaimTxid(swap) ?? swap.refundArkTxid,
-});
+const outcomeOf = (swap: RfqSwap): RfqSwapOutcome => {
+    // A receive swap that ended `refunded` was lost: the solver took the lockup
+    // back, so a `claimArkTxid` on it names a submission the chain never took.
+    // Reporting it would put a claim txid on the one outcome where the trader
+    // has nothing — the single combination in which `txid` present would not
+    // mean an action that landed. The record still carries it for diagnosis.
+    const lostReceive = swap.kind === "lightning_receive" && swap.state === "refunded";
+    return {
+        state: swap.state,
+        txid: lostReceive ? swap.refundArkTxid : (traderClaimTxid(swap) ?? swap.refundArkTxid),
+    };
+};
 
 const errorMessage = (error: unknown): string =>
     error instanceof Error ? error.message : String(error);
