@@ -559,10 +559,30 @@ describe("ASM number-token fidelity", () => {
     });
 });
 
-describe("MINIMALDATA number encoding", () => {
+describe("MINIMALDATA push encoding", () => {
+    it("encodes single-byte small integers with their dedicated opcodes", () => {
+        for (let value = 1; value <= 16; value++) {
+            expect(hex.encode(ArkadeScript.encode([Uint8Array.of(value)]))).toBe(
+                (OPCODE_VALUES[`OP_${value}`] as number).toString(16),
+            );
+        }
+        expect(hex.encode(ArkadeScript.encode([Uint8Array.of(0x81)]))).toBe("4f");
+    });
+
+    it("keeps other single-byte values as direct data pushes", () => {
+        expect(hex.encode(ArkadeScript.encode([Uint8Array.of(0)]))).toBe("0100");
+        expect(hex.encode(ArkadeScript.encode([Uint8Array.of(17)]))).toBe("0111");
+    });
+
     it("encodes -1 as OP_1NEGATE, not a data push", () => {
         expect(hex.encode(ArkadeScript.encode([-1]))).toBe("4f");
         expect(hex.encode(ArkadeScript.encode([-1n]))).toBe("4f");
+    });
+
+    it("keeps the emulator's 520-byte BigNum range", () => {
+        const encoded = ArkadeScript.encode([1n << 4158n]);
+        expect(encoded.slice(0, 3)).toEqual(Uint8Array.of(0x4d, 0x08, 0x02));
+        expect(encoded).toHaveLength(523);
     });
 
     it("decodes 0x4f back to the number -1", () => {
