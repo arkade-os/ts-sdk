@@ -32,6 +32,7 @@ import {
     senderIdentityForSwapRecord,
     senderPubkeyForRfqSecrets,
 } from "../src/secrets";
+import type { AssetSwapFallbackSecrets } from "../src/store";
 import { paymentHashOf } from "../src/onchainHtlc";
 
 const MNEMONIC =
