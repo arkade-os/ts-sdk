@@ -24,7 +24,7 @@ import {
     type CreateContractParams,
 } from "@arkade-os/sdk";
 
-import { lightningSendVtxoScript } from "../src/rfq";
+import { lightningSendVtxoScript, receiveVtxoScript } from "../src/rfq";
 import {
     ONCHAIN_CLAIM_MARGIN_SECONDS,
     ONCHAIN_ORDER_MARGIN_SECONDS,
@@ -39,6 +39,7 @@ import {
     LockupNeedsRecoveryError,
     REFUND_MTP_LAG_SECONDS,
     type LockupSpendIndexer,
+    type LockupVtxo,
 } from "../src/refund";
 import { SWAP_LOCKUP_CONTRACT_TYPE } from "../src/lockupContract";
 import { RefundNotLocallyPossibleError } from "../src/secrets";
@@ -47,6 +48,7 @@ import {
     isRfqSwapTerminal,
     nextOnchainAction,
     type ArkadeRefundResult,
+    type LightningReceiveSwap,
     type LightningSendSwap,
     type OnchainSendSwap,
     type RfqSwap,
@@ -96,9 +98,31 @@ const LOCKUP = lightningSendVtxoScript({
     receiverPkScript: p2tr(key(1)),
 });
 
+/**
+ * The receive corridor's lockup: the SAME covenant with the roles inverted —
+ * the solver is `sender` and funds it, the trader is `receiver` and claims it.
+ * Built through the production builder, so what the receive tests below drive
+ * is the real tree and not the send tree wearing a different label. In
+ * particular `refundWithoutReceiver` on THIS script is the solver's leaf, which
+ * is what makes a spend through it a loss rather than a return.
+ */
+const RECEIVE_LOCKUP = receiveVtxoScript({
+    solverPubkey: key(1),
+    refundLocktime: REFUND_LOCKTIME,
+    serverPubkey: key(3),
+    paymentHash: PAYMENT_HASH,
+    claimDelay: 4096,
+    emulatorPubkey: key(9),
+    solverRefundPkScript: p2tr(key(1)),
+    payoutPubkey: key(13),
+    payoutPkScript: PAYOUT,
+});
+
 /** The lockup's funding outpoint — what a spend of it has to reference. */
 const LOCKUP_OUTPOINT = { txid: "99".repeat(32), vout: 0 };
 const LOCKUP_VALUE = 100_000;
+/** The txid our own receive claim comes back with. */
+const CLAIM_ARK_TXID = "ac".repeat(32);
 
 const UNROLL = CSVMultisigTapscript.encode({
     timelock: { type: "blocks", value: BigInt(144) },
@@ -124,10 +148,14 @@ const spendOfLockup = (
         leaf?: "claim" | "refundWithoutReceiver";
         conditionWitness?: Uint8Array[];
         finalWitness?: Uint8Array[];
+        /** Which covenant was spent — the send lockup unless a receive test
+         * says otherwise. */
+        script?: typeof LOCKUP;
     } = {},
 ): { txid: string; psbt: string } => {
+    const script = over.script ?? LOCKUP;
     const leaf =
-        over.leaf === "refundWithoutReceiver" ? LOCKUP.refundWithoutReceiver() : LOCKUP.claim();
+        over.leaf === "refundWithoutReceiver" ? script.refundWithoutReceiver() : script.claim();
     const { checkpoints } = buildOffchainTx(
         [
             {
@@ -135,7 +163,7 @@ const spendOfLockup = (
                 vout: LOCKUP_OUTPOINT.vout,
                 value: LOCKUP_VALUE,
                 tapLeafScript: leaf,
-                tapTree: LOCKUP.encode(),
+                tapTree: script.encode(),
             },
         ],
         [{ script: PAYOUT, amount: BigInt(LOCKUP_VALUE) }],
@@ -182,21 +210,44 @@ const spentUnnamed = (over: Partial<FakeVtxo> = {}): FakeVtxo => ({
  * tests can assert on what was asked, not only on what was concluded. */
 type FakeIndexer = LockupSpendIndexer & { vtxoCalls: number; txLookups: string[][] };
 
+/**
+ * A funded output as `findLockupVtxos` reads one — the receive leg's view of
+ * the same script. Separate from {@link FakeVtxo} because the two reads are
+ * genuinely different queries: the fate read asks for everything at the script
+ * and cares about `spentBy`, while this one asks the spendable and recoverable
+ * filters separately and is the only read whose `value` is summed.
+ */
+interface FakeFunded {
+    txid: string;
+    vout: number;
+    value: number;
+    recoverable?: boolean;
+}
+
 const fakeIndexer = (
     state: {
         vtxos?: FakeVtxo[];
         /** Only the txids present here are resolvable — a `spentBy` with no
          * entry models the indexer returning fewer txs than were asked for. */
         txs?: { txid: string; psbt: string }[];
+        /** What sits at the lockup, for the filtered reads. */
+        funded?: FakeFunded[];
         fail?: boolean;
     } = {},
 ): FakeIndexer => {
     const indexer = {
         vtxoCalls: 0,
         txLookups: [] as string[][],
-        async getVtxos() {
+        async getVtxos(filter?: { spendableOnly?: boolean; recoverableOnly?: boolean }) {
             indexer.vtxoCalls += 1;
             if (state.fail) throw new Error("indexer unreachable");
+            // The filters are honoured rather than ignored: `findLockupVtxos`
+            // makes both calls and merges them, so a fake that answered the
+            // same set twice would report every output as spendable AND
+            // recoverable and hide the dedup entirely.
+            const funded = state.funded ?? [];
+            if (filter?.spendableOnly) return { vtxos: funded.filter((v) => !v.recoverable) };
+            if (filter?.recoverableOnly) return { vtxos: funded.filter((v) => v.recoverable) };
             return { vtxos: state.vtxos ?? [] };
         },
         async getVirtualTxs(txids: string[]) {
@@ -266,9 +317,25 @@ const onchainSwap = (over: Partial<OnchainSendSwap> = {}): OnchainSendSwap => ({
     ...over,
 });
 
+/** The receive leg's record. `expectedAmount` is what the lockup must carry;
+ * every value test below moves it or the funding against each other. */
+const receiveSwap = (over: Partial<LightningReceiveSwap> = {}): LightningReceiveSwap => ({
+    kind: "lightning_receive",
+    rfqId: RFQ_ID,
+    state: "pending",
+    lockupPkScript: RECEIVE_LOCKUP.pkScript,
+    paymentHash: PAYMENT_HASH,
+    refundLocktime: REFUND_LOCKTIME,
+    expectedAmount: LOCKUP_VALUE,
+    createdAt: 1,
+    updatedAt: 1,
+    ...over,
+});
+
 interface Spies {
     callbacks: RfqSwapManagerCallbacks;
     claims: { rfqId: string; utxo: ChainUtxo }[];
+    lockupClaims: { vtxos: readonly LockupVtxo[]; partiallyClaimed: boolean }[];
     refunds: string[];
     saved: RfqSwapState[];
     actions: RfqSwapActionName[];
@@ -277,15 +344,18 @@ interface Spies {
 const spies = (
     over: {
         claim?: () => Promise<{ txid: string }>;
+        claimLockup?: () => Promise<{ arkTxid: string; amount: number }>;
         refund?: () => Promise<ArkadeRefundResult>;
         probe?: () => Promise<{ ok: true } | { ok: false; reason: string }>;
     } = {},
 ): Spies => {
     const claims: { rfqId: string; utxo: ChainUtxo }[] = [];
+    const lockupClaims: { vtxos: readonly LockupVtxo[]; partiallyClaimed: boolean }[] = [];
     const refunds: string[] = [];
     const saved: RfqSwapState[] = [];
     return {
         claims,
+        lockupClaims,
         refunds,
         saved,
         actions: [],
@@ -293,6 +363,12 @@ const spies = (
             async claimOnchain(swap, utxo) {
                 claims.push({ rfqId: swap.rfqId, utxo });
                 return over.claim ? over.claim() : { txid: "dd".repeat(32) };
+            },
+            async claimLockup(_swap, vtxos, options) {
+                lockupClaims.push({ vtxos, partiallyClaimed: options.partiallyClaimed });
+                return over.claimLockup
+                    ? over.claimLockup()
+                    : { arkTxid: CLAIM_ARK_TXID, amount: LOCKUP_VALUE };
             },
             async refundArkade(swap) {
                 refunds.push(swap.rfqId);
@@ -953,6 +1029,508 @@ describe("RfqSwapManager — the lightning-send leg", () => {
 
         expect(swap.state).toBe("refunded");
         expect(swap.refundArkTxid).toBeUndefined();
+    });
+});
+
+/**
+ * The receive leg, where both halves of every other corridor are inverted: the
+ * SOLVER funds the lockup and the TRADER claims it.
+ *
+ * So the tests here are about the two things that inversion changes. First,
+ * what the manager is willing to publish `P` for — deriving the script proves
+ * nothing on this leg, because the script was never the lie, and a claim of a
+ * dust-funded lockup hands the solver a full Lightning settlement for nothing.
+ * Second, what the states mean: `refunded` is a LOSS here, `claimed` is our own
+ * belief rather than a chain fact, and there is no trader-side refund to fall
+ * back on when the window shuts.
+ */
+describe("RfqSwapManager — the lightning-receive leg", () => {
+    /** One pass over a receive swap. The manager is never started here, so
+     * `addSwap` does not poll on its own — same as every other block. */
+    const pass = async (m: RfqSwapManager, swap: LightningReceiveSwap): Promise<void> => {
+        await m.addSwap(swap);
+        await m.poll();
+    };
+
+    /** A lockup funded with one output, unspent — so the fate read says `open`
+     * and the pass carries on to the claim. */
+    const fundedIndexer = (value = LOCKUP_VALUE, over: Partial<FakeFunded> = {}) =>
+        fakeIndexer({
+            vtxos: unspent(),
+            funded: [{ ...LOCKUP_OUTPOINT, value, ...over }],
+        });
+
+    /** Comfortably inside the claim window. */
+    const BEFORE_DEADLINE = REFUND_LOCKTIME - 3600;
+
+    it("claims a lockup funded for the agreed amount", async () => {
+        const s = spies();
+        const swap = receiveSwap();
+        const m = manager({ indexer: fundedIndexer(), now: BEFORE_DEADLINE, spies: s });
+        await pass(m, swap);
+
+        expect(s.lockupClaims).toHaveLength(1);
+        expect(s.lockupClaims[0].partiallyClaimed).toBe(false);
+        expect(s.lockupClaims[0].vtxos).toEqual([
+            { ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE, recoverable: false },
+        ]);
+        expect(swap.state).toBe("claimed");
+        expect(swap.claimArkTxid).toBe(CLAIM_ARK_TXID);
+        expect(s.actions).toEqual(["claimLockup"]);
+        // and it is not over: `claimed` is what we did, not what the chain says
+        expect(await m.hasSwap(RFQ_ID)).toBe(true);
+    });
+
+    it("overfunding is fine; the gate is a floor", async () => {
+        const s = spies();
+        const swap = receiveSwap();
+        const m = manager({
+            indexer: fundedIndexer(LOCKUP_VALUE + 1),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        await pass(m, swap);
+
+        expect(swap.state).toBe("claimed");
+    });
+
+    it("sums funding split across outputs rather than reading the first", async () => {
+        const s = spies();
+        const swap = receiveSwap();
+        const m = manager({
+            indexer: fakeIndexer({
+                vtxos: unspent(),
+                funded: [
+                    { ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE - 1 },
+                    { ...LOCKUP_OUTPOINT, vout: 1, value: 1 },
+                ],
+            }),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        await pass(m, swap);
+
+        expect(swap.state).toBe("claimed");
+        expect(s.lockupClaims[0].vtxos).toHaveLength(2);
+    });
+
+    it("counts a swept output toward the funded value", async () => {
+        // A recoverable output is the agreed money still sitting at the script,
+        // so it makes the difference between the gate reading this lockup as
+        // fully funded and reading it as one satoshi short. What cannot be done
+        // with it is spend it offchain, and `pushClaim` refuses that by name —
+        // which is why it is handed to the callback rather than dropped here.
+        const s = spies();
+        const swap = receiveSwap();
+        const m = manager({
+            indexer: fakeIndexer({
+                vtxos: unspent(),
+                funded: [
+                    { ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE - 1 },
+                    { ...LOCKUP_OUTPOINT, vout: 1, value: 1, recoverable: true },
+                ],
+            }),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        await pass(m, swap);
+
+        expect(swap.state).toBe("claimed");
+        expect(s.lockupClaims[0].vtxos).toEqual([
+            { ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE - 1, recoverable: false },
+            { ...LOCKUP_OUTPOINT, vout: 1, value: 1, recoverable: true },
+        ]);
+    });
+
+    it("refuses to publish the preimage for a dust-funded lockup", async () => {
+        // THE attack this leg has and no other: the solver funds the correctly
+        // derived script with dust. Claiming makes `P` public, which is what
+        // lets the solver settle the payer's held HTLC in full.
+        const s = spies();
+        const swap = receiveSwap();
+        const m = manager({ indexer: fundedIndexer(330), now: BEFORE_DEADLINE, spies: s });
+        await pass(m, swap);
+
+        expect(s.lockupClaims).toHaveLength(0);
+        expect(swap.state).toBe("needs_counterparty");
+        expect(swap.blockedReason).toMatch(/330 sats, below the agreed 100000/);
+        // not terminal: the solver can still make this right
+        expect(await m.hasSwap(RFQ_ID)).toBe(true);
+    });
+
+    it("refuses a record whose expectedAmount cannot be compared against", async () => {
+        // The same class as the invoice gate's non-finite guards: `locked <
+        // undefined` and `locked < NaN` are both false, so an unusable
+        // comparand does not FAIL the value gate, it deletes it — and the claim
+        // proceeds for whatever was funded.
+        for (const expectedAmount of [Number.NaN, undefined as unknown as number]) {
+            const s = spies();
+            const swap = receiveSwap({ expectedAmount });
+            const m = manager({ indexer: fundedIndexer(1), now: BEFORE_DEADLINE, spies: s });
+            await pass(m, swap);
+
+            expect(s.lockupClaims).toHaveLength(0);
+            expect(swap.state).toBe("needs_counterparty");
+            expect(swap.blockedReason).toMatch(/not a finite number/);
+        }
+    });
+
+    it("claims as soon as the solver tops a short lockup up", async () => {
+        const s = spies();
+        const swap = receiveSwap();
+        let value = LOCKUP_VALUE - 1;
+        const m = manager({
+            indexer: fakeIndexer({
+                vtxos: unspent(),
+                // read fresh every pass, so the top-up is visible
+                get funded() {
+                    return [{ ...LOCKUP_OUTPOINT, value }];
+                },
+            }),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        await pass(m, swap);
+        expect(swap.state).toBe("needs_counterparty");
+
+        value = LOCKUP_VALUE;
+        await m.poll();
+
+        expect(swap.state).toBe("claimed");
+        expect(s.lockupClaims).toHaveLength(1);
+        // the refusal's reason does not outlive the refusal
+        expect(swap.blockedReason).toBeUndefined();
+    });
+
+    it("never pushes an Arkade refund, before or after the deadline", async () => {
+        // Every non-claim leaf of this covenant is the SOLVER's. A generic
+        // caller that wired `refundArkade` for its send swaps must not see it
+        // called with a receive one.
+        for (const now of [BEFORE_DEADLINE, REFUND_LOCKTIME + 1, REFUND_LOCKTIME + 100_000]) {
+            let probes = 0;
+            const s = spies({
+                probe: async () => {
+                    probes += 1;
+                    return { ok: true };
+                },
+            });
+            const swap = receiveSwap();
+            const m = manager({ indexer: fundedIndexer(), now, spies: s });
+            await pass(m, swap);
+
+            expect(s.refunds).toHaveLength(0);
+            // not even asked whether one is possible — there is nothing to ask
+            expect(probes).toBe(0);
+        }
+    });
+
+    it("stops claiming at refundLocktime, and claims right up to it", async () => {
+        // No margin, deliberately: the claim is an offchain spend that lands in
+        // seconds, and the solver's CLTV matures against median-time-past, so
+        // the real window runs PAST this deadline rather than ending before it.
+        const claimed = spies();
+        const open = receiveSwap();
+        const before = manager({
+            indexer: fundedIndexer(),
+            now: REFUND_LOCKTIME - 1,
+            spies: claimed,
+        });
+        await pass(before, open);
+        expect(open.state).toBe("claimed");
+
+        const s = spies();
+        const shut = receiveSwap();
+        const after = manager({ indexer: fundedIndexer(), now: REFUND_LOCKTIME, spies: s });
+        await pass(after, shut);
+
+        expect(s.lockupClaims).toHaveLength(0);
+        expect(shut.state).toBe("needs_counterparty");
+        expect(shut.blockedReason).toMatch(/claim window closed/);
+    });
+
+    it("keeps a submitted claim's label once the window shuts", async () => {
+        // `claimed` is still the truest thing the record knows; replacing it
+        // with a refusal would un-say it.
+        const s = spies();
+        const swap = receiveSwap({ state: "claimed", claimArkTxid: CLAIM_ARK_TXID });
+        const m = manager({ indexer: fundedIndexer(), now: REFUND_LOCKTIME + 1, spies: s });
+        await pass(m, swap);
+
+        expect(swap.state).toBe("claimed");
+        expect(swap.blockedReason).toBeUndefined();
+    });
+
+    it("settles on a hash-verified spend made by a txid that is not ours", async () => {
+        // `nonInteractiveClaim` is pinned to the trader's own payout script, so
+        // a claim that lands without us still pays us. Matching on the txid we
+        // submitted would turn that success into an anomaly the day covclaimd
+        // starts working.
+        const spend = spendOfLockup({ script: RECEIVE_LOCKUP, conditionWitness: [PREIMAGE] });
+        expect(spend.txid).not.toBe(CLAIM_ARK_TXID);
+
+        const s = spies();
+        const swap = receiveSwap({ state: "claimed", claimArkTxid: CLAIM_ARK_TXID });
+        const m = manager({
+            indexer: fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        await pass(m, swap);
+
+        // and the name collision one layer apart: fate `claimed` is state
+        // `settled`, never state `claimed`
+        expect(swap.state).toBe("settled");
+        expect(await m.hasSwap(RFQ_ID)).toBe(false);
+    });
+
+    it("a claim that never lands ends refunded when the solver takes the lockup back", async () => {
+        // The transition the state doc has to make legal: `claimed` is not
+        // terminal, so it must not retire the swap.
+        const s = spies();
+        const swap = receiveSwap({ state: "claimed", claimArkTxid: CLAIM_ARK_TXID });
+        const solverRefund = spendOfLockup({
+            script: RECEIVE_LOCKUP,
+            leaf: "refundWithoutReceiver",
+        });
+        const m = manager({
+            indexer: fakeIndexer({ vtxos: spentBy(solverRefund.txid), txs: [solverRefund] }),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        await pass(m, swap);
+
+        expect(swap.state).toBe("refunded");
+        expect(isRfqSwapTerminal(swap.state)).toBe(true);
+    });
+
+    it("reports a lost receive without the txid of the claim that lost it", async () => {
+        // The one combination where a `txid` on the outcome would name an
+        // action that did not happen: the claim was submitted, the chain never
+        // took it, and the solver reclaimed the lockup. The record keeps
+        // `claimArkTxid` for diagnosis; the outcome does not carry it.
+        const s = spies();
+        const swap = receiveSwap({ state: "claimed", claimArkTxid: CLAIM_ARK_TXID });
+        const solverRefund = spendOfLockup({
+            script: RECEIVE_LOCKUP,
+            leaf: "refundWithoutReceiver",
+        });
+        const m = manager({
+            indexer: fakeIndexer({ vtxos: spentBy(solverRefund.txid), txs: [solverRefund] }),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        const waiting = m.waitForSwapCompletion(RFQ_ID);
+        await m.poll();
+
+        expect(swap.claimArkTxid).toBe(CLAIM_ARK_TXID);
+        await expect(waiting).resolves.toEqual({ state: "refunded", txid: undefined });
+    });
+
+    it("reports nothing wired to claim, instead of a lockup nobody here can take", async () => {
+        // `claimable` would name an action this wallet cannot perform by hand
+        // either, and the swap would sit at it until the window shut.
+        const swap = receiveSwap();
+        const m = new RfqSwapManager({ indexer: fundedIndexer() }, { now: () => BEFORE_DEADLINE });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("needs_counterparty");
+        expect(swap.blockedReason).toMatch(/no callbacks are wired/);
+    });
+
+    it("ends refunded, not failed, when only a re-claim was the thing that threw", async () => {
+        // Both `claimArkTxid` and a claim error are set when the window shuts.
+        // A claim went out, so this is an ordinary loss rather than a wallet
+        // that could not act — `failed` is reserved for the latter.
+        let now = BEFORE_DEADLINE;
+        let fail = false;
+        const s = spies({
+            claimLockup: async () => {
+                if (fail) throw new Error("ark server unreachable");
+                return { arkTxid: CLAIM_ARK_TXID, amount: LOCKUP_VALUE };
+            },
+        });
+        const swap = receiveSwap();
+        const funded = [{ ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE }];
+        const m = manager({
+            indexer: fakeIndexer({
+                vtxos: unspent(),
+                get funded() {
+                    return funded;
+                },
+            }),
+            now: () => now,
+            spies: s,
+        });
+        await pass(m, swap);
+        expect(swap.claimArkTxid).toBe(CLAIM_ARK_TXID);
+
+        fail = true;
+        funded.push({ ...LOCKUP_OUTPOINT, vout: 1, value: 500 });
+        await m.poll();
+        expect(s.lockupClaims).toHaveLength(2);
+
+        now = REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS;
+        await m.poll();
+
+        expect(swap.state).toBe("refunded");
+        expect(swap.failure).toBeUndefined();
+    });
+
+    it("sweeps a lockup topped up after a claim, skipping the value gate", async () => {
+        // Once `P` is public the value gate protects nothing, and holding the
+        // remainder back over it would strand the trader's own money — note the
+        // funding here is far below `expectedAmount` and is claimed anyway.
+        const s = spies();
+        const swap = receiveSwap({ state: "claimed", claimArkTxid: CLAIM_ARK_TXID });
+        const m = manager({ indexer: fundedIndexer(1), now: BEFORE_DEADLINE, spies: s });
+        await pass(m, swap);
+
+        expect(s.lockupClaims).toHaveLength(1);
+        expect(s.lockupClaims[0].partiallyClaimed).toBe(true);
+        expect(swap.state).toBe("claimed");
+    });
+
+    it("does not re-claim the same outputs while the indexer catches up", async () => {
+        // The spend is submitted and finalized, but the outputs keep reading as
+        // unspent for a few passes. Re-submitting them would fail against the
+        // server every time and report a swap that worked as one that is
+        // failing — so the second pass claims nothing, and the third claims
+        // only because a NEW output showed up.
+        const s = spies();
+        const swap = receiveSwap();
+        const funded = [{ ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE }];
+        const m = manager({
+            indexer: fakeIndexer({
+                vtxos: unspent(),
+                get funded() {
+                    return funded;
+                },
+            }),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        await pass(m, swap);
+        expect(s.lockupClaims).toHaveLength(1);
+
+        await m.poll();
+        expect(s.lockupClaims).toHaveLength(1);
+        expect(swap.state).toBe("claimed");
+
+        funded.push({ ...LOCKUP_OUTPOINT, vout: 1, value: 500 });
+        await m.poll();
+
+        expect(s.lockupClaims).toHaveLength(2);
+        expect(s.lockupClaims[1].partiallyClaimed).toBe(true);
+        expect(s.lockupClaims[1].vtxos).toHaveLength(2);
+    });
+
+    it("ends refunded once the solver's reclaim window has passed unobserved", async () => {
+        const s = spies();
+        const swap = receiveSwap();
+        const m = manager({
+            indexer: fakeIndexer({ vtxos: [] }),
+            now: REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS,
+            spies: s,
+        });
+        await pass(m, swap);
+
+        expect(swap.state).toBe("refunded");
+        expect(await m.hasSwap(RFQ_ID)).toBe(false);
+        // resolution, not rejection — but the caller has to read the state
+        await expect(m.waitForSwapCompletion(RFQ_ID)).resolves.toEqual({
+            state: "refunded",
+            txid: undefined,
+        });
+    });
+
+    it("ends failed, with the reason, when the claim kept throwing until the window shut", async () => {
+        // The one shape that is not an ordinary unwind: a claimable lockup this
+        // wallet could not take. Reported as `refunded` it would read to an
+        // awaiting caller as a swap that simply did not happen.
+        let now = BEFORE_DEADLINE;
+        const s = spies({
+            claimLockup: async () => {
+                throw new Error("ark server unreachable");
+            },
+        });
+        const swap = receiveSwap();
+        const m = manager({ indexer: fundedIndexer(), now: () => now, spies: s });
+        await pass(m, swap);
+        expect(swap.state).toBe("claimable"); // retried, not given up on
+        expect(s.lockupClaims).toHaveLength(1);
+
+        await m.poll();
+        expect(s.lockupClaims).toHaveLength(2);
+
+        now = REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS;
+        await m.poll();
+
+        expect(swap.state).toBe("failed");
+        expect(swap.failure).toMatch(/ark server unreachable/);
+        await expect(m.waitForSwapCompletion(RFQ_ID)).rejects.toThrow(/ark server unreachable/);
+    });
+
+    it("reports without acting when auto-actions are off", async () => {
+        const s = spies();
+        const swap = receiveSwap();
+        const m = manager({
+            indexer: fundedIndexer(),
+            now: BEFORE_DEADLINE,
+            spies: s,
+            enableAutoActions: false,
+        });
+        await pass(m, swap);
+
+        expect(s.lockupClaims).toHaveLength(0);
+        expect(swap.state).toBe("claimable");
+    });
+
+    it("leaves the swap running when the lockup read fails", async () => {
+        const s = spies();
+        const swap = receiveSwap();
+        const failures: string[] = [];
+        const m = manager({ indexer: fakeIndexer({ fail: true }), now: BEFORE_DEADLINE, spies: s });
+        m.onSwapFailed((_s, error) => failures.push(error.message));
+        await pass(m, swap);
+
+        expect(swap.state).toBe("pending");
+        expect(failures).toEqual(["indexer unreachable"]);
+        expect(await m.hasSwap(RFQ_ID)).toBe(true);
+    });
+
+    it("does not resolve a waiter on the local claim, only on the chain's answer", async () => {
+        // An L1 broadcast is a chain fact the trader holds coins from; an
+        // Arkade submission is a submission, and `claimed -> refunded` is
+        // reachable from it.
+        const s = spies();
+        const swap = receiveSwap();
+        const spend = spendOfLockup({ script: RECEIVE_LOCKUP, conditionWitness: [PREIMAGE] });
+        const state = { vtxos: unspent(), funded: [{ ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE }] };
+        const indexer = fakeIndexer({
+            get vtxos() {
+                return state.vtxos;
+            },
+            get funded() {
+                return state.funded;
+            },
+            txs: [spend],
+        });
+        const m = manager({ indexer, now: BEFORE_DEADLINE, spies: s });
+        await pass(m, swap);
+        expect(swap.state).toBe("claimed");
+
+        let settled: unknown = null;
+        const waiting = m.waitForSwapCompletion(RFQ_ID).then((outcome) => (settled = outcome));
+        await Promise.resolve();
+        expect(settled).toBeNull();
+
+        state.vtxos = spentBy(spend.txid);
+        await m.poll();
+        await waiting;
+
+        expect(settled).toEqual({ state: "settled", txid: CLAIM_ARK_TXID });
     });
 });
 
