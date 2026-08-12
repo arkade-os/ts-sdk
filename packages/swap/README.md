@@ -375,7 +375,18 @@ senderPrivateKeyHex, preimageHex? }`.
 BOTH contracts locally (the role-inverted VHTLC, and the L1 HTLC for the onchain leg) → verify
 against the quote's compare-only addresses → gate. `requestLightningReceive` returns the solver's
 hold invoice to pay; `requestOnchainReceive` returns the L1 HTLC to fund — the payment/broadcast
-itself is the trader's own wallet's job, exactly as on the send corridors. The trader-side
+itself is the trader's own wallet's job, exactly as on the send corridors.
+
+The invoice on the lightning-receive leg is the *solver's*, so the SDK owns the comparison rather
+than taking the caller's facts about it: `requestLightningReceive` requires a `decodeInvoice`
+callback (no BOLT11 dependency is added) and `verifyReceiveInvoice` binds the decoded invoice to
+this swap's `H` and to `quote.from_amount` — an invoice on another payment hash is the one attack
+here with no on-chain trace, since the payer pays it in full and no lockup on `H` is ever funded.
+`assertReceivable` replaces `assertFundable` on this leg: the refund CLTV is the solver's, so the
+window that can run out is the hold invoice's, and the claim window is measured from
+`payDeadline = min(invoice expiry, valid_until)` — returned as the absolute `invoiceExpiresAt`,
+which is the deadline to show a payer, not `valid_until`. The optional `maxPayAmount` caps `from_amount`
+(`price_too_high`). The trader-side
 completion lands in `claim.ts`: `claimReceiveLockup` waits for the solver's funding and pushes the
 collaborative claim with the swap's own `P` and receiver key (covclaimd optional). Until covclaimd's
 reference vectors are cross-checked, the `sealClaimPacket` test vector is pinned from this
