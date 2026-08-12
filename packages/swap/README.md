@@ -494,6 +494,13 @@ knows which of the record's fields are derivation inputs, and it verifies the re
 `paymentHash`. A caller that forgets to pass the salt gets a _wrong_ preimage from a wallet that can
 derive, not an error — and that surfaces as an opaque script failure at claim time.
 
+Every refusal is a `PreimageNotRecoverableError` carrying a `reason`: `no-secrets` (the record
+predates the descriptor), `malformed-record`, `not-derivable` (nothing to derive from, or a key this
+wallet does not hold), or `hash-mismatch` (derived, but wrong — a tampered salt or the wrong seed).
+Branch on `reason`, never on message text. It is deliberately **not**
+`RefundNotLocallyPossibleError`: that one means no local refund is possible and `RfqSwapManager`
+reports `needs_counterparty` for it, which is a different verdict from a claim-path read failing.
+
 A caller-supplied preimage keeps `signingDescriptor` for the sender key and stores only
 `preimageHex` as secret material.
 

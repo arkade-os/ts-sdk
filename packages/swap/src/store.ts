@@ -238,6 +238,46 @@ const decodeHex32 = (value: string, field: string): Uint8Array => {
     return bytes;
 };
 
+/** Why a wallet cannot produce a swap's preimage. */
+export type PreimageBlockedReason =
+    /** The record carries no `signingDescriptor`. */
+    | "no-secrets"
+    /** `preimageHex` or `preimageSaltHex` is present but not 32 bytes of hex. */
+    | "malformed-record"
+    /**
+     * Nothing to derive from: a descriptor that repeats across swaps, with
+     * neither a stored preimage nor a salt — or one this wallet holds no key
+     * for. Merged deliberately: `contractSigner` reports a key it does not
+     * hold as a plain `Error` for static wallets and a `ForeignDescriptorError`
+     * for HD ones, so splitting the two here would mean matching on message
+     * text, which is the thing this type exists to avoid. The `cause` carries
+     * whichever it was.
+     */
+    | "not-derivable"
+    /** Derived, but it does not hash to the record's `paymentHash`. */
+    | "hash-mismatch";
+
+/**
+ * The wallet cannot produce this swap's preimage, and which of the four ways
+ * is `reason`.
+ *
+ * Deliberately **not** {@link RefundNotLocallyPossibleError}: that one means
+ * "no local refund is possible", and `RfqSwapManager` acts on it by reporting
+ * `needs_counterparty`. A claim-path read failure is a different verdict, and
+ * borrowing the refund error would have the manager announce one for the
+ * other.
+ */
+export class PreimageNotRecoverableError extends Error {
+    override readonly name = "PreimageNotRecoverableError";
+    constructor(
+        readonly reason: PreimageBlockedReason,
+        message: string,
+        options?: { cause?: unknown },
+    ) {
+        super(message, options);
+    }
+}
+
 /**
  * The preimage a swap record claims with — stored, or re-derived from the
  * wallet.
@@ -252,22 +292,52 @@ const decodeHex32 = (value: string, field: string): Uint8Array => {
  * salted arm has two inputs that can be wrong — the key and the salt — where
  * the HD arm had one, and a wrong P otherwise surfaces as an opaque script
  * failure at claim time, long after the mistake.
+ *
+ * Every refusal is a {@link PreimageNotRecoverableError} carrying a `reason`,
+ * so a caller can tell "this record predates the descriptor" from "the salt is
+ * corrupt" without reading message text.
  */
 export const preimageForSwapRecord = async (
     wallet: IWallet,
     record: SwapSecretsProjection & { paymentHash?: string },
 ): Promise<Uint8Array> => {
     if (!record.signingDescriptor) {
-        throw new Error("this swap record carries no signing descriptor");
+        throw new PreimageNotRecoverableError(
+            "no-secrets",
+            "this swap record carries no signing descriptor",
+        );
     }
-    const preimage = await contractPreimage(wallet, record.signingDescriptor, {
-        stored: record.preimageHex ? decodeHex32(record.preimageHex, "preimageHex") : undefined,
-        salt: record.preimageSaltHex
+    // Decoding sits outside the derivation try: a malformed record is the
+    // caller's bug, not evidence the wallet cannot derive.
+    let stored: Uint8Array | undefined;
+    let salt: Uint8Array | undefined;
+    try {
+        stored = record.preimageHex ? decodeHex32(record.preimageHex, "preimageHex") : undefined;
+        salt = record.preimageSaltHex
             ? decodeHex32(record.preimageSaltHex, "preimageSaltHex")
-            : undefined,
-    });
+            : undefined;
+    } catch (cause) {
+        throw new PreimageNotRecoverableError(
+            "malformed-record",
+            `this swap record's secrets projection is unreadable: ${String(cause)}`,
+            { cause },
+        );
+    }
+
+    let preimage: Uint8Array;
+    try {
+        preimage = await contractPreimage(wallet, record.signingDescriptor, { stored, salt });
+    } catch (cause) {
+        throw new PreimageNotRecoverableError(
+            "not-derivable",
+            `this wallet cannot produce the preimage for ${record.signingDescriptor}`,
+            { cause },
+        );
+    }
+
     if (record.paymentHash && hex.encode(sha256(preimage)) !== record.paymentHash) {
-        throw new Error(
+        throw new PreimageNotRecoverableError(
+            "hash-mismatch",
             "the derived preimage does not match this swap's payment hash: wrong wallet, or a tampered salt",
         );
     }

@@ -26,8 +26,10 @@ export {
     updateAssetSwapBestEffort,
     swapSecretsToRecord,
     preimageForSwapRecord,
+    PreimageNotRecoverableError,
     type AssetSwap,
     type AssetSwapStatus,
+    type PreimageBlockedReason,
     type SwapSecretsProjection,
 } from "./store";
 export {

@@ -16,7 +16,11 @@ import {
     type IWallet,
     type ProvisionedClaimSecret,
 } from "@arkade-os/sdk";
-import { preimageForSwapRecord, swapSecretsToRecord } from "../src/store";
+import {
+    PreimageNotRecoverableError,
+    preimageForSwapRecord,
+    swapSecretsToRecord,
+} from "../src/store";
 
 /** A wallet with no descriptor surface: its identity is its whole policy. */
 const staticWallet = (key = SingleKey.fromRandomBytes()) =>
@@ -39,8 +43,16 @@ describe("swapSecretsToRecord", () => {
     });
 
     it("stores the preimage and no salt when the wallet cannot derive", async () => {
+        // A COMPLETE identity that simply cannot sign deterministically — an
+        // extension or remote signer. A partial one is refused outright by
+        // `contractSigner`, so it never reaches this arm.
         const key = SingleKey.fromRandomBytes();
-        const identity = { xOnlyPublicKey: () => key.xOnlyPublicKey() };
+        const identity = {
+            sign: (tx: unknown) => key.sign(tx as never),
+            signMessage: (m: Uint8Array) => key.signMessage(m),
+            signerSession: () => key.signerSession(),
+            xOnlyPublicKey: () => key.xOnlyPublicKey(),
+        };
         const secrets = await provisionClaimSecret({ identity } as unknown as IWallet);
         const record = swapSecretsToRecord(secrets);
 
@@ -93,20 +105,44 @@ describe("preimageForSwapRecord", () => {
         );
     });
 
+    /** The reason of the `PreimageNotRecoverableError` a call throws. */
+    const reasonOf = async (call: Promise<unknown>): Promise<string> => {
+        try {
+            await call;
+        } catch (error) {
+            expect(error).toBeInstanceOf(PreimageNotRecoverableError);
+            return (error as PreimageNotRecoverableError).reason;
+        }
+        throw new Error("expected the call to throw");
+    };
+
     it("refuses a record with no signing descriptor", async () => {
-        await expect(preimageForSwapRecord(staticWallet(), {})).rejects.toThrow(
-            /no signing descriptor/,
-        );
+        // Typed, so a caller can tell this from a corrupt salt without
+        // matching on message text.
+        expect(await reasonOf(preimageForSwapRecord(staticWallet(), {}))).toBe("no-secrets");
     });
 
     it("refuses a salt that is not 32 bytes", async () => {
         const key = SingleKey.fromRandomBytes();
-        await expect(
-            preimageForSwapRecord(staticWallet(key), {
-                signingDescriptor: `tr(${hex.encode(await key.xOnlyPublicKey())})`,
-                preimageSaltHex: "aabb",
-            }),
-        ).rejects.toThrow(/preimageSaltHex must be 32 bytes/);
+        expect(
+            await reasonOf(
+                preimageForSwapRecord(staticWallet(key), {
+                    signingDescriptor: `tr(${hex.encode(await key.xOnlyPublicKey())})`,
+                    preimageSaltHex: "aabb",
+                }),
+            ),
+        ).toBe("malformed-record");
+    });
+
+    it("refuses a static record carrying neither a preimage nor a salt", async () => {
+        const key = SingleKey.fromRandomBytes();
+        expect(
+            await reasonOf(
+                preimageForSwapRecord(staticWallet(key), {
+                    signingDescriptor: `tr(${hex.encode(await key.xOnlyPublicKey())})`,
+                }),
+            ),
+        ).toBe("not-derivable");
     });
 
     describe("the payment-hash guard", () => {
@@ -120,20 +156,24 @@ describe("preimageForSwapRecord", () => {
             // Same length, different bytes: derives cleanly, matches nothing.
             record.preimageSaltHex = "ab".repeat(32);
 
-            await expect(preimageForSwapRecord(staticWallet(key), record)).rejects.toThrow(
-                /does not match this swap's payment hash/,
+            expect(await reasonOf(preimageForSwapRecord(staticWallet(key), record))).toBe(
+                "hash-mismatch",
             );
         });
 
         it("catches the wrong wallet", async () => {
             // The salted arm has two inputs that can be wrong where the HD arm
             // had one. Without this the mistake surfaces as a dead script.
+            // Refused as `not-derivable` rather than `hash-mismatch`: the key
+            // check fires first, before anything is derived.
             const secrets = await provisionClaimSecret(staticWallet());
             const record = recordOf(secrets);
 
-            await expect(
-                preimageForSwapRecord(staticWallet(SingleKey.fromRandomBytes()), record),
-            ).rejects.toThrow(/holds no key for descriptor|does not match/);
+            expect(
+                await reasonOf(
+                    preimageForSwapRecord(staticWallet(SingleKey.fromRandomBytes()), record),
+                ),
+            ).toBe("not-derivable");
         });
 
         it("stays quiet when the record carries no payment hash", async () => {
