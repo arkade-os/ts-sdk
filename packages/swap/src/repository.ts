@@ -1,5 +1,6 @@
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import type { AssetSwap } from "./store";
+import type { RfqSwapRecord } from "./rfqRecord";
 
 /** A registry discovery result held for reuse. Refetchable — unlike a swap
  * record, losing it costs one network round trip — but it must survive a cold
@@ -30,7 +31,7 @@ export const marketsCacheKey = (network: string, registry: string) =>
  * subset queries.
  */
 export interface AssetSwapRepository extends AsyncDisposable {
-    readonly version: 1;
+    readonly version: 2;
 
     /** Insert or replace a swap by id. Store the record whole: `preimageHex`
      * is secret-bearing — the only claim secret of a swap whose descriptor is
@@ -40,6 +41,20 @@ export interface AssetSwapRepository extends AsyncDisposable {
     /** All stored swaps, in no particular order — `getAssetSwaps` is the
      * canonical newest-first read. */
     getAllSwaps(): Promise<AssetSwap[]>;
+
+    /**
+     * Insert or replace a monitored RFQ swap by `rfqId`.
+     *
+     * Store the record WHOLE. Every field is a covenant tree parameter or the
+     * manager's own state, and a field-mapped backend that drops one round-trips
+     * a record whose covenant `rebuildRfqSwap` cannot reproduce — which surfaces
+     * as a refund that cannot be signed, long after the write.
+     */
+    saveRfqSwap(record: RfqSwapRecord): Promise<void>;
+    /** Every stored RFQ swap record, in no particular order. */
+    getAllRfqSwaps(): Promise<RfqSwapRecord[]>;
+    /** Drop one, once it is past retention — see `shouldRetainRfqSwap`. */
+    removeRfqSwap(rfqId: string): Promise<void>;
 
     /** Sent txids already checked for offer packets (see restore.ts). */
     getScannedTxids(): Promise<Set<string>>;
@@ -53,8 +68,9 @@ export interface AssetSwapRepository extends AsyncDisposable {
 }
 
 export class InMemoryAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 1 as const;
+    readonly version = 2 as const;
     private readonly swaps = new Map<string, AssetSwap>();
+    private readonly rfqSwaps = new Map<string, RfqSwapRecord>();
     private readonly scanned = new Set<string>();
     private readonly markets = new Map<string, MarketsCacheEntry>();
 
@@ -64,6 +80,18 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
 
     async getAllSwaps(): Promise<AssetSwap[]> {
         return [...this.swaps.values()];
+    }
+
+    async saveRfqSwap(record: RfqSwapRecord): Promise<void> {
+        this.rfqSwaps.set(record.rfqId, record);
+    }
+
+    async getAllRfqSwaps(): Promise<RfqSwapRecord[]> {
+        return [...this.rfqSwaps.values()];
+    }
+
+    async removeRfqSwap(rfqId: string): Promise<void> {
+        this.rfqSwaps.delete(rfqId);
     }
 
     async getScannedTxids(): Promise<Set<string>> {
@@ -91,6 +119,7 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
 
     async clear(): Promise<void> {
         this.swaps.clear();
+        this.rfqSwaps.clear();
         this.scanned.clear();
         this.markets.clear();
     }

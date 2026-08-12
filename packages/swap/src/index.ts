@@ -35,6 +35,15 @@ export {
 } from "./repository";
 export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";
 export {
+    RFQ_SWAP_RETENTION_SECONDS,
+    createRfqSwapRecord,
+    rebuildRfqSwap,
+    shouldRetainRfqSwap,
+    updateRfqSwapRecord,
+    type RfqSwapOrigin,
+    type RfqSwapRecord,
+} from "./rfqRecord";
+export {
     restoreAssetSwaps,
     classifySpend,
     classifyDepositSpend,
