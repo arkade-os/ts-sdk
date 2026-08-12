@@ -6,13 +6,20 @@
  * is impossible rather than merely failing, and stops grinding against a push
  * that can never work for the whole refund window.
  */
-import { contractSigner, type Identity, type IWallet } from "@arkade-os/sdk";
+import { WalletCannotSignError, contractSigner, type Identity, type IWallet } from "@arkade-os/sdk";
 
 export type RefundBlockedReason =
     /** The record carries no `signingDescriptor`. */
     | "no-secrets"
     /** The descriptor belongs to another wallet's key. */
-    | "foreign-descriptor";
+    | "foreign-descriptor"
+    /**
+     * This wallet holds the key but cannot sign with it — a watch-only
+     * identity, or a remote signer that is not attached. Unlike the other two
+     * this can stop being true without changing wallets, so it is worth
+     * telling apart: "attach your signer", not "restore the other wallet".
+     */
+    | "unsignable-wallet";
 
 /**
  * The wallet cannot produce this swap's spending key, so no local refund is
@@ -50,6 +57,13 @@ export async function senderIdentityForSwapRecord(
     try {
         return await contractSigner(wallet, record.signingDescriptor);
     } catch (cause) {
+        if (cause instanceof WalletCannotSignError) {
+            throw new RefundNotLocallyPossibleError(
+                "unsignable-wallet",
+                `this wallet holds ${record.signingDescriptor} but cannot sign with it; attach its signer`,
+                { cause },
+            );
+        }
         throw new RefundNotLocallyPossibleError(
             "foreign-descriptor",
             `this wallet cannot derive ${record.signingDescriptor}; the swap was created on another wallet`,

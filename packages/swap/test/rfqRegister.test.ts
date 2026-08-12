@@ -345,9 +345,10 @@ const realWallet = async () => {
             getTxOutspends: async () => [],
         } as Partial<OnchainProvider> as OnchainProvider,
         storage: { walletRepository, contractRepository },
-        identity: ReadonlySingleKey.fromPublicKey(
-            hex.decode("02" + hex.encode(schnorr.getPublicKey(new Uint8Array(32).fill(42)))),
-        ),
+        // A signing identity even though the wallet is readonly: these tests
+        // are about the contract row, and provisioning now refuses a wallet
+        // that cannot sign, since it could never refund the leg it funds.
+        identity: SingleKey.fromPrivateKey(new Uint8Array(32).fill(42)),
     });
     return { wallet, walletRepository, contractRepository };
 };

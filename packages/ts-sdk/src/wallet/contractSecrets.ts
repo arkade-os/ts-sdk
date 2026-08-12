@@ -194,7 +194,45 @@ export async function contractSigner(wallet: IWallet, descriptor: string): Promi
     if (!equalBytes(await signer.xOnlyPublicKey(), deriveDescriptorLeafPubKey(descriptor))) {
         throw new Error(`this wallet holds no key for descriptor: ${descriptor}`);
     }
+    if (!isSigningIdentity(signer)) throw new WalletCannotSignError(descriptor);
     return signer;
+}
+
+/**
+ * A wallet that holds a contract's key but cannot sign with it: a watch-only
+ * identity, or a remote signer whose transport is absent.
+ *
+ * Distinct from {@link ForeignDescriptorError} because the remedy differs —
+ * that one says "wrong wallet", this one says "this wallet, without its
+ * signer". Raised at provisioning as well as at signing, so a wallet that
+ * could never spend the leg finds out before it funds one.
+ */
+export class WalletCannotSignError extends Error {
+    override readonly name = "WalletCannotSignError";
+    constructor(readonly descriptor: string) {
+        super(`this wallet holds the key for ${descriptor} but cannot sign with it`);
+    }
+}
+
+/**
+ * Whether `value` is a complete {@link Identity} rather than the read-only
+ * half of one.
+ *
+ * All four members are checked because all four are load-bearing downstream —
+ * `signerSession` in particular, which an interactive refund needs and which a
+ * watch-only identity lacks. A partial identity passes a pubkey check happily
+ * and then fails as a `TypeError` deep inside a push, where the swap layer
+ * reads it as retryable and grinds against it for the whole refund window.
+ */
+function isSigningIdentity(value: unknown): value is Identity {
+    if (typeof value !== "object" || value === null) return false;
+    const v = value as Record<string, unknown>;
+    return (
+        typeof v.sign === "function" &&
+        typeof v.signMessage === "function" &&
+        typeof v.signerSession === "function" &&
+        typeof v.xOnlyPublicKey === "function"
+    );
 }
 
 /**

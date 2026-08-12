@@ -15,6 +15,8 @@ import {
     strictSigningDescriptorIndex,
     type IWallet,
     resolveDescriptorSigner,
+    ForeignDescriptorError,
+    WalletCannotSignError,
 } from "../src";
 import {
     ARKADE_SWAP_PREIMAGE_TAG,
@@ -146,6 +148,28 @@ describe("provisionRefundKey", () => {
         await expect(
             provisionClaimSecret(rogue, { preimage: new Uint8Array(32).fill(1) }),
         ).rejects.toThrow(/holds no key/);
+    });
+
+    it("refuses a wallet that holds the key but cannot sign with it", async () => {
+        // Watch-only, or a remote signer that is not attached. The pubkey
+        // check passes — it IS our key — so without a capability check the
+        // covenant binds it and the failure lands as a TypeError deep inside
+        // the push, which the swap layer reads as retryable.
+        const identity = SingleKey.fromRandomBytes();
+        const watchOnly = {
+            identity: {
+                xOnlyPublicKey: () => identity.xOnlyPublicKey(),
+                compressedPublicKey: () => identity.compressedPublicKey(),
+                // no sign / signMessage / signerSession
+            },
+        } as unknown as IWallet;
+
+        await expect(provisionRefundKey(watchOnly)).rejects.toBeInstanceOf(WalletCannotSignError);
+        await expect(provisionClaimSecret(watchOnly)).rejects.toBeInstanceOf(WalletCannotSignError);
+        // and it is told apart from "wrong wallet", which has a different remedy
+        await expect(provisionRefundKey(watchOnly)).rejects.not.toBeInstanceOf(
+            ForeignDescriptorError,
+        );
     });
 
     it("answers with the identity key on a wallet that cannot allocate", async () => {

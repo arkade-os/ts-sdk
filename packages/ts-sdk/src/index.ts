@@ -45,6 +45,7 @@ import {
     isPerArtifactDescriptor,
     provisionClaimSecret,
     provisionRefundKey,
+    WalletCannotSignError,
 } from "./wallet/contractSecrets";
 import type {
     DeterministicSigner,
@@ -544,6 +545,7 @@ export {
     isPerArtifactDescriptor,
     provisionClaimSecret,
     provisionRefundKey,
+    WalletCannotSignError,
     signingDescriptorIndex,
     strictSigningDescriptorIndex,
     deriveDescriptorLeafPubKey,
