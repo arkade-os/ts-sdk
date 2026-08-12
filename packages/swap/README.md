@@ -456,8 +456,11 @@ false`, or no callbacks) and the window has passed.
 
 A wallet that cannot allocate is not a wallet with no key. When one is present — a static / `auto` /
 single-key wallet — `deriveSwapSecrets` returns the **identity arm** (`derivable: true`,
-`identityKey: true`): the swap's sender/payout key is the wallet's own identity key, so the record
-still carries nothing secret and a refund needs only the same wallet. That is the tradeoff the
+`identityKey: "<x-only hex>"`): the swap's sender/payout key is the wallet's own identity key, so
+the record still carries nothing secret and a refund needs only the same wallet. `identityKey`
+holds that key rather than a bare flag, and `senderIdentityForRfqSecrets` compares it before
+returning a signer — a different wallet also has a signing identity, and would otherwise sign the
+refund with the wrong key, which surfaces only as a solver rejection or a dead script. That is the tradeoff the
 Boltz integration shipped for years, whose signer fell back to `wallet.identity`. Its cost is key
 reuse across swaps, which is exactly why **the identity arm never derives a preimage**:
 `derivePreimage` is a function of the key alone, so one key would repeat P across swaps and one
@@ -466,7 +469,8 @@ and `preimageHex` is then mandatory on the record — `preimageForRfqSecrets` th
 derive one.
 
 `derivable: false` is the last resort, for wallets that cannot sign at all (readonly identities,
-remote signers). It carries the raw `senderPrivateKey` and, for onchain sends, `preimage`;
+remote signers). It carries the raw `senderPrivateKey` and, for every preimage-bearing flow — an
+onchain send and both receives — the `preimage`;
 `rfqSecretsToRecord` stores them under `AssetSwap.fallbackSecrets` as a complete versioned
 record. The discriminant is a type-level fact, so a consumer written against the derivable arm
 alone will not compile against the fallback. A caller-supplied preimage on an HD wallet keeps

@@ -373,11 +373,12 @@ describe("requestOnchainSend on an HD wallet", () => {
                 hex.encode(await staticWallet().identity!.xOnlyPublicKey()),
             );
             expect(rfqSecretsToRecord(result.secrets)).toEqual({
-                identityKey: true,
+                identityKey: hex.encode(result.senderPubkey),
                 preimageHex: hex.encode(preimage),
             });
             expect(await preimageForRfqSecrets(wallet, result.secrets)).toEqual(preimage);
-            expect(warn).toHaveBeenCalledWith(expect.stringContaining("wallet's own identity key"));
+            // The preimage here is the caller's, not a generated one.
+            expect(warn).toHaveBeenCalledWith(expect.stringContaining("supplied by the caller"));
             expect(warn.mock.calls.join("\n")).not.toContain("sender key is random");
         } finally {
             warn.mockRestore();

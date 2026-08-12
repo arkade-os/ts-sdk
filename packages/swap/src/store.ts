@@ -73,14 +73,17 @@ export interface AssetSwap {
      */
     signingDescriptor?: string;
     /**
-     * The sender/payout key is the creating wallet's identity key — set
-     * instead of `signingDescriptor` on wallets that cannot allocate. Public,
-     * like the descriptor: the key needs no persistence because the wallet
-     * *is* the key. A preimage on this arm is random, so `preimageHex` is
-     * mandatory wherever the flow carries one.
+     * The creating wallet's x-only identity key, hex — set instead of
+     * `signingDescriptor` when the wallet cannot allocate. Public, like the
+     * descriptor, and it names WHICH wallet: a refund checks the key it holds
+     * against this one rather than signing with whatever identity is loaded.
+     * A preimage on this arm is random, so `preimageHex` is mandatory wherever
+     * the flow carries one.
      */
-    identityKey?: true;
-    /** P, hex, when the user supplied a preimage that is not seed-derived. */
+    identityKey?: string;
+    /** P, hex, whenever the record's own preimage is not seed-derived: a
+     * caller-supplied one, or the random one the identity and stored arms
+     * attach. */
     preimageHex?: string;
     /**
      * Complete stored-arm secrets for wallets that cannot derive. Versioned

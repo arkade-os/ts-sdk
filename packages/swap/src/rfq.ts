@@ -1115,7 +1115,9 @@ export async function requestOnchainSend(
         );
     } else if (isIdentitySwapSecrets(secrets)) {
         console.warn(
-            "[swap] this swap's sender key is the wallet's own identity key, but its preimage is random and MUST be persisted before funding",
+            params.preimage
+                ? "[swap] this swap's sender key is the wallet's own identity key, but its preimage was supplied by the caller and MUST be persisted before funding"
+                : "[swap] this swap's sender key is the wallet's own identity key, but its preimage is random and MUST be persisted before funding",
         );
     } else if (params.preimage) {
         console.warn(

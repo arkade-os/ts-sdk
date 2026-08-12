@@ -99,7 +99,15 @@ export interface StoredSwapSecrets {
  */
 export interface IdentitySwapSecrets {
     derivable: true;
-    identityKey: true;
+    /**
+     * The creating wallet's x-only identity key, hex. Public, and the whole
+     * arm's equivalent of {@link DerivedSwapSecrets.signingDescriptor}: a bare
+     * "an identity signed this" would let ANY signing wallet answer for the
+     * swap and sign the refund with the wrong key — which surfaces only as a
+     * solver rejection or a dead script, the same trap the HD arm's
+     * {@link isDeterministicSigner} check exists to avoid.
+     */
+    identityKey: string;
     preimage?: Uint8Array;
 }
 
@@ -171,10 +179,11 @@ export async function deriveSwapSecrets(
     // Single-key wallets: the identity IS the recoverable sender key, so the
     // random arm (a key that exists nowhere else) is a last resort, not the
     // default for every non-HD wallet.
-    if (signingIdentityOf(wallet)) {
+    const identity = signingIdentityOf(wallet);
+    if (identity) {
         return {
             derivable: true,
-            identityKey: true,
+            identityKey: hex.encode(await identity.xOnlyPublicKey()),
             ...(opts.preimage ? { preimage: randomBytes(32) } : {}),
         };
     }
@@ -213,14 +222,14 @@ export function randomSwapSecrets(
  */
 export function rfqSecretsToRecord(secrets: SwapSecrets): {
     signingDescriptor?: string;
-    identityKey?: true;
+    identityKey?: string;
     preimageHex?: string;
     fallbackSecrets?: AssetSwapFallbackSecrets;
 } {
     if (secrets.derivable) {
         if (isIdentitySwapSecrets(secrets)) {
             return {
-                identityKey: true,
+                identityKey: secrets.identityKey,
                 ...(secrets.preimage ? { preimageHex: hex.encode(secrets.preimage) } : {}),
             };
         }
@@ -241,14 +250,17 @@ export function rfqSecretsToRecord(secrets: SwapSecrets): {
 
 export function rfqSecretsOfRecord(record: {
     signingDescriptor?: string;
-    identityKey?: true;
+    identityKey?: string;
     preimageHex?: string;
     fallbackSecrets?: AssetSwapFallbackSecrets;
 }): SwapSecrets | undefined {
     if (record.identityKey) {
         return {
             derivable: true,
-            identityKey: true,
+            // Validated here so a truncated or non-hex key is an unreadable
+            // record — the caller's typed refusal — rather than a comparison
+            // that quietly never matches.
+            identityKey: hex.encode(decodeHex32(record.identityKey, "identityKey")),
             ...(record.preimageHex
                 ? { preimage: decodeHex32(record.preimageHex, "preimageHex") }
                 : {}),
@@ -354,6 +366,16 @@ export async function senderIdentityForRfqSecrets(
                 "this swap's sender is the creating wallet's identity key, which this wallet instance cannot sign with",
             );
         }
+        // The capability probe is not the check that matters, exactly as on
+        // the HD arm: a DIFFERENT wallet also has a signing identity, and it
+        // would sign happily with the wrong key.
+        const xonly = hex.encode(await identity.xOnlyPublicKey());
+        if (xonly !== secrets.identityKey) {
+            throw new RefundNotLocallyPossibleError(
+                "foreign-descriptor",
+                `this swap's sender is identity key ${secrets.identityKey}; this wallet is ${xonly}`,
+            );
+        }
         return identity;
     }
     const signer = isHDWalletCapable(wallet)
@@ -392,7 +414,7 @@ export async function senderIdentityForSwapRecord(
     wallet: IWallet,
     record: {
         signingDescriptor?: string;
-        identityKey?: true;
+        identityKey?: string;
         preimageHex?: string;
         fallbackSecrets?: AssetSwapFallbackSecrets;
     },

@@ -316,7 +316,7 @@ describe("the identity arm", () => {
     it("is what a wallet with a key but no HD state gets", async () => {
         const secrets = (await deriveSwapSecrets(singleKeyWallet()))!;
 
-        expect(secrets).toEqual({ derivable: true, identityKey: true });
+        expect(secrets).toEqual({ derivable: true, identityKey: await staticPubkey() });
         expect(isIdentitySwapSecrets(secrets)).toBe(true);
     });
 
@@ -337,7 +337,7 @@ describe("the identity arm", () => {
         expect(hex.encode(await senderPubkeyForRfqSecrets(wallet, secrets))).toBe(
             await staticPubkey(),
         );
-        expect(rfqSecretsToRecord(secrets)).toEqual({ identityKey: true });
+        expect(rfqSecretsToRecord(secrets)).toEqual({ identityKey: await staticPubkey() });
     });
 
     it("survives a restart: a fresh wallet on the same key resolves the record", async () => {
@@ -349,11 +349,34 @@ describe("the identity arm", () => {
 
     it("refuses a record whose wallet instance cannot sign", async () => {
         const error = await senderIdentityForSwapRecord(keylessWallet(), {
-            identityKey: true,
+            identityKey: await staticPubkey(),
         }).catch((e: unknown) => e as RefundNotLocallyPossibleError);
 
         expect(error).toBeInstanceOf(RefundNotLocallyPossibleError);
         expect(error.reason).toBe("foreign-descriptor");
+    });
+
+    it("refuses a wallet that signs, but with a different key", async () => {
+        // The capability probe alone would hand back THIS wallet's identity,
+        // which signs happily and produces a refund the covenant rejects.
+        const record = rfqSecretsToRecord((await deriveSwapSecrets(singleKeyWallet()))!);
+        const other = singleKeyWallet(new Uint8Array(32).fill(9));
+        const error = await senderIdentityForSwapRecord(other, record).catch(
+            (e: unknown) => e as RefundNotLocallyPossibleError,
+        );
+
+        expect(error).toBeInstanceOf(RefundNotLocallyPossibleError);
+        expect(error.reason).toBe("foreign-descriptor");
+        expect(error.message).toContain(await staticPubkey());
+    });
+
+    it("refuses a record whose identity key is not a 32-byte hex key", async () => {
+        const error = await senderIdentityForSwapRecord(singleKeyWallet(), {
+            identityKey: "abcd",
+        }).catch((e: unknown) => e as RefundNotLocallyPossibleError);
+
+        expect(error).toBeInstanceOf(RefundNotLocallyPossibleError);
+        expect(error.reason).toBe("unreadable-secrets");
     });
 
     it("refuses to derive a preimage from the reused key", async () => {
@@ -385,7 +408,7 @@ describe("the identity arm", () => {
         const record = rfqSecretsToRecord(secrets);
 
         expect(record).toEqual({
-            identityKey: true,
+            identityKey: await staticPubkey(),
             preimageHex: hex.encode(secrets.preimage!),
         });
         const restored = rfqSecretsOfRecord(record)!;
