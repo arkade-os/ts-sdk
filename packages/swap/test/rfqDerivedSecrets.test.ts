@@ -353,7 +353,13 @@ describe("requestOnchainSend on an HD wallet", () => {
         }
     });
 
-    it("warns and returns raw fallback secrets when allocation is unavailable", async () => {
+    /**
+     * Was "warns and returns raw fallback secrets when allocation is
+     * unavailable". That arm is gone: a wallet that cannot allocate now binds
+     * the covenant to its OWN identity rather than to a minted key, so there is
+     * no raw private key to return and nothing to warn about.
+     */
+    it("binds to the wallet's own key when allocation is unavailable, minting nothing", async () => {
         const wallet = staticWallet();
         const preimage = new Uint8Array(32).fill(8);
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -366,13 +372,17 @@ describe("requestOnchainSend on an HD wallet", () => {
                 preimage,
             });
 
-            expect(result.secrets.derivable).toBe(false);
-            if (result.secrets.derivable) throw new Error("expected stored secrets");
-            expect(result.secrets.senderPrivateKey).toBeInstanceOf(Uint8Array);
+            expect(result.secrets.derivable).toBe(true);
+            expect(result.secrets).not.toHaveProperty("senderPrivateKey");
+            // the covenant's sender IS the wallet's identity
+            expect(hex.encode(result.senderPubkey)).toBe(
+                hex.encode(await wallet.identity.xOnlyPublicKey()),
+            );
+            // a caller-supplied preimage still rides through untouched
             expect(result.secrets.preimage).toEqual(preimage);
             expect(await preimageForRfqSecrets(wallet, result.secrets)).toEqual(preimage);
-            expect(warn).toHaveBeenCalledWith(expect.stringContaining("sender key is random"));
-            expect(warn.mock.calls.join("\n")).not.toContain("preimage and sender key are random");
+            // nothing to warn about any more: no random key was created
+            expect(warn.mock.calls.join("\n")).not.toContain("random");
         } finally {
             warn.mockRestore();
         }

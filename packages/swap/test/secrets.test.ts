@@ -297,8 +297,13 @@ describe("cross-SDK vectors", () => {
 });
 
 describe("the fallback arm", () => {
-    it("is what a wallet with no HD state gets", async () => {
-        expect(await deriveSwapSecrets(staticWallet())).toBeUndefined();
+    it("is no longer what a wallet with no HD state gets — it gets the baseline arm", async () => {
+        // Was `undefined`, which sent every entry point into `randomSwapSecrets()`
+        // and a minted private key persisted as plaintext hex. A wallet that
+        // cannot allocate still HAS a key; see "the baseline arm" below.
+        const secrets = await deriveSwapSecrets(staticWallet());
+        expect(secrets).toBeDefined();
+        expect(secrets).not.toHaveProperty("senderPrivateKey");
     });
 
     it("carries the secrets, and a preimage only when asked", () => {
@@ -358,6 +363,84 @@ describe("the fallback arm", () => {
         expect(hex.encode(await senderPubkeyForRfqSecrets(wallet, restored))).toBe(
             hex.encode(await senderPubkeyForRfqSecrets(wallet, secrets)),
         );
+    });
+});
+
+/**
+ * The arm a wallet that cannot allocate a descriptor gets.
+ *
+ * Modelled on boltz-swap's `swapSigner`, which falls back to
+ * `this.wallet.identity` rather than minting: a wallet without HD state still
+ * holds a key, and the covenant can simply be bound to it. The difference from
+ * boltz-swap is the preimage — the baseline key is the SAME every swap, so the
+ * pinned-index derivation would repeat it, and it is generated per swap instead.
+ */
+describe("the baseline arm", () => {
+    it("binds to the wallet's own identity and mints nothing", async () => {
+        const wallet = staticWallet();
+        const secrets = (await deriveSwapSecrets(wallet))!;
+
+        expect(secrets.derivable).toBe(true);
+        expect(secrets).not.toHaveProperty("senderPrivateKey");
+        expect(hex.encode(await senderPubkeyForRfqSecrets(wallet, secrets))).toBe(
+            hex.encode(await wallet.identity.xOnlyPublicKey()),
+        );
+    });
+
+    it("gives each swap its own preimage, because the key repeats", async () => {
+        // The whole reason this arm cannot reuse the derived path: two swaps on
+        // one baseline key would derive the IDENTICAL preimage at the pinned
+        // index, and one solver learning its own would learn the other's.
+        const wallet = staticWallet();
+        const first = (await deriveSwapSecrets(wallet, { preimage: true }))!;
+        const second = (await deriveSwapSecrets(wallet, { preimage: true }))!;
+
+        expect(first.preimage).toHaveLength(32);
+        expect(hex.encode(second.preimage!)).not.toBe(hex.encode(first.preimage!));
+    });
+
+    it("carries no preimage when none was asked for", async () => {
+        // A lightning send's preimage belongs to the payee.
+        expect((await deriveSwapSecrets(staticWallet()))!.preimage).toBeUndefined();
+    });
+
+    it("round-trips through a record without persisting a private key", async () => {
+        const wallet = staticWallet();
+        const secrets = (await deriveSwapSecrets(wallet, { preimage: true }))!;
+        const record = rfqSecretsToRecord(secrets);
+
+        expect(record.fallbackSecrets).toBeUndefined();
+        expect(JSON.stringify(record)).not.toContain("senderPrivateKey");
+
+        const restored = rfqSecretsOfRecord(record)!;
+        expect(hex.encode(await preimageForRfqSecrets(wallet, restored))).toBe(
+            hex.encode(secrets.preimage!),
+        );
+        expect(hex.encode(await senderPubkeyForRfqSecrets(wallet, restored))).toBe(
+            hex.encode(await senderPubkeyForRfqSecrets(wallet, secrets)),
+        );
+    });
+
+    it("resolves the refund signer to the wallet's identity, not a refusal", async () => {
+        // `senderIdentityForRfqSecrets` refuses a DESCRIPTOR this wallet cannot
+        // derive, because signing that with the baseline key would produce a
+        // dead script. The baseline arm is the opposite case: the covenant was
+        // deliberately bound to this key, so returning it is correct.
+        const wallet = staticWallet();
+        const secrets = (await deriveSwapSecrets(wallet))!;
+        const signer = await senderIdentityForRfqSecrets(wallet, secrets);
+        expect(hex.encode(await signer.xOnlyPublicKey())).toBe(
+            hex.encode(await wallet.identity.xOnlyPublicKey()),
+        );
+    });
+
+    it("keeps allocating a fresh descriptor when the wallet can", async () => {
+        // The HD path must not regress into the baseline arm.
+        const { wallet } = await hdWallet();
+        const secrets = (await deriveSwapSecrets(wallet, { preimage: true }))!;
+        expect(secrets.signingDescriptor).toBeDefined();
+        // derived, not generated: nothing secret at rest on this arm
+        expect(secrets.preimage).toBeUndefined();
     });
 });
 

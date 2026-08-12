@@ -7,9 +7,16 @@
  * copied profile or a device backup yields nothing spendable and a wallet with
  * the seed can re-derive everything.
  *
- * Wallets that cannot allocate (static / `auto` / custom signers) get the
- * fallback arm instead, which carries real secrets the caller must store. That
- * arm is built by the caller, never in here: a restore probing for a derived
+ * Wallets that cannot allocate (static / `auto` / custom signers) bind the
+ * covenant to their OWN identity key instead — the baseline arm, modelled on
+ * boltz-swap's `swapSigner`. **No signing key is ever minted here.** The one
+ * secret that arm persists is the preimage, and only because the baseline key
+ * repeats across swaps: deriving at the pinned index would hand every swap the
+ * same P, and one solver learning its own would learn the next swap's.
+ *
+ * The older fallback arm, which minted a key and stored it as plaintext hex, is
+ * read-only legacy so swaps persisted by earlier versions stay refundable. It
+ * is still built by the caller, never in here: a restore probing for a derived
  * preimage must be able to come back empty rather than be handed a fresh
  * random one that will never match the chain.
  */
@@ -76,7 +83,43 @@ export interface DerivedSwapSecrets {
     preimage?: Uint8Array;
 }
 
-/** The wallet could not allocate. These are real secrets — persist them. */
+/**
+ * The wallet's own identity key, bound deliberately at creation.
+ *
+ * What a wallet that cannot allocate a descriptor gets. Modelled on
+ * boltz-swap's `swapSigner`, which falls back to `this.wallet.identity` rather
+ * than minting a key: a wallet without HD state still HAS a key, and the
+ * covenant can simply be bound to it.
+ *
+ * Nothing signing-related is at rest — the wallet already holds this key, so a
+ * record carries only the fact that this arm was used.
+ *
+ * One thing it does NOT inherit from the derived arm: the baseline key is the
+ * same for every swap, so the pinned-index preimage derivation would repeat
+ * itself. {@link deriveSwapSecrets} generates {@link preimage} per swap
+ * instead, and it is the only secret this arm persists.
+ *
+ * The privacy cost is real and accepted, as it is in boltz-swap: every swap on
+ * such a wallet shares one sender pubkey and is linkable by it. A minted key
+ * gave a fresh one per swap, at the price of a plaintext private key on disk.
+ */
+export interface BaselineSwapSecrets {
+    derivable: true;
+    /** Discriminates this arm from {@link DerivedSwapSecrets}. */
+    baseline: true;
+    /** Per-swap, because the key repeats. Absent when none was asked for — a
+     * lightning send's preimage belongs to the payee. */
+    preimage?: Uint8Array;
+}
+
+/**
+ * The wallet could not allocate. These are real secrets — persist them.
+ *
+ * **Legacy: read, never written.** {@link deriveSwapSecrets} returns
+ * {@link BaselineSwapSecrets} where it used to fall through to
+ * {@link randomSwapSecrets}. Kept so swaps persisted by earlier versions stay
+ * refundable.
+ */
 export interface StoredSwapSecrets {
     derivable: false;
     senderPrivateKey: Uint8Array;
@@ -89,27 +132,61 @@ export interface StoredSwapSecrets {
  * type-level fact: a consumer written against {@link DerivedSwapSecrets} alone
  * fails to compile when handed the stored arm.
  */
-export type SwapSecrets = DerivedSwapSecrets | StoredSwapSecrets;
+export type SwapSecrets = DerivedSwapSecrets | BaselineSwapSecrets | StoredSwapSecrets;
+
+/** Narrow the two `derivable: true` arms apart. */
+export const isBaselineSwapSecrets = (secrets: SwapSecrets): secrets is BaselineSwapSecrets =>
+    secrets.derivable && "baseline" in secrets;
 
 /**
- * Allocate a descriptor for one swap, or `undefined` when the wallet cannot.
+ * The secrets for one swap. Never mints a signing key.
  *
- * Allocates — never peeks. `getCurrentSigningDescriptor` returns the same
- * descriptor until the wallet rotates, and two swaps sharing a descriptor
- * derive the *identical* preimage, so one solver learning its own preimage
- * would learn the other swap's.
+ * Two arms, decided by whether the wallet can allocate a descriptor:
+ *
+ * - **Allocated** ({@link DerivedSwapSecrets}). Allocates — never peeks.
+ *   `getCurrentSigningDescriptor` returns the same descriptor until the wallet
+ *   rotates, and two swaps sharing a descriptor derive the *identical*
+ *   preimage, so one solver learning its own preimage would learn the other
+ *   swap's. A fresh descriptor per swap is exactly what lets
+ *   {@link derivePreimage} pin its message index.
+ * - **Baseline** ({@link BaselineSwapSecrets}). The wallet's own identity key,
+ *   as boltz-swap's `swapSigner` does. Because that key repeats, `opts.preimage`
+ *   is honoured by GENERATING one per swap rather than deriving it — deriving
+ *   would hand every swap the same P.
  *
  * Cost of allocating: the index is consumed even when the quote is later
  * refused, and a swap index never turns into a funded receive contract, so a
  * long run of swaps widens the "unused" gap a seed-only `restore()` scan sees
  * (see the README's gap-limit note). Restores that keep the swap repository
  * are unaffected — `adoptSwapDescriptor` re-claims each record's index.
+ *
+ * `undefined` is no longer returned: every wallet has one arm or the other.
  */
-export async function deriveSwapSecrets(wallet: IWallet): Promise<DerivedSwapSecrets | undefined> {
-    if (!isHDAllocationCapable(wallet)) return undefined;
-    const signingDescriptor = await wallet.getNextSigningDescriptor();
-    if (!signingDescriptor) return undefined;
-    return { derivable: true, signingDescriptor };
+export async function deriveSwapSecrets(
+    wallet: IWallet,
+    opts: { preimage?: boolean | Uint8Array } = {},
+): Promise<DerivedSwapSecrets | BaselineSwapSecrets> {
+    const supplied = opts.preimage instanceof Uint8Array ? opts.preimage : undefined;
+    if (supplied && supplied.length !== 32) {
+        // The HTLC claim leaf pins OP_SIZE 32: any other length is unclaimable.
+        throw new Error(`preimage must be 32 bytes, got ${supplied.length}`);
+    }
+
+    const signingDescriptor = isHDAllocationCapable(wallet)
+        ? await wallet.getNextSigningDescriptor()
+        : undefined;
+
+    if (signingDescriptor) {
+        // Fresh per swap, so the preimage derives; only a caller-supplied one
+        // is carried explicitly.
+        return { derivable: true, signingDescriptor, ...(supplied ? { preimage: supplied } : {}) };
+    }
+
+    return {
+        derivable: true,
+        baseline: true,
+        ...(supplied ? { preimage: supplied } : opts.preimage ? { preimage: randomBytes(32) } : {}),
+    };
 }
 
 /**
@@ -144,9 +221,20 @@ export function randomSwapSecrets(
  */
 export function rfqSecretsToRecord(secrets: SwapSecrets): {
     signingDescriptor?: string;
+    senderKey?: "baseline";
     preimageHex?: string;
     fallbackSecrets?: AssetSwapFallbackSecrets;
 } {
+    if (isBaselineSwapSecrets(secrets)) {
+        // An explicit marker, not the ABSENCE of a descriptor: a record with
+        // neither descriptor nor marker is one whose arm was never recorded,
+        // and `rfqSecretsOfRecord` must be able to refuse it rather than
+        // guessing that the baseline key was meant.
+        return {
+            senderKey: "baseline",
+            ...(secrets.preimage ? { preimageHex: hex.encode(secrets.preimage) } : {}),
+        };
+    }
     if (secrets.derivable) {
         return {
             signingDescriptor: secrets.signingDescriptor,
@@ -165,9 +253,19 @@ export function rfqSecretsToRecord(secrets: SwapSecrets): {
 
 export function rfqSecretsOfRecord(record: {
     signingDescriptor?: string;
+    senderKey?: "baseline";
     preimageHex?: string;
     fallbackSecrets?: AssetSwapFallbackSecrets;
 }): SwapSecrets | undefined {
+    if (record.senderKey === "baseline") {
+        return {
+            derivable: true,
+            baseline: true,
+            ...(record.preimageHex
+                ? { preimage: decodeHex32(record.preimageHex, "preimageHex") }
+                : {}),
+        };
+    }
     if (record.signingDescriptor) {
         return {
             derivable: true,
@@ -260,6 +358,11 @@ export async function senderIdentityForRfqSecrets(
     secrets: SwapSecrets,
 ): Promise<Identity> {
     if (!secrets.derivable) return SingleKey.fromPrivateKey(secrets.senderPrivateKey);
+    // The baseline arm is the one case where the plain wallet identity is the
+    // RIGHT key rather than a silent substitution: the covenant was bound to it
+    // at creation. The guard below exists for the opposite case — a descriptor
+    // this wallet cannot derive — and must not swallow this one.
+    if (isBaselineSwapSecrets(secrets)) return wallet.identity;
     const signer = isHDWalletCapable(wallet)
         ? await wallet.signerForDescriptor(secrets.signingDescriptor)
         : undefined;
@@ -368,6 +471,13 @@ export async function preimageForRfqSecrets(
         return secrets.preimage;
     }
     if (secrets.preimage) return secrets.preimage;
+    if (isBaselineSwapSecrets(secrets)) {
+        // Never derived on this arm: the baseline key repeats, so a derivation
+        // would return the same P for every swap. One was generated at request
+        // time or this swap never had one (a lightning send, whose P is the
+        // payee's).
+        throw new Error("this swap carries no stored preimage");
+    }
     const signer = await senderIdentityForRfqSecrets(wallet, secrets);
     if (!isDeterministicSigner(signer)) {
         // Loud: a preimage from a random-aux signature is unrecoverable, and

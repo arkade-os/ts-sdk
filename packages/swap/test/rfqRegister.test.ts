@@ -38,6 +38,7 @@ import {
     ProviderUnavailableError,
     ReadonlySingleKey,
     ReadonlyWallet,
+    SingleKey,
     VHTLCV2ContractHandler,
     type ArkProvider,
     type ExtendedVirtualCoin,
@@ -182,6 +183,9 @@ const recordingWallet = (
 ): { wallet: IWallet; created: Record<string, unknown>[] } => {
     const created: Record<string, unknown>[] = [];
     const wallet = {
+        // This stub cannot allocate a descriptor, so the swap takes the baseline
+        // arm and its sender key IS this identity. Required, not decoration.
+        identity: SingleKey.fromRandomBytes(),
         getAddress: async () => REFUND_ADDRESS,
         getContractManager: async () => ({
             createContract: async (params: Record<string, unknown>) => {
@@ -251,7 +255,13 @@ describe.each([
                 .filter((value): value is Uint8Array => value !== undefined)
                 .map((value) => hex.encode(value)),
         ];
-        expect(forbidden.length).toBeGreaterThan(1);
+        // Asserted directly rather than inferred from the list being long: the
+        // baseline arm mints no key, so on a lightning send — whose preimage is
+        // the payee's — `rfqId` is the only per-swap value that exists to look
+        // for, and a length guard would fail for the right reason at the wrong
+        // place.
+        expect(secrets.senderPrivateKey).toBeUndefined();
+        expect(forbidden.length).toBeGreaterThanOrEqual(1);
         for (const value of forbidden) expect(serialized).not.toContain(value);
     });
 
