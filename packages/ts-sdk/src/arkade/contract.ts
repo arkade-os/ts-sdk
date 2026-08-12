@@ -69,7 +69,7 @@ import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 
 import type { Network } from "../networks";
-import { DEFAULT_NETWORK } from "../networks";
+import { DEFAULT_NETWORK, resolveEmulatorPubkey } from "../networks";
 import type { ArkProvider } from "../providers/ark";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { IndexerProvider } from "../providers/indexer";
@@ -237,6 +237,18 @@ export interface ArkadeConnectOptions {
     /** Network for address derivation; defaults to the SDK default. */
     network?: Network;
     /**
+     * Co-sign with this emulator key (33-byte compressed hex) instead of the
+     * one pinned for `network`.
+     *
+     * Needed when a network's emulator key has rotated ahead of this SDK, for a
+     * self-hosted emulator, or on a network with no pinned key at all (signet,
+     * testnet, a hand-built `Network` — those throw without it). Setting it
+     * means trusting that operator as co-signer in place of the network's.
+     *
+     * @see resolveEmulatorPubkey
+     */
+    emulatorPubkey?: string;
+    /**
      * The wallet's contract manager. When set, contracts created from this
      * client can {@link ArkadeContract.register} themselves into the standard
      * contract pipeline (persistence, watching, events), and
@@ -258,7 +270,16 @@ export class Arkade {
     readonly emulator: EmulatorProvider | undefined;
     readonly network: Network;
     readonly serverKey: Uint8Array;
-    /** The co-signer's x-only key, present only when an emulator is configured. */
+    /**
+     * The co-signer key covenants are built against (33-byte compressed),
+     * present only when an emulator is configured.
+     *
+     * Resolved from the network — or from `emulatorPubkey` — never from the
+     * emulator's own report. When a claim is refused because the co-signer
+     * disagrees, compare `hex.encode(arkade.emulatorKey)` against the
+     * `signerPubkey` your emulator serves on `/v1/info`: if they differ, the
+     * network rotated and this SDK's pin is stale.
+     */
     readonly emulatorKey: Uint8Array | undefined;
     readonly checkpoint: CSVMultisigTapscript.Type;
     readonly indexer?: Pick<IndexerProvider, "getVtxos">;
@@ -297,12 +318,20 @@ export class Arkade {
         const info = await opts.arkade.getInfo();
         const serverKey = hex.decode(info.signerPubkey).slice(1);
         const checkpoint = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
+        const network = opts.network ?? DEFAULT_NETWORK;
 
         // The emulator is optional — only covenant contracts need it.
+        //
+        // The key comes from the network, NOT from the emulator's own /v1/info:
+        // asking the co-signer to name itself lets whatever is answering that
+        // URL pick the key its covenants commit to. The tradeoff is that a
+        // rotated network key is invisible here until the pinned constant ships
+        // — `emulatorPubkey` is the escape hatch for that window. `emulatorKey`
+        // below is public so an operator debugging a refused claim can diff
+        // what was pinned against what their emulator reports.
         let emulatorKey: Uint8Array | undefined;
         if (opts.emulator) {
-            const eInfo = await opts.emulator.getInfo();
-            emulatorKey = hex.decode(eInfo.signerPubkey);
+            emulatorKey = hex.decode(resolveEmulatorPubkey(network, opts.emulatorPubkey));
         }
 
         // Resolve the user key up-front so contract instantiation stays synchronous
@@ -316,7 +345,7 @@ export class Arkade {
         return new Arkade({
             arkProvider: opts.arkade,
             emulator: opts.emulator,
-            network: opts.network ?? DEFAULT_NETWORK,
+            network,
             serverKey,
             emulatorKey,
             checkpoint,

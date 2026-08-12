@@ -116,8 +116,10 @@ export interface BaseWalletConfig {
     /**
      * Minimum accepted checkpoint exit delay decoded from `ArkInfo.checkpointTapscript`,
      * as wall-clock seconds. Defaults per network — see
-     * `defaultCheckpointExitDelayPolicy`. Lowering it below the default relaxes a
-     * fund-safety bound; intended for local testing.
+     * `defaultCheckpointExitDelayPolicy`, which already carries the value the
+     * hosted signet and mutinynet Arkade Services advertise, so neither needs
+     * this set. Lowering it below the default relaxes a fund-safety bound;
+     * intended for local testing.
      */
     minCheckpointExitDelaySeconds?: bigint;
     /**

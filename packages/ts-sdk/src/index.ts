@@ -245,7 +245,17 @@ import { Intent } from "./intent";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
-import { getNetwork, networks, Network, NetworkName } from "./networks";
+import {
+    getNetwork,
+    networks,
+    Network,
+    NetworkName,
+    defaultEmulatorPubkey,
+    resolveEmulatorPubkey,
+    BITCOIN_EMULATOR_PUBKEY,
+    MUTINYNET_EMULATOR_PUBKEY,
+    REGTEST_EMULATOR_PUBKEY,
+} from "./networks";
 import {
     RestIndexerProvider,
     IndexerProvider,
@@ -343,6 +353,8 @@ import {
     resolveCheckpointExitDelayPolicy,
     DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
     REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+    MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+    SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
 } from "./wallet/checkpointExitDelay";
 import type { CheckpointExitDelayPolicy } from "./wallet/checkpointExitDelay";
 import { buildForfeitTx } from "./forfeit";
@@ -613,6 +625,11 @@ export {
     // Network
     getNetwork,
     networks,
+    defaultEmulatorPubkey,
+    resolveEmulatorPubkey,
+    BITCOIN_EMULATOR_PUBKEY,
+    MUTINYNET_EMULATOR_PUBKEY,
+    REGTEST_EMULATOR_PUBKEY,
 
     // DB
     closeDatabase,
@@ -687,6 +704,8 @@ export {
     resolveCheckpointExitDelayPolicy,
     DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
     REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+    MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
+    SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
     type CheckpointExitDelayPolicy,
     buildForfeitTx,
     isRecoverable,

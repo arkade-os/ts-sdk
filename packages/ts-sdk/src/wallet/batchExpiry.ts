@@ -68,5 +68,5 @@ export function assertValidBatchExpiry(
         );
     }
 
-    return assertTimelockWithinFloor(batchExpiry, policy, "batch expiry");
+    return assertTimelockWithinFloor(batchExpiry, policy, "batch expiry", "minBatchExpirySeconds");
 }

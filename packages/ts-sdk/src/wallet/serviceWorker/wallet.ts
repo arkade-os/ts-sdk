@@ -437,8 +437,9 @@ interface ServiceWorkerWalletOptions {
     /**
      * Timelock floors forwarded to the worker wallet. Lowering either below its
      * per-network default relaxes a fund-safety bound; intended for local
-     * testing and for fast public test networks (mutinynet) whose arkd runs
-     * below the mainnet-grade floors.
+     * testing. The fast public test networks whose arkd runs below the
+     * mainnet-grade checkpoint floor (signet, mutinynet) are defaulted to their
+     * own advertised value, so neither needs these set.
      *
      * @see WalletConfig.minBatchExpirySeconds
      */
