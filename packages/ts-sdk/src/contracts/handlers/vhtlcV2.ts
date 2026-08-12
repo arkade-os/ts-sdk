@@ -386,10 +386,12 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
      * complete, or race a claim already in flight. The `vhtlc` handler now
      * answers the same, for the same reason.
      *
-     * Recovery is unaffected: the gate guards only GENERIC selection, and every
-     * way out of a lockup names its outpoints explicitly — `settle({ inputs })`,
-     * or `@arkade-os/swap`'s `pushRefundWithoutReceiver`, which builds the
-     * refund itself from `findLockupVtxos`' outpoints.
+     * The gate covers `available` and renewal. Recovery is generic and names
+     * nothing, so it is not covered here: `recoverVtxos` filters on
+     * {@link assertSpendableNow} instead, which drops a lockup only while its
+     * refund path is shut rather than forever. The explicit routes out —
+     * `settle({ inputs })`, or `@arkade-os/swap`'s `pushRefundWithoutReceiver`
+     * over `findLockupVtxos`' outpoints — are unaffected either way.
      */
     isGenericallySpendable: () => false,
 
@@ -422,7 +424,12 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
      * round that sweeps this VTXO early is rejected by the server. That is the
      * same constraint `packages/boltz-swap` encodes as "pre-CLTV recoverable →
      * skipped"; nothing in this handler can enforce it, because the annotation
-     * is derived per contract and knows no clock.
+     * is derived per contract and knows no clock. `recoverVtxos` filters on
+     * {@link assertSpendableNow} for it.
+     *
+     * **Role-blind.** A receiver's row gets the same leaf, which names keys that
+     * wallet does not hold, so it is satisfiable only by the wallet holding the
+     * lockup's `sender` key and fails at intent registration for anyone else.
      */
     deriveTapscripts(script: VHTLC.ScriptV2): DerivedContractTapscripts {
         const leaf = script.refundWithoutReceiver();

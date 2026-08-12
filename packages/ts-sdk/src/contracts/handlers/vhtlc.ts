@@ -269,21 +269,19 @@ export const VHTLCContractHandler: ContractHandler<VHTLCContractParams, VHTLC.Sc
      * `refundWithoutReceiver` — `CLTV[sender, server]`, the sender's OWN
      * refund, which the server rejects until `refundLocktime` matures. The
      * reasons are that an escrowed lockup must not count toward the
-     * `available` balance bucket (`computeOffchainBalance` credits `available`
-     * only where this gate is open), and that generic RENEWAL must not
-     * silently execute a refund the caller never asked for —
-     * `runPeriodicSettle` selects through `getSpendableVtxos`, which this gate
-     * filters, and it runs unprompted whenever a wallet is built without an
-     * explicit `settlementConfig`.
+     * `available` balance bucket, and that generic RENEWAL must not silently
+     * execute a refund the caller never asked for — `runPeriodicSettle` selects
+     * through `getSpendableVtxos`, which this gate filters, and it runs
+     * unprompted whenever a wallet is built without an explicit
+     * `settlementConfig`.
      *
-     * **Inseparable from {@link deriveTapscripts}.** Until that method existed
-     * a `vhtlc` row's VTXOs could not be annotated at all, so they never
-     * reached this gate and the answer here was unobservable — the previous
-     * `true` and the missing derivation were safe only by cancelling out.
-     * Deriving the leaf without closing the gate would hand generic renewal an
-     * escrow it had never been offered before. (The earlier `true` was
-     * justified as preserving selection of in-flight swaps; no such selection
-     * was ever reachable, for that same annotation reason.)
+     * **Inseparable from {@link deriveTapscripts}.** Deriving the leaf without
+     * closing the gate hands generic renewal an escrow it had never been
+     * offered before; before that method existed the answer here was
+     * unobservable, so the two only ever made sense together.
+     *
+     * Recovery is filtered on {@link assertSpendableNow}, not on this: the gate
+     * is permanent, and applying it there would strand a matured lockup.
      */
     isGenericallySpendable: () => false,
 
@@ -312,7 +310,12 @@ export const VHTLCContractHandler: ContractHandler<VHTLCContractParams, VHTLC.Sc
      * on this leaf is only valid once `refundLocktime` has matured, so a
      * recovery round that sweeps this VTXO early is rejected by the server.
      * Nothing in this handler can enforce that, because the annotation is
-     * derived per contract and knows no clock.
+     * derived per contract and knows no clock; `recoverVtxos` filters on
+     * {@link assertSpendableNow} for it.
+     *
+     * **Role-blind.** A receiver's row gets the same leaf, which names keys that
+     * wallet does not hold, so it is satisfiable only by the wallet holding the
+     * lockup's `sender` key and fails at intent registration for anyone else.
      */
     deriveTapscripts(script: VHTLC.Script): DerivedContractTapscripts {
         const leaf = script.refundWithoutReceiver();
