@@ -4,8 +4,8 @@
  * Ported from the wallet, where this transport lived before it moved into the
  * package beside `httpTransport` and `relayTransport`.
  */
-import { describe, it, expect } from "vitest";
-import { generateSecretKey, getPublicKey, nip44, type Event } from "nostr-tools";
+import { describe, it, expect, vi } from "vitest";
+import { generateSecretKey, getPublicKey, nip44, SimplePool, type Event } from "nostr-tools";
 import { SwapRefusal } from "../src/rfq";
 import { RFQ_AD_KIND, RFQ_DIRECTED_KIND, RelayUnavailable, nostrRfqTransport } from "../src/nostr";
 
@@ -203,5 +203,35 @@ describe("nostrRfqTransport", () => {
             transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" }),
         ).rejects.toThrow(/no solver reply within 40ms/);
         await transport.close();
+    });
+
+    /**
+     * Every other test injects a pool, so this is the only coverage of the
+     * owned-pool teardown. The two assertions are one property: `pool.close()`
+     * already ends every subscription on those relays, so closing the
+     * subscription as well sends a second CLOSE frame on a socket that is
+     * already closing — the double-close this transport exists to avoid.
+     */
+    it("tears an owned pool down through pool.close() alone", async () => {
+        const subscriptionClose = vi.fn();
+        const subscribeMany = vi
+            .spyOn(SimplePool.prototype, "subscribeMany")
+            .mockReturnValue({ close: subscriptionClose } as never);
+        const poolClose = vi.spyOn(SimplePool.prototype, "close").mockImplementation(() => {});
+        try {
+            const relays = ["wss://x", "wss://y"];
+            const transport = nostrRfqTransport({
+                relays,
+                solverPubkey: getPublicKey(generateSecretKey()),
+                secretKey: generateSecretKey(),
+                // no `pool`: the transport creates and therefore owns one
+            });
+            await transport.close();
+            expect(poolClose).toHaveBeenCalledWith(relays);
+            expect(subscriptionClose).not.toHaveBeenCalled();
+        } finally {
+            subscribeMany.mockRestore();
+            poolClose.mockRestore();
+        }
     });
 });
