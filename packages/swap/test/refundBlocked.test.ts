@@ -57,6 +57,40 @@ describe("senderIdentityForSwapRecord", () => {
         ).toBe("foreign-descriptor");
     });
 
+    it("refuses an unreadable descriptor as foreign, not as an outage", async () => {
+        expect(
+            await reasonOf(
+                senderIdentityForSwapRecord(staticWallet(), { signingDescriptor: "not a tr()" }),
+            ),
+        ).toBe("foreign-descriptor");
+    });
+
+    it("lets an operational failure stay retryable instead of terminal", async () => {
+        // Every RefundNotLocallyPossibleError is terminal to RfqSwapManager,
+        // so typing a signer outage as one would abandon a refundable swap
+        // for the rest of its window. It must come back out unchanged.
+        const identity = SingleKey.fromRandomBytes();
+        const own = `tr(${Buffer.from(await identity.xOnlyPublicKey()).toString("hex")})`;
+        const outage = new Error("remote signer unreachable");
+        const flaky = {
+            identity: {
+                ...identity,
+                xOnlyPublicKey: () => Promise.reject(outage),
+                compressedPublicKey: () => identity.compressedPublicKey(),
+                sign: () => Promise.reject(outage),
+                signMessage: () => Promise.reject(outage),
+                signerSession: () => identity.signerSession(),
+            },
+        } as unknown as IWallet;
+
+        await expect(senderIdentityForSwapRecord(flaky, { signingDescriptor: own })).rejects.toBe(
+            outage,
+        );
+        await expect(
+            senderIdentityForSwapRecord(flaky, { signingDescriptor: own }),
+        ).rejects.not.toBeInstanceOf(RefundNotLocallyPossibleError);
+    });
+
     it("tells a missing signer apart from a wrong wallet: unsignable-wallet", async () => {
         // Watch-only, or a remote signer that is not attached. It IS our key,
         // so reporting "created on another wallet" would send the user after

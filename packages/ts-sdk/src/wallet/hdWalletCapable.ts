@@ -55,8 +55,11 @@ export interface HDWalletCapable {
  */
 export class ForeignDescriptorError extends Error {
     override readonly name = "ForeignDescriptorError";
-    constructor(readonly descriptor: string) {
-        super(`this wallet holds no key for descriptor: ${descriptor}`);
+    constructor(
+        readonly descriptor: string,
+        options?: { cause?: unknown },
+    ) {
+        super(`this wallet holds no key for descriptor: ${descriptor}`, options);
     }
 }
 

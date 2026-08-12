@@ -28,7 +28,11 @@ import {
     normalizeToDescriptor,
     parseHDDescriptor,
 } from "../identity/descriptor";
-import { isHDAllocationCapable, isHDWalletCapable } from "./hdWalletCapable";
+import {
+    ForeignDescriptorError,
+    isHDAllocationCapable,
+    isHDWalletCapable,
+} from "./hdWalletCapable";
 import type { IWallet } from ".";
 
 /**
@@ -191,9 +195,19 @@ export async function contractSigner(wallet: IWallet, descriptor: string): Promi
     const signer = isHDWalletCapable(wallet)
         ? await wallet.signerForDescriptor(descriptor)
         : wallet.identity;
-    if (!equalBytes(await signer.xOnlyPublicKey(), deriveDescriptorLeafPubKey(descriptor))) {
-        throw new Error(`this wallet holds no key for descriptor: ${descriptor}`);
+    // A descriptor whose key cannot be read is one no wallet can prove it
+    // holds — the same verdict as a mismatch, and typed the same way.
+    let expected: Uint8Array;
+    try {
+        expected = deriveDescriptorLeafPubKey(descriptor);
+    } catch (cause) {
+        throw new ForeignDescriptorError(descriptor, { cause });
     }
+    // Deliberately outside any wrapping: a signer that fails to answer is an
+    // operational failure to retry, not evidence the key belongs to someone
+    // else. Typing it as foreign would make a transient outage terminal.
+    const actual = await signer.xOnlyPublicKey();
+    if (!equalBytes(actual, expected)) throw new ForeignDescriptorError(descriptor);
     if (!isSigningIdentity(signer)) throw new WalletCannotSignError(descriptor);
     return signer;
 }

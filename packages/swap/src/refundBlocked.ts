@@ -6,7 +6,13 @@
  * is impossible rather than merely failing, and stops grinding against a push
  * that can never work for the whole refund window.
  */
-import { WalletCannotSignError, contractSigner, type Identity, type IWallet } from "@arkade-os/sdk";
+import {
+    ForeignDescriptorError,
+    WalletCannotSignError,
+    contractSigner,
+    type Identity,
+    type IWallet,
+} from "@arkade-os/sdk";
 
 export type RefundBlockedReason =
     /** The record carries no `signingDescriptor`. */
@@ -64,10 +70,18 @@ export async function senderIdentityForSwapRecord(
                 { cause },
             );
         }
-        throw new RefundNotLocallyPossibleError(
-            "foreign-descriptor",
-            `this wallet cannot derive ${record.signingDescriptor}; the swap was created on another wallet`,
-            { cause },
-        );
+        if (cause instanceof ForeignDescriptorError) {
+            throw new RefundNotLocallyPossibleError(
+                "foreign-descriptor",
+                `this wallet cannot derive ${record.signingDescriptor}; the swap was created on another wallet`,
+                { cause },
+            );
+        }
+        // Anything else is operational — a signer that did not answer, a
+        // transport that dropped. Rethrowing keeps it retryable: every
+        // `RefundNotLocallyPossibleError` is terminal to `RfqSwapManager`, so
+        // labelling an outage as one would abandon a refundable swap for the
+        // rest of its window.
+        throw cause;
     }
 }
