@@ -42,9 +42,6 @@ const PACKAGES = [
         order: 3,
         dependsOnSdk: true,
         bumpFlag: "--swap-bump",
-        // TEMP: not ready for release yet. Excluded from every release path (direct,
-        // "all", and as an SDK dependent) until this is removed. Remove to re-enable.
-        excludedFromRelease: true,
     },
 ];
 
