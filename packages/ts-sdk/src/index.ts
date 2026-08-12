@@ -35,6 +35,22 @@ import {
     ForeignDescriptorError,
     resolveDescriptorSigner,
 } from "./wallet/hdWalletCapable";
+import {
+    ARKADE_SWAP_PREIMAGE_TAG,
+    adoptContractDescriptor,
+    buildPreimageMessage,
+    contractPreimage,
+    contractSigner,
+    isDeterministicSigner,
+    isPerArtifactDescriptor,
+    provisionClaimSecret,
+    provisionRefundKey,
+} from "./wallet/contractSecrets";
+import type {
+    DeterministicSigner,
+    ProvisionedClaimSecret,
+    ProvisionedKey,
+} from "./wallet/contractSecrets";
 import type { HDAllocationCapable, HDWalletCapable } from "./wallet/hdWalletCapable";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
@@ -519,6 +535,15 @@ export {
     isHDAllocationCapable,
     ForeignDescriptorError,
     resolveDescriptorSigner,
+    ARKADE_SWAP_PREIMAGE_TAG,
+    adoptContractDescriptor,
+    buildPreimageMessage,
+    contractPreimage,
+    contractSigner,
+    isDeterministicSigner,
+    isPerArtifactDescriptor,
+    provisionClaimSecret,
+    provisionRefundKey,
     signingDescriptorIndex,
     strictSigningDescriptorIndex,
     deriveDescriptorLeafPubKey,
@@ -809,6 +834,9 @@ export type {
     HDDeterministicSignCapable,
     HDWalletCapable,
     HDAllocationCapable,
+    DeterministicSigner,
+    ProvisionedClaimSecret,
+    ProvisionedKey,
     // Indexer types
     IndexerProvider,
     PageResponse,

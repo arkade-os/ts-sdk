@@ -419,43 +419,52 @@ Lightning HTLC lapses, and **the payer is refunded** — the trader loses the in
 funds it was holding. Which is why staying online to claim is an obligation and not a preference:
 covclaimd cannot claim this covenant today, so the claim packet's offline path does not yet run.
 
-## RFQ secrets come from the wallet, not from this package
+## Swap secrets come from the wallet, not from this package
 
-The VHTLC `sender` key is always the wallet's — this package never generates signing keys and
-never branches on wallet type. `wallet.getNextSigningDescriptor()` is where the policy lives: an
-HD wallet allocates a fresh descriptor per swap; a static wallet answers with its one `tr(pubkey)`
-descriptor. The record keeps the descriptor, which is public, and the signer is recovered later
-through `wallet.signerForDescriptor()`.
+This package holds no key logic at all. It names the leg it is building and the SDK answers:
+
+```ts
+// a leg we fund — all it needs is the key that refunds it
+const { pubkey, descriptor } = await provisionRefundKey(wallet);
+// a leg we claim — the key that receives it, and the P that unlocks it
+const { pubkey, descriptor, preimage, paymentHash, mustPersistPreimage } =
+    await provisionClaimSecret(wallet);
+```
+
+Where the key comes from is the wallet's decision, invisible here: an HD wallet allocates a fresh
+descriptor per swap, a static wallet answers with its one `tr(pubkey)`. The record keeps the
+descriptor, which is public, and `contractSigner(wallet, descriptor)` recovers the signer.
 
 What each swap stores, and what is recoverable:
 
-| Wallet answers with | Sender key            | Preimage (when the swap needs one) | Secret at rest    |
-| ------------------- | --------------------- | ---------------------------------- | ----------------- |
-| fresh HD descriptor | re-derives from seed  | derives deterministically          | none              |
-| static `tr(pubkey)` | the wallet's identity | random, stored on the record       | the preimage only |
+| Wallet answers with | Spending key          | Preimage (when the leg needs one) | Secret at rest    |
+| ------------------- | --------------------- | --------------------------------- | ----------------- |
+| fresh HD descriptor | re-derives from seed  | derives deterministically         | none              |
+| static `tr(pubkey)` | the wallet's identity | random, stored on the record      | the preimage only |
 
 The preimage split follows the **descriptor's shape**, not the wallet's type: an HD child
 descriptor is unique to its swap, so `sha256(sign_det(...))` is safe; a static descriptor is the
 same key for every swap, so a derived preimage would repeat across swaps — one solver learning its
 own preimage would learn every other swap's — and a per-swap random preimage is stored instead.
-A stored preimage is the one secret at rest in the design, and it is never a private key.
+`mustPersistPreimage` says which you got. A stored preimage is the one secret at rest in the
+design, and it is never a private key.
 
 ```ts
 const swap = await requestOnchainSend(/* … */);
-// Always persist it. On an HD wallet it is just `{ signingDescriptor }` and
-// holds nothing secret; on a static wallet it also carries `preimage`, which
-// is the swap's only claim secret.
-await saveSwap({ ...record, ...rfqSecretsToRecord(swap.secrets) });
+// `swapSecretsToRecord` stores the public descriptor always, and `preimageHex`
+// only when the wallet said it cannot re-derive P.
+await saveSwap({ ...record, ...swapSecretsToRecord(swap.secrets) });
 
-// Later, from the seed plus that descriptor. Guard the lookup: offer-corridor
-// records (and records that lost their secrets fields) carry no secrets at
-// all, and a `!` here would crash the whole recovery loop on the first one.
-const secrets = rfqSecretsOfRecord(record);
-// Only ask for a preimage the corridor gave us one for: a lightning send's P
-// belongs to the payee, so this throws on those records rather than inventing
-// something the chain will never match.
-if (secrets && record.pair !== LIGHTNING_SEND_PAIR) {
-    const preimage = await preimageForRfqSecrets(wallet, secrets);
+// Later, from the seed plus that descriptor. Only ask for a preimage the
+// corridor gave us one for: a lightning send's P belongs to the payee, so
+// this throws on those records rather than inventing something the chain will
+// never match.
+if (record.signingDescriptor && record.pair !== LIGHTNING_SEND_PAIR) {
+    const preimage = await contractPreimage(
+        wallet,
+        record.signingDescriptor,
+        record.preimageHex ? hex.decode(record.preimageHex) : undefined,
+    );
 }
 
 // For a refund, take the composition instead of the guard: it turns all three

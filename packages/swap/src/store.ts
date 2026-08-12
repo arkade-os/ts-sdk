@@ -1,3 +1,5 @@
+import { hex } from "@scure/base";
+import type { ProvisionedClaimSecret, ProvisionedKey } from "@arkade-os/sdk";
 import type { AssetSwapRepository } from "./repository";
 
 export type AssetSwapStatus =
@@ -180,3 +182,19 @@ export const updateAssetSwapBestEffort = async (
         return { swaps, persisted: false };
     }
 };
+
+/**
+ * The record fields a wallet-provisioned secret becomes.
+ *
+ * `signingDescriptor` is public and always stored — it is what recovers the
+ * signer. `preimageHex` is stored only when the wallet says it cannot
+ * re-derive P, and is then the swap's only claim secret.
+ */
+export const swapSecretsToRecord = (
+    secrets: ProvisionedKey | ProvisionedClaimSecret,
+): { signingDescriptor: string; preimageHex?: string } => ({
+    signingDescriptor: secrets.descriptor,
+    ...("mustPersistPreimage" in secrets && secrets.mustPersistPreimage
+        ? { preimageHex: hex.encode(secrets.preimage) }
+        : {}),
+});

@@ -45,7 +45,7 @@ import {
     type RfqTransport,
 } from "../src/rfq";
 import { onchainHtlcScript, paymentHashOf } from "../src/onchainHtlc";
-import { preimageForRfqSecrets } from "../src/secrets";
+import { contractPreimage } from "@arkade-os/sdk";
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
@@ -280,7 +280,7 @@ describe("requestLightningSend on an HD wallet", () => {
                     d: string,
                 ) => Promise<{ xOnlyPublicKey: () => Promise<Uint8Array> }>;
             }
-        ).signerForDescriptor((result.secrets as { signingDescriptor: string }).signingDescriptor);
+        ).signerForDescriptor(result.secrets.descriptor);
         expect(hex.encode(result.senderPubkey)).toBe(hex.encode(await signer.xOnlyPublicKey()));
     });
 });
@@ -300,7 +300,11 @@ describe("requestOnchainSend on an HD wallet", () => {
 
         // The quote was requested against sha256 of the derived preimage, and
         // the preimage re-derives from the returned descriptor alone.
-        const preimage = await preimageForRfqSecrets(wallet, result.secrets);
+        const preimage = await contractPreimage(
+            wallet,
+            result.secrets.descriptor,
+            result.secrets.preimage,
+        );
         expect(seen.paymentHash).toBe(paymentHashOf(preimage));
         expect(seen.senderPubkey).toBe(hex.encode(result.senderPubkey));
     });
@@ -337,9 +341,11 @@ describe("requestOnchainSend on an HD wallet", () => {
             });
 
             expect(result.secrets.preimage).toEqual(preimage);
-            expect(await preimageForRfqSecrets(wallet, result.secrets)).toEqual(preimage);
+            expect(
+                await contractPreimage(wallet, result.secrets.descriptor, result.secrets.preimage),
+            ).toEqual(preimage);
 
-            const signer = await wallet.signerForDescriptor!(result.secrets.signingDescriptor);
+            const signer = await wallet.signerForDescriptor!(result.secrets.descriptor);
             expect(hex.encode(result.senderPubkey)).toBe(hex.encode(await signer.xOnlyPublicKey()));
             expect(warn).toHaveBeenCalledWith(
                 expect.stringContaining("cannot be re-derived from the seed"),
@@ -365,14 +371,16 @@ describe("requestOnchainSend on an HD wallet", () => {
                 preimage,
             });
 
-            expect(result.secrets.signingDescriptor).toBe(
+            expect(result.secrets.descriptor).toBe(
                 `tr(${hex.encode(await wallet.identity.xOnlyPublicKey())})`,
             );
             expect(hex.encode(result.senderPubkey)).toBe(
                 hex.encode(await wallet.identity.xOnlyPublicKey()),
             );
             expect(result.secrets.preimage).toEqual(preimage);
-            expect(await preimageForRfqSecrets(wallet, result.secrets)).toEqual(preimage);
+            expect(
+                await contractPreimage(wallet, result.secrets.descriptor, result.secrets.preimage),
+            ).toEqual(preimage);
             expect(warn).toHaveBeenCalledWith(
                 expect.stringContaining("cannot be re-derived from the seed"),
             );
@@ -400,7 +408,7 @@ describe("requestOnchainSend on an HD wallet", () => {
 
             // Same key for both swaps — that is the static policy — but the
             // stored preimages must never repeat.
-            expect(second.secrets.signingDescriptor).toBe(first.secrets.signingDescriptor);
+            expect(second.secrets.descriptor).toBe(first.secrets.descriptor);
             expect(first.secrets.preimage).toHaveLength(32);
             expect(hex.encode(second.secrets.preimage!)).not.toBe(
                 hex.encode(first.secrets.preimage!),
