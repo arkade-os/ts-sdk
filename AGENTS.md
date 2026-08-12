@@ -70,7 +70,8 @@ keys and never branch on wallet *type* — they ask the wallet and use what come
 - Per-artifact secrets (swap preimages) key off the **descriptor's shape**, not the wallet's type:
   an HD child descriptor is unique per artifact and can derive secrets deterministically; a bare
   `tr(pubkey)` repeats across artifacts, so derived-from-key secrets would collide and must be
-  stored per artifact instead (see `packages/swap/src/secrets.ts`).
+  stored per artifact instead (see `packages/ts-sdk/src/wallet/contractSecrets.ts` and
+  `swapSecretsToRecord` in `packages/swap/src/store.ts`).
 
 ## Local Scratch Files
 
