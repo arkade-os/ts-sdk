@@ -237,7 +237,17 @@ import { Intent } from "./intent";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
-import { getNetwork, networks, Network, NetworkName } from "./networks";
+import {
+    getNetwork,
+    networks,
+    Network,
+    NetworkName,
+    defaultEmulatorPubkey,
+    resolveEmulatorPubkey,
+    BITCOIN_EMULATOR_PUBKEY,
+    MUTINYNET_EMULATOR_PUBKEY,
+    REGTEST_EMULATOR_PUBKEY,
+} from "./networks";
 import {
     RestIndexerProvider,
     IndexerProvider,
@@ -580,6 +590,11 @@ export {
     // Network
     getNetwork,
     networks,
+    defaultEmulatorPubkey,
+    resolveEmulatorPubkey,
+    BITCOIN_EMULATOR_PUBKEY,
+    MUTINYNET_EMULATOR_PUBKEY,
+    REGTEST_EMULATOR_PUBKEY,
 
     // DB
     closeDatabase,
