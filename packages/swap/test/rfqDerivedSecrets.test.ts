@@ -237,9 +237,8 @@ describe("requestLightningSend and the corridor spread", () => {
         const result = await requestLightningSend(
             wallet,
             "http://ark",
-            EMULATOR_PUBKEY,
             spreadTransport(1072, 1000),
-            { invoice: INVOICE },
+            { emulatorPubkey: EMULATOR_PUBKEY, invoice: INVOICE },
         );
         expect(result.fundAmount).toBe(1072);
     });
@@ -247,43 +246,30 @@ describe("requestLightningSend and the corridor spread", () => {
     it("refuses a quote whose to_amount reprices the invoice", async () => {
         const wallet = await hdWallet();
         await expect(
-            requestLightningSend(
-                wallet,
-                "http://ark",
-                EMULATOR_PUBKEY,
-                spreadTransport(1000, 999),
-                {
-                    invoice: INVOICE,
-                },
-            ),
+            requestLightningSend(wallet, "http://ark", spreadTransport(1000, 999), {
+                emulatorPubkey: EMULATOR_PUBKEY,
+                invoice: INVOICE,
+            }),
         ).rejects.toThrow(/does not match the invoice/);
     });
 
     it("refuses a quote whose from_amount is below the invoice — a negative spread is not a quote", async () => {
         const wallet = await hdWallet();
         await expect(
-            requestLightningSend(
-                wallet,
-                "http://ark",
-                EMULATOR_PUBKEY,
-                spreadTransport(999, 1000),
-                {
-                    invoice: INVOICE,
-                },
-            ),
+            requestLightningSend(wallet, "http://ark", spreadTransport(999, 1000), {
+                emulatorPubkey: EMULATOR_PUBKEY,
+                invoice: INVOICE,
+            }),
         ).rejects.toThrow(/below the invoice amount/);
     });
 });
 describe("requestLightningSend on an HD wallet", () => {
     it("returns a descriptor and no key material", async () => {
         const wallet = await hdWallet();
-        const result = await requestLightningSend(
-            wallet,
-            "http://ark",
-            EMULATOR_PUBKEY,
-            lightningTransport(),
-            { invoice: INVOICE },
-        );
+        const result = await requestLightningSend(wallet, "http://ark", lightningTransport(), {
+            emulatorPubkey: EMULATOR_PUBKEY,
+            invoice: INVOICE,
+        });
 
         expect(result.secrets.derivable).toBe(true);
         expect(result).not.toHaveProperty("senderPrivateKey");
@@ -304,13 +290,12 @@ describe("requestOnchainSend on an HD wallet", () => {
     it("commits to the derived preimage and returns neither it nor the key", async () => {
         const wallet = await hdWallet();
         const seen: { paymentHash?: string; senderPubkey?: string } = {};
-        const result = await requestOnchainSend(
-            wallet,
-            "http://ark",
-            EMULATOR_PUBKEY,
-            onchainTransport(seen),
-            { amount: 100_000, amountSide: "to", payoutPubkey: PAYOUT_PUBKEY },
-        );
+        const result = await requestOnchainSend(wallet, "http://ark", onchainTransport(seen), {
+            emulatorPubkey: EMULATOR_PUBKEY,
+            amount: 100_000,
+            amountSide: "to",
+            payoutPubkey: PAYOUT_PUBKEY,
+        });
 
         expect(result.secrets.derivable).toBe(true);
         expect(result).not.toHaveProperty("preimage");
@@ -333,20 +318,14 @@ describe("requestOnchainSend on an HD wallet", () => {
             payoutPubkey: PAYOUT_PUBKEY,
         };
 
-        await requestOnchainSend(
-            wallet,
-            "http://ark",
-            EMULATOR_PUBKEY,
-            onchainTransport(first),
-            params,
-        );
-        await requestOnchainSend(
-            wallet,
-            "http://ark",
-            EMULATOR_PUBKEY,
-            onchainTransport(second),
-            params,
-        );
+        await requestOnchainSend(wallet, "http://ark", onchainTransport(first), {
+            ...params,
+            emulatorPubkey: EMULATOR_PUBKEY,
+        });
+        await requestOnchainSend(wallet, "http://ark", onchainTransport(second), {
+            ...params,
+            emulatorPubkey: EMULATOR_PUBKEY,
+        });
 
         expect(second.senderPubkey).not.toBe(first.senderPubkey);
         expect(second.paymentHash).not.toBe(first.paymentHash);
@@ -357,13 +336,13 @@ describe("requestOnchainSend on an HD wallet", () => {
         const preimage = new Uint8Array(32).fill(7);
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         try {
-            const result = await requestOnchainSend(
-                wallet,
-                "http://ark",
-                EMULATOR_PUBKEY,
-                onchainTransport({}),
-                { amount: 100_000, amountSide: "to", payoutPubkey: PAYOUT_PUBKEY, preimage },
-            );
+            const result = await requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
+                emulatorPubkey: EMULATOR_PUBKEY,
+                amount: 100_000,
+                amountSide: "to",
+                payoutPubkey: PAYOUT_PUBKEY,
+                preimage,
+            });
 
             expect(result.secrets.derivable).toBe(true);
             if (!result.secrets.derivable) throw new Error("expected derived secrets");
@@ -383,13 +362,13 @@ describe("requestOnchainSend on an HD wallet", () => {
         const preimage = new Uint8Array(32).fill(8);
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         try {
-            const result = await requestOnchainSend(
-                wallet,
-                "http://ark",
-                EMULATOR_PUBKEY,
-                onchainTransport({}),
-                { amount: 100_000, amountSide: "to", payoutPubkey: PAYOUT_PUBKEY, preimage },
-            );
+            const result = await requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
+                emulatorPubkey: EMULATOR_PUBKEY,
+                amount: 100_000,
+                amountSide: "to",
+                payoutPubkey: PAYOUT_PUBKEY,
+                preimage,
+            });
 
             expect(result.secrets.derivable).toBe(false);
             if (result.secrets.derivable) throw new Error("expected stored secrets");

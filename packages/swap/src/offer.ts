@@ -38,6 +38,7 @@ import {
 import wantAssetProgram from "./swap-want-asset.program.json";
 import wantBtcProgram from "./swap-want-btc.program.json";
 import { promoteOfferContract, retireOfferContract } from "./coverage";
+import { resolveEmulatorKey, type EmulatorPubkeyOverride } from "./emulatorKey";
 import type { AssetSwapRepository } from "./repository";
 import { getAssetSwapsOrThrow, updateAssetSwap, updateAssetSwapBestEffort } from "./store";
 
@@ -337,11 +338,11 @@ async function registerOfferContract(
  * you deposit, embedding the returned extension, and the solver does the rest:
  *
  *   // BTC -> asset
- *   const o = await createOffer(wallet, ARK, EMULATOR_PUBKEY, { wantAmount: 1000n, wantAsset })
+ *   const o = await createOffer(wallet, ARK, { wantAmount: 1000n, wantAsset })
  *   await wallet.send({ address: o.address, amount: 1000, extensions: [o.extension] })
  *
  *   // asset -> BTC (the sats are the VTXO carrier for the asset)
- *   const o = await createOffer(wallet, ARK, EMULATOR_PUBKEY, { wantAmount: 1000n, offerAsset })
+ *   const o = await createOffer(wallet, ARK, { wantAmount: 1000n, offerAsset })
  *   await wallet.send({ address: o.address, amount: 500,
  *                       assets: [{ assetId, amount: 1000n }],
  *                       extensions: [o.extension] })
@@ -353,21 +354,31 @@ async function registerOfferContract(
  * funding rather than after: nothing is at stake yet, so a failure can throw
  * and be retried, where the same failure after `wallet.send` would leave a
  * funded deposit unwatched with no way to notice.
+ *
+ * The covenant co-signer key defaults to the one pinned per network inside the
+ * SDK, resolved from the Ark server's reported network — never fetched from
+ * the emulator itself (the service being authenticated must not name its own
+ * trust anchor). `params.emulatorPubkey` overrides the pin: pass the solver
+ * card's `emulator_pubkey`, a self-hosted emulator's key, a key for an
+ * unpinned network (signet, testnet — those throw without it), or a rotated
+ * key the SDK hasn't shipped yet.
  */
 export async function createOffer(
     wallet: IWallet,
     arkServerUrl: string,
-    /** Covenant co-signer (emulator) x-only key — the SOLVER's deployment,
-     * not the user's. This library does NOT fetch or verify it: clients
-     * have no network path to the emulator, only the solver and covclaimd
-     * do. The caller must obtain this out-of-band, before calling this
-     * function, from the solver's signed registry/corridor card (its
-     * `emulator_pubkey`, added in arkade-os/solver-registry#18) or an
-     * equivalent source it
-     * independently trusts, and is responsible for having checked it
-     * against that trusted value itself. */
-    emulatorPubkey: Uint8Array,
-    params: { wantAmount: bigint; wantAsset?: asset.AssetId; offerAsset?: asset.AssetId },
+    params: {
+        wantAmount: bigint;
+        wantAsset?: asset.AssetId;
+        offerAsset?: asset.AssetId;
+        /** Co-sign with this emulator key instead of the one pinned for the
+         * network — as bytes (x-only or 33-byte compressed, e.g. the solver
+         * card's `emulator_pubkey`) or 33-byte compressed hex (same contract
+         * as `Arkade.connect`'s `emulatorPubkey` option). The library never
+         * fetches or verifies it: whoever supplies it is trusting that
+         * operator as co-signer in place of the network's.
+         * @see resolveEmulatorKey */
+        emulatorPubkey?: EmulatorPubkeyOverride;
+    },
 ): Promise<{
     /** The encoded offer, hex. **Persist this** — it is the only input
      * `cancelOffer` needs to rebuild the covenant, and the restore scan reads
@@ -393,12 +404,11 @@ export async function createOffer(
         wallet.identity.xOnlyPublicKey(),
     ]);
     // the ark signer key arrives compressed (33B) today; drop the prefix by
-    // length so an already-x-only key is passed through rather than
-    // shortened to 31 bytes — same normalization applied to the
-    // caller-supplied emulator key below, in case its source hands back
-    // either width
+    // length so an already-x-only key is passed through rather than shortened
+    // to 31 bytes
     const serverPubKey = xOnly(hex.decode(info.signerPubkey), "ark signer key");
-    const emuKey = xOnly(emulatorPubkey, "emulator pubkey");
+    const network = getNetwork(info.network as NetworkName);
+    const emuKey = resolveEmulatorKey(network, params.emulatorPubkey);
 
     // the script derives from every field but the script itself, so build the
     // binding first and complete the offer with it — an Offer value never
@@ -429,7 +439,7 @@ export async function createOffer(
         extension: { type: OFFER_PACKET_TYPE, payload },
         // VtxoScript.address owns address construction; assembling an ArkAddress
         // from tweakedPublicKey here would silently miss any future step it gains
-        address: script.address(getNetwork(info.network as NetworkName).hrp, serverPubKey).encode(),
+        address: script.address(network.hrp, serverPubKey).encode(),
         swapPkScript: script.pkScript,
     };
 }

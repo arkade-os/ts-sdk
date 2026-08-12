@@ -16,7 +16,7 @@ Arkade Intents names two participants:
   contract, and tracks it to a fill or a cancellation.
 - **solver** — supplies inventory and pricing, and fills the funded contract by delivering
   `wantAmount` to the user's script over the covenant's `fulfill` path. Some specifications and
-  repositories use *provider* or *market maker* as synonyms.
+  repositories use _provider_ or _market maker_ as synonyms.
 
 **`maker` and `taker` in this package name contract positions, not product roles.** The covenant
 programs bind `makerWP`, and the `Offer` type carries `makerPkScript` and `makerPublicKey`; those
@@ -25,14 +25,14 @@ identify the side that funds the swap and receives `wantAmount`. Read them as sc
 Arkade Intents documentation deliberately avoids maker and taker for the participants themselves.
 A resting maker order is firm once taken, and nothing here is: the user funds first, and if no
 solver fills, the deposit comes back through `cancelOffer` rather than through an executed trade.
-Naming the sides *user* and *solver* says who does what without borrowing a guarantee the contract
+Naming the sides _user_ and _solver_ says who does what without borrowing a guarantee the contract
 does not make.
 
 ## Request for quote
 
 Every Arkade Intents route is request-for-quote: the user states an intent, receives the solver's
 terms as a quote, funds the contract it derives from those terms, and a solver fills it. This
-route is no exception — what is specific to it is *where the quote is resolved*. `quoteOffer`
+route is no exception — what is specific to it is _where the quote is resolved_. `quoteOffer`
 prices the swap client-side from the market card the solver publishes: its price feed and its fee,
 the same two inputs a relay quote would carry. Same protocol, one fewer network hop, and a quote
 that is ready before the user finishes typing an amount.
@@ -52,7 +52,7 @@ with then.
 
 Every swap has the same two beats, on this route and on the cross-ledger corridors:
 
-1. **Funding** — the user funds the contract it derived from the quote. Funding *is* acceptance;
+1. **Funding** — the user funds the contract it derived from the quote. Funding _is_ acceptance;
    there is no accept message to send, here or anywhere in Arkade Intents.
 2. **Fill, or cancel** — a solver fills by delivering the other side, or the user takes the
    deposit back.
@@ -90,8 +90,8 @@ funds an offer should keep cancelling within reach.
 6. **`rfq`** — the user side of quoted swaps: RFQ negotiation over HTTP or a
    relay, then non-interactive filling (see below). All four reference-solver corridors:
    `arkade:BTC -> lightning:BTC` and `arkade:BTC -> onchain:BTC` (send), `lightning:BTC ->
-   arkade:BTC` and `onchain:BTC -> arkade:BTC` (receive), plus `arkade:BTC|asset ->
-   arkade:BTC|asset` (quote, then take by funding an offer from layer 1).
+arkade:BTC` and `onchain:BTC -> arkade:BTC` (receive), plus `arkade:BTC|asset ->
+arkade:BTC|asset` (quote, then take by funding an offer from layer 1).
 7. **`onchainHtlc`** — the Bitcoin-L1 side of `arkade:BTC <-> onchain:BTC`: a NUMS-keyed taproot
    HTLC as pure local derivation (golden-pinned), claim/refund spend builders with signing as a
    callback, the injected `ChainSource` seam (the package holds no L1 backend and no keys),
@@ -113,11 +113,11 @@ the rest:
 
 ```ts
 // BTC -> asset
-const o = await createOffer(wallet, ARK, EMULATOR_PUBKEY, { wantAmount: 1000n, wantAsset });
+const o = await createOffer(wallet, ARK, { wantAmount: 1000n, wantAsset });
 await wallet.send({ address: o.address, amount: 1000, extensions: [o.extension] });
 
 // asset -> BTC (the sats are the VTXO carrier for the asset)
-const o = await createOffer(wallet, ARK, EMULATOR_PUBKEY, { wantAmount: 1000n, offerAsset });
+const o = await createOffer(wallet, ARK, { wantAmount: 1000n, offerAsset });
 await wallet.send({
     address: o.address,
     amount: 500,
@@ -126,10 +126,14 @@ await wallet.send({
 });
 ```
 
-`EMULATOR_PUBKEY` is the covenant co-signer's x-only key — the solver's deployment, not yours.
-`createOffer` does not fetch or verify it: clients have no network path to the emulator, only the
-solver and covclaimd do. Obtain it out of band, before calling `createOffer`, from the solver's
-signed registry/corridor card and check it against whatever value you independently trust.
+The covenant co-signer ("emulator") key defaults to the one pinned per network inside the SDK,
+resolved from the network the Ark server reports — it is never fetched from the emulator itself,
+since the service being authenticated must not name its own trust anchor. Pass
+`params.emulatorPubkey` to override the pin: as bytes (x-only or 33-byte compressed — e.g. the
+solver's signed registry/corridor card's `emulator_pubkey`, obtained out of band and checked
+against a value you independently trust) or as 33-byte compressed hex (the same contract as
+`Arkade.connect`'s `emulatorPubkey` option). Overriding is needed for a self-hosted emulator, an
+unpinned network (signet, testnet), or a key rotation the SDK hasn't shipped yet.
 
 ### What `createOffer` gives you back
 
@@ -232,15 +236,9 @@ message anywhere: **acceptance is funding**.
 import { httpTransport, requestLightningSend } from "@arkade-os/swap";
 
 // invoice facts from YOUR OWN decoder — the module takes facts, not a decoder
-const swap = await requestLightningSend(
-    wallet,
-    arkServerUrl,
-    emulatorPubkey,
-    httpTransport(solverUrl),
-    {
-        invoice: { raw: bolt11, paymentHash, amountSats, expiresAt },
-    },
-);
+const swap = await requestLightningSend(wallet, arkServerUrl, httpTransport(solverUrl), {
+    invoice: { raw: bolt11, paymentHash, amountSats, expiresAt },
+});
 // quote verified against the LOCAL derivation and gated; now fund and go offline:
 await wallet.send({ address: swap.address, amount: swap.fundAmount });
 ```
@@ -256,10 +254,11 @@ which the manager can only poll and cannot retire the row when the swap ends.
 The trust model is the offer side's, applied to quotes: only `solver_pubkey`,
 `refund_locktime`, `valid_until` and the amounts are used from a quote; every other contract
 parameter is the trader's own data, and anything address-shaped from the solver is compare-only
-(`AddressMismatch` means refuse-to-fund). `emulatorPubkey` is neither: it is not fetched or
-verified by this library at all — clients have no network path to the emulator, only the solver
-and covclaimd do — so it must arrive already obtained out of band, from the solver's signed
-registry/corridor card, and already checked against whatever value you independently trust.
+(`AddressMismatch` means refuse-to-fund). The emulator key is neither: it defaults to the SDK's
+per-network pin and is never fetched from the emulator itself — clients have no network path to
+it anyway, only the solver and covclaimd do. A caller overriding it (`params.emulatorPubkey`,
+e.g. from the solver's signed registry/corridor card) must have checked that value against
+whatever source it independently trusts.
 Refusals carry a closed reason set (`SwapRefusal`); unknown reasons are a generic decline. The
 `swap-lightning-send.program.json` bytes are frozen the same way the offer programs are — a
 golden test pins the compiled leaves and scriptPubKey to the reference solver's exact script.
@@ -314,13 +313,11 @@ import {
     rfqSecretsToRecord,
 } from "@arkade-os/swap";
 
-const swap = await requestOnchainSend(
-    wallet,
-    arkServerUrl,
-    emulatorPubkey,
-    httpTransport(solverUrl),
-    { amount: 100_000, amountSide: "to", payoutPubkey },
-);
+const swap = await requestOnchainSend(wallet, arkServerUrl, httpTransport(solverUrl), {
+    amount: 100_000,
+    amountSide: "to",
+    payoutPubkey,
+});
 // Persist the record, including secrets, BEFORE funding. This must succeed:
 // if addAssetSwap throws, do not call wallet.send.
 await addAssetSwap(repository, {
@@ -377,7 +374,7 @@ against the quote's compare-only addresses → gate. `requestLightningReceive` r
 hold invoice to pay; `requestOnchainReceive` returns the L1 HTLC to fund — the payment/broadcast
 itself is the trader's own wallet's job, exactly as on the send corridors.
 
-The invoice on the lightning-receive leg is the *solver's*, so the SDK owns the comparison rather
+The invoice on the lightning-receive leg is the _solver's_, so the SDK owns the comparison rather
 than taking the caller's facts about it: `requestLightningReceive` requires a `decodeInvoice`
 callback (no BOLT11 dependency is added) and `verifyReceiveInvoice` binds the decoded invoice to
 this swap's `H` and to `quote.from_amount` — an invoice on another payment hash is the one attack
@@ -403,11 +400,11 @@ implementation and marked provisional (`TODO(claim-packet-vectors)`).
 
 `RfqSwapManager` drives the lightning-receive leg too, as `kind: "lightning_receive"` records
 carrying `expectedAmount` and wired to a `claimLockup` callback (`pushClaim`, with `expectedAmount`
-and `partiallyClaimed` passed through — the manager's value check decides *when* to act, the inner
+and `partiallyClaimed` passed through — the manager's value check decides _when_ to act, the inner
 one decides whether `P` is published). Nothing is asked of the solver: the reference solver's
 `rfq_status_request` consults neither receive store, so a status poll answers `unknown` for every
 one of these swaps and chain observation is the only workable design. States mean what they do on
-the send legs with the roles swapped — `settled` is *our own* claim landing, matched by a
+the send legs with the roles swapped — `settled` is _our own_ claim landing, matched by a
 hash-verified preimage spend rather than by the txid we submitted, so a claim that lands without us
 still counts; `claimed` is a local belief and not terminal; and **`refunded` is a loss**, the solver
 having taken back a lockup we failed to claim. A lockup funded below `expectedAmount` is reported
@@ -471,7 +468,7 @@ alone will not compile against the fallback. A caller-supplied preimage on an HD
 `signingDescriptor` for the sender key and stores only `preimageHex` as secret material.
 
 Each swap **allocates** its own descriptor rather than peeking at the current one: two swaps sharing
-a descriptor derive the *identical* preimage, so one solver learning its own preimage would learn the
+a descriptor derive the _identical_ preimage, so one solver learning its own preimage would learn the
 other swap's. On restore, `adoptSwapDescriptor` moves the wallet's watermark past a restored record's
 index so it cannot be handed out twice.
 
@@ -486,7 +483,7 @@ too little public quote data to rediscover, so the record remains required.
 
 **Gap-limit interaction:** every swap request — including one whose quote is refused — consumes one
 index from the wallet's receive stream, and a swap index never becomes a funded receive contract,
-so it looks *unused* to a seed-only `restore()` gap scan. Many consecutive swap allocations between
+so it looks _unused_ to a seed-only `restore()` gap scan. Many consecutive swap allocations between
 two funded receive indices can therefore exceed the scan's `gapLimit` (default 20) and stop it
 before later-funded addresses are found. Keep the swap repository in backups (restore then adopts
 each record's descriptor via `adoptSwapDescriptor`), or raise `gapLimit` on seed-only restores

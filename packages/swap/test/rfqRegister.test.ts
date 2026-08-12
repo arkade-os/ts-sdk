@@ -194,12 +194,14 @@ const recordingWallet = (
 };
 
 const lightningSend = (wallet: IWallet) =>
-    requestLightningSend(wallet, "http://ark", EMULATOR_PUBKEY, lightningTransport(), {
+    requestLightningSend(wallet, "http://ark", lightningTransport(), {
+        emulatorPubkey: EMULATOR_PUBKEY,
         invoice: INVOICE,
     });
 
 const onchainSend = (wallet: IWallet) =>
-    requestOnchainSend(wallet, "http://ark", EMULATOR_PUBKEY, onchainTransport(), {
+    requestOnchainSend(wallet, "http://ark", onchainTransport(), {
+        emulatorPubkey: EMULATOR_PUBKEY,
         amount: 100_000,
         amountSide: "to",
         payoutPubkey: PAYOUT_PUBKEY,

@@ -646,7 +646,8 @@ const lightningReceiveFlow = async (
         seen,
         createContract,
         run: () =>
-            requestLightningReceive(wallet, "http://ark", EMULATOR_PUBKEY, transport, {
+            requestLightningReceive(wallet, "http://ark", transport, {
+                emulatorPubkey: EMULATOR_PUBKEY,
                 amount: 5_000,
                 amountSide: "from",
                 covclaimdPubkey: COVCLAIMD_PK,
@@ -819,18 +820,13 @@ describe("requestOnchainReceive on an HD wallet", () => {
             async close() {},
         };
 
-        const result = await requestOnchainReceive(
-            wallet,
-            "http://ark",
-            EMULATOR_PUBKEY,
-            transport,
-            {
-                amount: 100_000,
-                amountSide: "from",
-                refundPubkey: L1_REFUND_PUBKEY,
-                covclaimdPubkey: COVCLAIMD_PK,
-            },
-        );
+        const result = await requestOnchainReceive(wallet, "http://ark", transport, {
+            emulatorPubkey: EMULATOR_PUBKEY,
+            amount: 100_000,
+            amountSide: "from",
+            refundPubkey: L1_REFUND_PUBKEY,
+            covclaimdPubkey: COVCLAIMD_PK,
+        });
 
         expect(result.fundAmount).toBe(100_000);
         expect(result.expectedAmount).toBe(99_000);
