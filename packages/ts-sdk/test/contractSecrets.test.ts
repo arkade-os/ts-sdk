@@ -14,6 +14,7 @@ import {
     SingleKey,
     strictSigningDescriptorIndex,
     type IWallet,
+    resolveDescriptorSigner,
 } from "../src";
 import {
     ARKADE_SWAP_PREIMAGE_TAG,
@@ -113,6 +114,38 @@ describe("provisionRefundKey", () => {
                 hex.encode(await (await contractSigner(wallet, k.descriptor)).xOnlyPublicKey()),
             ).toBe(hex.encode(k.pubkey));
         }
+    });
+
+    it("refuses a descriptor the wallet cannot sign for, before anything is funded", async () => {
+        // A wallet whose allocator hands back another seed's descriptor — a
+        // worker rebound to a second identity, a restore onto the wrong seed.
+        // Deriving the leaf key would succeed anyway (it is pure parsing), so
+        // without a signer check the covenant binds a key we cannot spend and
+        // the failure surfaces at refund time, funded.
+        const { wallet } = await hdWallet();
+        const other = MnemonicIdentity.fromMnemonic(
+            "legal winner thank year wave sausage worth useful legal winner thank yellow",
+            { isMainnet: false },
+        );
+        const otherProvider = await HDDescriptorProvider.create(
+            other,
+            new InMemoryWalletRepository(),
+        );
+        // Resolution is honest — it goes through the same helper both real
+        // wallets use. Only the allocator is rogue.
+        const rogue = {
+            ...wallet,
+            getNextSigningDescriptor: async () => otherProvider.materializeDescriptorAt(1),
+            signerForDescriptor: (d: string) => resolveDescriptorSigner(d, wallet.identity),
+        } as unknown as IWallet;
+
+        await expect(provisionRefundKey(rogue)).rejects.toThrow(/holds no key/);
+        // and the claim-secret path inherits it, including the arm that
+        // supplies its own preimage and so never derives one
+        await expect(provisionClaimSecret(rogue)).rejects.toThrow(/holds no key/);
+        await expect(
+            provisionClaimSecret(rogue, { preimage: new Uint8Array(32).fill(1) }),
+        ).rejects.toThrow(/holds no key/);
     });
 
     it("answers with the identity key on a wallet that cannot allocate", async () => {

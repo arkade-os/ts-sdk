@@ -493,7 +493,7 @@ export async function pushRefundWithoutReceiver(
     input: {
         script: InstanceType<typeof VHTLC.ScriptV2>;
         /** The `sender` signer. Build it from the swap's `secrets` with
-         * `senderIdentityForRfqSecrets` — on an HD wallet that resolves from
+         * `contractSigner` — on an HD wallet that resolves from
          * the seed, with no stored key bytes anywhere. */
         sender: Identity;
         vtxos: readonly LockupVtxo[];

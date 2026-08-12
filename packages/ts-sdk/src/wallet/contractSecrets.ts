@@ -113,8 +113,7 @@ async function provisionDescriptor(wallet: IWallet): Promise<string> {
     const allocated = isHDAllocationCapable(wallet)
         ? await wallet.getNextSigningDescriptor()
         : undefined;
-    // A wallet that cannot allocate still provides a key it holds. The one
-    // thing that never happens is a key the wallet does not hold.
+    // A wallet that cannot allocate still provides a key it holds.
     return allocated ?? normalizeToDescriptor(hex.encode(await wallet.identity.xOnlyPublicKey()));
 }
 
@@ -122,13 +121,23 @@ async function provisionDescriptor(wallet: IWallet): Promise<string> {
  * The key that spends a leg we fund — the refund key of an HTLC, the user key
  * of a covenant's cancel path.
  *
+ * The returned `pubkey` is taken from a signer the wallet produced, never
+ * from the descriptor string alone. That is the difference between an
+ * invariant and a comment: deriving the leaf key is pure parsing and would
+ * succeed just as well for a key this wallet cannot sign for — a descriptor
+ * allocated by a worker rebound to another identity, a record restored onto
+ * the wrong seed — and the covenant would bind it, the leg would fund, and
+ * the failure would surface at refund time with the money already committed.
+ * Throws {@link ForeignDescriptorError} instead, before there is a quote.
+ *
  * On an HD wallet this consumes an index even if the artifact is never built,
  * and a swap index never becomes a funded receive contract, so a long run of
  * them widens the gap a seed-only restore scan sees.
  */
 export async function provisionRefundKey(wallet: IWallet): Promise<ProvisionedKey> {
     const descriptor = await provisionDescriptor(wallet);
-    return { descriptor, pubkey: deriveDescriptorLeafPubKey(descriptor) };
+    const signer = await contractSigner(wallet, descriptor);
+    return { descriptor, pubkey: await signer.xOnlyPublicKey() };
 }
 
 /**
@@ -168,6 +177,15 @@ export async function provisionClaimSecret(
  * wallet that answers with the wrong key — another seed's, after a restore
  * mix-up — would sign happily, and the failure would surface only as a
  * counterparty rejection or a dead script.
+ *
+ * Know its limit. It catches a wallet that substitutes its *baseline*
+ * identity, which is the failure this exists for. It cannot catch one that
+ * returns a descriptor-scoped identity built over the same descriptor, since
+ * such an identity reads its pubkey back out of the descriptor string and the
+ * comparison becomes a tautology. What rules that case out is
+ * {@link resolveDescriptorSigner}'s `isOurs` test, which both shipped wallets
+ * resolve through — so this is the backstop for a hand-rolled `IWallet`, not
+ * the primary guarantee.
  */
 export async function contractSigner(wallet: IWallet, descriptor: string): Promise<Identity> {
     const signer = isHDWalletCapable(wallet)
