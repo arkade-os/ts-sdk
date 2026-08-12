@@ -332,6 +332,32 @@ export class ExpoWallet implements IWallet {
         return this.wallet.getContractManager();
     }
 
+    // Descriptor surface, delegated like everything else here. Without these
+    // the structural probes see a wallet with no HD state, so an Expo wallet
+    // running `walletMode: 'hd'` would bind every artifact to its baseline
+    // identity key — reusing one key across swaps while its receive addresses
+    // rotate, and never allocating the indices a restore scan looks for.
+
+    getCurrentSigningDescriptor(): Promise<string | undefined> {
+        return this.wallet.getCurrentSigningDescriptor();
+    }
+
+    getNextSigningDescriptor(): Promise<string | undefined> {
+        return this.wallet.getNextSigningDescriptor();
+    }
+
+    getUsedSigningDescriptors(opts?: { lookAhead?: number }): Promise<string[]> {
+        return this.wallet.getUsedSigningDescriptors(opts);
+    }
+
+    advanceSigningDescriptorWatermark(descriptor: string): Promise<void> {
+        return this.wallet.advanceSigningDescriptorWatermark(descriptor);
+    }
+
+    signerForDescriptor(descriptor: string): Promise<Identity> {
+        return this.wallet.signerForDescriptor(descriptor);
+    }
+
     /**
      * Wallet-level provider-connection freshness, delegated to the wrapped
      * in-process wallet. Synchronous because the Expo foreground wallet is

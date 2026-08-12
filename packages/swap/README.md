@@ -303,8 +303,7 @@ import {
     awaitOnchainFill,
     claimOnchainFill,
     addAssetSwap,
-    preimageForRfqSecrets,
-    rfqSecretsToRecord,
+    swapSecretsToRecord,
 } from "@arkade-os/swap";
 
 const swap = await requestOnchainSend(wallet, arkServerUrl, httpTransport(solverUrl), {
@@ -323,7 +322,7 @@ await addAssetSwap(repository, {
     swapPkScript: hex.encode(swap.swapPkScript),
     htlcPkScriptHex: hex.encode(swap.htlc.pkScript),
     htlcLocktime: swap.htlc.refundLocktime,
-    ...rfqSecretsToRecord(swap.secrets),
+    ...swapSecretsToRecord(swap.secrets),
 });
 await wallet.send({ address: swap.address, amount: swap.fundAmount });
 
@@ -333,7 +332,7 @@ const utxo = await awaitOnchainFill(chain, swap.htlc, minConfirmations);
 await claimOnchainFill(chain, {
     htlc: swap.htlc,
     utxo,
-    preimage: await preimageForRfqSecrets(wallet, swap.secrets),
+    preimage: swap.secrets.preimage,
     payoutPkScript,
     feeRateSatVb,
     sign,
@@ -512,26 +511,33 @@ after heavy swap use.
 
 The package is pre-release; these notes replace a changelog for consumers tracking the branch.
 
-- **`randomSwapSecrets` and the stored-secrets arm are gone; the wallet is the only key source.**
-  `deriveSwapSecrets(wallet, { preimage })` answers for every wallet (HD → fresh descriptor,
-  static → its identity's `tr(pubkey)`) and `SwapSecrets` is one shape — `{ signingDescriptor,
-preimage? }` — with no `derivable` discriminant and no `AssetSwap.fallbackSecrets`. No swap
-  record ever carries a private key. Static-descriptor swaps that need a preimage store a random
-  per-swap `preimageHex` instead of deriving one (a static key would derive the same preimage for
-  every swap). Core `Wallet.signerForDescriptor` now **throws `ForeignDescriptorError`** for a key
-  the wallet does not hold instead of silently answering with the baseline identity;
-  `senderIdentityForRfqSecrets` verifies the returned signer's key against the descriptor, so a
-  wrong-key signer is refused at resolution, not at the solver.
+- **`secrets.ts` is gone; key provisioning moved into `@arkade-os/sdk`.** This package no longer
+  derives, mints, or names keys. It asks the SDK for what the leg needs — `provisionRefundKey(wallet)`
+  for a leg it funds, `provisionClaimSecret(wallet, { preimage? })` for one it claims — and
+  recovers with `contractSigner(wallet, descriptor)` / `contractPreimage(wallet, descriptor,
+stored?)`. The returned `ProvisionedKey` / `ProvisionedClaimSecret` replace `SwapSecrets`, and
+  `descriptor` replaces `signingDescriptor` on them. Removed from this package with no
+  replacement here: `deriveSwapSecrets`, `randomSwapSecrets`, `senderPubkeyForRfqSecrets`,
+  `preimageForRfqSecrets`, `senderIdentityForRfqSecrets`, `isPerSwapDescriptor`, `derivePreimage`,
+  `buildPreimageMessage`, `RFQ_PREIMAGE_TAG`, `isDeterministicSigner`, `adoptSwapDescriptor` (now
+  `adoptContractDescriptor` in the SDK), `SwapSecrets` / `DerivedSwapSecrets` /
+  `StoredSwapSecrets`, and `rfqSecretsToRecord` / `rfqSecretsOfRecord` — persist a provisioned
+  secret with **`swapSecretsToRecord`** from `store` instead, and read P back with
+  `contractPreimage`. `RefundNotLocallyPossibleError` and `senderIdentityForSwapRecord` stay here
+  (now in `refundBlocked.ts`): they are swap lifecycle, not key provisioning.
+- **No swap record can carry a private key.** `AssetSwap.fallbackSecrets` and the
+  `AssetSwapFallbackSecrets` types are deleted rather than kept readable, and `preimageHex` — set
+  only when the wallet reports `mustPersistPreimage` — is the record's one secret field. A record
+  written by 0.0.1–0.0.3 carries no `signingDescriptor`, so `senderIdentityForSwapRecord` refuses
+  it with `no-secrets` rather than silently mis-signing; those versions shipped before any
+  consumer, which is the window for doing this without a secret migration.
 - **`requestLightningSend` / `requestOnchainSend` return `secrets`, not top-level raw key material.**
   `senderPrivateKey` is gone from both return types; caller-owned onchain preimages live inside
   `secrets` and must be persisted with the record. `pushRefundWithoutReceiver` /
   `refundIfUnresolved` take `sender: Identity` instead of `senderPrivateKey: Uint8Array` — build
   it from the record with `senderIdentityForSwapRecord`, which is what keeps a wallet that cannot
-  sign reporting `RefundNotLocallyPossibleError` rather than a `TypeError` at the push site;
-  `senderIdentityForRfqSecrets` is for callers that already hold resolved secrets. `AssetSwap`
-  gains `signingDescriptor?` and `preimageHex?`. Landed while the package is unpublished and
-  consumer-free, which is the whole window for doing it: after a consumer ships, the same change
-  becomes a secret migration across every deployed wallet.
+  sign reporting `RefundNotLocallyPossibleError` rather than a `TypeError` at the push site.
+  `AssetSwap` gains `signingDescriptor?` and `preimageHex?`.
 - **Every derived address changed, in both corridors.** The lightning-send lockup moved from the
   3-leaf program-artifact VHTLC to the 8-leaf `VHTLC.ScriptV2` (non-interactive claim and refund
   leaves), and the L1 HTLC's claim leaf gained a `SIZE 32 EQUALVERIFY` preimage-length guard. Both

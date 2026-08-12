@@ -23,13 +23,11 @@ import { hex } from "@scure/base";
 import {
     Identity,
     ReadonlyIdentity,
-    isHDCapableIdentity,
     type SerializedIdentity,
     type LegacySerializedIdentity,
     serializeReadonlyIdentity,
     serializeSigningIdentity,
 } from "../../identity";
-import { HDDescriptorProvider } from "../hdDescriptorProvider";
 import type { HDWalletCapable, HDAllocationCapable } from "../hdWalletCapable";
 import { resolveDescriptorSigner } from "../hdWalletCapable";
 import { WalletRepository } from "../../repositories/walletRepository";
@@ -1807,17 +1805,21 @@ export class ServiceWorkerWallet
     /**
      * @see HDWalletCapable.signerForDescriptor
      *
-     * Runs page-side: an Identity cannot cross the message bus, and it does
-     * not need to — the page owns the signing identity, and derivation reads
-     * no allocation state. Shares {@link resolveDescriptorSigner} with
-     * {@link Wallet.signerForDescriptor} so the two sides of the bus cannot
-     * answer differently for one descriptor.
+     * Runs page-side: an `Identity` cannot cross the message bus, and it does
+     * not need to — the page owns the signing identity, and resolving a
+     * descriptor reads no allocation state. Shares
+     * {@link resolveDescriptorSigner} with {@link Wallet.signerForDescriptor}
+     * so the two sides of the bus cannot answer differently for one
+     * descriptor.
+     *
+     * No provider is passed, and none is needed: `HDDescriptorProvider`'s
+     * `isOurs` and signing members all delegate to the identity, which the
+     * page holds. Building one here would only add a page-side read of the
+     * wallet state the worker allocates from — shared mutable state on a path
+     * that has no business touching it.
      */
     async signerForDescriptor(descriptor: string): Promise<Identity> {
-        const provider = isHDCapableIdentity(this.identity)
-            ? await HDDescriptorProvider.create(this.identity, this.walletRepository)
-            : undefined;
-        return resolveDescriptorSigner(descriptor, this.identity, provider);
+        return resolveDescriptorSigner(descriptor, this.identity);
     }
 
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {
