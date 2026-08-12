@@ -62,6 +62,8 @@ export type ClaimArkProvider = RefundArkProvider;
  * HTLC in full.
  */
 export class LockupAmountMismatchError extends Error {
+    readonly name = "LockupAmountMismatchError";
+    readonly reason = "amount_mismatch";
     readonly expectedAmount: number;
     readonly lockedAmount: number;
     constructor(expectedAmount: number, lockedAmount: number) {
@@ -69,11 +71,31 @@ export class LockupAmountMismatchError extends Error {
             `lockup holds ${lockedAmount} sats, below the agreed ${expectedAmount} — ` +
                 "refusing to publish the preimage",
         );
-        this.name = "LockupAmountMismatchError";
         this.expectedAmount = expectedAmount;
         this.lockedAmount = lockedAmount;
     }
 }
+
+/**
+ * Refuse an amount the gate below cannot compare against — `rfq.ts`'s
+ * `assertFinite` rule, at the one threshold that lives outside that module.
+ *
+ * `NaN` and `undefined` both fail EVERY comparison, so neither one fails the
+ * value gate: they delete it, and `P` goes out for a dust lockup. Both are
+ * reachable despite the static types — `expectedAmount` arrives from the
+ * caller's persisted record, and the values are `Number()`d off the indexer's
+ * JSON. Unlike `assertFinite`, absence is refused here too: the field is
+ * required, so `undefined` means the record predates it, which is exactly the
+ * case that must not proceed.
+ */
+const assertFiniteAmount = (value: number, reason: string, label: string): void => {
+    if (Number.isFinite(value)) return;
+    const error = new Error(`${label} is not a finite number (${String(value)})`) as Error & {
+        reason: string;
+    };
+    error.reason = reason;
+    throw error;
+};
 
 /**
  * A signer that reveals a preimage when spending a condition leaf.
@@ -159,8 +181,16 @@ export async function pushClaim(
     // first-output check would miss the dust exactly as a first-output claim
     // would leave sats behind.
     const locked = input.vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
-    if (!input.partiallyClaimed && locked < input.expectedAmount) {
-        throw new LockupAmountMismatchError(input.expectedAmount, locked);
+    assertFiniteAmount(locked, "lockup_malformed", "the lockup's summed value");
+    // Ahead of the comparison, never inside it — and only on the path that
+    // compares: once `P` is public, refusing a partial claim over a record
+    // that predates `expectedAmount` would strand the remainder to protect
+    // nothing.
+    if (!input.partiallyClaimed) {
+        assertFiniteAmount(input.expectedAmount, "invalid_gate_input", "expectedAmount");
+        if (locked < input.expectedAmount) {
+            throw new LockupAmountMismatchError(input.expectedAmount, locked);
+        }
     }
 
     const committed = input.script.options.preimageHash;

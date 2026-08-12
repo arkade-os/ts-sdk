@@ -215,6 +215,41 @@ describe("pushClaim", () => {
         expect(ark.submitted).toHaveLength(0);
     });
 
+    // NaN and undefined fail every comparison, so an unchecked one does not
+    // fail the gate — it deletes it, and the dust claim above goes through.
+    it.each([
+        ["NaN", Number.NaN],
+        ["missing from an older record", undefined as unknown as number],
+    ])("refuses an expectedAmount that is %s instead of comparing against it", async (_, bad) => {
+        const ark = fakeArk();
+        await expect(
+            pushClaim(ark, {
+                script: swapScript(),
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+                vtxos: [{ txid: "44".repeat(32), vout: 0, value: 330, recoverable: false }],
+                destinationPkScript: DESTINATION_PK_SCRIPT,
+                expectedAmount: bad,
+            }),
+        ).rejects.toMatchObject({ reason: "invalid_gate_input" });
+        expect(ark.submitted).toHaveLength(0);
+    });
+
+    it("refuses a lockup whose indexed value is not a number", async () => {
+        const ark = fakeArk();
+        await expect(
+            pushClaim(ark, {
+                script: swapScript(),
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+                vtxos: [{ txid: "44".repeat(32), vout: 0, value: Number.NaN, recoverable: false }],
+                destinationPkScript: DESTINATION_PK_SCRIPT,
+                expectedAmount: EXPECTED_AMOUNT,
+            }),
+        ).rejects.toMatchObject({ reason: "lockup_malformed" });
+        expect(ark.submitted).toHaveLength(0);
+    });
+
     it("sums across outputs and tolerates overfunding", async () => {
         // VTXOS is 60_000 + 40_000: neither output covers the amount alone.
         const split = fakeArk();
@@ -252,6 +287,19 @@ describe("pushClaim", () => {
             partiallyClaimed: true,
         });
         expect(result.amount).toBe(1_000);
+
+        // Including one whose record predates the field: `P` is already
+        // public, so refusing here would strand the remainder for nothing.
+        const older = await pushClaim(fakeArk(), {
+            script: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: [{ txid: "55".repeat(32), vout: 0, value: 1_000, recoverable: false }],
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: undefined as unknown as number,
+            partiallyClaimed: true,
+        });
+        expect(older.amount).toBe(1_000);
     });
 
     it("refuses a swept output before the amount is even considered", async () => {
