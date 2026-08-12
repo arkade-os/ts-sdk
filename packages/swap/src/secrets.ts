@@ -17,29 +17,21 @@
  *   would learn every other swap's. Those swaps carry a random preimage
  *   stored on the record instead: one per-swap secret at rest, and never a
  *   private key.
- *
- * Records written by older SDKs may carry `fallbackSecrets` with a stored
- * sender private key. Those remain readable ({@link rfqSecretsOfRecord},
- * {@link senderIdentityForRfqSecrets}) so existing swaps stay refundable, but
- * nothing here produces them anymore.
  */
 import { hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { randomBytes } from "@noble/hashes/utils.js";
-import { schnorr } from "@noble/curves/secp256k1.js";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 import {
     Identity,
     IWallet,
     ReadonlyIdentity,
-    SingleKey,
     deriveDescriptorLeafPubKey,
     isHDAllocationCapable,
     isHDWalletCapable,
     normalizeToDescriptor,
     parseHDDescriptor,
 } from "@arkade-os/sdk";
-import type { AssetSwapFallbackSecrets } from "./store";
 
 /**
  * Domain separator for the preimage derivation.
@@ -92,15 +84,15 @@ export function isPerSwapDescriptor(descriptor: string): boolean {
 }
 
 /**
- * The wallet-provided secrets for one swap. Persist `signingDescriptor` (and
- * `preimage`, when present) on the swap record.
+ * The wallet-provided secrets for one swap. Persist both fields on the swap
+ * record.
  *
- * The sender key is never at rest: it re-derives from the wallet via the
- * descriptor. The `preimage` field is at rest only for swaps whose descriptor
- * is not per-swap (static wallets) or whose preimage the caller supplied.
+ * The sender key is never among them: it re-derives from the wallet through
+ * `signingDescriptor`, which is public. `preimage` is the only secret this
+ * package ever puts at rest, and only when it cannot be re-derived — the
+ * caller supplied it, or the descriptor is shared across swaps.
  */
-export interface DerivedSwapSecrets {
-    derivable: true;
+export interface SwapSecrets {
     /** Public. Persist it on the swap record; it is what restore keys off. */
     signingDescriptor: string;
     /**
@@ -110,25 +102,6 @@ export interface DerivedSwapSecrets {
      */
     preimage?: Uint8Array;
 }
-
-/**
- * Legacy arm: older SDKs stored a random sender key when the wallet could
- * not allocate. Kept for reading existing records only — nothing produces
- * this anymore.
- */
-export interface StoredSwapSecrets {
-    derivable: false;
-    senderPrivateKey: Uint8Array;
-    /** Onchain-send only. A lightning send's preimage belongs to the payee. */
-    preimage?: Uint8Array;
-}
-
-/**
- * Which arm a swap got. The discriminant makes the persistence obligation a
- * type-level fact: a consumer written against {@link DerivedSwapSecrets} alone
- * fails to compile when handed the stored arm.
- */
-export type SwapSecrets = DerivedSwapSecrets | StoredSwapSecrets;
 
 /**
  * Ask the wallet for one swap's secrets. Always answers, and never mints a
@@ -154,7 +127,7 @@ export type SwapSecrets = DerivedSwapSecrets | StoredSwapSecrets;
 export async function deriveSwapSecrets(
     wallet: IWallet,
     opts: { preimage?: boolean | Uint8Array } = {},
-): Promise<DerivedSwapSecrets> {
+): Promise<SwapSecrets> {
     if (opts.preimage instanceof Uint8Array && opts.preimage.length !== 32) {
         // The HTLC claim leaf pins OP_SIZE 32: any other length is unclaimable.
         throw new Error(`preimage must be 32 bytes, got ${opts.preimage.length}`);
@@ -168,70 +141,41 @@ export async function deriveSwapSecrets(
         allocated ?? normalizeToDescriptor(hex.encode(await wallet.identity.xOnlyPublicKey()));
 
     if (opts.preimage instanceof Uint8Array) {
-        return { derivable: true, signingDescriptor, preimage: opts.preimage };
+        return { signingDescriptor, preimage: opts.preimage };
     }
     if (opts.preimage && !isPerSwapDescriptor(signingDescriptor)) {
         // Static key: a derived preimage would repeat across swaps. Mint one
         // for this swap only; the caller must persist it with the record.
-        return { derivable: true, signingDescriptor, preimage: randomBytes(32) };
+        return { signingDescriptor, preimage: randomBytes(32) };
     }
-    return { derivable: true, signingDescriptor };
+    return { signingDescriptor };
 }
 
 /**
- * Serialize or restore the secrets arm a persisted record describes. Normal
- * HD swaps store only `signingDescriptor`; static-descriptor swaps and
- * caller-supplied preimages add `preimageHex`; legacy fallback swaps use
- * `fallbackSecrets` so both P and the sender identity survive a restart.
+ * The record fields that carry a swap's secrets: the public descriptor, plus
+ * `preimageHex` for the swaps whose P cannot be re-derived.
  */
 export function rfqSecretsToRecord(secrets: SwapSecrets): {
-    signingDescriptor?: string;
+    signingDescriptor: string;
     preimageHex?: string;
-    fallbackSecrets?: AssetSwapFallbackSecrets;
 } {
-    if (secrets.derivable) {
-        return {
-            signingDescriptor: secrets.signingDescriptor,
-            ...(secrets.preimage ? { preimageHex: hex.encode(secrets.preimage) } : {}),
-        };
-    }
     return {
-        fallbackSecrets: {
-            version: 1,
-            type: "stored",
-            senderPrivateKeyHex: hex.encode(secrets.senderPrivateKey),
-            ...(secrets.preimage ? { preimageHex: hex.encode(secrets.preimage) } : {}),
-        },
+        signingDescriptor: secrets.signingDescriptor,
+        ...(secrets.preimage ? { preimageHex: hex.encode(secrets.preimage) } : {}),
     };
 }
 
 export function rfqSecretsOfRecord(record: {
     signingDescriptor?: string;
     preimageHex?: string;
-    fallbackSecrets?: AssetSwapFallbackSecrets;
 }): SwapSecrets | undefined {
-    if (record.signingDescriptor) {
-        return {
-            derivable: true,
-            signingDescriptor: record.signingDescriptor,
-            ...(record.preimageHex
-                ? { preimage: decodeHex32(record.preimageHex, "preimageHex") }
-                : {}),
-        };
-    }
-    // Total on purpose: consumers call this while iterating swap history, where
-    // a throw on one record would abort the whole loop.
-    const fallback = record.fallbackSecrets;
-    if (!fallback) return undefined;
-    if (fallback.version !== 1 || fallback.type !== "stored") {
-        throw new Error("unsupported RFQ fallback secrets record");
-    }
+    // Total on purpose: consumers call this while iterating swap history,
+    // which includes offer-corridor records that carry no secrets at all, and
+    // a throw on one would abort the whole loop.
+    if (!record.signingDescriptor) return undefined;
     return {
-        derivable: false,
-        senderPrivateKey: decodeHex32(fallback.senderPrivateKeyHex, "senderPrivateKeyHex"),
-        ...(fallback.preimageHex
-            ? { preimage: decodeHex32(fallback.preimageHex, "preimageHex") }
-            : {}),
+        signingDescriptor: record.signingDescriptor,
+        ...(record.preimageHex ? { preimage: decodeHex32(record.preimageHex, "preimageHex") } : {}),
     };
 }
 
@@ -264,12 +208,10 @@ export async function adoptSwapDescriptor(
 
 /** Why a wallet cannot produce a swap's sender key. Different instructions to
  * a user: restore the other wallet, or accept that this record never carried
- * the secrets at all. */
+ * a descriptor at all. */
 export type RefundBlockedReason =
-    /** The record names no arm: neither `signingDescriptor` nor `fallbackSecrets`. */
+    /** The record carries no `signingDescriptor`. */
     | "no-secrets"
-    /** It names an arm this version cannot read. */
-    | "unreadable-secrets"
     /** The descriptor belongs to another wallet's key. */
     | "foreign-descriptor";
 
@@ -306,7 +248,6 @@ export async function senderIdentityForRfqSecrets(
     wallet: IWallet,
     secrets: SwapSecrets,
 ): Promise<Identity> {
-    if (!secrets.derivable) return SingleKey.fromPrivateKey(secrets.senderPrivateKey);
     const refuse = (cause?: unknown) =>
         new RefundNotLocallyPossibleError(
             "foreign-descriptor",
@@ -341,42 +282,23 @@ export async function senderIdentityForRfqSecrets(
  *
  * The record→identity composition {@link rfqSecretsOfRecord} deliberately does
  * not do: it stays total so history iteration can call it, so *this* is where
- * "no secrets on the record" becomes a refusal rather than an `undefined` the
+ * a record with no descriptor becomes a refusal rather than an `undefined` the
  * caller has to remember to check.
  *
- * **Wire `refundArkade` here, not to {@link senderIdentityForRfqSecrets}.**
- * Only two of the three causes are throws; a caller one level down would skip
- * the third silently and turn it into a `TypeError` at the push site, which
- * `RfqSwapManager` then treats as retryable and grinds against for the whole
- * refund window.
- *
- * Takes the record shape structurally, matching {@link rfqSecretsOfRecord}, so
- * either record type can be passed.
+ * **Wire `refundArkade` here, not to {@link senderIdentityForRfqSecrets}.** A
+ * caller one level down skips that case silently and turns it into a
+ * `TypeError` at the push site, which `RfqSwapManager` then treats as
+ * retryable and grinds against for the whole refund window.
  */
 export async function senderIdentityForSwapRecord(
     wallet: IWallet,
-    record: {
-        signingDescriptor?: string;
-        preimageHex?: string;
-        fallbackSecrets?: AssetSwapFallbackSecrets;
-    },
+    record: { signingDescriptor?: string; preimageHex?: string },
 ): Promise<Identity> {
-    let secrets: SwapSecrets | undefined;
-    try {
-        secrets = rfqSecretsOfRecord(record);
-    } catch (error) {
-        throw new RefundNotLocallyPossibleError(
-            "unreadable-secrets",
-            error instanceof Error ? error.message : String(error),
-            // the record's own diagnosis, kept for a caller that wants more
-            // than the message
-            { cause: error },
-        );
-    }
+    const secrets = rfqSecretsOfRecord(record);
     if (!secrets) {
         throw new RefundNotLocallyPossibleError(
             "no-secrets",
-            "this swap record carries no signing descriptor and no fallback secrets",
+            "this swap record carries no signing descriptor",
         );
     }
     return senderIdentityForRfqSecrets(wallet, secrets);
@@ -387,7 +309,6 @@ export async function senderPubkeyForRfqSecrets(
     wallet: IWallet,
     secrets: SwapSecrets,
 ): Promise<Uint8Array> {
-    if (!secrets.derivable) return schnorr.getPublicKey(secrets.senderPrivateKey);
     return (await senderIdentityForRfqSecrets(wallet, secrets)).xOnlyPublicKey();
 }
 
@@ -424,10 +345,6 @@ export async function preimageForRfqSecrets(
     wallet: IWallet,
     secrets: SwapSecrets,
 ): Promise<Uint8Array> {
-    if (!secrets.derivable) {
-        if (!secrets.preimage) throw new Error("this swap carries no stored preimage");
-        return secrets.preimage;
-    }
     if (secrets.preimage) return secrets.preimage;
     if (!isPerSwapDescriptor(secrets.signingDescriptor)) {
         // A static descriptor is the same key for every swap, so deriving

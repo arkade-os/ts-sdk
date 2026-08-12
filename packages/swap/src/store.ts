@@ -17,22 +17,6 @@ export type AssetSwapStatus =
  * restore layers share one spelling instead of re-typing the literal. */
 export const BTC_ASSET_ID = "btc";
 
-/**
- * Legacy stored-secrets arm. Older SDKs minted a random sender key when the
- * wallet could not allocate a descriptor and persisted it here, plaintext.
- * Read-only since the wallet became the only key source: existing records
- * stay refundable, but nothing writes this shape anymore.
- */
-export interface AssetSwapFallbackSecretsV1 {
-    version: 1;
-    type: "stored";
-    senderPrivateKeyHex: string;
-    /** Onchain-send only. A lightning send's preimage belongs to the payee. */
-    preimageHex?: string;
-}
-
-export type AssetSwapFallbackSecrets = AssetSwapFallbackSecretsV1;
-
 // ponytail: records carry only chain-recoverable facts — no quote-time display
 // snapshot (tickers, fee bps, fiat value); add an optional snapshot field back
 // if a consumer must persist display metadata the restore scan cannot rebuild
@@ -80,13 +64,8 @@ export interface AssetSwap {
     signingDescriptor?: string;
     /** P, hex, when it cannot be re-derived from the seed: the user supplied
      * it, or the descriptor is static (shared across swaps, so a derived
-     * preimage would collide). */
+     * preimage would collide). The swap's only claim secret when present. */
     preimageHex?: string;
-    /**
-     * Legacy stored-arm secrets written by older SDKs — see
-     * {@link AssetSwapFallbackSecretsV1}. Read-only.
-     */
-    fallbackSecrets?: AssetSwapFallbackSecrets;
     /** The L1 HTLC's pkScript, hex — the chain-watch key. */
     htlcPkScriptHex?: string;
     htlcLocktime?: number;

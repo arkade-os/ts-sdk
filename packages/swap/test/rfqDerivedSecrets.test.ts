@@ -272,8 +272,6 @@ describe("requestLightningSend on an HD wallet", () => {
             invoice: INVOICE,
         });
 
-        expect(result.secrets.derivable).toBe(true);
-        expect(result).not.toHaveProperty("senderPrivateKey");
         // The covenant is bound to the allocated key, so the pubkey the solver
         // was given has to be the descriptor's.
         const signer = await (
@@ -298,9 +296,7 @@ describe("requestOnchainSend on an HD wallet", () => {
             payoutPubkey: PAYOUT_PUBKEY,
         });
 
-        expect(result.secrets.derivable).toBe(true);
         expect(result).not.toHaveProperty("preimage");
-        expect(result).not.toHaveProperty("senderPrivateKey");
 
         // The quote was requested against sha256 of the derived preimage, and
         // the preimage re-derives from the returned descriptor alone.
@@ -340,8 +336,6 @@ describe("requestOnchainSend on an HD wallet", () => {
                 preimage,
             });
 
-            expect(result.secrets.derivable).toBe(true);
-            if (!result.secrets.derivable) throw new Error("expected derived secrets");
             expect(result.secrets.preimage).toEqual(preimage);
             expect(await preimageForRfqSecrets(wallet, result.secrets)).toEqual(preimage);
 
@@ -371,8 +365,6 @@ describe("requestOnchainSend on an HD wallet", () => {
                 preimage,
             });
 
-            expect(result.secrets.derivable).toBe(true);
-            if (!result.secrets.derivable) throw new Error("expected derived secrets");
             expect(result.secrets.signingDescriptor).toBe(
                 `tr(${hex.encode(await wallet.identity.xOnlyPublicKey())})`,
             );
@@ -406,9 +398,6 @@ describe("requestOnchainSend on an HD wallet", () => {
                 payoutPubkey: PAYOUT_PUBKEY,
             });
 
-            expect(first.secrets.derivable).toBe(true);
-            if (!first.secrets.derivable || !second.secrets.derivable)
-                throw new Error("expected derived secrets");
             // Same key for both swaps — that is the static policy — but the
             // stored preimages must never repeat.
             expect(second.secrets.signingDescriptor).toBe(first.secrets.signingDescriptor);

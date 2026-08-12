@@ -663,7 +663,6 @@ describe("requestLightningReceive on an HD wallet", () => {
         const flow = await lightningReceiveFlow();
         const result = await flow.run();
 
-        expect(result.secrets.derivable).toBe(true);
         expect(result.payAmount).toBe(5_000);
         // What the claim gate compares against is the side that LANDS.
         expect(result.expectedAmount).toBe(4_950);

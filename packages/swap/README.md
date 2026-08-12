@@ -355,11 +355,9 @@ Crash recovery is record-driven, not chain-driven: `classifyOnchainHtlc` re-deri
 state (unfunded / awaiting confirmations / claimable / refundable / claimed-with-P / swept) from
 `ChainSource` plus the stored outpoint — without the stored record a spent HTLC is
 indistinguishable from an unfunded one, which is why persisting before funding is mandatory. The
-`AssetSwap` record carries the onchain fields (`paymentHash`, `signingDescriptor`,
-`preimageHex` for caller-supplied P, `fallbackSecrets`, `htlcPkScriptHex`, `htlcLocktime`,
-`l1Txid`) and the statuses `awaiting_fill / claimable / claimed / refunded_l1`.
-`fallbackSecrets` is versioned and discriminated: `{ version: 1, type: "stored",
-senderPrivateKeyHex, preimageHex? }`.
+`AssetSwap` record carries the onchain fields (`paymentHash`, `signingDescriptor`, `preimageHex`
+for a P that cannot be re-derived, `htlcPkScriptHex`, `htlcLocktime`, `l1Txid`) and the statuses
+`awaiting_fill / claimable / claimed / refunded_l1`.
 
 **On-board corridors are covered.** `requestLightningReceive` (`lightning:BTC -> arkade:BTC`) and
 `requestOnchainReceive` (`onchain:BTC -> arkade:BTC`) mirror the send-side flows: quote → derive
@@ -431,11 +429,10 @@ through `wallet.signerForDescriptor()`.
 
 What each swap stores, and what is recoverable:
 
-| Wallet answers with     | Sender key            | Preimage (when the swap needs one) | Secret at rest        |
-| ----------------------- | --------------------- | ---------------------------------- | --------------------- |
-| fresh HD descriptor     | re-derives from seed  | derives deterministically          | none                  |
-| static `tr(pubkey)`     | the wallet's identity | random, stored on the record       | the preimage only     |
-| (legacy records)        | stored private key    | stored                             | key + preimage (read-only) |
+| Wallet answers with | Sender key            | Preimage (when the swap needs one) | Secret at rest    |
+| ------------------- | --------------------- | ---------------------------------- | ----------------- |
+| fresh HD descriptor | re-derives from seed  | derives deterministically          | none              |
+| static `tr(pubkey)` | the wallet's identity | random, stored on the record       | the preimage only |
 
 The preimage split follows the **descriptor's shape**, not the wallet's type: an HD child
 descriptor is unique to its swap, so `sha256(sign_det(...))` is safe; a static descriptor is the
@@ -445,9 +442,9 @@ A stored preimage is the one secret at rest in the design, and it is never a pri
 
 ```ts
 const swap = await requestOnchainSend(/* … */);
-// Always persist it. On an HD wallet it is just `{ derivable: true,
-// signingDescriptor }` and holds nothing secret; on a static wallet it also
-// carries `preimage`, which is the swap's only claim secret.
+// Always persist it. On an HD wallet it is just `{ signingDescriptor }` and
+// holds nothing secret; on a static wallet it also carries `preimage`, which
+// is the swap's only claim secret.
 await saveSwap({ ...record, ...rfqSecretsToRecord(swap.secrets) });
 
 // Later, from the seed plus that descriptor. Guard the lookup: offer-corridor
@@ -475,12 +472,7 @@ terminal: the lockup stays funded and watched, a solver claim still ends the swa
 `pending`. The manager reports the same state when nothing is wired to act (`enableAutoActions:
 false`, or no callbacks) and the window has passed.
 
-`derivable: false` is a **legacy read-only arm**: records written by older SDKs that minted a
-random sender key when the wallet could not allocate, stored under `AssetSwap.fallbackSecrets`.
-Reading them keeps those swaps refundable; nothing produces them anymore — a wallet that cannot
-allocate now contributes its identity key instead. The discriminant is a type-level fact, so a
-consumer written against the derivable arm alone will not compile against the fallback. A
-caller-supplied preimage keeps `signingDescriptor` for the sender key and stores only
+A caller-supplied preimage keeps `signingDescriptor` for the sender key and stores only
 `preimageHex` as secret material.
 
 On an HD wallet each swap **allocates** its own descriptor rather than peeking at the current one:
@@ -511,16 +503,16 @@ after heavy swap use.
 
 The package is pre-release; these notes replace a changelog for consumers tracking the branch.
 
-- **`randomSwapSecrets` is gone; the wallet is the only key source.** `deriveSwapSecrets` now
-  answers for every wallet (HD → fresh descriptor, static → its identity's `tr(pubkey)`, and the
-  same for wallets without the descriptor API) and takes the preimage options `randomSwapSecrets`
-  used to: `deriveSwapSecrets(wallet, { preimage })`. New swaps never carry a stored sender key —
-  `fallbackSecrets` is read-only for records older SDKs wrote. Static-descriptor swaps that need a
-  preimage store a random per-swap `preimageHex` instead of deriving one (a static key would
-  derive the same preimage for every swap). Core `Wallet.signerForDescriptor` now **throws
-  `ForeignDescriptorError`** for a key the wallet does not hold instead of silently answering with
-  the baseline identity; `senderIdentityForRfqSecrets` verifies the returned signer's key against
-  the descriptor, so a wrong-key signer is refused at resolution, not at the solver.
+- **`randomSwapSecrets` and the stored-secrets arm are gone; the wallet is the only key source.**
+  `deriveSwapSecrets(wallet, { preimage })` answers for every wallet (HD → fresh descriptor,
+  static → its identity's `tr(pubkey)`) and `SwapSecrets` is one shape — `{ signingDescriptor,
+preimage? }` — with no `derivable` discriminant and no `AssetSwap.fallbackSecrets`. No swap
+  record ever carries a private key. Static-descriptor swaps that need a preimage store a random
+  per-swap `preimageHex` instead of deriving one (a static key would derive the same preimage for
+  every swap). Core `Wallet.signerForDescriptor` now **throws `ForeignDescriptorError`** for a key
+  the wallet does not hold instead of silently answering with the baseline identity;
+  `senderIdentityForRfqSecrets` verifies the returned signer's key against the descriptor, so a
+  wrong-key signer is refused at resolution, not at the solver.
 - **`requestLightningSend` / `requestOnchainSend` return `secrets`, not top-level raw key material.**
   `senderPrivateKey` is gone from both return types; caller-owned onchain preimages live inside
   `secrets` and must be persisted with the record. `pushRefundWithoutReceiver` /
@@ -528,10 +520,9 @@ The package is pre-release; these notes replace a changelog for consumers tracki
   it from the record with `senderIdentityForSwapRecord`, which is what keeps a wallet that cannot
   sign reporting `RefundNotLocallyPossibleError` rather than a `TypeError` at the push site;
   `senderIdentityForRfqSecrets` is for callers that already hold resolved secrets. `AssetSwap`
-  gains `signingDescriptor?`,
-  `preimageHex?`, and complete stored-arm `fallbackSecrets?`. Landed while the package is
-  unpublished and consumer-free, which is the whole window for doing it: after a consumer ships,
-  the same change becomes a secret migration across every deployed wallet.
+  gains `signingDescriptor?` and `preimageHex?`. Landed while the package is unpublished and
+  consumer-free, which is the whole window for doing it: after a consumer ships, the same change
+  becomes a secret migration across every deployed wallet.
 - **Every derived address changed, in both corridors.** The lightning-send lockup moved from the
   3-leaf program-artifact VHTLC to the 8-leaf `VHTLC.ScriptV2` (non-interactive claim and refund
   leaves), and the L1 HTLC's claim leaf gained a `SIZE 32 EQUALVERIFY` preimage-length guard. Both
@@ -550,11 +541,11 @@ scanned? })` — the server key is required because a spend is classified by reb
   indistinguishable from a fill. Leaves have no such failure mode.
 - **A spend that cannot be classified is no longer restored as `fulfilled`.** It leaves the funding
   txid unanswered so a later scan decides it. Records are never written on a guess.
-- **`AssetSwap` gained the secret-bearing `signingDescriptor?` / `fallbackSecrets?` fields**, and
-  `preimageHex` narrowed from "the claim preimage P" to "caller-supplied P only". The repository
-  version stays `1` — the package is unreleased, so there is no stored record to migrate — but a
-  field-mapped backend must persist the record whole: silently dropping `fallbackSecrets` on write
-  loses the stored arm's claim and refund keys.
+- **`AssetSwap` gained `signingDescriptor?`**, and `preimageHex` now means "P that cannot be
+  re-derived" — caller-supplied, or minted for a static descriptor. The repository version stays
+  `1` — the package is unreleased, so there is no stored record to migrate — but a field-mapped
+  backend must persist the record whole: silently dropping `preimageHex` leaves a static swap
+  permanently unclaimable.
 - **A write that gates something irreversible throws; one that follows it does not.**
   `addAssetSwap` and `updateAssetSwap` throw on a failed read or write — nothing irreversible may
   happen until the record is durable, which is why `cancelOffer` writes its `cancelling` marker

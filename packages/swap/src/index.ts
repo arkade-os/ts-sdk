@@ -25,7 +25,6 @@ export {
     updateAssetSwap,
     updateAssetSwapBestEffort,
     type AssetSwap,
-    type AssetSwapFallbackSecrets,
     type AssetSwapStatus,
 } from "./store";
 export {
@@ -145,10 +144,8 @@ export {
     senderIdentityForRfqSecrets,
     senderIdentityForSwapRecord,
     senderPubkeyForRfqSecrets,
-    type DerivedSwapSecrets,
     type DeterministicSigner,
     type RefundBlockedReason,
-    type StoredSwapSecrets,
     type SwapSecrets,
 } from "./secrets";
 export {

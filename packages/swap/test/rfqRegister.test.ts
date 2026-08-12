@@ -243,15 +243,9 @@ describe.each([
         // script-level facts and belong in `params`; nothing else does.
         const { wallet, created } = recordingWallet();
         const result = await request(wallet);
-        const secrets = result.secrets as {
-            derivable: boolean;
-            senderPrivateKey?: Uint8Array;
-            preimage?: Uint8Array;
-        };
-
         // The sender key is the wallet's — no minted key exists to leak.
-        expect(secrets.derivable).toBe(true);
-        expect(secrets.senderPrivateKey).toBeUndefined();
+        const secrets = result.secrets;
+        expect(secrets).not.toHaveProperty("senderPrivateKey");
 
         const serialized = JSON.stringify(created[0]);
         const forbidden = [

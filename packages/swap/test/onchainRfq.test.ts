@@ -292,12 +292,8 @@ describe("store — onchain records", () => {
             createdAt: 1,
             pair: ONCHAIN_SEND_PAIR,
             paymentHash: PAYMENT_HASH,
-            fallbackSecrets: {
-                version: 1,
-                type: "stored",
-                senderPrivateKeyHex: "11".repeat(32),
-                preimageHex: hex.encode(PREIMAGE),
-            },
+            signingDescriptor: `tr(${"ab".repeat(32)})`,
+            preimageHex: hex.encode(PREIMAGE),
             htlcPkScriptHex: "5120bb",
             htlcLocktime: HTLC_LOCKTIME,
         } as unknown as AssetSwap;
