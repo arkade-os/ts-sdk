@@ -255,11 +255,16 @@ export const nostrRfqTransport = (options: NostrRfqOptions): RfqTransport => {
 
         async close() {
             closed = true;
-            subscription.close();
             waiters.clear();
             // Only tear down a pool this transport created; a shared one belongs
-            // to the caller and may still be serving other swaps.
+            // to the caller and may still be serving other swaps. On an owned
+            // pool, `pool.close()` already ends every subscription on those
+            // relays — closing the subscription first as well sends a CLOSE
+            // frame on a socket the pool is about to close, and the browser
+            // logs "WebSocket is already in CLOSING or CLOSED state" on every
+            // negotiation. One teardown path each, per ownership.
             if (ownsPool) pool.close(relays);
+            else subscription.close();
         },
     };
 };
