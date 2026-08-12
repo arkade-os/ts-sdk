@@ -77,6 +77,11 @@ localStorage adapter to write:
     `swapMarkets-*` entries are orphaned — one cold refetch, and the data migration in §3
     can delete them alongside the swap keys.
 - `makeCachedFeedFetch()` is unchanged (it now also accepts `(ttlMs, fetchImpl)`).
+- The emulator co-signer key positional is gone from every covenant-building entrypoint:
+  `createOffer(wallet, arkUrl, emulatorPubkey, params)` → `createOffer(wallet, arkUrl, params)`,
+  and `request*(wallet, arkUrl, emulatorPubkey, transport, params)` →
+  `request*(wallet, arkUrl, transport, params)`. The SDK resolves the key from its per-network
+  pin; `params.emulatorPubkey` overrides it (see the README).
 - `createOffer` no longer returns `payload`; it returns the send-ready `extension` instead. In
   `providers/assetSwaps.tsx`: `extensions: [{ type: OFFER_PACKET_TYPE, payload: offer.payload }]`
   → `extensions: [offer.extension]` (the `OFFER_PACKET_TYPE` import can go).

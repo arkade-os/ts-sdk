@@ -68,6 +68,7 @@ const SERVER = key(3);
 const SOLVER = key(1);
 const RECEIVER_PK_SCRIPT = p2tr(key(1));
 const EMULATOR_PUBKEY = key(9);
+const EMULATOR_PUBKEY_HEX = "02" + hex.encode(EMULATOR_PUBKEY);
 const PAYOUT_PUBKEY = key(15);
 const HTLC_PUBKEY = key(11);
 const REFUND_ADDRESS = new ArkAddress(SERVER, key(21), "tark").encode();
@@ -194,12 +195,14 @@ const recordingWallet = (
 };
 
 const lightningSend = (wallet: IWallet) =>
-    requestLightningSend(wallet, "http://ark", EMULATOR_PUBKEY, lightningTransport(), {
+    requestLightningSend(wallet, "http://ark", lightningTransport(), {
+        emulatorPubkey: EMULATOR_PUBKEY_HEX,
         invoice: INVOICE,
     });
 
 const onchainSend = (wallet: IWallet) =>
-    requestOnchainSend(wallet, "http://ark", EMULATOR_PUBKEY, onchainTransport(), {
+    requestOnchainSend(wallet, "http://ark", onchainTransport(), {
+        emulatorPubkey: EMULATOR_PUBKEY_HEX,
         amount: 100_000,
         amountSide: "to",
         payoutPubkey: PAYOUT_PUBKEY,

@@ -71,6 +71,7 @@ const PAYMENT_HASH = hex.encode(sha256(PREIMAGE));
 const SERVER = key(3);
 const SOLVER = key(1);
 const EMULATOR_PUBKEY = key(9);
+const EMULATOR_PUBKEY_HEX = "02" + hex.encode(EMULATOR_PUBKEY);
 const TRADER_PAYOUT_PUBKEY = key(13);
 const SOLVER_REFUND_PK_SCRIPT = p2tr(key(8));
 const L1_REFUND_PUBKEY = key(7);
@@ -646,7 +647,8 @@ const lightningReceiveFlow = async (
         seen,
         createContract,
         run: () =>
-            requestLightningReceive(wallet, "http://ark", EMULATOR_PUBKEY, transport, {
+            requestLightningReceive(wallet, "http://ark", transport, {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 amount: 5_000,
                 amountSide: "from",
                 covclaimdPubkey: COVCLAIMD_PK,
@@ -819,18 +821,13 @@ describe("requestOnchainReceive on an HD wallet", () => {
             async close() {},
         };
 
-        const result = await requestOnchainReceive(
-            wallet,
-            "http://ark",
-            EMULATOR_PUBKEY,
-            transport,
-            {
-                amount: 100_000,
-                amountSide: "from",
-                refundPubkey: L1_REFUND_PUBKEY,
-                covclaimdPubkey: COVCLAIMD_PK,
-            },
-        );
+        const result = await requestOnchainReceive(wallet, "http://ark", transport, {
+            emulatorPubkey: EMULATOR_PUBKEY_HEX,
+            amount: 100_000,
+            amountSide: "from",
+            refundPubkey: L1_REFUND_PUBKEY,
+            covclaimdPubkey: COVCLAIMD_PK,
+        });
 
         expect(result.fundAmount).toBe(100_000);
         expect(result.expectedAmount).toBe(99_000);

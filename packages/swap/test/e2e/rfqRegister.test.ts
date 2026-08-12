@@ -25,8 +25,8 @@ import {
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    REGTEST_EMULATOR_PUBKEY,
     RestArkProvider,
-    RestEmulatorProvider,
     RestIndexerProvider,
     SingleKey,
     Wallet,
@@ -45,7 +45,6 @@ import {
 } from "../../src";
 
 const ARK_URL = "http://localhost:7070";
-const EMULATOR_URL = "http://localhost:7073";
 const ESPLORA_API_URL = "http://localhost:3000/api";
 const arkdExec = "docker exec -t arkd";
 
@@ -168,10 +167,9 @@ beforeAll(async () => {
     claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
     hrp = ArkAddress.decode(address).hrp;
 
-    // Stands in for the one-time, out-of-band read of the solver's registry
-    // card that a real integration does before ever calling this.
-    const emulatorInfo = await new RestEmulatorProvider(EMULATOR_URL).getInfo();
-    emulatorPubkey = xOnly(hex.decode(emulatorInfo.signerPubkey));
+    // the pinned regtest key: the stub solver derives with the same default
+    // `requestLightningSend` resolves internally
+    emulatorPubkey = xOnly(hex.decode(REGTEST_EMULATOR_PUBKEY));
 }, 120_000);
 
 describe("RFQ lockup registration (regtest)", () => {
@@ -179,7 +177,7 @@ describe("RFQ lockup registration (regtest)", () => {
     let lockupScript: string;
 
     it("registers the lockup before the maker can fund it", async () => {
-        swap = await requestLightningSend(wallet, ARK_URL, emulatorPubkey, stubTransport(), {
+        swap = await requestLightningSend(wallet, ARK_URL, stubTransport(), {
             invoice: {
                 raw: "lnbcrt10u1p",
                 paymentHash: PAYMENT_HASH,

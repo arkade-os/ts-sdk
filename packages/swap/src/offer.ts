@@ -31,6 +31,8 @@ import {
     arkade,
     asset,
     getNetwork,
+    resolveEmulatorPubkey,
+    toXOnlySignerHex,
     type IWallet,
     type NetworkName,
 } from "@arkade-os/sdk";
@@ -81,8 +83,7 @@ export interface Offer {
  * change here changes the derived swap addresses — see the golden test). */
 function swapProgramBinding(offer: Omit<Offer, "swapPkScript">, serverPubkey: Uint8Array) {
     // a wrong-width script would bind a truncated makerWP into the covenant and
-    // only surface as an unspendable address once the user funds it — the same
-    // failure the xOnly guard below rejects for keys
+    // only surface as an unspendable address once the user funds it
     if (offer.makerPkScript.length !== FIELDS.makerPkScript.width) {
         throw new Error("makerPkScript is not a 34-byte taproot scriptPubKey");
     }
@@ -147,21 +148,6 @@ const NAMES = Object.fromEntries(Object.entries(FIELDS).map(([k, f]) => [f.tag, 
     number,
     FieldName
 >;
-
-/** Drop the prefix of a 33-byte compressed key; pass an x-only key through.
- * A malformed key would otherwise bind silently into the covenant and only
- * surface as an unspendable address once the user funds it. */
-const XONLY_LEN = 32;
-const xOnly = (key: Uint8Array, label: string): Uint8Array => {
-    // deliberately not FIELDS.makerPublicKey.width: this also normalizes the ark
-    // and emulator signer keys, which have no TLV record of their own — the two
-    // lengths agree by spec, not because one derives from the other
-    if (key.length === XONLY_LEN) return key;
-    if (key.length !== 33 || (key[0] !== 0x02 && key[0] !== 0x03)) {
-        throw new Error(`${label} is not a compressed or x-only public key`);
-    }
-    return key.slice(1);
-};
 
 function tlv(type: number, value: Uint8Array): Uint8Array {
     // the length prefix is u16 — reject rather than emit a truncated length
@@ -337,11 +323,11 @@ async function registerOfferContract(
  * you deposit, embedding the returned extension, and the solver does the rest:
  *
  *   // BTC -> asset
- *   const o = await createOffer(wallet, ARK, EMULATOR_PUBKEY, { wantAmount: 1000n, wantAsset })
+ *   const o = await createOffer(wallet, ARK, { wantAmount: 1000n, wantAsset })
  *   await wallet.send({ address: o.address, amount: 1000, extensions: [o.extension] })
  *
  *   // asset -> BTC (the sats are the VTXO carrier for the asset)
- *   const o = await createOffer(wallet, ARK, EMULATOR_PUBKEY, { wantAmount: 1000n, offerAsset })
+ *   const o = await createOffer(wallet, ARK, { wantAmount: 1000n, offerAsset })
  *   await wallet.send({ address: o.address, amount: 500,
  *                       assets: [{ assetId, amount: 1000n }],
  *                       extensions: [o.extension] })
@@ -357,17 +343,14 @@ async function registerOfferContract(
 export async function createOffer(
     wallet: IWallet,
     arkServerUrl: string,
-    /** Covenant co-signer (emulator) x-only key — the SOLVER's deployment,
-     * not the user's. This library does NOT fetch or verify it: clients
-     * have no network path to the emulator, only the solver and covclaimd
-     * do. The caller must obtain this out-of-band, before calling this
-     * function, from the solver's signed registry/corridor card (its
-     * `emulator_pubkey`, added in arkade-os/solver-registry#18) or an
-     * equivalent source it
-     * independently trusts, and is responsible for having checked it
-     * against that trusted value itself. */
-    emulatorPubkey: Uint8Array,
-    params: { wantAmount: bigint; wantAsset?: asset.AssetId; offerAsset?: asset.AssetId },
+    params: {
+        wantAmount: bigint;
+        wantAsset?: asset.AssetId;
+        offerAsset?: asset.AssetId;
+        /** Co-signer key override (33-byte compressed hex); see
+         * {@link resolveEmulatorPubkey}. */
+        emulatorPubkey?: string;
+    },
 ): Promise<{
     /** The encoded offer, hex. **Persist this** — it is the only input
      * `cancelOffer` needs to rebuild the covenant, and the restore scan reads
@@ -392,13 +375,11 @@ export async function createOffer(
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
-    // the ark signer key arrives compressed (33B) today; drop the prefix by
-    // length so an already-x-only key is passed through rather than
-    // shortened to 31 bytes — same normalization applied to the
-    // caller-supplied emulator key below, in case its source hands back
-    // either width
-    const serverPubKey = xOnly(hex.decode(info.signerPubkey), "ark signer key");
-    const emuKey = xOnly(emulatorPubkey, "emulator pubkey");
+    const serverPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
+    const network = getNetwork(info.network as NetworkName);
+    const emuKey = hex.decode(
+        toXOnlySignerHex(resolveEmulatorPubkey(network, params.emulatorPubkey)),
+    );
 
     // the script derives from every field but the script itself, so build the
     // binding first and complete the offer with it — an Offer value never
@@ -429,7 +410,7 @@ export async function createOffer(
         extension: { type: OFFER_PACKET_TYPE, payload },
         // VtxoScript.address owns address construction; assembling an ArkAddress
         // from tweakedPublicKey here would silently miss any future step it gains
-        address: script.address(getNetwork(info.network as NetworkName).hrp, serverPubKey).encode(),
+        address: script.address(network.hrp, serverPubKey).encode(),
         swapPkScript: script.pkScript,
     };
 }

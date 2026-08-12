@@ -35,12 +35,10 @@
  * Trust model, identical to the offer side: from a quote the user uses only
  * the binding fields — `solver_pubkey`, `refund_locktime`, `valid_until`, the
  * amounts. Every other contract parameter is the user's own data (its
- * invoice, its Ark server connection, its refund address) or obtained
- * out-of-band from a source it independently trusts — the emulator's x-only
- * key, from the solver's signed registry/corridor card, since clients have no
- * network path to the emulator itself; only the solver and covclaimd do.
- * Anything address-shaped the solver sends is compare-only: a mismatch means
- * refuse-to-fund, never "use theirs".
+ * invoice, its Ark server connection, its refund address) or a trusted
+ * constant — the emulator key defaults to the SDK's per-network pin (see
+ * `resolveEmulatorPubkey`). Anything address-shaped the solver sends is
+ * compare-only: a mismatch means refuse-to-fund, never "use theirs".
  *
  * Transport is symmetric-outbound: the reference framing below speaks the dev
  * broker (`{op:"sub"|"event"}` over WebSocket) or plain HTTP; the production
@@ -55,6 +53,7 @@ import {
     VHTLC,
     asset,
     getNetwork,
+    resolveEmulatorPubkey,
     type IWallet,
     type NetworkName,
 } from "@arkade-os/sdk";
@@ -86,8 +85,7 @@ import {
 import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
 
-/** Drop the prefix of a 33-byte compressed key; pass an x-only key through —
- * same rule as offer.ts, kept local so this module stays self-contained. */
+/** Drop the prefix of a 33-byte compressed key; pass an x-only key through. */
 const xOnly = (key: Uint8Array, label: string): Uint8Array => {
     if (key.length === 32) return key;
     if (key.length !== 33 || (key[0] !== 0x02 && key[0] !== 0x03)) {
@@ -623,10 +621,7 @@ export function lightningSendVtxoScript(params: {
      * {@link unilateralRefundDelay} and {@link unilateralRefundWithoutReceiverDelay}
      * derive from this same value — one rounding, shared across all three tiers. */
     claimDelay: number;
-    /** Emulator x-only key — the SOLVER's deployment, not the trader's own.
-     * Not fetched here or anywhere in this package; see {@link
-     * requestLightningSend}'s `emulatorPubkey` parameter for where it comes
-     * from and why. */
+    /** Emulator x-only key (32 bytes). */
     emulatorPubkey: Uint8Array;
     /** Where a refund must pay: the trader's P2TR pkScript (34 bytes). Also
      * `nonInteractiveRefund`'s covenant destination. */
@@ -712,20 +707,14 @@ export interface InvoiceFacts {
 export async function requestLightningSend(
     wallet: IWallet,
     arkServerUrl: string,
-    /** Covenant co-signer (emulator) x-only key — the SOLVER's deployment,
-     * not the trader's. This library does NOT fetch or verify it: clients
-     * have no network path to the emulator, only the solver and covclaimd
-     * do. The caller must obtain this out-of-band, before calling this
-     * function, from the solver's signed registry/corridor card (its
-     * `emulator_pubkey`, added in arkade-os/solver-registry#18) or an
-     * equivalent source it
-     * independently trusts, and is responsible for having checked it against
-     * that trusted value itself — the same never-trust-only-compare rule as
-     * {@link verifyLockupAddress}, just applied by the caller instead of
-     * here, because there is nothing in this module to derive it against. */
-    emulatorPubkey: Uint8Array,
     transport: RfqTransport,
-    params: { invoice: InvoiceFacts; rfqId?: string },
+    params: {
+        invoice: InvoiceFacts;
+        rfqId?: string;
+        /** Co-signer key override (33-byte compressed hex); see
+         * {@link resolveEmulatorPubkey}. */
+        emulatorPubkey?: string;
+    },
 ): Promise<{
     rfqId: string;
     quote: RfqQuote;
@@ -787,20 +776,22 @@ export async function requestLightningSend(
     }
 
     const serverPubkey = xOnly(hex.decode(info.signerPubkey), "ark signer key");
+    const network = getNetwork(info.network as NetworkName);
     const script = lightningSendVtxoScript({
         solverPubkey: xOnly(hex.decode(quote.solver_pubkey), "solver key"),
         refundLocktime: quote.refund_locktime,
         serverPubkey,
         paymentHash: params.invoice.paymentHash,
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
-        emulatorPubkey: xOnly(emulatorPubkey, "emulator pubkey"),
+        emulatorPubkey: xOnly(
+            hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
+            "emulator signer key",
+        ),
         senderPubkey,
         receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
         refundPkScript: ArkAddress.decode(refundAddress).pkScript,
     });
-    const address = script
-        .address(getNetwork(info.network as NetworkName).hrp, serverPubkey)
-        .encode();
+    const address = script.address(network.hrp, serverPubkey).encode();
     verifyLockupAddress(quote, address);
     assertFundable({
         quote,
@@ -1065,9 +1056,6 @@ export function deriveOnchainSend(input: {
 export async function requestOnchainSend(
     wallet: IWallet,
     arkServerUrl: string,
-    /** Covenant co-signer (emulator) x-only key — same parameter, same
-     * caller obligation, as {@link requestLightningSend}'s. */
-    emulatorPubkey: Uint8Array,
     transport: RfqTransport,
     params: {
         amount: number;
@@ -1077,6 +1065,9 @@ export async function requestOnchainSend(
         /** Optional caller-owned P. Persist it with the returned secrets before funding. */
         preimage?: Uint8Array;
         rfqId?: string;
+        /** Co-signer key override (33-byte compressed hex); see
+         * {@link resolveEmulatorPubkey}. */
+        emulatorPubkey?: string;
     },
 ): Promise<{
     rfqId: string;
@@ -1141,14 +1132,18 @@ export async function requestOnchainSend(
         }),
     );
 
+    const network = getNetwork(info.network as NetworkName);
     const derived = deriveOnchainSend({
         quote,
         paymentHash,
         payoutPubkey: params.payoutPubkey,
         serverPubkey: xOnly(hex.decode(info.signerPubkey), "ark signer key"),
-        emulatorPubkey: xOnly(emulatorPubkey, "emulator pubkey"),
+        emulatorPubkey: xOnly(
+            hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
+            "emulator signer key",
+        ),
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
-        hrp: getNetwork(info.network as NetworkName).hrp,
+        hrp: network.hrp,
         l1Network: l1NetworkFromArk(info.network),
         refundAddress,
         senderPubkey,
@@ -1474,13 +1469,13 @@ export function deriveLightningReceive(input: {
 export async function requestLightningReceive(
     wallet: IWallet,
     arkServerUrl: string,
-    /** Covenant co-signer (emulator) x-only key — same parameter, same
-     * caller obligation, as {@link requestLightningSend}'s. */
-    emulatorPubkey: Uint8Array,
     transport: RfqTransport,
     params: {
         amount: number;
         amountSide: "from" | "to";
+        /** Co-signer key override (33-byte compressed hex); see
+         * {@link resolveEmulatorPubkey}. */
+        emulatorPubkey?: string;
         /** covclaimd's 33-byte compressed pubkey (from its own info endpoint)
          * — the claim packet seals to it and only it can ever read `P` early. */
         covclaimdPubkey: Uint8Array;
@@ -1551,15 +1546,19 @@ export async function requestLightningReceive(
     );
     assertQuotedAmount(quote, params.amountSide, params.amount);
 
+    const network = getNetwork(info.network as NetworkName);
     const derived = deriveLightningReceive({
         quote,
         paymentHash,
         payoutPubkey,
         payoutAddress,
         serverPubkey: xOnly(hex.decode(info.signerPubkey), "ark signer key"),
-        emulatorPubkey: xOnly(emulatorPubkey, "emulator pubkey"),
+        emulatorPubkey: xOnly(
+            hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
+            "emulator signer key",
+        ),
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
-        hrp: getNetwork(info.network as NetworkName).hrp,
+        hrp: network.hrp,
     });
     const now = Math.floor(Date.now() / 1000);
     const { payDeadline } = verifyReceiveInvoice({
@@ -1692,13 +1691,13 @@ export function deriveOnchainReceive(input: {
 export async function requestOnchainReceive(
     wallet: IWallet,
     arkServerUrl: string,
-    /** Covenant co-signer (emulator) x-only key — same parameter, same
-     * caller obligation, as {@link requestLightningSend}'s. */
-    emulatorPubkey: Uint8Array,
     transport: RfqTransport,
     params: {
         amount: number;
         amountSide: "from" | "to";
+        /** Co-signer key override (33-byte compressed hex); see
+         * {@link resolveEmulatorPubkey}. */
+        emulatorPubkey?: string;
         /** Trader's x-only L1 key for the HTLC's refund leaf. */
         refundPubkey: Uint8Array;
         /** covclaimd's 33-byte compressed pubkey — see {@link requestLightningReceive}. */
@@ -1756,6 +1755,7 @@ export async function requestOnchainReceive(
     );
     assertQuotedAmount(quote, params.amountSide, params.amount);
 
+    const network = getNetwork(info.network as NetworkName);
     const derived = deriveOnchainReceive({
         quote,
         paymentHash,
@@ -1763,9 +1763,12 @@ export async function requestOnchainReceive(
         payoutAddress,
         refundPubkey: params.refundPubkey,
         serverPubkey: xOnly(hex.decode(info.signerPubkey), "ark signer key"),
-        emulatorPubkey: xOnly(emulatorPubkey, "emulator pubkey"),
+        emulatorPubkey: xOnly(
+            hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
+            "emulator signer key",
+        ),
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
-        hrp: getNetwork(info.network as NetworkName).hrp,
+        hrp: network.hrp,
         l1Network: l1NetworkFromArk(info.network),
     });
     assertFundable({
