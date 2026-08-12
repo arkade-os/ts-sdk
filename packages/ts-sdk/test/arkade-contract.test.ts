@@ -126,6 +126,11 @@ describe("arkade.Arkade / ArkadeContract", () => {
             emulator,
             indexer,
             network: networks.regtest,
+            // connect() takes the co-signer key from the network, not from the
+            // emulator's own getInfo, so this fixture key has to come in as the
+            // override or the tree below would be built against regtest's
+            // pinned key instead. "02"-prefixed like the server key above.
+            emulatorPubkey: "02" + hex.encode(emulatorKey),
         });
         return { ark, captured };
     }
