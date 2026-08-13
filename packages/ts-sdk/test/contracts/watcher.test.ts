@@ -9,12 +9,15 @@ import {
     type IndexerProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    EventSourceUnavailableError,
 } from "../../src";
+import { saveVtxosForContract } from "../../src/contracts/vtxoOwnership";
 import type { SubscriptionResponse } from "../../src/providers/indexer";
 import { hex } from "@scure/base";
 import {
     createDefaultContractParams,
     createDelegateContractParams,
+    createMockExtendedVtxo,
     createMockIndexerProvider,
     createMockVtxo,
     TEST_DEFAULT_SCRIPT,
@@ -61,6 +64,45 @@ describe("ContractWatcher", () => {
             script: TEST_DEFAULT_SCRIPT,
             address: "address",
             state: "inactive",
+            createdAt: Date.now(),
+        };
+
+        await watcher.addContract(contract);
+        expect(mockIndexer.subscribeForScripts).toHaveBeenCalledWith([contract.script], undefined);
+    });
+
+    it("should not subscribe retained contracts, but should keep them readable", async () => {
+        await watcher.startWatching(() => {});
+        (mockIndexer.subscribeForScripts as any).mockClear();
+
+        const contract: Contract = {
+            type: "default",
+            params: createDefaultContractParams(),
+            script: TEST_DEFAULT_SCRIPT,
+            address: "address",
+            state: "active",
+            watch: "retained",
+            createdAt: Date.now(),
+        };
+
+        await watcher.addContract(contract);
+
+        expect(mockIndexer.subscribeForScripts).not.toHaveBeenCalled();
+        expect(watcher.getWatchedContracts()).toEqual([]);
+        // The row is still held: reads, annotation and history go through it.
+        expect(watcher.getAllContracts().map((c) => c.script)).toEqual([TEST_DEFAULT_SCRIPT]);
+    });
+
+    it("should subscribe awaiting-funds contracts", async () => {
+        await watcher.startWatching(() => {});
+
+        const contract: Contract = {
+            type: "default",
+            params: createDefaultContractParams(),
+            script: TEST_DEFAULT_SCRIPT,
+            address: "address",
+            state: "active",
+            watch: "awaiting-funds",
             createdAt: Date.now(),
         };
 
@@ -379,6 +421,85 @@ describe("ContractWatcher", () => {
             } finally {
                 warnSpy.mockRestore();
                 await watcher.stopWatching();
+            }
+        });
+    });
+    describe("when the environment has no EventSource", () => {
+        const noEventSource = () =>
+            Object.assign(createMockIndexerProvider(), {
+                getSubscription: vi.fn(() => ({
+                    [Symbol.asyncIterator]: () => ({
+                        next: () => Promise.reject(new EventSourceUnavailableError()),
+                    }),
+                })),
+            }) as IndexerProvider;
+
+        it("says so once, stops reconnecting, and keeps polling", async () => {
+            vi.useFakeTimers();
+            const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+            const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+            const indexer = noEventSource();
+            const walletRepository = new InMemoryWalletRepository();
+            const watcher = new ContractWatcher({
+                indexerProvider: indexer,
+                walletRepository,
+                failsafePollIntervalMs: 1_000,
+            });
+            const contract: Contract = {
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+                state: "active",
+                createdAt: Date.now(),
+            };
+            const events: ContractEvent[] = [];
+
+            try {
+                await watcher.addContract(contract);
+                await watcher.startWatching((event) => events.push(event));
+                await vi.advanceTimersByTimeAsync(0);
+
+                const attemptsAfterConnect = (indexer.getSubscription as any).mock.calls.length;
+                const warning = warnSpy.mock.calls.find(
+                    (call) =>
+                        typeof call[0] === "string" && call[0].includes("contract events are OFF"),
+                );
+                expect(warning).toBeDefined();
+                // The remedy has to travel with the warning, not just the type.
+                expect(String(warning?.[0])).toContain("configureEventSource");
+                // A ReferenceError used to land here every few seconds.
+                expect(errorSpy).not.toHaveBeenCalled();
+
+                // Past several reconnect windows (backoff caps at 5s): no retry
+                // and no second warning...
+                await vi.advanceTimersByTimeAsync(30_000);
+                expect((indexer.getSubscription as any).mock.calls.length).toBe(
+                    attemptsAfterConnect,
+                );
+                expect(
+                    warnSpy.mock.calls.filter(
+                        (call) =>
+                            typeof call[0] === "string" &&
+                            call[0].includes("contract events are OFF"),
+                    ),
+                ).toHaveLength(1);
+                // A reset invites subscribers to resync and wait for the stream
+                // back; there is no stream to come back.
+                expect(events.map((e) => e.type)).not.toContain("connection_reset");
+
+                // ...while the failsafe poll still delivers: a VTXO that lands
+                // after the stream gave up is still reported, just later.
+                await saveVtxosForContract(walletRepository, contract, [
+                    createMockExtendedVtxo({ script: contract.script, txid: "ab".repeat(32) }),
+                ]);
+                await vi.advanceTimersByTimeAsync(2_000);
+                expect(events.map((e) => e.type)).toContain("vtxo_received");
+            } finally {
+                await watcher.stopWatching();
+                warnSpy.mockRestore();
+                errorSpy.mockRestore();
+                vi.useRealTimers();
             }
         });
     });

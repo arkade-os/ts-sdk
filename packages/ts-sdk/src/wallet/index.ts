@@ -340,7 +340,13 @@ export interface WalletBalance {
      * intent. Equals `settled + preconfirmed` when nothing is intent-locked.
      */
     available: number;
-    /** Recoverable balance from subdust or expired (swept) virtual outputs. */
+    /**
+     * Recoverable balance from subdust or expired (swept) virtual outputs —
+     * recoverable in principle, so a lockup whose contract refuses a spend right
+     * now is still counted and `total` does not lose it.
+     * `VtxoManager.getRecoverableBalance()` answers the narrower question of
+     * what a batch would hand back today, and excludes it.
+     */
     recoverable: number;
 
     /**
@@ -354,8 +360,16 @@ export interface WalletBalance {
     /** Total balance across offchain, recoverable, pending-recovery, and boarding funds. */
     total: number;
 
-    /** Asset balance entries (`assetId` & `amount`) */
+    /** Asset balance entries (`assetId` & `amount`) the wallet owns. */
     assets: Asset[];
+
+    /**
+     * The subset of {@link assets} generic spending will accept, i.e. the asset
+     * analogue of {@link available}. Assets have no owned/spendable split of
+     * their own, so `assets - availableAssets` is what is held but not
+     * selectable — escrowed, intent-locked or awaiting recovery.
+     */
+    availableAssets: Asset[];
 }
 
 /**
@@ -383,7 +397,13 @@ export interface SendBitcoinParams {
      */
     memo?: string;
 
-    /** Optional explicit virtual output selection used by `Wallet.sendBitcoin`. */
+    /**
+     * Optional explicit virtual output selection used by `Wallet.sendBitcoin`.
+     * Ungated, like `settle({ inputs })`: whatever is named here is spent, even
+     * if generic selection would skip it.
+     *
+     * @see IReadonlyWallet.getSpendableVtxos
+     */
     selectedVtxos?: ExtendedVirtualCoin[];
 }
 
@@ -938,7 +958,16 @@ export interface IAssetManager extends IReadonlyAssetManager {
  * @see IReadonlyWallet
  */
 export interface IWallet extends IReadonlyWallet {
-    /** Signing identity associated with the wallet. */
+    /**
+     * Signing identity associated with the wallet.
+     *
+     * A real signer, not a `ReadonlyIdentity` that structurally fits: contract
+     * corridors need all four members — `sign`, `signMessage`, `signerSession`
+     * and `xOnlyPublicKey` — and `signerSession` is the one a watch-only
+     * identity lacks. `isSigningIdentity` is the check; a wallet that fails it
+     * is refused as `WalletCannotSignError` before anything is funded, rather
+     * than at the push that discovers there is no signer.
+     */
     identity: Identity;
 
     /**
@@ -1028,6 +1057,21 @@ export interface IReadonlyWallet {
      * @see GetVtxosFilter
      */
     getVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
+
+    /**
+     * The subset of {@link getVtxos} that generic spending may select: the same
+     * filter, minus contracts the generic-spending gate closes, minus funds
+     * awaiting recovery under a past-cutoff signer, minus outpoints locked by an
+     * in-flight intent. Every implicit coin selection in the SDK reads this;
+     * `getVtxos` stays the raw reporting/recovery read.
+     *
+     * Both exclusion sets are derived from one contract snapshot, so they cannot
+     * disagree about which VTXOs exist.
+     *
+     * @param filter - Same flags, same defaults, as {@link getVtxos}
+     * @see GetVtxosFilter
+     */
+    getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
 
     /** @returns Onchain boarding inputs tracked by the wallet. */
     getBoardingUtxos(): Promise<ExtendedCoin[]>;

@@ -1,6 +1,6 @@
 {
     "name": "@arkade-os/swap",
-    "version": "0.0.1",
+    "version": "0.0.3",
     "type": "module",
     "description": "Client-side Arkade Intents asset swaps: discover markets, quote, create/track/cancel offers, restore from chain.",
     "repository": {
@@ -20,20 +20,31 @@
                 "types": "./dist/index.d.ts",
                 "default": "./dist/index.cjs"
             }
+        },
+        "./nostr": {
+            "import": {
+                "types": "./dist/nostr.d.ts",
+                "default": "./dist/nostr.js"
+            },
+            "require": {
+                "types": "./dist/nostr.d.ts",
+                "default": "./dist/nostr.cjs"
+            }
         }
     },
     "files": [
         "dist"
     ],
     "scripts": {
-        "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+        "build": "tsup src/index.ts src/nostr.ts --format esm,cjs --dts --clean",
         "typecheck": "tsc --noEmit",
         "format": "prettier --write src test",
         "lint": "prettier --check src test",
         "prepack": "pnpm run build",
         "test": "vitest run --exclude test/e2e",
         "test:unit": "vitest run --exclude test/e2e",
-        "test:integration": "vitest run test/e2e/**",
+        "test:integration": "vitest run test/e2e/** --exclude test/e2e/rfq*.test.ts",
+        "test:integration:rfq": "vitest run test/e2e/rfq*.test.ts",
         "smoke:dist": "node scripts/smoke-dist.mjs"
     },
     "keywords": [
@@ -46,9 +57,19 @@
     "license": "MIT",
     "dependencies": {
         "@arkade-os/sdk": "workspace:*",
-        "@arkade-os/solver-discovery": "0.1.4",
+        "@arkade-os/solver-discovery": "0.2.1",
+        "@noble/curves": "2.0.1",
+        "@noble/hashes": "2.0.1",
         "@scure/base": "2.0.0",
         "@scure/btc-signer": "2.0.1"
+    },
+    "peerDependencies": {
+        "nostr-tools": "^2.12.0"
+    },
+    "peerDependenciesMeta": {
+        "nostr-tools": {
+            "optional": true
+        }
     },
     "publishConfig": {
         "access": "public",
@@ -56,6 +77,7 @@
     },
     "packageManager": "pnpm@10.25.0",
     "devDependencies": {
-        "fake-indexeddb": "6.2.5"
+        "fake-indexeddb": "6.2.5",
+        "nostr-tools": "^2.12.0"
     }
 }

@@ -6,6 +6,7 @@ import {
     warnAndFilterVtxosForScript,
     saveVtxosForContract,
 } from "../../../contracts/vtxoOwnership";
+import { isWatchedContract } from "../../../contracts/types";
 
 export const CONTRACT_POLL_TASK_TYPE = "contract-poll";
 
@@ -14,7 +15,7 @@ export const CONTRACT_POLL_TASK_TYPE = "contract-poll";
  * persists the results to the wallet repository.
  *
  * Replicates the polling subset of @see ContractManager.initialize:
- * 1. Load all contracts from the contract repository.
+ * 1. Load every watched contract from the contract repository.
  * 2. Paginated fetch of every VTXO (including spent) from the indexer.
  * 3. Extend each VTXO with tapscript data.
  * 4. Save to the wallet repository.
@@ -34,7 +35,9 @@ export const contractPollProcessor: TaskProcessor = {
     ): Promise<Omit<TaskResult, "id" | "executedAt">> {
         const { contractRepository, walletRepository, indexerProvider, extendVtxo } = deps;
 
-        const contracts = await contractRepository.getContracts();
+        // Background channel, so it covers exactly what the watcher's
+        // subscription covers: `retained` rows are kept for reads only.
+        const contracts = (await contractRepository.getContracts()).filter(isWatchedContract);
         let contractsProcessed = 0;
         let vtxosSaved = 0;
 

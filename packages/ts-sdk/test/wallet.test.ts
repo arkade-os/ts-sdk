@@ -1855,6 +1855,10 @@ describe("Wallet._settleImpl", () => {
                 proof: "delete-proof",
                 message: { type: "delete", expire_at: 0 },
             }),
+            logUngatedInputs: vi.fn().mockResolvedValue(undefined),
+            getContractManager: vi.fn().mockResolvedValue({
+                assertAnnotatable: vi.fn().mockResolvedValue(undefined),
+            }),
             safeRegisterIntent,
             createBatchHandler,
             updateDbAfterSettle,
@@ -1926,6 +1930,10 @@ describe("Wallet._settleImpl", () => {
                 proof: "delete-proof",
                 message: { type: "delete", expire_at: 0 },
             }),
+            logUngatedInputs: vi.fn().mockResolvedValue(undefined),
+            getContractManager: vi.fn().mockResolvedValue({
+                assertAnnotatable: vi.fn().mockResolvedValue(undefined),
+            }),
             safeRegisterIntent: vi.fn(async () => {
                 callOrder.push("safeRegisterIntent");
                 throw registerError;
@@ -1981,6 +1989,10 @@ describe("Wallet._settleImpl", () => {
                 proof: "delete-proof",
                 message: { type: "delete", expire_at: 0 },
             }),
+            logUngatedInputs: vi.fn().mockResolvedValue(undefined),
+            getContractManager: vi.fn().mockResolvedValue({
+                assertAnnotatable: vi.fn().mockResolvedValue(undefined),
+            }),
             safeRegisterIntent: vi.fn().mockResolvedValue("intent-id"),
             createBatchHandler: vi.fn().mockReturnValue({} as Batch.Handler),
             updateDbAfterSettle: vi.fn().mockRejectedValue(new Error("db write failed")),
@@ -2009,7 +2021,7 @@ describe("Wallet._settleImpl", () => {
             }).script,
         );
 
-        const makeVtxo = (value: number, i: number): ExtendedVirtualCoin =>
+        const makeVtxo = (value: number, i: number | string): ExtendedVirtualCoin =>
             ({
                 txid: `vtxo-${value}-${i}`,
                 vout: 0,
@@ -2043,6 +2055,9 @@ describe("Wallet._settleImpl", () => {
                 },
             }) as ExtendedCoin;
 
+        // A gated (e.g. escrowed) coin: reported by getVtxos, withheld by getSpendableVtxos.
+        const gatedVtxo = makeVtxo(1_000_000, "gated");
+
         // Build a `this` for _settleImpl that runs the auto-select branch and
         // short-circuits at makeRegisterIntentSignature, capturing the final
         // selected inputs (which is what gets registered with the server).
@@ -2071,7 +2086,11 @@ describe("Wallet._settleImpl", () => {
                 },
                 boardingTapscript: { exitScript: exitScriptHex },
                 getBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
-                getVtxos: vi.fn().mockResolvedValue(vtxos),
+                // The gate lives in getSpendableVtxos: the raw read carries a coin
+                // auto-selection must never reach for (and, at this value, would
+                // sort to the front of the batch if it did).
+                getVtxos: vi.fn().mockResolvedValue([...vtxos, gatedVtxo]),
+                getSpendableVtxos: vi.fn().mockResolvedValue(vtxos),
                 getAddress: vi.fn().mockResolvedValue(walletAddress),
                 identity: {
                     signerSession: () => ({
@@ -2090,6 +2109,18 @@ describe("Wallet._settleImpl", () => {
             };
             return { thisArg, sentinel, getCaptured: () => capturedInputs };
         };
+
+        it("auto-selects from the gated read", async () => {
+            const vtxos = [makeVtxo(5_000, 0), makeVtxo(7_000, 1)];
+            const { thisArg, sentinel, getCaptured } = buildThisArg(vtxos, {});
+
+            await expect(
+                (Wallet.prototype as any)._settleImpl.call(thisArg, undefined),
+            ).rejects.toBe(sentinel);
+
+            expect(getCaptured()!.map((v: any) => v.txid)).toEqual(["vtxo-7000-1", "vtxo-5000-0"]);
+            expect(thisArg.getSpendableVtxos).toHaveBeenCalled();
+        });
 
         it("caps the number of auto-selected VTXOs at MAX_VTXOS_PER_SETTLEMENT", async () => {
             const value = 5_000;

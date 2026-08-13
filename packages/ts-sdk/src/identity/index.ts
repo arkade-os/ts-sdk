@@ -92,6 +92,8 @@ export {
     normalizeToDescriptor,
     extractPubKey,
     parseHDDescriptor,
+    identityDescriptor,
+    deriveDescriptorLeafPubKey,
     deriveDescriptorLeafCompressedPubKey,
 } from "./descriptor";
 export type { ParsedHDDescriptor } from "./descriptor";
@@ -113,3 +115,28 @@ export { isHDCapableIdentity } from "./hdCapableIdentity";
 
 // Static descriptor provider (wrapper for legacy Identity)
 export { StaticDescriptorProvider } from "./staticDescriptorProvider";
+
+/**
+ * Whether `value` is a complete {@link Identity} rather than the read-only
+ * half of one.
+ *
+ * All four members are checked because all four are load-bearing —
+ * `signerSession` in particular, which an interactive refund needs and which
+ * a watch-only identity lacks. A partial identity satisfies a pubkey check
+ * happily and then fails as a `TypeError` deep inside a signing path, where
+ * callers read it as retryable.
+ *
+ * One shared guard: two copies drift, and the copy that is not updated when
+ * `Identity` gains a member is the one that lets a watch-only identity
+ * through.
+ */
+export function isSigningIdentity(value: unknown): value is Identity {
+    if (typeof value !== "object" || value === null) return false;
+    const v = value as Partial<Identity>;
+    return (
+        typeof v.sign === "function" &&
+        typeof v.signMessage === "function" &&
+        typeof v.signerSession === "function" &&
+        typeof v.xOnlyPublicKey === "function"
+    );
+}

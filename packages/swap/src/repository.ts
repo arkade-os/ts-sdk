@@ -32,7 +32,10 @@ export const marketsCacheKey = (network: string, registry: string) =>
 export interface AssetSwapRepository extends AsyncDisposable {
     readonly version: 1;
 
-    /** Insert or replace a swap by id. */
+    /** Insert or replace a swap by id. Store the record whole: `preimageHex`
+     * is secret-bearing — the only claim secret of a swap whose descriptor is
+     * not per-swap — and a field-mapped backend that drops it leaves the swap
+     * unclaimable. */
     saveSwap(swap: AssetSwap): Promise<void>;
     /** All stored swaps, in no particular order — `getAssetSwaps` is the
      * canonical newest-first read. */

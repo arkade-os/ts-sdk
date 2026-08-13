@@ -36,13 +36,19 @@ import {
 } from "../index";
 import { DelegateInfo } from "../../providers/delegate";
 import {
-    canRecoverOnchain,
-    canSpendOffchain,
     fetchVtxoCreatedAtByTxid,
     hasTerminalSpend,
     type NormalizedExtendedVirtualCoin,
 } from "../vtxo";
-import { ReadonlyWallet, Wallet, type ProviderConnectionState } from "../wallet";
+import {
+    ReadonlyWallet,
+    spendableVtxosExcludingLocked,
+    Wallet,
+    type ProviderConnectionState,
+} from "../wallet";
+import { computeOffchainBalance } from "../balance";
+import { isHDAllocationCapable, isHDWalletCapable } from "../hdWalletCapable";
+import { gatedContracts } from "../../contracts/spendability";
 import type {
     DeprecatedSignerMigrationReport,
     DeprecatedSignerReport,
@@ -200,6 +206,15 @@ export type ResponseGetVtxos = ResponseEnvelope & {
     payload: { vtxos: Awaited<ReturnType<IWallet["getVtxos"]>> };
 };
 
+export type RequestGetSpendableVtxos = RequestEnvelope & {
+    type: "GET_SPENDABLE_VTXOS";
+    payload: { filter?: GetVtxosFilter };
+};
+export type ResponseGetSpendableVtxos = ResponseEnvelope & {
+    type: "SPENDABLE_VTXOS";
+    payload: { vtxos: Awaited<ReturnType<IWallet["getSpendableVtxos"]>> };
+};
+
 export type RequestGetBoardingUtxos = RequestEnvelope & {
     type: "GET_BOARDING_UTXOS";
 };
@@ -353,6 +368,43 @@ export type RequestRefreshOutpoints = RequestEnvelope & {
 };
 export type ResponseRefreshOutpoints = ResponseEnvelope & {
     type: "REFRESH_OUTPOINTS_SUCCESS";
+};
+
+// HD signing-descriptor surface. Descriptor allocation and the watermark are
+// owned by the worker-side Wallet (single writer); the page proxies both as
+// plain strings — unlike scanContracts there is no callback to cross the
+// structured-clone boundary.
+export type RequestGetCurrentSigningDescriptor = RequestEnvelope & {
+    type: "GET_CURRENT_SIGNING_DESCRIPTOR";
+};
+export type ResponseGetCurrentSigningDescriptor = ResponseEnvelope & {
+    type: "CURRENT_SIGNING_DESCRIPTOR";
+    payload: { descriptor?: string };
+};
+
+export type RequestGetNextSigningDescriptor = RequestEnvelope & {
+    type: "GET_NEXT_SIGNING_DESCRIPTOR";
+};
+export type ResponseGetNextSigningDescriptor = ResponseEnvelope & {
+    type: "NEXT_SIGNING_DESCRIPTOR";
+    payload: { descriptor?: string };
+};
+
+export type RequestGetUsedSigningDescriptors = RequestEnvelope & {
+    type: "GET_USED_SIGNING_DESCRIPTORS";
+    payload?: { lookAhead?: number };
+};
+export type ResponseGetUsedSigningDescriptors = ResponseEnvelope & {
+    type: "USED_SIGNING_DESCRIPTORS";
+    payload: { descriptors: string[] };
+};
+
+export type RequestAdvanceSigningDescriptorWatermark = RequestEnvelope & {
+    type: "ADVANCE_SIGNING_DESCRIPTOR_WATERMARK";
+    payload: { descriptor: string };
+};
+export type ResponseAdvanceSigningDescriptorWatermark = ResponseEnvelope & {
+    type: "SIGNING_DESCRIPTOR_WATERMARK_ADVANCED";
 };
 
 export type RequestGetAllSpendingPaths = RequestEnvelope & {
@@ -706,6 +758,7 @@ export type WalletUpdaterRequest =
     | RequestGetBoardingAddress
     | RequestGetBalance
     | RequestGetVtxos
+    | RequestGetSpendableVtxos
     | RequestGetBoardingUtxos
     | RequestGetTransactionHistory
     | RequestGetStatus
@@ -724,6 +777,10 @@ export type WalletUpdaterRequest =
     | RequestIsContractManagerWatching
     | RequestRefreshVtxos
     | RequestRefreshOutpoints
+    | RequestGetCurrentSigningDescriptor
+    | RequestGetNextSigningDescriptor
+    | RequestGetUsedSigningDescriptors
+    | RequestAdvanceSigningDescriptorWatermark
     | RequestSend
     | RequestGetAssetDetails
     | RequestIssue
@@ -751,6 +808,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseGetBoardingAddress
         | ResponseGetBalance
         | ResponseGetVtxos
+        | ResponseGetSpendableVtxos
         | ResponseGetBoardingUtxos
         | ResponseGetTransactionHistory
         | ResponseGetStatus
@@ -771,6 +829,10 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseIsContractManagerWatching
         | ResponseRefreshVtxos
         | ResponseRefreshOutpoints
+        | ResponseGetCurrentSigningDescriptor
+        | ResponseGetNextSigningDescriptor
+        | ResponseGetUsedSigningDescriptors
+        | ResponseAdvanceSigningDescriptorWatermark
         | ResponseContractEvent
         | ResponseSend
         | ResponseGetAssetDetails
@@ -974,6 +1036,19 @@ export class WalletMessageHandler
                         payload: { vtxos },
                     };
                 }
+                case "GET_SPENDABLE_VTXOS": {
+                    if (!this.readonlyWallet) {
+                        throw new WalletNotInitializedError();
+                    }
+                    const vtxos = await this.readonlyWallet.getSpendableVtxos(
+                        message.payload.filter,
+                    );
+                    return this.tagged({
+                        id,
+                        type: "SPENDABLE_VTXOS",
+                        payload: { vtxos },
+                    });
+                }
                 case "GET_BOARDING_UTXOS": {
                     const utxos = await this.getAllBoardingUtxos();
                     return this.tagged({
@@ -1136,6 +1211,72 @@ export class WalletMessageHandler
                     return this.tagged({
                         id,
                         type: "REFRESH_OUTPOINTS_SUCCESS",
+                    });
+                }
+                // The HD *probes* below answer like a static wallet (undefined
+                // / empty) rather than erroring when the worker wallet is
+                // readonly or non-HD: the page-side structural guards
+                // (isHDWalletCapable / isHDAllocationCapable) cannot see
+                // across the message bus, so "no HD state" must be a value.
+                //
+                // The two *allocating* cases split that condition. A wallet
+                // that is present but cannot allocate is a fact about the
+                // wallet, and still answers as a static one. No signing wallet
+                // at all — a readonly-initialized worker, or one past clear() /
+                // stop() — is an initialization error like every other mutating
+                // case here: answering "allocated" or "advanced" there would
+                // let the same index be issued twice, and two swaps sharing a
+                // descriptor derive the same preimage.
+                case "GET_CURRENT_SIGNING_DESCRIPTOR": {
+                    const wallet = this.wallet;
+                    const descriptor = isHDWalletCapable(wallet)
+                        ? await wallet.getCurrentSigningDescriptor()
+                        : undefined;
+                    return this.tagged({
+                        id,
+                        type: "CURRENT_SIGNING_DESCRIPTOR",
+                        payload: { descriptor },
+                    });
+                }
+                case "GET_NEXT_SIGNING_DESCRIPTOR": {
+                    const wallet = this.wallet;
+                    if (!wallet) throw new WalletNotInitializedError();
+                    const descriptor = isHDAllocationCapable(wallet)
+                        ? await wallet.getNextSigningDescriptor()
+                        : undefined;
+                    return this.tagged({
+                        id,
+                        type: "NEXT_SIGNING_DESCRIPTOR",
+                        payload: { descriptor },
+                    });
+                }
+                case "GET_USED_SIGNING_DESCRIPTORS": {
+                    const wallet = this.wallet;
+                    const descriptors = isHDWalletCapable(wallet)
+                        ? await wallet.getUsedSigningDescriptors(
+                              (message as RequestGetUsedSigningDescriptors).payload,
+                          )
+                        : [];
+                    return this.tagged({
+                        id,
+                        type: "USED_SIGNING_DESCRIPTORS",
+                        payload: { descriptors },
+                    });
+                }
+                case "ADVANCE_SIGNING_DESCRIPTOR_WATERMARK": {
+                    const wallet = this.wallet;
+                    if (!wallet) throw new WalletNotInitializedError();
+                    if (isHDAllocationCapable(wallet)) {
+                        // Throws on a foreign or index-less descriptor — that
+                        // propagates to the page as an error response.
+                        await wallet.advanceSigningDescriptorWatermark(
+                            (message as RequestAdvanceSigningDescriptorWatermark).payload
+                                .descriptor,
+                        );
+                    }
+                    return this.tagged({
+                        id,
+                        type: "SIGNING_DESCRIPTOR_WATERMARK_ADVANCED",
                     });
                 }
                 case "SEND": {
@@ -1358,14 +1499,23 @@ export class WalletMessageHandler
         await this.onWalletInitialized();
     }
 
-    private async handleGetBalance() {
-        const [boardingUtxos, allVtxos, pendingOutpoints] = await Promise.all([
+    /**
+     * The worker's own balance. Same bucketing rules as `Wallet.getBalance` —
+     * both call {@link computeOffchainBalance} — but deliberately a different
+     * freshness: this reads the repository directly, with no indexer sync, so a
+     * polling UI never pays for a network round-trip. That rules out
+     * `pendingRecoveryOutpoints()`, whose snapshot syncs; the same classification
+     * runs over this method's local snapshot instead.
+     */
+    private async handleGetBalance(): Promise<WalletBalance> {
+        const [boardingUtxos, { snapshot, vtxos: allVtxos }] = await Promise.all([
             this.getAllBoardingUtxos(),
-            this.getVtxosFromRepo(),
-            this.readonlyWallet
-                ? this.readonlyWallet.pendingRecoveryOutpoints()
-                : Promise.resolve(new Set<string>()),
+            this.repoSnapshot(),
         ]);
+        // Both exclusion sets come off that one snapshot, so they answer about
+        // the same instant — and neither costs an indexer round-trip.
+        const pendingOutpoints =
+            this.readonlyWallet?.pendingRecoveryOutpointsIn(snapshot) ?? new Set<string>();
 
         // boarding
         let confirmed = 0;
@@ -1378,54 +1528,21 @@ export class WalletMessageHandler
             }
         }
 
-        // offchain — bucketed from a single repo read, with the same capability reads
-        // Wallet.getBalance uses so the two agree. No chain tip: this is an offline-first read.
-        const now = { timestamp: new Date() };
-
-        let settled = 0;
-        let preconfirmed = 0;
-        let recoverable = 0;
-        let pendingRecovery = 0;
-        // Past-cutoff (EXPIRED) deprecated-signer funds not yet swept are NOT
-        // spendable — bucket them under pendingRecovery, out of settled/preconfirmed.
-        //
-        // Pending is tested first, and before expiry: such funds cannot be renewed until they
-        // recover, so once their batch expiry passes `canRecoverOnchain` would otherwise claim
-        // them and report them as renewable-right-now. The branches are exclusive, so
-        // `totalOffchain` below counts each VTXO once.
-        for (const vtxo of allVtxos) {
-            if (hasTerminalSpend(vtxo)) continue;
-            if (pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
-                pendingRecovery += vtxo.value;
-            } else if (canRecoverOnchain(vtxo, now)) {
-                recoverable += vtxo.value;
-            } else if (canSpendOffchain(vtxo, now)) {
-                if (vtxo.isPreconfirmed) {
-                    preconfirmed += vtxo.value;
-                } else {
-                    settled += vtxo.value;
-                }
-            }
-        }
+        const gated = gatedContracts(snapshot.map((_) => _.contract));
+        const unlocked = new Set(
+            (
+                await spendableVtxosExcludingLocked(allVtxos, this.readonlyWallet?.intentRepository)
+            ).map((vtxo) => `${vtxo.txid}:${vtxo.vout}`),
+        );
 
         const totalBoarding = confirmed + unconfirmed;
-        const totalOffchain = settled + preconfirmed + recoverable + pendingRecovery;
-
-        // aggregate asset balances from spendable virtual outputs
-        const assetBalances = new Map<string, bigint>();
-        for (const vtxo of allVtxos) {
-            if (hasTerminalSpend(vtxo)) continue;
-            if (vtxo.assets) {
-                for (const a of vtxo.assets) {
-                    const current = assetBalances.get(a.assetId) ?? 0n;
-                    assetBalances.set(a.assetId, current + a.amount);
-                }
-            }
-        }
-        const assets = Array.from(assetBalances.entries()).map(([assetId, amount]) => ({
-            assetId,
-            amount,
-        }));
+        // No chain tip: this is an offline-first read.
+        const offchain = computeOffchainBalance(allVtxos, {
+            now: { timestamp: new Date() },
+            isPendingRecovery: (vtxo) => pendingOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
+            isGenericallySpendable: (vtxo) => !gated.has(vtxo.script),
+            isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
+        });
 
         return {
             boarding: {
@@ -1433,27 +1550,20 @@ export class WalletMessageHandler
                 unconfirmed,
                 total: totalBoarding,
             },
-            settled,
-            preconfirmed,
-            available: settled + preconfirmed,
-            recoverable,
-            pendingRecovery,
-            total: totalBoarding + totalOffchain,
-            assets,
+            settled: offchain.settled,
+            preconfirmed: offchain.preconfirmed,
+            available: offchain.available,
+            recoverable: offchain.recoverable,
+            pendingRecovery: offchain.pendingRecovery,
+            total: totalBoarding + offchain.total,
+            assets: offchain.assets,
+            availableAssets: offchain.availableAssets,
         };
     }
     private async getAllBoardingUtxos(): Promise<ExtendedCoin[]> {
         if (!this.readonlyWallet) return [];
         return this.readonlyWallet.getBoardingUtxos();
     }
-    /**
-     * Get spendable vtxos from the repository
-     */
-    private async getSpendableVtxos() {
-        const vtxos = await this.getVtxosFromRepo();
-        return vtxos.filter((v) => !hasTerminalSpend(v));
-    }
-
     private async onWalletInitialized() {
         if (
             !this.readonlyWallet ||
@@ -1702,6 +1812,12 @@ export class WalletMessageHandler
             .filter((v) => outpointSet.has(`${v.txid}:${v.vout}`))
             .map((v) => ({ ...v, contractScript: v.script }));
 
+        // Explicit outpoints, so ungated — but delegation hands the spending
+        // authority itself to a third party, which for a gated (e.g. escrowed)
+        // contract means giving away its cancel path. Legitimate deliberately,
+        // bad by accident: report it. Diagnostics only, never fatal.
+        void wallet.logUngatedInputs("delegate", filtered);
+
         const result = await delegateManager.delegate(
             filtered,
             destination,
@@ -1727,11 +1843,15 @@ export class WalletMessageHandler
         };
     }
 
+    /**
+     * Ungated repository read mirroring `Wallet.getVtxos`, the raw reporting read.
+     */
     private async handleGetVtxos(message: RequestGetVtxos) {
         if (!this.readonlyWallet) {
             throw new WalletNotInitializedError();
         }
-        const vtxos = await this.getSpendableVtxos();
+        const allVtxos = await this.getVtxosFromRepo();
+        const vtxos = allVtxos.filter((v) => !hasTerminalSpend(v));
         const dustAmount = this.readonlyWallet.dustAmount;
         const includeRecoverable = message.payload.filter?.withRecoverable ?? false;
         const filteredVtxos = includeRecoverable
@@ -1749,7 +1869,13 @@ export class WalletMessageHandler
                   return true;
               });
 
-        return filteredVtxos;
+        // Unrolling terminally spends the virtual output, so unrolled coins never
+        // survive the unspent read above — append them on request, as `Wallet.getVtxos`
+        // does, otherwise `prepareUnrollTransaction` finds nothing behind the worker.
+        if (!message.payload.filter?.withUnrolled) {
+            return filteredVtxos;
+        }
+        return filteredVtxos.concat(allVtxos.filter((v) => hasTerminalSpend(v) && v.isUnrolled));
     }
 
     /** Tear down handler subscriptions, then delegate the full wipe to the wallet. */
@@ -1779,18 +1905,43 @@ export class WalletMessageHandler
      * addresses and the wallet's primary address, with deduplication.
      */
     private async getVtxosFromRepo(): Promise<NormalizedExtendedVirtualCoin[]> {
-        if (!this.walletRepository || !this.readonlyWallet) return [];
+        return (await this.repoSnapshot()).vtxos;
+    }
+
+    /**
+     * The worker's equivalent of `ReadonlyWallet.contractSnapshot`: contracts
+     * paired with the VTXOs the repository holds for them, plus the flat
+     * deduplicated list. Purely local — unlike the main-thread snapshot it never
+     * syncs against the indexer.
+     *
+     * One read of the contract rows serves both halves. Reading them twice
+     * (once for the VTXO buckets, once for the gate) races the contract
+     * manager's own writes: a contract registered between the two reads yields
+     * VTXOs with no matching row in the gate, and `gatedContracts` lists only
+     * what it knows is closed — so the coins of a just-registered escrowed
+     * contract would count as available until the next poll.
+     */
+    private async repoSnapshot(): Promise<{
+        // Not `ContractWithVtxos`: repository rows carry no `contractScript`,
+        // and the gate and signer classification only read `contract`/`vtxos`.
+        snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[];
+        vtxos: NormalizedExtendedVirtualCoin[];
+    }> {
+        if (!this.walletRepository || !this.readonlyWallet) return { snapshot: [], vtxos: [] };
         const seen = new Set<string>();
         const allVtxos: NormalizedExtendedVirtualCoin[] = [];
 
         const addVtxos = (vtxos: NormalizedExtendedVirtualCoin[]) => {
+            const fresh: NormalizedExtendedVirtualCoin[] = [];
             for (const vtxo of vtxos) {
                 const key = `${vtxo.txid}:${vtxo.vout}`;
                 if (!seen.has(key)) {
                     seen.add(key);
                     allVtxos.push(vtxo);
+                    fresh.push(vtxo);
                 }
             }
+            return fresh;
         };
 
         // Aggregate virtual outputs from all contract addresses. Address
@@ -1799,8 +1950,12 @@ export class WalletMessageHandler
         // wrong-script row never wins the txid:vout race.
         const manager = await this.readonlyWallet.getContractManager();
         const contracts = await manager.getContracts();
+        const snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[] = [];
         for (const contract of contracts) {
-            addVtxos(await getVtxosForContract(this.walletRepository, contract));
+            snapshot.push({
+                contract,
+                vtxos: addVtxos(await getVtxosForContract(this.walletRepository, contract)),
+            });
         }
 
         // Also check the wallet's primary address. Decode it to its script
@@ -1818,7 +1973,9 @@ export class WalletMessageHandler
             );
         }
         // Routed through the same helper as the contract buckets rather than reading the
-        // repository directly, so this bucket normalizes too.
+        // repository directly, so this bucket normalizes too. Anything left here
+        // is outside every contract row, so it carries no contract to judge it
+        // by — the wallet's own receive address, which is never gated.
         addVtxos(
             await getVtxosForContract(this.walletRepository, {
                 script: walletScript,
@@ -1826,7 +1983,7 @@ export class WalletMessageHandler
             }),
         );
 
-        return allVtxos;
+        return { snapshot, vtxos: allVtxos };
     }
 
     /**

@@ -81,7 +81,13 @@ export type ContractTapscripts = Pick<
  */
 export type ContractTapscriptCache = Map<string, ContractTapscripts>;
 
-function deriveContractTapscripts(contract: Contract): ContractTapscripts {
+/**
+ * Build a contract's annotation tapscripts, or throw. Exported so callers that
+ * must know *whether* a contract can still be annotated — the bulk sync, the
+ * pre-spend check — can ask without annotating a VTXO, and can keep the result
+ * in a {@link ContractTapscriptCache} so nothing is built twice.
+ */
+export function deriveContractTapscripts(contract: Contract): ContractTapscripts {
     const handler = contractHandlers.get(contract.type);
     if (!handler) {
         throw new Error(`No handler for contract type '${contract.type}'`);

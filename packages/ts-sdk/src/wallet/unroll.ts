@@ -288,6 +288,10 @@ export namespace Unroll {
 
 /**
  * Prepares the transaction that spends the CSV path to complete unrolling a VTXO.
+ *
+ * Caller-named txids, so the generic-spending gate does not apply — this spends
+ * already-unrolled onchain funds, not the offchain coin set.
+ *
  * @param wallet the wallet owning the VTXO(s)
  * @param vtxoTxIds the txids of the VTXO(s) to complete unroll
  * @param outputAddress the address to send the unrolled funds to

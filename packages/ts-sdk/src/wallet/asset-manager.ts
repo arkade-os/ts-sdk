@@ -66,7 +66,7 @@ export class AssetManager extends ReadonlyAssetManager implements IAssetManager 
 
         const metadata = castMetadata(params.metadata);
 
-        const virtualCoins = await this.wallet.getVtxos({
+        const virtualCoins = await this.wallet.getSpendableVtxos({
             withRecoverable: false,
         });
 
@@ -178,7 +178,7 @@ export class AssetManager extends ReadonlyAssetManager implements IAssetManager 
             throw new Error(`Asset ${params.assetId} is not reissuable`);
         }
 
-        const virtualCoins = await this.wallet.getVtxos({
+        const virtualCoins = await this.wallet.getSpendableVtxos({
             withRecoverable: false,
         });
 
@@ -309,7 +309,7 @@ export class AssetManager extends ReadonlyAssetManager implements IAssetManager 
             throw new Error(`Burn amount must be greater than 0, got ${params.amount}`);
         }
 
-        const virtualCoins = await this.wallet.getVtxos({
+        const virtualCoins = await this.wallet.getSpendableVtxos({
             withRecoverable: false,
         });
 

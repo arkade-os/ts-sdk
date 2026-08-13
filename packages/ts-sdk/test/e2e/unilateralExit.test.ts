@@ -253,11 +253,11 @@ describe("unilateral exit packages", () => {
             });
 
             // register the contract (with the preimage) in bob's repository.
-            // NOTE: registration goes straight to the repository — the
-            // ContractManager annotation path (`deriveContractTapscripts`)
-            // still assumes forfeit-style scripts and cannot annotate VHTLCs.
-            // The exit flow's explicit-outpoint path is designed to work
-            // without wallet-side VTXO tracking.
+            // NOTE: registration goes straight to the repository, so this
+            // exercises the exit flow's explicit-outpoint path without any
+            // wallet-side VTXO tracking. It never goes through
+            // `ContractManager`, and so is untouched by the `vhtlc` handler's
+            // generic-spending gate, which filters generic selection only.
             await bob.wallet.contractRepository.saveContract({
                 type: "vhtlc",
                 params: {

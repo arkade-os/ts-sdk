@@ -56,18 +56,6 @@ export const ArkadeScript: P.CoderType<ArkadeScriptType> = P.wrap({
                 w.byte(v);
                 continue;
             } else if (typeof o === "number" || typeof o === "bigint") {
-                // Arkade VM enforces MINIMALDATA: values 0, 1..16 and -1 must
-                // use OP_0 / OP_1..OP_16 / OP_1NEGATE, not data pushes.
-                if (o === 0 || o === 0n) {
-                    w.byte(0x00);
-                    continue;
-                } else if (o >= 1 && o <= 16) {
-                    w.byte(OP.OP_1 - 1 + Number(o));
-                    continue;
-                } else if (o === -1 || o === -1n) {
-                    w.byte(OP["1NEGATE"]);
-                    continue;
-                }
                 // Encode numbers via BigNum (520-byte cap).
                 const big = typeof o === "number" ? BigInt(o) : o;
                 o = BigNum.encode(big);
@@ -75,7 +63,14 @@ export const ArkadeScript: P.CoderType<ArkadeScriptType> = P.wrap({
             if (!(o instanceof Uint8Array)) throw new Error(`Wrong Script OP=${o} (${typeof o})`);
             // Bytes (data push)
             const len = o.length;
-            if (len < OP.PUSHDATA1) w.byte(len);
+            // Arkade VM enforces MINIMALDATA for small script numbers.
+            if (len === 1 && o[0] >= 1 && o[0] <= 16) {
+                w.byte(OP.OP_1 - 1 + o[0]);
+                continue;
+            } else if (len === 1 && o[0] === 0x81) {
+                w.byte(OP["1NEGATE"]);
+                continue;
+            } else if (len < OP.PUSHDATA1) w.byte(len);
             else if (len <= 0xff) {
                 w.byte(OP.PUSHDATA1);
                 w.byte(len);
