@@ -29,15 +29,33 @@ export interface LightningReceiveProfile extends Record<string, unknown> {
     expectedAmount: number;
     /** Where the claim pays. */
     payoutAddress: string;
+    /**
+     * Our Arkade claim's txid, once submitted.
+     *
+     * Here rather than on the record's common half, which is for fields all
+     * three legs carry: this one is the receive leg's alone, the counterpart of
+     * the onchain leg's `claimTxid`. Restoring without it re-arms the value gate
+     * against a lockup we have already partly claimed — `claimIfFunded` reads
+     * `partiallyClaimed` off exactly this — so the remainder is refused over a
+     * preimage that is already public, and a swap that did claim is relabelled
+     * `needs_counterparty` once its window shuts.
+     */
+    claimArkTxid?: string;
 }
 
 export const LightningReceiveCorridor: RfqCorridorHandler<LightningReceiveProfile> = {
     kind: "lightning_receive",
 
-    // `expectedAmount` is the only half the manager holds; `payoutAddress`
-    // comes from the request result and never changes, so the caller writes it
-    // once and this leaves it alone.
-    project: (swap: RfqSwap) => ({ expectedAmount: (swap as LightningReceiveSwap).expectedAmount }),
+    // What the manager holds: the amount gate, and its own claim once it lands.
+    // `payoutAddress` comes from the request result and never changes, so the
+    // caller writes it once and this leaves it alone.
+    project: (swap: RfqSwap) => {
+        const receive = swap as LightningReceiveSwap;
+        return {
+            expectedAmount: receive.expectedAmount,
+            ...(receive.claimArkTxid ? { claimArkTxid: receive.claimArkTxid } : {}),
+        };
+    },
 
     hydrate(profile) {
         // Required, never defaulted: the manager reports `needs_counterparty`
@@ -51,7 +69,10 @@ export const LightningReceiveCorridor: RfqCorridorHandler<LightningReceiveProfil
         ) {
             throw new Error("lightning_receive record carries no expectedAmount; it cannot claim");
         }
-        return { expectedAmount: profile.expectedAmount };
+        return {
+            expectedAmount: profile.expectedAmount,
+            ...(profile.claimArkTxid ? { claimArkTxid: profile.claimArkTxid } : {}),
+        };
     },
 };
 
@@ -99,6 +120,20 @@ export const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
             throw new Error(
                 "onchain_send record carries no L1 keys; its HTLC cannot be rebuilt and its " +
                     "refund window would pass unwatched",
+            );
+        }
+        // Required, never defaulted, for the same reason the receive leg's
+        // `expectedAmount` is: `classifyOnchainHtlc` gates on
+        // `confirmations < minConfirmations`, and that comparison against
+        // `undefined` is false — so a missing value does not fail the
+        // confirmation gate, it DELETES it, and the swap claims an unconfirmed
+        // fill with the preimage. The other L1 inputs are checked by
+        // `onchainHtlcScript`, which refuses a bad locktime, key or network.
+        if (!Number.isInteger(profile.minConfirmations) || profile.minConfirmations < 1) {
+            throw new Error(
+                `onchain_send record carries no usable minConfirmations ` +
+                    `(${String(profile.minConfirmations)}); the confirmation gate cannot be ` +
+                    `checked — refusing to restore a swap that would claim an unconfirmed fill`,
             );
         }
         return {
