@@ -94,10 +94,19 @@ describe("the unilateral ladder — what stops a funder preempting a claimant", 
         }
     });
 
-    it("matches the reference solver's headroom exactly", () => {
-        // `SOLO_REFUND_HEADROOM_SECONDS` in the reference solver's
-        // `src/core/timelocks.ts`. A trader deriving a different headroom
-        // derives a different address and refuses every quote.
+    it("pins the headroom constant against an accidental edit on this side", () => {
+        // Deliberately NOT a cross-implementation check, despite what an
+        // earlier title here claimed: `SOLO_REFUND_HEADROOM_SECONDS` is
+        // *defined* as `8 * SEQUENCE_GRANULARITY_SECONDS`, so asserting that
+        // restates its own definition. Re-declaring 512 locally is what gives
+        // it any value at all — it catches someone editing the constant, and
+        // nothing more.
+        //
+        // Agreement with the solver is not testable from inside this package;
+        // nothing here can see `src/core/timelocks.ts`. What stands in for it
+        // is the provenance of the golden bytes in `rfq.test.ts` /
+        // `rfqReceive.test.ts` — see the note there. If the two ever need to be
+        // checked mechanically, it takes a fixture shared across the repos.
         expect(SOLO_REFUND_HEADROOM_SECONDS).toBe(8 * SEQUENCE_GRANULARITY_SECONDS);
     });
 });

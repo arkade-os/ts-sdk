@@ -94,6 +94,12 @@ describe("receiveVtxoScript", () => {
     // trader's), preimage hash = ripemd160(sha256(0x07 * 32)), locktime
     // 1_800_000_000, CSV 4096s / 4096s / 8192s — the two-signature tier sits
     // level with the claim, the solo refund carries the headroom.
+    //
+    // PROVENANCE: generated from the solver's own `CovenantSwapScript` with the
+    // roles inverted, at lightning-swap-service `b9fc3fe` (merged `c904d44`),
+    // and validated by first reproducing the pre-change pin `5120f683cdac…`.
+    // See the longer note in `rfq.test.ts` before regenerating — recomputing
+    // this from the package itself would make the assertion circular.
     const script = () =>
         receiveVtxoScript({
             solverPubkey: SOLVER,

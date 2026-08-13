@@ -521,10 +521,29 @@ The package is pre-release; these notes replace a changelog for consumers tracki
   never enough for a claimant to complete a unilateral exit in. The two-signature refund needs no
   separation at all, since neither party can spend that leaf alone. This tracks the reference
   solver's [lightning-swap-service#81](https://github.com/arkade-os/lightning-swap-service/pull/81);
-  the two derivations must agree exactly. **Deployment must be coordinated** on the same terms as
-  the entry below: a mismatch refuses every quote at `verifyLockupAddress` rather than losing funds.
-  `unilateralClaimDelay`'s BIP68 ceiling tightened to match (it now reserves the full headroom
-  rather than two steps).
+  the two derivations must produce **the same three delay values** for the same operator, which is
+  what keeps the derived addresses identical. **Deployment must be coordinated** on the same terms
+  as the entry below: for a quote not yet funded, a mismatch refuses it at `verifyLockupAddress`
+  rather than losing funds.
+
+  **An in-flight lockup funded before the upgrade needs care, and the entry below understates
+  this.** The delays are not quote fields and are not persisted on the swap record
+  (`AssetSwap` keeps `swapPkScript`, not `claimDelay`), and `RfqSwap`'s own doc tells callers to
+  *rebuild* the script on restart from the quote's binding fields — which re-derives the delays
+  under whatever ladder is compiled in. So a trader who funded on `0.0.4`, upgraded, and restarted
+  rebuilds a **new** address, and `refundIfUnresolved` finds no VTXOs there and returns
+  `nothing_to_refund` — a terminal-sounding answer for money still locked at the old script, with
+  `refundLocktime` still ticking. Until the delays are persisted and rebuilt from the stored value,
+  drain in-flight lockups before upgrading, or rebuild the old script from the pre-upgrade delays
+  by hand. This is a pre-existing gap that any address-moving change hits, not one this change
+  introduces.
+
+  `unilateralClaimDelay`'s BIP68 ceiling tightened to reserve the full headroom rather than two
+  steps. Note this guard alone is **not** mirrored in the reference solver, which still rejects
+  only above `0xffff * 512`: for an operator `unilateralExitDelay` in `(33549824, 33553920]`
+  seconds the trader throws here while the solver quotes and then fails deeper in its own script
+  build. Both refuse, at different seams with different messages, so it is a diagnosability wart
+  rather than a fund risk — and the window is unreachable in practice (~388 days).
 
 - **`secrets.ts` is gone; key provisioning moved into `@arkade-os/sdk`.** This package no longer
   derives, mints, or names keys. It asks the SDK for what the leg needs — `provisionRefundKey(wallet)`

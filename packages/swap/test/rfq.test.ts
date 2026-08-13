@@ -64,6 +64,22 @@ describe("lightningSendVtxoScript", () => {
     // coordinated trader/solver deployment — see "Breaking changes" in the
     // README. A version mismatch refuses quotes (verifyLockupAddress), it does
     // not lose funds.
+    //
+    // PROVENANCE — read before regenerating. "Byte-identical to the reference
+    // solver" is only meaningful if the expected value came from the SOLVER.
+    // Recomputing it from this package would assert that this code equals
+    // itself: green, and blind to exactly the drift the pin exists to catch.
+    //
+    // The current bytes were produced by the solver's own `CovenantSwapScript`
+    // (`src/arkade/covenant.ts`) at lightning-swap-service `b9fc3fe`, merged to
+    // its main as `c904d44`, driven by that commit's `deriveUnilateralDelays`.
+    // The generator was first run against the PRE-change ladder
+    // (4096/4608/5120) as a negative control and reproduced the goldens then
+    // pinned here — send `51200370b2a6…`, receive `5120f683cdac…` — which is
+    // what establishes it speaks the reference's dialect rather than this one.
+    //
+    // Regenerate the same way: drive the solver, reproduce the CURRENT pin
+    // first, and only then trust the new number.
     // The reference solver's fixture, and its exact output bytes: sender =
     // key(13) (the trader's own VHTLC-sender key), receiver = key(1)
     // (solver), server = key(3), emulator = key(9), refund destination =
