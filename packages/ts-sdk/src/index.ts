@@ -107,6 +107,7 @@ import {
     // Asset types
     Asset,
     Recipient,
+    SendParams,
     IssuanceParams,
     IssuanceResult,
     ReissuanceParams,
@@ -934,6 +935,7 @@ export type {
     IAssetManager,
     Asset,
     Recipient,
+    SendParams,
     IssuanceParams,
     IssuanceResult,
     ReissuanceParams,

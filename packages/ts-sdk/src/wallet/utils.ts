@@ -11,6 +11,7 @@ import { isTapscriptDeriving } from "../contracts/types";
 import { contractHandlers } from "../contracts/handlers";
 import { DefaultVtxo } from "../script/default";
 import { DelegateVtxo } from "../script/delegate";
+import { VtxoScript } from "../script/base";
 import type { ReadonlyWallet } from "./wallet";
 import { classifyAgainstSignerSet, type SignerSet } from "./signerRotation";
 import { hex } from "@scure/base";
@@ -212,9 +213,10 @@ export function isValidArkAddress(address: string): boolean {
     }
 }
 
-type ValidatedRecipient = Required<Omit<Recipient, "extensions">> & {
+type ValidatedRecipient = Required<Omit<Recipient, "extensions" | "tapTree">> & {
     script: Bytes;
     extensions?: Recipient["extensions"];
+    tapTree?: Recipient["tapTree"];
 };
 
 /**
@@ -255,6 +257,32 @@ export function assertRecipientArkAddress(
     }
 }
 
+/**
+ * A published taptree must derive the address it is published against — nothing
+ * downstream re-derives it, so a mismatched tree fails only in whatever later
+ * tries to spend.
+ *
+ * Compared against `pkScript`, not the output script: a sub-dust output pays the
+ * `RETURN` form of the same key.
+ */
+function assertTapTreeDerivesAddress(encoded: string, tapTree: Bytes, address: ArkAddress): void {
+    let derived: Bytes;
+    try {
+        derived = VtxoScript.decode(tapTree).pkScript;
+    } catch (e) {
+        throw new Error(
+            `Invalid tapTree for ${encoded}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+    }
+    if (hex.encode(derived) !== hex.encode(address.pkScript)) {
+        throw new Error(
+            `Invalid tapTree for ${encoded}: derives ${hex.encode(derived)}, ` +
+                `address is ${hex.encode(address.pkScript)}. Expected VtxoScript.encode() form: ` +
+                `leaf depths are ignored and the tree is rebuilt in arkd's canonical shape.`,
+        );
+    }
+}
+
 export function validateRecipients(
     recipients: Recipient[],
     dustAmount: number,
@@ -277,11 +305,16 @@ export function validateRecipients(
             throw new Error("Amount must be positive");
         }
 
+        if (recipient.tapTree) {
+            assertTapTreeDerivesAddress(recipient.address, recipient.tapTree, address);
+        }
+
         validatedRecipients.push({
             address: recipient.address,
             assets: recipient.assets ?? [],
             amount,
             script: amount < dustAmount ? address.subdustPkScript : address.pkScript,
+            tapTree: recipient.tapTree,
         });
     }
 

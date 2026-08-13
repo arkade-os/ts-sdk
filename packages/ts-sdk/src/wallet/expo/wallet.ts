@@ -13,6 +13,7 @@ import type {
     ArkTransaction,
     ExtendedCoin,
     Recipient,
+    SendParams,
 } from "..";
 import type { SettlementEvent } from "../../providers/ark";
 import type { Identity } from "../../identity";
@@ -389,8 +390,8 @@ export class ExpoWallet implements IWallet, HDWalletCapable, HDAllocationCapable
         return this.wallet.settle(params, eventCallback);
     }
 
-    send(...recipients: [Recipient, ...Recipient[]]): Promise<string> {
-        return this.wallet.send(...recipients);
+    send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
+        return this.wallet.send(...args);
     }
 
     get assetManager(): IAssetManager {

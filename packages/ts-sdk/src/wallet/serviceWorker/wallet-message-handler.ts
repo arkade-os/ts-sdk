@@ -454,7 +454,11 @@ export type ResponseContractEvent = ResponseEnvelope & {
 // Asset operations
 export type RequestSend = RequestEnvelope & {
     type: "SEND";
-    payload: { recipients: [Recipient, ...Recipient[]] };
+    payload: {
+        recipients: [Recipient, ...Recipient[]];
+        /** @see SendParams.selectedVtxos */
+        selectedVtxos?: ExtendedVirtualCoin[];
+    };
 };
 export type ResponseSend = ResponseEnvelope & {
     type: "SEND_SUCCESS";
@@ -1276,8 +1280,14 @@ export class WalletMessageHandler
                     });
                 }
                 case "SEND": {
-                    const { recipients } = (message as RequestSend).payload;
-                    const txid = await (this.wallet as IWallet).send(...recipients);
+                    const { recipients, selectedVtxos } = (message as RequestSend).payload;
+                    // Object form only when the client asked for it: the
+                    // variadic form is what every existing client sends, and
+                    // routing it through `{ recipients }` regardless would put
+                    // a behaviour change behind a protocol field nobody set.
+                    const txid = await (selectedVtxos
+                        ? (this.wallet as IWallet).send({ recipients, selectedVtxos })
+                        : (this.wallet as IWallet).send(...recipients));
                     return this.tagged({
                         id,
                         type: "SEND_SUCCESS",

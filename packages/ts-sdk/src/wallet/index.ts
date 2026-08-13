@@ -440,6 +440,34 @@ export interface Recipient {
     /** Assets to send to the same recipient (`assetId` & `amount`) */
     assets?: Asset[];
     extensions?: Array<{ type: number; payload: Uint8Array }>; // custom extension packets to embed in the tx
+
+    /**
+     * The recipient contract's tapleaf set (`VtxoScript.encode` form), published
+     * on this output's `PSBT_OUT_TAP_TREE` so its spending paths are recoverable
+     * from the transaction alone — an address commits only to the output key.
+     *
+     * Refused unless it derives the recipient address's taproot key, and it must
+     * come from `VtxoScript.encode()`: leaf depths are ignored on read and the
+     * tree is rebuilt in arkd's canonical shape, so a tree from another encoder
+     * is refused even where it commits to the same address.
+     */
+    tapTree?: Bytes;
+}
+
+/** Object form of `IWallet.send`'s arguments; the variadic form has no slot for options. */
+export interface SendParams {
+    /** One or more recipients — the variadic arguments of the other form. */
+    recipients: [Recipient, ...Recipient[]];
+
+    /**
+     * Spend exactly these virtual outputs instead of letting the wallet choose.
+     * Taken as given, like `settle({ inputs })`: nothing is added, so a shortfall
+     * is an error rather than a top-up. Use when a contract must be funded from
+     * coins outliving its timelock, which generic selection does not know about.
+     *
+     * @see IReadonlyWallet.getVtxos
+     */
+    selectedVtxos?: ExtendedVirtualCoin[];
 }
 
 /**
@@ -967,16 +995,25 @@ export interface IWallet extends IReadonlyWallet {
     ): Promise<string>;
 
     /**
-     * Send bitcoin and/or assets to one or more Arkade recipients.
+     * Send bitcoin and/or assets to one or more Arkade recipients, passed
+     * either as variadic `Recipient`s or as a single `SendParams` object —
+     * the latter also carries the inputs to spend.
      *
-     * @param recipients - One or more recipients
+     * @param args - Recipients, or a `SendParams` object
      * @returns Arkade transaction id
+     * @see SendParams
      * @example
      * ```typescript
      * await wallet.send({ address: 'ark1q...', amount: 1000 })
+     *
+     * // choosing the inputs as well as the outputs
+     * await wallet.send({
+     *     recipients: [{ address: 'ark1q...', amount: 1000 }],
+     *     selectedVtxos: mine,
+     * })
      * ```
      */
-    send(...recipients: [Recipient, ...Recipient[]]): Promise<string>;
+    send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string>;
 
     // TODO: this needs to be async or find a workaround
     /** Asset manager bound to this wallet instance. */
