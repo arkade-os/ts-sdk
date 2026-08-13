@@ -172,6 +172,27 @@ describe("rebuildRfqSwap", () => {
             /expectedAmount/,
         );
     });
+
+    it("carries the receive leg's own claim txid through a restart", () => {
+        // Per-kind, and so on the profile rather than the record's common half:
+        // it is the counterpart of the onchain leg's `claimTxid`, and the two
+        // send legs have no such txid at all. Losing it re-arms the value gate
+        // against a lockup we have already partly claimed — `claimIfFunded`
+        // reads `partiallyClaimed` off exactly this — so the remainder is
+        // refused over a preimage that is already public, and a swap that did
+        // claim is relabelled `needs_counterparty` once its window shuts.
+        const record = updateRfqSwapRecord(
+            createRfqSwapRecord(receiveOrigin, swapOf(receiveOrigin)),
+            {
+                ...swapOf(receiveOrigin, "claimed"),
+                claimArkTxid: "ab".repeat(32),
+            } as LightningReceiveSwap,
+        );
+        expect(record.profile.claimArkTxid).toBe("ab".repeat(32));
+
+        const rebuilt = rebuildRfqSwap(record, RECEIVE_LOCKUP.params) as LightningReceiveSwap;
+        expect(rebuilt.claimArkTxid).toBe("ab".repeat(32));
+    });
 });
 
 describe("an onchain-send record carries its L1 half", () => {
@@ -232,6 +253,31 @@ describe("an onchain-send record carries its L1 half", () => {
         expect(() => rebuildRfqSwap({ ...record, profile: {} }, SEND_LOCKUP.params)).toThrow(
             /L1 keys/,
         );
+    });
+
+    it("refuses an onchain record whose confirmation gate cannot be checked", () => {
+        // The onchain leg's counterpart to the receive leg's `expectedAmount`:
+        // `classifyOnchainHtlc` gates on `confirmations < minConfirmations`, and
+        // that comparison against `undefined` is false — so a missing value does
+        // not fail the gate, it deletes it, and the swap publishes `P` against
+        // an unconfirmed fill.
+        const record = createRfqSwapRecord(onchainOrigin, onchainSwap());
+        const { minConfirmations: _dropped, ...profile } = record.profile;
+        expect(() => rebuildRfqSwap({ ...record, profile }, SEND_LOCKUP.params)).toThrow(
+            /minConfirmations/,
+        );
+    });
+
+    it("refuses an onchain record naming a network it cannot build for", () => {
+        // `btc.p2tr` reads an unknown network as mainnet, so this would restore
+        // a regtest swap holding a `bc1p…` address and say nothing about it.
+        const record = createRfqSwapRecord(onchainOrigin, onchainSwap());
+        expect(() =>
+            rebuildRfqSwap(
+                { ...record, profile: { ...record.profile, network: "signet" } },
+                SEND_LOCKUP.params,
+            ),
+        ).toThrow(/unknown L1 network/);
     });
 
     it("carries the fill outpoint and our claim through the mutable half", () => {

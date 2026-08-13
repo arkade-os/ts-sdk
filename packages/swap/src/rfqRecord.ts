@@ -133,7 +133,6 @@ export interface RfqSwapRecord extends RfqSwapOrigin {
     createdAt: number;
     updatedAt: number;
     refundArkTxid?: string;
-    claimArkTxid?: string;
     failure?: string;
     blockedReason?: string;
 }
@@ -141,9 +140,12 @@ export interface RfqSwapRecord extends RfqSwapOrigin {
 /**
  * The manager's mutable half, projected off a live record.
  *
- * Corridor-agnostic by construction: `claimArkTxid` is the only per-kind field
- * left on `RfqSwapCommon` itself, and everything else a corridor tracks goes
- * through its handler's `project`.
+ * Corridor-agnostic by construction: every field here is one `RfqSwapCommon`
+ * declares, so each is on all three legs, and anything a single corridor tracks
+ * goes through its handler's `project` instead — `claimArkTxid` included, which
+ * only the receive leg has. A per-kind field lifted to here would be written by
+ * this function and restored by nobody, since `rebuildRfqSwap` builds the
+ * common half from `RfqSwapCommon` alone.
  */
 const managerState = (swap: PersistableRfqSwap) => ({
     rfqId: swap.rfqId,
@@ -151,7 +153,6 @@ const managerState = (swap: PersistableRfqSwap) => ({
     createdAt: swap.createdAt,
     updatedAt: swap.updatedAt,
     ...(swap.refundArkTxid ? { refundArkTxid: swap.refundArkTxid } : {}),
-    ...("claimArkTxid" in swap && swap.claimArkTxid ? { claimArkTxid: swap.claimArkTxid } : {}),
     ...(swap.failure ? { failure: swap.failure } : {}),
     ...(swap.blockedReason ? { blockedReason: swap.blockedReason } : {}),
 });
@@ -186,7 +187,6 @@ export function updateRfqSwapRecord(
 ): RfqSwapRecord {
     const {
         refundArkTxid: _refundArkTxid,
-        claimArkTxid: _claimArkTxid,
         failure: _failure,
         blockedReason: _blockedReason,
         ...origin
