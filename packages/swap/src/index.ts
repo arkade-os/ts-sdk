@@ -9,6 +9,13 @@ export {
     type Offer,
 } from "./offer";
 export {
+    compareBookOffers,
+    planBookSweep,
+    type BookFill,
+    type BookOffer,
+    type BookSweep,
+} from "./orderbook";
+export {
     discoverMarkets,
     findMarket,
     validatePlan,

@@ -126,6 +126,25 @@ await wallet.send({
 });
 ```
 
+### Aggregating offers as an order book
+
+`planBookSweep` turns a relay or indexer snapshot into an integer-exact, deterministic fill plan.
+It filters one market direction, sorts by price without floating point, and selects whole funded
+offer UTXOs until the requested depth is reached. Equal prices are ordered by outpoint, so two
+clients given the same snapshot select the same inputs regardless of message arrival order.
+
+```ts
+const sweep = planBookSweep(book, assetId, "BTC", 10_000n);
+// Build one transaction which spends every sweep.fills input and includes the
+// covenant-required maker output for each. Never treat this quote as a partial fill.
+```
+
+The planner intentionally does not build or sign the transaction. The existing offer covenant is
+full-fill: each selected UTXO must be consumed in full and its committed `payAmount` delivered.
+That makes a multi-offer take atomic while keeping signing keys in the wallet and covenant
+validation in the transaction layer. A UI may render the result as continuous depth, but must show
+the possible whole-offer overfill reported by `takeAmount`.
+
 The covenant co-signer ("emulator") key defaults to the SDK's per-network pin, resolved from the
 network the Ark server reports — never fetched from the emulator itself. Pass
 `params.emulatorPubkey` (33-byte compressed hex, the same contract as `Arkade.connect`'s option)
