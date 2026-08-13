@@ -375,6 +375,14 @@ export async function contractPreimage(
  * derivation reproducible. `DescriptorIdentity` satisfies it, and throws
  * rather than degrading to a random-aux signer. */
 export interface DeterministicSigner extends ReadonlyIdentity {
+    /**
+     * Implementors wrapping a remote: throw only for a refusal that will
+     * repeat. {@link provisionClaimSecret} reads a transient throw — a network
+     * hiccup, an extension timeout — as "this signer cannot derive", and falls
+     * back to a stored random preimage for the artifact's whole life. That is
+     * claimable, but it persists a secret the seed would otherwise have
+     * replaced, and nothing surfaces the downgrade to the caller.
+     */
     signSchnorrDeterministic(messageHash: Uint8Array): Promise<Uint8Array>;
 }
 
