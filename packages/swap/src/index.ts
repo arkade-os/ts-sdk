@@ -36,7 +36,11 @@ export {
 export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";
 // The corridor handlers and their registry are internal — see `rfqCorridor.ts`
 // for why. What a consumer writes into `RfqSwapOrigin.profile` is these:
-export type { LightningReceiveProfile, OnchainSendProfile } from "./rfqCorridors";
+export {
+    onchainSendProfile,
+    type LightningReceiveProfile,
+    type OnchainSendProfile,
+} from "./rfqCorridors";
 export {
     RFQ_SWAP_RETENTION_SECONDS,
     createRfqSwapRecord,

@@ -999,6 +999,10 @@ export function deriveOnchainSend(input: {
      * contract is Bitcoin L1 — there is no Arkade contract row for it, so a
      * consumer persisting the swap has no other route to rebuilding it. */
     htlcParams: OnchainHtlcParams;
+    /** Echoed from the input, so a result is a complete description of the L1
+     * half rather than one a caller has to re-assemble from what it passed in.
+     * {@link onchainSendProfile} reads it from here. */
+    l1Network: OnchainNetwork;
     refundLocktime: number;
     htlcLocktime: number;
     minConfirmations: number;
@@ -1053,6 +1057,7 @@ export function deriveOnchainSend(input: {
         script,
         htlc,
         htlcParams,
+        l1Network: input.l1Network,
         refundLocktime,
         htlcLocktime,
         minConfirmations,
@@ -1116,8 +1121,21 @@ export async function requestOnchainSend(
      * lockup there is no contract row holding its parameters. Persist
      * `htlc.address` alongside them (`OnchainSendProfile.htlcAddress`): the
      * rebuild checks the two against each other, which is the only check
-     * available on a leg with no second copy of its covenant. */
+     * available on a leg with no second copy of its covenant.
+     *
+     * `onchainSendProfile(result)` does all of that mapping for you; prefer it
+     * to reading these fields across by hand. */
     htlcParams: OnchainHtlcParams;
+    /**
+     * Which bitcoin network the L1 HTLC was derived for.
+     *
+     * Returned because it is NOT the ark network name and cannot be recovered
+     * from one by inspection: this call maps `info.network` through a private
+     * narrowing where signet, mutinynet and testnet4 all become `"testnet"`.
+     * A caller reconstructing it from context would be re-deriving a mapping
+     * it cannot see, and a value the profile needs verbatim.
+     */
+    l1Network: OnchainNetwork;
     /** `profile.min_confirmations`; gates when the L1 fill becomes claimable,
      * and part of what a restored swap needs to drive its own claim. */
     minConfirmations: number;
@@ -1201,6 +1219,7 @@ export async function requestOnchainSend(
         refundAddress,
         htlc: derived.htlc,
         htlcParams: derived.htlcParams,
+        l1Network: derived.l1Network,
         minConfirmations: derived.minConfirmations,
         senderPubkey,
         secrets,
