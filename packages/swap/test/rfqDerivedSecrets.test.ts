@@ -33,6 +33,7 @@ import {
     InMemoryWalletRepository,
     MnemonicIdentity,
     SingleKey,
+    VHTLCV2ContractHandler,
     type IWallet,
 } from "@arkade-os/sdk";
 import {
@@ -289,33 +290,25 @@ describe("treeParams round-trips to the funded script", () => {
     });
 
     it("a record built from the result rebuilds the covenant that was funded", async () => {
-        // The hop the other two tests leave open: entrypoint -> script and
-        // record -> script are each covered, but the consumer writes
-        // entrypoint -> RECORD by hand, and that is the only place a tree
-        // parameter can go missing. Written out longhand on purpose — this is
-        // the mapping an integrator copies.
+        // The consumer's whole mapping, longhand — this is what an integrator
+        // copies. It carries NO tree parameters: the entrypoint already
+        // registered the covenant, so the record points at that row and the
+        // rebuild reads it back. There is no hand-mapping left for a parameter
+        // to go missing from.
         const result = await requestLightningSend(
             staticWallet(),
             "http://ark",
             lightningTransport(),
             { invoice: INVOICE, emulatorPubkey: EMULATOR_PUBKEY_HEX },
         );
-        const t = result.treeParams;
 
         const record = createRfqSwapRecord(
             {
                 kind: "lightning_send",
-                solverPubkey: hex.encode(t.solverPubkey),
-                emulatorPubkey: hex.encode(t.emulatorPubkey),
-                serverPubkey: hex.encode(t.serverPubkey),
-                paymentHash: t.paymentHash,
-                refundLocktime: t.refundLocktime,
-                claimDelay: t.claimDelay,
-                senderPubkey: hex.encode(t.senderPubkey),
-                refundPkScript: hex.encode(t.refundPkScript),
-                receiverPkScript: hex.encode(t.receiverPkScript),
-                signingDescriptor: result.secrets.descriptor,
+                lockupScript: hex.encode(result.swapPkScript),
                 lockupAddress: result.address,
+                paymentHash: result.treeParams.paymentHash,
+                signingDescriptor: result.secrets.descriptor,
                 amount: result.fundAmount,
             },
             {
@@ -323,16 +316,26 @@ describe("treeParams round-trips to the funded script", () => {
                 rfqId: result.rfqId,
                 state: "pending",
                 lockupPkScript: result.swapPkScript,
-                paymentHash: t.paymentHash,
-                refundLocktime: t.refundLocktime,
+                paymentHash: result.treeParams.paymentHash,
+                refundLocktime: result.treeParams.refundLocktime,
                 createdAt: 1,
                 updatedAt: 1,
             },
         );
 
-        expect(hex.encode(rebuildRfqSwap(record).lockupPkScript)).toBe(
-            hex.encode(result.swapPkScript),
-        );
+        // The row the entrypoint registered is what resolves the covenant.
+        const contracts = {
+            getContracts: async () => [
+                {
+                    script: hex.encode(result.swapPkScript),
+                    params: VHTLCV2ContractHandler.serializeParams(result.script.options),
+                },
+            ],
+        } as unknown as Parameters<typeof rebuildRfqSwap>[1];
+
+        const rebuilt = await rebuildRfqSwap(record, contracts);
+        expect(hex.encode(rebuilt.lockupPkScript)).toBe(hex.encode(result.swapPkScript));
+        expect(rebuilt.refundLocktime).toBe(result.treeParams.refundLocktime);
     });
 
     it("carries the inputs no quote and no second round trip could supply", async () => {

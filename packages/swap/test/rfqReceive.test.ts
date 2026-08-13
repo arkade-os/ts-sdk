@@ -38,6 +38,7 @@ import {
     HDDescriptorProvider,
     InMemoryWalletRepository,
     MnemonicIdentity,
+    VHTLCV2ContractHandler,
     type IWallet,
 } from "@arkade-os/sdk";
 import {
@@ -707,27 +708,19 @@ describe("requestLightningReceive on an HD wallet", () => {
         // `RfqSwapOrigin` and rebuild the same covenant. `expectedAmount` and
         // `preimageHex` ride along because neither is re-derivable at claim time.
         const result = await (await lightningReceiveFlow()).run();
-        const t = result.treeParams;
 
         const record = createRfqSwapRecord(
             {
                 kind: "lightning_receive",
-                solverPubkey: hex.encode(t.solverPubkey),
-                emulatorPubkey: hex.encode(t.emulatorPubkey),
-                serverPubkey: hex.encode(t.serverPubkey),
-                paymentHash: t.paymentHash,
-                refundLocktime: t.refundLocktime,
-                claimDelay: t.claimDelay,
-                payoutPubkey: hex.encode(t.payoutPubkey),
-                payoutPkScript: hex.encode(t.payoutPkScript),
-                solverRefundPkScript: hex.encode(t.solverRefundPkScript),
+                lockupScript: hex.encode(result.swapPkScript),
+                lockupAddress: result.address,
+                paymentHash: result.treeParams.paymentHash,
                 payoutAddress: result.payoutAddress,
                 expectedAmount: result.expectedAmount,
                 signingDescriptor: result.secrets.descriptor,
                 ...(result.secrets.mustPersistPreimage
                     ? { preimageHex: hex.encode(result.secrets.preimage) }
                     : {}),
-                lockupAddress: result.address,
                 amount: result.payAmount,
             },
             {
@@ -735,15 +728,24 @@ describe("requestLightningReceive on an HD wallet", () => {
                 rfqId: result.rfqId,
                 state: "pending",
                 lockupPkScript: result.swapPkScript,
-                paymentHash: t.paymentHash,
-                refundLocktime: t.refundLocktime,
+                paymentHash: result.treeParams.paymentHash,
+                refundLocktime: result.treeParams.refundLocktime,
                 expectedAmount: result.expectedAmount,
                 createdAt: 1,
                 updatedAt: 1,
             },
         );
 
-        const rebuilt = rebuildRfqSwap(record) as LightningReceiveSwap;
+        const contracts = {
+            getContracts: async () => [
+                {
+                    script: hex.encode(result.swapPkScript),
+                    params: VHTLCV2ContractHandler.serializeParams(result.script.options),
+                },
+            ],
+        } as unknown as Parameters<typeof rebuildRfqSwap>[1];
+
+        const rebuilt = (await rebuildRfqSwap(record, contracts)) as LightningReceiveSwap;
         expect(hex.encode(rebuilt.lockupPkScript)).toBe(hex.encode(result.swapPkScript));
         expect(rebuilt.expectedAmount).toBe(4_950);
         // an HD wallet re-derives P from the seed, so nothing secret is stored
