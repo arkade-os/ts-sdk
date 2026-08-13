@@ -333,6 +333,32 @@ describe("getSpendableVtxos", () => {
 });
 
 describe("getBalance", () => {
+    /** `settled + preconfirmed === available + gated + intentLocked`. */
+    const expectSplit = (balance: {
+        settled: number;
+        preconfirmed: number;
+        available: number;
+        gated: number;
+        intentLocked: number;
+    }) =>
+        expect(balance.settled + balance.preconfirmed).toBe(
+            balance.available + balance.gated + balance.intentLocked,
+        );
+
+    const lockOutpoint = async (intents: InMemoryIntentRepository, txid: string) =>
+        intents.saveIntent({
+            intentTxId: `i-${txid.slice(0, 4)}`,
+            createdAt: 1,
+            updatedAt: 1,
+            registerProof: "",
+            registerProofMessage: "",
+            deleteProof: "",
+            deleteProofMessage: "",
+            partialForfeits: [],
+            state: "batch_in_progress",
+            intentVtxos: [{ txid, vout: 0 }],
+        });
+
     it("counts gated funds as owned but not as available (D1c)", async () => {
         const { wallet } = await seededWallet();
         const balance = await wallet.getBalance();
@@ -342,6 +368,41 @@ describe("getBalance", () => {
         expect(balance.total).toBe(70_000);
         // …minus the escrowed and the unknown-type contract.
         expect(balance.available).toBe(50_000);
+        expect(balance.gated).toBe(20_000);
+        expect(balance.intentLocked).toBe(0);
+        expectSplit(balance);
+    });
+
+    it("counts a gated-and-locked VTXO once, as gated", async () => {
+        const intents = new InMemoryIntentRepository();
+        const { wallet } = await seededWallet({ intents });
+        const escrowTxid = ESCROW_SCRIPT.slice(-2).repeat(32);
+        await lockOutpoint(intents, escrowTxid);
+
+        // Without this the case passes for the wrong reason: no overlap gives
+        // the same buckets as an overlap counted once.
+        expect(await intents.getLockedVtxoOutpoints()).toContainEqual({
+            txid: escrowTxid,
+            vout: 0,
+        });
+
+        const balance = await wallet.getBalance();
+        expect(balance.gated).toBe(20_000);
+        expect(balance.intentLocked).toBe(0);
+        expect(balance.available).toBe(50_000);
+        expectSplit(balance);
+    });
+
+    it("reports an ungated intent-locked VTXO as intentLocked", async () => {
+        const intents = new InMemoryIntentRepository();
+        const { wallet, defaultScript } = await seededWallet({ intents });
+        await lockOutpoint(intents, defaultScript.slice(-2).repeat(32));
+
+        const balance = await wallet.getBalance();
+        expect(balance.intentLocked).toBe(40_000);
+        expect(balance.gated).toBe(20_000);
+        expect(balance.available).toBe(10_000); // only MARKED_SCRIPT survives
+        expectSplit(balance);
     });
 
     it("gives assets the same owned/spendable split (D1e)", async () => {

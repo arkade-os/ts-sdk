@@ -341,6 +341,27 @@ export interface WalletBalance {
      */
     available: number;
     /**
+     * Spendable-but-for-the-gate funds: VTXOs under a contract the
+     * generic-spending gate refuses — a VHTLC lockup, an unmarked `arkade`
+     * program, or a type whose handler this runtime never registered. Counted in
+     * `settled`/`preconfirmed` and `total`, never in `available`.
+     *
+     * Tested before {@link intentLocked}: the gate is a durable property of the
+     * contract while an intent lock clears on its own, so a VTXO that is both is
+     * reported here — it does not become available when the batch settles.
+     */
+    gated: number;
+    /**
+     * Funds committed to an in-flight (non-terminal) intent, and not already
+     * counted in {@link gated}. Unlike `gated`, these return to `available` when
+     * the intent reaches a terminal state.
+     *
+     * Reported as zero where the wallet cannot answer the question — no intent
+     * repository, or a repository read that fails — so this under-reports into
+     * `available` rather than misattributing.
+     */
+    intentLocked: number;
+    /**
      * Recoverable balance from subdust or expired (swept) virtual outputs —
      * recoverable in principle, so a lockup whose contract refuses a spend right
      * now is still counted and `total` does not lose it.
