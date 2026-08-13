@@ -35,6 +35,18 @@ describe("swapActivityResolver", () => {
         ]);
     });
 
+    it("indexes every txid of a swap to the same groupId", async () => {
+        const resolver = await preparedResolver([
+            { rfqId: "r1", kind: "lightning_send", state: "refunded", txids: ["fund", "refund"] },
+        ]);
+
+        const funding = resolver.resolve(tx("fund"));
+        const refund = resolver.resolve(tx("refund"));
+
+        expect(funding?.[0].groupId).toBe("swap:r1");
+        expect(refund?.[0].groupId).toBe(funding?.[0].groupId);
+    });
+
     it("reports the swap's state as the membership status", async () => {
         const resolver = await preparedResolver([
             { rfqId: "r1", kind: "lightning_send", state: "failed", txids: ["fund"] },
