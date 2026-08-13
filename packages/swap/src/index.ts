@@ -59,6 +59,7 @@ export {
     MIN_CLAIM_WINDOW_SECONDS,
     MIN_HEADROOM_SECONDS,
     RFQ_TERMINAL_STATES,
+    SOLO_REFUND_HEADROOM_SECONDS,
     AddressMismatch,
     SwapRefusal,
     arkadeSwapRequest,

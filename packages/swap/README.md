@@ -512,6 +512,20 @@ after heavy swap use.
 
 The package is pre-release; these notes replace a changelog for consumers tracking the branch.
 
+- **Every derived address changed again, in both corridors — the unilateral ladder was re-spaced.**
+  `unilateralRefundDelay` now sits **level with** `claimDelay` instead of one 512s step above it,
+  and `unilateralRefundWithoutReceiverDelay` sits `SOLO_REFUND_HEADROOM_SECONDS` (4096s, newly
+  exported) above it instead of two steps. The old ladder spaced all three leaves one step apart as
+  though they were interchangeable rungs; they are not. Only `unilateralRefundWithoutReceiver` is a
+  solo path for the funder, so it is the only one whose timing can steal, and one 512s tick was
+  never enough for a claimant to complete a unilateral exit in. The two-signature refund needs no
+  separation at all, since neither party can spend that leaf alone. This tracks the reference
+  solver's [lightning-swap-service#81](https://github.com/arkade-os/lightning-swap-service/pull/81);
+  the two derivations must agree exactly. **Deployment must be coordinated** on the same terms as
+  the entry below: a mismatch refuses every quote at `verifyLockupAddress` rather than losing funds.
+  `unilateralClaimDelay`'s BIP68 ceiling tightened to match (it now reserves the full headroom
+  rather than two steps).
+
 - **`secrets.ts` is gone; key provisioning moved into `@arkade-os/sdk`.** This package no longer
   derives, mints, or names keys. It asks the SDK for what the leg needs — `provisionRefundKey(wallet)`
   for a leg it funds, `provisionClaimSecret(wallet, { preimage? })` for one it claims — and

@@ -16,6 +16,7 @@ import {
     ARKADE_ASSET,
     ARKADE_BTC,
     LIGHTNING_SEND_PAIR,
+    SOLO_REFUND_HEADROOM_SECONDS,
     SwapRefusal,
     arkadeSwapRequest,
     assertFundable,
@@ -70,7 +71,8 @@ describe("lightningSendVtxoScript", () => {
     // payout = p2tr(key(1)) (nonInteractiveClaim's covenant target, same key
     // as solverPubkey — the solver's own claim identity), preimage hash =
     // ripemd160(sha256(0x07 * 32)), locktime 1_800_000_000, CSV 4096s /
-    // 4608s / 5120s (claimDelay, +512 per unilateralRefundDelay, +1024 per
+    // 4096s / 8192s (claimDelay, unilateralRefundDelay LEVEL with it, and
+    // SOLO_REFUND_HEADROOM_SECONDS above it for
     // unilateralRefundWithoutReceiverDelay).
     const PREIMAGE = new Uint8Array(32).fill(7);
     const PAYMENT_HASH = hex.encode(sha256(PREIMAGE));
@@ -93,7 +95,7 @@ describe("lightningSendVtxoScript", () => {
 
     it("is byte-identical to the reference solver's script — golden scriptPubKey", () => {
         expect(hex.encode(script().pkScript)).toBe(
-            "51200370b2a6bf43aad67d7908c402beb7b6f079688a5e1d5380f3ed8ab9031ac982",
+            "51209e4ec65c3dc94c8046e7ef50258b69a88d61720df5b87bd0069576859e22ab89",
         );
     });
 
@@ -120,14 +122,23 @@ describe("lightningSendVtxoScript", () => {
         expect(compiled.unilateralClaimScript).toBe(
             `82012088a914${hash160}876903080040b275${"20"}${hex.encode(key(1))}ac`,
         );
-        // unilateralRefund: sender + receiver, CSV(4608s), no server
+        // unilateralRefund: sender + receiver, CSV(4096s) — LEVEL with the
+        // claim, no server. The CSV bytes are pinned, not just described: the
+        // two refund tiers' sequences were the one part of this tree nothing
+        // asserted, which is how the ladder could drift silently.
+        expect(compiled.unilateralRefundScript.startsWith("03080040b275")).toBe(true);
         expect(compiled.unilateralRefundScript.includes(hex.encode(key(3)))).toBe(false);
         expect(
             compiled.unilateralRefundScript.endsWith(
                 `20${hex.encode(SENDER_PUBKEY)}ad20${hex.encode(key(1))}ac`,
             ),
         ).toBe(true);
-        // unilateralRefundWithoutReceiver: sender alone, CSV(5120s)
+        // unilateralRefundWithoutReceiver: sender alone, CSV(8192s) — the
+        // headroom above the claim, the gap that stops a funder preempting a
+        // claimant who holds the preimage.
+        expect(compiled.unilateralRefundWithoutReceiverScript.startsWith("03100040b275")).toBe(
+            true,
+        );
         expect(compiled.unilateralRefundWithoutReceiverScript.includes(hex.encode(key(1)))).toBe(
             false,
         );
@@ -219,12 +230,12 @@ describe("unilateralClaimDelay", () => {
     });
 
     it("keeps all three tiers BIP68-encodable at the maximum server delay", () => {
-        // the cap sits two 512s steps below BIP68's 0xffff * 512 ceiling so
-        // the refund tiers stacked above claimDelay stay encodable too
-        const max = (0xffff - 2) * 512;
+        // the cap sits SOLO_REFUND_HEADROOM_SECONDS below BIP68's 0xffff * 512
+        // ceiling so the solo refund stacked above claimDelay still encodes
+        const max = 0xffff * 512 - SOLO_REFUND_HEADROOM_SECONDS;
         const claim = unilateralClaimDelay(max);
         expect(claim).toBe(max);
-        expect(unilateralRefundDelay(claim)).toBe((0xffff - 1) * 512);
+        expect(unilateralRefundDelay(claim)).toBe(max);
         expect(unilateralRefundWithoutReceiverDelay(claim)).toBe(0xffff * 512);
         // the proof that matters: the full contract compiles, so every CSV
         // leaf's sequence encoded — this threw from inside the tapscript
@@ -244,8 +255,10 @@ describe("unilateralClaimDelay", () => {
         ).not.toThrow();
     });
 
-    it("rejects a server delay whose refund tiers would overflow BIP68", () => {
-        expect(() => unilateralClaimDelay((0xffff - 2) * 512 + 1)).toThrow(/BIP68/);
+    it("rejects a server delay whose solo refund would overflow BIP68", () => {
+        expect(() => unilateralClaimDelay(0xffff * 512 - SOLO_REFUND_HEADROOM_SECONDS + 1)).toThrow(
+            /BIP68/,
+        );
         expect(() => unilateralClaimDelay(0xffff * 512)).toThrow(/BIP68/);
     });
 });

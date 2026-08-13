@@ -551,6 +551,25 @@ export const relayTransport = (
 /** BIP68 sequence granularity; the delay derivation rounds up to it. */
 const SEQUENCE_GRANULARITY_SECONDS = 512;
 
+/**
+ * How long the sender's SOLO refund opens after the receiver's claim, seconds.
+ *
+ * This is the window in which a claimant holding the preimage must be able to
+ * finish taking their money before the funder could take it back. On a live
+ * Arkade server that is one collaborative spend; with the server gone it is a
+ * full unilateral exit — an unroll broadcast per chain step, each waiting on a
+ * confirmation, then the CSV spend.
+ *
+ * 4096s (eight 512s units, ~68 minutes) is sized for that worst case. It is
+ * REASONED, not measured, and it mirrors `SOLO_REFUND_HEADROOM_SECONDS` in the
+ * reference solver's `src/core/timelocks.ts` — the two must move together or a
+ * trader derives an address the solver never quoted.
+ *
+ * A multiple of the granularity on purpose: BIP68 would round anything else,
+ * making the encoded timelock differ from the number written here.
+ */
+export const SOLO_REFUND_HEADROOM_SECONDS = 8 * SEQUENCE_GRANULARITY_SECONDS;
+
 /** The solver's unilateral-claim delay, derived from the Ark server's reported
  * exit delay exactly as the reference solver derives it — both sides read the
  * SAME server, so the derivation (not a quote field) is what keeps the two
@@ -564,12 +583,15 @@ export const unilateralClaimDelay = (serverExitDelaySeconds: number): number => 
             `server exit delay must be at least ${SEQUENCE_GRANULARITY_SECONDS}s of seconds, got ${serverExitDelaySeconds}`,
         );
     }
-    // two granularity steps below BIP68's ceiling, not at it: the refund tiers
-    // add one and two steps on top of this value, and every tier must encode
-    if (serverExitDelaySeconds > (0xffff - 2) * SEQUENCE_GRANULARITY_SECONDS) {
+    // the headroom below BIP68's ceiling, not at it: the solo refund stacks
+    // SOLO_REFUND_HEADROOM_SECONDS on top of this value, and it must encode too
+    if (
+        serverExitDelaySeconds >
+        0xffff * SEQUENCE_GRANULARITY_SECONDS - SOLO_REFUND_HEADROOM_SECONDS
+    ) {
         throw new Error(
             `server exit delay ${serverExitDelaySeconds}s exceeds what BIP68 can encode ` +
-                `once the two refund tiers are stacked above it`,
+                `once the solo refund's headroom is stacked above it`,
         );
     }
     return (
@@ -578,19 +600,18 @@ export const unilateralClaimDelay = (serverExitDelaySeconds: number): number => 
     );
 };
 
-/** VHTLC's `unilateralRefund` tier: sender + solver, no server, one 512s step
- * past `claimDelay` — the middle rung between the fully-collaborative paths
- * and the sender's last-resort `unilateralRefundWithoutReceiver`. Same
- * already-rounded `claimDelay` input as {@link unilateralClaimDelay}
- * produces — one rounding, shared across all three tiers. */
-export const unilateralRefundDelay = (claimDelay: number): number =>
-    claimDelay + SEQUENCE_GRANULARITY_SECONDS;
+/** VHTLC's `unilateralRefund` tier: sender + receiver, no server — LEVEL with
+ * `claimDelay`, not above it. Neither party can spend a two-signature leaf
+ * alone, so separating it buys no safety, and every second spent separating it
+ * is a second taken off the headroom that does matter. */
+export const unilateralRefundDelay = (claimDelay: number): number => claimDelay;
 
-/** VHTLC's `unilateralRefundWithoutReceiver` tier: sender alone, needs
- * nobody — two 512s steps past `claimDelay`, past {@link
- * unilateralRefundDelay}. */
+/** VHTLC's `unilateralRefundWithoutReceiver` tier: sender alone, needing
+ * nobody. The only leaf whose timing can steal — a funder able to refund
+ * before the claimant can claim takes money from someone holding the preimage
+ * — so it opens last, by {@link SOLO_REFUND_HEADROOM_SECONDS}. */
 export const unilateralRefundWithoutReceiverDelay = (claimDelay: number): number =>
-    claimDelay + 2 * SEQUENCE_GRANULARITY_SECONDS;
+    claimDelay + SOLO_REFUND_HEADROOM_SECONDS;
 
 /** Compile the lightning-send VHTLC from the quote's binding fields plus the
  * trader's own data. `paymentHash` is the BOLT11 payment hash (`sha256(P)`,
