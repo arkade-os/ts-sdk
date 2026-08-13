@@ -11,6 +11,16 @@ export interface OffchainBalance {
     settled: number;
     preconfirmed: number;
     available: number;
+    /**
+     * The part of `settled + preconfirmed` held at contracts generic spending
+     * is gated from — swap escrow, chiefly. Counted in the owned buckets and in
+     * `total`, since it is still the user's money, but never in `available`.
+     *
+     * Disjoint from `available` by construction. The remainder,
+     * `settled + preconfirmed - available - escrow`, is what an in-flight
+     * settlement intent has locked.
+     */
+    escrow: number;
     recoverable: number;
     pendingRecovery: number;
     /** `settled + preconfirmed + recoverable + pendingRecovery` — the buckets are disjoint. */
@@ -57,6 +67,7 @@ export function computeOffchainBalance(
     let settled = 0;
     let preconfirmed = 0;
     let available = 0;
+    let escrow = 0;
     let recoverable = 0;
     let pendingRecovery = 0;
     const owned = new Map<string, bigint>();
@@ -94,7 +105,12 @@ export function computeOffchainBalance(
         } else {
             settled += vtxo.value;
         }
-        if (isGenericallySpendable(vtxo) && isUnlocked(vtxo)) {
+        // Gate first, so the two buckets are disjoint: a coin that is both gated
+        // and intent-locked is escrow, and the intent-locked remainder stays
+        // derivable as `settled + preconfirmed - available - escrow`.
+        if (!isGenericallySpendable(vtxo)) {
+            escrow += vtxo.value;
+        } else if (isUnlocked(vtxo)) {
             available += vtxo.value;
             addAssets(spendable, vtxo);
         }
@@ -107,6 +123,7 @@ export function computeOffchainBalance(
         settled,
         preconfirmed,
         available,
+        escrow,
         recoverable,
         pendingRecovery,
         total: settled + preconfirmed + recoverable + pendingRecovery,
