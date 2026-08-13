@@ -129,6 +129,18 @@ export function onchainHtlcScript(params: OnchainHtlcParams, network: OnchainNet
             `refundLocktime must be a positive unix timestamp, got ${params.refundLocktime}`,
         );
     }
+    // Refused rather than defaulted: an unknown network reaches `btc.p2tr` as
+    // `undefined`, which it reads as mainnet — so a regtest HTLC rebuilt from a
+    // record whose `network` was garbled comes back with a `bc1p…` address and
+    // no complaint. The output key is network-independent, so the leaves and
+    // pkScript would still be right; only the address would lie, which is the
+    // worst shape for it to fail in.
+    if (!Object.hasOwn(L1_NETWORKS, network)) {
+        throw new Error(
+            `unknown L1 network '${String(network)}' — expected one of ` +
+                `${Object.keys(L1_NETWORKS).join(", ")}`,
+        );
+    }
     const h160 = h160FromPaymentHash(params.paymentHash);
     const claim = btc.Script.encode([
         "SIZE",

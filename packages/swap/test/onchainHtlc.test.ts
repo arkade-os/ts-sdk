@@ -110,6 +110,22 @@ describe("onchainHtlcScript — golden", () => {
             ),
         ).toThrow(/positive/);
     });
+
+    it("rejects a network it cannot build for, rather than defaulting to mainnet", () => {
+        // `btc.p2tr` reads an absent network as mainnet, so a garbled value
+        // would come back as a valid-looking `bc1p…` address for what was meant
+        // to be a regtest HTLC. The output key is network-independent, so the
+        // leaves and pkScript would still be right and only the address would
+        // lie — the worst shape for this to fail in.
+        const params = {
+            paymentHash: PAYMENT_HASH,
+            claimKey: key(1),
+            refundKey: key(3),
+            refundLocktime: LOCKTIME,
+        };
+        expect(() => onchainHtlcScript(params, "signet" as never)).toThrow(/unknown L1 network/);
+        expect(() => onchainHtlcScript(params, undefined as never)).toThrow(/unknown L1 network/);
+    });
 });
 
 describe("buildHtlcClaim", () => {
