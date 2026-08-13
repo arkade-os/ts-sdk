@@ -1553,6 +1553,7 @@ export class WalletMessageHandler
             settled: offchain.settled,
             preconfirmed: offchain.preconfirmed,
             available: offchain.available,
+            escrow: offchain.escrow,
             recoverable: offchain.recoverable,
             pendingRecovery: offchain.pendingRecovery,
             total: totalBoarding + offchain.total,

@@ -341,6 +341,17 @@ export interface WalletBalance {
      */
     available: number;
     /**
+     * Funds held at contracts that generic spending is gated from — swap escrow,
+     * chiefly. Still the user's money, so counted in `settled`/`preconfirmed` and
+     * in `total`; never in `available`.
+     *
+     * Present so a consumer can explain the gap between `total` and `available`
+     * without re-deriving the contract gate itself. The rest of that gap is
+     * `recoverable`, `pendingRecovery`, and intent-locked funds — the last of
+     * which is `settled + preconfirmed - available - escrow`.
+     */
+    escrow: number;
+    /**
      * Recoverable balance from subdust or expired (swept) virtual outputs —
      * recoverable in principle, so a lockup whose contract refuses a spend right
      * now is still counted and `total` does not lose it.
