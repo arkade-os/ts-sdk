@@ -38,7 +38,8 @@ import {
     type OnchainSendSwap,
     type RfqSwapState,
 } from "./swapManager";
-import { onchainHtlcScript, type OnchainNetwork } from "./onchainHtlc";
+import { rfqCorridorHandlers } from "./rfqCorridor";
+import "./rfqCorridors";
 
 /**
  * The swap kinds this projection covers — all three the manager monitors.
@@ -79,21 +80,12 @@ export const RFQ_SWAP_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 /** The immutable request-time half. Hex for everything binary, so the record is
  * plain JSON and survives any structured-clone backend unchanged. */
 export interface RfqSwapOrigin {
-    kind: "lightning_send" | "lightning_receive" | "onchain_send";
+    /** Which corridor this is. Resolves the handler that owns
+     * {@link profile}; see `rfqCorridor.ts`. */
+    kind: string;
 
     /**
-     * `sha256(P)`, hex — the BOLT11 payment hash.
-     *
-     * Not recoverable from the covenant, which commits to `hash160(P)`: 20
-     * bytes, the conventional HTLC shape. Kept so a swap can be correlated to
-     * the payer's invoice — the fate check itself does not need it, since
-     * `hash160(candidate)` against the covenant's own `preimageHash` proves the
-     * same thing about the same witness.
-     */
-    paymentHash: string;
-
-    /**
-     * The Arkade address that was actually funded.
+     * The Arkade address that was funded.
      *
      * Both the swap's handle on its covenant — {@link lockupContractParams}
      * looks the contract row up by the script it decodes to — and, being taken
@@ -102,6 +94,16 @@ export interface RfqSwapOrigin {
      */
     lockupAddress: string;
 
+    /**
+     * `sha256(P)`, hex — the BOLT11 payment hash.
+     *
+     * Not recoverable from the covenant, which commits to `hash160(P)`: 20
+     * bytes, the conventional HTLC shape. Kept so a swap can be correlated to
+     * the payer's invoice, and because a corridor whose own contract commits to
+     * the `sha256` form has nowhere else to read it.
+     */
+    paymentHash: string;
+
     // ── Secrets projection (see `swapSecretsToRecord`) ─────────────────────
     /** Public wallet descriptor that recovers the covenant signer. */
     signingDescriptor: string;
@@ -109,49 +111,18 @@ export interface RfqSwapOrigin {
      * claim secret says P cannot be re-derived. */
     preimageHex?: string;
 
-    // ── Onchain-send leg ─────────────────────────────────────────────────────
     /**
-     * The L1 HTLC's own inputs. Onchain-send only, and required there.
+     * The corridor's own half, as plain JSON — written by the caller from the
+     * request result, kept current by the handler's `project`.
      *
-     * The Arkade lockup gets a contract row; this does not — the HTLC is
-     * Bitcoin L1, not an Arkade contract — and `OnchainHtlc` hands back only
-     * derived values, never the keys it was built from. So these are the one
-     * set of script parameters this record legitimately stores, and dropping
-     * them would leave a restored swap unable to claim the fill or take the
-     * HTLC back at `htlcLocktime`.
-     *
-     * All public: two counterparty x-only keys, a locktime and a network.
+     * Opaque here on purpose. Nothing in this file, the repository or the
+     * IndexedDB store interprets it, which is what lets a new corridor ship
+     * without touching any of them.
      */
-    onchain?: {
-        /** VHTLC-side claim key — the trader's payout key. */
-        claimKey: string;
-        /** The solver's L1 key, from `profile.htlc_pubkey`. */
-        refundKey: string;
-        /** `profile.htlc_locktime` — the trader's own L1 recourse deadline,
-         * distinct from the Arkade lockup's `refundLocktime`. */
-        htlcLocktime: number;
-        network: OnchainNetwork;
-        /** `profile.min_confirmations`, which gates when the fill is claimable. */
-        minConfirmations: number;
-    };
+    profile: Record<string, unknown>;
 
-    // ── Receive-leg facts ────────────────────────────────────────────────────
-    /**
-     * What the lockup must carry before the claim will publish `P`.
-     *
-     * Receive only, and **not re-derivable**: read at claim time it would be
-     * whatever the solver funded, which is the dust-funding attack rather than
-     * a check on it.
-     */
-    expectedAmount?: number;
-    /** Where the claim pays. Kept for display: the covenant pins the payout
-     * pkScript, but an address also carries the network the record was made
-     * on, which a local re-derivation would silently take from the SDK's
-     * default. */
-    payoutAddress?: string;
-
-    /** Consumer display metadata. {@link rebuildRfqSwap} ignores it —
-     * `RfqSwapCommon` carries no amount of its own. */
+    /** Consumer display metadata. The rebuild ignores it — `RfqSwapCommon`
+     * carries no amount of its own. */
     amount?: number;
 }
 
@@ -165,26 +136,22 @@ export interface RfqSwapRecord extends RfqSwapOrigin {
     claimArkTxid?: string;
     failure?: string;
     blockedReason?: string;
-    /** Onchain-send only: the fill's outpoint, learned on first sighting.
-     * Without it a SPENT htlc reads as never funded — see
-     * `classifyOnchainHtlc`. */
-    funding?: { txid: string; vout: number };
-    /** Onchain-send only: our own L1 claim. */
-    claimTxid?: string;
 }
 
-/** The manager's mutable half, projected off a live record. */
+/**
+ * The manager's mutable half, projected off a live record.
+ *
+ * Corridor-agnostic by construction: `claimArkTxid` is the only per-kind field
+ * left on `RfqSwapCommon` itself, and everything else a corridor tracks goes
+ * through its handler's `project`.
+ */
 const managerState = (swap: PersistableRfqSwap) => ({
     rfqId: swap.rfqId,
     state: swap.state,
     createdAt: swap.createdAt,
     updatedAt: swap.updatedAt,
     ...(swap.refundArkTxid ? { refundArkTxid: swap.refundArkTxid } : {}),
-    ...(swap.kind === "lightning_receive" && swap.claimArkTxid
-        ? { claimArkTxid: swap.claimArkTxid }
-        : {}),
-    ...(swap.kind === "onchain_send" && swap.funding ? { funding: swap.funding } : {}),
-    ...(swap.kind === "onchain_send" && swap.claimTxid ? { claimTxid: swap.claimTxid } : {}),
+    ...("claimArkTxid" in swap && swap.claimArkTxid ? { claimArkTxid: swap.claimArkTxid } : {}),
     ...(swap.failure ? { failure: swap.failure } : {}),
     ...(swap.blockedReason ? { blockedReason: swap.blockedReason } : {}),
 });
@@ -194,7 +161,14 @@ export function createRfqSwapRecord(
     origin: RfqSwapOrigin,
     swap: PersistableRfqSwap,
 ): RfqSwapRecord {
-    return { ...origin, ...managerState(swap) };
+    const handler = rfqCorridorHandlers.getOrThrow(origin.kind);
+    return {
+        ...origin,
+        ...managerState(swap),
+        // The caller wrote what only the request result knows; the handler adds
+        // what the live swap already carries.
+        profile: { ...origin.profile, ...handler.project(swap) },
+    };
 }
 
 /**
@@ -217,16 +191,15 @@ export function updateRfqSwapRecord(
         blockedReason: _blockedReason,
         ...origin
     } = record;
-    return { ...origin, ...managerState(swap) };
-}
-
-/** Names the missing field rather than letting a rebuild continue with a value
- * whose absence only shows up as a gate that never fires. */
-function required<T>(value: T | undefined, name: string): T {
-    if (value === undefined) {
-        throw new Error(`rfq swap record is missing ${name}; its swap cannot be rebuilt`);
-    }
-    return value;
+    const handler = rfqCorridorHandlers.getOrThrow(record.kind);
+    // The profile MERGES rather than being replaced: `project` returns only
+    // what the manager can change, and the rest came from the request result
+    // and has no other source.
+    return {
+        ...origin,
+        ...managerState(swap),
+        profile: { ...record.profile, ...handler.project(swap) },
+    };
 }
 
 /**
@@ -283,44 +256,16 @@ export function rebuildRfqSwap(record: RfqSwapRecord, params: LockupParams): Per
         ...(record.blockedReason ? { blockedReason: record.blockedReason } : {}),
     };
 
-    if (record.kind === "lightning_send") {
-        return { ...common, kind: "lightning_send" } satisfies LightningSendSwap;
-    }
-
-    if (record.kind === "onchain_send") {
-        // Required, not defaulted: an onchain-send swap restored without its L1
-        // half would be monitored on the Arkade side while its HTLC refund
-        // window passed unwatched — the one failure `RfqSwapManager` refuses by
-        // name elsewhere.
-        const l1 = required(record.onchain, "onchain");
-        return {
-            ...common,
-            kind: "onchain_send",
-            htlc: onchainHtlcScript(
-                {
-                    paymentHash: record.paymentHash,
-                    claimKey: hex.decode(l1.claimKey),
-                    refundKey: hex.decode(l1.refundKey),
-                    refundLocktime: l1.htlcLocktime,
-                },
-                l1.network,
-            ),
-            minConfirmations: l1.minConfirmations,
-            ...(record.funding ? { funding: record.funding } : {}),
-            ...(record.claimTxid ? { claimTxid: record.claimTxid } : {}),
-        } satisfies OnchainSendSwap;
-    }
-
+    // Corridor-agnostic from here: the handler for this record's kind supplies
+    // whatever its leg needs, and this file names none of them. A kind with no
+    // handler registered throws rather than restoring a swap nothing knows how
+    // to drive.
+    const handler = rfqCorridorHandlers.getOrThrow(record.kind);
     return {
         ...common,
-        kind: "lightning_receive",
-        // Required, not defaulted: the manager reports `needs_counterparty`
-        // rather than claiming when this is not a finite number, and a
-        // comparison against `undefined` would delete the value gate instead of
-        // failing it.
-        expectedAmount: required(record.expectedAmount, "expectedAmount"),
-        ...(record.claimArkTxid ? { claimArkTxid: record.claimArkTxid } : {}),
-    } satisfies LightningReceiveSwap;
+        kind: record.kind,
+        ...handler.hydrate(record.profile, { paymentHash: record.paymentHash, lockup: script }),
+    } as PersistableRfqSwap;
 }
 
 /**

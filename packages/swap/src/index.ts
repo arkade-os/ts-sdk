@@ -35,6 +35,19 @@ export {
 } from "./repository";
 export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";
 export {
+    rfqCorridorHandlers,
+    type RfqCorridorContext,
+    type RfqCorridorHandler,
+    type RfqSwapCommonFields,
+} from "./rfqCorridor";
+export {
+    LightningReceiveCorridor,
+    LightningSendCorridor,
+    OnchainSendCorridor,
+    type LightningReceiveProfile,
+    type OnchainSendProfile,
+} from "./rfqCorridors";
+export {
     RFQ_SWAP_RETENTION_SECONDS,
     createRfqSwapRecord,
     rebuildRfqSwap,

@@ -77,6 +77,7 @@ const sendOrigin: RfqSwapOrigin = {
     paymentHash: PAYMENT_HASH,
     lockupAddress: SEND_LOCKUP.address,
     signingDescriptor: `tr(${hex.encode(key(7))})`,
+    profile: {},
     amount: 25_000,
 };
 
@@ -84,10 +85,9 @@ const receiveOrigin: RfqSwapOrigin = {
     kind: "lightning_receive",
     paymentHash: PAYMENT_HASH,
     lockupAddress: RECEIVE_LOCKUP.address,
-    payoutAddress: "tark1qpayout",
-    expectedAmount: 20_000,
     signingDescriptor: `tr(${hex.encode(key(15))})`,
     preimageHex: "ee".repeat(32),
+    profile: { expectedAmount: 20_000, payoutAddress: "tark1qpayout" },
     amount: 20_400,
 };
 
@@ -112,7 +112,7 @@ const swapOf = (
         : ({
               ...common,
               kind: "lightning_receive",
-              expectedAmount: origin.expectedAmount!,
+              expectedAmount: origin.profile.expectedAmount as number,
           } as LightningReceiveSwap);
 };
 
@@ -168,9 +168,9 @@ describe("rebuildRfqSwap", () => {
         // leaves the params and the lockup check intact, so nothing about the
         // address would catch it — only this does.
         const record = createRfqSwapRecord(receiveOrigin, swapOf(receiveOrigin));
-        expect(() =>
-            rebuildRfqSwap({ ...record, expectedAmount: undefined }, RECEIVE_LOCKUP.params),
-        ).toThrow(/expectedAmount/);
+        expect(() => rebuildRfqSwap({ ...record, profile: {} }, RECEIVE_LOCKUP.params)).toThrow(
+            /expectedAmount/,
+        );
     });
 });
 
@@ -193,7 +193,7 @@ describe("an onchain-send record carries its L1 half", () => {
         paymentHash: PAYMENT_HASH,
         lockupAddress: SEND_LOCKUP.address,
         signingDescriptor: `tr(${hex.encode(key(7))})`,
-        onchain: L1,
+        profile: { ...L1 },
         amount: 100_000,
     };
 
@@ -229,8 +229,8 @@ describe("an onchain-send record carries its L1 half", () => {
 
     it("refuses an onchain record with no L1 half rather than half-driving it", () => {
         const record = createRfqSwapRecord(onchainOrigin, onchainSwap());
-        expect(() => rebuildRfqSwap({ ...record, onchain: undefined }, SEND_LOCKUP.params)).toThrow(
-            /onchain/,
+        expect(() => rebuildRfqSwap({ ...record, profile: {} }, SEND_LOCKUP.params)).toThrow(
+            /L1 keys/,
         );
     });
 
@@ -244,8 +244,8 @@ describe("an onchain-send record carries its L1 half", () => {
                 claimTxid: "cd".repeat(32),
             }),
         );
-        expect(record.funding).toEqual({ txid: "ab".repeat(32), vout: 1 });
-        expect(record.claimTxid).toBe("cd".repeat(32));
+        expect(record.profile.funding).toEqual({ txid: "ab".repeat(32), vout: 1 });
+        expect(record.profile.claimTxid).toBe("cd".repeat(32));
 
         const rebuilt = rebuildRfqSwap(record, SEND_LOCKUP.params) as {
             funding?: { txid: string };
