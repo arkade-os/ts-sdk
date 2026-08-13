@@ -201,6 +201,18 @@ describe("rebuildRfqSwap", () => {
             /senderPubkey/,
         );
     });
+
+    it("refuses a receive record missing expectedAmount", () => {
+        // Its own test, and not part of the mutation loop above: this is the
+        // one required field that is NOT a tree parameter, so dropping it
+        // leaves the covenant — and `assertRebuildMatchesLockup` — intact. The
+        // value gate is what goes missing, which nothing about the address
+        // would catch.
+        const record = createRfqSwapRecord(receiveOrigin, swapOf(receiveOrigin));
+        expect(() => rebuildRfqSwap({ ...record, expectedAmount: undefined })).toThrow(
+            /expectedAmount/,
+        );
+    });
 });
 
 describe("the record never carries a private key", () => {

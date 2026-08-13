@@ -30,7 +30,7 @@
  * public. `preimageHex` is stored only when the SDK's provisioned claim
  * secret says it cannot be re-derived.
  */
-import { ArkAddress } from "@arkade-os/sdk";
+import { ArkAddress, VHTLC } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
 import { lightningSendVtxoScript, receiveVtxoScript } from "./rfq";
 import {
@@ -223,7 +223,7 @@ function assertRebuildMatchesLockup(pkScript: Uint8Array, lockupAddress: string)
  * The covenant a record describes, from its tree parameters alone — the same
  * builder over the same binding fields that made it.
  */
-export function rfqSwapCovenant(origin: RfqSwapOrigin): ReturnType<typeof receiveVtxoScript> {
+export function rfqSwapCovenant(origin: RfqSwapOrigin): InstanceType<typeof VHTLC.ScriptV2> {
     return origin.kind === "lightning_send"
         ? lightningSendVtxoScript({
               solverPubkey: bytes(origin.solverPubkey, "solverPubkey"),
