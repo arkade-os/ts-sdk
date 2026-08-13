@@ -1,3 +1,5 @@
+import { hex } from "@scure/base";
+import type { ProvisionedClaimSecret, ProvisionedKey } from "@arkade-os/sdk";
 import type { AssetSwapRepository } from "./repository";
 
 export type AssetSwapStatus =
@@ -16,16 +18,6 @@ export type AssetSwapStatus =
  * Lives here with the {@link AssetSwap} fields it describes so the market and
  * restore layers share one spelling instead of re-typing the literal. */
 export const BTC_ASSET_ID = "btc";
-
-export interface AssetSwapFallbackSecretsV1 {
-    version: 1;
-    type: "stored";
-    senderPrivateKeyHex: string;
-    /** Onchain-send only. A lightning send's preimage belongs to the payee. */
-    preimageHex?: string;
-}
-
-export type AssetSwapFallbackSecrets = AssetSwapFallbackSecretsV1;
 
 // ponytail: records carry only chain-recoverable facts — no quote-time display
 // snapshot (tickers, fee bps, fiat value); add an optional snapshot field back
@@ -67,19 +59,15 @@ export interface AssetSwap {
      * derivation is the right one. */
     paymentHash?: string;
     /**
-     * The HD descriptor this swap's secrets derive from. Public — it is what
-     * lets the record carry no secrets at all. Present iff the swap was
-     * created on a wallet that can allocate.
+     * The wallet descriptor this swap's sender key comes from — a fresh HD
+     * child, or a static wallet's `tr(pubkey)`. Public — the signer
+     * re-derives from the wallet, so the record carries no key material.
      */
     signingDescriptor?: string;
-    /** P, hex, when the user supplied a preimage that is not seed-derived. */
+    /** P, hex, when it cannot be re-derived from the seed: the user supplied
+     * it, or the descriptor is static (shared across swaps, so a derived
+     * preimage would collide). The swap's only claim secret when present. */
     preimageHex?: string;
-    /**
-     * Complete stored-arm secrets for wallets that cannot derive. Versioned
-     * and discriminated so restore can rebuild both the sender identity and,
-     * for onchain sends, P.
-     */
-    fallbackSecrets?: AssetSwapFallbackSecrets;
     /** The L1 HTLC's pkScript, hex — the chain-watch key. */
     htlcPkScriptHex?: string;
     htlcLocktime?: number;
@@ -194,3 +182,19 @@ export const updateAssetSwapBestEffort = async (
         return { swaps, persisted: false };
     }
 };
+
+/**
+ * The record fields a wallet-provisioned secret becomes.
+ *
+ * `signingDescriptor` is public and always stored — it is what recovers the
+ * signer. `preimageHex` is stored only when the wallet says it cannot
+ * re-derive P, and is then the swap's only claim secret.
+ */
+export const swapSecretsToRecord = (
+    secrets: ProvisionedKey | ProvisionedClaimSecret,
+): { signingDescriptor: string; preimageHex?: string } => ({
+    signingDescriptor: secrets.descriptor,
+    ...("mustPersistPreimage" in secrets && secrets.mustPersistPreimage
+        ? { preimageHex: hex.encode(secrets.preimage) }
+        : {}),
+});

@@ -38,6 +38,7 @@ import {
     ProviderUnavailableError,
     ReadonlySingleKey,
     ReadonlyWallet,
+    SingleKey,
     VHTLCV2ContractHandler,
     type ArkProvider,
     type ExtendedVirtualCoin,
@@ -182,6 +183,9 @@ const recordingWallet = (
 ): { wallet: IWallet; created: Record<string, unknown>[] } => {
     const created: Record<string, unknown>[] = [];
     const wallet = {
+        // The sender key comes from the wallet now — a fixture without an
+        // identity is not a wallet these entrypoints can serve.
+        identity: SingleKey.fromRandomBytes(),
         getAddress: async () => REFUND_ADDRESS,
         getContractManager: async () => ({
             createContract: async (params: Record<string, unknown>) => {
@@ -209,9 +213,13 @@ const onchainSend = (wallet: IWallet) =>
     });
 
 describe.each([
-    ["requestLightningSend", lightningSend],
-    ["requestOnchainSend", onchainSend],
-])("%s registers the lockup before returning an address", (_name, request) => {
+    // `hasPreimage` pins which corridor owns P: a lightning send's belongs to
+    // the payee, an onchain send mints its own. Asserted rather than inferred,
+    // so a corridor that stopped carrying one cannot quietly narrow the
+    // secret-leak check below to the rfqId.
+    ["requestLightningSend", lightningSend, false],
+    ["requestOnchainSend", onchainSend, true],
+])("%s registers the lockup before returning an address", (_name, request, hasPreimage) => {
     it("writes the row the funded script is keyed by", async () => {
         const { wallet, created } = recordingWallet();
         const result = await request(wallet);
@@ -239,19 +247,17 @@ describe.each([
         // script-level facts and belong in `params`; nothing else does.
         const { wallet, created } = recordingWallet();
         const result = await request(wallet);
-        const secrets = result.secrets as {
-            senderPrivateKey?: Uint8Array;
-            preimage?: Uint8Array;
-        };
+        // The sender key is the wallet's — no minted key exists to leak.
+        const secrets = result.secrets;
+        expect(secrets).not.toHaveProperty("senderPrivateKey");
+
+        expect(secrets.preimage !== undefined).toBe(hasPreimage);
 
         const serialized = JSON.stringify(created[0]);
         const forbidden = [
             result.rfqId,
-            ...[secrets.senderPrivateKey, secrets.preimage]
-                .filter((value): value is Uint8Array => value !== undefined)
-                .map((value) => hex.encode(value)),
+            ...(secrets.preimage ? [hex.encode(secrets.preimage)] : []),
         ];
-        expect(forbidden.length).toBeGreaterThan(1);
         for (const value of forbidden) expect(serialized).not.toContain(value);
     });
 
@@ -344,9 +350,10 @@ const realWallet = async () => {
             getTxOutspends: async () => [],
         } as Partial<OnchainProvider> as OnchainProvider,
         storage: { walletRepository, contractRepository },
-        identity: ReadonlySingleKey.fromPublicKey(
-            hex.decode("02" + hex.encode(schnorr.getPublicKey(new Uint8Array(32).fill(42)))),
-        ),
+        // A signing identity even though the wallet is readonly: these tests
+        // are about the contract row, and provisioning now refuses a wallet
+        // that cannot sign, since it could never refund the leg it funds.
+        identity: SingleKey.fromPrivateKey(new Uint8Array(32).fill(42)),
     });
     return { wallet, walletRepository, contractRepository };
 };

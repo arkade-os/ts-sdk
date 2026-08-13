@@ -14,7 +14,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { ArkAddress, asset, type IWallet } from "@arkade-os/sdk";
+import { ArkAddress, SingleKey, asset, type IWallet } from "@arkade-os/sdk";
 
 // cancel.test.ts's pattern: spread the real module, override only the
 // network seam these functions must never touch (RestEmulatorProvider) plus
@@ -98,7 +98,9 @@ const REFUND_LOCKTIME = NOW + 60 * 24 * 3600;
 const HTLC_LOCKTIME = NOW + 30 * 24 * 3600;
 
 const wallet = {
-    identity: { xOnlyPublicKey: async () => key(20) },
+    // a complete signing identity: provisioning now refuses a wallet that
+    // cannot sign, since it could never refund the leg it funds
+    identity: SingleKey.fromRandomBytes(),
     getAddress: async () => REFUND_ADDRESS,
     // Every maker entrypoint here registers its covenant with the contract
     // manager before handing back an address — `createOffer` via

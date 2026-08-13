@@ -19,14 +19,41 @@ import {
     isBatchSignable,
     DescriptorIdentity,
     isHDDeterministicSignCapable,
+    deriveDescriptorLeafPubKey,
     deriveDescriptorLeafCompressedPubKey,
+    normalizeToDescriptor,
+    parseHDDescriptor,
+    identityDescriptor,
+    isSigningIdentity,
 } from "./identity";
 import type {
     DescriptorIdentityOptions,
     DescriptorSigner,
     HDDeterministicSignCapable,
 } from "./identity";
-import { isHDWalletCapable, isHDAllocationCapable } from "./wallet/hdWalletCapable";
+import {
+    isHDWalletCapable,
+    isHDAllocationCapable,
+    ForeignDescriptorError,
+    resolveDescriptorSigner,
+} from "./wallet/hdWalletCapable";
+import {
+    ARKADE_SWAP_PREIMAGE_TAG,
+    adoptContractDescriptor,
+    buildPreimageMessage,
+    contractPreimage,
+    contractSigner,
+    isDeterministicSigner,
+    isPerArtifactDescriptor,
+    provisionClaimSecret,
+    provisionRefundKey,
+    WalletCannotSignError,
+} from "./wallet/contractSecrets";
+import type {
+    DeterministicSigner,
+    ProvisionedClaimSecret,
+    ProvisionedKey,
+} from "./wallet/contractSecrets";
 import type { HDAllocationCapable, HDWalletCapable } from "./wallet/hdWalletCapable";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
@@ -510,9 +537,26 @@ export {
     isHDDeterministicSignCapable,
     isHDWalletCapable,
     isHDAllocationCapable,
+    ForeignDescriptorError,
+    resolveDescriptorSigner,
+    ARKADE_SWAP_PREIMAGE_TAG,
+    adoptContractDescriptor,
+    buildPreimageMessage,
+    contractPreimage,
+    contractSigner,
+    isDeterministicSigner,
+    isPerArtifactDescriptor,
+    provisionClaimSecret,
+    provisionRefundKey,
+    WalletCannotSignError,
     signingDescriptorIndex,
     strictSigningDescriptorIndex,
+    deriveDescriptorLeafPubKey,
     deriveDescriptorLeafCompressedPubKey,
+    normalizeToDescriptor,
+    parseHDDescriptor,
+    identityDescriptor,
+    isSigningIdentity,
     OnchainWallet,
     Ramps,
     DustChangeError,
@@ -798,6 +842,9 @@ export type {
     HDDeterministicSignCapable,
     HDWalletCapable,
     HDAllocationCapable,
+    DeterministicSigner,
+    ProvisionedClaimSecret,
+    ProvisionedKey,
     // Indexer types
     IndexerProvider,
     PageResponse,

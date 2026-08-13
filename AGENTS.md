@@ -52,6 +52,30 @@ The `src/contracts/` pipeline is event-driven with strict ownership rules:
 
 Repository interfaces carry `readonly version: N` to force compile-time updates on schema changes.
 
+## Key Provisioning Ownership
+
+Wallets own key material and key-derivation policy. Packages and plugins never generate signing
+keys and never branch on wallet *type* — they ask the wallet and use what comes back:
+
+- `wallet.getNextSigningDescriptor()` answers for every `Wallet`: an HD wallet allocates a fresh
+  descriptor, a static wallet answers with its one `tr(pubkey)`. The policy decision (static vs
+  fresh) lives inside the wallet, invisible to callers.
+- `wallet.signerForDescriptor(descriptor)` returns the descriptor's `Identity` and **throws**
+  (`ForeignDescriptorError`) for a key the wallet does not hold — it never silently substitutes
+  the baseline identity, which would sign with the wrong key. The identity it returns must be a
+  full signer (`sign`, `signMessage`, `signerSession`, `xOnlyPublicKey`); one carrying the right
+  key but no ability to use it is refused as `WalletCannotSignError`, a distinct failure with a
+  distinct remedy — attach the signer, rather than restore another seed.
+- Structural probes (`isHDAllocationCapable`, `isHDWalletCapable`) are feature detection — "does
+  this wallet speak the descriptor API" — never policy. Code that branches *behavior* on whether a
+  wallet is HD, or calls `randomSecretKey()` for a signing/refund/claim key, is a defect: the
+  wallet's identity key is the fallback, never a minted one.
+- Per-artifact secrets (swap preimages) key off the **descriptor's shape**, not the wallet's type:
+  an HD child descriptor is unique per artifact and can derive secrets deterministically; a bare
+  `tr(pubkey)` repeats across artifacts, so derived-from-key secrets would collide and must be
+  stored per artifact instead (see `packages/ts-sdk/src/wallet/contractSecrets.ts` and
+  `swapSecretsToRecord` in `packages/swap/src/store.ts`).
+
 ## Local Scratch Files
 
 `.gitignore` excludes `*.agents.md`, `TASKS.md`, `CLAUDE.md`, `REVIEW.md`, and `.claude/`. These are local scratch notes — drafts, review snapshots, AI session state — and are **not** authoritative project guidance. Authoritative guidance lives in this `AGENTS.md` (and the package READMEs); treat anything in an ignored file as transient context that may be stale or contradict the codebase.

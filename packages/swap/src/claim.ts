@@ -22,7 +22,7 @@
  *
  * covclaimd stays useful (it claims for an offline trader via
  * `nonInteractiveClaim`), but with the receiver key derivable from the swap's
- * `secrets` (`senderIdentityForRfqSecrets`), a trader that is online never
+ * `secrets` (`contractSigner`), a trader that is online never
  * depends on it.
  */
 import { hex } from "@scure/base";
@@ -126,7 +126,7 @@ export async function pushClaim(
         /** The receive-direction covenant (see `receiveVtxoScript`). */
         script: InstanceType<typeof VHTLC.ScriptV2>;
         /** The trader's `receiver` signer. Build it from the swap's `secrets`
-         * with `senderIdentityForRfqSecrets` — on an HD wallet that resolves
+         * with `contractSigner` — on an HD wallet that resolves
          * from the seed, with no stored key bytes anywhere. */
         receiver: Identity;
         /** `P`, 32 bytes — the trader generated it at request time. */

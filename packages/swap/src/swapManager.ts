@@ -95,7 +95,7 @@ import {
     type LockupVtxo,
 } from "./refund";
 import { registerLockupContract } from "./lockupContract";
-import { RefundNotLocallyPossibleError } from "./secrets";
+import { RefundNotLocallyPossibleError } from "./refundBlocked";
 
 // ── Records ──────────────────────────────────────────────────────────────────
 

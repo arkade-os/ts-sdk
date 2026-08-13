@@ -24,8 +24,8 @@ export {
     addAssetSwap,
     updateAssetSwap,
     updateAssetSwapBestEffort,
+    swapSecretsToRecord,
     type AssetSwap,
-    type AssetSwapFallbackSecrets,
     type AssetSwapStatus,
 } from "./store";
 export {
@@ -131,26 +131,10 @@ export {
     type ClaimArkProvider,
 } from "./claim";
 export {
-    RFQ_PREIMAGE_TAG,
     RefundNotLocallyPossibleError,
-    adoptSwapDescriptor,
-    buildPreimageMessage,
-    derivePreimage,
-    deriveSwapSecrets,
-    isDeterministicSigner,
-    preimageForRfqSecrets,
-    randomSwapSecrets,
-    rfqSecretsOfRecord,
-    rfqSecretsToRecord,
-    senderIdentityForRfqSecrets,
     senderIdentityForSwapRecord,
-    senderPubkeyForRfqSecrets,
-    type DerivedSwapSecrets,
-    type DeterministicSigner,
     type RefundBlockedReason,
-    type StoredSwapSecrets,
-    type SwapSecrets,
-} from "./secrets";
+} from "./refundBlocked";
 export {
     LockupNeedsRecoveryError,
     REFUND_MTP_LAG_SECONDS,

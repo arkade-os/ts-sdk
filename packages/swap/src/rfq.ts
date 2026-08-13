@@ -76,12 +76,11 @@ export {
 } from "./onchainHtlc";
 
 import {
-    deriveSwapSecrets,
-    preimageForRfqSecrets,
-    randomSwapSecrets,
-    senderPubkeyForRfqSecrets,
-    type SwapSecrets,
-} from "./secrets";
+    provisionClaimSecret,
+    provisionRefundKey,
+    type ProvisionedClaimSecret,
+    type ProvisionedKey,
+} from "@arkade-os/sdk";
 import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
 
@@ -696,13 +695,13 @@ export interface InvoiceFacts {
  * throws while nothing is funded. `RfqSwapManager` re-registers as a backstop
  * for older records; a repeat write is a no-op.
  *
- * Allocates a fresh `sender` key per call and returns it as `senderPubkey`
- * plus `secrets`. On an HD wallet `secrets` holds only a public descriptor and
- * nothing needs protecting; otherwise it holds the raw key and the caller MUST
- * persist it, or every interactive refund path is gone. `nonInteractiveRefund`
- * still recovers the funds without it — but it needs the SOLVER's active
- * cooperation, not just infrastructure uptime, so losing the key with an
- * unwilling solver is a total loss.
+ * The `sender` key comes from the wallet — a fresh HD descriptor per call, or
+ * the wallet's static key — and is returned as `senderPubkey` plus `secrets`.
+ * `secrets` holds only a public descriptor; the signer re-derives from the
+ * wallet, so nothing secret is at rest. Persist `secrets` with the record
+ * anyway: it is how the refund signer is found again. `nonInteractiveRefund`
+ * recovers the funds even without it — but it needs the SOLVER's active
+ * cooperation, not just infrastructure uptime.
  */
 export async function requestLightningSend(
     wallet: IWallet,
@@ -733,18 +732,15 @@ export async function requestLightningSend(
     refundAddress: string;
     /** The VHTLC `sender` x-only key, bound into the covenant. Public. */
     senderPubkey: Uint8Array;
-    /** How the `sender` key is recovered later. Persist it with the record —
-     * on the derivable arm it holds nothing secret. */
-    secrets: SwapSecrets;
+    /** How the `sender` key is recovered later. Persist it with the record;
+     * it holds nothing secret. */
+    secrets: ProvisionedKey;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
-    const secrets = (await deriveSwapSecrets(wallet)) ?? randomSwapSecrets();
-    if (!secrets.derivable) {
-        console.warn(
-            "[swap] wallet cannot allocate an HD descriptor: the sender key is random and MUST be persisted before funding",
-        );
-    }
-    const senderPubkey = await senderPubkeyForRfqSecrets(wallet, secrets);
+    // This leg is one we fund, so all it needs is the key that refunds it.
+    // No preimage: a lightning send's P belongs to the payee.
+    const secrets = await provisionRefundKey(wallet);
+    const senderPubkey = secrets.pubkey;
     const [info, refundAddress] = await Promise.all([
         new RestArkProvider(arkServerUrl).getInfo(),
         wallet.getAddress(),
@@ -1086,35 +1082,21 @@ export async function requestOnchainSend(
     senderPubkey: Uint8Array;
     /** How the preimage and the `sender` key are recovered later. Persist it
      * with the record BEFORE funding. */
-    secrets: SwapSecrets;
+    secrets: ProvisionedClaimSecret;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
-    // Before anything irreversible (HD allocation, quote, funding): the L1
-    // claim leaf pins OP_SIZE 32, so any other length funds an unclaimable
-    // HTLC, and restore rejects the record outright (`decodeHex32`).
-    if (params.preimage && params.preimage.length !== 32) {
-        throw new Error(`preimage must be 32 bytes, got ${params.preimage.length}`);
-    }
-    const derivedSecrets = await deriveSwapSecrets(wallet);
-    const secrets = derivedSecrets
-        ? params.preimage
-            ? { ...derivedSecrets, preimage: params.preimage }
-            : derivedSecrets
-        : randomSwapSecrets({ preimage: params.preimage ?? true });
-    if (!secrets.derivable) {
+    // We fund the arkade leg and claim the L1 one, so this needs both halves:
+    // the key that refunds the lockup and the P that claims the HTLC. A
+    // supplied P is length-checked before an index is consumed — the L1 claim
+    // leaf pins OP_SIZE 32, and any other length funds an unclaimable HTLC.
+    const secrets = await provisionClaimSecret(wallet, { preimage: params.preimage });
+    if (secrets.mustPersistPreimage) {
         console.warn(
-            params.preimage
-                ? "[swap] this swap's sender key is random; the supplied preimage and sender key MUST be persisted before funding"
-                : "[swap] this swap's preimage and sender key are random and MUST be persisted before funding",
-        );
-    } else if (params.preimage) {
-        console.warn(
-            "[swap] this swap's preimage was supplied by the caller and MUST be persisted with the signing descriptor before funding",
+            "[swap] this swap's preimage cannot be re-derived from the seed and MUST be persisted with the record before funding",
         );
     }
-    const preimage = await preimageForRfqSecrets(wallet, secrets);
-    const paymentHash = paymentHashOf(preimage);
-    const senderPubkey = await senderPubkeyForRfqSecrets(wallet, secrets);
+    const paymentHash = hex.encode(secrets.paymentHash);
+    const senderPubkey = secrets.pubkey;
     const [info, refundAddress] = await Promise.all([
         new RestArkProvider(arkServerUrl).getInfo(),
         wallet.getAddress(),
@@ -1512,18 +1494,19 @@ export async function requestLightningReceive(
     payoutPubkey: Uint8Array;
     /** How the preimage and the payout key are recovered later. Persist it
      * with the record BEFORE paying the invoice. */
-    secrets: SwapSecrets;
+    secrets: ProvisionedClaimSecret;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
-    const secrets = (await deriveSwapSecrets(wallet)) ?? randomSwapSecrets({ preimage: true });
-    if (!secrets.derivable) {
+    // A leg we claim: the key that receives it, and the P that unlocks it.
+    const secrets = await provisionClaimSecret(wallet);
+    if (secrets.mustPersistPreimage) {
         console.warn(
-            "[swap] this swap's preimage and payout key are random and MUST be persisted before paying",
+            "[swap] this swap's preimage cannot be re-derived from the seed and MUST be persisted with the record before paying",
         );
     }
-    const preimage = await preimageForRfqSecrets(wallet, secrets);
-    const paymentHash = paymentHashOf(preimage);
-    const payoutPubkey = await senderPubkeyForRfqSecrets(wallet, secrets);
+    const preimage = secrets.preimage;
+    const paymentHash = hex.encode(secrets.paymentHash);
+    const payoutPubkey = secrets.pubkey;
     const [info, payoutAddress] = await Promise.all([
         new RestArkProvider(arkServerUrl).getInfo(),
         wallet.getAddress(),
@@ -1720,18 +1703,19 @@ export async function requestOnchainReceive(
     htlc: OnchainHtlc;
     payoutAddress: string;
     payoutPubkey: Uint8Array;
-    secrets: SwapSecrets;
+    secrets: ProvisionedClaimSecret;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
-    const secrets = (await deriveSwapSecrets(wallet)) ?? randomSwapSecrets({ preimage: true });
-    if (!secrets.derivable) {
+    // A leg we claim: the key that receives it, and the P that unlocks it.
+    const secrets = await provisionClaimSecret(wallet);
+    if (secrets.mustPersistPreimage) {
         console.warn(
-            "[swap] this swap's preimage and payout key are random and MUST be persisted before funding",
+            "[swap] this swap's preimage cannot be re-derived from the seed and MUST be persisted with the record before funding",
         );
     }
-    const preimage = await preimageForRfqSecrets(wallet, secrets);
-    const paymentHash = paymentHashOf(preimage);
-    const payoutPubkey = await senderPubkeyForRfqSecrets(wallet, secrets);
+    const preimage = secrets.preimage;
+    const paymentHash = hex.encode(secrets.paymentHash);
+    const payoutPubkey = secrets.pubkey;
     const [info, payoutAddress] = await Promise.all([
         new RestArkProvider(arkServerUrl).getInfo(),
         wallet.getAddress(),

@@ -9,7 +9,11 @@ import {
     MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD,
     isHDWalletCapable,
     isHDAllocationCapable,
+    ForeignDescriptorError,
+    resolveDescriptorSigner,
+    deriveDescriptorLeafPubKey,
 } from "../src";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { deriveDescriptorLeafCompressedPubKey } from "../src/identity/descriptor";
 import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
 
@@ -87,7 +91,13 @@ describe("HDWalletCapable", () => {
         const wallet = await makeWallet({ hd: false });
         expect(await wallet.getCurrentSigningDescriptor()).toBeUndefined();
         expect(await wallet.getUsedSigningDescriptors()).toEqual([]);
-        expect(await wallet.signerForDescriptor("tr(deadbeef)")).toBe(wallet.identity);
+        const own = `tr(${hex.encode(await wallet.identity.xOnlyPublicKey())})`;
+        expect(await wallet.signerForDescriptor(own)).toBe(wallet.identity);
+        // A key this wallet does not hold is a refusal, not a silent
+        // substitution — the identity would sign with the wrong key.
+        await expect(wallet.signerForDescriptor("tr(deadbeef)")).rejects.toBeInstanceOf(
+            ForeignDescriptorError,
+        );
         await wallet.dispose();
     });
 
@@ -134,9 +144,21 @@ describe("HDWalletCapable", () => {
         await wallet.dispose();
     });
 
-    it("cannot allocate on a static wallet", async () => {
+    it("a static wallet answers allocation with its one identity descriptor", async () => {
+        // The wallet decides what "next" means: static policy is the same
+        // key every time, answered through the same method — consumers never
+        // branch on wallet shape, and never mint a key of their own.
         const wallet = await makeWallet({ hd: false });
-        expect(await wallet.getNextSigningDescriptor()).toBeUndefined();
+        const own = `tr(${hex.encode(await wallet.identity.xOnlyPublicKey())})`;
+        expect(await wallet.getNextSigningDescriptor()).toBe(own);
+        expect(await wallet.getNextSigningDescriptor()).toBe(own);
+        // The static descriptor round-trips: adoptable and resolvable back to
+        // the identity. Adopting is a no-op whatever it is handed — there is
+        // no index stream to move — and restores iterate whole histories, so
+        // a descriptor this wallet cannot place must not abort the loop.
+        await wallet.advanceSigningDescriptorWatermark(own);
+        await wallet.advanceSigningDescriptorWatermark("tr(deadbeef)");
+        expect(await wallet.signerForDescriptor(own)).toBe(wallet.identity);
         await wallet.dispose();
     });
 
@@ -296,13 +318,92 @@ describe("HDWalletCapable", () => {
         await wallet.dispose();
     });
 
-    it("signerForDescriptor falls back to the identity for a foreign descriptor", async () => {
+    it("signerForDescriptor refuses a foreign descriptor", async () => {
+        // The old fallback answered with the baseline identity, which signs
+        // happily with the wrong key — the failure then surfaces as a
+        // rejected transaction far from this call. A typed refusal here is
+        // what lets callers distinguish "not my key" from transient errors.
         const wallet = await makeWallet({ hd: true });
         const foreign = MnemonicIdentity.fromMnemonic(
             "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong",
             { isMainnet: false },
         ).descriptor.replace("/*)", "/0)");
-        expect(await wallet.signerForDescriptor(foreign)).toBe(wallet.identity);
+        await expect(wallet.signerForDescriptor(foreign)).rejects.toBeInstanceOf(
+            ForeignDescriptorError,
+        );
         await wallet.dispose();
+    });
+
+    it("signerForDescriptor answers the identity for the identity's own bare descriptor", async () => {
+        // An HD wallet may hold records bound to its baseline key — e.g.
+        // written while the wallet ran as `auto`/static, before an HD
+        // migration. The identity key IS that descriptor's key.
+        const wallet = await makeWallet({ hd: true });
+        const own = `tr(${hex.encode(await wallet.identity.xOnlyPublicKey())})`;
+        expect(await wallet.signerForDescriptor(own)).toBe(wallet.identity);
+        await wallet.dispose();
+    });
+});
+
+describe("resolveDescriptorSigner", () => {
+    // The rule every `signerForDescriptor` shares. Kept here rather than per
+    // wallet class because the bug it exists to prevent is the page-side and
+    // worker-side wallets answering differently for one descriptor.
+    const identity = MnemonicIdentity.fromMnemonic(
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+        { isMainnet: false },
+    );
+
+    it("returns a signer that can actually sign a bare descriptor", async () => {
+        // A seed cannot derive for a pathless `tr(pubkey)`, so routing it
+        // through descriptor machinery yields a signer whose pubkey checks
+        // out and whose every signature throws — discovered only after the
+        // artifact is funded. The identity holds that key directly.
+        const provider = await HDDescriptorProvider.create(
+            identity,
+            new InMemoryWalletRepository(),
+        );
+        const bare = `tr(${hex.encode(await identity.xOnlyPublicKey())})`;
+        // The provider claims it — bare descriptors match on raw pubkey — so
+        // "the provider claims it" cannot be the whole rule.
+        expect(provider.isOurs(bare)).toBe(true);
+
+        const signer = await resolveDescriptorSigner(bare, identity, provider);
+        expect(signer).toBe(identity);
+        await expect(
+            signer.signMessage(sha256(new Uint8Array(32)), "schnorr"),
+        ).resolves.toBeInstanceOf(Uint8Array);
+    });
+
+    it("derives through a seed-backed identity when the wallet has no provider", async () => {
+        // A wallet in `auto`/`static` mode has no provider, but its identity
+        // may still own the derivation — refusing here would strand records
+        // the wallet demonstrably holds the key for.
+        const provider = await HDDescriptorProvider.create(
+            identity,
+            new InMemoryWalletRepository(),
+        );
+        const atIndex3 = provider.materializeDescriptorAt(3);
+
+        const signer = await resolveDescriptorSigner(atIndex3, identity, undefined);
+        expect(hex.encode(await signer.xOnlyPublicKey())).toBe(
+            hex.encode(deriveDescriptorLeafPubKey(atIndex3)),
+        );
+        await expect(
+            signer.signMessage(sha256(new Uint8Array(32)), "schnorr"),
+        ).resolves.toBeInstanceOf(Uint8Array);
+    });
+
+    it("refuses a foreign descriptor and an unreadable one alike", async () => {
+        const foreign = MnemonicIdentity.fromMnemonic(
+            "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong",
+            { isMainnet: false },
+        ).descriptor.replace("/*)", "/0)");
+        await expect(resolveDescriptorSigner(foreign, identity)).rejects.toBeInstanceOf(
+            ForeignDescriptorError,
+        );
+        await expect(resolveDescriptorSigner("not a descriptor", identity)).rejects.toBeInstanceOf(
+            ForeignDescriptorError,
+        );
     });
 });

@@ -21,17 +21,16 @@ import { SettlementEvent } from "../../providers/ark";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "../activity";
 import { hex } from "@scure/base";
 import {
-    DescriptorIdentity,
     Identity,
     ReadonlyIdentity,
-    isHDCapableIdentity,
     type SerializedIdentity,
     type LegacySerializedIdentity,
     serializeReadonlyIdentity,
     serializeSigningIdentity,
+    isSigningIdentity,
 } from "../../identity";
-import { HDDescriptorProvider } from "../hdDescriptorProvider";
 import type { HDWalletCapable, HDAllocationCapable } from "../hdWalletCapable";
+import { resolveDescriptorSigner } from "../hdWalletCapable";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
 import { setupServiceWorker } from "../../worker/browser/utils";
@@ -279,15 +278,6 @@ const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
 function getRequestDedupKey(request: WalletUpdaterRequest): string {
     const { id, tag, ...rest } = request;
     return JSON.stringify(rest);
-}
-
-function isSigningCapable(identity: Identity | ReadonlyIdentity): identity is Identity {
-    const candidate = identity as Partial<Identity>;
-    return (
-        typeof candidate.signMessage === "function" &&
-        typeof candidate.sign === "function" &&
-        typeof candidate.signerSession === "function"
-    );
 }
 
 class ServiceWorkerReadonlyAssetManager implements IReadonlyAssetManager {
@@ -1619,7 +1609,7 @@ export class ServiceWorkerWallet
         const contractRepository =
             options.storage?.contractRepository ?? new IndexedDBContractRepository();
 
-        if (!isSigningCapable(options.identity)) {
+        if (!isSigningIdentity(options.identity)) {
             throw new Error(
                 "ServiceWorkerWallet.create() requires a signing Identity; got a ReadonlyIdentity",
             );
@@ -1815,17 +1805,21 @@ export class ServiceWorkerWallet
     /**
      * @see HDWalletCapable.signerForDescriptor
      *
-     * Runs page-side: an Identity cannot cross the message bus, and it does
-     * not need to — the page owns the signing identity, and derivation reads
-     * no allocation state. Mirrors {@link Wallet.signerForDescriptor}'s
-     * fallback: the wallet identity itself for a non-HD identity or a foreign
+     * Runs page-side: an `Identity` cannot cross the message bus, and it does
+     * not need to — the page owns the signing identity, and resolving a
+     * descriptor reads no allocation state. Shares
+     * {@link resolveDescriptorSigner} with {@link Wallet.signerForDescriptor}
+     * so the two sides of the bus cannot answer differently for one
      * descriptor.
+     *
+     * No provider is passed, and none is needed: `HDDescriptorProvider`'s
+     * `isOurs` and signing members all delegate to the identity, which the
+     * page holds. Building one here would only add a page-side read of the
+     * wallet state the worker allocates from — shared mutable state on a path
+     * that has no business touching it.
      */
     async signerForDescriptor(descriptor: string): Promise<Identity> {
-        if (!isHDCapableIdentity(this.identity)) return this.identity;
-        const provider = await HDDescriptorProvider.create(this.identity, this.walletRepository);
-        if (!provider.isOurs(descriptor)) return this.identity;
-        return new DescriptorIdentity({ descriptor, signer: provider, base: this.identity });
+        return resolveDescriptorSigner(descriptor, this.identity);
     }
 
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {

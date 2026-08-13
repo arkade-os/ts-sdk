@@ -45,7 +45,7 @@ import {
     type RfqTransport,
 } from "../src/rfq";
 import { onchainHtlcScript, paymentHashOf } from "../src/onchainHtlc";
-import { preimageForRfqSecrets } from "../src/secrets";
+import { contractPreimage } from "@arkade-os/sdk";
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
@@ -272,8 +272,6 @@ describe("requestLightningSend on an HD wallet", () => {
             invoice: INVOICE,
         });
 
-        expect(result.secrets.derivable).toBe(true);
-        expect(result).not.toHaveProperty("senderPrivateKey");
         // The covenant is bound to the allocated key, so the pubkey the solver
         // was given has to be the descriptor's.
         const signer = await (
@@ -282,7 +280,7 @@ describe("requestLightningSend on an HD wallet", () => {
                     d: string,
                 ) => Promise<{ xOnlyPublicKey: () => Promise<Uint8Array> }>;
             }
-        ).signerForDescriptor((result.secrets as { signingDescriptor: string }).signingDescriptor);
+        ).signerForDescriptor(result.secrets.descriptor);
         expect(hex.encode(result.senderPubkey)).toBe(hex.encode(await signer.xOnlyPublicKey()));
     });
 });
@@ -298,13 +296,15 @@ describe("requestOnchainSend on an HD wallet", () => {
             payoutPubkey: PAYOUT_PUBKEY,
         });
 
-        expect(result.secrets.derivable).toBe(true);
         expect(result).not.toHaveProperty("preimage");
-        expect(result).not.toHaveProperty("senderPrivateKey");
 
         // The quote was requested against sha256 of the derived preimage, and
         // the preimage re-derives from the returned descriptor alone.
-        const preimage = await preimageForRfqSecrets(wallet, result.secrets);
+        const preimage = await contractPreimage(
+            wallet,
+            result.secrets.descriptor,
+            result.secrets.preimage,
+        );
         expect(seen.paymentHash).toBe(paymentHashOf(preimage));
         expect(seen.senderPubkey).toBe(hex.encode(result.senderPubkey));
     });
@@ -340,20 +340,29 @@ describe("requestOnchainSend on an HD wallet", () => {
                 preimage,
             });
 
-            expect(result.secrets.derivable).toBe(true);
-            if (!result.secrets.derivable) throw new Error("expected derived secrets");
             expect(result.secrets.preimage).toEqual(preimage);
-            expect(await preimageForRfqSecrets(wallet, result.secrets)).toEqual(preimage);
+            expect(
+                await contractPreimage(wallet, result.secrets.descriptor, result.secrets.preimage),
+            ).toEqual(preimage);
 
-            const signer = await wallet.signerForDescriptor!(result.secrets.signingDescriptor);
+            const signer = await wallet.signerForDescriptor!(result.secrets.descriptor);
             expect(hex.encode(result.senderPubkey)).toBe(hex.encode(await signer.xOnlyPublicKey()));
-            expect(warn).toHaveBeenCalledWith(expect.stringContaining("supplied by the caller"));
+            // A P the wallet did not derive cannot be re-derived, HD descriptor
+            // or not — so the record must carry it. The flag is what callers
+            // branch on; the warning only tells a human the same thing.
+            expect(result.secrets.mustPersistPreimage).toBe(true);
+            expect(warn).toHaveBeenCalledWith(
+                expect.stringContaining("cannot be re-derived from the seed"),
+            );
         } finally {
             warn.mockRestore();
         }
     });
 
-    it("warns and returns raw fallback secrets when allocation is unavailable", async () => {
+    it("binds a static wallet's swap to its identity key, never a minted one", async () => {
+        // The wallet that cannot allocate still provides ITS key. The one
+        // secret the record carries is the per-swap preimage — a static key
+        // deriving preimages would hand every swap the same one.
         const wallet = staticWallet();
         const preimage = new Uint8Array(32).fill(8);
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -366,13 +375,49 @@ describe("requestOnchainSend on an HD wallet", () => {
                 preimage,
             });
 
-            expect(result.secrets.derivable).toBe(false);
-            if (result.secrets.derivable) throw new Error("expected stored secrets");
-            expect(result.secrets.senderPrivateKey).toBeInstanceOf(Uint8Array);
+            expect(result.secrets.descriptor).toBe(
+                `tr(${hex.encode(await wallet.identity.xOnlyPublicKey())})`,
+            );
+            expect(hex.encode(result.senderPubkey)).toBe(
+                hex.encode(await wallet.identity.xOnlyPublicKey()),
+            );
             expect(result.secrets.preimage).toEqual(preimage);
-            expect(await preimageForRfqSecrets(wallet, result.secrets)).toEqual(preimage);
-            expect(warn).toHaveBeenCalledWith(expect.stringContaining("sender key is random"));
-            expect(warn.mock.calls.join("\n")).not.toContain("preimage and sender key are random");
+            expect(
+                await contractPreimage(wallet, result.secrets.descriptor, result.secrets.preimage),
+            ).toEqual(preimage);
+            expect(result.secrets.mustPersistPreimage).toBe(true);
+            expect(warn).toHaveBeenCalledWith(
+                expect.stringContaining("cannot be re-derived from the seed"),
+            );
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    it("mints a stored per-swap preimage for a static wallet when none is supplied", async () => {
+        const wallet = staticWallet();
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+            const first = await requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 100_000,
+                amountSide: "to",
+                payoutPubkey: PAYOUT_PUBKEY,
+            });
+            const second = await requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 100_000,
+                amountSide: "to",
+                payoutPubkey: PAYOUT_PUBKEY,
+            });
+
+            // Same key for both swaps — that is the static policy — but the
+            // stored preimages must never repeat.
+            expect(second.secrets.descriptor).toBe(first.secrets.descriptor);
+            expect(first.secrets.preimage).toHaveLength(32);
+            expect(hex.encode(second.secrets.preimage!)).not.toBe(
+                hex.encode(first.secrets.preimage!),
+            );
         } finally {
             warn.mockRestore();
         }

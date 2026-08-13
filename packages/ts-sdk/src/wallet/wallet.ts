@@ -157,9 +157,8 @@ import {
 } from "./walletReceiveRotator";
 import { HDDescriptorProvider } from "./hdDescriptorProvider";
 import { DescriptorProvider } from "../identity/descriptorProvider";
-import { DescriptorIdentity } from "../identity/descriptorIdentity";
-import { HDWalletCapable } from "./hdWalletCapable";
-import { deriveDescriptorLeafPubKey } from "../identity/descriptor";
+import { HDWalletCapable, resolveDescriptorSigner } from "./hdWalletCapable";
+import { deriveDescriptorLeafPubKey, identityDescriptor } from "../identity/descriptor";
 import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
 import { CandidateDeps, Contract, ContractWithVtxos, DiscoveryDeps } from "../contracts/types";
 import {
@@ -2535,19 +2534,29 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
     }
 
     /**
-     * @see HDWalletCapable.getNextSigningDescriptor
+     * @see HDAllocationCapable.getNextSigningDescriptor
+     *
+     * Every `Wallet` answers — this is where the wallet's key-provisioning
+     * policy lives, so consumers never have to branch on wallet shape:
+     * - HD: allocate a fresh index through the contract manager (which owns
+     *   cross-context serialization and the look-ahead band).
+     * - custom provider: whatever the provider allocates.
+     * - static / `auto`: the identity key as a bare `tr(pubkey)` descriptor —
+     *   the same answer every call, because that IS the static policy.
      */
     async getNextSigningDescriptor(): Promise<string | undefined> {
-        const provider = this._descriptorProvider;
-        if (!(provider instanceof HDDescriptorProvider)) return undefined;
-        return (await this.getContractManager()).getNextSigningDescriptor();
+        if (this._descriptorProvider instanceof HDDescriptorProvider) {
+            return (await this.getContractManager()).getNextSigningDescriptor();
+        }
+        return identityDescriptor(this.identity);
     }
 
     /**
-     * @see HDWalletCapable.advanceSigningDescriptorWatermark
+     * @see HDAllocationCapable.advanceSigningDescriptorWatermark
      */
     async advanceSigningDescriptorWatermark(descriptor: string): Promise<void> {
         const provider = this._descriptorProvider;
+        // Nothing to move without an index stream, so nothing to validate.
         if (!(provider instanceof HDDescriptorProvider)) return;
         if (!provider.isOurs(descriptor)) {
             throw new Error(`descriptor is not derivable from this wallet: ${descriptor}`);
@@ -2605,13 +2614,16 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
 
     /**
      * @see HDWalletCapable.signerForDescriptor
+     *
+     * Fail-loud contract: the returned identity is always the descriptor's
+     * own key. A descriptor this wallet cannot sign for throws
+     * {@link ForeignDescriptorError} instead of silently substituting the
+     * baseline identity — that identity would sign happily with the wrong
+     * key, and the failure would only surface as a rejected transaction or a
+     * dead script, far from the call that caused it.
      */
     async signerForDescriptor(descriptor: string): Promise<Identity> {
-        const provider = this._descriptorProvider;
-        if (!(provider instanceof HDDescriptorProvider) || !provider.isOurs(descriptor)) {
-            return this.identity;
-        }
-        return new DescriptorIdentity({ descriptor, signer: provider, base: this.identity });
+        return resolveDescriptorSigner(descriptor, this.identity, this._descriptorProvider);
     }
 
     /**
@@ -2900,9 +2912,7 @@ export class Wallet extends ReadonlyWallet implements IWallet, HDWalletCapable {
         // `isHDCapableIdentity`.
         const hd = provider instanceof HDDescriptorProvider;
 
-        const staticDescriptor = hd
-            ? undefined
-            : `tr(${hex.encode(await this.identity.xOnlyPublicKey())})`;
+        const staticDescriptor = hd ? undefined : await identityDescriptor(this.identity);
         const materialize = (index: number): string =>
             hd ? provider.materializeDescriptorAt(index) : staticDescriptor!;
 
