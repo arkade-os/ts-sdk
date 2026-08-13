@@ -86,6 +86,22 @@ export class RelayUnavailable extends Error {
 }
 
 /**
+ * `close()` was called while a negotiation was still waiting on a reply.
+ *
+ * Distinct from both a timeout and {@link RelayUnavailable}, which describe the
+ * wire; this describes a decision on our own side of it. A caller that closed
+ * deliberately — a user leaving the screen, a flow abandoning its request — can
+ * match on this and stay quiet, rather than reporting a solver failure that
+ * never happened.
+ */
+export class TransportClosed extends Error {
+    constructor() {
+        super("transport closed before the solver replied");
+        this.name = "TransportClosed";
+    }
+}
+
+/**
  * Normalise whatever `subscribeMany`'s `onclose` hands back into readable text.
  *
  * nostr-tools changed this payload WITHIN its own 2.x line: earlier versions
@@ -255,6 +271,14 @@ export const nostrRfqTransport = (options: NostrRfqOptions): RfqTransport => {
 
         async close() {
             closed = true;
+            // Reject, don't drop. `waiters.clear()` alone empties the map without
+            // ever calling the stored closures, so each caller's promise stays
+            // pending and its timer stays armed: a close mid-negotiation surfaces
+            // `timeoutMs` later as "no solver reply", blaming the solver for a
+            // teardown we chose. Each reject clears its own timer and map entry,
+            // as in `onclose` above — the two teardown paths agree on what
+            // happens to a waiter.
+            for (const waiter of waiters.values()) waiter.reject(new TransportClosed());
             waiters.clear();
             // Only tear down a pool this transport created; a shared one belongs
             // to the caller and may still be serving other swaps. On an owned

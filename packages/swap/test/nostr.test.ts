@@ -7,7 +7,13 @@
 import { describe, it, expect, vi } from "vitest";
 import { generateSecretKey, getPublicKey, nip44, SimplePool, type Event } from "nostr-tools";
 import { SwapRefusal } from "../src/rfq";
-import { RFQ_AD_KIND, RFQ_DIRECTED_KIND, RelayUnavailable, nostrRfqTransport } from "../src/nostr";
+import {
+    RFQ_AD_KIND,
+    RFQ_DIRECTED_KIND,
+    RelayUnavailable,
+    TransportClosed,
+    nostrRfqTransport,
+} from "../src/nostr";
 
 /**
  * A stand-in for SimplePool that behaves like a relay the solver is also on:
@@ -233,5 +239,31 @@ describe("nostrRfqTransport", () => {
             subscribeMany.mockRestore();
             poolClose.mockRestore();
         }
+    });
+
+    /**
+     * Closing mid-negotiation must settle the caller, not abandon it.
+     *
+     * The default 30s timeout is deliberate here: it is far longer than this
+     * test is allowed to run, so a regression that goes back to dropping
+     * waiters fails as a hung test rather than passing late. The error type is
+     * half the point — waiting out the timeout would eventually reject too, but
+     * with "no solver reply", which names the wrong cause and tells a user to
+     * try a solver that was never at fault.
+     */
+    it("rejects a pending request as TransportClosed when closed mid-negotiation", async () => {
+        const solverSecret = generateSecretKey();
+        const { pool } = fakePool(solverSecret);
+        const transport = nostrRfqTransport({
+            relays: ["wss://x"],
+            solverPubkey: getPublicKey(solverSecret),
+            secretKey: generateSecretKey(),
+            pool: pool as never,
+            // no `timeoutMs`: the 30s default outlives the test's own limit
+        });
+
+        const pending = transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" });
+        await transport.close();
+        await expect(pending).rejects.toBeInstanceOf(TransportClosed);
     });
 });
