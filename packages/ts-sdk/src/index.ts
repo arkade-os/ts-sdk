@@ -126,6 +126,7 @@ export {
     collabExitResolver,
     assetMintResolver,
     createDefaultActivityRegistry,
+    buildActivities,
     type Activity,
     type ActivityIntent,
     type GroupMembership,
