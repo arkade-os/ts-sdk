@@ -11,7 +11,12 @@ import {
     type RfqCorridorContext,
     type RfqCorridorHandler,
 } from "./rfqCorridor";
-import { onchainHtlcScript, type OnchainNetwork } from "./onchainHtlc";
+import {
+    onchainHtlcScript,
+    type OnchainHtlc,
+    type OnchainHtlcParams,
+    type OnchainNetwork,
+} from "./onchainHtlc";
 import type { LightningReceiveSwap, OnchainSendSwap, RfqSwap } from "./swapManager";
 
 /** `arkade:BTC->lightning:BTC`. Nothing beyond the covenant and the common
@@ -107,6 +112,41 @@ export interface OnchainSendProfile extends Record<string, unknown> {
     funding?: { txid: string; vout: number };
     /** Our own L1 claim, so a restart does not re-broadcast it. */
     claimTxid?: string;
+}
+
+/**
+ * Build the profile from what `requestOnchainSend` returned.
+ *
+ * Pass the whole result: every field this needs is on it, so the mapping is
+ * done here, once, instead of at each call site.
+ *
+ * That mapping is the reason this exists. `htlcParams.refundLocktime` becomes
+ * `htlcLocktime` — the same value under a different name, because the record
+ * already has a `refundLocktime` and it is the arkade lockup's, a different
+ * deadline entirely. The keys go from bytes to hex. `htlcAddress` is not an
+ * input to anything, it is the derived value the rebuild checks the inputs
+ * against, so writing it is easy to skip and impossible to reconstruct later.
+ * A caller copying fields across by hand gets all three right or restores a
+ * swap that watches nothing.
+ *
+ * The other two corridors have no such builder, deliberately: their profiles
+ * are the request result's own fields under their own names, with nothing
+ * derived and nothing renamed.
+ */
+export function onchainSendProfile(result: {
+    htlc: Pick<OnchainHtlc, "address">;
+    htlcParams: OnchainHtlcParams;
+    l1Network: OnchainNetwork;
+    minConfirmations: number;
+}): OnchainSendProfile {
+    return {
+        claimKey: hex.encode(result.htlcParams.claimKey),
+        refundKey: hex.encode(result.htlcParams.refundKey),
+        htlcLocktime: result.htlcParams.refundLocktime,
+        network: result.l1Network,
+        htlcAddress: result.htlc.address,
+        minConfirmations: result.minConfirmations,
+    };
 }
 
 /**
