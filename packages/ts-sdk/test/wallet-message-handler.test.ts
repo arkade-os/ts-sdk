@@ -7,6 +7,7 @@ import {
     deserializeMigrationReport,
 } from "../src/wallet/serviceWorker/wallet-message-handler";
 import { InMemoryWalletRepository } from "../src";
+import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
 import {
     createMockExtendedVtxo,
     createMockIndexerProvider,
@@ -1487,7 +1488,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         tag: DEFAULT_MESSAGE_TAG,
     });
 
-    const setupHandler = (contracts: any[] = []) => {
+    const setupHandler = (contracts: any[] = [], intents?: InMemoryIntentRepository) => {
         mockIndexer = createMockIndexerProvider();
         walletRepo = new InMemoryWalletRepository();
 
@@ -1501,6 +1502,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 commitmentsToIgnore: new Set(),
             }),
             dustAmount: 546n,
+            ...(intents ? { intentRepository: intents } : {}),
             pendingRecoveryOutpoints: vi.fn().mockResolvedValue(new Set<string>()),
             pendingRecoveryOutpointsIn: vi.fn().mockReturnValue(new Set<string>()),
             getContractManager: vi.fn().mockResolvedValue({
@@ -1859,9 +1861,47 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 settled: 30000,
                 total: 30000,
                 available: 10000,
+                gated: 20000,
+                intentLocked: 0,
                 assets: [{ assetId: "cc".repeat(32), amount: 7n }],
                 availableAssets: [{ assetId: "cc".repeat(32), amount: 3n }],
             },
+        });
+    });
+
+    it("GET_BALANCE reports an intent-locked VTXO as intentLocked", async () => {
+        const intents = new InMemoryIntentRepository();
+        setupHandler([{ address: "contract-1", script: "s1", type: "default" }], intents);
+
+        await walletRepo.saveVtxos("contract-1", [
+            createMockExtendedVtxo({
+                txid: "aa".repeat(32),
+                value: 10000,
+                virtualStatus: { state: "settled" },
+                script: "s1",
+            }),
+        ]);
+        await intents.saveIntent({
+            intentTxId: "i",
+            createdAt: 1,
+            updatedAt: 1,
+            registerProof: "",
+            registerProofMessage: "",
+            deleteProof: "",
+            deleteProofMessage: "",
+            partialForfeits: [],
+            state: "batch_in_progress",
+            intentVtxos: [{ txid: "aa".repeat(32), vout: 0 }],
+        });
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_BALANCE",
+        } as any);
+
+        expect(response).toMatchObject({
+            type: "BALANCE",
+            payload: { settled: 10000, available: 0, gated: 0, intentLocked: 10000 },
         });
     });
 

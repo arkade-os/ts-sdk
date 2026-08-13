@@ -11,6 +11,31 @@ export interface OffchainBalance {
     settled: number;
     preconfirmed: number;
     available: number;
+    /**
+     * Spendable-but-for-the-gate funds: VTXOs under a contract
+     * {@link BalanceCapabilities.isGenericallySpendable} refuses — a VHTLC
+     * lockup, an unmarked `arkade` program, or a type whose handler this runtime
+     * never registered. Counted in `settled`/`preconfirmed` and `total`, never
+     * in `available`.
+     *
+     * Tested before {@link intentLocked}: the gate is a durable property of the
+     * contract while an intent lock clears on its own, so a VTXO that is both is
+     * reported here — it does not become available when the batch settles.
+     */
+    gated: number;
+    /**
+     * Funds committed to an in-flight (non-terminal) intent, and not already
+     * counted in {@link gated}. Unlike `gated`, these return to `available` when
+     * the intent reaches a terminal state.
+     *
+     * Reported as zero where the caller cannot answer the question — a wallet
+     * with no intent repository, or a repository read that fails — so this
+     * under-reports into `available` rather than misattributing. The two callers
+     * answer from deliberately different reads (@see {@link BalanceCapabilities}),
+     * so a worker figure and a main-thread figure need not agree unless taken
+     * over the same state.
+     */
+    intentLocked: number;
     recoverable: number;
     pendingRecovery: number;
     /** `settled + preconfirmed + recoverable + pendingRecovery` — the buckets are disjoint. */
@@ -57,6 +82,8 @@ export function computeOffchainBalance(
     let settled = 0;
     let preconfirmed = 0;
     let available = 0;
+    let gated = 0;
+    let intentLocked = 0;
     let recoverable = 0;
     let pendingRecovery = 0;
     const owned = new Map<string, bigint>();
@@ -94,7 +121,13 @@ export function computeOffchainBalance(
         } else {
             settled += vtxo.value;
         }
-        if (isGenericallySpendable(vtxo) && isUnlocked(vtxo)) {
+        // Disjoint by construction, so `settled + preconfirmed` splits exactly
+        // three ways. Gate before lock: see `gated`.
+        if (!isGenericallySpendable(vtxo)) {
+            gated += vtxo.value;
+        } else if (!isUnlocked(vtxo)) {
+            intentLocked += vtxo.value;
+        } else {
             available += vtxo.value;
             addAssets(spendable, vtxo);
         }
@@ -107,6 +140,8 @@ export function computeOffchainBalance(
         settled,
         preconfirmed,
         available,
+        gated,
+        intentLocked,
         recoverable,
         pendingRecovery,
         total: settled + preconfirmed + recoverable + pendingRecovery,

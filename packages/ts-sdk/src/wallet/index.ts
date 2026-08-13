@@ -330,16 +330,41 @@ export interface WalletBalance {
         /** Combined boarding balance (`confirmed` + `unconfirmed`) */
         total: number;
     };
-    /** Spendable settled (finalized) balance. */
+    /** Settled (finalized) balance the wallet owns, including gated and intent-locked funds. */
     settled: number;
-    /** Spendable preconfirmed (unfinalized) balance. */
+    /** Preconfirmed (unfinalized) balance the wallet owns, on the same owned rule as {@link settled}. */
     preconfirmed: number;
     /**
-     * Immediately spendable offchain balance: the `settled + preconfirmed`
-     * rule applied only to VTXOs not locked by an in-flight (non-terminal)
-     * intent. Equals `settled + preconfirmed` when nothing is intent-locked.
+     * Immediately spendable offchain balance — what generic selection would
+     * pick, so nothing counted here can be refused by `send`:
+     * `settled + preconfirmed - gated - intentLocked`.
      */
     available: number;
+    /**
+     * Spendable-but-for-the-gate funds: VTXOs under a contract the
+     * generic-spending gate refuses — a VHTLC lockup, an unmarked `arkade`
+     * program, or a type whose handler this runtime never registered. Counted in
+     * `settled`/`preconfirmed` and `total`, never in `available`.
+     *
+     * Tested before {@link intentLocked}: the gate is a durable property of the
+     * contract while an intent lock clears on its own, so a VTXO that is both is
+     * reported here — it does not become available when the batch settles.
+     *
+     * Covers this bucket only: {@link recoverable} has the same owned-versus-
+     * obtainable split under a different predicate and is not counted here, so
+     * `total - gated` still carries a recoverable component.
+     */
+    gated: number;
+    /**
+     * Funds committed to an in-flight (non-terminal) intent, and not already
+     * counted in {@link gated}. Unlike `gated`, these return to `available` when
+     * the intent reaches a terminal state.
+     *
+     * Reported as zero where the wallet cannot answer the question — no intent
+     * repository, or a repository read that fails — so this under-reports into
+     * `available` rather than misattributing.
+     */
+    intentLocked: number;
     /**
      * Recoverable balance from subdust or expired (swept) virtual outputs —
      * recoverable in principle, so a lockup whose contract refuses a spend right
@@ -365,9 +390,9 @@ export interface WalletBalance {
 
     /**
      * The subset of {@link assets} generic spending will accept, i.e. the asset
-     * analogue of {@link available}. Assets have no owned/spendable split of
-     * their own, so `assets - availableAssets` is what is held but not
-     * selectable — escrowed, intent-locked or awaiting recovery.
+     * analogue of {@link available}. `assets - availableAssets` is what is held
+     * but not selectable, for the {@link gated} and {@link intentLocked} causes
+     * plus recovery — assets have no per-cause split of their own.
      */
     availableAssets: Asset[];
 }
