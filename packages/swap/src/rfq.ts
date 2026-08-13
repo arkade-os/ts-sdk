@@ -1101,8 +1101,9 @@ export async function requestOnchainSend(
     htlc: OnchainHtlc;
     /** The VHTLC `sender` x-only key, bound into the covenant. Public. */
     senderPubkey: Uint8Array;
-    /** How the preimage and the `sender` key are recovered later. Persist it
-     * with the record BEFORE funding. */
+    /** How the preimage and the `sender` key are recovered later — map it
+     * through `swapSecretsToRecord` and persist BEFORE funding. Public unless
+     * `mustPersistPreimage` says the wallet could not derive P. */
     secrets: ProvisionedClaimSecret;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
@@ -1513,8 +1514,9 @@ export async function requestLightningReceive(
     payoutAddress: string;
     /** The trader's covenant `receiver` key, bound into the tree. Public. */
     payoutPubkey: Uint8Array;
-    /** How the preimage and the payout key are recovered later. Persist it
-     * with the record BEFORE paying the invoice. */
+    /** How the preimage and the payout key are recovered later — map it
+     * through `swapSecretsToRecord` and persist BEFORE paying the invoice.
+     * Public unless `mustPersistPreimage` says the wallet could not derive P. */
     secrets: ProvisionedClaimSecret;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
@@ -1724,6 +1726,9 @@ export async function requestOnchainReceive(
     htlc: OnchainHtlc;
     payoutAddress: string;
     payoutPubkey: Uint8Array;
+    /** How the preimage and the payout key are recovered later — map it
+     * through `swapSecretsToRecord` and persist BEFORE funding. Public unless
+     * `mustPersistPreimage` says the wallet could not derive P. */
     secrets: ProvisionedClaimSecret;
 }> {
     const rfqId = params.rfqId ?? newRfqId();

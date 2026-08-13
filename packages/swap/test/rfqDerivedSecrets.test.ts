@@ -46,6 +46,7 @@ import {
 } from "../src/rfq";
 import { onchainHtlcScript, paymentHashOf } from "../src/onchainHtlc";
 import { contractPreimage } from "@arkade-os/sdk";
+import { swapSecretsToRecord } from "../src/store";
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
@@ -300,11 +301,9 @@ describe("requestOnchainSend on an HD wallet", () => {
 
         // The quote was requested against sha256 of the derived preimage, and
         // the preimage re-derives from the returned descriptor alone.
-        const preimage = await contractPreimage(
-            wallet,
-            result.secrets.descriptor,
-            result.secrets.preimage,
-        );
+        const preimage = await contractPreimage(wallet, result.secrets.descriptor, {
+            stored: result.secrets.preimage,
+        });
         expect(seen.paymentHash).toBe(paymentHashOf(preimage));
         expect(seen.senderPubkey).toBe(hex.encode(result.senderPubkey));
     });
@@ -342,7 +341,9 @@ describe("requestOnchainSend on an HD wallet", () => {
 
             expect(result.secrets.preimage).toEqual(preimage);
             expect(
-                await contractPreimage(wallet, result.secrets.descriptor, result.secrets.preimage),
+                await contractPreimage(wallet, result.secrets.descriptor, {
+                    stored: result.secrets.preimage,
+                }),
             ).toEqual(preimage);
 
             const signer = await wallet.signerForDescriptor!(result.secrets.descriptor);
@@ -360,9 +361,9 @@ describe("requestOnchainSend on an HD wallet", () => {
     });
 
     it("binds a static wallet's swap to its identity key, never a minted one", async () => {
-        // The wallet that cannot allocate still provides ITS key. The one
-        // secret the record carries is the per-swap preimage — a static key
-        // deriving preimages would hand every swap the same one.
+        // The wallet that cannot allocate still provides ITS key. This case
+        // supplies its own preimage, so the record does carry one — see the
+        // next test for what a static wallet stores when it does not.
         const wallet = staticWallet();
         const preimage = new Uint8Array(32).fill(8);
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -383,7 +384,9 @@ describe("requestOnchainSend on an HD wallet", () => {
             );
             expect(result.secrets.preimage).toEqual(preimage);
             expect(
-                await contractPreimage(wallet, result.secrets.descriptor, result.secrets.preimage),
+                await contractPreimage(wallet, result.secrets.descriptor, {
+                    stored: result.secrets.preimage,
+                }),
             ).toEqual(preimage);
             expect(result.secrets.mustPersistPreimage).toBe(true);
             expect(warn).toHaveBeenCalledWith(
@@ -394,32 +397,74 @@ describe("requestOnchainSend on an HD wallet", () => {
         }
     });
 
-    it("mints a stored per-swap preimage for a static wallet when none is supplied", async () => {
+    it("derives a static wallet's preimage from a per-swap salt, storing nothing secret", async () => {
         const wallet = staticWallet();
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         try {
-            const first = await requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
-                emulatorPubkey: EMULATOR_PUBKEY_HEX,
-                amount: 100_000,
-                amountSide: "to",
-                payoutPubkey: PAYOUT_PUBKEY,
-            });
-            const second = await requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
+            const send = () =>
+                requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
+                    emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                    amount: 100_000,
+                    amountSide: "to",
+                    payoutPubkey: PAYOUT_PUBKEY,
+                });
+            const first = await send();
+            const second = await send();
+
+            // Same key for both swaps — that is the static policy — but the
+            // salts, and therefore the preimages, must never repeat.
+            expect(second.secrets.descriptor).toBe(first.secrets.descriptor);
+            expect(first.secrets.preimageSalt).toHaveLength(32);
+            expect(hex.encode(second.secrets.preimageSalt!)).not.toBe(
+                hex.encode(first.secrets.preimageSalt!),
+            );
+            expect(hex.encode(second.secrets.preimage)).not.toBe(
+                hex.encode(first.secrets.preimage),
+            );
+
+            // Nothing to persist, and therefore no warning: the salt is public
+            // and the preimage re-derives from it.
+            for (const result of [first, second]) {
+                expect(result.secrets.mustPersistPreimage).toBe(false);
+                expect(swapSecretsToRecord(result.secrets).preimageHex).toBeUndefined();
+                expect(
+                    hex.encode(
+                        await contractPreimage(wallet, result.secrets.descriptor, {
+                            salt: result.secrets.preimageSalt,
+                        }),
+                    ),
+                ).toBe(hex.encode(result.secrets.preimage));
+            }
+            expect(warn).not.toHaveBeenCalledWith(
+                expect.stringContaining("cannot be re-derived from the seed"),
+            );
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    it("writes only public fields on a derived-arm record, on either wallet", async () => {
+        // Backstop against a future change putting a secret back on disk. An
+        // allowlist rather than a hex pattern: `preimageSaltHex` is 64 hex too,
+        // and the difference between it and `preimageHex` is what they mean,
+        // not what they look like.
+        const send = (wallet: IWallet) =>
+            requestOnchainSend(wallet, "http://ark", onchainTransport({}), {
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 amount: 100_000,
                 amountSide: "to",
                 payoutPubkey: PAYOUT_PUBKEY,
             });
 
-            // Same key for both swaps — that is the static policy — but the
-            // stored preimages must never repeat.
-            expect(second.secrets.descriptor).toBe(first.secrets.descriptor);
-            expect(first.secrets.preimage).toHaveLength(32);
-            expect(hex.encode(second.secrets.preimage!)).not.toBe(
-                hex.encode(first.secrets.preimage!),
+        for (const wallet of [await hdWallet(), staticWallet()]) {
+            const record = swapSecretsToRecord((await send(wallet)).secrets);
+            expect(record.preimageHex).toBeUndefined();
+            expect(Object.keys(record).sort()).toEqual(
+                expect.arrayContaining(["signingDescriptor"]),
             );
-        } finally {
-            warn.mockRestore();
+            for (const field of Object.keys(record)) {
+                expect(["signingDescriptor", "preimageSaltHex"]).toContain(field);
+            }
         }
     });
 });

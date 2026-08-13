@@ -6,12 +6,14 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
+import { sha256 } from "@noble/hashes/sha2.js";
 import {
     DescriptorIdentity,
     HDDescriptorProvider,
     InMemoryWalletRepository,
     MnemonicIdentity,
     SingleKey,
+    deriveDescriptorLeafPubKey,
     strictSigningDescriptorIndex,
     type IWallet,
     resolveDescriptorSigner,
@@ -19,9 +21,11 @@ import {
     WalletCannotSignError,
 } from "../src";
 import {
+    ARKADE_SALTED_PREIMAGE_TAG,
     ARKADE_SWAP_PREIMAGE_TAG,
     adoptContractDescriptor,
     buildPreimageMessage,
+    buildSaltedPreimageMessage,
     contractPreimage,
     contractSigner,
     isDeterministicSigner,
@@ -95,6 +99,34 @@ describe("buildPreimageMessage", () => {
 
     it.each([-1, 1.5, 0x1_0000_0000])("rejects index %s", (index) => {
         expect(() => buildPreimageMessage(new Uint8Array(32), index)).toThrow(/u32/);
+    });
+});
+
+describe("buildSaltedPreimageMessage", () => {
+    it("lays out TAG ‖ xonly(32) ‖ salt(32)", () => {
+        const xonly = new Uint8Array(32).fill(0xab);
+        const salt = new Uint8Array(32).fill(0xcd);
+        const message = buildSaltedPreimageMessage(xonly, salt);
+        const tag = new TextEncoder().encode(ARKADE_SALTED_PREIMAGE_TAG);
+
+        expect(message).toHaveLength(tag.length + 64);
+        expect(hex.encode(message)).toBe(hex.encode(tag) + "ab".repeat(32) + "cd".repeat(32));
+    });
+
+    it("cannot collide with the pinned-index message for the same key", () => {
+        // Distinct tags are the whole separation between the two arms; a
+        // shared prefix would let one key derive one P through both.
+        const xonly = new Uint8Array(32).fill(0xab);
+        expect(ARKADE_SALTED_PREIMAGE_TAG).not.toBe(ARKADE_SWAP_PREIMAGE_TAG);
+        expect(hex.encode(buildSaltedPreimageMessage(xonly, new Uint8Array(32)))).not.toBe(
+            hex.encode(buildPreimageMessage(xonly, 0)),
+        );
+    });
+
+    it("rejects a salt or key that is not 32 bytes", () => {
+        const ok = new Uint8Array(32);
+        expect(() => buildSaltedPreimageMessage(new Uint8Array(20), ok)).toThrow(/32 bytes/);
+        expect(() => buildSaltedPreimageMessage(ok, new Uint8Array(31))).toThrow(/32 bytes/);
     });
 });
 
@@ -203,19 +235,156 @@ describe("provisionClaimSecret", () => {
 
     it("never repeats a preimage, on either kind of wallet", async () => {
         // HD: uniqueness comes from a fresh index. Static: the key repeats by
-        // design, so uniqueness has to come from the stored preimage instead —
-        // deriving there would hand two artifacts one P, and one counterparty
-        // learning its own would learn the other's.
+        // design, so uniqueness comes from a fresh salt instead. This is the
+        // regression test for the collision the salted arm exists to avoid —
+        // it fails if anyone reuses a constant salt.
         const { wallet: hd } = await hdWallet();
         const hdSecrets = [await provisionClaimSecret(hd), await provisionClaimSecret(hd)];
         expect(new Set(hdSecrets.map((s) => hex.encode(s.preimage))).size).toBe(2);
         expect(hdSecrets.every((s) => !s.mustPersistPreimage)).toBe(true);
+        expect(hdSecrets.every((s) => s.preimageSalt === undefined)).toBe(true);
 
         const stat = staticWallet();
-        const statSecrets = [await provisionClaimSecret(stat), await provisionClaimSecret(stat)];
-        expect(statSecrets[0].descriptor).toBe(statSecrets[1].descriptor);
-        expect(new Set(statSecrets.map((s) => hex.encode(s.preimage))).size).toBe(2);
-        expect(statSecrets.every((s) => s.mustPersistPreimage)).toBe(true);
+        const statSecrets = [
+            await provisionClaimSecret(stat),
+            await provisionClaimSecret(stat),
+            await provisionClaimSecret(stat),
+        ];
+        // One descriptor, three swaps, three different everything-else.
+        expect(new Set(statSecrets.map((s) => s.descriptor)).size).toBe(1);
+        expect(new Set(statSecrets.map((s) => hex.encode(s.preimageSalt!))).size).toBe(3);
+        expect(new Set(statSecrets.map((s) => hex.encode(s.preimage))).size).toBe(3);
+        expect(new Set(statSecrets.map((s) => hex.encode(s.paymentHash))).size).toBe(3);
+        // And nothing secret to store: the salt is public.
+        expect(statSecrets.every((s) => !s.mustPersistPreimage)).toBe(true);
+    });
+
+    it("derives a static wallet's preimage from the seed and the salt alone", async () => {
+        // The property the salted arm rests on: two independently constructed
+        // wallets on one key agree, given only the record's public fields.
+        const key = SingleKey.fromRandomBytes();
+        const first = { identity: key } as unknown as IWallet;
+        const secret = await provisionClaimSecret(first);
+        expect(secret.mustPersistPreimage).toBe(false);
+        expect(secret.preimageSalt).toHaveLength(32);
+
+        const second = {
+            identity: SingleKey.fromHex(key.toHex()),
+        } as unknown as IWallet;
+        const rederived = await contractPreimage(second, secret.descriptor, {
+            salt: secret.preimageSalt,
+        });
+        expect(hex.encode(rederived)).toBe(hex.encode(secret.preimage));
+    });
+
+    it("separates the salted arm from the pinned-index arm by tag", async () => {
+        // Same key, both derivations: distinct tags must keep them apart, or
+        // one corridor's preimage would be the other's.
+        const key = SingleKey.fromRandomBytes();
+        const secret = await provisionClaimSecret({ identity: key } as unknown as IWallet);
+        const xonly = await key.xOnlyPublicKey();
+
+        const asIfPinned = sha256(
+            await key.signSchnorrDeterministic(sha256(buildPreimageMessage(xonly, 0))),
+        );
+        expect(hex.encode(secret.preimage)).not.toBe(hex.encode(asIfPinned));
+    });
+
+    it("falls back to a stored preimage when the signer cannot derive", async () => {
+        // Both signers here are COMPLETE identities — `contractSigner` refuses
+        // a partial one outright (WalletCannotSignError), so the fallback arm
+        // is for a wallet that can spend the leg but cannot sign
+        // deterministically: an extension or remote signer.
+        //
+        // Two distinct refusals: one missing the method entirely, and one that
+        // exposes it and throws at call time (DescriptorIdentity's shape). The
+        // structural guard only sees the first, so both must land here.
+        const base = SingleKey.fromRandomBytes();
+        const signing = {
+            sign: (tx: unknown) => base.sign(tx as never),
+            signMessage: (m: Uint8Array) => base.signMessage(m),
+            signerSession: () => base.signerSession(),
+            xOnlyPublicKey: () => base.xOnlyPublicKey(),
+        };
+
+        for (const identity of [
+            signing,
+            {
+                ...signing,
+                signSchnorrDeterministic: async () => {
+                    throw new Error("this signer refuses");
+                },
+            },
+        ]) {
+            const secret = await provisionClaimSecret({ identity } as unknown as IWallet);
+            expect(secret.mustPersistPreimage).toBe(true);
+            expect(secret.preimage).toHaveLength(32);
+            // No salt: a record carrying one it cannot derive from is worse
+            // than none, because it reads as recoverable.
+            expect(secret.preimageSalt).toBeUndefined();
+        }
+    });
+
+    it("propagates a key refusal instead of degrading it to a stored preimage", async () => {
+        // The salted arm's fallback may absorb "cannot sign deterministically"
+        // and nothing else. A wallet that does not hold the key must not come
+        // back with a random preimage and a success — that funds a leg nothing
+        // can spend.
+        const base = SingleKey.fromRandomBytes();
+        const wallet = {
+            identity: base,
+            getCurrentSigningDescriptor: async () => undefined,
+            getNextSigningDescriptor: async () => undefined,
+            getUsedSigningDescriptors: async () => [],
+            advanceSigningDescriptorWatermark: async () => {},
+            // Resolves once for provisioning, then stops holding the key —
+            // the only way to reach the salted arm's catch with a key error.
+            signerForDescriptor: vi
+                .fn()
+                .mockResolvedValueOnce(base)
+                .mockRejectedValue(new ForeignDescriptorError("tr(deadbeef)")),
+        } as unknown as IWallet;
+
+        await expect(provisionClaimSecret(wallet)).rejects.toBeInstanceOf(ForeignDescriptorError);
+    });
+
+    it("refuses a watch-only identity before it reaches the salted arm", async () => {
+        // The fallback must not paper over a wallet that cannot spend the leg
+        // at all: #738's check fires first, so such a wallet learns before it
+        // funds rather than at refund time.
+        const base = SingleKey.fromRandomBytes();
+        const watchOnly = { xOnlyPublicKey: () => base.xOnlyPublicKey() };
+
+        await expect(
+            provisionClaimSecret({ identity: watchOnly } as unknown as IWallet),
+        ).rejects.toThrow(/cannot sign with it/);
+    });
+
+    it("still raises loudly for an HD descriptor whose signer cannot derive", async () => {
+        // A per-artifact descriptor that cannot sign deterministically is a
+        // broken wallet, not a fallback case — the salted arm's tolerance must
+        // not leak into this one.
+        const { wallet } = await hdWallet();
+        const { descriptor } = await provisionRefundKey(wallet);
+        const identity = (wallet as unknown as { identity: Record<string, unknown> }).identity;
+        const broken = {
+            identity,
+            getCurrentSigningDescriptor: async () => undefined,
+            getNextSigningDescriptor: async () => descriptor,
+            getUsedSigningDescriptors: async () => [],
+            advanceSigningDescriptorWatermark: async () => {},
+            // A COMPLETE identity for the right key that simply cannot sign
+            // deterministically — otherwise `contractSigner` refuses it as
+            // watch-only first and this asserts the wrong refusal.
+            signerForDescriptor: async () => ({
+                sign: identity.sign,
+                signMessage: identity.signMessage,
+                signerSession: identity.signerSession,
+                xOnlyPublicKey: async () => deriveDescriptorLeafPubKey(descriptor),
+            }),
+        } as unknown as IWallet;
+
+        await expect(provisionClaimSecret(broken)).rejects.toThrow(/not derivable/);
     });
 
     it("takes a caller's preimage verbatim and marks it for storage", async () => {
@@ -291,24 +460,41 @@ describe("contractPreimage", () => {
         const { wallet } = await hdWallet();
         const { descriptor } = await provisionRefundKey(wallet);
         const stored = new Uint8Array(32).fill(3);
-        expect(await contractPreimage(wallet, descriptor, stored)).toEqual(stored);
+        expect(await contractPreimage(wallet, descriptor, { stored })).toEqual(stored);
+    });
+
+    it("prefers a stored preimage over a salt, on a static descriptor", async () => {
+        // Precedence, not a coin flip: a stored P is the artifact's, whatever
+        // the wallet could derive now.
+        const wallet = staticWallet();
+        const { descriptor } = await provisionRefundKey(wallet);
+        const stored = new Uint8Array(32).fill(9);
+        expect(
+            await contractPreimage(wallet, descriptor, {
+                stored,
+                salt: new Uint8Array(32).fill(1),
+            }),
+        ).toEqual(stored);
     });
 
     it("refuses a stored preimage that is not 32 bytes", async () => {
-        // The check the deleted record decoder made. A truncated column or a
-        // partial write would otherwise restore silently and be caught only
-        // when the claim is built, with the timeout margin already spent.
-        const { wallet } = await hdWallet();
+        // The check the deleted record decoder made — a truncated column would
+        // otherwise restore silently and be caught only when the claim is
+        // built. The empty case is the one an explicit length test buys: a
+        // zero-length array is truthy, so it would be handed straight back.
+        const wallet = staticWallet();
         const { descriptor } = await provisionRefundKey(wallet);
-        await expect(
-            contractPreimage(wallet, descriptor, new Uint8Array(20).fill(3)),
-        ).rejects.toThrow(/stored preimage must be 32 bytes/);
+        for (const stored of [new Uint8Array(0), new Uint8Array(20).fill(3), new Uint8Array(31)]) {
+            await expect(contractPreimage(wallet, descriptor, { stored })).rejects.toThrow(
+                /stored preimage must be 32 bytes/,
+            );
+        }
     });
 
     it("refuses to derive for a descriptor that carries none", async () => {
-        // Deriving off a shared key would hand two artifacts one preimage —
-        // without accusing the record of losing anything: a leg whose P
-        // belongs to the counterparty legitimately has none, and lands here.
+        // Deriving off a shared key with no salt would hand two artifacts one
+        // preimage — without accusing the record of losing anything: a leg
+        // whose P belongs to the counterparty legitimately has none.
         const wallet = staticWallet();
         const { descriptor } = await provisionRefundKey(wallet);
         await expect(contractPreimage(wallet, descriptor)).rejects.toThrow(
@@ -411,6 +597,41 @@ describe("cross-SDK vectors", () => {
         // The message these hash from, spelled out for a reimplementation.
         expect(hex.encode(buildPreimageMessage(hex.decode(xonly), 0))).toBe(
             hex.encode(new TextEncoder().encode(ARKADE_SWAP_PREIMAGE_TAG)) + xonly + "00000000",
+        );
+    });
+
+    // The salted arm. Keyed off a raw private key rather than the mnemonic,
+    // because this arm is what a wallet with no HD stream uses — a
+    // reimplementation needs no derivation path to reproduce it.
+    it.each([
+        {
+            privateKey: "0101010101010101010101010101010101010101010101010101010101010101",
+            xonly: "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+            salt: "0000000000000000000000000000000000000000000000000000000000000000",
+            preimage: "b4d9da14ae18b0de26571983e689846d02f58ff19449104d05f3578b0081a828",
+        },
+        {
+            privateKey: "0202020202020202020202020202020202020202020202020202020202020202",
+            xonly: "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766",
+            salt: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            preimage: "7fc76ad065dbfa7cdba6905d04b1f37c93f970c03fb123b5612cec3a185dfad5",
+        },
+        {
+            privateKey: "4242424242424242424242424242424242424242424242424242424242424242",
+            xonly: "24653eac434488002cc06bbfb7f10fe18991e35f9fe4302dbea6d2353dc0ab1c",
+            salt: "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
+            preimage: "dbaf93e66f2149482c6be3b6ebeccb033d6ae7adb3a20547d411a0577d6f135d",
+        },
+    ])("salted, key $privateKey", async ({ privateKey, xonly, salt, preimage }) => {
+        const key = SingleKey.fromHex(privateKey);
+        const wallet = { identity: key } as unknown as IWallet;
+        expect(hex.encode(await key.xOnlyPublicKey())).toBe(xonly);
+
+        expect(
+            hex.encode(await contractPreimage(wallet, `tr(${xonly})`, { salt: hex.decode(salt) })),
+        ).toBe(preimage);
+        expect(hex.encode(buildSaltedPreimageMessage(hex.decode(xonly), hex.decode(salt)))).toBe(
+            hex.encode(new TextEncoder().encode(ARKADE_SALTED_PREIMAGE_TAG)) + xonly + salt,
         );
     });
 });

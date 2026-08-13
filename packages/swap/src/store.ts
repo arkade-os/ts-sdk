@@ -1,5 +1,7 @@
 import { hex } from "@scure/base";
-import type { ProvisionedClaimSecret, ProvisionedKey } from "@arkade-os/sdk";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { contractPreimage } from "@arkade-os/sdk";
+import type { IWallet, ProvisionedClaimSecret, ProvisionedKey } from "@arkade-os/sdk";
 import type { AssetSwapRepository } from "./repository";
 
 export type AssetSwapStatus =
@@ -30,7 +32,41 @@ export const BTC_ASSET_ID = "btc";
 // AssetSwapStore class holding the repository privately if a second consumer
 // starts writing swaps, or the first invariant gets violated in practice.
 
-export interface AssetSwap {
+/**
+ * The record fields a wallet-provisioned secret becomes — what
+ * {@link swapSecretsToRecord} emits, and what every record type carrying swap
+ * secrets embeds.
+ *
+ * A named type rather than four fields restated per record: the mapper and the
+ * records it feeds must agree exactly, and a record that silently omits one of
+ * these round-trips a swap whose preimage cannot be re-derived. Embedding makes
+ * the omission a compile error instead.
+ *
+ * **Only `preimageHex` is secret.** `signingDescriptor` and `preimageSaltHex`
+ * are public derivation inputs — they must survive a field-mapped backend, but
+ * they leak nothing without the seed.
+ */
+export interface SwapSecretsProjection {
+    /**
+     * The wallet descriptor this swap's sender key comes from — a fresh HD
+     * child, or a static wallet's `tr(pubkey)`. Public — the signer
+     * re-derives from the wallet, so the record carries no key material.
+     */
+    signingDescriptor?: string;
+    /** P, hex, when it cannot be re-derived from the seed at all: the user
+     * supplied it, or the signer cannot sign deterministically. The swap's only
+     * claim secret when present. */
+    preimageHex?: string;
+    /**
+     * The salt P derives from, hex, on the salted arm — what a static wallet
+     * gets instead of storing P. **Public**, and unlike every other field here
+     * it is minted per swap: it is what stops one repeating key from handing
+     * every swap the same preimage.
+     */
+    preimageSaltHex?: string;
+}
+
+export interface AssetSwap extends SwapSecretsProjection {
     /** Funding txid — the swap's identity. */
     id: string;
     /** 'btc' or a 68-hex asset id. */
@@ -58,16 +94,6 @@ export interface AssetSwap {
     /** `sha256(P)`, hex. Public, and how a restore confirms a candidate
      * derivation is the right one. */
     paymentHash?: string;
-    /**
-     * The wallet descriptor this swap's sender key comes from — a fresh HD
-     * child, or a static wallet's `tr(pubkey)`. Public — the signer
-     * re-derives from the wallet, so the record carries no key material.
-     */
-    signingDescriptor?: string;
-    /** P, hex, when it cannot be re-derived from the seed: the user supplied
-     * it, or the descriptor is static (shared across swaps, so a derived
-     * preimage would collide). The swap's only claim secret when present. */
-    preimageHex?: string;
     /** The L1 HTLC's pkScript, hex — the chain-watch key. */
     htlcPkScriptHex?: string;
     htlcLocktime?: number;
@@ -187,14 +213,137 @@ export const updateAssetSwapBestEffort = async (
  * The record fields a wallet-provisioned secret becomes.
  *
  * `signingDescriptor` is public and always stored — it is what recovers the
- * signer. `preimageHex` is stored only when the wallet says it cannot
- * re-derive P, and is then the swap's only claim secret.
+ * signer. Then at most one of: `preimageHex`, when the wallet says it cannot
+ * re-derive P and it becomes the swap's only claim secret; or
+ * `preimageSaltHex`, the public input a derivable-but-repeating key needs.
  */
 export const swapSecretsToRecord = (
     secrets: ProvisionedKey | ProvisionedClaimSecret,
-): { signingDescriptor: string; preimageHex?: string } => ({
+): SwapSecretsProjection & { signingDescriptor: string } => ({
     signingDescriptor: secrets.descriptor,
     ...("mustPersistPreimage" in secrets && secrets.mustPersistPreimage
         ? { preimageHex: hex.encode(secrets.preimage) }
         : {}),
+    ...("preimageSalt" in secrets && secrets.preimageSalt
+        ? { preimageSaltHex: hex.encode(secrets.preimageSalt) }
+        : {}),
 });
+
+/** 32 bytes of hex, or a message naming the field that was wrong. */
+const decodeHex32 = (value: string, field: string): Uint8Array => {
+    const bytes = hex.decode(value);
+    if (bytes.length !== 32) {
+        throw new Error(`${field} must be 32 bytes, got ${bytes.length}`);
+    }
+    return bytes;
+};
+
+/** Why a wallet cannot produce a swap's preimage. */
+export type PreimageBlockedReason =
+    /** The record carries no `signingDescriptor`. */
+    | "no-secrets"
+    /** `preimageHex` or `preimageSaltHex` is present but not 32 bytes of hex. */
+    | "malformed-record"
+    /**
+     * Nothing to derive from: a descriptor that repeats across swaps, with
+     * neither a stored preimage nor a salt — or one this wallet holds no key
+     * for. Merged deliberately: `contractSigner` reports a key it does not
+     * hold as a plain `Error` for static wallets and a `ForeignDescriptorError`
+     * for HD ones, so splitting the two here would mean matching on message
+     * text, which is the thing this type exists to avoid. The `cause` carries
+     * whichever it was.
+     */
+    | "not-derivable"
+    /** Derived, but it does not hash to the record's `paymentHash`. */
+    | "hash-mismatch";
+
+/**
+ * The wallet cannot produce this swap's preimage, and which of the four ways
+ * is `reason`.
+ *
+ * Deliberately **not** {@link RefundNotLocallyPossibleError}: that one means
+ * "no local refund is possible", and `RfqSwapManager` acts on it by reporting
+ * `needs_counterparty`. A claim-path read failure is a different verdict, and
+ * borrowing the refund error would have the manager announce one for the
+ * other.
+ */
+export class PreimageNotRecoverableError extends Error {
+    override readonly name = "PreimageNotRecoverableError";
+    constructor(
+        readonly reason: PreimageBlockedReason,
+        message: string,
+        options?: { cause?: unknown },
+    ) {
+        super(message, options);
+    }
+}
+
+/**
+ * The preimage a swap record claims with — stored, or re-derived from the
+ * wallet.
+ *
+ * The record-shaped inverse of {@link swapSecretsToRecord}, and the one place
+ * that knows which of a record's fields `contractPreimage` needs. Wire claim
+ * paths here rather than composing it by hand: a caller that forgets to pass
+ * `preimageSaltHex` gets a *wrong* preimage from a wallet that can derive,
+ * not an error.
+ *
+ * Verifies the result against `paymentHash` when the record carries one. The
+ * salted arm has two inputs that can be wrong — the key and the salt — where
+ * the HD arm had one, and a wrong P otherwise surfaces as an opaque script
+ * failure at claim time, long after the mistake.
+ *
+ * Every refusal is a {@link PreimageNotRecoverableError} carrying a `reason`,
+ * so a caller can tell "this record predates the descriptor" from "the salt is
+ * corrupt" without reading message text.
+ */
+export const preimageForSwapRecord = async (
+    wallet: IWallet,
+    record: SwapSecretsProjection & { paymentHash?: string },
+): Promise<Uint8Array> => {
+    if (!record.signingDescriptor) {
+        throw new PreimageNotRecoverableError(
+            "no-secrets",
+            "this swap record carries no signing descriptor",
+        );
+    }
+    // Decoding sits outside the derivation try: a malformed record is the
+    // caller's bug, not evidence the wallet cannot derive.
+    let stored: Uint8Array | undefined;
+    let salt: Uint8Array | undefined;
+    try {
+        stored = record.preimageHex ? decodeHex32(record.preimageHex, "preimageHex") : undefined;
+        salt = record.preimageSaltHex
+            ? decodeHex32(record.preimageSaltHex, "preimageSaltHex")
+            : undefined;
+    } catch (cause) {
+        throw new PreimageNotRecoverableError(
+            "malformed-record",
+            `this swap record's secrets projection is unreadable: ${String(cause)}`,
+            { cause },
+        );
+    }
+
+    let preimage: Uint8Array;
+    try {
+        preimage = await contractPreimage(wallet, record.signingDescriptor, { stored, salt });
+    } catch (cause) {
+        throw new PreimageNotRecoverableError(
+            "not-derivable",
+            `this wallet cannot produce the preimage for ${record.signingDescriptor}`,
+            { cause },
+        );
+    }
+
+    // Case-folded: `hex.encode` always emits lowercase, but `hex.decode`
+    // accepts either, so a backend that normalises hex to uppercase round-trips
+    // the salt and the preimage fine and then fails only here — a spurious
+    // hash-mismatch on a preimage that is actually correct.
+    if (record.paymentHash && hex.encode(sha256(preimage)) !== record.paymentHash.toLowerCase()) {
+        throw new PreimageNotRecoverableError(
+            "hash-mismatch",
+            "the derived preimage does not match this swap's payment hash: wrong wallet, or a tampered salt",
+        );
+    }
+    return preimage;
+};
