@@ -200,9 +200,10 @@ export interface RfqStatus {
  * `senderPubkey` is the trader's own key for the VHTLC's sender-side leaves
  * (see {@link lightningSendVtxoScript}) — required, never sent anywhere else,
  * never trusted by the solver as anything but a pubkey to bind into the
- * script. On the wire it's `client_refund_pubkey` (docs/rfq-protocol.md —
- * the solver's schema is `.strict()`, so both the wrong name AND the missing
- * required field would refuse every request). */
+ * script. On the wire it's `client_refund_pubkey` (the payload schemas are
+ * public at https://docs.arkadeos.com/intents/reference/rfq — the solver's schema
+ * is `.strict()`, so both the wrong name AND the missing required field would
+ * refuse every request). */
 export const lightningSendRequest = (input: {
     rfqId: string;
     invoice: string;
