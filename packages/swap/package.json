@@ -1,6 +1,6 @@
 {
     "name": "@arkade-os/swap",
-    "version": "0.0.4",
+    "version": "0.0.5",
     "type": "module",
     "description": "Client-side Arkade Intents asset swaps: discover markets, quote, create/track/cancel offers, restore from chain.",
     "repository": {
