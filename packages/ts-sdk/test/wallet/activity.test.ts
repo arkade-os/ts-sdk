@@ -357,3 +357,76 @@ describe("createDefaultActivityRegistry", () => {
         ]);
     });
 });
+
+describe("ActivityIntent.status", () => {
+    it("carries a resolver-declared status onto the activity's intent", async () => {
+        const fundingTx = tx("aa", { type: TxType.TxSent });
+        const resolver = {
+            id: "test:swap",
+            resolve: () => [{ groupId: "swap:1", label: "Lightning send", status: "Failed" }],
+        };
+
+        const [activity] = await buildActivities([fundingTx], [resolver]);
+
+        expect(activity.intent?.status).toBe("Failed");
+    });
+
+    it("reports status independently of settled, which stays true for a settled member tx", async () => {
+        const fundingTx = tx("aa", { type: TxType.TxSent });
+        const resolver = {
+            id: "test:swap",
+            resolve: () => [{ groupId: "swap:1", status: "Failed" }],
+        };
+
+        const [activity] = await buildActivities([fundingTx], [resolver]);
+
+        // The whole point of the field: the funding tx confirmed, so `settled`
+        // is legitimately true while the action itself failed.
+        expect(activity.settled).toBe(true);
+        expect(activity.intent?.status).toBe("Failed");
+    });
+
+    it("merges first-writer-wins across resolvers sharing a groupId", async () => {
+        const fundingTx = tx("aa", { type: TxType.TxSent });
+        const first = {
+            id: "test:a",
+            resolve: () => [{ groupId: "swap:1", status: "Refunded" }],
+        };
+        const second = {
+            id: "test:b",
+            resolve: () => [{ groupId: "swap:1", status: "Failed" }],
+        };
+
+        const [activity] = await buildActivities([fundingTx], [first, second]);
+
+        expect(activity.intent?.status).toBe("Refunded");
+    });
+
+    it("carries status when a group has a single membership", async () => {
+        // Guards the second fold site: `merge` only runs when two memberships
+        // share a groupId, so a one-member group exercises the bucket assembly
+        // path instead — the one that is easy to leave out.
+        const fundingTx = tx("aa", { type: TxType.TxSent });
+        const resolver = {
+            id: "test:swap",
+            resolve: () => [{ groupId: "swap:solo", status: "Refunded" }],
+        };
+
+        const [activity] = await buildActivities([fundingTx], [resolver]);
+
+        expect(activity.intent?.status).toBe("Refunded");
+    });
+
+    it("leaves status undefined when no resolver sets one", async () => {
+        const fundingTx = tx("aa", { type: TxType.TxSent });
+        const resolver = {
+            id: "test:plain",
+            resolve: () => [{ groupId: "grp:1", label: "Something" }],
+        };
+
+        const [activity] = await buildActivities([fundingTx], [resolver]);
+
+        expect(activity.intent?.status).toBeUndefined();
+        expect(activity.intent?.label).toBe("Something");
+    });
+});
