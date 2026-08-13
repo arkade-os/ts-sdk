@@ -21,7 +21,7 @@
  *
  * - {@link RfqSwapOrigin} — the immutable request-time facts. `paymentHash` in
  *   particular is NOT recoverable from the tree: the covenant binds
- *   `ripemd160(sha256(P))`, which is one-way over the hash this record carries.
+ *   `hash160(P)`, which is one-way over the hash this record carries.
  * - the manager's mutable state, replaced by {@link updateRfqSwapRecord} on
  *   every pass that changed something.
  *
@@ -78,11 +78,13 @@ export interface RfqSwapOrigin {
     kind: "lightning_send" | "lightning_receive";
 
     /**
-     * `sha256(P)`, hex.
+     * `sha256(P)`, hex — the BOLT11 payment hash.
      *
-     * The one request-time fact the covenant cannot give back: the tree binds
-     * `ripemd160` of this value, so a rebuild can check a candidate but never
-     * recover the hash itself.
+     * Not recoverable from the covenant, which commits to `hash160(P)`: 20
+     * bytes, the conventional HTLC shape. Kept so a swap can be correlated to
+     * the payer's invoice — the fate check itself does not need it, since
+     * `hash160(candidate)` against the covenant's own `preimageHash` proves the
+     * same thing about the same witness.
      */
     paymentHash: string;
 
