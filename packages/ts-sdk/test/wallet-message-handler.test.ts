@@ -1705,7 +1705,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         expect(manager.getContracts).toHaveBeenCalledTimes(1);
         expect(response).toMatchObject({
             type: "BALANCE",
-            payload: { settled: 30000, total: 30000, available: 0 },
+            payload: { settled: 30000, total: 30000, available: 0, escrow: 30000 },
         });
     });
 

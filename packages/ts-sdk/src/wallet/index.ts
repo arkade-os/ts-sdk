@@ -341,14 +341,18 @@ export interface WalletBalance {
      */
     available: number;
     /**
-     * Funds held at contracts that generic spending is gated from — swap escrow,
-     * chiefly. Still the user's money, so counted in `settled`/`preconfirmed` and
-     * in `total`; never in `available`.
+     * Funds held at contracts the generic-spending gate closes. Swap escrow is
+     * the common case, but the gate is default-closed: a contract type with no
+     * registered handler, a plugin type, and an `arkade` contract whose metadata
+     * does not explicitly set `genericallySpendable` all land here too. Still the
+     * user's money, so counted in `settled`/`preconfirmed` and in `total`; never
+     * in `available`.
      *
      * Present so a consumer can explain the gap between `total` and `available`
      * without re-deriving the contract gate itself. The rest of that gap is
-     * `recoverable`, `pendingRecovery`, and intent-locked funds — the last of
-     * which is `settled + preconfirmed - available - escrow`.
+     * `boarding.total`, `recoverable`, `pendingRecovery`, and intent-locked
+     * offchain funds — the last of which is
+     * `settled + preconfirmed - available - escrow` (all four offchain terms).
      */
     escrow: number;
     /**
