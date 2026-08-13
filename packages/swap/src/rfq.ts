@@ -66,6 +66,7 @@ import {
     onchainHtlcScript,
     paymentHashOf,
     type OnchainHtlc,
+    type OnchainHtlcParams,
     type OnchainNetwork,
 } from "./onchainHtlc";
 
@@ -993,6 +994,11 @@ export function deriveOnchainSend(input: {
      * so the row can never key on a script other than the derived one. */
     script: InstanceType<typeof VHTLC.ScriptV2>;
     htlc: OnchainHtlc;
+    /** The inputs {@link htlc} was built from. Returned because nothing else
+     * can give them back: `OnchainHtlc` exposes only derived values, and this
+     * contract is Bitcoin L1 — there is no Arkade contract row for it, so a
+     * consumer persisting the swap has no other route to rebuilding it. */
+    htlcParams: OnchainHtlcParams;
     refundLocktime: number;
     htlcLocktime: number;
     minConfirmations: number;
@@ -1029,15 +1035,16 @@ export function deriveOnchainSend(input: {
     const address = script.address(input.hrp, input.serverPubkey).encode();
     verifyLockupAddress(quote, address);
 
-    const htlc = onchainHtlcScript(
-        {
-            paymentHash: input.paymentHash,
-            claimKey: input.payoutPubkey,
-            refundKey: xOnly(hex.decode(htlcPubkey), "solver L1 htlc key"),
-            refundLocktime: htlcLocktime,
-        },
-        input.l1Network,
-    );
+    // Named so the inputs can be handed back: `OnchainHtlc` carries only
+    // derived values, and unlike the Arkade lockup this HTLC has no contract
+    // row, so these are the only route to rebuilding it after a restart.
+    const htlcParams = {
+        paymentHash: input.paymentHash,
+        claimKey: input.payoutPubkey,
+        refundKey: xOnly(hex.decode(htlcPubkey), "solver L1 htlc key"),
+        refundLocktime: htlcLocktime,
+    };
+    const htlc = onchainHtlcScript(htlcParams, input.l1Network);
     if (htlc.address !== htlcAddress) throw new AddressMismatch(htlc.address, htlcAddress);
 
     return {
@@ -1045,6 +1052,7 @@ export function deriveOnchainSend(input: {
         swapPkScript: script.pkScript,
         script,
         htlc,
+        htlcParams,
         refundLocktime,
         htlcLocktime,
         minConfirmations,
@@ -1102,6 +1110,14 @@ export async function requestOnchainSend(
     refundAddress: string;
     /** The EXPECTED L1 fill, derived locally — watch and claim against this. */
     htlc: OnchainHtlc;
+    /** The inputs {@link htlc} was built from — persist these to rebuild it
+     * after a restart. Nothing else gives them back: `OnchainHtlc` exposes only
+     * derived values, and this contract is Bitcoin L1, so unlike the arkade
+     * lockup there is no contract row holding its parameters. */
+    htlcParams: OnchainHtlcParams;
+    /** `profile.min_confirmations`; gates when the L1 fill becomes claimable,
+     * and part of what a restored swap needs to drive its own claim. */
+    minConfirmations: number;
     /** The VHTLC `sender` x-only key, bound into the covenant. Public. */
     senderPubkey: Uint8Array;
     /** How the preimage and the `sender` key are recovered later. Persist it
@@ -1181,6 +1197,8 @@ export async function requestOnchainSend(
         script: derived.script,
         refundAddress,
         htlc: derived.htlc,
+        htlcParams: derived.htlcParams,
+        minConfirmations: derived.minConfirmations,
         senderPubkey,
         secrets,
     };

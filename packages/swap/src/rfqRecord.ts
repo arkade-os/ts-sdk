@@ -35,19 +35,23 @@ import {
     isRfqSwapTerminal,
     type LightningReceiveSwap,
     type LightningSendSwap,
+    type OnchainSendSwap,
     type RfqSwapState,
 } from "./swapManager";
+import { onchainHtlcScript, type OnchainNetwork } from "./onchainHtlc";
 
 /**
- * The swap kinds this projection covers.
+ * The swap kinds this projection covers — all three the manager monitors.
  *
- * `onchain_send` is deliberately absent: no contract row and no record here
- * carries an L1 half, so a rebuild could not reproduce its `htlc`, `funding`,
- * `claimTxid` or `minConfirmations`, and storing one would round-trip a swap
- * whose L1 refund window nothing is watching. Taking this rather than `RfqSwap`
- * is what makes that a compile error at the call site instead of a silent loss.
+ * `onchain_send` carries an L1 half nothing else can rebuild. Its Arkade lockup
+ * has a contract row like the others, but the HTLC is Bitcoin L1, not an Arkade
+ * contract, so no row exists for it; and `OnchainHtlc` exposes only derived
+ * values — `address`, `pkScript`, `leaves`, `controlBlocks` — never the
+ * `claimKey`/`refundKey` `onchainHtlcScript` takes as inputs. So the record
+ * carries {@link RfqSwapOrigin.onchain}, and without it a restored swap would
+ * let its L1 refund window pass unwatched.
  */
-export type PersistableRfqSwap = LightningSendSwap | LightningReceiveSwap;
+export type PersistableRfqSwap = LightningSendSwap | LightningReceiveSwap | OnchainSendSwap;
 
 /**
  * The serialized covenant parameters a rebuild is given.
@@ -75,7 +79,7 @@ export const RFQ_SWAP_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 /** The immutable request-time half. Hex for everything binary, so the record is
  * plain JSON and survives any structured-clone backend unchanged. */
 export interface RfqSwapOrigin {
-    kind: "lightning_send" | "lightning_receive";
+    kind: "lightning_send" | "lightning_receive" | "onchain_send";
 
     /**
      * `sha256(P)`, hex — the BOLT11 payment hash.
@@ -104,6 +108,32 @@ export interface RfqSwapOrigin {
     /** The only secret this record may hold; present when the provisioned
      * claim secret says P cannot be re-derived. */
     preimageHex?: string;
+
+    // ── Onchain-send leg ─────────────────────────────────────────────────────
+    /**
+     * The L1 HTLC's own inputs. Onchain-send only, and required there.
+     *
+     * The Arkade lockup gets a contract row; this does not — the HTLC is
+     * Bitcoin L1, not an Arkade contract — and `OnchainHtlc` hands back only
+     * derived values, never the keys it was built from. So these are the one
+     * set of script parameters this record legitimately stores, and dropping
+     * them would leave a restored swap unable to claim the fill or take the
+     * HTLC back at `htlcLocktime`.
+     *
+     * All public: two counterparty x-only keys, a locktime and a network.
+     */
+    onchain?: {
+        /** VHTLC-side claim key — the trader's payout key. */
+        claimKey: string;
+        /** The solver's L1 key, from `profile.htlc_pubkey`. */
+        refundKey: string;
+        /** `profile.htlc_locktime` — the trader's own L1 recourse deadline,
+         * distinct from the Arkade lockup's `refundLocktime`. */
+        htlcLocktime: number;
+        network: OnchainNetwork;
+        /** `profile.min_confirmations`, which gates when the fill is claimable. */
+        minConfirmations: number;
+    };
 
     // ── Receive-leg facts ────────────────────────────────────────────────────
     /**
@@ -135,6 +165,12 @@ export interface RfqSwapRecord extends RfqSwapOrigin {
     claimArkTxid?: string;
     failure?: string;
     blockedReason?: string;
+    /** Onchain-send only: the fill's outpoint, learned on first sighting.
+     * Without it a SPENT htlc reads as never funded — see
+     * `classifyOnchainHtlc`. */
+    funding?: { txid: string; vout: number };
+    /** Onchain-send only: our own L1 claim. */
+    claimTxid?: string;
 }
 
 /** The manager's mutable half, projected off a live record. */
@@ -147,6 +183,8 @@ const managerState = (swap: PersistableRfqSwap) => ({
     ...(swap.kind === "lightning_receive" && swap.claimArkTxid
         ? { claimArkTxid: swap.claimArkTxid }
         : {}),
+    ...(swap.kind === "onchain_send" && swap.funding ? { funding: swap.funding } : {}),
+    ...(swap.kind === "onchain_send" && swap.claimTxid ? { claimTxid: swap.claimTxid } : {}),
     ...(swap.failure ? { failure: swap.failure } : {}),
     ...(swap.blockedReason ? { blockedReason: swap.blockedReason } : {}),
 });
@@ -248,6 +286,31 @@ export function rebuildRfqSwap(record: RfqSwapRecord, params: LockupParams): Per
     if (record.kind === "lightning_send") {
         return { ...common, kind: "lightning_send" } satisfies LightningSendSwap;
     }
+
+    if (record.kind === "onchain_send") {
+        // Required, not defaulted: an onchain-send swap restored without its L1
+        // half would be monitored on the Arkade side while its HTLC refund
+        // window passed unwatched — the one failure `RfqSwapManager` refuses by
+        // name elsewhere.
+        const l1 = required(record.onchain, "onchain");
+        return {
+            ...common,
+            kind: "onchain_send",
+            htlc: onchainHtlcScript(
+                {
+                    paymentHash: record.paymentHash,
+                    claimKey: hex.decode(l1.claimKey),
+                    refundKey: hex.decode(l1.refundKey),
+                    refundLocktime: l1.htlcLocktime,
+                },
+                l1.network,
+            ),
+            minConfirmations: l1.minConfirmations,
+            ...(record.funding ? { funding: record.funding } : {}),
+            ...(record.claimTxid ? { claimTxid: record.claimTxid } : {}),
+        } satisfies OnchainSendSwap;
+    }
+
     return {
         ...common,
         kind: "lightning_receive",

@@ -174,6 +174,88 @@ describe("rebuildRfqSwap", () => {
     });
 });
 
+describe("an onchain-send record carries its L1 half", () => {
+    // The arkade lockup has a contract row; the HTLC does not — it is Bitcoin
+    // L1, not an arkade contract — and `OnchainHtlc` hands back only derived
+    // values. So this is the one set of script parameters the record stores,
+    // and a restored swap without them would let its L1 refund window pass
+    // unwatched.
+    const L1 = {
+        claimKey: hex.encode(key(15)),
+        refundKey: hex.encode(key(11)),
+        htlcLocktime: 1_850_000_000,
+        network: "regtest" as const,
+        minConfirmations: 2,
+    };
+
+    const onchainOrigin: RfqSwapOrigin = {
+        kind: "onchain_send",
+        paymentHash: PAYMENT_HASH,
+        lockupAddress: SEND_LOCKUP.address,
+        signingDescriptor: `tr(${hex.encode(key(7))})`,
+        onchain: L1,
+        amount: 100_000,
+    };
+
+    const onchainSwap = (over: Record<string, unknown> = {}) =>
+        ({
+            kind: "onchain_send",
+            rfqId: "rfq-1",
+            state: "pending",
+            lockupPkScript: p2tr(key(11)),
+            paymentHash: PAYMENT_HASH,
+            refundLocktime: REFUND_LOCKTIME,
+            htlc: {},
+            minConfirmations: 2,
+            createdAt: 1_000,
+            updatedAt: 1_000,
+            ...over,
+        }) as unknown as Parameters<typeof createRfqSwapRecord>[1];
+
+    it("rebuilds the L1 htlc from the stored inputs", () => {
+        const record = createRfqSwapRecord(onchainOrigin, onchainSwap());
+        const rebuilt = rebuildRfqSwap(record, SEND_LOCKUP.params);
+
+        expect(rebuilt.kind).toBe("onchain_send");
+        const onchain = rebuilt as { htlc: { address: string }; minConfirmations: number };
+        expect(onchain.htlc.address).toBeTruthy();
+        expect(onchain.minConfirmations).toBe(2);
+        // the same inputs must give the same contract back
+        expect(onchain.htlc.address).toBe(
+            (rebuildRfqSwap(record, SEND_LOCKUP.params) as { htlc: { address: string } }).htlc
+                .address,
+        );
+    });
+
+    it("refuses an onchain record with no L1 half rather than half-driving it", () => {
+        const record = createRfqSwapRecord(onchainOrigin, onchainSwap());
+        expect(() => rebuildRfqSwap({ ...record, onchain: undefined }, SEND_LOCKUP.params)).toThrow(
+            /onchain/,
+        );
+    });
+
+    it("carries the fill outpoint and our claim through the mutable half", () => {
+        // Without `funding` a SPENT htlc reads as never funded; without
+        // `claimTxid` a restored swap would re-broadcast a claim it already made.
+        const record = updateRfqSwapRecord(
+            createRfqSwapRecord(onchainOrigin, onchainSwap()),
+            onchainSwap({
+                funding: { txid: "ab".repeat(32), vout: 1 },
+                claimTxid: "cd".repeat(32),
+            }),
+        );
+        expect(record.funding).toEqual({ txid: "ab".repeat(32), vout: 1 });
+        expect(record.claimTxid).toBe("cd".repeat(32));
+
+        const rebuilt = rebuildRfqSwap(record, SEND_LOCKUP.params) as {
+            funding?: { txid: string };
+            claimTxid?: string;
+        };
+        expect(rebuilt.funding?.txid).toBe("ab".repeat(32));
+        expect(rebuilt.claimTxid).toBe("cd".repeat(32));
+    });
+});
+
 describe("the record never carries a private key", () => {
     it.each([
         ["lightning_send", sendOrigin],
