@@ -19,7 +19,7 @@ const preparedResolver = async (swaps: SwapActivityInput[]) => {
 };
 
 describe("swapActivityResolver", () => {
-    it("resolves a swap's transaction to its groupId, label, status and metadata", async () => {
+    it("resolves a swap's transaction to its groupId, label, outcome and metadata", async () => {
         const resolver = await preparedResolver([
             { rfqId: "r1", kind: "lightning_send", state: "settled", txids: ["fund"] },
         ]);
@@ -29,7 +29,7 @@ describe("swapActivityResolver", () => {
                 groupId: "swap:r1",
                 label: "Lightning send",
                 kind: "swap",
-                status: "Settled",
+                outcome: "settled",
                 metadata: { rfqId: "r1", swapKind: "lightning_send" },
             },
         ]);
@@ -47,14 +47,33 @@ describe("swapActivityResolver", () => {
         expect(refund?.[0].groupId).toBe(funding?.[0].groupId);
     });
 
-    it("reports the swap's state as the membership status", async () => {
+    it("reports the swap's state as the membership outcome", async () => {
         const resolver = await preparedResolver([
             { rfqId: "r1", kind: "lightning_send", state: "failed", txids: ["fund"] },
         ]);
 
         expect(resolver.resolve(tx("fund"))).toEqual([
-            expect.objectContaining({ status: "Failed", kind: "swap" }),
+            expect.objectContaining({ outcome: "failed", kind: "swap" }),
         ]);
+    });
+
+    it("gives a lightning_receive refund a different outcome than a lightning_send refund", async () => {
+        // swapManager.ts:158-167: a send-leg refund is money coming back, but a
+        // receive-leg refund is a LOSS — the trader's incoming payment never
+        // arrived. The two must not render as the same token.
+        const send = await preparedResolver([
+            { rfqId: "r1", kind: "lightning_send", state: "refunded", txids: ["a"] },
+        ]);
+        const receive = await preparedResolver([
+            { rfqId: "r2", kind: "lightning_receive", state: "refunded", txids: ["b"] },
+        ]);
+
+        const sendOutcome = send.resolve(tx("a"))?.[0].outcome;
+        const receiveOutcome = receive.resolve(tx("b"))?.[0].outcome;
+
+        expect(sendOutcome).toBe("refunded");
+        expect(receiveOutcome).toBe("lost");
+        expect(receiveOutcome).not.toBe(sendOutcome);
     });
 
     it("labels each leg by its corridor", async () => {

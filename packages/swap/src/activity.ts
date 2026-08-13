@@ -17,7 +17,7 @@ export interface SwapActivityInput {
      * only on the unmerged rfq-persistence branch, not on master. Reconcile
      * with `RfqSwapRecord["kind"]` once that branch lands.
      */
-    kind: "lightning_send" | "lightning_receive";
+    kind: "lightning_send" | "lightning_receive" | "onchain_send";
     state: RfqSwapState;
     /** Funding, claim and refund txids, in whatever order. */
     txids: readonly string[];
@@ -27,21 +27,26 @@ export interface SwapActivityInput {
 const LABELS: Record<SwapActivityInput["kind"], string> = {
     lightning_send: "Lightning send",
     lightning_receive: "Lightning receive",
+    onchain_send: "Onchain send",
 };
 
 /**
- * How a swap state reads to a user. Keyed exhaustively off `RfqSwapState`, so a
- * state added upstream is a compile error here rather than silently rendering
- * as something misleading.
+ * How a swap state reads as an outcome token, keyed exhaustively off
+ * `RfqSwapState` so a state added upstream is a compile error here rather
+ * than silently rendering as something misleading. Opaque lowercase machine
+ * tokens, not display text — see `ActivityIntent.outcome`.
+ *
+ * `lightning_receive` + `refunded` is handled separately in `resolve`: it
+ * does not read off this table.
  */
-const STATUS: Record<RfqSwapState, string> = {
-    pending: "Pending",
-    claimable: "Pending",
-    claimed: "Pending",
-    needs_counterparty: "Pending",
-    settled: "Settled",
-    refunded: "Refunded",
-    failed: "Failed",
+const OUTCOME: Record<RfqSwapState, string> = {
+    pending: "pending",
+    claimable: "pending",
+    claimed: "pending",
+    needs_counterparty: "pending",
+    settled: "settled",
+    refunded: "refunded",
+    failed: "failed",
 };
 
 /**
@@ -49,9 +54,11 @@ const STATUS: Record<RfqSwapState, string> = {
  *
  * Without this a failed swap renders as two unrelated rows: the send that
  * funded the lockup, and the receive when the covenant refunds. Grouping by
- * `rfqId` collapses them, and `buildActivities` already excludes a same-key
- * receive paired with a sent row as change, so the activity amount needs no
- * special handling.
+ * `rfqId` collapses them into one activity, and the amount comes out correct
+ * by netting, not by `buildActivities`'s same-key change exclusion — that
+ * rule only fires when one txid is both sent and received, and funding and
+ * refund are different txids. Summing the signed amounts
+ * (`-funding + refund ≈ -fees`) is what does the work here.
  *
  * `prepare` loads once and `resolve` stays pure and synchronous, as the SDK's
  * `ActivityResolver` contract requires.
@@ -77,12 +84,20 @@ export function swapActivityResolver(deps: {
             const key = tx.key.arkTxid || tx.key.commitmentTxid || tx.key.boardingTxid;
             const swap = key ? byTxid.get(key) : undefined;
             if (!swap) return undefined;
+            // A `lightning_receive` that ends `refunded` is a LOSS, not money
+            // returned: that leg has no trader-side refund, every non-claim leaf
+            // of the covenant is the solver's, and a swap ending here is one
+            // whose incoming payment never arrived (swapManager.ts:158-167). A
+            // send leg's `refunded` is the opposite — the lockup coming back —
+            // so the two need distinct tokens; `lostReceive` is this package's
+            // own name for the case (swapManager.ts:1656-1661).
+            const lostReceive = swap.kind === "lightning_receive" && swap.state === "refunded";
             return [
                 {
                     groupId: `swap:${swap.rfqId}`,
                     label: LABELS[swap.kind],
                     kind: "swap",
-                    status: STATUS[swap.state],
+                    outcome: lostReceive ? "lost" : OUTCOME[swap.state],
                     metadata: { rfqId: swap.rfqId, swapKind: swap.kind },
                 },
             ];
