@@ -706,33 +706,30 @@ describe("requestLightningReceive on an HD wallet", () => {
         expect(flow.createContract).not.toHaveBeenCalled();
     });
 
-    it("a record built from the result rebuilds the covenant the solver must fund", async () => {
+    it("a record plus the row this call registered rebuild the covenant the solver must fund", async () => {
         // The receive leg's half of `rfqDerivedSecrets`'s send-leg round trip:
         // what the entrypoint hands back must survive the hand-written hop into
-        // `RfqSwapOrigin` and rebuild the same covenant. `expectedAmount` and
-        // `preimageHex` ride along because neither is re-derivable at claim time.
-        const result = await (await lightningReceiveFlow()).run();
-        const t = result.treeParams;
+        // `RfqSwapOrigin` and rebuild the same covenant. The tree is not part of
+        // that hop — it comes from the contract row this same call wrote, which
+        // is why the mapping below is short. `expectedAmount` and `preimageHex`
+        // ride along because neither is re-derivable at claim time.
+        const flow = await lightningReceiveFlow();
+        const result = await flow.run();
+        const { params } = flow.createContract.mock.calls[0][0] as {
+            params: Record<string, string>;
+        };
 
         const record = createRfqSwapRecord(
             {
                 kind: "lightning_receive",
-                solverPubkey: hex.encode(t.solverPubkey),
-                emulatorPubkey: hex.encode(t.emulatorPubkey),
-                serverPubkey: hex.encode(t.serverPubkey),
-                paymentHash: t.paymentHash,
-                refundLocktime: t.refundLocktime,
-                claimDelay: t.claimDelay,
-                payoutPubkey: hex.encode(t.payoutPubkey),
-                payoutPkScript: hex.encode(t.payoutPkScript),
-                solverRefundPkScript: hex.encode(t.solverRefundPkScript),
+                paymentHash: result.treeParams.paymentHash,
+                lockupAddress: result.address,
                 payoutAddress: result.payoutAddress,
                 expectedAmount: result.expectedAmount,
                 signingDescriptor: result.secrets.descriptor,
                 ...(result.secrets.mustPersistPreimage
                     ? { preimageHex: hex.encode(result.secrets.preimage) }
                     : {}),
-                lockupAddress: result.address,
                 amount: result.payAmount,
             },
             {
@@ -740,16 +737,17 @@ describe("requestLightningReceive on an HD wallet", () => {
                 rfqId: result.rfqId,
                 state: "pending",
                 lockupPkScript: result.swapPkScript,
-                paymentHash: t.paymentHash,
-                refundLocktime: t.refundLocktime,
+                paymentHash: result.treeParams.paymentHash,
+                refundLocktime: result.treeParams.refundLocktime,
                 expectedAmount: result.expectedAmount,
                 createdAt: 1,
                 updatedAt: 1,
             },
         );
 
-        const rebuilt = rebuildRfqSwap(record) as LightningReceiveSwap;
+        const rebuilt = rebuildRfqSwap(record, params) as LightningReceiveSwap;
         expect(hex.encode(rebuilt.lockupPkScript)).toBe(hex.encode(result.swapPkScript));
+        expect(rebuilt.refundLocktime).toBe(result.treeParams.refundLocktime);
         expect(rebuilt.expectedAmount).toBe(4_950);
         // an HD wallet re-derives P from the seed, so nothing secret is stored
         expect(record.preimageHex).toBeUndefined();

@@ -7,32 +7,30 @@
  * script object with no methods. So a consumer stores THIS and rebuilds the
  * live record at boot.
  *
- * Two halves, because {@link RfqSwapManagerCallbacks.saveSwap} only ever sees
- * an `RfqSwap` and that type carries none of the covenant's tree parameters:
+ * **The covenant is not stored here.** Every RFQ lockup registers a contract
+ * row before its address can be funded (see `lockupContract.ts`), and that row
+ * already holds the tree parameters, keyed by the script they derive — a key
+ * `createContract` refuses to write unless the params reproduce it. Storing the
+ * tree a second time would be two sources for one covenant, drifting apart with
+ * nothing to say which is right. So {@link rebuildRfqSwap} takes the parameters
+ * from its caller: `lockupContractParams` reads the row, and a consumer that
+ * keeps its own copy of `VHTLCV2ContractHandler.serializeParams(...)` can pass
+ * that instead.
  *
- * - {@link RfqSwapOrigin} — the immutable request-time facts, taken from the
- *   entry point's own return value. Written once, by
- *   {@link createRfqSwapRecord}.
+ * What lives here is what no covenant can give back:
+ *
+ * - {@link RfqSwapOrigin} — the immutable request-time facts. `paymentHash` in
+ *   particular is NOT recoverable from the tree: the covenant binds
+ *   `ripemd160(sha256(P))`, which is one-way over the hash this record carries.
  * - the manager's mutable state, replaced by {@link updateRfqSwapRecord} on
  *   every pass that changed something.
- *
- * **Every tree parameter is stored, including the ones that look re-readable
- * from the live wallet.** `serverPubkey` and `claimDelay` are the trader's own
- * *at request time*; a wallet later pointed at a different Arkade Service, or
- * one whose server rotated its key, would rebuild a different covenant and lose
- * the lockup. `emulatorPubkey` is resolved from a per-network pin the SDK can
- * change between releases, for the same reason. Storing them all makes
- * {@link rebuildRfqSwap} a pure function of the record — no wallet, no network,
- * no ambient defaults — which is what lets a test prove a dropped field is a
- * failure rather than a silent wrong address.
  *
  * **No record written here carries a private key.** The wallet descriptor is
  * public. `preimageHex` is stored only when the SDK's provisioned claim
  * secret says it cannot be re-derived.
  */
-import { ArkAddress, VHTLC } from "@arkade-os/sdk";
+import { ArkAddress, VHTLCV2ContractHandler, type VHTLC } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
-import { lightningSendVtxoScript, receiveVtxoScript } from "./rfq";
 import {
     isRfqSwapTerminal,
     type LightningReceiveSwap,
@@ -43,13 +41,22 @@ import {
 /**
  * The swap kinds this projection covers.
  *
- * `onchain_send` is deliberately absent: {@link RfqSwapOrigin} carries no L1
- * half, so a record could not reproduce its `htlc`, `funding`, `claimTxid` or
- * `minConfirmations`, and storing one here would round-trip a swap whose L1
- * refund window nothing is watching. Taking this rather than `RfqSwap` is what
- * makes that a compile error at the call site instead of a silent loss.
+ * `onchain_send` is deliberately absent: no contract row and no record here
+ * carries an L1 half, so a rebuild could not reproduce its `htlc`, `funding`,
+ * `claimTxid` or `minConfirmations`, and storing one would round-trip a swap
+ * whose L1 refund window nothing is watching. Taking this rather than `RfqSwap`
+ * is what makes that a compile error at the call site instead of a silent loss.
  */
 export type PersistableRfqSwap = LightningSendSwap | LightningReceiveSwap;
+
+/**
+ * The serialized covenant parameters a rebuild is given.
+ *
+ * `VHTLCV2ContractHandler`'s own wire shape — what `serializeParams` writes and
+ * `createScript` reads — which is exactly what a lockup's contract row stores
+ * under `params`.
+ */
+export type LockupParams = Record<string, string>;
 
 /**
  * How long a retired swap's record is kept, in SECONDS.
@@ -70,45 +77,24 @@ export const RFQ_SWAP_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 export interface RfqSwapOrigin {
     kind: "lightning_send" | "lightning_receive";
 
-    // ── Tree parameters shared by both legs ──────────────────────────────────
-    /** The solver's x-only key, from the quote. */
-    solverPubkey: string;
-    /** The covenant co-signer, from the SDK's per-network pin or an override. */
-    emulatorPubkey: string;
-    /** The Arkade Service's x-only key, as it was AT REQUEST TIME. */
-    serverPubkey: string;
-    /** `sha256(P)`, hex. */
-    paymentHash: string;
-    refundLocktime: number;
-    /** `unilateralClaimDelay` over the server info held at request time. */
-    claimDelay: number;
-
-    // ── Send-leg tree parameters ─────────────────────────────────────────────
-    /** VHTLC's `sender` — the trader's own key on this leg. */
-    senderPubkey?: string;
-    /** Where the refund leaf must pay. */
-    refundPkScript?: string;
-    /** The solver's claim destination, from `profile.receiver_pk_script`. */
-    receiverPkScript?: string;
-
-    // ── Receive-leg tree parameters ──────────────────────────────────────────
-    /** VHTLC's `receiver` — the trader's own key on this leg. */
-    payoutPubkey?: string;
-    /** `nonInteractiveClaim`'s pinned destination. */
-    payoutPkScript?: string;
-    /** From `profile.solver_refund_pk_script` — the one tree parameter nothing
-     * else on the wire determines. */
-    solverRefundPkScript?: string;
-    /** Where the claim pays; kept for display and for rebuilding the claim. */
-    payoutAddress?: string;
     /**
-     * What the lockup must carry before the claim will publish `P`.
+     * `sha256(P)`, hex.
      *
-     * Receive only, and **not re-derivable**: read at claim time it would be
-     * whatever the solver funded, which is the dust-funding attack rather than
-     * a check on it.
+     * The one request-time fact the covenant cannot give back: the tree binds
+     * `ripemd160` of this value, so a rebuild can check a candidate but never
+     * recover the hash itself.
      */
-    expectedAmount?: number;
+    paymentHash: string;
+
+    /**
+     * The Arkade address that was actually funded.
+     *
+     * Both the swap's handle on its covenant — {@link lockupContractParams}
+     * looks the contract row up by the script it decodes to — and, being taken
+     * from the entry point rather than re-derived, the check that the
+     * parameters a caller supplies belong to THIS swap.
+     */
+    lockupAddress: string;
 
     // ── Secrets projection (see `swapSecretsToRecord`) ─────────────────────
     /** Public wallet descriptor that recovers the covenant signer. */
@@ -117,12 +103,21 @@ export interface RfqSwapOrigin {
      * claim secret says P cannot be re-derived. */
     preimageHex?: string;
 
-    // ── Lockup and display ───────────────────────────────────────────────────
-    /** The Arkade address that was actually funded. Taken, never re-derived: a
-     * local re-derivation would silently use the SDK's default network. Being
-     * independent of the tree parameters is also what lets the rebuild check
-     * itself — see {@link rebuildRfqSwap}. */
-    lockupAddress: string;
+    // ── Receive-leg facts ────────────────────────────────────────────────────
+    /**
+     * What the lockup must carry before the claim will publish `P`.
+     *
+     * Receive only, and **not re-derivable**: read at claim time it would be
+     * whatever the solver funded, which is the dust-funding attack rather than
+     * a check on it.
+     */
+    expectedAmount?: number;
+    /** Where the claim pays. Kept for display: the covenant pins the payout
+     * pkScript, but an address also carries the network the record was made
+     * on, which a local re-derivation would silently take from the SDK's
+     * default. */
+    payoutAddress?: string;
+
     /** Consumer display metadata. {@link rebuildRfqSwap} ignores it —
      * `RfqSwapCommon` carries no amount of its own. */
     amount?: number;
@@ -185,81 +180,52 @@ export function updateRfqSwapRecord(
     return { ...origin, ...managerState(swap) };
 }
 
-/** Names the missing field rather than letting `hex.decode(undefined)` throw
- * something that does not say which parameter was lost. */
+/** Names the missing field rather than letting a rebuild continue with a value
+ * whose absence only shows up as a gate that never fires. */
 function required<T>(value: T | undefined, name: string): T {
     if (value === undefined) {
-        throw new Error(`rfq swap record is missing ${name}; its covenant cannot be rebuilt`);
+        throw new Error(`rfq swap record is missing ${name}; its swap cannot be rebuilt`);
     }
     return value;
 }
 
-const bytes = (value: string | undefined, name: string): Uint8Array =>
-    hex.decode(required(value, name));
-
 /**
- * The one thing a record can check about itself.
+ * The covenant a record is locked to, from parameters supplied by the caller.
  *
- * It stores both the tree parameters and `lockupAddress` — the address that was
- * actually funded — and the two are independent: the parameters rebuild the
- * covenant, the address was taken verbatim from the entry point. They must
- * agree. A parameter stored wrong or dropped by a field-mapped backend
- * otherwise yields a live record watching a covenant nobody funded, whose
- * refund cannot be signed, and nothing says so until the refund is due. Here it
- * throws at restore instead.
+ * The parameters and `lockupAddress` reach the record by independent routes —
+ * the row was written from the covenant, the address was taken verbatim from
+ * the entry point — so requiring them to agree is what stops the wrong row, or
+ * a row a field-mapped backend read back short a key, from producing a live
+ * record watching a covenant nobody funded.
  */
-function assertRebuildMatchesLockup(pkScript: Uint8Array, lockupAddress: string): void {
+function lockupScript(
+    params: LockupParams,
+    lockupAddress: string,
+): InstanceType<typeof VHTLC.ScriptV2> {
+    const script = VHTLCV2ContractHandler.createScript(params);
     const funded = ArkAddress.decode(lockupAddress).pkScript;
-    if (hex.encode(funded) !== hex.encode(pkScript)) {
+    if (hex.encode(funded) !== hex.encode(script.pkScript)) {
         throw new Error(
-            `rfq swap record rebuilds ${hex.encode(pkScript)}, but its lockup address holds ` +
-                `${hex.encode(funded)} — a stored tree parameter is wrong, so the covenant ` +
-                `cannot be spent`,
+            `rfq swap covenant params derive ${hex.encode(script.pkScript)}, but the record's ` +
+                `lockup address holds ${hex.encode(funded)} — these params are not this swap's`,
         );
     }
+    return script;
 }
 
 /**
- * The covenant a record describes, from its tree parameters alone — the same
- * builder over the same binding fields that made it.
- */
-export function rfqSwapCovenant(origin: RfqSwapOrigin): InstanceType<typeof VHTLC.ScriptV2> {
-    return origin.kind === "lightning_send"
-        ? lightningSendVtxoScript({
-              solverPubkey: bytes(origin.solverPubkey, "solverPubkey"),
-              refundLocktime: origin.refundLocktime,
-              serverPubkey: bytes(origin.serverPubkey, "serverPubkey"),
-              paymentHash: origin.paymentHash,
-              claimDelay: origin.claimDelay,
-              emulatorPubkey: bytes(origin.emulatorPubkey, "emulatorPubkey"),
-              refundPkScript: bytes(origin.refundPkScript, "refundPkScript"),
-              senderPubkey: bytes(origin.senderPubkey, "senderPubkey"),
-              receiverPkScript: bytes(origin.receiverPkScript, "receiverPkScript"),
-          })
-        : receiveVtxoScript({
-              solverPubkey: bytes(origin.solverPubkey, "solverPubkey"),
-              refundLocktime: origin.refundLocktime,
-              serverPubkey: bytes(origin.serverPubkey, "serverPubkey"),
-              paymentHash: origin.paymentHash,
-              claimDelay: origin.claimDelay,
-              emulatorPubkey: bytes(origin.emulatorPubkey, "emulatorPubkey"),
-              solverRefundPkScript: bytes(origin.solverRefundPkScript, "solverRefundPkScript"),
-              payoutPubkey: bytes(origin.payoutPubkey, "payoutPubkey"),
-              payoutPkScript: bytes(origin.payoutPkScript, "payoutPkScript"),
-          });
-}
-
-/**
- * Rebuild the live record. Pure: everything it needs is on the record.
+ * Rebuild the live record. Pure, and synchronous, given the covenant's
+ * parameters.
  *
- * Hand the result to {@link RfqSwapManager.start}. The covenant is rebuilt the
- * way it was made, and then checked against the address that was actually
- * funded — see {@link assertRebuildMatchesLockup} — so the `lockupPkScript` it
- * produces is the one the funded lockup is keyed by.
+ * Hand the result to {@link RfqSwapManager.start}. Take `params` from the
+ * lockup's contract row — {@link lockupContractParams} is the one-liner — or
+ * from a copy of `VHTLCV2ContractHandler.serializeParams(script.options)` a
+ * consumer keeps itself; either way they are checked against the address that
+ * was actually funded, so the `lockupPkScript` this produces is the one the
+ * funded lockup is keyed by.
  */
-export function rebuildRfqSwap(record: RfqSwapRecord): PersistableRfqSwap {
-    const script = rfqSwapCovenant(record);
-    assertRebuildMatchesLockup(script.pkScript, record.lockupAddress);
+export function rebuildRfqSwap(record: RfqSwapRecord, params: LockupParams): PersistableRfqSwap {
+    const script = lockupScript(params, record.lockupAddress);
 
     const common = {
         rfqId: record.rfqId,
@@ -267,7 +233,9 @@ export function rebuildRfqSwap(record: RfqSwapRecord): PersistableRfqSwap {
         lockupPkScript: script.pkScript,
         lockup: { script, address: record.lockupAddress },
         paymentHash: record.paymentHash,
-        refundLocktime: record.refundLocktime,
+        // From the covenant, which binds it: the record's own copy would be a
+        // second source for the deadline the refund is gated on.
+        refundLocktime: Number(script.options.refundLocktime),
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
         ...(record.refundArkTxid ? { refundArkTxid: record.refundArkTxid } : {}),

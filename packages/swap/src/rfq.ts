@@ -769,10 +769,12 @@ export async function requestLightningSend(
      * come from this wallet's own `getInfo()`, `emulatorPubkey` from a
      * per-network pin, `refundPkScript` from decoding an address.
      *
-     * All public. `RfqSwapOrigin` holds the same fields under the same names,
-     * hex-encoded — hex each binary one and the record is complete; see
-     * `rfqRecord.ts` for why every one of them must be stored rather than
-     * re-read later.
+     * All public. Persisting them is optional: this call also registers the
+     * lockup as a contract, and that row is where `rebuildRfqSwap` takes its
+     * covenant from — see `rfqRecord.ts`. Keep a copy only to hold a record
+     * that rebuilds without the wallet's contract store, and keep it as
+     * `VHTLCV2ContractHandler.serializeParams(script.options)`, the shape the
+     * rebuild accepts.
      */
     treeParams: LightningSendTreeParams;
 }> {

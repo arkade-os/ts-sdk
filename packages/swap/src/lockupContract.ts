@@ -8,7 +8,12 @@
  * which is only true while both write the SAME row, hence this module.
  */
 import { hex } from "@scure/base";
-import { VHTLCV2ContractHandler, type IContractManager, type VHTLC } from "@arkade-os/sdk";
+import {
+    ArkAddress,
+    VHTLCV2ContractHandler,
+    type IContractManager,
+    type VHTLC,
+} from "@arkade-os/sdk";
 
 /** The contract type a swap lockup registers under. `@arkade-os/sdk`'s handler
  * for `VHTLC.ScriptV2` — the covenant script this corridor builds. */
@@ -21,6 +26,35 @@ export const SWAP_LOCKUP_CONTRACT_KIND = "rfq-swap-lockup";
  * injection style as `SwapContractRegistry`, and satisfied by a real
  * `ContractManager` (`await wallet.getContractManager()`). */
 export type LockupContractWriter = Pick<IContractManager, "createContract">;
+
+/** The read seam {@link lockupContractParams} needs. Same narrowing, same
+ * `ContractManager` satisfies it. */
+export type LockupContractReader = Pick<IContractManager, "getContracts">;
+
+/**
+ * No row for a lockup a record claims was funded.
+ *
+ * Separate from a rebuild failure on purpose: the record is fine and its money
+ * may well be at the address — what is missing is the wallet's copy of the
+ * covenant, which registration writes before the address can be funded. So this
+ * means the contract store was cleared or was never the one that registered
+ * this swap, and the remedy is a store, not a re-quote.
+ */
+export class LockupContractMissing extends Error {
+    /** The lockup whose row is absent. */
+    readonly address: string;
+    /** Its pkScript hex — the key the row would have been under. */
+    readonly script: string;
+    constructor(address: string, script: string) {
+        super(
+            `no contract row for lockup ${address} (script ${script}); its covenant cannot be ` +
+                `rebuilt from this wallet's contract store`,
+        );
+        this.name = "LockupContractMissing";
+        this.address = address;
+        this.script = script;
+    }
+}
 
 /**
  * The lockup could not be written locally.
@@ -84,4 +118,29 @@ export async function registerLockupContract(
     } catch (error) {
         throw new LockupRegistrationFailed(script, address, error);
     }
+}
+
+/**
+ * The stored covenant parameters of a funded lockup — the other half of
+ * `rebuildRfqSwap`.
+ *
+ * The row is the wallet's own copy of the tree, written from the covenant
+ * before the address could be funded and keyed by the script it derives, which
+ * `createContract` refuses to write unless the params reproduce it. That is why
+ * an RFQ swap record stores no tree parameters of its own.
+ *
+ * Looked up by script rather than address: the script is the row's key, and
+ * decoding it here means a record whose address does not decode fails as a bad
+ * address instead of as a missing row.
+ *
+ * Throws {@link LockupContractMissing} when there is no row.
+ */
+export async function lockupContractParams(
+    contracts: LockupContractReader,
+    lockupAddress: string,
+): Promise<Record<string, string>> {
+    const script = hex.encode(ArkAddress.decode(lockupAddress).pkScript);
+    const [row] = await contracts.getContracts({ script });
+    if (!row) throw new LockupContractMissing(lockupAddress, script);
+    return row.params;
 }
