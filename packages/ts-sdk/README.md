@@ -341,7 +341,25 @@ console.log('Boarding Total:', balance.boarding.total)
 console.log('Offchain Available:', balance.available)
 console.log('Offchain Settled:', balance.settled)
 console.log('Offchain Preconfirmed:', balance.preconfirmed)
+console.log('Gated by a contract:', balance.gated) // swap escrow, chiefly
+console.log('Locked by an in-flight intent:', balance.intentLocked)
 console.log('Recoverable:', balance.recoverable)
+console.log('Awaiting recovery:', balance.pendingRecovery)
+```
+
+`settled` and `preconfirmed` are what the wallet OWNS; `available` is what generic
+spending will actually pick. The difference is accounted for exactly:
+
+```
+settled + preconfirmed === available + gated + intentLocked
+```
+
+To show "your money, minus what is tied up", subtract from `settled + preconfirmed`
+— **not from `total`**, which also contains `boarding.total`, `recoverable` and
+`pendingRecovery`. Those are still your funds, so subtracting a bucket from `total`
+silently drops them from the figure.
+
+```typescript
 
 // Get virtual outputs (available for offchain spending)
 const vtxos = await wallet.getVtxos()

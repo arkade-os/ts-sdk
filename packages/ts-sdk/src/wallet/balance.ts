@@ -31,7 +31,7 @@ export interface OffchainBalance {
      * Reported as zero where the caller cannot answer the question — a wallet
      * with no intent repository, or a repository read that fails — so this
      * under-reports into `available` rather than misattributing. The two callers
-     * answer from deliberately different reads (@see {@link BalanceCapabilities}),
+     * answer from deliberately different reads (see {@link BalanceCapabilities}),
      * so a worker figure and a main-thread figure need not agree unless taken
      * over the same state.
      */

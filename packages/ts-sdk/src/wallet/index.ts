@@ -351,8 +351,12 @@ export interface WalletBalance {
      * reported here — it does not become available when the batch settles.
      *
      * Covers this bucket only: {@link recoverable} has the same owned-versus-
-     * obtainable split under a different predicate and is not counted here, so
-     * `total - gated` still carries a recoverable component.
+     * obtainable split under a different predicate and is not counted here.
+     *
+     * Subtract this from `settled + preconfirmed`, never from `total`. `total`
+     * also carries {@link boarding}, {@link recoverable} and
+     * {@link pendingRecovery}, which are still the user's funds — netting a
+     * bucket out of it drops them from the figure with no signal.
      */
     gated: number;
     /**
