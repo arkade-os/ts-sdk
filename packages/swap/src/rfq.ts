@@ -1135,7 +1135,10 @@ export async function requestOnchainSend(
     /** The inputs {@link htlc} was built from — persist these to rebuild it
      * after a restart. Nothing else gives them back: `OnchainHtlc` exposes only
      * derived values, and this contract is Bitcoin L1, so unlike the arkade
-     * lockup there is no contract row holding its parameters. */
+     * lockup there is no contract row holding its parameters. Persist
+     * `htlc.address` alongside them (`OnchainSendProfile.htlcAddress`): the
+     * rebuild checks the two against each other, which is the only check
+     * available on a leg with no second copy of its covenant. */
     htlcParams: OnchainHtlcParams;
     /** `profile.min_confirmations`; gates when the L1 fill becomes claimable,
      * and part of what a restored swap needs to drive its own claim. */
