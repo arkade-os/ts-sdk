@@ -127,11 +127,21 @@ describe("OriginRateGate", () => {
     });
 
     it("takes the longest cooldown, never a shorter one", () => {
-        const gate = new OriginRateGate();
-        gate.reportRateLimited("https://a.example/x", "30");
-        const long = gate.cooldownRemainingMs("https://a.example/x");
-        gate.reportRateLimited("https://a.example/x", "1");
-        expect(gate.cooldownRemainingMs("https://a.example/x")).toBe(long);
+        // Frozen, because the property is exact equality. `blockedUntil` is an
+        // absolute deadline and `cooldownRemainingMs` subtracts `Date.now()`
+        // at each call, so on a real clock the two reads are taken a moment
+        // apart and the second is lower by however long the test took — a
+        // millisecond of scheduling reads as "the shorter report won".
+        vi.useFakeTimers();
+        try {
+            const gate = new OriginRateGate();
+            gate.reportRateLimited("https://a.example/x", "30");
+            const long = gate.cooldownRemainingMs("https://a.example/x");
+            gate.reportRateLimited("https://a.example/x", "1");
+            expect(gate.cooldownRemainingMs("https://a.example/x")).toBe(long);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it("clamps an absurd Retry-After", () => {
