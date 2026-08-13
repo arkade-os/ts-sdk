@@ -1,6 +1,7 @@
 /**
- * The Nostr RFQ transport — the PRODUCTION one (docs/rfq-protocol.md § 3.1 in
- * arkade-os/lightning-swap-service).
+ * The Nostr RFQ transport — the PRODUCTION one (the kind, the NIP-44 framing
+ * and the payloads it carries are public at
+ * https://docs.arkadeos.com/intents/reference/rfq).
  *
  * `rfq.ts` ships two other transports: `httpTransport`, and `relayTransport`
  * which speaks the dev broker's `{op:"sub"|"event"}` framing. Neither is what a
