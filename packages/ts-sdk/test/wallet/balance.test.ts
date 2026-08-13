@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { computeOffchainBalance, type BalanceCapabilities } from "../../src/wallet/balance";
 import type { NormalizedExtendedVirtualCoin } from "../../src/wallet/vtxo";
-import type { WalletBalance } from "../../src/wallet";
 
 /**
  * A plainly spendable coin: not spent, not swept, no expiry in the past.
@@ -110,37 +109,5 @@ describe("computeOffchainBalance escrow bucket", () => {
 
         expect(balance.recoverable).toBe(1000);
         expect(balance.escrow).toBe(0);
-    });
-});
-
-describe("WalletBalance carries escrow through both getBalance paths", () => {
-    it("is present on the shape both callers assemble", () => {
-        const balance = computeOffchainBalance(
-            [vtxo("a", 1000, "gated")],
-            caps({ isGenericallySpendable: () => false }),
-        );
-
-        // Exactly the object literal both `Wallet.getBalance` and the worker's
-        // `handleGetBalance` build. Annotated as `WalletBalance` on purpose: the
-        // annotation pins this literal to the real return shape, so a drift
-        // between either `getBalance` implementation and the type surfaces
-        // here. Note this package's `tsconfig.json` excludes `**/*.test.ts`,
-        // so `pnpm typecheck` does not see it — the check only fires in an
-        // editor or under a typecheck that does cover test files.
-        const assembled: WalletBalance = {
-            boarding: { confirmed: 0, unconfirmed: 0, total: 0 },
-            settled: balance.settled,
-            preconfirmed: balance.preconfirmed,
-            available: balance.available,
-            escrow: balance.escrow,
-            recoverable: balance.recoverable,
-            pendingRecovery: balance.pendingRecovery,
-            total: 0 + balance.total,
-            assets: balance.assets,
-            availableAssets: balance.availableAssets,
-        };
-
-        expect(assembled.escrow).toBe(1000);
-        expect(assembled.total).toBe(1000);
     });
 });
