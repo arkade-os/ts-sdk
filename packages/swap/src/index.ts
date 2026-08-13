@@ -38,9 +38,9 @@ export {
     RFQ_SWAP_RETENTION_SECONDS,
     createRfqSwapRecord,
     rebuildRfqSwap,
-    rfqSwapCovenant,
     shouldRetainRfqSwap,
     updateRfqSwapRecord,
+    type LockupParams,
     type PersistableRfqSwap,
     type RfqSwapOrigin,
     type RfqSwapRecord,
@@ -166,11 +166,14 @@ export {
     type RefundOutcome,
 } from "./refund";
 export {
+    LockupContractMissing,
     LockupRegistrationFailed,
     SWAP_LOCKUP_CONTRACT_KIND,
     SWAP_LOCKUP_CONTRACT_LABEL,
     SWAP_LOCKUP_CONTRACT_TYPE,
+    lockupContractParams,
     registerLockupContract,
+    type LockupContractReader,
     type LockupContractWriter,
 } from "./lockupContract";
 export {

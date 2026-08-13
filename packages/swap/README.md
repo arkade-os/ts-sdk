@@ -566,10 +566,28 @@ scanned? })` — the server key is required because a spend is classified by reb
   store at `DB_VERSION` 2. The bump is deliberate: an implementor must acknowledge the new methods
   rather than silently satisfy an older shape. Existing databases upgrade in place: the new store is
   added and the three original ones are untouched. Store RFQ records whole for the same reason as
-  above: every field is either a covenant tree parameter or manager state, and dropping one leaves a
-  record whose covenant `rebuildRfqSwap` cannot reproduce — which it now refuses to do, checking the
-  rebuilt covenant against the record's own `lockupAddress` and throwing at restore rather than
-  handing back a swap nobody can spend.
+  above: what is in one is what nothing else can recover — `paymentHash` (the covenant binds
+  `ripemd160` of it, which is one-way), `preimageHex`, the receive leg's `expectedAmount` gate, and
+  the manager's own state.
+- **An RFQ record stores no covenant.** The tree lives in the lockup's contract row, written before
+  the address could be funded and keyed by the script its params derive — a key `createContract`
+  refuses to write unless they reproduce it. So the rebuild takes the params from the caller:
+
+    ```ts
+    const params = await lockupContractParams(
+        await wallet.getContractManager(),
+        record.lockupAddress,
+    );
+    const swap = rebuildRfqSwap(record, params);
+    ```
+
+    `lockupContractParams` throws `LockupContractMissing` when this wallet has no row for the lockup —
+    a cleared contract store, or a record from elsewhere. A consumer that would rather not depend on
+    the contract store can keep its own copy of
+    `VHTLCV2ContractHandler.serializeParams(script.options)` and pass that instead; either way the
+    params are checked against the record's `lockupAddress` before a swap is handed back, so the wrong
+    row fails at restore rather than at refund time.
+
 - **Pruning is the consumer's, and nothing here does it for you.** `shouldRetainRfqSwap(record, now)`
   answers whether a record is still worth keeping — live swaps and `needs_counterparty` always,
   terminal ones for `RFQ_SWAP_RETENTION_SECONDS` (30 days) after `updatedAt`. Sweep with it at boot

@@ -9,15 +9,7 @@ const rfqRecord = (rfqId: string): RfqSwapRecord => ({
     rfqId,
     kind: "lightning_send",
     state: "pending",
-    solverPubkey: "a1".repeat(32),
-    emulatorPubkey: "b2".repeat(32),
-    serverPubkey: "c3".repeat(32),
     paymentHash: "d4".repeat(32),
-    refundLocktime: 1_900_000_000,
-    claimDelay: 4096,
-    senderPubkey: "a7".repeat(32),
-    refundPkScript: "5120" + "e5".repeat(32),
-    receiverPkScript: "5120" + "f6".repeat(32),
     signingDescriptor: `tr(${"a7".repeat(32)})`,
     lockupAddress: "tark1qlockup",
     createdAt: 1,
@@ -83,12 +75,20 @@ describe.each(backends)("AssetSwapRepository (%s)", (_, create) => {
         expect(records.find((r) => r.rfqId === "r1")?.state).toBe("settled");
     });
 
-    it("stores the record whole, so the rebuild's tree parameters survive", async () => {
-        // A field-mapped backend that dropped one of these would round-trip a
-        // record whose covenant cannot be rebuilt — and nothing would say so
-        // until a refund was due.
+    it("stores the record whole, down to the fields nothing else can recover", async () => {
+        // The covenant lives in the contract row, but what is here is here
+        // because nothing rebuilds it: `paymentHash` is one-way inside the
+        // tree, `preimageHex` may be a swap's only claim secret, and
+        // `expectedAmount` is the receive leg's value gate. A field-mapped
+        // backend that dropped one would say nothing until a claim was due.
         await using repository = create();
-        const record = rfqRecord("r1");
+        const record: RfqSwapRecord = {
+            ...rfqRecord("r1"),
+            kind: "lightning_receive",
+            expectedAmount: 20_000,
+            payoutAddress: "tark1qpayout",
+            preimageHex: "ee".repeat(32),
+        };
         await repository.saveRfqSwap(record);
         const [restored] = await repository.getAllRfqSwaps();
         expect(restored).toEqual(record);

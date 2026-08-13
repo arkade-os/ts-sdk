@@ -88,15 +88,22 @@ const hdWallet = async (): Promise<IWallet> => {
     } as unknown as IWallet;
 };
 
-const staticWallet = (): IWallet =>
+/** @param rows collects what the entrypoint registers, for a test that needs
+ * the row's params back — what it writes is `rfqRegister.test.ts`'s subject. */
+const staticWallet = (rows: { params: Record<string, string> }[] = []): IWallet =>
     ({
         identity: SingleKey.fromHex(
             "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
         ),
         getAddress: async () => REFUND_ADDRESS,
         // Both entrypoints register the lockup before returning an address to
-        // fund; what they write is `rfqRegister.test.ts`'s subject.
-        getContractManager: async () => ({ createContract: async () => ({}) }),
+        // fund.
+        getContractManager: async () => ({
+            createContract: async (row: { params: Record<string, string> }) => {
+                rows.push(row);
+                return {};
+            },
+        }),
     }) as unknown as IWallet;
 
 /** Quotes back whatever the maker derived, so the flow reaches its gates. */
@@ -288,34 +295,27 @@ describe("treeParams round-trips to the funded script", () => {
         expect(hex.encode(rebuilt.pkScript)).toBe(hex.encode(result.script.pkScript));
     });
 
-    it("a record built from the result rebuilds the covenant that was funded", async () => {
+    it("a record plus the row this call registered rebuild the covenant that was funded", async () => {
         // The hop the other two tests leave open: entrypoint -> script and
         // record -> script are each covered, but the consumer writes
-        // entrypoint -> RECORD by hand, and that is the only place a tree
-        // parameter can go missing. Written out longhand on purpose — this is
-        // the mapping an integrator copies.
+        // entrypoint -> RECORD by hand. Written out longhand on purpose — this
+        // is the mapping an integrator copies, and the tree is deliberately
+        // absent from it: the covenant comes from the contract row the same
+        // call registered, so there is no second copy to drift.
+        const rows: { params: Record<string, string> }[] = [];
         const result = await requestLightningSend(
-            staticWallet(),
+            staticWallet(rows),
             "http://ark",
             lightningTransport(),
             { invoice: INVOICE, emulatorPubkey: EMULATOR_PUBKEY_HEX },
         );
-        const t = result.treeParams;
 
         const record = createRfqSwapRecord(
             {
                 kind: "lightning_send",
-                solverPubkey: hex.encode(t.solverPubkey),
-                emulatorPubkey: hex.encode(t.emulatorPubkey),
-                serverPubkey: hex.encode(t.serverPubkey),
-                paymentHash: t.paymentHash,
-                refundLocktime: t.refundLocktime,
-                claimDelay: t.claimDelay,
-                senderPubkey: hex.encode(t.senderPubkey),
-                refundPkScript: hex.encode(t.refundPkScript),
-                receiverPkScript: hex.encode(t.receiverPkScript),
-                signingDescriptor: result.secrets.descriptor,
+                paymentHash: result.treeParams.paymentHash,
                 lockupAddress: result.address,
+                signingDescriptor: result.secrets.descriptor,
                 amount: result.fundAmount,
             },
             {
@@ -323,16 +323,16 @@ describe("treeParams round-trips to the funded script", () => {
                 rfqId: result.rfqId,
                 state: "pending",
                 lockupPkScript: result.swapPkScript,
-                paymentHash: t.paymentHash,
-                refundLocktime: t.refundLocktime,
+                paymentHash: result.treeParams.paymentHash,
+                refundLocktime: result.treeParams.refundLocktime,
                 createdAt: 1,
                 updatedAt: 1,
             },
         );
 
-        expect(hex.encode(rebuildRfqSwap(record).lockupPkScript)).toBe(
-            hex.encode(result.swapPkScript),
-        );
+        const rebuilt = rebuildRfqSwap(record, rows[0].params);
+        expect(hex.encode(rebuilt.lockupPkScript)).toBe(hex.encode(result.swapPkScript));
+        expect(rebuilt.refundLocktime).toBe(result.treeParams.refundLocktime);
     });
 
     it("carries the inputs no quote and no second round trip could supply", async () => {

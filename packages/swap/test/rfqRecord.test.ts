@@ -3,39 +3,30 @@
  * format: it holds derived `Uint8Array`s and a `VHTLC.ScriptV2` class instance,
  * and IndexedDB's structured clone strips prototypes.
  *
- * The property worth testing is that the rebuild is a PURE function of the
- * record — no wallet, no network, no ambient defaults. That is what makes a
- * dropped tree parameter a test failure instead of a covenant nobody can spend.
+ * The covenant is NOT part of it: every lockup registers a contract row before
+ * it can be funded, and the rebuild takes that row's params. So what is worth
+ * testing here is the seam — that the rebuild refuses params which are not this
+ * swap's, and that it carries through the facts no covenant can give back.
  */
 import { describe, expect, it } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
+import { VHTLCV2ContractHandler } from "@arkade-os/sdk";
 import {
     RFQ_SWAP_RETENTION_SECONDS,
     createRfqSwapRecord,
     rebuildRfqSwap,
-    rfqSwapCovenant,
     shouldRetainRfqSwap,
     updateRfqSwapRecord,
+    type LockupParams,
     type RfqSwapOrigin,
     type RfqSwapRecord,
 } from "../src/rfqRecord";
+import { lightningSendVtxoScript, receiveVtxoScript } from "../src/rfq";
 import type { LightningReceiveSwap, LightningSendSwap, RfqSwapState } from "../src/swapManager";
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
-
-/** The rebuild checks its covenant against `lockupAddress`, so a fixture must
- * carry the address its own tree parameters actually produce. */
-const lockupAddress = (origin: Omit<RfqSwapOrigin, "lockupAddress">): string =>
-    rfqSwapCovenant({ ...origin, lockupAddress: "" })
-        .address("tark", hex.decode(origin.serverPubkey))
-        .encode();
-
-const originWithLockup = (origin: Omit<RfqSwapOrigin, "lockupAddress">): RfqSwapOrigin => ({
-    ...origin,
-    lockupAddress: lockupAddress(origin),
-});
 
 const REFUND_LOCKTIME = 1_900_000_000;
 // BIP68 encodes second-based relative timelocks in 512s units, and the refund
@@ -43,39 +34,65 @@ const REFUND_LOCKTIME = 1_900_000_000;
 // 512 — the same 4096 the rest of the suite uses.
 const CLAIM_DELAY = 4096;
 const PAYMENT_HASH = "d4".repeat(32);
+const SERVER = key(3);
 
-const sendOrigin: RfqSwapOrigin = originWithLockup({
-    kind: "lightning_send",
-    solverPubkey: hex.encode(key(1)),
-    emulatorPubkey: hex.encode(key(9)),
-    serverPubkey: hex.encode(key(3)),
-    paymentHash: PAYMENT_HASH,
-    refundLocktime: REFUND_LOCKTIME,
-    claimDelay: CLAIM_DELAY,
-    senderPubkey: hex.encode(key(7)),
-    refundPkScript: hex.encode(p2tr(key(21))),
-    receiverPkScript: hex.encode(p2tr(key(1))),
-    signingDescriptor: `tr(${hex.encode(key(7))})`,
-    amount: 25_000,
+/** The two halves a consumer holds: the row's params, and the address that was
+ * funded. Built the way the entry points build them, so the fixture exercises
+ * the real `serializeParams` round trip rather than a hand-written record. */
+const lockupOf = (script: ReturnType<typeof receiveVtxoScript>) => ({
+    params: VHTLCV2ContractHandler.serializeParams(script.options),
+    address: script.address("tark", SERVER).encode(),
 });
 
-const receiveOrigin: RfqSwapOrigin = originWithLockup({
-    kind: "lightning_receive",
-    solverPubkey: hex.encode(key(1)),
-    emulatorPubkey: hex.encode(key(9)),
-    serverPubkey: hex.encode(key(3)),
+const SEND_LOCKUP = lockupOf(
+    lightningSendVtxoScript({
+        solverPubkey: key(1),
+        refundLocktime: REFUND_LOCKTIME,
+        serverPubkey: SERVER,
+        paymentHash: PAYMENT_HASH,
+        claimDelay: CLAIM_DELAY,
+        emulatorPubkey: key(9),
+        refundPkScript: p2tr(key(21)),
+        senderPubkey: key(7),
+        receiverPkScript: p2tr(key(1)),
+    }),
+);
+
+const RECEIVE_LOCKUP = lockupOf(
+    receiveVtxoScript({
+        solverPubkey: key(1),
+        refundLocktime: REFUND_LOCKTIME,
+        serverPubkey: SERVER,
+        paymentHash: PAYMENT_HASH,
+        claimDelay: CLAIM_DELAY,
+        emulatorPubkey: key(9),
+        solverRefundPkScript: p2tr(key(2)),
+        payoutPubkey: key(15),
+        payoutPkScript: p2tr(key(15)),
+    }),
+);
+
+const sendOrigin: RfqSwapOrigin = {
+    kind: "lightning_send",
     paymentHash: PAYMENT_HASH,
-    refundLocktime: REFUND_LOCKTIME,
-    claimDelay: CLAIM_DELAY,
-    payoutPubkey: hex.encode(key(15)),
-    payoutPkScript: hex.encode(p2tr(key(15))),
-    solverRefundPkScript: hex.encode(p2tr(key(2))),
+    lockupAddress: SEND_LOCKUP.address,
+    signingDescriptor: `tr(${hex.encode(key(7))})`,
+    amount: 25_000,
+};
+
+const receiveOrigin: RfqSwapOrigin = {
+    kind: "lightning_receive",
+    paymentHash: PAYMENT_HASH,
+    lockupAddress: RECEIVE_LOCKUP.address,
     payoutAddress: "tark1qpayout",
     expectedAmount: 20_000,
     signingDescriptor: `tr(${hex.encode(key(15))})`,
     preimageHex: "ee".repeat(32),
     amount: 20_400,
-});
+};
+
+const paramsOf = (origin: RfqSwapOrigin): LockupParams =>
+    origin.kind === "lightning_send" ? SEND_LOCKUP.params : RECEIVE_LOCKUP.params;
 
 const swapOf = (
     origin: RfqSwapOrigin,
@@ -86,7 +103,7 @@ const swapOf = (
         state,
         lockupPkScript: p2tr(key(11)),
         paymentHash: origin.paymentHash,
-        refundLocktime: origin.refundLocktime,
+        refundLocktime: REFUND_LOCKTIME,
         createdAt: 1_000,
         updatedAt: 1_000,
     };
@@ -103,9 +120,9 @@ describe("rebuildRfqSwap", () => {
     it.each([
         ["lightning_send", sendOrigin],
         ["lightning_receive", receiveOrigin],
-    ] as const)("rebuilds %s with no wallet and no network", (kind, origin) => {
+    ] as const)("rebuilds %s from the contract row's params", (kind, origin) => {
         const record = createRfqSwapRecord(origin, swapOf(origin));
-        const rebuilt = rebuildRfqSwap(record);
+        const rebuilt = rebuildRfqSwap(record, paramsOf(origin));
 
         expect(rebuilt.kind).toBe(kind);
         expect(rebuilt.rfqId).toBe("rfq-1");
@@ -115,103 +132,45 @@ describe("rebuildRfqSwap", () => {
             hex.encode(rebuilt.lockup!.script.pkScript),
         );
         expect(rebuilt.lockup?.address).toBe(origin.lockupAddress);
+        // read off the covenant, which binds it — the record stores no copy
+        expect(rebuilt.refundLocktime).toBe(REFUND_LOCKTIME);
+        expect(rebuilt.paymentHash).toBe(PAYMENT_HASH);
     });
 
-    it("is deterministic — the same record rebuilds the same covenant", () => {
+    it("refuses params that are not this swap's", () => {
+        // The check the record can still make about itself: the params and the
+        // funded address reach it by independent routes — the row was written
+        // from the covenant, the address came from the entry point — so the
+        // wrong row is caught at restore rather than at refund time.
         const record = createRfqSwapRecord(sendOrigin, swapOf(sendOrigin));
-        expect(hex.encode(rebuildRfqSwap(record).lockupPkScript)).toBe(
-            hex.encode(rebuildRfqSwap(record).lockupPkScript),
+        expect(() => rebuildRfqSwap(record, RECEIVE_LOCKUP.params)).toThrow(
+            /not this swap's|lockup address/,
         );
     });
 
-    // Shared by both legs: the parameters every covenant is bound by.
-    const commonMutations: Partial<RfqSwapOrigin>[] = [
-        { solverPubkey: hex.encode(key(2)) },
-        { emulatorPubkey: hex.encode(key(8)) },
-        { serverPubkey: hex.encode(key(4)) },
-        { paymentHash: "aa".repeat(32) },
-        { refundLocktime: REFUND_LOCKTIME + 1 },
-        // one granularity step, so the mutated value stays encodable
-        { claimDelay: CLAIM_DELAY + 512 },
-    ];
-
-    it.each([
-        [
-            "lightning_send",
-            sendOrigin,
-            [
-                { senderPubkey: hex.encode(key(6)) },
-                { refundPkScript: hex.encode(p2tr(key(22))) },
-                { receiverPkScript: hex.encode(p2tr(key(5))) },
-            ],
-        ],
-        [
-            "lightning_receive",
-            receiveOrigin,
-            [
-                { payoutPubkey: hex.encode(key(16)) },
-                { payoutPkScript: hex.encode(p2tr(key(16))) },
-                // the one tree parameter nothing else on the wire determines
-                { solverRefundPkScript: hex.encode(p2tr(key(23))) },
-            ],
-        ],
-    ] as const)(
-        "changes the %s covenant when any tree parameter changes",
-        (_kind, origin, legMutations) => {
-            // The guard against a projection that silently drops a field: if a
-            // parameter did not reach the script, mutating it would be a no-op.
-            // Against `rfqSwapCovenant`, not `rebuildRfqSwap`: the latter now
-            // refuses a mutated record outright, which the next test covers.
-            const baseline = hex.encode(rfqSwapCovenant(origin).pkScript);
-
-            for (const mutation of [...commonMutations, ...legMutations]) {
-                const changed = hex.encode(rfqSwapCovenant({ ...origin, ...mutation }).pkScript);
-                expect(
-                    changed,
-                    `mutating ${Object.keys(mutation)[0]} did not reach the script`,
-                ).not.toBe(baseline);
-            }
-        },
-    );
-
-    it.each([
-        ["lightning_send", sendOrigin, { senderPubkey: hex.encode(key(6)) }],
-        ["lightning_receive", receiveOrigin, { solverRefundPkScript: hex.encode(p2tr(key(23))) }],
-    ] as const)(
-        "refuses a %s record whose parameters disagree with its funded address",
-        (_kind, origin, mutation) => {
-            // The whole point of storing `lockupAddress` alongside the tree: a
-            // wrong parameter is caught at restore, not at refund time.
-            const base = createRfqSwapRecord(origin, swapOf(origin));
-            expect(() => rebuildRfqSwap({ ...base, ...mutation })).toThrow(
-                /lockup address|cannot be spent/,
-            );
-        },
-    );
+    it("refuses params a backend read back short a key", () => {
+        // A field-mapped store that drops one: `createScript` either throws or
+        // derives another covenant, and both must fail here rather than hand
+        // back a live record watching a script nobody funded.
+        const { refundNoReceiverDelay: _dropped, ...partial } = SEND_LOCKUP.params;
+        const record = createRfqSwapRecord(sendOrigin, swapOf(sendOrigin));
+        expect(() => rebuildRfqSwap(record, partial)).toThrow();
+    });
 
     it("carries the receive leg's expectedAmount, which is not re-derivable", () => {
         const record = createRfqSwapRecord(receiveOrigin, swapOf(receiveOrigin));
-        const rebuilt = rebuildRfqSwap(record) as LightningReceiveSwap;
+        const rebuilt = rebuildRfqSwap(record, RECEIVE_LOCKUP.params) as LightningReceiveSwap;
         expect(rebuilt.expectedAmount).toBe(20_000);
     });
 
-    it("refuses a record missing a tree parameter rather than rebuilding a wrong covenant", () => {
-        const record = createRfqSwapRecord(sendOrigin, swapOf(sendOrigin));
-        expect(() => rebuildRfqSwap({ ...record, senderPubkey: undefined })).toThrow(
-            /senderPubkey/,
-        );
-    });
-
-    it("refuses a receive record missing expectedAmount", () => {
-        // Its own test, and not part of the mutation loop above: this is the
-        // one required field that is NOT a tree parameter, so dropping it
-        // leaves the covenant — and `assertRebuildMatchesLockup` — intact. The
-        // value gate is what goes missing, which nothing about the address
-        // would catch.
+    it("refuses a receive record missing expectedAmount rather than deleting the value gate", () => {
+        // The one required field the covenant cannot vouch for: dropping it
+        // leaves the params and the lockup check intact, so nothing about the
+        // address would catch it — only this does.
         const record = createRfqSwapRecord(receiveOrigin, swapOf(receiveOrigin));
-        expect(() => rebuildRfqSwap({ ...record, expectedAmount: undefined })).toThrow(
-            /expectedAmount/,
-        );
+        expect(() =>
+            rebuildRfqSwap({ ...record, expectedAmount: undefined }, RECEIVE_LOCKUP.params),
+        ).toThrow(/expectedAmount/);
     });
 });
 
@@ -229,6 +188,14 @@ describe("the record never carries a private key", () => {
         expect(record.signingDescriptor).toBe(receiveOrigin.signingDescriptor);
         expect(record.preimageHex).toBe("ee".repeat(32));
     });
+
+    it("stores no covenant tree parameter — the contract row is the one copy", () => {
+        // Nothing here may become a second source for the covenant. The
+        // solver's key is the canary: it binds the tree and appears nowhere in
+        // what the record keeps.
+        const record = createRfqSwapRecord(sendOrigin, swapOf(sendOrigin));
+        expect(JSON.stringify(record)).not.toContain(hex.encode(key(1)));
+    });
 });
 
 describe("updateRfqSwapRecord", () => {
@@ -244,8 +211,7 @@ describe("updateRfqSwapRecord", () => {
         expect(moved.refundArkTxid).toBe("ff".repeat(32));
         expect(moved.updatedAt).toBe(2_000);
         // the immutable half is untouched
-        expect(moved.solverPubkey).toBe(sendOrigin.solverPubkey);
-        expect(moved.claimDelay).toBe(CLAIM_DELAY);
+        expect(moved.paymentHash).toBe(sendOrigin.paymentHash);
         expect(moved.lockupAddress).toBe(sendOrigin.lockupAddress);
         expect(moved.signingDescriptor).toBe(sendOrigin.signingDescriptor);
     });
@@ -262,15 +228,15 @@ describe("updateRfqSwapRecord", () => {
         const recovered = updateRfqSwapRecord(blocked, swapOf(sendOrigin, "pending"));
         expect(recovered.blockedReason).toBeUndefined();
         expect(recovered.failure).toBeUndefined();
-        expect(recovered.solverPubkey).toBe(sendOrigin.solverPubkey);
+        expect(recovered.paymentHash).toBe(sendOrigin.paymentHash);
         expect(recovered.lockupAddress).toBe(sendOrigin.lockupAddress);
     });
 
     it("keeps a rebuilt covenant identical across a state change", () => {
         const record = createRfqSwapRecord(sendOrigin, swapOf(sendOrigin));
         const moved = updateRfqSwapRecord(record, swapOf(sendOrigin, "settled"));
-        expect(hex.encode(rebuildRfqSwap(moved).lockupPkScript)).toBe(
-            hex.encode(rebuildRfqSwap(record).lockupPkScript),
+        expect(hex.encode(rebuildRfqSwap(moved, SEND_LOCKUP.params).lockupPkScript)).toBe(
+            hex.encode(rebuildRfqSwap(record, SEND_LOCKUP.params).lockupPkScript),
         );
     });
 });
