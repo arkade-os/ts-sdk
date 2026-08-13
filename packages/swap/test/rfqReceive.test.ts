@@ -92,7 +92,14 @@ describe("receiveVtxoScript", () => {
     // key(3), emulator = key(9), covenant refund destination = p2tr(key(8))
     // (the solver's own on these legs), claim payout = p2tr(key(5)) (the
     // trader's), preimage hash = ripemd160(sha256(0x07 * 32)), locktime
-    // 1_800_000_000, CSV 4096s / 4608s / 5120s.
+    // 1_800_000_000, CSV 4096s / 4096s / 8192s — the two-signature tier sits
+    // level with the claim, the solo refund carries the headroom.
+    //
+    // PROVENANCE: generated from the solver's own `CovenantSwapScript` with the
+    // roles inverted, at lightning-swap-service `b9fc3fe` (merged `c904d44`),
+    // and validated by first reproducing the pre-change pin `5120f683cdac…`.
+    // See the longer note in `rfq.test.ts` before regenerating — recomputing
+    // this from the package itself would make the assertion circular.
     const script = () =>
         receiveVtxoScript({
             solverPubkey: SOLVER,
@@ -108,7 +115,7 @@ describe("receiveVtxoScript", () => {
 
     it("is byte-identical to the reference solver's role-inverted script — golden scriptPubKey", () => {
         expect(hex.encode(script().pkScript)).toBe(
-            "5120f683cdac21b1a88963f03078567e58188d24340c0f0e5d5c17a2790b3478c908",
+            "5120a7a178e3751648bfbcca49731d98d103c805812e2cb6d7a89563eacb3a5dc415",
         );
     });
 
