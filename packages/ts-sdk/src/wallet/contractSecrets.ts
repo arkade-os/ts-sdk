@@ -206,6 +206,11 @@ export async function contractSigner(wallet: IWallet, descriptor: string): Promi
     // operational failure to retry, not evidence the key belongs to someone
     // else. Typing it as foreign would make a transient outage terminal.
     const actual = await signer.xOnlyPublicKey();
+    // NOTE: this catches a wallet substituting its BASELINE identity, nothing
+    // more. A signer built over `descriptor` itself reads its pubkey back out
+    // of that string, so the comparison is a tautology. `resolveDescriptorSigner`'s
+    // `isOurs` test is the real guarantee — a hand-rolled `IWallet` that skips
+    // it gets only this weaker check. See the docstring above.
     if (!equalBytes(actual, expected)) throw new ForeignDescriptorError(descriptor);
     if (!isSigningIdentity(signer)) throw new WalletCannotSignError(descriptor);
     return signer;

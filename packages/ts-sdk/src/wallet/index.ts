@@ -924,7 +924,16 @@ export interface IAssetManager extends IReadonlyAssetManager {
  * @see IReadonlyWallet
  */
 export interface IWallet extends IReadonlyWallet {
-    /** Signing identity associated with the wallet. */
+    /**
+     * Signing identity associated with the wallet.
+     *
+     * A real signer, not a `ReadonlyIdentity` that structurally fits: contract
+     * corridors need all four members — `sign`, `signMessage`, `signerSession`
+     * and `xOnlyPublicKey` — and `signerSession` is the one a watch-only
+     * identity lacks. `isSigningIdentity` is the check; a wallet that fails it
+     * is refused as `WalletCannotSignError` before anything is funded, rather
+     * than at the push that discovers there is no signer.
+     */
     identity: Identity;
 
     /**
