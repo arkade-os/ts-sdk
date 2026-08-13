@@ -122,8 +122,11 @@ describe("WalletBalance carries escrow through both getBalance paths", () => {
 
         // Exactly the object literal both `Wallet.getBalance` and the worker's
         // `handleGetBalance` build. Annotated as `WalletBalance` on purpose: the
-        // annotation is what makes this fail before the field exists, and what
-        // keeps it pinned to the real return shape afterwards.
+        // annotation pins this literal to the real return shape, so a drift
+        // between either `getBalance` implementation and the type surfaces
+        // here. Note this package's `tsconfig.json` excludes `**/*.test.ts`,
+        // so `pnpm typecheck` does not see it — the check only fires in an
+        // editor or under a typecheck that does cover test files.
         const assembled: WalletBalance = {
             boarding: { confirmed: 0, unconfirmed: 0, total: 0 },
             settled: balance.settled,
