@@ -17,18 +17,18 @@
  * repository writes whole, so a backend that mangles unknown keys would lose a
  * corridor's half without saying so — which is why `serialize` returns a flat
  * object rather than anything class-shaped.
+ *
+ * **A seam for this package, not for consumers**, and none of it is exported
+ * from the index. `RfqSwapManager` branches on `RfqSwap["kind"]` to decide what
+ * it drives — `driveReceiveClaim`, `driveOnchain`, `traderClaimTxid` — so a
+ * corridor registered from outside would persist and restore correctly and then
+ * sit unmonitored, which is worse than not being storable at all. `kind` is
+ * typed to the manager's union to keep the two in step: a corridor becomes
+ * storable in the same change that makes it drivable, or not at all. What a
+ * consumer needs is the profile types, so those are exported and this is not.
  */
 import type { VHTLC } from "@arkade-os/sdk";
 import type { RfqSwap } from "./swapManager";
-
-/** The record fields every corridor shares, as a handler sees them. */
-export interface RfqSwapCommonFields {
-    rfqId: string;
-    paymentHash: string;
-    lockupAddress: string;
-    signingDescriptor: string;
-    preimageHex?: string;
-}
 
 /**
  * How one corridor persists and restores its own half.
@@ -42,8 +42,9 @@ export interface RfqSwapCommonFields {
  * covenant it is handed.
  */
 export interface RfqCorridorHandler<P extends Record<string, unknown> = Record<string, unknown>> {
-    /** The `RfqSwap["kind"]` this handles. */
-    readonly kind: string;
+    /** The swap kind this handles. The manager's own union, so a handler can
+     * only ever exist for a corridor the manager can drive. */
+    readonly kind: RfqSwap["kind"];
 
     /**
      * The parts of the profile the MANAGER can change, projected off the live
@@ -97,6 +98,10 @@ class RfqCorridorRegistry {
         this.handlers.set(handler.kind, handler as RfqCorridorHandler);
     }
 
+    /** Takes a bare `string`, deliberately, where {@link RfqCorridorHandler.kind}
+     * is the manager's union: a lookup key comes off a record a backend handed
+     * back, and that it typechecks as a `kind` is a claim about the type, not
+     * about what was stored. Narrowing this would read as a check already made. */
     get(kind: string): RfqCorridorHandler | undefined {
         return this.handlers.get(kind);
     }

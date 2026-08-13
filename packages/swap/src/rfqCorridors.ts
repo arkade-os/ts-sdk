@@ -86,6 +86,20 @@ export interface OnchainSendProfile extends Record<string, unknown> {
      * from the arkade lockup's `refundLocktime`. */
     htlcLocktime: number;
     network: OnchainNetwork;
+    /**
+     * The L1 address the fill was expected at — `htlc.address` from
+     * `requestOnchainSend`, which `deriveOnchainSend` has already checked
+     * against the quote's own `profile.htlc_address`.
+     *
+     * The counterpart of the record's `lockupAddress`, and here for the same
+     * reason: the inputs above and this address reach the record by independent
+     * routes, so requiring the rebuild to reproduce it is what catches a
+     * parameter that came back wrong. The arkade lockup gets that check from
+     * `rebuildRfqSwap`; this leg, the one whose parameters have no second source
+     * anywhere, would otherwise get none — and a swapped or corrupted key
+     * derives another perfectly valid HTLC, at an address nobody funded.
+     */
+    htlcAddress: string;
     /** `profile.min_confirmations`; gates when the fill is claimable. */
     minConfirmations: number;
     /** The fill's outpoint, learned on first sighting. Without it a SPENT htlc
@@ -136,20 +150,31 @@ export const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
                     `checked — refusing to restore a swap that would claim an unconfirmed fill`,
             );
         }
+        const htlc = onchainHtlcScript(
+            {
+                // From the record, not the covenant: the lockup commits to
+                // `hash160(P)`, and the HTLC needs `sha256(P)`. One P
+                // unlocks both legs, but only one of the two hashes of it
+                // is recoverable here.
+                paymentHash,
+                claimKey: hex.decode(profile.claimKey),
+                refundKey: hex.decode(profile.refundKey),
+                refundLocktime: profile.htlcLocktime,
+            },
+            profile.network,
+        );
+        // What `rebuildRfqSwap` does for the arkade lockup, on the leg that
+        // cannot borrow a contract row to do it: parameters that derive some
+        // other HTLC are caught here, at restore, rather than by a claim that
+        // watches an address nobody funded until the refund window shuts.
+        if (htlc.address !== profile.htlcAddress) {
+            throw new Error(
+                `onchain_send record's L1 inputs derive ${htlc.address}, but the fill was ` +
+                    `expected at ${String(profile.htlcAddress)} — these are not this swap's`,
+            );
+        }
         return {
-            htlc: onchainHtlcScript(
-                {
-                    // From the record, not the covenant: the lockup commits to
-                    // `hash160(P)`, and the HTLC needs `sha256(P)`. One P
-                    // unlocks both legs, but only one of the two hashes of it
-                    // is recoverable here.
-                    paymentHash,
-                    claimKey: hex.decode(profile.claimKey),
-                    refundKey: hex.decode(profile.refundKey),
-                    refundLocktime: profile.htlcLocktime,
-                },
-                profile.network,
-            ),
+            htlc,
             minConfirmations: profile.minConfirmations,
             ...(profile.funding ? { funding: profile.funding } : {}),
             ...(profile.claimTxid ? { claimTxid: profile.claimTxid } : {}),

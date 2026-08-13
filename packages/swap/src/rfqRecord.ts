@@ -80,9 +80,16 @@ export const RFQ_SWAP_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 /** The immutable request-time half. Hex for everything binary, so the record is
  * plain JSON and survives any structured-clone backend unchanged. */
 export interface RfqSwapOrigin {
-    /** Which corridor this is. Resolves the handler that owns
-     * {@link profile}; see `rfqCorridor.ts`. */
-    kind: string;
+    /**
+     * Which corridor this is. Resolves the handler that owns {@link profile};
+     * see `rfqCorridor.ts`.
+     *
+     * The manager's own union, not an open string: `RfqSwapManager` branches on
+     * `kind` to decide what to drive, so a corridor it does not know could be
+     * persisted and rebuilt here and then never driven — which is the failure
+     * this whole file is arranged to make impossible.
+     */
+    kind: PersistableRfqSwap["kind"];
 
     /**
      * The Arkade address that was funded.
@@ -157,11 +164,43 @@ const managerState = (swap: PersistableRfqSwap) => ({
     ...(swap.blockedReason ? { blockedReason: swap.blockedReason } : {}),
 });
 
+/**
+ * The origin and the live swap must be halves of one swap.
+ *
+ * They arrive separately — the origin written from the request result, the swap
+ * built by the entry point — and these two functions are the only place both are
+ * in hand, so they are the only place the pairing can be checked at all.
+ *
+ * Neither mismatch is loud on its own. A `kind` that disagrees runs the wrong
+ * handler's `project`, which casts on kind: a receive origin projected off a
+ * send swap writes `expectedAmount: undefined` OVER the value the caller just
+ * supplied, deleting the gate at the moment it was being recorded. An address
+ * that disagrees is quieter still — the record stores no `lockupPkScript`, so
+ * {@link rebuildRfqSwap} derives one from `lockupAddress`, and the restored swap
+ * watches a covenant that is not the one this swap was monitoring.
+ */
+function assertSameSwap(origin: RfqSwapOrigin, swap: PersistableRfqSwap): void {
+    if (origin.kind !== swap.kind) {
+        throw new Error(
+            `rfq swap record is a ${origin.kind} origin paired with a ${swap.kind} swap`,
+        );
+    }
+    const funded = hex.encode(ArkAddress.decode(origin.lockupAddress).pkScript);
+    const watched = hex.encode(swap.lockupPkScript);
+    if (funded !== watched) {
+        throw new Error(
+            `rfq swap record's lockup address holds ${funded}, but the swap watches ${watched} — ` +
+                `these are not the same swap`,
+        );
+    }
+}
+
 /** First write, at the moment the caller hands the swap to the manager. */
 export function createRfqSwapRecord(
     origin: RfqSwapOrigin,
     swap: PersistableRfqSwap,
 ): RfqSwapRecord {
+    assertSameSwap(origin, swap);
     const handler = rfqCorridorHandlers.getOrThrow(origin.kind);
     return {
         ...origin,
@@ -185,6 +224,11 @@ export function updateRfqSwapRecord(
     record: RfqSwapRecord,
     swap: PersistableRfqSwap,
 ): RfqSwapRecord {
+    // Re-checked on every write, not just the first: a manager driving several
+    // swaps hands this a record and a live swap looked up separately, and
+    // updating one swap's record from another's is exactly how a good record
+    // acquires another swap's state.
+    assertSameSwap(record, swap);
     const {
         refundArkTxid: _refundArkTxid,
         failure: _failure,

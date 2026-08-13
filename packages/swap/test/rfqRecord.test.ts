@@ -23,6 +23,7 @@ import {
     type RfqSwapRecord,
 } from "../src/rfqRecord";
 import { lightningSendVtxoScript, receiveVtxoScript } from "../src/rfq";
+import { onchainHtlcScript } from "../src/onchainHtlc";
 import type { LightningReceiveSwap, LightningSendSwap, RfqSwapState } from "../src/swapManager";
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
@@ -42,6 +43,10 @@ const SERVER = key(3);
 const lockupOf = (script: ReturnType<typeof receiveVtxoScript>) => ({
     params: VHTLCV2ContractHandler.serializeParams(script.options),
     address: script.address("tark", SERVER).encode(),
+    // The live swap watches this, and the record stores only the address it
+    // decodes from — so a fixture that let the two disagree would be a swap no
+    // consumer could build.
+    pkScript: script.pkScript,
 });
 
 const SEND_LOCKUP = lockupOf(
@@ -91,8 +96,10 @@ const receiveOrigin: RfqSwapOrigin = {
     amount: 20_400,
 };
 
-const paramsOf = (origin: RfqSwapOrigin): LockupParams =>
-    origin.kind === "lightning_send" ? SEND_LOCKUP.params : RECEIVE_LOCKUP.params;
+const lockupFor = (origin: RfqSwapOrigin) =>
+    origin.kind === "lightning_receive" ? RECEIVE_LOCKUP : SEND_LOCKUP;
+
+const paramsOf = (origin: RfqSwapOrigin): LockupParams => lockupFor(origin).params;
 
 const swapOf = (
     origin: RfqSwapOrigin,
@@ -101,7 +108,7 @@ const swapOf = (
     const common = {
         rfqId: "rfq-1",
         state,
-        lockupPkScript: p2tr(key(11)),
+        lockupPkScript: lockupFor(origin).pkScript,
         paymentHash: origin.paymentHash,
         refundLocktime: REFUND_LOCKTIME,
         createdAt: 1_000,
@@ -201,11 +208,24 @@ describe("an onchain-send record carries its L1 half", () => {
     // values. So this is the one set of script parameters the record stores,
     // and a restored swap without them would let its L1 refund window pass
     // unwatched.
+    const HTLC_LOCKTIME = 1_850_000_000;
+    // The contract the request derived — what the record's inputs must give back.
+    const L1_HTLC = onchainHtlcScript(
+        {
+            paymentHash: PAYMENT_HASH,
+            claimKey: key(15),
+            refundKey: key(11),
+            refundLocktime: HTLC_LOCKTIME,
+        },
+        "regtest",
+    );
+
     const L1 = {
         claimKey: hex.encode(key(15)),
         refundKey: hex.encode(key(11)),
-        htlcLocktime: 1_850_000_000,
+        htlcLocktime: HTLC_LOCKTIME,
         network: "regtest" as const,
+        htlcAddress: L1_HTLC.address,
         minConfirmations: 2,
     };
 
@@ -223,7 +243,7 @@ describe("an onchain-send record carries its L1 half", () => {
             kind: "onchain_send",
             rfqId: "rfq-1",
             state: "pending",
-            lockupPkScript: p2tr(key(11)),
+            lockupPkScript: SEND_LOCKUP.pkScript,
             paymentHash: PAYMENT_HASH,
             refundLocktime: REFUND_LOCKTIME,
             htlc: {},
@@ -239,12 +259,20 @@ describe("an onchain-send record carries its L1 half", () => {
 
         expect(rebuilt.kind).toBe("onchain_send");
         const onchain = rebuilt as { htlc: { address: string }; minConfirmations: number };
-        expect(onchain.htlc.address).toBeTruthy();
+        // the contract the request derived, not merely a well-formed one
+        expect(onchain.htlc.address).toBe(L1_HTLC.address);
         expect(onchain.minConfirmations).toBe(2);
-        // the same inputs must give the same contract back
-        expect(onchain.htlc.address).toBe(
-            (rebuildRfqSwap(record, SEND_LOCKUP.params) as { htlc: { address: string } }).htlc
-                .address,
+    });
+
+    it("refuses L1 inputs that derive some other HTLC", () => {
+        // The check `rebuildRfqSwap` makes for the arkade lockup, on the leg
+        // that has no contract row to make it from. Swapping the two keys is
+        // the case nothing else catches: every input stays well formed, the
+        // rebuild succeeds, and the address it produces is one nobody funded.
+        const record = createRfqSwapRecord(onchainOrigin, onchainSwap());
+        const swapped = { ...record.profile, claimKey: L1.refundKey, refundKey: L1.claimKey };
+        expect(() => rebuildRfqSwap({ ...record, profile: swapped }, SEND_LOCKUP.params)).toThrow(
+            /not this swap's/,
         );
     });
 
@@ -323,6 +351,36 @@ describe("the record never carries a private key", () => {
         // what the record keeps.
         const record = createRfqSwapRecord(sendOrigin, swapOf(sendOrigin));
         expect(JSON.stringify(record)).not.toContain(hex.encode(key(1)));
+    });
+});
+
+describe("the origin and the live swap must be one swap", () => {
+    it("refuses an origin whose kind is not the swap's", () => {
+        // Not cosmetic: the handler resolved from `kind` casts on it, so a
+        // receive origin projected off a send swap writes
+        // `expectedAmount: undefined` over the value the caller just supplied —
+        // deleting the value gate at the moment it was being recorded.
+        expect(() => createRfqSwapRecord(receiveOrigin, swapOf(sendOrigin))).toThrow(
+            /lightning_receive origin paired with a lightning_send swap/,
+        );
+    });
+
+    it("refuses an origin whose lockup is not the one the swap watches", () => {
+        // The record stores no `lockupPkScript` — the rebuild derives it from
+        // `lockupAddress` — so a disagreement here restores a swap watching a
+        // covenant this one never had, and only these two functions ever hold
+        // both halves.
+        const wrongLockup = { ...sendOrigin, lockupAddress: RECEIVE_LOCKUP.address };
+        expect(() => createRfqSwapRecord(wrongLockup, swapOf(sendOrigin))).toThrow(
+            /not the same swap/,
+        );
+    });
+
+    it("re-checks on every write, not just the first", () => {
+        const record = createRfqSwapRecord(sendOrigin, swapOf(sendOrigin));
+        expect(() => updateRfqSwapRecord(record, swapOf(receiveOrigin, "claimed"))).toThrow(
+            /lightning_send origin paired with a lightning_receive swap/,
+        );
     });
 });
 
