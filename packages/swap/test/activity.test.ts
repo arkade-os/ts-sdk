@@ -1,100 +1,96 @@
 import { describe, it, expect } from "vitest";
-import { buildActivities, type ArkTransaction } from "@arkade-os/sdk";
+import type { ArkTransaction } from "@arkade-os/sdk";
 import { swapActivityResolver, type SwapActivityInput } from "../src/activity";
 
-const tx = (arkTxid: string, type: "SENT" | "RECEIVED", amount: number): ArkTransaction =>
+const tx = (arkTxid: string): ArkTransaction =>
     ({
         key: { arkTxid, boardingTxid: "", commitmentTxid: "" },
-        type,
-        amount,
+        type: "SENT",
+        amount: 1000,
         settled: true,
         createdAt: 1,
     }) as unknown as ArkTransaction;
 
-const resolverFor = (swaps: SwapActivityInput[]) =>
-    swapActivityResolver({ listSwaps: async () => swaps });
+/** Builds a resolver and runs prepare() — resolve() only sees data after this. */
+const preparedResolver = async (swaps: SwapActivityInput[]) => {
+    const resolver = swapActivityResolver({ listSwaps: async () => swaps });
+    await resolver.prepare!();
+    return resolver;
+};
 
 describe("swapActivityResolver", () => {
-    it("groups a swap's funding and refund into one activity", async () => {
-        const swaps: SwapActivityInput[] = [
+    it("resolves a swap's transaction to its groupId, label, status and metadata", async () => {
+        const resolver = await preparedResolver([
+            { rfqId: "r1", kind: "lightning_send", state: "settled", txids: ["fund"] },
+        ]);
+
+        expect(resolver.resolve(tx("fund"))).toEqual([
             {
-                rfqId: "r1",
-                kind: "lightning_send",
-                state: "refunded",
-                txids: ["fund", "refund"],
+                groupId: "swap:r1",
+                label: "Lightning send",
+                kind: "swap",
+                status: "Settled",
+                metadata: { rfqId: "r1", swapKind: "lightning_send" },
             },
-        ];
-
-        const activities = await buildActivities(
-            [tx("fund", "SENT", 1000), tx("refund", "RECEIVED", 1000)],
-            [resolverFor(swaps)],
-        );
-
-        expect(activities).toHaveLength(1);
-        expect(activities[0].id).toBe("swap:r1");
-        expect(activities[0].txs).toHaveLength(2);
+        ]);
     });
 
-    it("reports the swap's state as the activity status", async () => {
-        const swaps: SwapActivityInput[] = [
+    it("reports the swap's state as the membership status", async () => {
+        const resolver = await preparedResolver([
             { rfqId: "r1", kind: "lightning_send", state: "failed", txids: ["fund"] },
-        ];
+        ]);
 
-        const [activity] = await buildActivities([tx("fund", "SENT", 1000)], [resolverFor(swaps)]);
-
-        expect(activity.intent?.status).toBe("Failed");
-        expect(activity.intent?.kind).toBe("swap");
+        expect(resolver.resolve(tx("fund"))).toEqual([
+            expect.objectContaining({ status: "Failed", kind: "swap" }),
+        ]);
     });
 
     it("labels each leg by its corridor", async () => {
-        const send: SwapActivityInput[] = [
+        const send = await preparedResolver([
             { rfqId: "r1", kind: "lightning_send", state: "settled", txids: ["a"] },
-        ];
-        const receive: SwapActivityInput[] = [
+        ]);
+        const receive = await preparedResolver([
             { rfqId: "r2", kind: "lightning_receive", state: "settled", txids: ["b"] },
-        ];
+        ]);
 
-        const [sent] = await buildActivities([tx("a", "SENT", 1)], [resolverFor(send)]);
-        const [received] = await buildActivities([tx("b", "RECEIVED", 1)], [resolverFor(receive)]);
-
-        expect(sent.intent?.label).toBe("Lightning send");
-        expect(received.intent?.label).toBe("Lightning receive");
+        expect(send.resolve(tx("a"))).toEqual([
+            expect.objectContaining({ label: "Lightning send" }),
+        ]);
+        expect(receive.resolve(tx("b"))).toEqual([
+            expect.objectContaining({ label: "Lightning receive" }),
+        ]);
     });
 
     it("leaves an unrelated transaction plain", async () => {
-        const swaps: SwapActivityInput[] = [
+        const resolver = await preparedResolver([
             { rfqId: "r1", kind: "lightning_send", state: "pending", txids: ["fund"] },
-        ];
+        ]);
 
-        const activities = await buildActivities([tx("other", "SENT", 500)], [resolverFor(swaps)]);
-
-        expect(activities[0].id).toBe("other");
-        expect(activities[0].intent).toBeUndefined();
+        expect(resolver.resolve(tx("other"))).toBeUndefined();
     });
 
-    it("contributes nothing when the record read rejects", async () => {
+    it("leaves the index empty when listSwaps rejects, so resolve contributes nothing", async () => {
         const resolver = swapActivityResolver({
             listSwaps: async () => {
                 throw new Error("store unavailable");
             },
         });
 
-        const activities = await buildActivities([tx("fund", "SENT", 1000)], [resolver]);
-
-        // buildActivities isolates a resolver whose prepare() rejects; history
-        // must still render rather than failing whole.
-        expect(activities).toHaveLength(1);
-        expect(activities[0].intent).toBeUndefined();
+        await expect(resolver.prepare!()).rejects.toThrow("store unavailable");
+        expect(resolver.resolve(tx("fund"))).toBeUndefined();
     });
 
-    it("ignores a swap with no transactions yet", async () => {
-        const swaps: SwapActivityInput[] = [
+    it("a swap with no transactions yet contributes nothing", async () => {
+        const resolver = await preparedResolver([
             { rfqId: "r1", kind: "lightning_send", state: "pending", txids: [] },
-        ];
+        ]);
 
-        const activities = await buildActivities([tx("other", "SENT", 1)], [resolverFor(swaps)]);
+        expect(resolver.resolve(tx("other"))).toBeUndefined();
+    });
 
-        expect(activities).toHaveLength(1);
-        expect(activities[0].id).toBe("other");
+    it("resolve() before prepare() returns undefined rather than throwing", () => {
+        const resolver = swapActivityResolver({ listSwaps: async () => [] });
+
+        expect(resolver.resolve(tx("fund"))).toBeUndefined();
     });
 });
