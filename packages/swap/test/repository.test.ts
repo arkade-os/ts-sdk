@@ -235,7 +235,23 @@ describe("SQLiteAssetSwapRepository", () => {
             /Invalid table prefix/,
         );
     });
+});
 
+/**
+ * The RFQ half, over the backends that implement it.
+ *
+ * Its own matrix rather than the one above, because the SQLite and Realm
+ * backends do not carry `saveRfqSwap` / `getAllRfqSwaps` / `removeRfqSwap` yet —
+ * the interface bump makes that a compile error, and the parity work is a
+ * separate change. When it lands, these move into the matrix above and this
+ * list goes away.
+ */
+const rfqBackends: [string, () => AssetSwapRepository][] = [
+    ["inMemory", () => new InMemoryAssetSwapRepository()],
+    ["indexedDb", () => new IndexedDbAssetSwapRepository(`test-rfq-${Math.random()}`)],
+];
+
+describe.each(rfqBackends)("RFQ swap records (%s)", (_, create) => {
     it("upserts rfq swaps by rfqId and returns them all", async () => {
         await using repository = create();
         await repository.saveRfqSwap(rfqRecord("r1"));
