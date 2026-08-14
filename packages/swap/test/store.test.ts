@@ -73,7 +73,7 @@ describe("asset swap store", () => {
 
     it("reports failed add writes and keeps update writes best-effort", async () => {
         const broken = (existing: AssetSwap[] = []): AssetSwapRepository => ({
-            version: 2,
+            version: 3,
             saveSwap: async () => {
                 throw new Error("quota exceeded");
             },
@@ -110,7 +110,7 @@ describe("asset swap store", () => {
 
     it("reads a failed read as empty history, but never writes on one", async () => {
         const broken: AssetSwapRepository = {
-            version: 2,
+            version: 3,
             saveSwap: async () => {},
             getAllSwaps: async () => {
                 throw new Error("backend gone");

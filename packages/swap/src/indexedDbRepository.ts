@@ -52,7 +52,7 @@ const txDone = (tx: IDBTransaction): Promise<void> =>
 /** Browser backend over the SDK's shared IndexedDB manager — the same
  * infrastructure the wallet already uses for its Boltz swap repository. */
 export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 2 as const;
+    readonly version = 3 as const;
     // the promise, not the resolved database: openDatabase bumps a refcount on
     // every call including cache hits, while dispose closes once, so two
     // concurrent first calls would strand the refcount above zero and leak the

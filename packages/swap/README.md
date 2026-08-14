@@ -722,14 +722,18 @@ scanned? })` — the server key is required because a spend is classified by reb
   re-derived" — caller-supplied, or minted for a static descriptor. A field-mapped backend must
   persist the record whole: silently dropping `preimageHex` leaves a static swap permanently
   unclaimable.
-- **The repository interface is at version `2`.** It gained `saveRfqSwap` / `getAllRfqSwaps` /
+- **The repository interface is at version `3`.** It gained `saveRfqSwap` / `getAllRfqSwaps` /
   `removeRfqSwap` for monitored RFQ swaps, and the IndexedDB backend a matching `rfqSwaps` object
-  store at `DB_VERSION` 2. The bump is deliberate: an implementor must acknowledge the new methods
+  store at `DB_VERSION` 2. Version `2` was the shape 0.0.5 released — swaps, scan cursor, markets,
+  with `preimageSaltHex` on the swap record — and `DB_VERSION` was 1 there, so this is the database's
+  first version increase. The bump is deliberate: an implementor must acknowledge the new methods
   rather than silently satisfy an older shape. Existing databases upgrade in place: the new store is
-  added and the three original ones are untouched. Store RFQ records whole for the same reason as
-  above: what is in one is what nothing else can recover — `paymentHash` (the covenant binds
-  `ripemd160` of it, which is one-way), `preimageHex`, the receive leg's `expectedAmount` gate, and
-  the manager's own state.
+  added and the three original ones are untouched. **`DB_VERSION` 2 is a one-way door** — a browser
+  whose database has upgraded cannot be rolled back to 0.0.5, which opens it at version 1 and fails
+  `VersionError` across the whole swap store, not just the RFQ half. Store RFQ records whole for the
+  same reason as above: what is in one is what nothing else can recover — `paymentHash` (the covenant
+  binds `hash160` of it, which is one-way), `preimageHex`, the receive leg's `expectedAmount` gate,
+  and the manager's own state.
 - **An RFQ record stores no covenant.** The tree lives in the lockup's contract row, written before
   the address could be funded and keyed by the script its params derive — a key `createContract`
   refuses to write unless they reproduce it. So the rebuild takes the params from the caller:

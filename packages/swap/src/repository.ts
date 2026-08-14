@@ -31,7 +31,10 @@ export const marketsCacheKey = (network: string, registry: string) =>
  * subset queries.
  */
 export interface AssetSwapRepository extends AsyncDisposable {
-    readonly version: 2;
+    /** 3 adds the RFQ methods below. 2 was the released shape — swaps, scan
+     * cursor, markets, with `preimageSaltHex` on the swap record — so an
+     * implementor built against that cannot satisfy this one silently. */
+    readonly version: 3;
 
     /** Insert or replace a swap by id. Store the record whole: `preimageHex`
      * and `preimageSaltHex` both leave the swap unclaimable if a field-mapped
@@ -75,7 +78,7 @@ export interface AssetSwapRepository extends AsyncDisposable {
 }
 
 export class InMemoryAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 2 as const;
+    readonly version = 3 as const;
     private readonly swaps = new Map<string, AssetSwap>();
     private readonly rfqSwaps = new Map<string, RfqSwapRecord>();
     private readonly scanned = new Set<string>();
