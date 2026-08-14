@@ -1,9 +1,78 @@
-// Node-only smoke: build an offer payload with deterministic keys and
-// round-trip it through encodeOffer/decodeOffer byte-for-byte. Run after
-// `pnpm build`: `pnpm smoke:dist`.
+// Node-only smoke: walk the exports map, import every repository subpath, and
+// round-trip an offer payload through encodeOffer/decodeOffer byte-for-byte.
+// Run after `pnpm build`: `pnpm smoke:dist`.
+//
+// Unlike the Boltz script's structural-only subpath check, the backends here
+// import types only from @arkade-os/sdk/repositories/*, so nothing survives to
+// runtime and a real import is safe — and it is the import, not the file-
+// existence walk, that catches a broken exports map.
+//
+// So every import here goes through the package name, not `../dist/...`: a
+// relative path resolves whatever is on disk and would pass with the exports
+// map removed, malformed, or missing the subpath a consumer writes. Both
+// conditions are exercised, since `import` and `require` resolve separately and
+// a subpath can be correct under one and broken under the other.
+import { readFileSync, existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { hex } from "@scure/base";
 import { ArkAddress, asset } from "@arkade-os/sdk";
-import { encodeOffer, decodeOffer, offerVtxoScript } from "../dist/index.js";
+import { encodeOffer, decodeOffer, offerVtxoScript } from "@arkade-os/swap";
+import { SQLiteAssetSwapRepository } from "@arkade-os/swap/repositories/sqlite";
+import {
+    AssetSwapRealmSchemas,
+    RealmAssetSwapRepository,
+} from "@arkade-os/swap/repositories/realm";
+
+const pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const pkg = JSON.parse(readFileSync(resolve(pkgRoot, "package.json"), "utf8"));
+
+const walkExports = (node, label) => {
+    if (typeof node === "string") {
+        if (!existsSync(resolve(pkgRoot, node))) {
+            throw new Error(`${label} → missing ${node}`);
+        }
+        return;
+    }
+    if (node && typeof node === "object") {
+        for (const [k, v] of Object.entries(node)) walkExports(v, `${label}.${k}`);
+    }
+};
+walkExports(pkg.exports, "exports");
+for (const field of ["main", "types"]) {
+    if (pkg[field] && !existsSync(resolve(pkgRoot, pkg[field]))) {
+        throw new Error(`${field} → missing ${pkg[field]}`);
+    }
+}
+
+// Resolve every declared subpath as a consumer would — by specifier, under both
+// conditions. Driven off the exports keys, so a subpath added later is covered
+// without touching this script. The static imports above already cover three
+// specifiers under `import`; this is what covers `require`.
+const require = createRequire(resolve(pkgRoot, "package.json"));
+const specifiers = Object.keys(pkg.exports).map((key) =>
+    key === "." ? pkg.name : `${pkg.name}${key.slice(1)}`,
+);
+for (const specifier of specifiers) {
+    const [esm, cjs] = [await import(specifier), require(specifier)];
+    for (const [condition, mod] of [
+        ["import", esm],
+        ["require", cjs],
+    ]) {
+        if (!mod || Object.keys(mod).length === 0) {
+            throw new Error(`${specifier} (${condition}) → resolved to an empty module`);
+        }
+    }
+}
+
+// Constructing is the check: neither handle is touched.
+const stubExecutor = { run: async () => {}, get: async () => undefined, all: async () => [] };
+new SQLiteAssetSwapRepository(stubExecutor);
+new RealmAssetSwapRepository({});
+if (AssetSwapRealmSchemas.length !== 3) {
+    throw new Error(`expected 3 Realm schemas, got ${AssetSwapRealmSchemas.length}`);
+}
 
 const server = hex.decode("4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa");
 const offer = {

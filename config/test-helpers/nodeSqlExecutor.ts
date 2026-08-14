@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import type { SQLExecutor } from "../../src/repositories/sqlite/types";
+import type { SQLExecutor } from "@arkade-os/sdk/repositories/sqlite";
 
 // A real in-memory SQLite engine backed by Node's built-in `node:sqlite`.
 // Unlike the regex-based mock, it executes actual SQL (JOINs, `IN (...)`,

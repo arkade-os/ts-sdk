@@ -95,7 +95,10 @@ localStorage adapter to write:
 - **`AssetSwapQuoteSnapshot` / `AssetSwap.quote`** was not ported. The wallet should keep its own
   record type: `type WalletAssetSwap = AssetSwap & { quote?: AssetSwapQuoteSnapshot }` and cast at
   the store boundary — the repository persists whole records, so extra fields like `quote`
-  survive untouched. (Or restore the field upstream if a second consumer wants it.)
+  survive untouched **provided they are JSON-safe**. The SQLite and Realm backends serialize to
+  JSON, so a `quotedAt` `Date` comes back an ISO string and a `bigint` amount throws on save; only
+  the IndexedDB backend (structured clone) round-trips those. (Or restore the field upstream if a
+  second consumer wants it.)
 - `restore.ts` no longer documents the wallet's feeBps/fiat backfill behavior; that logic already
   lives in the wallet caller and is unaffected.
 

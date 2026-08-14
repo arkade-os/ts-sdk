@@ -2,10 +2,10 @@
 
 Client-side [Arkade Intents](https://arkade.money) asset swaps: discover markets, quote and
 validate, create offers, track them, cancel them, and rebuild the whole record set from chain after
-a wallet restore. Framework-free TypeScript over `@arkade-os/sdk`: the core API and
-`InMemoryAssetSwapRepository` use no DOM and no Node-specific APIs, so they run in Node, the
-browser, and React Native alike. `IndexedDbAssetSwapRepository` is the one exception — it needs a
-platform-provided or polyfilled IndexedDB.
+a wallet restore. Framework-free TypeScript over `@arkade-os/sdk`: the core API uses no DOM and no
+Node-specific APIs, so it runs in Node, the browser, and React Native alike. Four storage backends
+ship — in-memory (anywhere, nothing outlives the process), IndexedDB (browser), SQLite and Realm
+(React Native, on subpath entry points) — see "Storage backends" below.
 
 ## Roles
 
@@ -100,11 +100,78 @@ arkade:BTC|asset` (quote, then take by funding an offer from layer 1).
 
 Everything the package persists — swap records, the restore-scan cursor, and the markets cache —
 goes through a single `AssetSwapRepository`, following the Arkade repository convention
-(versioned interface, `AsyncDisposable`, one backend per platform). Two backends ship here:
-`InMemoryAssetSwapRepository` and `IndexedDbAssetSwapRepository` (built on the SDK's shared
-IndexedDB manager, like the Boltz plugin's repositories). Construct one and pass it wherever the
-package asks for a repository; `discoverMarkets` also accepts none, for a one-shot uncached
-discovery.
+(versioned interface, `AsyncDisposable`, one backend per platform). Construct one and pass it
+wherever the package asks for a repository; `discoverMarkets` also accepts none, for a one-shot
+uncached discovery.
+
+## Storage backends
+
+| Backend                        | Import from                           | For                                             |
+| ------------------------------ | ------------------------------------- | ----------------------------------------------- |
+| `InMemoryAssetSwapRepository`  | `@arkade-os/swap`                     | tests, one-shot scripts — nothing survives exit |
+| `IndexedDbAssetSwapRepository` | `@arkade-os/swap`                     | the browser (or a polyfilled IndexedDB)         |
+| `SQLiteAssetSwapRepository`    | `@arkade-os/swap/repositories/sqlite` | React Native, over your SQLite driver           |
+| `RealmAssetSwapRepository`     | `@arkade-os/swap/repositories/realm`  | React Native, over your Realm instance          |
+
+Neither subpath adds a dependency: they take the SDK's structural `SQLExecutor` / `RealmLike`
+handles, so you pass the database you already opened.
+
+**Records are stored whole.** The SQLite and Realm backends serialize each record to **JSON** in a
+`data` column, with only `status` / `createdAt` mapped out for querying — so a field they do not
+know about survives, which is what the `quote`-shaped extension in `MIGRATION.md` relies on. JSON is
+the boundary, though, and it is narrower than IndexedDB's structured clone: a `Date` in a
+consumer-added field comes back an ISO **string**, a `Set` or `Map` comes back empty, and a `bigint`
+makes `saveSwap` **throw**. `AssetSwap` itself is JSON-safe by design (amounts are strings); keep
+your own added fields that way too.
+
+### SQLite
+
+```ts
+import { SQLiteAssetSwapRepository } from "@arkade-os/swap/repositories/sqlite";
+import { SQLiteWalletRepository, type SQLExecutor } from "@arkade-os/sdk/repositories/sqlite";
+
+const db = await SQLite.openDatabaseAsync("wallet.db"); // expo-sqlite
+// Build the executor ONCE and hand this same instance to every repository on
+// the database: the SDK serializes transactions in a chain keyed by this
+// object, so a per-repository literal splits the chain and two BEGIN
+// IMMEDIATEs can interleave.
+const executor: SQLExecutor = {
+    run: (sql, params) => db.runAsync(sql, params ?? []),
+    get: (sql, params) => db.getFirstAsync(sql, params ?? []),
+    all: (sql, params) => db.getAllAsync(sql, params ?? []),
+};
+
+const swaps = new SQLiteAssetSwapRepository(executor);
+const wallet = new SQLiteWalletRepository(executor); // same instance
+```
+
+Sharing the executor is **necessary** for that serialization, not sufficient for atomicity across
+all wallet storage: it disciplines the repositories that enter the chain — this one,
+`SQLiteIntentRepository`, `SQLiteVirtualTxRepository`, and the wallet repository's migration path —
+and nothing else. `SQLiteWalletRepository` and `SQLiteContractRepository` still write raw, so their
+writes can land inside whatever transaction happens to be open.
+
+Three tables land in your database, prefixed `arkade_`: `arkade_asset_swaps`,
+`arkade_asset_swap_scanned_txids`, `arkade_asset_swap_markets`. Pass `{ prefix: "myapp_" }` if your
+app already owns those names.
+
+### Realm
+
+```ts
+import Realm from "realm";
+import { AssetSwapRealmSchemas, RealmAssetSwapRepository } from "@arkade-os/swap/repositories/realm";
+import { ArkRealmSchemas } from "@arkade-os/sdk/repositories/realm";
+
+const realm = await Realm.open({
+    schema: [...ArkRealmSchemas, ...AssetSwapRealmSchemas, ...yourOwnSchemas],
+    schemaVersion: YOUR_VERSION, // these schemas are new: bump yours when adding them
+});
+const swaps = new RealmAssetSwapRepository(realm);
+```
+
+Three classes land in your Realm namespace: `ArkadeAssetSwap`, `ArkadeAssetSwapScannedTxid`,
+`ArkadeAssetSwapMarketsCache`. Unlike SQLite there is no prefix option — a Realm schema name is
+baked into the schema objects you register — so reconcile against your own models by name.
 
 ## Creating an offer
 
