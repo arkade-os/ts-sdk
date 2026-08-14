@@ -58,9 +58,10 @@ describe("swapActivityResolver", () => {
     });
 
     it("gives a lightning_receive refund a different outcome than a lightning_send refund", async () => {
-        // swapManager.ts:158-167: a send-leg refund is money coming back, but a
-        // receive-leg refund is a LOSS — the trader's incoming payment never
-        // arrived. The two must not render as the same token.
+        // RfqSwapState's `refunded` case (swapManager.ts): a send-leg refund is
+        // money coming back, but a receive-leg refund is a LOSS — the trader's
+        // incoming payment never arrived. The two must not render as the same
+        // token.
         const send = await preparedResolver([
             { rfqId: "r1", kind: "lightning_send", state: "refunded", txids: ["a"] },
         ]);
@@ -83,12 +84,18 @@ describe("swapActivityResolver", () => {
         const receive = await preparedResolver([
             { rfqId: "r2", kind: "lightning_receive", state: "settled", txids: ["b"] },
         ]);
+        const onchainSend = await preparedResolver([
+            { rfqId: "r3", kind: "onchain_send", state: "settled", txids: ["c"] },
+        ]);
 
         expect(send.resolve(tx("a"))).toEqual([
             expect.objectContaining({ label: "Lightning send" }),
         ]);
         expect(receive.resolve(tx("b"))).toEqual([
             expect.objectContaining({ label: "Lightning receive" }),
+        ]);
+        expect(onchainSend.resolve(tx("c"))).toEqual([
+            expect.objectContaining({ label: "Onchain send" }),
         ]);
     });
 

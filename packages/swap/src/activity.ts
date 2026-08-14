@@ -41,6 +41,13 @@ const LABELS: Record<SwapActivityInput["kind"], string> = {
  */
 const OUTCOME: Record<RfqSwapState, string> = {
     pending: "pending",
+    // `claimable` and `claimed` are both in-progress states with no
+    // user-visible phase distinct from "pending". `needs_counterparty` is
+    // different in kind — the swap is BLOCKED, not merely in flight, since no
+    // unilateral trader move exists (see `RfqSwapState`). Collapsing it into
+    // `pending` here is a deliberate choice the opaque-token design permits —
+    // apps map tokens themselves — but a future reader weighing a `"blocked"`
+    // or `"stuck"` token should know this was already considered.
     claimable: "pending",
     claimed: "pending",
     needs_counterparty: "pending",
@@ -87,10 +94,11 @@ export function swapActivityResolver(deps: {
             // A `lightning_receive` that ends `refunded` is a LOSS, not money
             // returned: that leg has no trader-side refund, every non-claim leaf
             // of the covenant is the solver's, and a swap ending here is one
-            // whose incoming payment never arrived (swapManager.ts:158-167). A
-            // send leg's `refunded` is the opposite — the lockup coming back —
-            // so the two need distinct tokens; `lostReceive` is this package's
-            // own name for the case (swapManager.ts:1656-1661).
+            // whose incoming payment never arrived (see `RfqSwapState`'s
+            // `refunded` case in swapManager.ts). A send leg's `refunded` is the
+            // opposite — the lockup coming back — so the two need distinct
+            // tokens; `lostReceive` is this package's own name for the case (see
+            // the `lostReceive` local in `outcomeOf`, swapManager.ts).
             const lostReceive = swap.kind === "lightning_receive" && swap.state === "refunded";
             return [
                 {
