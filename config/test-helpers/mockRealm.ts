@@ -1,16 +1,9 @@
-import { RealmLike } from "../../src/repositories/realm/types";
+import type { RealmLike } from "@arkade-os/sdk/repositories/realm";
 
 // In-memory RealmLike for tests. Stores shallow copies as row objects and
 // returns those same references from objects()/filtered(), so delete() can
-// match by identity. Supports `col == $n` predicates joined by AND / OR.
-
-const PK_FIELD: Record<string, string> = {
-    ArkVirtualTx: "txid",
-    ArkIntent: "intentTxId",
-    ArkVtxoBranch: "pk",
-};
-const pkOf = (name: string, o: Record<string, unknown>): string =>
-    String(o[PK_FIELD[name] ?? "pk"]);
+// match by identity. Supports `col == $n` and `col == null` predicates joined
+// by AND / OR.
 
 type Row = Record<string, unknown>;
 
@@ -43,7 +36,7 @@ function withFiltered(rows: Row[]): Row[] {
                     .replace(/[()]/g, "")
                     .split(/\s+OR\s+/i)
                     .some((c) => {
-                        const m = c.trim().match(/^(\w+)\s*==\s*\$(\d+)$/);
+                        const m = c.trim().match(/^(\w+)\s*==\s*(?:\$(\d+)|(null))$/);
                         // Fail loudly on an unsupported shape: silently matching
                         // it would hide real query mismatches from the tests.
                         if (!m) {
@@ -51,6 +44,11 @@ function withFiltered(rows: Row[]): Row[] {
                                 `mockRealm: unsupported filtered() clause: "${c.trim()}"`,
                             );
                         }
+                        // `== null` also matches an absent property: that is
+                        // what the query means for rows written before the
+                        // property existed, which is the only reason a
+                        // repository emits the clause.
+                        if (m[3]) return row[m[1]] === null || row[m[1]] === undefined;
                         return row[m[1]] === a[Number(m[2])];
                     }),
             ),
@@ -60,7 +58,18 @@ function withFiltered(rows: Row[]): Row[] {
     return arr;
 }
 
-export function createMockRealm(): RealmLike {
+/**
+ * @param primaryKeys schema name → primary-key property. Required and
+ * exhaustive: an unlisted schema throws rather than keying every row on
+ * `undefined`, which would collapse a whole collection onto one row.
+ */
+export function createMockRealm(primaryKeys: Record<string, string>): RealmLike {
+    const pkOf = (name: string, o: Row): string => {
+        const field = primaryKeys[name];
+        if (!field) throw new Error(`mockRealm: no primary key configured for schema "${name}"`);
+        return String(o[field]);
+    };
+
     const colls = new Map<string, Map<string, Row>>();
     const coll = (n: string): Map<string, Row> => {
         let c = colls.get(n);
