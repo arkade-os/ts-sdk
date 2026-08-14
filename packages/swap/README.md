@@ -116,13 +116,22 @@ uncached discovery.
 Neither subpath adds a dependency: they take the SDK's structural `SQLExecutor` / `RealmLike`
 handles, so you pass the database you already opened.
 
+All four carry both record types: asset swaps and the monitored RFQ swaps
+(`saveRfqSwap` / `getAllRfqSwaps` / `removeRfqSwap`). Each keeps them in a store of their own — a
+second object store on IndexedDB, an `…rfq_swaps` table on SQLite, the `ArkadeRfqSwap` class on
+Realm — since the two record types have different keys and no consumer wants them interleaved.
+
 **Records are stored whole.** The SQLite and Realm backends serialize each record to **JSON** in a
-`data` column, with only `status` / `createdAt` mapped out for querying — so a field they do not
-know about survives, which is what the `quote`-shaped extension in `MIGRATION.md` relies on. JSON is
+`data` column, with only `status` / `createdAt` (and an RFQ record's `state` / `updatedAt`) mapped
+out for querying — so a field they do not know about survives, which is what the `quote`-shaped
+extension in `MIGRATION.md` relies on. It is also what keeps an RFQ record's corridor `profile`
+intact: `profile.hashlock` is a nested object holding the payment hash and any preimage material, and
+a field-mapped backend is exactly what would lose it. JSON is
 the boundary, though, and it is narrower than IndexedDB's structured clone: a `Date` in a
 consumer-added field comes back an ISO **string**, a `Set` or `Map` comes back empty, and a `bigint`
-makes `saveSwap` **throw**. `AssetSwap` itself is JSON-safe by design (amounts are strings); keep
-your own added fields that way too.
+makes `saveSwap` **throw**. `AssetSwap` and `RfqSwapRecord` are both JSON-safe by design (amounts are
+strings, binary is hex), and a corridor `profile` is plain JSON by the handler contract; keep your own
+added fields — and any corridor profile you write — that way too.
 
 ### SQLite
 
@@ -169,9 +178,15 @@ const realm = await Realm.open({
 const swaps = new RealmAssetSwapRepository(realm);
 ```
 
-Three classes land in your Realm namespace: `ArkadeAssetSwap`, `ArkadeAssetSwapScannedTxid`,
-`ArkadeAssetSwapMarketsCache`. Unlike SQLite there is no prefix option — a Realm schema name is
-baked into the schema objects you register — so reconcile against your own models by name.
+Four classes land in your Realm namespace: `ArkadeAssetSwap`, `ArkadeRfqSwap`,
+`ArkadeAssetSwapScannedTxid`, `ArkadeAssetSwapMarketsCache`. Unlike SQLite there is no prefix option
+— a Realm schema name is baked into the schema objects you register — so reconcile against your own
+models by name.
+
+`ArkadeRfqSwap` arrived after the other three. **If you already shipped them, add it and bump
+`schemaVersion` again**: Realm creates schemas at open, so a config still listing three fails on the
+first RFQ read rather than at open. SQLite needs nothing — its DDL runs `CREATE TABLE IF NOT EXISTS`
+on every init, so the table appears on the next operation.
 
 ## Creating an offer
 

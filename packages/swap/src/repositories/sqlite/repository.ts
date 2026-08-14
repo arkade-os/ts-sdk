@@ -9,6 +9,7 @@ import {
     type MarketsCacheEntry,
 } from "../../repository";
 import type { AssetSwap } from "../../store";
+import type { RfqSwapRecord } from "../../rfqRecord";
 
 const DEFAULT_PREFIX = "arkade_";
 // SQLite's default parameter ceiling is 999; stay well under it per statement.
@@ -22,18 +23,26 @@ const INSERT_CHUNK = 500;
  * and `created_at` are mapped out for querying only, so no field of a record
  * can be dropped. That holds for JSON-safe values: a consumer-added `Date`
  * comes back a string and a `bigint` throws on save, unlike the IndexedDB
- * backend's structured clone. `AssetSwap` itself is JSON-safe by design.
+ * backend's structured clone. `AssetSwap` itself is JSON-safe by design, and so
+ * is `RfqSwapRecord` — including its corridor `profile`, which is plain JSON by
+ * the handler contract (see `rfqCorridor.ts`). Whole-record storage is what
+ * keeps a nested `profile.hashlock` from being lost the way a field-mapped
+ * backend could lose it.
  *
- * Tables are created lazily on first operation. The consumer owns the
+ * Tables are created lazily on first operation, and `CREATE TABLE IF NOT
+ * EXISTS` runs on every init — so the `rfq_swaps` table appears for an existing
+ * database on its next operation, with no migration and no version to bump.
+ * The consumer owns the
  * `SQLExecutor` lifecycle — `[Symbol.asyncDispose]` is a no-op — and must pass
  * the **same executor instance** to every repository on the database: the
  * write chain is keyed by that object, and a per-repository literal splits it.
  */
 export class SQLiteAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 2 as const;
+    readonly version = 3 as const;
     private initPromise: Promise<void> | null = null;
     private readonly prefix: string;
     private readonly swaps: string;
+    private readonly rfqSwaps: string;
     private readonly scanned: string;
     private readonly markets: string;
 
@@ -43,6 +52,7 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
     ) {
         this.prefix = sanitizeTablePrefix(options?.prefix ?? DEFAULT_PREFIX);
         this.swaps = `${this.prefix}asset_swaps`;
+        this.rfqSwaps = `${this.prefix}rfq_swaps`;
         this.scanned = `${this.prefix}asset_swap_scanned_txids`;
         this.markets = `${this.prefix}asset_swap_markets`;
     }
@@ -77,6 +87,19 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
             await this.db.run(
                 `CREATE INDEX IF NOT EXISTS idx_${this.prefix}asset_swaps_created_at ON ${this.swaps} (created_at)`,
             );
+            // A separate table rather than a `kind` column on the one above: the
+            // two record types have different keys and no consumer wants them
+            // interleaved. `state` and `updated_at` are mapped out for querying
+            // and for the retention sweep; the record itself still goes in whole.
+            await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.rfqSwaps} (
+                rfq_id TEXT PRIMARY KEY,
+                state TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                data TEXT NOT NULL
+            )`);
+            await this.db.run(
+                `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_state ON ${this.rfqSwaps} (state)`,
+            );
             await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.scanned} (txid TEXT PRIMARY KEY)`);
             await this.db.run(
                 `CREATE TABLE IF NOT EXISTS ${this.markets} (cache_key TEXT PRIMARY KEY, data TEXT NOT NULL)`,
@@ -109,6 +132,30 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         await this.ensureInit();
         const rows = await this.db.all<{ data: string }>(`SELECT data FROM ${this.swaps}`);
         return rows.map((r) => JSON.parse(r.data) as AssetSwap);
+    }
+
+    async saveRfqSwap(record: RfqSwapRecord): Promise<void> {
+        await this.ensureInit();
+        await this.withTx(async () => {
+            await this.db.run(
+                `INSERT OR REPLACE INTO ${this.rfqSwaps} (rfq_id, state, updated_at, data)
+                 VALUES (?, ?, ?, ?)`,
+                [record.rfqId, record.state, record.updatedAt, JSON.stringify(record)],
+            );
+        });
+    }
+
+    async getAllRfqSwaps(): Promise<RfqSwapRecord[]> {
+        await this.ensureInit();
+        const rows = await this.db.all<{ data: string }>(`SELECT data FROM ${this.rfqSwaps}`);
+        return rows.map((r) => JSON.parse(r.data) as RfqSwapRecord);
+    }
+
+    async removeRfqSwap(rfqId: string): Promise<void> {
+        await this.ensureInit();
+        await this.withTx(async () => {
+            await this.db.run(`DELETE FROM ${this.rfqSwaps} WHERE rfq_id = ?`, [rfqId]);
+        });
     }
 
     async getScannedTxids(): Promise<Set<string>> {
@@ -160,13 +207,14 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         });
     }
 
-    /** All three tables in one transaction: clearing swaps but keeping scanned
-     * txids would leave the restore scan permanently skipping those funding
-     * txs, so a partial clear must not be observable. */
+    /** Every table in one transaction: clearing swaps but keeping scanned txids
+     * would leave the restore scan permanently skipping those funding txs, so a
+     * partial clear must not be observable. */
     async clear(): Promise<void> {
         await this.ensureInit();
         await this.withTx(async () => {
             await this.db.run(`DELETE FROM ${this.swaps}`);
+            await this.db.run(`DELETE FROM ${this.rfqSwaps}`);
             await this.db.run(`DELETE FROM ${this.scanned}`);
             await this.db.run(`DELETE FROM ${this.markets}`);
         });

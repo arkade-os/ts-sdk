@@ -54,6 +54,7 @@ const backends: [string, () => AssetSwapRepository][] = [
             new RealmAssetSwapRepository(
                 createMockRealm({
                     ArkadeAssetSwap: "id",
+                    ArkadeRfqSwap: "rfqId",
                     ArkadeAssetSwapScannedTxid: "txid",
                     ArkadeAssetSwapMarketsCache: "key",
                 }),
@@ -222,8 +223,39 @@ describe("SQLiteAssetSwapRepository", () => {
         await using app = new SQLiteAssetSwapRepository(db, { prefix: "app2_" });
         await using dflt = new SQLiteAssetSwapRepository(db);
         await app.saveSwap(swap("a"));
+        await app.saveRfqSwap(rfqRecord("r1"));
         expect((await app.getAllSwaps()).map((s) => s.id)).toEqual(["a"]);
         expect(await dflt.getAllSwaps()).toEqual([]);
+        // the rfq table is prefixed too — a hardcoded name would leak records
+        // between two apps sharing one connection
+        expect((await app.getAllRfqSwaps()).map((r) => r.rfqId)).toEqual(["r1"]);
+        expect(await dflt.getAllRfqSwaps()).toEqual([]);
+    });
+
+    // The counterpart of the IndexedDB migration test below, and the same
+    // riskiest-claim shape: the rfq table has to appear for a database that
+    // predates it. Nothing here bumps a version, so `CREATE TABLE IF NOT EXISTS`
+    // on every init is the entire mechanism — and this is what says so.
+    it("adds the rfq table to a database that only has the original three", async () => {
+        const db = createNodeSQLExecutor();
+        // A pre-RFQ database, created the way the old init created it.
+        await db.run(`CREATE TABLE arkade_asset_swaps (
+            id TEXT PRIMARY KEY, status TEXT NOT NULL, created_at INTEGER NOT NULL, data TEXT NOT NULL
+        )`);
+        await db.run(`CREATE TABLE arkade_asset_swap_scanned_txids (txid TEXT PRIMARY KEY)`);
+        await db.run(
+            `CREATE TABLE arkade_asset_swap_markets (cache_key TEXT PRIMARY KEY, data TEXT NOT NULL)`,
+        );
+        await db.run(
+            `INSERT INTO arkade_asset_swaps (id, status, created_at, data) VALUES (?, ?, ?, ?)`,
+            ["legacy", "pending", 1, JSON.stringify(swap("legacy"))],
+        );
+
+        await using repository = new SQLiteAssetSwapRepository(db);
+        await repository.saveRfqSwap(rfqRecord("r1"));
+        expect((await repository.getAllRfqSwaps()).map((r) => r.rfqId)).toEqual(["r1"]);
+        // and the rows that were already there are untouched
+        expect((await repository.getAllSwaps()).map((s) => s.id)).toEqual(["legacy"]);
     });
 
     it("rejects a prefix that is not a SQL identifier", () => {
@@ -237,21 +269,10 @@ describe("SQLiteAssetSwapRepository", () => {
     });
 });
 
-/**
- * The RFQ half, over the backends that implement it.
- *
- * Its own matrix rather than the one above, because the SQLite and Realm
- * backends do not carry `saveRfqSwap` / `getAllRfqSwaps` / `removeRfqSwap` yet —
- * the interface bump makes that a compile error, and the parity work is a
- * separate change. When it lands, these move into the matrix above and this
- * list goes away.
- */
-const rfqBackends: [string, () => AssetSwapRepository][] = [
-    ["inMemory", () => new InMemoryAssetSwapRepository()],
-    ["indexedDb", () => new IndexedDbAssetSwapRepository(`test-rfq-${Math.random()}`)],
-];
-
-describe.each(rfqBackends)("RFQ swap records (%s)", (_, create) => {
+/** The RFQ half, over EVERY backend — which is the point of this matrix: all
+ * four implement the same three methods, and a backend that stores a record
+ * short a field fails here rather than at a claim. */
+describe.each(backends)("RFQ swap records (%s)", (_, create) => {
     it("upserts rfq swaps by rfqId and returns them all", async () => {
         await using repository = create();
         await repository.saveRfqSwap(rfqRecord("r1"));
