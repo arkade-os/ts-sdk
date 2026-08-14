@@ -39,12 +39,24 @@ export {
 } from "./repository";
 export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";
 // The corridor handlers and their registry are internal — see `rfqCorridor.ts`
-// for why. What a consumer writes into `RfqSwapOrigin.profile` is these:
+// for why. What a consumer writes into `RfqSwapOrigin.profile` is these: every
+// corridor's keys through `rfqSecretsProfile`, then whatever its own leg adds.
+// The two readers are how they come back — `rfqSignerOf` for the refund signer
+// on any leg, `rfqClaimSecretOf` for the preimage on a leg we claim.
 export {
     onchainSendProfile,
     type LightningReceiveProfile,
+    type LightningSendProfile,
     type OnchainSendProfile,
 } from "./rfqCorridors";
+export {
+    rfqSecretsProfile,
+    rfqClaimSecretOf,
+    rfqSignerOf,
+    type RfqClaimSecretProjection,
+    type RfqHashlockProjection,
+    type RfqSignerProjection,
+} from "./rfqProfileParts";
 export {
     RFQ_SWAP_RETENTION_SECONDS,
     createRfqSwapRecord,

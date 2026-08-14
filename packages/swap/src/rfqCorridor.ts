@@ -29,6 +29,7 @@
  */
 import type { VHTLC } from "@arkade-os/sdk";
 import type { RfqSwap } from "./swapManager";
+import type { RfqClaimSecretProjection } from "./rfqProfileParts";
 
 /**
  * How one corridor persists and restores its own half.
@@ -57,8 +58,26 @@ export interface RfqCorridorHandler<P extends Record<string, unknown> = Record<s
      * current.
      *
      * Return `{}` for a corridor with nothing mutable of its own.
+     *
+     * **Never return `signer` or `hashlock`.** The profile merges SHALLOWLY, so
+     * returning even `{ hashlock: { paymentHash } }` replaces the whole subtree
+     * and deletes the preimage salt on the first write after creation — an
+     * unclaimable lockup, discovered at claim time. Nothing needs it: the
+     * descriptor and the salt exist only in the request result, never on a live
+     * `RfqSwap`.
      */
     project(swap: RfqSwap): Partial<P>;
+
+    /**
+     * The claim inputs off this corridor's profile, when this leg is one WE
+     * claim — typically `{ ...profile.signer, ...profile.hashlock }`.
+     *
+     * Omitted by a corridor that only refunds (`lightning_send`) or has no
+     * hashlock at all, so `rfqClaimSecretOf` answers `undefined` and a caller
+     * that would have derived a preimage learns so instead of deriving a wrong
+     * one.
+     */
+    claimSecret?(profile: P): RfqClaimSecretProjection;
 
     /**
      * Rebuild the corridor's live fields from what was stored.
@@ -70,12 +89,10 @@ export interface RfqCorridorHandler<P extends Record<string, unknown> = Record<s
     hydrate(profile: P, context: RfqCorridorContext): Record<string, unknown>;
 }
 
-/** What a handler may read beyond its own profile: the common record fields it
- * shares with every corridor, and the rebuilt lockup covenant. */
+/** What a handler may read beyond its own profile: the rebuilt lockup covenant.
+ * The payment hash is not here — it belongs to a corridor's own `hashlock`, and
+ * a corridor that has none would have had to be handed a fake. */
 export interface RfqCorridorContext {
-    /** `sha256(P)`, hex. On the covenant it appears only as `hash160(P)`, so a
-     * corridor needing the preimage hash proper takes it from here. */
-    paymentHash: string;
     lockup: InstanceType<typeof VHTLC.ScriptV2>;
 }
 

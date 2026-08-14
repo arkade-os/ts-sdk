@@ -15,9 +15,13 @@ const rfqRecord = (rfqId: string): RfqSwapRecord => ({
     rfqId,
     kind: "lightning_send",
     state: "pending",
-    paymentHash: "d4".repeat(32),
-    signingDescriptor: `tr(${"a7".repeat(32)})`,
     lockupAddress: "tark1qlockup",
+    // The corridor's own keys, nested — which is what a field-mapped backend is
+    // likeliest to flatten or drop.
+    profile: {
+        signer: { signingDescriptor: `tr(${"a7".repeat(32)})` },
+        hashlock: { paymentHash: "d4".repeat(32) },
+    },
     createdAt: 1,
     updatedAt: 1,
 });
@@ -244,17 +248,23 @@ describe("SQLiteAssetSwapRepository", () => {
 
     it("stores the record whole, down to the fields nothing else can recover", async () => {
         // The covenant lives in the contract row, but what is here is here
-        // because nothing rebuilds it: `paymentHash` is one-way inside the
-        // tree, `preimageHex` may be a swap's only claim secret, and
+        // because nothing rebuilds it: `paymentHash` is one-way inside the tree,
+        // the preimage material may be a swap's only route back to P, and
         // `expectedAmount` is the receive leg's value gate. A field-mapped
-        // backend that dropped one would say nothing until a claim was due.
+        // backend that dropped one would say nothing until a claim was due — and
+        // the ones under `profile.hashlock` are nested, so they are the likeliest
+        // to be lost. `preimageSaltHex` is here rather than `preimageHex`
+        // because it is the arm a static wallet actually gets.
         await using repository = create();
         const record: RfqSwapRecord = {
             ...rfqRecord("r1"),
             kind: "lightning_receive",
-            expectedAmount: 20_000,
-            payoutAddress: "tark1qpayout",
-            preimageHex: "ee".repeat(32),
+            profile: {
+                signer: { signingDescriptor: `tr(${"a7".repeat(32)})` },
+                hashlock: { paymentHash: "d4".repeat(32), preimageSaltHex: "ee".repeat(32) },
+                expectedAmount: 20_000,
+                payoutAddress: "tark1qpayout",
+            },
         };
         await repository.saveRfqSwap(record);
         const [restored] = await repository.getAllRfqSwaps();

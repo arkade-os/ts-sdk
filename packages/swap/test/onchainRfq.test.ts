@@ -313,10 +313,12 @@ describe("deriveOnchainSend", () => {
         const record = createRfqSwapRecord(
             {
                 kind: "onchain_send",
-                paymentHash: PAYMENT_HASH,
                 lockupAddress: derived.address,
-                signingDescriptor: `tr(${hex.encode(SENDER_PUBKEY)})`,
-                profile: onchainSendProfile(derived),
+                profile: {
+                    signer: { signingDescriptor: `tr(${hex.encode(SENDER_PUBKEY)})` },
+                    hashlock: { paymentHash: PAYMENT_HASH },
+                    ...onchainSendProfile(derived),
+                },
             },
             {
                 kind: "onchain_send",

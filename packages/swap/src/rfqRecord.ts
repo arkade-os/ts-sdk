@@ -19,15 +19,21 @@
  *
  * What lives here is what no covenant can give back:
  *
- * - {@link RfqSwapOrigin} — the immutable request-time facts. `paymentHash` in
- *   particular is NOT recoverable from the tree: the covenant binds
- *   `hash160(P)`, which is one-way over the hash this record carries.
+ * - {@link RfqSwapOrigin} — the immutable request-time facts every corridor
+ *   has: which corridor, which address was funded, and the corridor's own
+ *   opaque {@link RfqSwapOrigin.profile}.
  * - the manager's mutable state, replaced by {@link updateRfqSwapRecord} on
  *   every pass that changed something.
  *
+ * A corridor's keys live in its profile, not here — `profile.signer` and, for a
+ * leg locked to a preimage, `profile.hashlock`, which carries the `sha256(P)`
+ * the covenant cannot give back (it binds `hash160(P)`, one-way over it). See
+ * `rfqProfileParts.ts`.
+ *
  * **No record written here carries a private key.** The wallet descriptor is
- * public. `preimageHex` is stored only when the SDK's provisioned claim
- * secret says it cannot be re-derived.
+ * public, and so is the per-swap salt a static wallet's preimage derives from —
+ * which is what the record stores INSTEAD of P. `preimageHex` appears only when
+ * the SDK's provisioned claim secret says P cannot be re-derived at all.
  */
 import { ArkAddress, VHTLCV2ContractHandler, type VHTLC } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
@@ -48,9 +54,9 @@ import "./rfqCorridors";
  * has a contract row like the others, but the HTLC is Bitcoin L1, not an Arkade
  * contract, so no row exists for it; and `OnchainHtlc` exposes only derived
  * values — `address`, `pkScript`, `leaves`, `controlBlocks` — never the
- * `claimKey`/`refundKey` `onchainHtlcScript` takes as inputs. So the record
- * carries {@link RfqSwapOrigin.onchain}, and without it a restored swap would
- * let its L1 refund window pass unwatched.
+ * `claimKey`/`refundKey` `onchainHtlcScript` takes as inputs. So they ride in
+ * that corridor's {@link RfqSwapOrigin.profile}, and without them a restored
+ * swap would let its L1 refund window pass unwatched.
  */
 export type PersistableRfqSwap = LightningSendSwap | LightningReceiveSwap | OnchainSendSwap;
 
@@ -77,8 +83,9 @@ export type LockupParams = Record<string, string>;
  */
 export const RFQ_SWAP_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 
-/** The immutable request-time half. Hex for everything binary, so the record is
- * plain JSON and survives any structured-clone backend unchanged. */
+/** The immutable request-time half, and only what EVERY corridor has. Hex for
+ * everything binary, so the record is plain JSON and survives any
+ * structured-clone backend unchanged. */
 export interface RfqSwapOrigin {
     /**
      * Which corridor this is. Resolves the handler that owns {@link profile};
@@ -102,29 +109,15 @@ export interface RfqSwapOrigin {
     lockupAddress: string;
 
     /**
-     * `sha256(P)`, hex — the BOLT11 payment hash.
-     *
-     * Not recoverable from the covenant, which commits to `hash160(P)`: 20
-     * bytes, the conventional HTLC shape. Kept so a swap can be correlated to
-     * the payer's invoice, and because a corridor whose own contract commits to
-     * the `sha256` form has nowhere else to read it.
-     */
-    paymentHash: string;
-
-    // ── Secrets projection (see `swapSecretsToRecord`) ─────────────────────
-    /** Public wallet descriptor that recovers the covenant signer. */
-    signingDescriptor: string;
-    /** The only secret this record may hold; present when the provisioned
-     * claim secret says P cannot be re-derived. */
-    preimageHex?: string;
-
-    /**
      * The corridor's own half, as plain JSON — written by the caller from the
      * request result, kept current by the handler's `project`.
      *
      * Opaque here on purpose. Nothing in this file, the repository or the
      * IndexedDB store interprets it, which is what lets a new corridor ship
-     * without touching any of them.
+     * without touching any of them. It carries the corridor's keys as well as
+     * its state: `signer` (which wallet key signs this leg) and, on a corridor
+     * locked to a preimage, `hashlock` — see `rfqProfileParts.ts`, and write
+     * both with `rfqSecretsProfile` rather than by hand.
      */
     profile: Record<string, unknown>;
 
@@ -289,7 +282,6 @@ export function rebuildRfqSwap(record: RfqSwapRecord, params: LockupParams): Per
         state: record.state,
         lockupPkScript: script.pkScript,
         lockup: { script, address: record.lockupAddress },
-        paymentHash: record.paymentHash,
         // From the covenant, which binds it: the record's own copy would be a
         // second source for the deadline the refund is gated on.
         refundLocktime: Number(script.options.refundLocktime),
@@ -301,14 +293,15 @@ export function rebuildRfqSwap(record: RfqSwapRecord, params: LockupParams): Per
     };
 
     // Corridor-agnostic from here: the handler for this record's kind supplies
-    // whatever its leg needs, and this file names none of them. A kind with no
+    // whatever its leg needs — `paymentHash` included, which is a hashlock's
+    // fact and not RFQ's — and this file names none of them. A kind with no
     // handler registered throws rather than restoring a swap nothing knows how
     // to drive.
     const handler = rfqCorridorHandlers.getOrThrow(record.kind);
     return {
         ...common,
         kind: record.kind,
-        ...handler.hydrate(record.profile, { paymentHash: record.paymentHash, lockup: script }),
+        ...handler.hydrate(record.profile, { lockup: script }),
     } as PersistableRfqSwap;
 }
 

@@ -731,9 +731,59 @@ scanned? })` — the server key is required because a spend is classified by reb
   added and the three original ones are untouched. **`DB_VERSION` 2 is a one-way door** — a browser
   whose database has upgraded cannot be rolled back to 0.0.5, which opens it at version 1 and fails
   `VersionError` across the whole swap store, not just the RFQ half. Store RFQ records whole for the
-  same reason as above: what is in one is what nothing else can recover — `paymentHash` (the covenant
-  binds `hash160` of it, which is one-way), `preimageHex`, the receive leg's `expectedAmount` gate,
-  and the manager's own state.
+  same reason as above: what is in one is what nothing else can recover — the manager's own state,
+  and, inside the corridor's `profile`, its keys and its gates.
+- **An RFQ record's keys live in its corridor's `profile`, under two keys.** `profile.signer` holds
+  `signingDescriptor` — which wallet key signs this leg, on any corridor. `profile.hashlock` holds
+  `paymentHash` (the covenant binds `hash160` of it, which is one-way) plus, **only on legs we
+  claim**, `preimageHex` or `preimageSaltHex`. The record's own half — `kind`, `lockupAddress`,
+  `amount`, the manager's state — recovers nothing on its own, so a backend that drops either nested
+  object loses the signer or the claim secret exactly as one dropping `preimageHex` used to. Two keys
+  rather than one because a hashlock belongs to a corridor and a signer does not: a corridor that
+  settles without a preimage still has a leg to sign and refund.
+
+    ```ts
+    // In. One call per leg, whatever that leg's provisioning produced — never
+    // hand-mapped: copying `signingDescriptor` and `preimageHex` across by hand
+    // drops the salt a static wallet's P derives from, and the swap is
+    // unclaimable with nothing to say so until claim time.
+    const record = createRfqSwapRecord(
+        {
+            kind: "lightning_receive",
+            lockupAddress: result.address,
+            profile: {
+                ...rfqSecretsProfile(result.secrets, result.treeParams.paymentHash),
+                expectedAmount: result.expectedAmount,
+                payoutAddress: result.payoutAddress,
+            },
+        },
+        swap,
+    );
+
+    // Out, and WHICH reader depends on the leg. The refund signer, on any leg:
+    const sender = await senderIdentityForSwapRecord(wallet, rfqSignerOf(record)!);
+    // P, only where we claim — `lightning_receive`, `onchain_send`:
+    const claim = rfqClaimSecretOf(record);
+    if (claim) await preimageForSwapRecord(wallet, claim); // hash-checked
+    ```
+
+- **`lightning_send` has a payment hash and no preimage**, so `rfqClaimSecretOf` answers `undefined`
+  for it. P belongs to the payee and its descriptor is a *refund* key from `provisionRefundKey`.
+  Wiring the claim helper to all three legs does not degrade gracefully: the salted arm derives
+  *some* P off the refund descriptor and the payment-hash check rejects it, so a correct record reads
+  as corrupt. That leg's reader is `rfqSignerOf`.
+- **Non-hashlock corridors carry no `profile.hashlock` at all** — no `paymentHash`, no preimage
+  material, no placeholder; the key is simply absent, which is why `rfqSecretsProfile` takes the
+  payment hash as an optional second argument. They still write `profile.signer` if their leg is one
+  this wallet signs. The three corridors shipping today all lock to a preimage, but that is a fact
+  about them and not about RFQ. A corridor needing more than one descriptor — a co-signed leg, a
+  second key for an L1 half — extends `profile.signer` rather than fabricating a hashlock.
+- **Both readers answer `undefined` only for "this corridor has no such half", and throw on a half
+  that is there and unusable.** Neither ever hands back a partial projection:
+  `preimageForSwapRecord` verifies only when the projection carries a `paymentHash`, so one missing
+  its hash would claim with an *unverified* preimage instead of failing. A thrown
+  `PreimageNotRecoverableError("malformed-record")` is a storage bug, not a protocol state — treating
+  it as "no preimage available" and falling back to a refund reads the two as the same thing.
 - **An RFQ record stores no covenant.** The tree lives in the lockup's contract row, written before
   the address could be funded and keyed by the script its params derive — a key `createContract`
   refuses to write unless they reproduce it. So the rebuild takes the params from the caller:

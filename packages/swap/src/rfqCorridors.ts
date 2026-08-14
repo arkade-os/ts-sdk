@@ -6,11 +6,12 @@
  * which name a corridor. See `rfqCorridor.ts` for why it is shaped this way.
  */
 import { hex } from "@scure/base";
+import { rfqCorridorHandlers, type RfqCorridorHandler } from "./rfqCorridor";
 import {
-    rfqCorridorHandlers,
-    type RfqCorridorContext,
-    type RfqCorridorHandler,
-} from "./rfqCorridor";
+    hydrateHashlock,
+    type RfqHashlockProjection,
+    type RfqSignerProjection,
+} from "./rfqProfileParts";
 import {
     onchainHtlcScript,
     type OnchainHtlc,
@@ -19,17 +20,32 @@ import {
 } from "./onchainHtlc";
 import type { LightningReceiveSwap, OnchainSendSwap, RfqSwap } from "./swapManager";
 
-/** `arkade:BTC->lightning:BTC`. Nothing beyond the covenant and the common
- * fields: the solver claims the lockup, the trader's only move is the refund,
- * and both are fully described by the contract row. */
-export const LightningSendCorridor: RfqCorridorHandler<Record<string, never>> = {
+/**
+ * `arkade:BTC->lightning:BTC`. Nothing beyond its keys and the covenant: the
+ * solver claims the lockup, the trader's only move is the refund, and the rest
+ * of the leg is fully described by the contract row.
+ *
+ * The one leg with a hashlock it can never open — P belongs to the payee — so
+ * `hashlock` here is `{ paymentHash }` alone and `signer` holds a REFUND key.
+ */
+export interface LightningSendProfile extends Record<string, unknown> {
+    signer: RfqSignerProjection;
+    hashlock: RfqHashlockProjection;
+}
+
+export const LightningSendCorridor: RfqCorridorHandler<LightningSendProfile> = {
     kind: "lightning_send",
     project: () => ({}),
-    hydrate: () => ({}),
+    hydrate: (profile) => hydrateHashlock(profile),
+    // No `claimSecret`, deliberately: `provisionRefundKey` mints no preimage at
+    // all, and deriving one off the refund descriptor would fail the payment
+    // hash check — a `hash-mismatch` on a swap that was never broken.
 };
 
 /** `lightning:BTC->arkade:BTC`. */
 export interface LightningReceiveProfile extends Record<string, unknown> {
+    signer: RfqSignerProjection;
+    hashlock: RfqHashlockProjection;
     /** The quote's `to_amount`, captured at REQUEST time. */
     expectedAmount: number;
     /** Where the claim pays. */
@@ -75,14 +91,21 @@ export const LightningReceiveCorridor: RfqCorridorHandler<LightningReceiveProfil
             throw new Error("lightning_receive record carries no expectedAmount; it cannot claim");
         }
         return {
+            ...hydrateHashlock(profile),
             expectedAmount: profile.expectedAmount,
             ...(profile.claimArkTxid ? { claimArkTxid: profile.claimArkTxid } : {}),
         };
     },
+
+    // We are the claimant here, so the preimage material on the hashlock is
+    // ours to use.
+    claimSecret: (profile) => ({ ...profile.signer, ...profile.hashlock }),
 };
 
 /** `arkade:BTC->onchain:BTC`. */
 export interface OnchainSendProfile extends Record<string, unknown> {
+    signer: RfqSignerProjection;
+    hashlock: RfqHashlockProjection;
     /** The trader's L1 claim key. */
     claimKey: string;
     /** The solver's L1 key, from `profile.htlc_pubkey`. */
@@ -132,13 +155,19 @@ export interface OnchainSendProfile extends Record<string, unknown> {
  * The other two corridors have no such builder, deliberately: their profiles
  * are the request result's own fields under their own names, with nothing
  * derived and nothing renamed.
+ *
+ * The L1 half ONLY. `signer` and `hashlock` come from `rfqSecretsProfile`, which
+ * every corridor calls — folding them in here would give this leg a one-call
+ * mapper the other two cannot have, and the uniform rule ("`rfqSecretsProfile`
+ * first, then whatever the corridor adds") is what keeps the per-corridor
+ * instructions short enough to follow.
  */
 export function onchainSendProfile(result: {
     htlc: Pick<OnchainHtlc, "address">;
     htlcParams: OnchainHtlcParams;
     l1Network: OnchainNetwork;
     minConfirmations: number;
-}): OnchainSendProfile {
+}): Omit<OnchainSendProfile, "signer" | "hashlock"> {
     return {
         claimKey: hex.encode(result.htlcParams.claimKey),
         refundKey: hex.encode(result.htlcParams.refundKey),
@@ -169,7 +198,10 @@ export const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
         };
     },
 
-    hydrate(profile, { paymentHash }: RfqCorridorContext) {
+    hydrate(profile) {
+        // Its own hashlock, not the context's: one owner for the value, and a
+        // corridor with none is never handed a fake.
+        const { paymentHash } = hydrateHashlock(profile);
         if (!profile.claimKey || !profile.refundKey) {
             throw new Error(
                 "onchain_send record carries no L1 keys; its HTLC cannot be rebuilt and its " +
@@ -192,7 +224,7 @@ export const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
         }
         const htlc = onchainHtlcScript(
             {
-                // From the record, not the covenant: the lockup commits to
+                // From the profile, not the covenant: the lockup commits to
                 // `hash160(P)`, and the HTLC needs `sha256(P)`. One P
                 // unlocks both legs, but only one of the two hashes of it
                 // is recoverable here.
@@ -214,12 +246,17 @@ export const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
             );
         }
         return {
+            paymentHash,
             htlc,
             minConfirmations: profile.minConfirmations,
             ...(profile.funding ? { funding: profile.funding } : {}),
             ...(profile.claimTxid ? { claimTxid: profile.claimTxid } : {}),
         };
     },
+
+    // The trader claims the L1 HTLC with P, so this leg's preimage material is
+    // ours.
+    claimSecret: (profile) => ({ ...profile.signer, ...profile.hashlock }),
 };
 
 rfqCorridorHandlers.register(LightningSendCorridor as RfqCorridorHandler);

@@ -64,6 +64,7 @@ import {
     registerLockupContract,
 } from "../src/lockupContract";
 import { createRfqSwapRecord, rebuildRfqSwap } from "../src/rfqRecord";
+import { rfqSecretsProfile } from "../src/rfqProfileParts";
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
@@ -400,9 +401,8 @@ describe("a registered lockup, against a real contract manager", () => {
         const record = createRfqSwapRecord(
             {
                 kind: "lightning_send",
-                paymentHash: swap.treeParams.paymentHash,
                 lockupAddress: swap.address,
-                signingDescriptor: swap.secrets.descriptor,
+                profile: rfqSecretsProfile(swap.secrets, swap.treeParams.paymentHash),
             },
             {
                 kind: "lightning_send",

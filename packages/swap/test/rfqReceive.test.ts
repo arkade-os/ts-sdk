@@ -38,6 +38,7 @@ import {
     HDDescriptorProvider,
     InMemoryWalletRepository,
     MnemonicIdentity,
+    SingleKey,
     type IWallet,
 } from "@arkade-os/sdk";
 import {
@@ -62,6 +63,8 @@ import { createRfqSwapRecord, rebuildRfqSwap } from "../src/rfqRecord";
 import type { LightningReceiveSwap } from "../src/swapManager";
 import { onchainHtlcScript, paymentHashOf } from "../src/onchainHtlc";
 import { contractPreimage } from "@arkade-os/sdk";
+import { preimageForSwapRecord } from "../src/store";
+import { rfqClaimSecretOf, rfqSecretsProfile, rfqSignerOf } from "../src/rfqProfileParts";
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
@@ -610,6 +613,23 @@ const hdWallet = async (
     } as unknown as IWallet;
 };
 
+/**
+ * The wallet that cannot allocate: one `tr(pubkey)` for every swap, so its
+ * preimage derives from a public per-swap salt instead of the key alone.
+ *
+ * Here because the claim secret's salted arm exists only on this wallet, and
+ * this is the only file that runs the receive leg — the one corridor where a
+ * lost salt means an unclaimable lockup.
+ */
+const staticWallet = (createContract: () => Promise<unknown> = async () => ({})): IWallet =>
+    ({
+        identity: SingleKey.fromHex(
+            "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
+        ),
+        getAddress: async () => PAYOUT_ADDRESS,
+        getContractManager: async () => ({ createContract }),
+    }) as unknown as IWallet;
+
 /** The full flow with the solver's answers under test control. The decoder
  * echoes the hash the request actually carried, so a test that overrides
  * nothing is a well-behaved solver; `createContract` doubles as the marker for
@@ -711,8 +731,10 @@ describe("requestLightningReceive on an HD wallet", () => {
         // what the entrypoint hands back must survive the hand-written hop into
         // `RfqSwapOrigin` and rebuild the same covenant. The tree is not part of
         // that hop — it comes from the contract row this same call wrote, which
-        // is why the mapping below is short. `expectedAmount` and `preimageHex`
-        // ride along because neither is re-derivable at claim time.
+        // is why the mapping below is short. `expectedAmount` rides along
+        // because it is not re-derivable at claim time; the claim secret goes
+        // through `rfqSecretsProfile`, whose whole point is that the caller
+        // never decides which of its fields to copy.
         const flow = await lightningReceiveFlow();
         const result = await flow.run();
         const { params } = flow.createContract.mock.calls[0][0] as {
@@ -722,14 +744,12 @@ describe("requestLightningReceive on an HD wallet", () => {
         const record = createRfqSwapRecord(
             {
                 kind: "lightning_receive",
-                paymentHash: result.treeParams.paymentHash,
                 lockupAddress: result.address,
-                payoutAddress: result.payoutAddress,
-                expectedAmount: result.expectedAmount,
-                signingDescriptor: result.secrets.descriptor,
-                ...(result.secrets.mustPersistPreimage
-                    ? { preimageHex: hex.encode(result.secrets.preimage) }
-                    : {}),
+                profile: {
+                    ...rfqSecretsProfile(result.secrets, result.treeParams.paymentHash),
+                    expectedAmount: result.expectedAmount,
+                    payoutAddress: result.payoutAddress,
+                },
                 amount: result.payAmount,
             },
             {
@@ -749,8 +769,12 @@ describe("requestLightningReceive on an HD wallet", () => {
         expect(hex.encode(rebuilt.lockupPkScript)).toBe(hex.encode(result.swapPkScript));
         expect(rebuilt.refundLocktime).toBe(result.treeParams.refundLocktime);
         expect(rebuilt.expectedAmount).toBe(4_950);
-        // an HD wallet re-derives P from the seed, so nothing secret is stored
-        expect(record.preimageHex).toBeUndefined();
+        // an HD wallet re-derives P from the seed alone, so the hashlock carries
+        // neither a preimage nor a salt — its descriptor is unique per swap
+        expect(rfqClaimSecretOf(record)).toEqual({
+            signingDescriptor: result.secrets.descriptor,
+            paymentHash: result.treeParams.paymentHash,
+        });
     });
 
     it("refuses an amountless invoice and one above from_amount", async () => {
@@ -820,6 +844,115 @@ describe("requestLightningReceive on an HD wallet", () => {
 
         expect(first.seen.paymentHash).toBeDefined();
         expect(second.seen.paymentHash).not.toBe(first.seen.paymentHash);
+    });
+});
+
+/**
+ * The claim secret is corridor state, and a static wallet's half of it is the
+ * public per-swap salt — the only stored input to P on that arm.
+ *
+ * Here rather than in `rfqDerivedSecrets.test.ts` because this is the only file
+ * that runs the receive leg, and the receive leg is where losing P means an
+ * unclaimable lockup rather than a refund that still works.
+ */
+describe("a static wallet's receive record hands P back", () => {
+    /** The record a consumer writes, from the request result alone. */
+    const recordFor = (
+        result: Awaited<ReturnType<Awaited<ReturnType<typeof lightningReceiveFlow>>["run"]>>,
+    ) =>
+        createRfqSwapRecord(
+            {
+                kind: "lightning_receive",
+                lockupAddress: result.address,
+                profile: {
+                    ...rfqSecretsProfile(result.secrets, result.treeParams.paymentHash),
+                    // required by `hydrate`, so a record without it would fail
+                    // the round trip for a reason this test is not about
+                    expectedAmount: result.expectedAmount,
+                    payoutAddress: result.payoutAddress,
+                },
+                amount: result.payAmount,
+            },
+            {
+                kind: "lightning_receive",
+                rfqId: result.rfqId,
+                state: "pending",
+                lockupPkScript: result.swapPkScript,
+                paymentHash: result.treeParams.paymentHash,
+                refundLocktime: result.treeParams.refundLocktime,
+                expectedAmount: result.expectedAmount,
+                createdAt: 1,
+                updatedAt: 1,
+            },
+        );
+
+    it("stores the salt, stores no preimage, and re-derives P through the record", async () => {
+        const createContract = vi.fn(async () => ({}));
+        const flow = await lightningReceiveFlow({ wallet: staticWallet(createContract) });
+        const result = await flow.run();
+        const { params } = createContract.mock.calls[0][0] as { params: Record<string, string> };
+
+        // the arm this test exists for: one repeating key, so uniqueness comes
+        // from a salt rather than from the descriptor
+        expect(result.secrets.mustPersistPreimage).toBe(false);
+        expect(result.secrets.preimageSalt).toHaveLength(32);
+
+        const record = recordFor(result);
+        const hashlock = record.profile.hashlock as {
+            paymentHash: string;
+            preimageHex?: string;
+            preimageSaltHex?: string;
+        };
+        expect(hashlock.preimageSaltHex).toBe(hex.encode(result.secrets.preimageSalt!));
+        expect(hashlock.preimageHex).toBeUndefined();
+
+        // the record still restores, and the claim reader still verifies
+        rebuildRfqSwap(record, params);
+        const recovered = await preimageForSwapRecord(flow.wallet, rfqClaimSecretOf(record)!);
+        expect(hex.encode(sha256(recovered))).toBe(result.treeParams.paymentHash);
+    });
+
+    it("throws rather than reading a lost payment hash back unverified", async () => {
+        // `preimageForSwapRecord` checks only `if (record.paymentHash …)`, so a
+        // projection missing it does not fail — it claims with an unverified
+        // preimage. That is why the reader validates and this asserts on the
+        // throw rather than on a wrong P.
+        const flow = await lightningReceiveFlow({ wallet: staticWallet() });
+        const record = recordFor(await flow.run());
+        const { paymentHash: _dropped, ...rest } = record.profile.hashlock as Record<
+            string,
+            unknown
+        >;
+
+        // what a field-mapped backend does to one key of a nested object
+        expect(() =>
+            rfqClaimSecretOf({ ...record, profile: { ...record.profile, hashlock: rest } }),
+        ).toThrow(expect.objectContaining({ reason: "malformed-record" }));
+        // and a value that is present but not 32 bytes of hex
+        expect(() =>
+            rfqClaimSecretOf({
+                ...record,
+                profile: { ...record.profile, hashlock: { ...rest, paymentHash: "d4".repeat(31) } },
+            }),
+        ).toThrow(expect.objectContaining({ reason: "malformed-record" }));
+        expect(() =>
+            rfqClaimSecretOf({
+                ...record,
+                profile: { ...record.profile, hashlock: { ...rest, paymentHash: "not hex" } },
+            }),
+        ).toThrow(expect.objectContaining({ reason: "malformed-record" }));
+    });
+
+    it("throws on an emptied signer rather than reporting no local refund", async () => {
+        // `senderIdentityForSwapRecord` turns a missing descriptor into a
+        // permanent `no-secrets` refusal the manager acts on, so an emptied
+        // `signer` must not reach it as one.
+        const flow = await lightningReceiveFlow({ wallet: staticWallet() });
+        const record = recordFor(await flow.run());
+        expect(rfqSignerOf(record)?.signingDescriptor).toBeDefined();
+        expect(() =>
+            rfqSignerOf({ ...record, profile: { ...record.profile, signer: {} } }),
+        ).toThrow(/signingDescriptor/);
     });
 });
 

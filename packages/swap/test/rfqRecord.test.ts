@@ -79,22 +79,33 @@ const RECEIVE_LOCKUP = lockupOf(
 
 const sendOrigin: RfqSwapOrigin = {
     kind: "lightning_send",
-    paymentHash: PAYMENT_HASH,
     lockupAddress: SEND_LOCKUP.address,
-    signingDescriptor: `tr(${hex.encode(key(7))})`,
-    profile: {},
+    // A refund key and a hash it can never open: P belongs to the payee.
+    profile: {
+        signer: { signingDescriptor: `tr(${hex.encode(key(7))})` },
+        hashlock: { paymentHash: PAYMENT_HASH },
+    },
     amount: 25_000,
 };
 
 const receiveOrigin: RfqSwapOrigin = {
     kind: "lightning_receive",
-    paymentHash: PAYMENT_HASH,
     lockupAddress: RECEIVE_LOCKUP.address,
-    signingDescriptor: `tr(${hex.encode(key(15))})`,
-    preimageHex: "ee".repeat(32),
-    profile: { expectedAmount: 20_000, payoutAddress: "tark1qpayout" },
+    profile: {
+        signer: { signingDescriptor: `tr(${hex.encode(key(15))})` },
+        hashlock: { paymentHash: PAYMENT_HASH, preimageHex: "ee".repeat(32) },
+        expectedAmount: 20_000,
+        payoutAddress: "tark1qpayout",
+    },
     amount: 20_400,
 };
+
+/** The corridor's own hashlock, for an assertion about what was stored. */
+const hashlockOf = (record: { profile: Record<string, unknown> }) =>
+    record.profile.hashlock as { paymentHash: string; preimageHex?: string };
+
+const signerOf = (record: { profile: Record<string, unknown> }) =>
+    record.profile.signer as { signingDescriptor: string };
 
 const lockupFor = (origin: RfqSwapOrigin) =>
     origin.kind === "lightning_receive" ? RECEIVE_LOCKUP : SEND_LOCKUP;
@@ -109,7 +120,7 @@ const swapOf = (
         rfqId: "rfq-1",
         state,
         lockupPkScript: lockupFor(origin).pkScript,
-        paymentHash: origin.paymentHash,
+        paymentHash: hashlockOf(origin).paymentHash,
         refundLocktime: REFUND_LOCKTIME,
         createdAt: 1_000,
         updatedAt: 1_000,
@@ -175,7 +186,8 @@ describe("rebuildRfqSwap", () => {
         // leaves the params and the lockup check intact, so nothing about the
         // address would catch it — only this does.
         const record = createRfqSwapRecord(receiveOrigin, swapOf(receiveOrigin));
-        expect(() => rebuildRfqSwap({ ...record, profile: {} }, RECEIVE_LOCKUP.params)).toThrow(
+        const { expectedAmount: _dropped, ...profile } = record.profile;
+        expect(() => rebuildRfqSwap({ ...record, profile }, RECEIVE_LOCKUP.params)).toThrow(
             /expectedAmount/,
         );
     });
@@ -231,10 +243,12 @@ describe("an onchain-send record carries its L1 half", () => {
 
     const onchainOrigin: RfqSwapOrigin = {
         kind: "onchain_send",
-        paymentHash: PAYMENT_HASH,
         lockupAddress: SEND_LOCKUP.address,
-        signingDescriptor: `tr(${hex.encode(key(7))})`,
-        profile: { ...L1 },
+        profile: {
+            signer: { signingDescriptor: `tr(${hex.encode(key(7))})` },
+            hashlock: { paymentHash: PAYMENT_HASH },
+            ...L1,
+        },
         amount: 100_000,
     };
 
@@ -278,9 +292,12 @@ describe("an onchain-send record carries its L1 half", () => {
 
     it("refuses an onchain record with no L1 half rather than half-driving it", () => {
         const record = createRfqSwapRecord(onchainOrigin, onchainSwap());
-        expect(() => rebuildRfqSwap({ ...record, profile: {} }, SEND_LOCKUP.params)).toThrow(
-            /L1 keys/,
-        );
+        // keys and hashlock kept: this is about the L1 half alone, and a profile
+        // stripped of everything would fail the hashlock gate first
+        const { signer, hashlock } = record.profile;
+        expect(() =>
+            rebuildRfqSwap({ ...record, profile: { signer, hashlock } }, SEND_LOCKUP.params),
+        ).toThrow(/L1 keys/);
     });
 
     it("refuses an onchain record whose confirmation gate cannot be checked", () => {
@@ -340,9 +357,11 @@ describe("the record never carries a private key", () => {
     });
 
     it("keeps the descriptor and optional preimage used to recover the claim", () => {
+        // Under the corridor's own keys, not on the record: the descriptor is a
+        // signer question and the preimage material a hashlock one.
         const record = createRfqSwapRecord(receiveOrigin, swapOf(receiveOrigin));
-        expect(record.signingDescriptor).toBe(receiveOrigin.signingDescriptor);
-        expect(record.preimageHex).toBe("ee".repeat(32));
+        expect(signerOf(record).signingDescriptor).toBe(signerOf(receiveOrigin).signingDescriptor);
+        expect(hashlockOf(record).preimageHex).toBe("ee".repeat(32));
     });
 
     it("stores no covenant tree parameter — the contract row is the one copy", () => {
@@ -396,10 +415,10 @@ describe("updateRfqSwapRecord", () => {
         expect(moved.state).toBe("refunded");
         expect(moved.refundArkTxid).toBe("ff".repeat(32));
         expect(moved.updatedAt).toBe(2_000);
-        // the immutable half is untouched
-        expect(moved.paymentHash).toBe(sendOrigin.paymentHash);
+        // the immutable half is untouched, corridor keys included
+        expect(hashlockOf(moved).paymentHash).toBe(hashlockOf(sendOrigin).paymentHash);
         expect(moved.lockupAddress).toBe(sendOrigin.lockupAddress);
-        expect(moved.signingDescriptor).toBe(sendOrigin.signingDescriptor);
+        expect(signerOf(moved).signingDescriptor).toBe(signerOf(sendOrigin).signingDescriptor);
     });
 
     it("clears a field the swap no longer carries, not just sets new ones", () => {
@@ -414,7 +433,7 @@ describe("updateRfqSwapRecord", () => {
         const recovered = updateRfqSwapRecord(blocked, swapOf(sendOrigin, "pending"));
         expect(recovered.blockedReason).toBeUndefined();
         expect(recovered.failure).toBeUndefined();
-        expect(recovered.paymentHash).toBe(sendOrigin.paymentHash);
+        expect(hashlockOf(recovered).paymentHash).toBe(hashlockOf(sendOrigin).paymentHash);
         expect(recovered.lockupAddress).toBe(sendOrigin.lockupAddress);
     });
 
