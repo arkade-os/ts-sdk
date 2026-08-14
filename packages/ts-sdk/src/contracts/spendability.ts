@@ -40,11 +40,29 @@ export type ExcludableVtxo = { txid: string; vout: number; script?: string };
  */
 export type VtxoExclusion = (vtxo: ExcludableVtxo) => string | undefined;
 
-/** The contract gate as an exclusion, naming the type that closed it. */
+/**
+ * The contract gate as an exclusion, naming why it closed: a handler ran and
+ * declined, or this build has no handler for the type at all.
+ *
+ * The two want opposite reactions from whoever reads the log. A decline is
+ * the gate working as designed — nothing to do. A missing handler means a
+ * contract row this build cannot interpret, e.g. a vendoring or version
+ * mismatch, which is worth a reader's attention. `contractHandlers` is
+ * already available here, so the message can tell them apart instead of
+ * collapsing both into one sentence that reads as the same case either way.
+ */
 export function gateExclusion(gated: ReadonlyMap<string, string>): VtxoExclusion {
     return (vtxo) => {
         const type = vtxo.script === undefined ? undefined : gated.get(vtxo.script);
         if (type === undefined) return undefined;
+        // A handler present but declaring no `isGenericallySpendable` predicate
+        // reads the same as an explicit decline here: both are this build
+        // recognizing the type and landing on "closed", not failing to
+        // interpret the row. Splitting that case out further would flag a
+        // plugin-authoring gap, not something an operator can act on.
+        if (!contractHandlers.has(type)) {
+            return `at ${vtxo.script} (contract type '${type}') has no handler registered in this build`;
+        }
         return `at ${vtxo.script} (contract type '${type}') is not generically spendable`;
     };
 }

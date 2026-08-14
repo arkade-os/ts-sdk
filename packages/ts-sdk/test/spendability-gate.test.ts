@@ -4,6 +4,7 @@ import {
     BoardingContractHandler,
     DefaultContractHandler,
     DelegateContractHandler,
+    gateExclusion,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     isContractGenericallySpendable,
@@ -519,6 +520,32 @@ describe("spending sites consume the accessor", () => {
             }),
         ).rejects.toThrow();
         expect(wallet.getSpendableVtxos).toHaveBeenCalled();
+    });
+});
+
+describe("gateExclusion", () => {
+    const GATED_SCRIPT = "51200000000000000000000000000000000000000000000000000000000000000006";
+
+    it("names the ordinary refusal for a type this build has a handler for", () => {
+        // vhtlc-v2 is a real registered handler (see handlers/index.ts) that
+        // simply declines: the gate is working as designed here.
+        const exclusion = gateExclusion(new Map([[GATED_SCRIPT, "vhtlc-v2"]]));
+        expect(exclusion({ txid: "a", vout: 0, script: GATED_SCRIPT })).toBe(
+            `at ${GATED_SCRIPT} (contract type 'vhtlc-v2') is not generically spendable`,
+        );
+    });
+
+    it("names the missing handler for a type this build never registered", () => {
+        const exclusion = gateExclusion(new Map([[GATED_SCRIPT, "not-a-registered-type"]]));
+        expect(exclusion({ txid: "a", vout: 0, script: GATED_SCRIPT })).toBe(
+            `at ${GATED_SCRIPT} (contract type 'not-a-registered-type') has no handler registered in this build`,
+        );
+    });
+
+    it("returns undefined for a vtxo the gate does not cover", () => {
+        const exclusion = gateExclusion(new Map([[GATED_SCRIPT, "vhtlc-v2"]]));
+        expect(exclusion({ txid: "a", vout: 0, script: "not-gated" })).toBeUndefined();
+        expect(exclusion({ txid: "a", vout: 0 })).toBeUndefined();
     });
 });
 
