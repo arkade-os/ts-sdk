@@ -18,6 +18,8 @@ const swap = (id: string, createdAt = 1): AssetSwap => ({
     createdAt,
 });
 
+const REGISTRY = "https://registry.example";
+
 // one contract, every backend
 const backends: [string, () => AssetSwapRepository][] = [
     ["inMemory", () => new InMemoryAssetSwapRepository()],
@@ -44,12 +46,16 @@ describe.each(backends)("AssetSwapRepository (%s)", (_, create) => {
         expect(await repository.getScannedTxids()).toEqual(new Set(["t1", "t2", "t3"]));
     });
 
-    it("clears both swaps and scan state", async () => {
+    // All three stores, because clear() is all-or-nothing across them and a
+    // backend whose clear forgets one compiles and ships.
+    it("clears swaps, scan state and the markets cache", async () => {
         await using repository = create();
         await repository.saveSwap(swap("a"));
         await repository.markTxidsScanned(["t1"]);
+        await repository.saveCachedMarkets("regtest", REGISTRY, { markets: [], fetchedAt: 1 });
         await repository.clear();
         expect(await repository.getAllSwaps()).toEqual([]);
         expect(await repository.getScannedTxids()).toEqual(new Set());
+        expect(await repository.getCachedMarkets("regtest", REGISTRY)).toBeUndefined();
     });
 });
