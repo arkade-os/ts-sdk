@@ -347,10 +347,12 @@ console.log('Recoverable:', balance.recoverable)
 console.log('Awaiting recovery:', balance.pendingRecovery)
 ```
 
-`settled` and `preconfirmed` are what the wallet OWNS; `available` is what generic
-spending will actually pick. The difference is accounted for exactly:
+`settled` and `preconfirmed` are the owned offchain buckets this relationship is
+about — `recoverable` and `pendingRecovery` are the wallet's funds too, just held
+under a different predicate. `available` is what generic spending will actually
+pick, and the difference between the two is accounted for exactly:
 
-```
+```text
 settled + preconfirmed === available + gated + intentLocked
 ```
 
