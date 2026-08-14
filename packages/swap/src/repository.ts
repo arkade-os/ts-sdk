@@ -36,7 +36,13 @@ export interface AssetSwapRepository extends AsyncDisposable {
      * and `preimageSaltHex` both leave the swap unclaimable if a field-mapped
      * backend drops them — the first is the only claim secret of a swap whose
      * signer cannot derive, the second the public input every other static
-     * wallet's preimage derives from. */
+     * wallet's preimage derives from.
+     *
+     * Records must be **JSON-safe**: the SQLite and Realm backends serialize
+     * the record to JSON, so a `Date` in a consumer-added field comes back a
+     * string, a `Set`/`Map` comes back empty, and a `bigint` throws here —
+     * none of which happens on IndexedDB's structured clone. `AssetSwap` as
+     * declared is JSON-safe; keep added fields that way. */
     saveSwap(swap: AssetSwap): Promise<void>;
     /** All stored swaps, in no particular order — `getAssetSwaps` is the
      * canonical newest-first read. */
