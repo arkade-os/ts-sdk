@@ -47,9 +47,16 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         this.markets = `${this.prefix}asset_swap_markets`;
     }
 
+    /** A rejected init is not cached. The DDL runs in a transaction on a shared
+     * connection, so it can fail for reasons that pass — a `SQLITE_BUSY` on
+     * `BEGIN IMMEDIATE`, a neighbour's rollback — and caching that rejection
+     * would strand the instance unusable for the life of the process. Same rule
+     * as the IndexedDB backend's `ensureDb`. */
     private ensureInit(): Promise<void> {
-        if (!this.initPromise) this.initPromise = this.init();
-        return this.initPromise;
+        return (this.initPromise ??= this.init().catch((err) => {
+            this.initPromise = null;
+            throw err;
+        }));
     }
 
     /** The DDL is transactional in SQLite too: run raw on a shared connection it

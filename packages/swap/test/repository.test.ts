@@ -177,6 +177,30 @@ describe("SQLiteAssetSwapRepository", () => {
         expect(insertAt).toBeGreaterThan(rollbackAt);
     });
 
+    // A caching-forever ensureInit passes every other test in this file: the
+    // first init succeeds there, so only a transient failure exposes it.
+    it("retries init after a transient failure instead of caching the rejection", async () => {
+        const db = createNodeSQLExecutor();
+        let failNextDDL = true;
+        const flaky: SQLExecutor = {
+            run: (sql, params) => {
+                if (failNextDDL && sql.includes("CREATE TABLE")) {
+                    failNextDDL = false;
+                    return Promise.reject(new Error("database is locked"));
+                }
+                return db.run(sql, params);
+            },
+            get: (sql, params) => db.get(sql, params),
+            all: (sql, params) => db.all(sql, params),
+        };
+        await using repository = new SQLiteAssetSwapRepository(flaky);
+
+        await expect(repository.getAllSwaps()).rejects.toThrow("database is locked");
+
+        await repository.saveSwap(swap("a"));
+        expect((await repository.getAllSwaps()).map((s) => s.id)).toEqual(["a"]);
+    });
+
     it("isolates two prefixes on one connection", async () => {
         const db = createNodeSQLExecutor();
         await using app = new SQLiteAssetSwapRepository(db, { prefix: "app2_" });
