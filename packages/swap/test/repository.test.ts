@@ -352,3 +352,63 @@ describe("IndexedDB v1 -> v2 migration", () => {
         expect(await repository.getAllRfqSwaps()).toHaveLength(1);
     });
 });
+
+/**
+ * A connection that went away used to strand the repository: the manager closes
+ * the database on `versionchange` and this class cached the closed handle, so
+ * every later transaction threw `InvalidStateError` with no path back.
+ *
+ * Unreachable before the RFQ store, since the version never increased and
+ * `versionchange` never fired. The first upgrade is what makes it reachable, and
+ * there are two outcomes worth telling apart — recovery, and honest failure.
+ */
+describe("a repository whose connection went away", () => {
+    /** fake-indexeddb dispatches events on the microtask queue. */
+    const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    it("reopens after an external delete", async () => {
+        const dbName = `reopen-${Math.random()}`;
+        await using repository = new IndexedDbAssetSwapRepository(dbName);
+        await repository.saveRfqSwap(rfqRecord("r1"));
+
+        // an outside delete fires `versionchange`, and the manager closes on it
+        await new Promise<void>((resolve, reject) => {
+            const del = indexedDB.deleteDatabase(dbName);
+            del.onsuccess = () => resolve();
+            del.onerror = () => reject(del.error);
+        });
+        await flush();
+
+        // the recreated database is empty but usable — the point being that the
+        // repository opens one at all rather than reusing a closed handle
+        await repository.saveRfqSwap(rfqRecord("r2"));
+        expect((await repository.getAllRfqSwaps()).map((r) => r.rfqId)).toEqual(["r2"]);
+    });
+
+    it("fails honestly, and repeatably, when another tab upgraded past it", async () => {
+        // Terminal by design: an older bundle has no business writing a newer
+        // schema. What the fix converts is the diagnosis — `VersionError` names
+        // the reload, where `InvalidStateError` implies a client bug — and that
+        // every retry re-fails the same way instead of sticking.
+        const dbName = `newer-${Math.random()}`;
+        await using repository = new IndexedDbAssetSwapRepository(dbName);
+        await repository.saveRfqSwap(rfqRecord("r1"));
+
+        const newer = await new Promise<IDBDatabase>((resolve, reject) => {
+            const open = indexedDB.open(dbName, 99);
+            open.onsuccess = () => resolve(open.result);
+            open.onerror = () => reject(open.error);
+        });
+        await flush();
+        try {
+            for (const attempt of [1, 2]) {
+                await expect(
+                    repository.saveRfqSwap(rfqRecord(`r${attempt}`)),
+                    `attempt ${attempt}`,
+                ).rejects.toMatchObject({ name: "VersionError" });
+            }
+        } finally {
+            newer.close();
+        }
+    });
+});

@@ -27,7 +27,19 @@ const STORES: readonly [name: string, options?: IDBObjectStoreParameters][] = [
     [STORE_MARKETS],
 ];
 
-function initDatabase(db: IDBDatabase) {
+/**
+ * @param oldVersion the version being upgraded FROM, 0 on a fresh install.
+ * @param transaction the upgrade transaction — the only way to read or rewrite
+ * existing rows during a migration.
+ *
+ * Both unused today: every version so far has only added an object store, and
+ * `createObjectStore` needs neither. Named rather than dropped because the next
+ * migration will not be additive, and a signature that takes them is what makes
+ * "cursor over v2 rows and rewrite them" a local change here.
+ */
+function initDatabase(db: IDBDatabase, oldVersion: number, transaction: IDBTransaction | null) {
+    void oldVersion;
+    void transaction;
     for (const [name, options] of STORES) {
         if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, options);
     }
@@ -63,12 +75,35 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
 
     private ensureDb(): Promise<IDBDatabase> {
-        return (this.dbPromise ??= openDatabase(this.dbName, DB_VERSION, initDatabase).catch(
-            (err) => {
+        if (this.dbPromise) return this.dbPromise;
+        const opening = openDatabase(this.dbName, DB_VERSION, initDatabase)
+            .then((db) => {
+                // A connection that goes away must be forgotten, or every later
+                // transaction throws `InvalidStateError` with no path back — the
+                // manager closes the database on `versionchange` and this cache
+                // would still hold the closed handle. Reopening either recovers
+                // (an external delete, an eviction) or fails honestly with
+                // `VersionError` when another tab upgraded past this bundle,
+                // which names the reload instead of implying a client bug.
+                const forget = () => {
+                    // identity check: a reopen may already have replaced this
+                    // promise, and nulling that one would drop a live connection
+                    if (this.dbPromise === opening) this.dbPromise = null;
+                };
+                // addEventListener, not `db.onversionchange =`: that handler is
+                // the manager's, and its close is what we want to keep. `close`
+                // fires only on ABNORMAL termination per spec — never on an
+                // explicit close() — so the two never double-fire.
+                db.addEventListener("versionchange", forget);
+                db.addEventListener("close", forget);
+                return db;
+            })
+            .catch((err) => {
                 this.dbPromise = null;
                 throw err;
-            },
-        ));
+            });
+        this.dbPromise = opening;
+        return opening;
     }
 
     private async readStore(name: string): Promise<IDBObjectStore> {
