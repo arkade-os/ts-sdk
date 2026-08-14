@@ -818,6 +818,19 @@ scanned? })` — the server key is required because a spend is classified by reb
     params are checked against the record's `lockupAddress` before a swap is handed back, so the wrong
     row fails at restore rather than at refund time.
 
+- **The record names the transactions that funded the lockup.** `fundingTxids` is filled by the
+  manager from the chain read every pass already makes — no caller action, and no query of your own:
+  it is there so a swap's transactions can be grouped into one activity (funding, plus
+  `claimArkTxid` / `refundArkTxid` / the onchain leg's `claimTxid`) without an indexer round trip on
+  the read path, over records that may be terminal and months old. Not caller-supplied, because on a
+  receive leg the **solver** funds the lockup and the caller has nothing to write.
+
+    It is **append-only**: `updateRfqSwapRecord` unions it where the rest of the mutable half is
+    replaced, and a read that returns nothing adds nothing. An indexer that has pruned a long-spent
+    output must not be able to erase the one identifier its funding transaction is known by. Absent
+    means "learned nothing yet" — never "there was no funding" — so branch on absence, not on an
+    empty list.
+
 - **Pruning is the consumer's, and nothing here does it for you.** `shouldRetainRfqSwap(record, now)`
   answers whether a record is still worth keeping — live swaps and `needs_counterparty` always,
   terminal ones for `RFQ_SWAP_RETENTION_SECONDS` (30 days) after `updatedAt`. Sweep with it at boot

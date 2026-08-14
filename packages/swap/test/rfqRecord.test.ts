@@ -446,6 +446,58 @@ describe("updateRfqSwapRecord", () => {
     });
 });
 
+describe("the funding txids are append-only history, not state", () => {
+    const FUND_A = "1a".repeat(32);
+    const FUND_B = "2b".repeat(32);
+
+    const withFunding = (txids: string[], state: RfqSwapState = "pending") =>
+        ({ ...swapOf(sendOrigin, state), fundingTxids: txids }) as LightningSendSwap;
+
+    it("carries what the manager learned, and gives it back on rebuild", () => {
+        // Not on the origin: on a receive leg the SOLVER funds the lockup, so
+        // the caller has nothing to write at creation and the manager is the
+        // only thing that can answer.
+        const record = updateRfqSwapRecord(
+            createRfqSwapRecord(sendOrigin, swapOf(sendOrigin)),
+            withFunding([FUND_A]),
+        );
+        expect(record.fundingTxids).toEqual([FUND_A]);
+        // restored, so the next pass unions onto it instead of starting over
+        expect(rebuildRfqSwap(record, SEND_LOCKUP.params).fundingTxids).toEqual([FUND_A]);
+    });
+
+    it("unions rather than replacing, and never duplicates", () => {
+        const first = updateRfqSwapRecord(
+            createRfqSwapRecord(sendOrigin, swapOf(sendOrigin)),
+            withFunding([FUND_A]),
+        );
+        const second = updateRfqSwapRecord(first, withFunding([FUND_A, FUND_B]));
+        expect(second.fundingTxids).toEqual([FUND_A, FUND_B]);
+    });
+
+    it("cannot be erased by a live swap that does not carry it", () => {
+        // The reason this one field is unioned where the rest of the mutable
+        // half is replaced. A swap built by hand rather than by `rebuildRfqSwap`,
+        // or a pass whose indexer read came back short of a long-spent output,
+        // would otherwise delete the only identifier the funding transaction is
+        // known by — and nothing recovers it once that output is pruned.
+        const funded = updateRfqSwapRecord(
+            createRfqSwapRecord(sendOrigin, swapOf(sendOrigin)),
+            withFunding([FUND_A]),
+        );
+        const later = updateRfqSwapRecord(funded, swapOf(sendOrigin, "settled"));
+        expect(later.fundingTxids).toEqual([FUND_A]);
+    });
+
+    it("is absent, not empty, on a record that never saw a funding output", () => {
+        // Absence is "learned nothing", and a consumer branches on it; an empty
+        // array would read as "there was no funding".
+        const record = createRfqSwapRecord(sendOrigin, swapOf(sendOrigin));
+        expect(record.fundingTxids).toBeUndefined();
+        expect("fundingTxids" in record).toBe(false);
+    });
+});
+
 describe("shouldRetainRfqSwap", () => {
     const at = (state: RfqSwapState, updatedAt: number): RfqSwapRecord =>
         updateRfqSwapRecord(createRfqSwapRecord(sendOrigin, swapOf(sendOrigin)), {

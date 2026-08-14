@@ -132,6 +132,18 @@ export interface RfqSwapRecord extends RfqSwapOrigin {
     state: RfqSwapState;
     createdAt: number;
     updatedAt: number;
+    /**
+     * The transactions that funded the lockup — see
+     * {@link RfqSwapCommon.fundingTxids}.
+     *
+     * Common to every corridor, so it lives here rather than in a profile: every
+     * corridor has a funded lockup, and the manager learns this from the chain
+     * read it already makes on every pass. That is also why it is not on
+     * {@link RfqSwapOrigin}: on a receive leg the SOLVER funds the lockup, so a
+     * caller-supplied field would be structurally absent on the one leg whose
+     * history is hardest to reconstruct.
+     */
+    fundingTxids?: string[];
     refundArkTxid?: string;
     failure?: string;
     blockedReason?: string;
@@ -152,6 +164,7 @@ const managerState = (swap: PersistableRfqSwap) => ({
     state: swap.state,
     createdAt: swap.createdAt,
     updatedAt: swap.updatedAt,
+    ...(swap.fundingTxids?.length ? { fundingTxids: [...swap.fundingTxids] } : {}),
     ...(swap.refundArkTxid ? { refundArkTxid: swap.refundArkTxid } : {}),
     ...(swap.failure ? { failure: swap.failure } : {}),
     ...(swap.blockedReason ? { blockedReason: swap.blockedReason } : {}),
@@ -204,6 +217,21 @@ export function createRfqSwapRecord(
     };
 }
 
+/** Append-only, order-preserving. See {@link updateRfqSwapRecord}. */
+const unionTxids = (
+    stored: readonly string[] | undefined,
+    learned: readonly string[] | undefined,
+): string[] => {
+    const out = [...(stored ?? [])];
+    const seen = new Set(out);
+    for (const txid of learned ?? []) {
+        if (seen.has(txid)) continue;
+        seen.add(txid);
+        out.push(txid);
+    }
+    return out;
+};
+
 /**
  * Every later write. The origin half is carried through untouched.
  *
@@ -212,6 +240,13 @@ export function createRfqSwapRecord(
  * set these fields, never clear them. The manager clears them on purpose: it
  * deletes `blockedReason` when a swap leaves `needs_counterparty`, precisely
  * because a stale `blockedReason` reads as a live refusal.
+ *
+ * `fundingTxids` is the one exception, and unions instead. It is append-only
+ * history, not state: a live swap built by hand rather than by
+ * {@link rebuildRfqSwap}, or a pass whose indexer read came back short of a
+ * long-spent output, must not be able to delete the identifier the funding
+ * transaction is known by — nothing recovers it once the indexer has pruned the
+ * output it was read from.
  */
 export function updateRfqSwapRecord(
     record: RfqSwapRecord,
@@ -226,15 +261,18 @@ export function updateRfqSwapRecord(
         refundArkTxid: _refundArkTxid,
         failure: _failure,
         blockedReason: _blockedReason,
+        fundingTxids: stored,
         ...origin
     } = record;
     const handler = rfqCorridorHandlers.getOrThrow(record.kind);
     // The profile MERGES rather than being replaced: `project` returns only
     // what the manager can change, and the rest came from the request result
     // and has no other source.
+    const fundingTxids = unionTxids(stored, swap.fundingTxids);
     return {
         ...origin,
         ...managerState(swap),
+        ...(fundingTxids.length ? { fundingTxids } : {}),
         profile: { ...record.profile, ...handler.project(swap) },
     };
 }
@@ -287,6 +325,10 @@ export function rebuildRfqSwap(record: RfqSwapRecord, params: LockupParams): Per
         refundLocktime: Number(script.options.refundLocktime),
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
+        // Restored so the next pass unions onto what is already known rather
+        // than starting over — the manager's own accumulation is what keeps this
+        // append-only across a restart.
+        ...(record.fundingTxids?.length ? { fundingTxids: [...record.fundingTxids] } : {}),
         ...(record.refundArkTxid ? { refundArkTxid: record.refundArkTxid } : {}),
         ...(record.failure ? { failure: record.failure } : {}),
         ...(record.blockedReason ? { blockedReason: record.blockedReason } : {}),

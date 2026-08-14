@@ -237,6 +237,24 @@ interface RfqSwapCommon {
     refundLocktime: number;
     createdAt: number;
     updatedAt: number;
+    /**
+     * The transactions that funded this lockup, learned from the chain read
+     * every pass already makes.
+     *
+     * The wallet's own history is keyed by funding txid, so this is what lets a
+     * swap's transactions be grouped into one activity without an indexer query
+     * on the read path — over records that may be terminal and months old.
+     *
+     * **Append-only.** A read that returns nothing adds nothing rather than
+     * clearing it: an indexer that has pruned a long-spent output must not be
+     * able to erase the one identifier the funding transaction is known by.
+     * `updateRfqSwapRecord` unions rather than replaces for the same reason.
+     *
+     * The arkade lockup's funding, on every corridor. The onchain leg's L1 fill
+     * is a different chain and a different transaction, and stays on that
+     * corridor's own profile.
+     */
+    fundingTxids?: string[];
     /** Set once the trader's own `refundWithoutReceiver` push landed. */
     refundArkTxid?: string;
     /** Why `state` is `failed`. */
@@ -1095,6 +1113,10 @@ export class RfqSwapManager {
             // that do not care whether the indexer is up.
             fate = { fate: "unknown" };
         }
+        // Before the resolution branch, not after: a swap that ends on this very
+        // pass still has to carry the transaction that funded it, and the write
+        // that follows is its last.
+        this.noteFunding(swap, fate.fundingTxids);
         if (fate.fate === "claimed" || fate.fate === "returned") {
             this.setState(swap, fate.fate === "claimed" ? "settled" : "refunded");
             return;
@@ -1531,6 +1553,30 @@ export class RfqSwapManager {
     private unblock(swap: RfqSwap): void {
         if (swap.state !== "needs_counterparty") return;
         this.setState(swap, traderClaimTxid(swap) ? "claimed" : "pending");
+    }
+
+    /**
+     * Record the transactions that funded the lockup, from the read this pass
+     * already made.
+     *
+     * Free: `readLockupFate` fetches those outputs to decide the swap's fate and
+     * was discarding their txids. Recovering them later would mean an indexer
+     * query on the read path, keyed by script, for a transaction the wallet's
+     * own history is keyed by.
+     *
+     * Unions, and only touches when something was actually new — a pass that
+     * learned nothing must not stamp `updatedAt`, which is what terminal
+     * retention is measured from. `undefined` means the read failed or returned
+     * nothing; see {@link LockupFate.fundingTxids} for why that is not "there
+     * was no funding".
+     */
+    private noteFunding(swap: RfqSwap, txids: readonly string[] | undefined): void {
+        if (!txids?.length) return;
+        const known = new Set(swap.fundingTxids ?? []);
+        const added = txids.filter((txid) => !known.has(txid));
+        if (added.length === 0) return;
+        swap.fundingTxids = [...(swap.fundingTxids ?? []), ...added];
+        this.touch(swap);
     }
 
     private touch(swap: RfqSwap): void {

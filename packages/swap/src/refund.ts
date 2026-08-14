@@ -308,9 +308,9 @@ export type LockupSpendIndexer = Pick<RestIndexerProvider, "getVtxos" | "getVirt
  * What chain data says became of a swap lockup — the whole answer, with no
  * solver involvement and nothing taken on the solver's word.
  */
-export type LockupFate =
-    /** At least one output at the lockup is still unspent. Not over. */
-    | { fate: "open" }
+export type LockupFate = (
+    | /** At least one output at the lockup is still unspent. Not over. */
+    { fate: "open" }
     /** Spent by a witness carrying a preimage that HASHES to the quote's
      * `payment_hash`. Only the claim leaf can reveal one, and the only
      * legitimate way the solver obtains it is by completing its side. */
@@ -321,7 +321,24 @@ export type LockupFate =
     /** Nothing was learned: no outputs visible, an output spent by nothing the
      * indexer names, a spend it could not produce, or a blob that would not
      * decode. Never an answer. */
-    | { fate: "unknown" };
+    | { fate: "unknown" }
+) & {
+    /**
+     * The transactions that FUNDED the lockup — every distinct `txid` among the
+     * outputs at its script, spent or not.
+     *
+     * Carried on the fate rather than fetched separately because this read
+     * already has them: the funding txid is the one identifier a wallet's own
+     * history is keyed by, and recovering it later means another indexer query
+     * on the READ path, over records that may be terminal and months old.
+     *
+     * Absent, not empty, when nothing was read — including the caller's own
+     * fabricated `{ fate: "unknown" }` after a failed read. A consumer must
+     * treat absence as "learned nothing this time" and keep what it had, never
+     * as "there was no funding".
+     */
+    fundingTxids?: readonly string[];
+};
 
 /** `sha256(candidate)` against the quote's wire-form payment hash. This — not
  * a matching witness SHAPE — is the only thing that turns a witness item into
@@ -392,6 +409,12 @@ export async function readLockupFate(
     const all = vtxos ?? [];
     if (all.length === 0) return { fate: "unknown" };
 
+    // Collected BEFORE the loop below, which returns as soon as it finds one
+    // unspent output: gathering these as it went would report whichever prefix
+    // it happened to visit. Deduped because one transaction can fund a lockup
+    // with more than one output.
+    const fundingTxids = [...new Set(all.map((vtxo) => vtxo.txid))];
+
     const spentBy = new Set<string>();
     let everySpendNamed = true;
     for (const vtxo of all) {
@@ -400,7 +423,8 @@ export async function readLockupFate(
         // so a `spentBy`-only test would read an output that is gone as one
         // still sitting there. Same union — and the same reason — as the SDK's
         // own `hasTerminalSpend`.
-        if (!vtxo.isSpent && !vtxo.spentBy && !vtxo.settledBy) return { fate: "open" };
+        if (!vtxo.isSpent && !vtxo.spentBy && !vtxo.settledBy)
+            return { fate: "open", fundingTxids };
         // `spentBy` is the EMPTY STRING, not absent, when there is nothing to
         // name, so this is a truthiness test and never a presence one. When it
         // IS set it names the CHECKPOINT transaction, which is exactly the one
@@ -437,7 +461,7 @@ export async function readLockupFate(
             if (!all.some((vtxo) => vtxo.txid === txid && vtxo.vout === spent.index)) continue;
             for (const candidate of candidateWitnessItems(tx, i)) {
                 if (hashesTo(candidate, input.paymentHash)) {
-                    return { fate: "claimed", preimage: candidate };
+                    return { fate: "claimed", preimage: candidate, fundingTxids };
                 }
             }
         }
@@ -445,8 +469,8 @@ export async function readLockupFate(
 
     // Only a lockup whose every spend was actually seen can be called returned.
     return everySpendNamed && observed.size === spentBy.size
-        ? { fate: "returned" }
-        : { fate: "unknown" };
+        ? { fate: "returned", fundingTxids }
+        : { fate: "unknown", fundingTxids };
 }
 
 /**

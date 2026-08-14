@@ -38,6 +38,7 @@ import {
 import {
     LockupNeedsRecoveryError,
     REFUND_MTP_LAG_SECONDS,
+    readLockupFate,
     type LockupSpendIndexer,
     type LockupVtxo,
 } from "../src/refund";
@@ -1801,6 +1802,130 @@ describe("RfqSwapManager — bookkeeping", () => {
         await m.addSwap(swap);
         await m.poll();
         expect(s.saved).toEqual(["settled"]);
+    });
+
+    describe("the transactions that funded the lockup", () => {
+        /** The saved swaps themselves, not just their states. */
+        const withSaves = (over: Parameters<typeof spies>[0] = {}) => {
+            const s = spies(over);
+            const writes: (readonly string[] | undefined)[] = [];
+            s.callbacks.saveSwap = async (swap) => {
+                s.saved.push(swap.state);
+                writes.push(swap.fundingTxids && [...swap.fundingTxids]);
+            };
+            return { s, writes };
+        };
+
+        it("records what the fate read already fetched, on the pass that reads it", async () => {
+            // Free: `readLockupFate` fetches these outputs to decide the swap,
+            // and was throwing their txids away. The alternative is an indexer
+            // query on the READ path, keyed by script, for the transaction the
+            // wallet's own history is keyed by.
+            const { s, writes } = withSaves();
+            const swap = lightningSwap();
+            const m = manager({ now: SAFE_NOW, spies: s });
+            await m.addSwap(swap);
+            await m.poll();
+
+            expect(swap.fundingTxids).toEqual([LOCKUP_OUTPOINT.txid]);
+            // and it reached storage on that same pass, not only on the next one
+            expect(writes).toEqual([[LOCKUP_OUTPOINT.txid]]);
+        });
+
+        it("records it on the pass that ENDS the swap too", async () => {
+            // The last write is the last chance: a settled swap is finalized and
+            // never polled again, so capturing after the resolution branch would
+            // leave exactly the records history renders from without a txid.
+            const { s, writes } = withSaves();
+            const swap = lightningSwap();
+            const m = manager({ indexer: settledIndexer(), now: SAFE_NOW, spies: s });
+            await m.addSwap(swap);
+            await m.poll();
+
+            expect(swap.state).toBe("settled");
+            expect(writes).toEqual([[LOCKUP_OUTPOINT.txid]]);
+        });
+
+        it("unions across passes, and a read that learns nothing changes nothing", async () => {
+            const { s } = withSaves();
+            const swap = lightningSwap();
+            const second = { txid: "88".repeat(32), vout: 1, spentBy: "" };
+            const indexer = fakeIndexer({ vtxos: unspent() });
+            const m = manager({ indexer, now: SAFE_NOW, spies: s });
+            await m.addSwap(swap);
+            await m.poll();
+            const stamped = swap.updatedAt;
+
+            // same output again: nothing new, so `updatedAt` must not move —
+            // terminal retention is measured from it
+            await m.poll();
+            expect(swap.fundingTxids).toEqual([LOCKUP_OUTPOINT.txid]);
+            expect(swap.updatedAt).toBe(stamped);
+
+            // a second funding output, at a different transaction
+            indexer.getVtxos = fakeIndexer({ vtxos: [...unspent(), second] }).getVtxos;
+            await m.poll();
+            expect(swap.fundingTxids).toEqual([LOCKUP_OUTPOINT.txid, second.txid]);
+        });
+
+        it("is reported by every arm of the fate read, deduped", async () => {
+            // Per-arm, because the read returns from four places and the two
+            // early ones return mid-loop — a later edit that forgets the field
+            // on one of them would leave exactly one corridor's records bare.
+            const fate = (state: Parameters<typeof fakeIndexer>[0]) =>
+                readLockupFate(fakeIndexer(state), {
+                    swapPkScript: LOCKUP.pkScript,
+                    paymentHash: PAYMENT_HASH,
+                });
+            const only = [LOCKUP_OUTPOINT.txid];
+
+            // open: returns on the FIRST unspent output, so the txids cannot be
+            // gathered as the loop goes — a second output of the same funding
+            // transaction has to be counted once, not missed and not twice
+            await expect(
+                fate({ vtxos: [...unspent(), { ...LOCKUP_OUTPOINT, vout: 1, spentBy: "" }] }),
+            ).resolves.toMatchObject({ fate: "open", fundingTxids: only });
+            // claimed: also an early return, from inside the witness search
+            await expect(
+                fate({ vtxos: spentBy(CLAIM_SPEND.txid), txs: [CLAIM_SPEND] }),
+            ).resolves.toMatchObject({ fate: "claimed", fundingTxids: only });
+            // returned
+            const refund = spendOfLockup({ leaf: "refundWithoutReceiver" });
+            await expect(
+                fate({ vtxos: spentBy(refund.txid), txs: [refund] }),
+            ).resolves.toMatchObject({ fate: "returned", fundingTxids: only });
+            // unknown, but the outputs were still read — this is the arm where
+            // "nothing was learned about the FATE" and "nothing was learned at
+            // all" come apart
+            await expect(fate({ vtxos: [spentUnnamed()] })).resolves.toMatchObject({
+                fate: "unknown",
+                fundingTxids: only,
+            });
+            // and nothing at the script reports nothing, rather than an empty list
+            expect(await fate({ vtxos: [] })).toEqual({ fate: "unknown" });
+        });
+
+        it("keeps what it knows when the read fails or comes back empty", async () => {
+            // An indexer that has pruned a long-spent output must not be able to
+            // erase the only identifier that transaction is known by — nothing
+            // recovers it afterwards.
+            const { s } = withSaves();
+            const swap = lightningSwap();
+            const indexer = fakeIndexer({ vtxos: unspent() });
+            const m = manager({ indexer, now: SAFE_NOW, spies: s });
+            await m.addSwap(swap);
+            await m.poll();
+
+            indexer.getVtxos = async () => {
+                throw new Error("indexer unreachable");
+            };
+            await m.poll();
+            expect(swap.fundingTxids).toEqual([LOCKUP_OUTPOINT.txid]);
+
+            indexer.getVtxos = async () => ({ vtxos: [] });
+            await m.poll();
+            expect(swap.fundingTxids).toEqual([LOCKUP_OUTPOINT.txid]);
+        });
     });
 
     it("runs one action at a time per swap", async () => {

@@ -143,6 +143,20 @@ nothing will tell it when it does not.
   inputs against, so it is the easiest to skip and impossible to reconstruct later. Without this
   profile a restored swap watches nothing and its L1 refund window passes unwatched.
 
+### The funding txids come for free
+
+`record.fundingTxids` names the transactions that funded the lockup. **Nothing for the wallet to
+write** — the manager fills it from the chain read it already makes on every pass, and
+`rebuildRfqSwap` gives it back at boot. Use it as the correlation key for history: a swap's own
+transactions are that list plus `refundArkTxid`, the receive leg's `profile.claimArkTxid`, and the
+onchain leg's `profile.claimTxid`, so grouping them into one activity needs no indexer query on the
+read path.
+
+Two properties to rely on: it is **append-only** (a read that learns nothing changes nothing, and
+`updateRfqSwapRecord` unions rather than replaces — so a swap object the wallet built by hand cannot
+erase it), and **absence means "not learned yet"**, never "there was no funding". Branch on absence
+rather than on an empty array.
+
 ### Not every corridor has a hashlock
 
 The three corridors shipping today all lock to a preimage, so all three carry `profile.hashlock` —
