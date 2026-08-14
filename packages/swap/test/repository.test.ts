@@ -5,7 +5,9 @@ import { AssetSwapRepository, InMemoryAssetSwapRepository } from "../src/reposit
 import { IndexedDbAssetSwapRepository } from "../src/indexedDbRepository";
 import { runInTransaction, type SQLExecutor } from "@arkade-os/sdk/repositories/sqlite";
 import { SQLiteAssetSwapRepository } from "../src/repositories/sqlite";
+import { RealmAssetSwapRepository } from "../src/repositories/realm";
 import { createNodeSQLExecutor } from "../../../config/test-helpers/nodeSqlExecutor";
+import { createMockRealm } from "../../../config/test-helpers/mockRealm";
 import { btcUsd } from "./fixtures";
 
 const swap = (id: string, createdAt = 1): AssetSwap => ({
@@ -30,6 +32,17 @@ const backends: [string, () => AssetSwapRepository][] = [
     // unique db name per run so fake-indexeddb state never leaks between tests
     ["indexedDb", () => new IndexedDbAssetSwapRepository(`test-${Math.random()}`)],
     ["sqlite", () => new SQLiteAssetSwapRepository(createNodeSQLExecutor())],
+    [
+        "realm",
+        () =>
+            new RealmAssetSwapRepository(
+                createMockRealm({
+                    ArkadeAssetSwap: "id",
+                    ArkadeAssetSwapScannedTxid: "txid",
+                    ArkadeAssetSwapMarketsCache: "key",
+                }),
+            ),
+    ],
 ];
 
 describe.each(backends)("AssetSwapRepository (%s)", (_, create) => {

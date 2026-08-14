@@ -13,6 +13,10 @@ import { hex } from "@scure/base";
 import { ArkAddress, asset } from "@arkade-os/sdk";
 import { encodeOffer, decodeOffer, offerVtxoScript } from "../dist/index.js";
 import { SQLiteAssetSwapRepository } from "../dist/repositories/sqlite/index.js";
+import {
+    AssetSwapRealmSchemas,
+    RealmAssetSwapRepository,
+} from "../dist/repositories/realm/index.js";
 
 const pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(resolve(pkgRoot, "package.json"), "utf8"));
@@ -35,9 +39,13 @@ for (const field of ["main", "types"]) {
     }
 }
 
-// Constructing is the check: the executor is never touched.
+// Constructing is the check: neither handle is touched.
 const stubExecutor = { run: async () => {}, get: async () => undefined, all: async () => [] };
 new SQLiteAssetSwapRepository(stubExecutor);
+new RealmAssetSwapRepository({});
+if (AssetSwapRealmSchemas.length !== 3) {
+    throw new Error(`expected 3 Realm schemas, got ${AssetSwapRealmSchemas.length}`);
+}
 
 const server = hex.decode("4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa");
 const offer = {
