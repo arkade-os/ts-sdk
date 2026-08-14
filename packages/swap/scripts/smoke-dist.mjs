@@ -6,17 +6,24 @@
 // import types only from @arkade-os/sdk/repositories/*, so nothing survives to
 // runtime and a real import is safe — and it is the import, not the file-
 // existence walk, that catches a broken exports map.
+//
+// So every import here goes through the package name, not `../dist/...`: a
+// relative path resolves whatever is on disk and would pass with the exports
+// map removed, malformed, or missing the subpath a consumer writes. Both
+// conditions are exercised, since `import` and `require` resolve separately and
+// a subpath can be correct under one and broken under the other.
 import { readFileSync, existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hex } from "@scure/base";
 import { ArkAddress, asset } from "@arkade-os/sdk";
-import { encodeOffer, decodeOffer, offerVtxoScript } from "../dist/index.js";
-import { SQLiteAssetSwapRepository } from "../dist/repositories/sqlite/index.js";
+import { encodeOffer, decodeOffer, offerVtxoScript } from "@arkade-os/swap";
+import { SQLiteAssetSwapRepository } from "@arkade-os/swap/repositories/sqlite";
 import {
     AssetSwapRealmSchemas,
     RealmAssetSwapRepository,
-} from "../dist/repositories/realm/index.js";
+} from "@arkade-os/swap/repositories/realm";
 
 const pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(resolve(pkgRoot, "package.json"), "utf8"));
@@ -36,6 +43,26 @@ walkExports(pkg.exports, "exports");
 for (const field of ["main", "types"]) {
     if (pkg[field] && !existsSync(resolve(pkgRoot, pkg[field]))) {
         throw new Error(`${field} → missing ${pkg[field]}`);
+    }
+}
+
+// Resolve every declared subpath as a consumer would — by specifier, under both
+// conditions. Driven off the exports keys, so a subpath added later is covered
+// without touching this script. The static imports above already cover three
+// specifiers under `import`; this is what covers `require`.
+const require = createRequire(resolve(pkgRoot, "package.json"));
+const specifiers = Object.keys(pkg.exports).map((key) =>
+    key === "." ? pkg.name : `${pkg.name}${key.slice(1)}`,
+);
+for (const specifier of specifiers) {
+    const [esm, cjs] = [await import(specifier), require(specifier)];
+    for (const [condition, mod] of [
+        ["import", esm],
+        ["require", cjs],
+    ]) {
+        if (!mod || Object.keys(mod).length === 0) {
+            throw new Error(`${specifier} (${condition}) → resolved to an empty module`);
+        }
     }
 }
 
