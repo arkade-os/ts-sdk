@@ -52,6 +52,31 @@ export namespace VHTLC {
             senderPkScript: Bytes;
             emulatorPubkey: Bytes;
         };
+        /**
+         * Optional: denominate this contract in an Arkade ASSET rather than in
+         * sats alone.
+         *
+         * Only the two NON-INTERACTIVE leaves change. Every other leaf is a
+         * signature path that asserts nothing about value, so an asset makes no
+         * difference to them — which is why this option reaches exactly the
+         * leaves whose covenant the emulator enforces.
+         *
+         * When set, those covenants additionally require the output to carry at
+         * least the input's amount of THIS asset, and to carry exactly one
+         * asset. The sat clause is RETAINED, not replaced: an asset-carrying
+         * VTXO carries sats too, so dropping it would let a spend satisfy the
+         * asset covenant while stripping the sats — exactly as the sat-only
+         * covenant lets a spend strip the asset.
+         *
+         * The id is the pair the introspection opcodes take. A canonical Asset
+         * ID is `(genesis txid, group index)`, never a single blob.
+         */
+        asset?: {
+            /** The asset's genesis transaction id, 32 bytes. */
+            txid: Bytes;
+            /** The asset group index within that genesis transaction. */
+            groupIndex: number;
+        };
     }
 
     /**
@@ -138,7 +163,10 @@ export namespace VHTLC {
             let arkadeScriptNic: Bytes | undefined;
             let nonInteractiveClaimScript: Bytes | undefined;
             if (options.nonInteractiveClaim) {
-                arkadeScriptNic = enforcePayTo(options.nonInteractiveClaim.receiverPkScript);
+                arkadeScriptNic = enforcePayToMaybeAsset(
+                    options.nonInteractiveClaim.receiverPkScript,
+                    options.asset,
+                );
                 nonInteractiveClaimScript = ConditionMultisigTapscript.encode({
                     conditionScript,
                     pubkeys: [
@@ -155,7 +183,10 @@ export namespace VHTLC {
             let arkadeScriptNir: Bytes | undefined;
             let nonInteractiveRefundScript: Bytes | undefined;
             if (options.nonInteractiveRefund) {
-                arkadeScriptNir = enforcePayTo(options.nonInteractiveRefund.senderPkScript);
+                arkadeScriptNir = enforcePayToMaybeAsset(
+                    options.nonInteractiveRefund.senderPkScript,
+                    options.asset,
+                );
                 // No timelock: server + receiver together can release this
                 // immediately, same as `refund` above, just without needing
                 // the sender's own signature — the covenant is what still
@@ -468,4 +499,96 @@ function enforcePayTo(destinationPkScript: Bytes): Bytes {
         "INSPECTINPUTVALUE",
         "GREATERTHANOREQUAL",
     ]);
+}
+
+/**
+ * {@link enforcePayTo} for a contract denominated in an Arkade ASSET: the same
+ * covenant, plus "carries at least the input's amount of exactly this one
+ * asset".
+ *
+ * The sat covenant is this one's TAIL, restated inline below, so an asset
+ * contract enforces everything a sat contract does and never less.  That
+ * matters because an asset-carrying VTXO carries sats too: a covenant
+ * constraining only the asset would let a spend strip the sats, and the
+ * sat-only covenant lets a spend strip the ASSET -- the loss this exists to
+ * prevent.
+ *
+ * Two opcode details decide whether it is safe, and the intuitive reading gets
+ * both wrong:
+ *
+ *  - A canonical Asset ID is TWO stack items, `asset_txid` then `asset_gidx`.
+ *    Pushing it as one 32-byte blob encodes cleanly and fails only at spend
+ *    time, once the contract is already funded.
+ *  - `INSPECTOUTASSETLOOKUP` pushes `amount 1`, or `0 0` when the asset is
+ *    ABSENT.  The `VERIFY` after each lookup pops that success flag and is
+ *    load-bearing, not defensive: without it an output carrying NONE of the
+ *    asset reports amount 0, `0 >= 0` passes, and the stripping spend succeeds
+ *    anyway.  Applied to the input lookup too, so an input whose asset is
+ *    undeclared cannot compare `0 >= 0` either.
+ *
+ * `INSPECTOUTASSETCOUNT == 1` bounds the output to the single asset bound, so
+ * nothing can be injected alongside it.  Deliberately strict: a covenant that
+ * is too permissive cannot be tightened once funds are locked to it, while a
+ * strict one can be relaxed in a later contract version.
+ */
+function enforcePayToAsset(
+    destinationPkScript: Bytes,
+    asset: { txid: Bytes; groupIndex: number },
+): Bytes {
+    if (!isP2trPkScript(destinationPkScript)) {
+        throw new Error("invalid P2TR script");
+    }
+    if (asset.txid.length !== 32) {
+        throw new Error(`asset txid must be 32 bytes, got ${asset.txid.length}`);
+    }
+    if (!Number.isInteger(asset.groupIndex) || asset.groupIndex < 0 || asset.groupIndex > 0xffff) {
+        throw new Error(
+            `asset group index must be an integer in [0, 65535], got ${asset.groupIndex}`,
+        );
+    }
+    return ArkadeScript.encode([
+        // The output carries at least as much of the asset as the input did.
+        // Output index is the input's -- the same index alignment the sat
+        // covenant relies on, and the same liveness obligation on whoever
+        // assembles the spend.
+        "PUSHCURRENTINPUTINDEX",
+        asset.txid,
+        asset.groupIndex,
+        "INSPECTOUTASSETLOOKUP",
+        "VERIFY", // PRESENT on the output, not merely "zero of it"
+        "PUSHCURRENTINPUTINDEX",
+        asset.txid,
+        asset.groupIndex,
+        "INSPECTINASSETLOOKUP",
+        "VERIFY", // ...and on the input, so the comparison means something
+        "GREATERTHANOREQUAL",
+        "VERIFY",
+        // Exactly one asset out: nothing injected alongside the one bound.
+        "PUSHCURRENTINPUTINDEX",
+        "INSPECTOUTASSETCOUNT",
+        1,
+        "EQUALVERIFY",
+        // ...then the sat covenant, byte-for-byte enforcePayTo above.
+        "PUSHCURRENTINPUTINDEX",
+        "DUP",
+        "INSPECTOUTPUTSCRIPTPUBKEY",
+        1,
+        "EQUALVERIFY",
+        destinationPkScript.subarray(2),
+        "EQUALVERIFY",
+        "INSPECTOUTPUTVALUE",
+        "PUSHCURRENTINPUTINDEX",
+        "INSPECTINPUTVALUE",
+        "GREATERTHANOREQUAL",
+    ]);
+}
+
+/** Pick the covenant this contract's denomination calls for. */
+function enforcePayToMaybeAsset(
+    destinationPkScript: Bytes,
+    asset?: { txid: Bytes; groupIndex: number },
+): Bytes {
+    return asset === undefined
+        ? enforcePayTo(destinationPkScript)
+        : enforcePayToAsset(destinationPkScript, asset);
 }

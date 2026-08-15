@@ -425,3 +425,90 @@ describe("VHTLC address", () => {
         });
     });
 });
+
+describe("VHTLC.ScriptV2 — asset denomination", () => {
+    const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
+    const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
+    const baseOptions = () => ({
+        preimageHash: new Uint8Array(20).fill(9),
+        sender: key(1),
+        receiver: key(2),
+        server: key(3),
+        refundLocktime: 1_800_000_000n,
+        unilateralClaimDelay: { type: "seconds" as const, value: 512n },
+        unilateralRefundDelay: { type: "seconds" as const, value: 1024n },
+        unilateralRefundWithoutReceiverDelay: { type: "seconds" as const, value: 1536n },
+    });
+
+    const receiverPkScript = p2tr(key(4));
+    const emulatorPubkey = key(5);
+    const asset = { txid: new Uint8Array(32).fill(0xab), groupIndex: 2 };
+
+    const withAsset = (extra: object = {}) =>
+        new VHTLC.ScriptV2({
+            ...baseOptions(),
+            nonInteractiveClaim: { receiverPkScript, emulatorPubkey },
+            nonInteractiveRefund: { senderPkScript: p2tr(key(6)), emulatorPubkey },
+            ...extra,
+        });
+
+    it("leaves every script byte-identical when no asset is given", () => {
+        // The compatibility property. Every contract already funded derives
+        // from the sat covenant; a change of one byte makes those underivable
+        // and therefore unspendable.
+        const sats = withAsset();
+        const explicitlyNone = withAsset({ asset: undefined });
+        expect(hex.encode(explicitlyNone.pkScript)).toBe(hex.encode(sats.pkScript));
+        expect(explicitlyNone.nonInteractiveClaimScript).toBe(sats.nonInteractiveClaimScript);
+        expect(explicitlyNone.nonInteractiveRefundScript).toBe(sats.nonInteractiveRefundScript);
+    });
+
+    it("changes ONLY the two non-interactive leaves", () => {
+        // Every other leaf is a signature path asserting nothing about value,
+        // so an asset must make no difference to them. This is what "mostly
+        // just the non-interactive paths" means, checked rather than asserted.
+        const sats = withAsset();
+        const assets = withAsset({ asset });
+
+        expect(assets.claimScript).toBe(sats.claimScript);
+        expect(assets.refundScript).toBe(sats.refundScript);
+        expect(assets.unilateralClaimScript).toBe(sats.unilateralClaimScript);
+        expect(assets.unilateralRefundScript).toBe(sats.unilateralRefundScript);
+        expect(assets.unilateralRefundWithoutReceiverScript).toBe(
+            sats.unilateralRefundWithoutReceiverScript,
+        );
+
+        // ...and the two that DO change, change.
+        expect(assets.nonInteractiveClaimScript).not.toBe(sats.nonInteractiveClaimScript);
+        expect(assets.nonInteractiveRefundScript).not.toBe(sats.nonInteractiveRefundScript);
+        // which necessarily moves the address
+        expect(hex.encode(assets.pkScript)).not.toBe(hex.encode(sats.pkScript));
+    });
+
+    it("keeps the sat covenant as the tail, so an asset contract never enforces less", () => {
+        const sats = withAsset();
+        const assets = withAsset({ asset });
+        const satCovenant = hex.encode(sats.nonInteractiveClaimArkadeScript!);
+        const assetCovenant = hex.encode(assets.nonInteractiveClaimArkadeScript!);
+        expect(assetCovenant.endsWith(satCovenant)).toBe(true);
+        expect(assetCovenant.length).toBeGreaterThan(satCovenant.length);
+    });
+
+    it("binds the asset id, so a different asset is a different contract", () => {
+        const a = withAsset({ asset });
+        const otherTxid = withAsset({ asset: { ...asset, txid: new Uint8Array(32).fill(0xcd) } });
+        const otherGroup = withAsset({ asset: { ...asset, groupIndex: 3 } });
+        expect(hex.encode(otherTxid.pkScript)).not.toBe(hex.encode(a.pkScript));
+        expect(hex.encode(otherGroup.pkScript)).not.toBe(hex.encode(a.pkScript));
+    });
+
+    it("refuses a malformed asset id rather than encoding one", () => {
+        expect(() => withAsset({ asset: { txid: new Uint8Array(31), groupIndex: 0 } })).toThrow(
+            /32 bytes/,
+        );
+        expect(() => withAsset({ asset: { ...asset, groupIndex: -1 } })).toThrow(/\[0, 65535\]/);
+        expect(() => withAsset({ asset: { ...asset, groupIndex: 0x10000 } })).toThrow(
+            /\[0, 65535\]/,
+        );
+    });
+});
