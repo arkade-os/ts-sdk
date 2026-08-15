@@ -502,6 +502,28 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
         expect(hex.encode(otherGroup.pkScript)).not.toBe(hex.encode(a.pkScript));
     });
 
+    it("pushes the txid REVERSED, because that is what the opcode matches", () => {
+        // `asset.txid` is WIRE order -- the leading 32 bytes of the serialized
+        // Asset ID -- but the introspection opcodes match those bytes reversed.
+        // Push wire order and the lookup reports the asset ABSENT (`0 0`), so
+        // the covenant fails and the contract it guards is unspendable, with
+        // nothing in the error naming the cause. Established on regtest against
+        // a real minted asset (see test/e2e/asset-covenant.test.ts).
+        const distinct = { txid: new Uint8Array(32).map((_, i) => i + 1), groupIndex: 1 };
+        const covenant = hex.encode(
+            withAsset({ asset: distinct }).nonInteractiveClaimArkadeScript!,
+        );
+        expect(covenant).toContain(hex.encode(Uint8Array.from(distinct.txid).reverse()));
+        expect(covenant).not.toContain(hex.encode(distinct.txid));
+    });
+
+    it("does not mutate the caller's asset id", () => {
+        const mine = { txid: new Uint8Array(32).map((_, i) => i + 1), groupIndex: 1 };
+        const before = hex.encode(mine.txid);
+        withAsset({ asset: mine });
+        expect(hex.encode(mine.txid)).toBe(before);
+    });
+
     it("refuses a malformed asset id rather than encoding one", () => {
         expect(() => withAsset({ asset: { txid: new Uint8Array(31), groupIndex: 0 } })).toThrow(
             /32 bytes/,

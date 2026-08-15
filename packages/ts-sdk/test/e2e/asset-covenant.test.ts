@@ -143,6 +143,10 @@ describe("asset-denominated non-interactive covenant", () => {
         await waitFor(
             async () => assetBalanceOf(await alice.wallet.getBalance(), assetId) >= ASSET_LOCKED,
         );
+        // Reversed HERE because this probe pushes the id into a raw artifact.
+        // `VHTLC.ScriptV2` does the same flip internally, so a contract built
+        // through the SDK takes the id in wire order and callers do not think
+        // about it; this test is the layer below that.
         const assetTxid = hex.decode(assetId.slice(0, 64)).slice().reverse();
         const idBytes = hex.decode(assetId);
         const assetGidx = BigInt(idBytes[32]! | (idBytes[33]! << 8));

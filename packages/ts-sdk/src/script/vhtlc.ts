@@ -546,18 +546,29 @@ function enforcePayToAsset(
             `asset group index must be an integer in [0, 65535], got ${asset.groupIndex}`,
         );
     }
+    // REVERSED, once, here. `asset.txid` is the id in WIRE order -- the leading
+    // 32 bytes of the serialized Asset ID -- but the introspection opcodes match
+    // against those bytes reversed. Push wire order and the lookup reports the
+    // asset ABSENT (`0 0`), so the covenant fails and the contract it guards is
+    // unspendable. Nothing in the failure says so: the emulator returns only
+    // `OP_VERIFY failed`, and returns it whatever the amount comparison says.
+    // Established on regtest against a real minted asset, by elimination against
+    // a passing BTC-only control.
+    //
+    // A copy rather than an in-place reverse: the caller's id is theirs.
+    const inspectionTxid = Uint8Array.from(asset.txid).reverse();
     return ArkadeScript.encode([
         // The output carries at least as much of the asset as the input did.
         // Output index is the input's -- the same index alignment the sat
         // covenant relies on, and the same liveness obligation on whoever
         // assembles the spend.
         "PUSHCURRENTINPUTINDEX",
-        asset.txid,
+        inspectionTxid,
         asset.groupIndex,
         "INSPECTOUTASSETLOOKUP",
         "VERIFY", // PRESENT on the output, not merely "zero of it"
         "PUSHCURRENTINPUTINDEX",
-        asset.txid,
+        inspectionTxid,
         asset.groupIndex,
         "INSPECTINASSETLOOKUP",
         "VERIFY", // ...and on the input, so the comparison means something
