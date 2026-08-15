@@ -17,49 +17,30 @@
  * (2) is the whole reason the covenant exists. Without it the emulator would
  * happily co-sign a spend that walks off with the asset.
  *
- * STATUS: SKIPPED, and deliberately kept rather than deleted.
+ * RESULT: PASSES. Both assertions hold, so the covenant is spendable AND
+ * protective — the emulator co-signs a spend that pays the asset through, and
+ * refuses one that keeps the sats and strips the asset.
  *
- * What it already established, which was the point:
+ * Three things had to be right, and each was established by elimination
+ * against a passing BTC-only control (`non-interactive-htlc.test.ts`):
  *
- *   The emulator EXECUTES the asset introspection opcodes. Submitting this
- *   contract's spend returns
+ *  1. The asset input must be declared LOCAL, not INTENT. Declaring it intent
+ *     is rejected upstream by arkd itself:
+ *       ASSET_INPUT_INVALID (35): unexpected asset input type: intent
  *
- *     failed to execute arkade script: OP_VERIFY failed vin=0
+ *  2. Issuance is not immediately spendable. The wallet balance has to reflect
+ *     it before the asset can be sent, which is why the mint is followed by a
+ *     wait here, as arkade-regtest's own bootstrap does.
  *
- *   An opcode the engine did not know would fail at parse, naming the opcode.
- *   Failing at OP_VERIFY means the script ran. That was the open question, and
- *   it is now answered: an asset-denominated covenant is executable.
+ *  3. THE TXID PUSHED BY THE SCRIPT IS REVERSED relative to the serialized
+ *     Asset ID. `assetId.slice(0, 64)` is the id's leading 32 bytes; the
+ *     opcode matches only against those bytes REVERSED. With them un-reversed
+ *     the lookup returns `0 0` and the covenant's VERIFY fails — and it fails
+ *     identically whatever the amount comparison says, which is what isolated
+ *     it.
  *
- * What is still open, and why this is skipped rather than green:
- *
- *   The POSITIVE case does not pass yet. Setting `assetAmount` to 0 — making
- *   the GREATERTHANOREQUAL trivially true — still fails the same way, which
- *   isolates the failure to the LOOKUP's own VERIFY: the emulator is not
- *   seeing the asset at output 0. So the open question is about the HARNESS,
- *   not the opcodes: how `withAsset({inputs, outputs})` maps onto the output
- *   indices the covenant inspects, and whether output 0 of this spend is the
- *   receiver output the asset actually lands on.
- *
- *   DIAGNOSIS (strong, not yet proven by a passing run). `AssetSpec.inputs` is
- *   `{ vin, amount }[]`, and `ContractSpend.buildAssetPacket` turns each into
- *   `AssetInput.create(vin, amount)` — which is the **LOCAL** variant, "input
- *   from same transaction's prevouts". The sibling constructor
- *   `AssetInput.createIntent(txid, vin, amount)` exists for the **INTENT**
- *   variant, "output from intent transaction", and nothing in `AssetSpec` can
- *   reach it.
- *
- *   An Arkade contract spend takes its input through a checkpoint / intent
- *   transaction, so the asset arrives as an INTENT input. Declared LOCAL, the
- *   group does not balance; an unbalanced group makes the whole asset packet
- *   invalid; and an invalid packet means NO output is credited with the asset —
- *   which is precisely why the OUTPUT lookup returns `0 0` even with the
- *   amount comparison neutralised.
- *
- *   If that is right, this is an SDK limitation rather than a covenant problem:
- *   `AssetSpec` cannot express the input kind an Arkade contract spend actually
- *   has. Fixing it means widening `AssetSpec.inputs` to carry an optional
- *   source txid and routing to `createIntent`. That is the next step, and it is
- *   a change to this SDK, not to the covenant.
+ * (3) is the trap worth remembering: nothing about it is visible in the error,
+ * which says only `OP_VERIFY failed vin=0`.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -144,9 +125,7 @@ describe("asset-denominated non-interactive covenant", () => {
 
     beforeEach(beforeEachFaucet, 20000);
 
-    // KNOWN RED — see the header. Skipped so it does not fail the suite while
-    // the harness question is open; the finding it produced is already banked.
-    it.skip("the emulator executes the asset covenant", { timeout: 180000 }, async () => {
+    it("the emulator executes the asset covenant", { timeout: 180000 }, async () => {
         // A wallet that mints, then funds the contract with the asset.
         const alice = await createTestArkWallet();
         const aliceAddress = await alice.wallet.getAddress();
@@ -164,7 +143,7 @@ describe("asset-denominated non-interactive covenant", () => {
         await waitFor(
             async () => assetBalanceOf(await alice.wallet.getBalance(), assetId) >= ASSET_LOCKED,
         );
-        const assetTxid = hex.decode(assetId.slice(0, 64));
+        const assetTxid = hex.decode(assetId.slice(0, 64)).slice().reverse();
         const idBytes = hex.decode(assetId);
         const assetGidx = BigInt(idBytes[32]! | (idBytes[33]! << 8));
 
@@ -190,7 +169,7 @@ describe("asset-denominated non-interactive covenant", () => {
             amount: Number(CARRIER_SATS),
             assets: [{ assetId, amount: ASSET_LOCKED }],
         });
-        await waitForVtxo(indexerProvider, contract.pkScript);
+        const [contractVtxo] = await waitForVtxo(indexerProvider, contract.pkScript);
 
         // (2) THE MONEY ASSERTION. Pay the sats, keep the asset. If the emulator
         // co-signs this, the covenant is decorative and an asset lockup can be
