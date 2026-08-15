@@ -40,8 +40,26 @@
  *   indices the covenant inspects, and whether output 0 of this spend is the
  *   receiver output the asset actually lands on.
  *
- *   Until that is understood, a passing assertion here would be worth nothing
- *   and a failing one would just be noise in the suite.
+ *   DIAGNOSIS (strong, not yet proven by a passing run). `AssetSpec.inputs` is
+ *   `{ vin, amount }[]`, and `ContractSpend.buildAssetPacket` turns each into
+ *   `AssetInput.create(vin, amount)` — which is the **LOCAL** variant, "input
+ *   from same transaction's prevouts". The sibling constructor
+ *   `AssetInput.createIntent(txid, vin, amount)` exists for the **INTENT**
+ *   variant, "output from intent transaction", and nothing in `AssetSpec` can
+ *   reach it.
+ *
+ *   An Arkade contract spend takes its input through a checkpoint / intent
+ *   transaction, so the asset arrives as an INTENT input. Declared LOCAL, the
+ *   group does not balance; an unbalanced group makes the whole asset packet
+ *   invalid; and an invalid packet means NO output is credited with the asset —
+ *   which is precisely why the OUTPUT lookup returns `0 0` even with the
+ *   amount comparison neutralised.
+ *
+ *   If that is right, this is an SDK limitation rather than a covenant problem:
+ *   `AssetSpec` cannot express the input kind an Arkade contract spend actually
+ *   has. Fixing it means widening `AssetSpec.inputs` to carry an optional
+ *   source txid and routing to `createIntent`. That is the next step, and it is
+ *   a change to this SDK, not to the covenant.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
