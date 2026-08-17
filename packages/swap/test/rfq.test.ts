@@ -22,6 +22,7 @@ import {
     arkadeSwapRequest,
     assertFundable,
     assertPairLength,
+    expectQuote,
     httpTransport,
     lightningSendRequest,
     lightningSendVtxoScript,
@@ -406,6 +407,33 @@ describe("guardrails", () => {
         expect(() => assertFundable({ quote: short, invoiceExpiresAt: now + 7200, now })).toThrow(
             /headroom/,
         );
+    });
+});
+
+describe("expectQuote", () => {
+    it("refuses a quote for a pair other than the one requested, case included", () => {
+        const requested = LIGHTNING_SEND_PAIR;
+        expect(expectQuote(quoteFixture(), RFQ_ID, requested).to_amount).toBe(2100);
+        expect(() =>
+            expectQuote(quoteFixture({ pair: "onchain:BTC->arkade:BTC" }), RFQ_ID, requested),
+        ).toThrow(/not the requested/);
+        expect(() =>
+            expectQuote(quoteFixture({ pair: requested.toUpperCase() }), RFQ_ID, requested),
+        ).toThrow(/not the requested/);
+    });
+
+    it("accepts any pair when the request named none", () => {
+        expect(expectQuote(quoteFixture({ pair: "anything" }), RFQ_ID).rfq_id).toBe(RFQ_ID);
+    });
+
+    it("still reports a refusal as a refusal, not as a pair mismatch", () => {
+        expect(() =>
+            expectQuote(
+                { v: 1, type: "rfq_refusal", rfq_id: RFQ_ID, reason: "exposure_cap" },
+                RFQ_ID,
+                LIGHTNING_SEND_PAIR,
+            ),
+        ).toThrow(SwapRefusal);
     });
 });
 

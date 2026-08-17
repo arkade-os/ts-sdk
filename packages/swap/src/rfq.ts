@@ -432,14 +432,43 @@ export interface RfqTransport {
     close(): Promise<void>;
 }
 
-const expectQuote = (payload: unknown, rfqId: string): RfqQuote => {
-    const p = payload as { type?: string; reason?: string; rfq_id?: string } | null;
+/**
+ * Discriminate a solver reply: a refusal carries a closed-set reason and is
+ * thrown as {@link SwapRefusal}; anything that is not a quote for THIS
+ * negotiation is an error rather than a value. The `rfq_id` check is what stops
+ * a reply to one negotiation being accepted as the answer to another — on a
+ * shared relay the solver's events all arrive on the same subscription.
+ *
+ * `pair` is compared for the same reason the solver compares it byte for byte:
+ * a solver that normalises case, or quotes a market other than the one asked
+ * for, is otherwise undetectable client-side. Note the quote's pair is a
+ * constant the solver restates rather than the request's echoed back, so this
+ * binds every solver to the exact spellings this module builds.
+ *
+ * `requestedPair` is optional by value, not by parameter: callers pass a
+ * payload they built, and a payload with no `pair` is not one whose pair can be
+ * wrong. Comparing `String(undefined)` would refuse every quote.
+ *
+ * Shared with the nostr transport (`nostr.ts`), which used to carry a
+ * byte-identical copy — module-level only, never re-exported from `index.ts`.
+ */
+export const expectQuote = (payload: unknown, rfqId: string, requestedPair?: string): RfqQuote => {
+    const p = payload as { type?: string; reason?: string; rfq_id?: string; pair?: unknown } | null;
     if (p?.type === "rfq_refusal") throw new SwapRefusal(p.reason ?? "unknown", p.rfq_id ?? rfqId);
     if (p?.type !== "rfq_quote" || p.rfq_id !== rfqId) {
         throw new Error(`unexpected reply: ${p?.type ?? "no payload"}`);
     }
+    if (requestedPair !== undefined && p.pair !== requestedPair) {
+        throw new Error(
+            `solver quoted ${JSON.stringify(p.pair)}, not the requested ${requestedPair}`,
+        );
+    }
     return payload as RfqQuote;
 };
+
+/** The pair of a request we built, when it named one. */
+export const pairOf = (payload: Record<string, unknown>): string | undefined =>
+    typeof payload.pair === "string" ? payload.pair : undefined;
 
 /** HTTP: POST /v1/swap for quotes, GET /v1/rfq/<rfq_id> for status.
  * `fetchImpl` is injectable for tests and non-global-fetch runtimes. */
@@ -474,7 +503,11 @@ export const httpTransport = (
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify(payload),
             });
-            return expectQuote(await readJson(response, "quote request"), String(payload.rfq_id));
+            return expectQuote(
+                await readJson(response, "quote request"),
+                String(payload.rfq_id),
+                pairOf(payload),
+            );
         },
         async status(rfqId) {
             const response = await fetchImpl(`${baseUrl}/v1/rfq/${rfqId}`, { method: "GET" });
@@ -577,6 +610,7 @@ export const relayTransport = (
             return expectQuote(
                 await roundTrip(payload, String(payload.rfq_id)),
                 String(payload.rfq_id),
+                pairOf(payload),
             );
         },
         async status(rfqId) {

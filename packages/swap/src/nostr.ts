@@ -28,7 +28,7 @@
  * eagerly, on purpose (see below), so an async factory would push a `await`
  * into every caller for no benefit the subpath does not already give.
  */
-import { SwapRefusal, type RfqQuote, type RfqStatus, type RfqTransport } from "./rfq";
+import { expectQuote, pairOf, type RfqStatus, type RfqTransport } from "./rfq";
 import {
     finalizeEvent,
     generateSecretKey,
@@ -119,24 +119,6 @@ const closeReasons = (raw: readonly unknown[]): string[] =>
         const { url, reason } = (entry ?? {}) as { url?: string; reason?: string };
         return url ? `${url}: ${reason ?? "closed"}` : (reason ?? "closed");
     });
-
-/**
- * Discriminate a decrypted reply, mirroring the client's own rule: a refusal
- * carries a closed-set reason and is thrown as `SwapRefusal`; anything that is
- * not a quote for THIS negotiation is an error rather than a value.
- *
- * The `rfq_id` check is what stops a reply to one negotiation being accepted as
- * the answer to another — on a shared relay the solver's events all arrive on
- * the same subscription.
- */
-const asQuote = (payload: unknown, rfqId: string): RfqQuote => {
-    const p = payload as { type?: string; reason?: string; rfq_id?: string } | null;
-    if (p?.type === "rfq_refusal") throw new SwapRefusal(p.reason ?? "unknown", p.rfq_id ?? rfqId);
-    if (p?.type !== "rfq_quote" || p.rfq_id !== rfqId) {
-        throw new Error(`unexpected reply: ${p?.type ?? "no payload"}`);
-    }
-    return payload as RfqQuote;
-};
 
 export interface NostrRfqOptions {
     /** Relay URLs from the solver's card. The rendezvous, not solver endpoints. */
@@ -257,7 +239,7 @@ export const nostrRfqTransport = (options: NostrRfqOptions): RfqTransport => {
             // publish promise is still settling.
             const reply = awaitReply(rfqId);
             await send(payload);
-            return asQuote(await reply, rfqId);
+            return expectQuote(await reply, rfqId, pairOf(payload));
         },
 
         async status(rfqId) {
