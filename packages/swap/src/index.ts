@@ -186,3 +186,4 @@ export {
     type RfqSwapState,
     type SwapContractRegistry,
 } from "./swapManager";
+export { swapActivityResolver, type SwapActivityInput } from "./activity";
