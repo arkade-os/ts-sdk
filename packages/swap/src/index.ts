@@ -55,7 +55,8 @@ export {
 } from "./watch";
 export { retireSettledOfferContracts, type OfferContractRetirer } from "./coverage";
 export {
-    /** @deprecated no solver serves the coarse asset leg — use `arkadeAssetLeg` */
+    // deprecated — use arkadeAssetLeg; the @deprecated that editors read is on
+    // the declaration in rfq.ts, reached through this alias
     ARKADE_ASSET,
     ARKADE_BTC,
     LIGHTNING_BTC,
