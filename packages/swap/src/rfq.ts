@@ -106,14 +106,28 @@ const solverHex = (value: string, field: string): Uint8Array => {
 
 // ── Pairs ────────────────────────────────────────────────────────────────────
 
-/** Legs are `<corridor>:<asset>`; a pair is directional, `from->to`. Arkade
- * asset legs stay coarse (`arkade:ASSET`) — the exact asset ids ride the
- * request profile, mirroring how the offer TLV identifies assets. */
+/** Legs are `<corridor>:<asset>`; a pair is directional, `from->to`. */
 export const ARKADE_BTC = "arkade:BTC";
-export const ARKADE_ASSET = "arkade:ASSET";
 export const LIGHTNING_BTC = "lightning:BTC";
 
 export const ONCHAIN_BTC = "onchain:BTC";
+
+/** The arkade leg for an asset: the asset id itself, 68 lowercase hex. The id
+ * lives in the pair rather than the profile because the pair is the field both
+ * sides route and subscribe on, and a coarse leg cannot say which asset a
+ * market key is for.
+ *
+ * Taking an `AssetId` rather than a string is what enforces the case rule:
+ * `hex.decode` accepts uppercase while `hex.encode` only emits lowercase, so a
+ * value that reached us as `A1B2…` leaves here as `a1b2…`. Solvers compare pair
+ * strings byte for byte — a sender that normalised only in its key derivation
+ * would reach the right subscription and then be skipped as an unserved pair. */
+export const arkadeAssetLeg = (id: asset.AssetId): string => `arkade:${id.toString()}`;
+
+/** @deprecated The coarse asset leg. No solver serves it: `ASSET` is neither a
+ * registered ticker nor a 68-hex asset id, so a solver's market-key derivation
+ * throws on it. Use {@link arkadeAssetLeg}. Removed next major. */
+export const ARKADE_ASSET = "arkade:ASSET";
 
 export const rfqPair = (from: string, to: string): string => `${from}->${to}`;
 
@@ -223,9 +237,9 @@ export const lightningSendRequest = (input: {
 });
 
 /** The rfq_request for an arkade↔arkade swap. Exactly one side may name an
- * asset id per direction (BTC has none); the pair string stays coarse and the
- * ids ride the profile, like the offer TLV. Forward-looking: the wire shape is
- * specified, the reference solver does not serve it yet. */
+ * asset id per direction (BTC has none), and the id is the leg itself — see
+ * {@link arkadeAssetLeg}. Forward-looking: the wire shape is specified, the
+ * reference solver does not serve it yet. */
 export const arkadeSwapRequest = (input: {
     rfqId: string;
     /** Asset the trader deposits; omit when depositing BTC. */
@@ -237,22 +251,29 @@ export const arkadeSwapRequest = (input: {
     amount: number;
 }): Record<string, unknown> => {
     if (Boolean(input.wantAsset) === Boolean(input.offerAsset)) {
-        throw new Error("set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC)");
+        throw new Error(
+            "set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC) — " +
+                "asset->asset is nameable on the wire but no solver quotes it yet",
+        );
     }
+    const pair = rfqPair(
+        input.offerAsset ? arkadeAssetLeg(input.offerAsset) : ARKADE_BTC,
+        input.wantAsset ? arkadeAssetLeg(input.wantAsset) : ARKADE_BTC,
+    );
+    assertPairLength(pair);
     return {
         v: 1,
         type: "rfq_request",
         rfq_id: input.rfqId,
-        pair: rfqPair(
-            input.offerAsset ? ARKADE_ASSET : ARKADE_BTC,
-            input.wantAsset ? ARKADE_ASSET : ARKADE_BTC,
-        ),
+        pair,
         amount_side: input.amountSide,
         amount: input.amount,
-        profile: {
-            ...(input.offerAsset && { offer_asset: hex.encode(input.offerAsset.serialize()) }),
-            ...(input.wantAsset && { want_asset: hex.encode(input.wantAsset.serialize()) }),
-        },
+        // The pair is the only place the asset ids appear. Repeating them here
+        // would be a key the solver's `.strict()` profile schema does not
+        // declare, and an undeclared key is `unsupported_payload` — a refusal,
+        // not an ignored extra. Empty, not absent: `profile` is required on
+        // every other request shape this wire carries.
+        profile: {},
     };
 };
 
@@ -293,6 +314,34 @@ const gateError = (reason: string, message: string): Error & { reason: string } 
 const assertFinite = (value: number | undefined, reason: string, label: string): void => {
     if (value !== undefined && !Number.isFinite(value)) {
         throw gateError(reason, `${label} is not a finite number (${String(value)})`);
+    }
+};
+
+/** The wire's cap on a pair string, mirrored so an over-long pair fails here
+ * with a reason instead of arriving as a bare `unsupported_payload`.
+ *
+ * 158 = ("lightning".length + 1 + 68) * 2 + "->".length — the longest corridor
+ * name, a full 68-hex asset id on each leg, and the arrow. The longest pair
+ * anyone can build is `arkade:<68>->arkade:<68>`, at 152 — and until the
+ * exactly-one-asset guard in {@link arkadeSwapRequest} relaxes, this package
+ * tops out at 87, so the guard is dormant on purpose.
+ *
+ * Restated rather than re-derived from this package's own corridor names: a
+ * local cap BELOW the solver's would refuse a pair the solver would have
+ * served, which is worse than the remote refusal this exists to pre-empt. The
+ * test pins the number so a drift is a failure, not a surprise.
+ *
+ * Module-level, not in `index.ts`: it mirrors a number this repo does not own,
+ * and publishing it would turn a remote edit into a semver event here. */
+export const MAX_PAIR_LENGTH = 158;
+
+/** Exported for the tests — a dormant guard still needs one, and no public
+ * entry point can reach it. Not in `index.ts`. */
+export const assertPairLength = (pair: string): void => {
+    if (pair.length > MAX_PAIR_LENGTH) {
+        throw new Error(
+            `pair is ${pair.length} characters, over the wire's ${MAX_PAIR_LENGTH}-character limit`,
+        );
     }
 };
 

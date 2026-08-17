@@ -13,19 +13,22 @@ import { ripemd160 } from "@noble/hashes/legacy.js";
 
 import {
     AddressMismatch,
-    ARKADE_ASSET,
     ARKADE_BTC,
     LIGHTNING_SEND_PAIR,
+    MAX_PAIR_LENGTH,
     SOLO_REFUND_HEADROOM_SECONDS,
     SwapRefusal,
+    arkadeAssetLeg,
     arkadeSwapRequest,
     assertFundable,
+    assertPairLength,
     httpTransport,
     lightningSendRequest,
     lightningSendVtxoScript,
     newRfqId,
     offerTermsFromQuote,
     relayTransport,
+    rfqPair,
     unilateralClaimDelay,
     unilateralRefundDelay,
     unilateralRefundWithoutReceiverDelay,
@@ -33,7 +36,7 @@ import {
     type RelaySocket,
     type RfqQuote,
 } from "../src/rfq";
-import { USD_ID } from "./fixtures";
+import { CHF_ID, USD_ID } from "./fixtures";
 import { asset } from "@arkade-os/sdk";
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
@@ -302,21 +305,85 @@ describe("requests", () => {
         });
     });
 
-    it("builds an arkade swap request with asset ids riding the profile", () => {
-        const wantAsset = asset.AssetId.fromBytes(hex.decode(USD_ID));
-        const request = arkadeSwapRequest({
+    it("names the asset id in the pair, in both directions", () => {
+        const usd = asset.AssetId.fromString(USD_ID);
+        const wanting = arkadeSwapRequest({
             rfqId: RFQ_ID,
-            wantAsset,
+            wantAsset: usd,
             amountSide: "from",
             amount: 5000,
         }) as Record<string, unknown>;
-        expect(request.pair).toBe(`${ARKADE_BTC}->${ARKADE_ASSET}`);
-        expect(request.amount).toBe(5000);
-        expect((request.profile as Record<string, unknown>).want_asset).toBe(USD_ID);
-        // Exactly one side names an asset.
+        expect(wanting.pair).toBe(`arkade:BTC->arkade:${USD_ID}`);
+        expect(wanting.amount).toBe(5000);
+
+        const offering = arkadeSwapRequest({
+            rfqId: RFQ_ID,
+            offerAsset: usd,
+            amountSide: "to",
+            amount: 5000,
+        }) as Record<string, unknown>;
+        expect(offering.pair).toBe(`arkade:${USD_ID}->arkade:BTC`);
+    });
+
+    /** Solvers compare pair strings byte for byte, so an uppercase id reaching
+     * the wire is a silent unserved-pair miss. Taking an `AssetId` is the
+     * normalisation. */
+    it("emits a lowercase leg for an asset id built from uppercase hex", () => {
+        const request = arkadeSwapRequest({
+            rfqId: RFQ_ID,
+            wantAsset: asset.AssetId.fromString(USD_ID.toUpperCase()),
+            amountSide: "from",
+            amount: 1,
+        }) as Record<string, unknown>;
+        expect(request.pair).toBe(`arkade:BTC->arkade:${USD_ID}`);
+    });
+
+    it("refuses neither asset and both — asset->asset has no counterparty yet", () => {
+        const usd = asset.AssetId.fromString(USD_ID);
+        const chf = asset.AssetId.fromString(CHF_ID);
         expect(() => arkadeSwapRequest({ rfqId: RFQ_ID, amountSide: "to", amount: 1 })).toThrow(
             /exactly one/,
         );
+        expect(() =>
+            arkadeSwapRequest({
+                rfqId: RFQ_ID,
+                offerAsset: usd,
+                wantAsset: chf,
+                amountSide: "to",
+                amount: 1,
+            }),
+        ).toThrow(/no solver quotes it yet/);
+    });
+
+    /** Load-bearing against the solver's `.strict()` profile schema: a key it
+     * does not declare refuses the whole request. */
+    it("sends an empty profile, with no asset keys left in it", () => {
+        const request = arkadeSwapRequest({
+            rfqId: RFQ_ID,
+            wantAsset: asset.AssetId.fromString(USD_ID),
+            amountSide: "from",
+            amount: 5000,
+        }) as Record<string, unknown>;
+        expect(Object.keys(request.profile as Record<string, unknown>)).toHaveLength(0);
+    });
+
+    it("mirrors the wire's pair-length cap, dormant until asset->asset lands", () => {
+        expect(MAX_PAIR_LENGTH).toBe(158);
+        const both = rfqPair(
+            arkadeAssetLeg(asset.AssetId.fromString(USD_ID)),
+            arkadeAssetLeg(asset.AssetId.fromString(CHF_ID)),
+        );
+        expect(both.length).toBe(152);
+        expect(() => assertPairLength("x".repeat(MAX_PAIR_LENGTH + 1))).toThrow(/158/);
+        // What the builder can actually emit today — the number that makes the
+        // guard unreachable until the exactly-one-asset rule relaxes.
+        const request = arkadeSwapRequest({
+            rfqId: RFQ_ID,
+            wantAsset: asset.AssetId.fromString(USD_ID),
+            amountSide: "from",
+            amount: 1,
+        }) as Record<string, unknown>;
+        expect((request.pair as string).length).toBe(87);
     });
 });
 
