@@ -250,7 +250,16 @@ export const arkadeSwapRequest = (input: {
     /** Integer base units of the side named by `amountSide`. */
     amount: number;
 }): Record<string, unknown> => {
-    if (Boolean(input.wantAsset) === Boolean(input.offerAsset)) {
+    // Both refusals say "exactly one", but the causes differ and so do the
+    // remedies: neither side named is a degenerate request, both sides named is
+    // a real corridor still waiting on a counterparty.
+    if (!input.wantAsset && !input.offerAsset) {
+        throw new Error(
+            "set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC) — " +
+                "with neither set both legs are BTC, which is not a swap",
+        );
+    }
+    if (input.wantAsset && input.offerAsset) {
         throw new Error(
             "set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC) — " +
                 "asset->asset is nameable on the wire but no solver quotes it yet",

@@ -339,11 +339,14 @@ describe("requests", () => {
         expect(request.pair).toBe(`arkade:BTC->arkade:${USD_ID}`);
     });
 
-    it("refuses neither asset and both — asset->asset has no counterparty yet", () => {
+    /** Each refusal names its own cause: neither set is degenerate, both set is
+     * a real corridor with no counterparty. One shared message would tell the
+     * BTC->BTC caller to wait for a solver that will never help it. */
+    it("refuses neither asset and both, for the reason that applies", () => {
         const usd = asset.AssetId.fromString(USD_ID);
         const chf = asset.AssetId.fromString(CHF_ID);
         expect(() => arkadeSwapRequest({ rfqId: RFQ_ID, amountSide: "to", amount: 1 })).toThrow(
-            /exactly one/,
+            /exactly one.*not a swap/s,
         );
         expect(() =>
             arkadeSwapRequest({
