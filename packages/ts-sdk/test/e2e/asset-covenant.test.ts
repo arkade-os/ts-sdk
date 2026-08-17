@@ -173,7 +173,8 @@ describe("asset-denominated non-interactive covenant", () => {
             amount: Number(CARRIER_SATS),
             assets: [{ assetId, amount: ASSET_LOCKED }],
         });
-        const [contractVtxo] = await waitForVtxo(indexerProvider, contract.pkScript);
+        // Funded and visible — the value is not needed, only the arrival.
+        await waitForVtxo(indexerProvider, contract.pkScript);
 
         // (2) THE MONEY ASSERTION. Pay the sats, keep the asset. If the emulator
         // co-signs this, the covenant is decorative and an asset lockup can be

@@ -524,6 +524,58 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
         expect(hex.encode(mine.txid)).toBe(before);
     });
 
+    it("refuses an asset that no leaf would bind, instead of silently dropping it", () => {
+        // THE SILENT CASE. Both non-interactive leaves are optional, and they are
+        // the only ones carrying the covenant — the signature leaves assert
+        // nothing about value. So `asset` with neither leaf used to build a
+        // sat-only contract and say nothing: the caller funds it believing the
+        // asset is bound, and ANY spend satisfying the sat covenant walks off
+        // with the asset. The only outward difference is a pkScript that happens
+        // to match a non-asset address, which is not something a caller checks.
+        expect(
+            () =>
+                new VHTLC.ScriptV2({
+                    ...baseOptions(),
+                    asset,
+                }),
+        ).toThrow(/no effect without/);
+        // One leaf is enough to bind it, so neither is required individually.
+        expect(
+            () =>
+                new VHTLC.ScriptV2({
+                    ...baseOptions(),
+                    nonInteractiveClaim: { receiverPkScript, emulatorPubkey },
+                    asset,
+                }),
+        ).not.toThrow();
+        expect(
+            () =>
+                new VHTLC.ScriptV2({
+                    ...baseOptions(),
+                    nonInteractiveRefund: { senderPkScript: p2tr(key(6)), emulatorPubkey },
+                    asset,
+                }),
+        ).not.toThrow();
+    });
+
+    it("binds the asset on VHTLC.Script (v1) too, which inherits the same base", () => {
+        // The option lands on `BaseScript`, so v1 gets it. That is deliberate —
+        // the asset covenant is orthogonal to the preimage-condition fragment
+        // that is the ONLY difference between versions — but it has to be
+        // asserted, or v1 is carrying an untested money path.
+        const v1 = new VHTLC.Script({
+            ...baseOptions(),
+            nonInteractiveClaim: { receiverPkScript, emulatorPubkey },
+            asset,
+        });
+        const v1NoAsset = new VHTLC.Script({
+            ...baseOptions(),
+            nonInteractiveClaim: { receiverPkScript, emulatorPubkey },
+        });
+        expect(hex.encode(v1.pkScript)).not.toBe(hex.encode(v1NoAsset.pkScript));
+        expect(() => new VHTLC.Script({ ...baseOptions(), asset })).toThrow(/no effect without/);
+    });
+
     it("refuses a malformed asset id rather than encoding one", () => {
         expect(() => withAsset({ asset: { txid: new Uint8Array(31), groupIndex: 0 } })).toThrow(
             /32 bytes/,

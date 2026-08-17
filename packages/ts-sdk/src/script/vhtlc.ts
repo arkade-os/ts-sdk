@@ -353,6 +353,23 @@ export namespace VHTLC {
         if (!preimageHash || preimageHash.length !== 20) {
             throw new Error("preimage hash must be 20 bytes");
         }
+        // The two non-interactive leaves are the ONLY ones carrying a covenant
+        // — the signature leaves assert nothing about value — so they are the
+        // only place an asset can be bound. Accepting `asset` without either of
+        // them would emit a sat-only contract and say nothing about it: the
+        // caller funds it believing the asset is protected, and any spend that
+        // satisfies the sat covenant walks off with the asset. The one outward
+        // difference is a pkScript matching a non-asset address, which is not
+        // something a caller thinks to check. Refuse instead of dropping it.
+        if (
+            options.asset !== undefined &&
+            !options.nonInteractiveClaim &&
+            !options.nonInteractiveRefund
+        ) {
+            throw new Error(
+                "asset has no effect without nonInteractiveClaim or nonInteractiveRefund",
+            );
+        }
         if (options.nonInteractiveClaim) {
             const { emulatorPubkey, receiverPkScript } = options.nonInteractiveClaim;
             if (!emulatorPubkey || (emulatorPubkey.length !== 32 && emulatorPubkey.length !== 33)) {
