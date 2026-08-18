@@ -48,6 +48,7 @@ import { hex } from "@scure/base";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import {
     arkade,
+    asset as assetExt,
     networks,
     RestArkProvider,
     RestIndexerProvider,
@@ -152,9 +153,12 @@ describe("asset-denominated non-interactive covenant", () => {
         // `VHTLC.ScriptV2` does the same flip internally, so a contract built
         // through the SDK takes the id in canonical order and callers do not think
         // about it; this test is the layer below that.
-        const assetTxid = hex.decode(assetId.slice(0, 64)).slice().reverse();
-        const idBytes = hex.decode(assetId);
-        const assetGidx = BigInt(idBytes[32]! | (idBytes[33]! << 8));
+        // Namespaced: the entry point re-exports this module as `export * as
+        // asset`, so the class is `asset.AssetId` and a bare `AssetId` import
+        // type-checks (the TYPE is re-exported) and is undefined at runtime.
+        const parsed = assetExt.AssetId.fromString(assetId);
+        const assetTxid = Uint8Array.from(parsed.txid).reverse();
+        const assetGidx = BigInt(parsed.groupIndex);
 
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
