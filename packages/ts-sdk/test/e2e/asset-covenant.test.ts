@@ -69,6 +69,8 @@ const ASSET_SUPPLY = 1_000n;
 const ASSET_LOCKED = 500n;
 /** What a shortchanging spend tries to forward instead of the whole amount. */
 const ASSET_SKIMMED = 100n;
+/** A second asset funded alongside the bound one — what the count bound refuses. */
+const ASSET_TAGALONG = 7n;
 /** Room for a second output, so a misdirection spend is constructable at all. */
 const DUST_SATS = 330n;
 
@@ -174,6 +176,18 @@ describe("asset-denominated non-interactive covenant", () => {
         await waitFor(
             async () => assetBalanceOf(await alice.wallet.getBalance(), assetId) >= ASSET_LOCKED,
         );
+        // A SECOND asset, so `INSPECTOUTASSETCOUNT` has something to refuse.
+        // Without one, deleting that bound entirely goes unnoticed: every spend
+        // here carries a single asset, so the count is 1 whether or not anything
+        // checks it.
+        const { assetId: otherId } = await alice.wallet.assetManager.issue({
+            amount: ASSET_SUPPLY,
+            metadata: { decimals: 0, name: "Covenant Probe Two", ticker: "CVP2" },
+        });
+        await waitFor(
+            async () => assetBalanceOf(await alice.wallet.getBalance(), otherId) >= ASSET_TAGALONG,
+        );
+
         // Reversed HERE because this probe pushes the id into a raw artifact.
         // `VHTLC.ScriptV2` does the same flip internally, so a contract built
         // through the SDK takes the id in canonical order and callers do not think
@@ -209,7 +223,12 @@ describe("asset-denominated non-interactive covenant", () => {
             // below, which are the only ones the asset clause alone refuses,
             // would be unconstructable.
             amount: Number(CARRIER_SATS + DUST_SATS),
-            assets: [{ assetId, amount: ASSET_LOCKED }],
+            // BOTH assets, which is the shape the caveat on `VHTLC.Options.asset`
+            // warns about: only the bound one is protected.
+            assets: [
+                { assetId, amount: ASSET_LOCKED },
+                { assetId: otherId, amount: ASSET_TAGALONG },
+            ],
         });
         // Funded and visible — the value is not needed, only the arrival.
         await waitForVtxo(indexerProvider, contract.pkScript);
@@ -229,6 +248,12 @@ describe("asset-denominated non-interactive covenant", () => {
         // conservation check is satisfied and the ONLY thing left to refuse
         // them is the covenant.
         const elsewhere = randomP2TR();
+        /** Route the tag-along to one output — it must go somewhere for conservation. */
+        const tagAlongTo = (vout: number) => ({
+            assetId: otherId,
+            inputs: [{ vin: 0, amount: ASSET_TAGALONG }],
+            outputs: [{ vout, amount: ASSET_TAGALONG }],
+        });
         const payTwo = (): TransactionOutput[] => [
             { script: receiverPkScript, amount: CARRIER_SATS },
             { script: elsewhere, amount: DUST_SATS },
@@ -246,6 +271,7 @@ describe("asset-denominated non-interactive covenant", () => {
                     inputs: [{ vin: 0, amount: ASSET_LOCKED }],
                     outputs: [{ vout: 1, amount: ASSET_LOCKED }],
                 })
+                .withAsset(tagAlongTo(1))
                 .to(payTwo())
                 .send(),
         ).rejects.toThrow();
@@ -267,6 +293,24 @@ describe("asset-denominated non-interactive covenant", () => {
                         { vout: 1, amount: ASSET_LOCKED - ASSET_SKIMMED },
                     ],
                 })
+                .withAsset(tagAlongTo(1))
+                .to(payTwo())
+                .send(),
+        ).rejects.toThrow();
+
+        // (2c) INJECTION. The bound asset is forwarded in full — presence and
+        // amount both satisfied — and the tag-along is dumped onto the SAME
+        // output. Only `INSPECTOUTASSETCOUNT == 1` refuses this, and until there
+        // were two assets in play nothing could tell whether that bound existed.
+        await expect(
+            contract.functions
+                .claim(PREIMAGE)
+                .withAsset({
+                    assetId,
+                    inputs: [{ vin: 0, amount: ASSET_LOCKED }],
+                    outputs: [{ vout: 0, amount: ASSET_LOCKED }],
+                })
+                .withAsset(tagAlongTo(0))
                 .to(payTwo())
                 .send(),
         ).rejects.toThrow();
@@ -279,8 +323,14 @@ describe("asset-denominated non-interactive covenant", () => {
                 inputs: [{ vin: 0, amount: ASSET_LOCKED }],
                 outputs: [{ vout: 0, amount: ASSET_LOCKED }],
             })
-            .to(receiverPkScript, CARRIER_SATS)
-            .change(elsewhere)
+            // THE CAVEAT, MADE CONCRETE. The tag-along has to go somewhere, and
+            // the covenant says nothing about where: the spender picks. Here it
+            // goes to `elsewhere` — an address the contract never named — and the
+            // spend is ACCEPTED. That is what "only the bound asset is protected"
+            // means in practice, and why an asset contract should be funded with
+            // the asset it names and nothing else.
+            .withAsset(tagAlongTo(1))
+            .to(payTwo())
             .send();
 
         const [vtxo] = await waitForVtxo(indexerProvider, receiverPkScript);
