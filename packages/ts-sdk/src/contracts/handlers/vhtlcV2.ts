@@ -46,6 +46,8 @@ export interface VHTLCV2ContractParams {
     nonInteractiveClaim?: {
         receiverPkScript: Uint8Array;
         emulatorPubkey: Uint8Array;
+        /** @see VHTLC.Options.nonInteractiveClaim.strict */
+        strict?: { amount: bigint; assetAmount?: bigint };
     };
     /** @see VHTLC.Options.nonInteractiveRefund */
     nonInteractiveRefund?: {
@@ -162,6 +164,17 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
                 nonInteractiveClaimEmulatorPubkey: hex.encode(
                     params.nonInteractiveClaim.emulatorPubkey,
                 ),
+                // The opt-in quoted bound. Dropping it re-derives the DEFAULT
+                // claim covenant — a strictly weaker one — and registration dies
+                // at `upsertContractRow` with an opaque `Script mismatch`. Same
+                // silent-drop class as the asset keys above.
+                ...(params.nonInteractiveClaim.strict && {
+                    strictClaimAmount: params.nonInteractiveClaim.strict.amount.toString(),
+                    ...(params.nonInteractiveClaim.strict.assetAmount !== undefined && {
+                        strictClaimAssetAmount:
+                            params.nonInteractiveClaim.strict.assetAmount.toString(),
+                    }),
+                }),
             }),
             ...(params.nonInteractiveRefund && {
                 nonInteractiveRefundSenderPkScript: hex.encode(
@@ -210,6 +223,12 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
                 "asset params are incomplete: assetTxid and assetGroupIndex must both be present or both absent",
             );
         }
+        if (params.strictClaimAssetAmount !== undefined && params.strictClaimAmount === undefined) {
+            throw new Error(
+                "strictClaimAssetAmount without strictClaimAmount: reading this as 'not strict' " +
+                    "would re-derive the default claim covenant, which is weaker than the row asked for",
+            );
+        }
         const asset =
             params.assetTxid !== undefined && params.assetGroupIndex !== undefined
                 ? {
@@ -233,6 +252,14 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
                 nonInteractiveClaim: {
                     receiverPkScript: claim.destination,
                     emulatorPubkey: claim.emulatorPubkey,
+                    ...(params.strictClaimAmount !== undefined && {
+                        strict: {
+                            amount: BigInt(params.strictClaimAmount),
+                            ...(params.strictClaimAssetAmount !== undefined && {
+                                assetAmount: BigInt(params.strictClaimAssetAmount),
+                            }),
+                        },
+                    }),
                 },
             }),
             ...(refund && {

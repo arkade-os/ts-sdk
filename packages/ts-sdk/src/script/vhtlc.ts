@@ -10,7 +10,7 @@ import {
 } from "./tapscript";
 import { hex } from "@scure/base";
 import { TapLeafScript, VtxoScript } from "./base";
-import { ArkadeScript } from "../arkade/script";
+import { ArkadeScript, type ArkadeScriptType } from "../arkade/script";
 import { computeArkadeScriptPublicKey } from "../arkade/tweak";
 
 /** Virtual Hash Time Lock Contract (VHTLC) namespace. */
@@ -32,6 +32,51 @@ export namespace VHTLC {
         nonInteractiveClaim?: {
             receiverPkScript: Bytes;
             emulatorPubkey: Bytes;
+            /**
+             * OPT-IN: also require the claim to pay at least these amounts.
+             *
+             * The covenant's default bound is conservation (`out >= in`) — see
+             * {@link enforcePayTo} for why a quote is normally not the
+             * covenant's business. This is the escape hatch for a consumer that
+             * wants the quote enforced in script rather than at its own
+             * admission layer.
+             *
+             * ADDITIVE, NEVER A REPLACEMENT. The conservation bound stays. On
+             * its own, `out >= quoted` leaves everything ABOVE the quote
+             * unconstrained, so an overfunded lockup's surplus could be routed
+             * anywhere by whoever assembles the spend — trading an underfunding
+             * hole for a skimming one. Both bounds together admit neither.
+             *
+             * WHAT IT COSTS, and it is not only opcodes:
+             *
+             *  - THE ADDRESS BECOMES A FUNCTION OF THE QUOTE. These amounts
+             *    compile into the leaf, hence the emulator key, hence the
+             *    pkScript. A re-quote is a different address, and cannot be
+             *    applied to a lockup already funded.
+             *  - AN UNDERFUNDED LOCKUP BECOMES UNCLAIMABLE. Its only exit is the
+             *    refund path, which waits out the CLTV. That is the intended
+             *    incentive and it lands on whoever misfunded — but it converts
+             *    "claim the short amount now and settle up" into "wait for the
+             *    timelock".
+             *
+             * Omit for the default. Omitting leaves every script byte unchanged,
+             * so contracts already funded keep their addresses.
+             */
+            strict?: {
+                /** Sats the claim must pay. Positive. */
+                amount: bigint;
+                /**
+                 * Asset base units the claim must pay.
+                 *
+                 * Required iff {@link VHTLC.Options.asset} is set, and refused
+                 * otherwise. Strict-on-sats-only against an asset-denominated
+                 * contract would pin the sat CARRIER and say nothing about the
+                 * asset that is the actual amount — half-enforcement that reads
+                 * like enforcement, which is the failure this option exists to
+                 * avoid rather than introduce.
+                 */
+                assetAmount?: bigint;
+            };
         };
         /**
          * Optional non-interactive refund leaf: `server` + `receiver` + a
@@ -189,6 +234,7 @@ export namespace VHTLC {
                 arkadeScriptNic = enforcePayToMaybeAsset(
                     options.nonInteractiveClaim.receiverPkScript,
                     options.asset,
+                    options.nonInteractiveClaim.strict,
                 );
                 nonInteractiveClaimScript = ConditionMultisigTapscript.encode({
                     conditionScript,
@@ -393,6 +439,34 @@ export namespace VHTLC {
                 "asset has no effect without nonInteractiveClaim or nonInteractiveRefund",
             );
         }
+
+        // The opt-in quoted bound, and every way of asking for half of it.
+        const strict = options.nonInteractiveClaim?.strict;
+        if (strict !== undefined) {
+            // `out >= 0` is satisfied by every output, so a zero would compile a
+            // bound that reads like enforcement and enforces nothing.
+            if (strict.amount <= 0n) {
+                throw new Error(`strict claim amount must be positive, got ${strict.amount}`);
+            }
+            // Strict on the sat carrier while the ASSET — the actual amount —
+            // goes unbounded. The most dangerous shape here, because the caller
+            // has explicitly asked for enforcement and would get it on the wrong
+            // quantity.
+            if (options.asset !== undefined && strict.assetAmount === undefined) {
+                throw new Error(
+                    "strict claim needs assetAmount when the contract is denominated in an asset: " +
+                        "bounding only the sats would leave the asset amount unenforced",
+                );
+            }
+            if (options.asset === undefined && strict.assetAmount !== undefined) {
+                throw new Error("strict claim assetAmount has no effect without asset");
+            }
+            if (strict.assetAmount !== undefined && strict.assetAmount <= 0n) {
+                throw new Error(
+                    `strict claim assetAmount must be positive, got ${strict.assetAmount}`,
+                );
+            }
+        }
         if (options.nonInteractiveClaim) {
             const { emulatorPubkey, receiverPkScript } = options.nonInteractiveClaim;
             if (!emulatorPubkey || (emulatorPubkey.length !== 32 && emulatorPubkey.length !== 33)) {
@@ -541,15 +615,23 @@ function isP2trPkScript(pkScript: Bytes): boolean {
  * So a funding gate that compares a lockup against its quote belongs in the
  * consumer, not here. `lightning-swap-service`'s `lockupIsFunded` is that gate.
  */
-function enforcePayTo(destinationPkScript: Bytes): Bytes {
-    // validateOptions already checked this for both current call sites — kept
-    // here too, since this covenant is the one place a wrong destination
-    // becomes irreversible (a mis-typed leaf, unlike a rejected constructor
-    // call, only surfaces once someone tries to spend it).
-    if (!isP2trPkScript(destinationPkScript)) {
-        throw new Error("invalid P2TR script");
-    }
-    return ArkadeScript.encode([
+/**
+ * The sat half of both covenants: the output at this input's index is P2TR,
+ * pays `destinationPkScript`, and carries at least the input's value.
+ *
+ * ONE COPY, shared by {@link enforcePayTo} and {@link enforcePayToAsset}. The
+ * asset covenant used to restate these tokens inline under a comment promising
+ * they matched "byte-for-byte" — a promise nothing enforced, and one that an
+ * option added to one and forgotten on the other would have broken silently.
+ *
+ * `quotedSats` is the opt-in bound from
+ * {@link VHTLC.Options.nonInteractiveClaim.strict}. It is ADDED to the
+ * conservation comparison, never substituted for it: alone, `out >= quoted`
+ * leaves everything above the quote unconstrained, so an overfunded lockup's
+ * surplus could be routed anywhere by whoever assembles the spend.
+ */
+function satClause(destinationPkScript: Bytes, quotedSats?: bigint): ArkadeScriptType {
+    return [
         "PUSHCURRENTINPUTINDEX",
         "DUP",
         "INSPECTOUTPUTSCRIPTPUBKEY",
@@ -558,10 +640,26 @@ function enforcePayTo(destinationPkScript: Bytes): Bytes {
         destinationPkScript.subarray(2),
         "EQUALVERIFY",
         "INSPECTOUTPUTVALUE",
+        // `DUP` because the output value is needed twice: once against the
+        // quote, once against the input.
+        ...(quotedSats === undefined
+            ? []
+            : (["DUP", quotedSats, "GREATERTHANOREQUAL", "VERIFY"] as ArkadeScriptType)),
         "PUSHCURRENTINPUTINDEX",
         "INSPECTINPUTVALUE",
         "GREATERTHANOREQUAL",
-    ]);
+    ];
+}
+
+function enforcePayTo(destinationPkScript: Bytes, quotedSats?: bigint): Bytes {
+    // validateOptions already checked this for both current call sites — kept
+    // here too, since this covenant is the one place a wrong destination
+    // becomes irreversible (a mis-typed leaf, unlike a rejected constructor
+    // call, only surfaces once someone tries to spend it).
+    if (!isP2trPkScript(destinationPkScript)) {
+        throw new Error("invalid P2TR script");
+    }
+    return ArkadeScript.encode(satClause(destinationPkScript, quotedSats));
 }
 
 /**
@@ -597,6 +695,8 @@ function enforcePayTo(destinationPkScript: Bytes): Bytes {
 function enforcePayToAsset(
     destinationPkScript: Bytes,
     asset: { txid: Bytes; groupIndex: number },
+    /** @see VHTLC.Options.nonInteractiveClaim.strict */
+    strict?: { amount: bigint; assetAmount?: bigint },
 ): Bytes {
     if (!isP2trPkScript(destinationPkScript)) {
         throw new Error("invalid P2TR script");
@@ -631,6 +731,12 @@ function enforcePayToAsset(
         asset.groupIndex,
         "INSPECTOUTASSETLOOKUP",
         "VERIFY", // PRESENT on the output, not merely "zero of it"
+        // The quoted bound, when the caller opted in — added to the input
+        // comparison below, not substituted for it. `DUP` because the output's
+        // asset amount is needed twice.
+        ...(strict?.assetAmount === undefined
+            ? []
+            : (["DUP", strict.assetAmount, "GREATERTHANOREQUAL", "VERIFY"] as ArkadeScriptType)),
         "PUSHCURRENTINPUTINDEX",
         inspectionTxid,
         asset.groupIndex,
@@ -643,27 +749,23 @@ function enforcePayToAsset(
         "INSPECTOUTASSETCOUNT",
         1,
         "EQUALVERIFY",
-        // ...then the sat covenant, byte-for-byte enforcePayTo above.
-        "PUSHCURRENTINPUTINDEX",
-        "DUP",
-        "INSPECTOUTPUTSCRIPTPUBKEY",
-        1,
-        "EQUALVERIFY",
-        destinationPkScript.subarray(2),
-        "EQUALVERIFY",
-        "INSPECTOUTPUTVALUE",
-        "PUSHCURRENTINPUTINDEX",
-        "INSPECTINPUTVALUE",
-        "GREATERTHANOREQUAL",
+        // ...then the sat covenant, the same tokens `enforcePayTo` emits.
+        ...satClause(destinationPkScript, strict?.amount),
     ]);
 }
 
 /** Pick the covenant this contract's denomination calls for. */
 function enforcePayToMaybeAsset(
     destinationPkScript: Bytes,
-    asset?: { txid: Bytes; groupIndex: number },
+    asset: { txid: Bytes; groupIndex: number } | undefined,
+    /**
+     * Present only for the CLAIM leaf, and only when the caller opted in. The
+     * refund leaf never receives one: a refund returns what arrived, so a quote
+     * has no place in it — see {@link enforcePayTo}.
+     */
+    strict?: { amount: bigint; assetAmount?: bigint },
 ): Bytes {
     return asset === undefined
-        ? enforcePayTo(destinationPkScript)
-        : enforcePayToAsset(destinationPkScript, asset);
+        ? enforcePayTo(destinationPkScript, strict?.amount)
+        : enforcePayToAsset(destinationPkScript, asset, strict);
 }

@@ -150,6 +150,44 @@ describe("VHTLCV2ContractHandler", () => {
         );
     });
 
+    it("round-trips the STRICT claim bound, which is opt-in and therefore droppable", () => {
+        // Dropping it re-derives the DEFAULT claim covenant — weaker than the row
+        // asked for — and dies at `upsertContractRow` with an opaque `Script
+        // mismatch`. The failure is identical to the asset drop above and just as
+        // silent, which is why an opt-in field needs the round-trip most: nothing
+        // else signals its absence.
+        const params = fullParams({
+            assetTxid: ASSET_TXID,
+            assetGroupIndex: "7",
+            strictClaimAmount: "50000",
+            strictClaimAssetAmount: "1234",
+        });
+        const typed = VHTLCV2ContractHandler.deserializeParams(params);
+        expect(typed.nonInteractiveClaim?.strict).toEqual({ amount: 50_000n, assetAmount: 1234n });
+        expect(VHTLCV2ContractHandler.serializeParams(typed)).toEqual(params);
+
+        // ...and it derives a DIFFERENT script from the same contract without it.
+        const loose = fullParams({ assetTxid: ASSET_TXID, assetGroupIndex: "7" });
+        expect(hex.encode(VHTLCV2ContractHandler.createScript(params).pkScript)).not.toBe(
+            hex.encode(VHTLCV2ContractHandler.createScript(loose).pkScript),
+        );
+    });
+
+    it("refuses a strict ASSET bound with no strict sat bound", () => {
+        // Reading it as "not strict" would re-derive the default covenant. The
+        // mirror case (sats without asset, on an asset contract) is refused by
+        // the script layer's own validation, which this defers to.
+        expect(() =>
+            VHTLCV2ContractHandler.deserializeParams(
+                fullParams({
+                    assetTxid: ASSET_TXID,
+                    assetGroupIndex: "7",
+                    strictClaimAssetAmount: "1234",
+                }),
+            ),
+        ).toThrow(/without strictClaimAmount/);
+    });
+
     it("refuses half an asset rather than deriving a sat-only script from it", () => {
         // A txid without its group index names no asset and an index without a
         // txid names nothing at all. Reading either as "no asset" re-derives the
