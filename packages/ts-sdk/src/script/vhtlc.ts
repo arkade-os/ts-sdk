@@ -68,6 +68,21 @@ export namespace VHTLC {
          * asset covenant while stripping the sats — exactly as the sat-only
          * covenant lets a spend strip the asset.
          *
+         * ONE ASSET IS BOUND, AND ONLY THAT ONE IS PROTECTED. If a VTXO funded to
+         * this contract carries ADDITIONAL assets alongside the bound one, those
+         * are not covered: whoever assembles a covenant spend chooses where they
+         * go, and can send them anywhere.
+         *
+         * `INSPECTOUTASSETCOUNT == 1` does not close that. It constrains the
+         * covenant's OUTPUT to exactly one asset — so the extras cannot ride
+         * along with the bound asset — but arkd's conservation rule is satisfied
+         * by routing them to a different output, which the covenant says nothing
+         * about. The bound asset arrives; the rest is the spender's to direct.
+         *
+         * So fund an asset contract with the asset it names and nothing else. A
+         * multi-asset VTXO behind this covenant is a loss waiting for whoever
+         * pushes the spend.
+         *
          * The id is the pair the introspection opcodes take. A canonical Asset
          * ID is `(genesis txid, group index)`, never a single blob.
          */
