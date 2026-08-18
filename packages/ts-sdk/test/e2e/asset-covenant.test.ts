@@ -85,7 +85,7 @@ const DUST_SATS = 330n;
  */
 const assetCovenantHTLC = {
     version: 0,
-    params: ["hash", "receiver", "amount", "assetTxid", "assetGidx", "assetAmount", "server"],
+    params: ["hash", "receiver", "amount", "assetTxid", "assetGidx", "server"],
     functions: {
         claim: {
             inputs: [{ name: "preimage", type: "bytes" }] as const,
@@ -96,15 +96,40 @@ const assetCovenantHTLC = {
             },
             arkadeScript: {
                 asm: [
-                    // the asset must be present on output 0, in at least the locked amount
+                    // THE ASSET CLAUSE, INPUT-RELATIVE — mirroring what
+                    // `VHTLC.ScriptV2` actually builds rather than a simplified
+                    // stand-in. Two of these opcodes had never been executed by
+                    // anything in this repo: `INSPECTINASSETLOOKUP`, which is
+                    // what makes the comparison relative to what was locked
+                    // rather than to a constant baked into the script, and
+                    // `INSPECTOUTASSETCOUNT`, which stops a spend injecting
+                    // further assets alongside the bound one. A stack-order or
+                    // counting quirk in either would make every ScriptV2 asset
+                    // contract unspendable on its covenant leaves, and byte-
+                    // pinning unit tests cannot find that — they passed for the
+                    // pre-flip txid too.
+                    //
+                    // Index `0` where ScriptV2 writes `PUSHCURRENTINPUTINDEX`.
+                    // Equivalent for this spend, which has one contract input at
+                    // 0 paying output 0, and the same self-send alignment the sat
+                    // clause below already relies on.
                     0,
                     "$assetTxid",
                     "$assetGidx",
                     "INSPECTOUTASSETLOOKUP",
-                    "VERIFY",
-                    "$assetAmount",
+                    "VERIFY", // PRESENT on the output, not merely "zero of it"
+                    0,
+                    "$assetTxid",
+                    "$assetGidx",
+                    "INSPECTINASSETLOOKUP",
+                    "VERIFY", // ...and on the input, so the comparison means something
                     "GREATERTHANOREQUAL",
                     "VERIFY",
+                    // Exactly one asset out: nothing injected alongside the bound one.
+                    0,
+                    "INSPECTOUTASSETCOUNT",
+                    1,
+                    "EQUALVERIFY",
                     // ...and the sats and destination, as the BTC covenant does
                     0,
                     "DUP",
@@ -173,7 +198,6 @@ describe("asset-denominated non-interactive covenant", () => {
             amount: CARRIER_SATS,
             assetTxid,
             assetGidx,
-            assetAmount: ASSET_LOCKED,
         });
 
         // Fund the contract WITH THE ASSET — a sat carrier plus the asset itself.
