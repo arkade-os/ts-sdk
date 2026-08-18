@@ -150,7 +150,7 @@ describe("asset-denominated non-interactive covenant", () => {
         );
         // Reversed HERE because this probe pushes the id into a raw artifact.
         // `VHTLC.ScriptV2` does the same flip internally, so a contract built
-        // through the SDK takes the id in wire order and callers do not think
+        // through the SDK takes the id in canonical order and callers do not think
         // about it; this test is the layer below that.
         const assetTxid = hex.decode(assetId.slice(0, 64)).slice().reverse();
         const idBytes = hex.decode(assetId);

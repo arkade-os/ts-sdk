@@ -72,7 +72,15 @@ export namespace VHTLC {
          * ID is `(genesis txid, group index)`, never a single blob.
          */
         asset?: {
-            /** The asset's genesis transaction id, 32 bytes. */
+            /**
+             * The asset's genesis transaction id, 32 bytes, in CANONICAL order
+             * — exactly the leading 32 bytes of a serialized Asset ID, no flip.
+             *
+             * The covenant reverses it internally because the introspection
+             * opcodes match wire order; callers never do that themselves, and a
+             * caller who pre-reverses gets a contract that is unspendable on its
+             * covenant leaves with nothing in the error naming why.
+             */
             txid: Bytes;
             /** The asset group index within that genesis transaction. */
             groupIndex: number;
@@ -563,11 +571,12 @@ function enforcePayToAsset(
             `asset group index must be an integer in [0, 65535], got ${asset.groupIndex}`,
         );
     }
-    // REVERSED, once, here. `asset.txid` is the id in WIRE order -- the leading
-    // 32 bytes of the serialized Asset ID -- but the introspection opcodes match
-    // against those bytes reversed. Push wire order and the lookup reports the
-    // asset ABSENT (`0 0`), so the covenant fails and the contract it guards is
-    // unspendable. Nothing in the failure says so: the emulator returns only
+    // REVERSED, once, here. `asset.txid` is the id in CANONICAL order -- the
+    // leading 32 bytes of the serialized Asset ID, which arkd's `serializeTxHash`
+    // already reversed "to match the canonical txid format". The introspection
+    // opcodes match against WIRE order, which is those bytes reversed back. Push
+    // the canonical bytes unflipped and the lookup reports the asset ABSENT
+    // (`0 0`), so the covenant fails and the contract it guards is unspendable. Nothing in the failure says so: the emulator returns only
     // `OP_VERIFY failed`, and returns it whatever the amount comparison says.
     // Established on regtest against a real minted asset, by elimination against
     // a passing BTC-only control.

@@ -39,6 +39,8 @@ const HASH = "4d487dd3753a89bc9fe98401d1196523058251fc";
 
 /** `OP_1 <32-byte program>`; anything else fails `isP2trPkScript`. */
 const p2tr = (programHex: string): string => `5120${programHex}`;
+/** A genesis txid in canonical order — the leading 32 bytes of a serialized Asset ID. */
+const ASSET_TXID = "b2".repeat(32);
 const RECEIVER_PK_SCRIPT = p2tr(RECEIVER);
 const SENDER_PK_SCRIPT = p2tr(SENDER);
 
@@ -125,6 +127,39 @@ describe("VHTLCV2ContractHandler", () => {
         expect(hex.encode(VHTLCV2ContractHandler.createScript(reserialized).pkScript)).toBe(
             hex.encode(VHTLCV2ContractHandler.createScript(params).pkScript),
         );
+    });
+
+    it("round-trips the ASSET, so a re-derived contract is not silently sat-only", () => {
+        // The failure this closes was silent in the worst way. `ContractManager`
+        // re-derives a contract from these params; with no `asset` key the
+        // derivation produced the SAT-ONLY script, and registration died at
+        // `upsertContractRow` with a `Script mismatch` naming two hex strings
+        // and no cause. The same silent-drop class `validateOptions` refuses one
+        // layer up.
+        const params = fullParams({ assetTxid: ASSET_TXID, assetGroupIndex: "7" });
+        const typed = VHTLCV2ContractHandler.deserializeParams(params);
+        expect(typed.asset).toEqual({ txid: hex.decode(ASSET_TXID), groupIndex: 7 });
+        expect(VHTLCV2ContractHandler.serializeParams(typed)).toEqual(params);
+
+        // And the script it derives is the asset one, not the sat-only one —
+        // the assertion the round-trip exists for. Comparing against the same
+        // params minus the asset, so this cannot pass by both being equal.
+        const satOnly = fullParams();
+        expect(hex.encode(VHTLCV2ContractHandler.createScript(params).pkScript)).not.toBe(
+            hex.encode(VHTLCV2ContractHandler.createScript(satOnly).pkScript),
+        );
+    });
+
+    it("refuses half an asset rather than deriving a sat-only script from it", () => {
+        // A txid without its group index names no asset and an index without a
+        // txid names nothing at all. Reading either as "no asset" re-derives the
+        // sat-only script — exactly the silent drop above, reached by a corrupt
+        // row instead of a missing feature.
+        for (const half of [{ assetTxid: ASSET_TXID }, { assetGroupIndex: "7" }]) {
+            expect(() => VHTLCV2ContractHandler.deserializeParams(fullParams(half))).toThrow(
+                /both be present or both absent/,
+            );
+        }
     });
 
     it("round-trips a bare six-leaf contract without inventing covenant keys", () => {

@@ -503,9 +503,10 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
     });
 
     it("pushes the txid REVERSED, because that is what the opcode matches", () => {
-        // `asset.txid` is WIRE order -- the leading 32 bytes of the serialized
+        // `asset.txid` is CANONICAL order -- the leading 32 bytes of the serialized
         // Asset ID -- but the introspection opcodes match those bytes reversed.
-        // Push wire order and the lookup reports the asset ABSENT (`0 0`), so
+        // Push the canonical bytes unflipped and the lookup reports the asset
+        // ABSENT (`0 0`), so
         // the covenant fails and the contract it guards is unspendable, with
         // nothing in the error naming the cause. Established on regtest against
         // a real minted asset (see test/e2e/asset-covenant.test.ts).

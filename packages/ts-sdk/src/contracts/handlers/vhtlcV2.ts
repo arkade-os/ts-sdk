@@ -31,6 +31,17 @@ export interface VHTLCV2ContractParams {
     unilateralClaimDelay: RelativeTimelock;
     unilateralRefundDelay: RelativeTimelock;
     unilateralRefundWithoutReceiverDelay: RelativeTimelock;
+    /**
+     * The Arkade asset the covenant leaves bind, if any.
+     *
+     * @see VHTLC.Options.asset
+     */
+    asset?: {
+        /** The asset's genesis txid, 32 bytes, canonical order — as the serialized Asset ID carries it. */
+        txid: Uint8Array;
+        /** The asset group index within that genesis transaction. */
+        groupIndex: number;
+    };
     /** @see VHTLC.Options.nonInteractiveClaim */
     nonInteractiveClaim?: {
         receiverPkScript: Uint8Array;
@@ -160,6 +171,19 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
                     params.nonInteractiveRefund.emulatorPubkey,
                 ),
             }),
+            // The asset must round-trip, and its absence here used to be silent
+            // in the worst way. `ContractManager` re-derives a contract from
+            // these params; dropping the asset derives the SAT-ONLY script, so
+            // registration died at `upsertContractRow` with a `Script mismatch`
+            // naming two hex strings and no cause. Same silent-drop class
+            // `validateOptions` refuses one layer up.
+            //
+            // Two keys rather than one blob, mirroring the script's own view of
+            // an Asset ID as a (txid, groupIndex) pair.
+            ...(params.asset && {
+                assetTxid: hex.encode(params.asset.txid),
+                assetGroupIndex: params.asset.groupIndex.toString(),
+            }),
         };
     },
 
@@ -176,12 +200,30 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
             "nonInteractiveRefundEmulatorPubkey",
             "nonInteractiveRefund",
         );
+        // Both halves or neither: a txid without its group index names no asset,
+        // and an index without a txid names nothing at all. Either alone is a
+        // corrupt row rather than a contract that happens to lack an asset, and
+        // reading it as the latter re-derives the sat-only script — the exact
+        // silent drop this round-trip exists to close.
+        if ((params.assetTxid === undefined) !== (params.assetGroupIndex === undefined)) {
+            throw new Error(
+                "asset params are incomplete: assetTxid and assetGroupIndex must both be present or both absent",
+            );
+        }
+        const asset =
+            params.assetTxid !== undefined && params.assetGroupIndex !== undefined
+                ? {
+                      txid: hex.decode(params.assetTxid),
+                      groupIndex: Number(params.assetGroupIndex),
+                  }
+                : undefined;
         return {
             sender: hex.decode(params.sender),
             receiver: hex.decode(params.receiver),
             server: hex.decode(params.server),
             preimageHash: hex.decode(params.hash),
             refundLocktime: BigInt(params.refundLocktime),
+            ...(asset && { asset }),
             unilateralClaimDelay: sequenceToTimelock(Number(params.claimDelay)),
             unilateralRefundDelay: sequenceToTimelock(Number(params.refundDelay)),
             unilateralRefundWithoutReceiverDelay: sequenceToTimelock(
