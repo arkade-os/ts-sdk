@@ -45,9 +45,11 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { hex } from "@scure/base";
+import { schnorr } from "@noble/curves/secp256k1.js";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import {
     arkade,
+    VHTLC,
     asset as assetExt,
     networks,
     RestArkProvider,
@@ -143,6 +145,63 @@ const assetCovenantHTLC = {
                     "INSPECTOUTPUTVALUE",
                     "$amount",
                     "EQUAL",
+                ],
+                witness: [],
+            },
+        },
+    },
+};
+
+/**
+ * The SAME contract shape, with the arkadeScript written to match
+ * `VHTLC.ScriptV2`'s own covenant token for token.
+ *
+ * The artifact above is a probe: literal `0` for the output index, `$amount
+ * EQUAL` for the sats. Convenient — it keeps the misdirection cases
+ * constructable — and it means the emulator never executes the exact bytes a
+ * consumer locks funds to. This one closes that, and the test PROVES the match
+ * with `resolveAsm` rather than asserting it by eye.
+ */
+const scriptV2Shaped = {
+    version: 0,
+    params: ["hash", "receiver", "assetTxid", "assetGidx", "server"],
+    functions: {
+        claim: {
+            inputs: [{ name: "preimage", type: "bytes" }] as const,
+            tapscript: {
+                signers: ["$server"],
+                asm: ["HASH160", "$hash", "EQUAL"],
+                witness: ["preimage"],
+            },
+            arkadeScript: {
+                asm: [
+                    "PUSHCURRENTINPUTINDEX",
+                    "$assetTxid",
+                    "$assetGidx",
+                    "INSPECTOUTASSETLOOKUP",
+                    "VERIFY",
+                    "PUSHCURRENTINPUTINDEX",
+                    "$assetTxid",
+                    "$assetGidx",
+                    "INSPECTINASSETLOOKUP",
+                    "VERIFY",
+                    "GREATERTHANOREQUAL",
+                    "VERIFY",
+                    "PUSHCURRENTINPUTINDEX",
+                    "INSPECTOUTASSETCOUNT",
+                    1,
+                    "EQUALVERIFY",
+                    "PUSHCURRENTINPUTINDEX",
+                    "DUP",
+                    "INSPECTOUTPUTSCRIPTPUBKEY",
+                    1,
+                    "EQUALVERIFY",
+                    "$receiver",
+                    "EQUALVERIFY",
+                    "INSPECTOUTPUTVALUE",
+                    "PUSHCURRENTINPUTINDEX",
+                    "INSPECTINPUTVALUE",
+                    "GREATERTHANOREQUAL",
                 ],
                 witness: [],
             },
@@ -336,6 +395,109 @@ describe("asset-denominated non-interactive covenant", () => {
         const [vtxo] = await waitForVtxo(indexerProvider, receiverPkScript);
         expect(vtxo.txid).toBe(txid);
     });
+
+    it(
+        "spends a covenant PROVEN byte-identical to VHTLC.ScriptV2's own",
+        { timeout: 180000 },
+        async () => {
+            // THE GAP THIS CLOSES. Every other test here runs a probe artifact, so
+            // the emulator had never executed the byte sequence `ScriptV2` actually
+            // builds — the one a consumer locks funds to. A stack-order or counting
+            // quirk in it would leave every asset contract unspendable on its
+            // covenant leaves, and no test would say so.
+            // A receiver of this test's own: the module-level one is already paid
+            // by the test above, so waiting on it returns THAT spend's vtxo and
+            // the txid assertion below compares two unrelated transactions.
+            const payee = randomP2TR();
+            const alice = await createTestArkWallet();
+            const aliceAddress = await alice.wallet.getAddress();
+            faucetOffchain(aliceAddress!, Number(CARRIER_SATS) * 6);
+            await waitFor(
+                async () => (await alice.wallet.getBalance()).total >= Number(CARRIER_SATS),
+            );
+
+            const { assetId } = await alice.wallet.assetManager.issue({
+                amount: ASSET_SUPPLY,
+                metadata: { decimals: 0, name: "ScriptV2 Shaped", ticker: "SV2" },
+            });
+            await waitFor(
+                async () =>
+                    assetBalanceOf(await alice.wallet.getBalance(), assetId) >= ASSET_LOCKED,
+            );
+            const parsed = assetExt.AssetId.fromString(assetId);
+            const assetTxid = Uint8Array.from(parsed.txid).reverse();
+            const assetGidx = BigInt(parsed.groupIndex);
+
+            // THE PROOF, and the reason this is worth more than the spend below.
+            // `resolveAsm` binds the artifact's placeholders exactly as the compiler
+            // does, so this compares the bytes the emulator is about to run against
+            // the bytes `ScriptV2` emits for the same asset and destination. Equal
+            // means the spend exercises ScriptV2's covenant, not a lookalike.
+            const fromSdk = new VHTLC.ScriptV2({
+                preimageHash: PREIMAGE_HASH,
+                sender: schnorr.getPublicKey(new Uint8Array(32).fill(1)),
+                receiver: schnorr.getPublicKey(new Uint8Array(32).fill(2)),
+                server: schnorr.getPublicKey(new Uint8Array(32).fill(3)),
+                refundLocktime: 1_800_000_000n,
+                unilateralClaimDelay: { type: "seconds", value: 512n },
+                unilateralRefundDelay: { type: "seconds", value: 1024n },
+                unilateralRefundWithoutReceiverDelay: { type: "seconds", value: 1536n },
+                nonInteractiveClaim: {
+                    receiverPkScript: payee,
+                    emulatorPubkey: schnorr.getPublicKey(new Uint8Array(32).fill(5)),
+                },
+                asset: { txid: parsed.txid, groupIndex: parsed.groupIndex },
+            }).nonInteractiveClaimArkadeScript!;
+            const fromArtifact = arkade.resolveAsm(
+                scriptV2Shaped.functions.claim.arkadeScript.asm as never,
+                {
+                    hash: PREIMAGE_HASH,
+                    receiver: payee.slice(2),
+                    assetTxid,
+                    assetGidx,
+                },
+            );
+            expect(hex.encode(fromArtifact)).toBe(hex.encode(fromSdk));
+
+            const ark = await arkade.Arkade.connect({
+                arkade: arkProvider,
+                indexer: indexerProvider,
+                identity: alice.identity,
+                emulator,
+                network: networks.regtest,
+            });
+            const contract = ark.contract(scriptV2Shaped, {
+                hash: PREIMAGE_HASH,
+                receiver: payee.slice(2),
+                assetTxid,
+                assetGidx,
+            });
+
+            await alice.wallet.send({
+                address: contract.address,
+                amount: Number(CARRIER_SATS),
+                assets: [{ assetId, amount: ASSET_LOCKED }],
+            });
+            await waitForVtxo(indexerProvider, contract.pkScript);
+
+            // Everything through to output 0. Input-relative on both quantities, so
+            // the whole input must arrive — no second output, and none needed: the
+            // misdirection cases live on the probe artifact, which differs from this
+            // only in the index literal and the sat clause form.
+            const { txid } = await contract.functions
+                .claim(PREIMAGE)
+                .withAsset({
+                    assetId,
+                    inputs: [{ vin: 0, amount: ASSET_LOCKED }],
+                    outputs: [{ vout: 0, amount: ASSET_LOCKED }],
+                })
+                .to(payee, CARRIER_SATS)
+                .send();
+
+            const [vtxo] = await waitForVtxo(indexerProvider, payee);
+            expect(vtxo.txid).toBe(txid);
+        },
+    );
 });
 
 async function waitFor(pred: () => Promise<boolean>, timeoutMs = 30000) {
