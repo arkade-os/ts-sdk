@@ -534,6 +534,71 @@ describe("VHTLC.ScriptV2 — asset denomination", () => {
             ...extra,
         });
 
+    it("derives the pkScript it derived BEFORE strict existed, for every shape", () => {
+        // GOLDEN VECTORS, and what they are compared against is the point. The
+        // sibling test asserts `strict: undefined` equals omitting it — nearly a
+        // tautology in JS, since both are `undefined` on the property. What that
+        // cannot show is that ADDING the option left the default path's BYTES
+        // alone, and those bytes ARE the address of every contract already
+        // funded.
+        //
+        // Captured from b43534b — the commit before `strict` existed — and
+        // verified identical at the commit that added it, across all seven
+        // shapes and both script versions. A change that moves the default path
+        // fails here instead of making funded contracts underivable.
+        const claimLeaf = { receiverPkScript, emulatorPubkey };
+        const refundLeaf = { senderPkScript: p2tr(key(6)), emulatorPubkey };
+        const shapes: [string, object, string, string][] = [
+            [
+                "bare",
+                {},
+                "512069be6bafd0f15802284199463ddc3fa995fd6a5ba470d9ce02a565f286492fc8",
+                "5120f2612eed370d3603672b7e256635fdb1e8fdf2636853175cc0dbec585d50679e",
+            ],
+            [
+                "claim only",
+                { nonInteractiveClaim: claimLeaf },
+                "5120bbc33adb5e0f81ad7fd3a14380cf5d552815bdadfbffeaa1ab4938c486e16bbd",
+                "51207b87979f8e028ea914a8a53e088650c99fdcf61696cf539dc1d6412bbac88deb",
+            ],
+            [
+                "refund only",
+                { nonInteractiveClaim: undefined, nonInteractiveRefund: refundLeaf },
+                "5120699c92a6ed1b32cc9ab346d17eb9960de311172388e5f6c50212e0e91984a0d0",
+                "5120915ced574d918f70128ef16160f3b72ac05dad06e27162fffb90b33f4d2ee5c2",
+            ],
+            [
+                "both leaves",
+                { nonInteractiveClaim: claimLeaf, nonInteractiveRefund: refundLeaf },
+                "5120d155531ea89a92eac969c5e5205607b9debba9a4e66453c9410e9b6ca38e4eda",
+                "5120d8880eda3ad3281604f27e5b5dcd851631acb974f9d8aecf18a9e13e3a439f5b",
+            ],
+            [
+                "asset + both",
+                { nonInteractiveClaim: claimLeaf, nonInteractiveRefund: refundLeaf, asset },
+                "5120dd8f3358c9d8300d57772c6450f1d310086d45e5903aa1808637d8dd3e5ffea0",
+                "5120869d1ad5a5bced06a50c883c718c8e25f531168a8f536469ca58e28360a87a8e",
+            ],
+            [
+                "asset + claim only",
+                { nonInteractiveClaim: claimLeaf, nonInteractiveRefund: undefined, asset },
+                "5120e2d876c066c379b809f0c52eedc1cfb0820bf02ad9c08ed01fdc61221de89bf1",
+                "5120e768c26de90c1450f06492c212c12d2d0927fbefff866b16939ecd52d3cde9f1",
+            ],
+            [
+                "asset + refund only",
+                { nonInteractiveClaim: undefined, nonInteractiveRefund: refundLeaf, asset },
+                "51201c2b6772a07dccfa83eb07210c420d73d928d72b3d03f5e88888858743cad280",
+                "5120e953cff4c35d60942bdfbd7a741d19ebbf9ebc499f381a9d16f6945bfe317d6f",
+            ],
+        ];
+        for (const [name, extra, v2, v1] of shapes) {
+            const options = { ...baseOptions(), ...extra };
+            expect(hex.encode(new VHTLC.ScriptV2(options).pkScript), `${name} (v2)`).toBe(v2);
+            expect(hex.encode(new VHTLC.Script(options).pkScript), `${name} (v1)`).toBe(v1);
+        }
+    });
+
     it("leaves EVERY byte unchanged when strict is omitted", () => {
         // The compatibility property the option rests on. `strict` compiles into
         // the leaf, hence the emulator key, hence the address — so if merely
